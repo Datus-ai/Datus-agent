@@ -2,27 +2,25 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 import os.path
+from functools import lru_cache
 from typing import Any, List, Optional, Union
 
 import numpy as np
 from fastembed import TextEmbedding
 from fastembed.text.text_embedding_base import TextEmbeddingBase
 from huggingface_hub.errors import LocalEntryNotFoundError
-from lancedb.embeddings.base import TextEmbeddingFunction
-from lancedb.embeddings.registry import register
-from lancedb.embeddings.utils import weak_lru
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from datus.storage.embedding_models import get_embedding_device
+from datus.storage.vector.base import EmbeddingFunction
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
 
-@register("fastembed")
-class FastEmbedEmbeddings(TextEmbeddingFunction):
+class FastEmbedEmbeddings(BaseModel, EmbeddingFunction):
     """
-    LanceDB embedding function backed by ``fastembed`` text encoders.
+    Embedding function backed by ``fastembed`` text encoders.
 
     Parameters
     ----------
@@ -36,45 +34,43 @@ class FastEmbedEmbeddings(TextEmbeddingFunction):
     normalize: bool, default True
         Retained for backwards compatibility; ``fastembed`` models always
         return normalized embeddings.
-    trust_remote_code: bool, default True
-        Unused but preserved to avoid breaking persisted LanceDB configs.
     batch_size: int, default 256
         Batch size used when generating embeddings.
     cache_dir: str | None
         Optional cache directory for ``fastembed`` model assets. When
         omitted the library default (``FASTEMBED_CACHE_PATH`` or a temp
         directory) is used.
-    local_files_only: bool, default True
-        If True, only cached model artifacts will be used and downloads
-        will not be attempted.
     """
 
     name: str = "sentence-transformers/all-MiniLM-L6-v2"
     device: str = "cpu"
     normalize: bool = True
-    trust_remote_code: bool = True
     batch_size: int = 256
-    # Do NOT persist cache_dir into LanceDB metadata to keep artifacts portable
     cache_dir: Optional[str] = Field(default=None, exclude=True, repr=False)
+
+    model_config = {"arbitrary_types_allowed": True}
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.device = get_embedding_device()
         self._model_instance: Optional[TextEmbedding] = None
+        self._dim_size: Optional[int] = None
 
         normalized_name = self._normalize_model_name(self.name)
         object.__setattr__(self, "name", normalized_name)
 
-        # Allow batch size and cache_dir overrides
+        # Allow batch size override
         batch_size = kwargs.get("batch_size", self.batch_size)
         object.__setattr__(self, "batch_size", int(batch_size))
         self.cache_dir = str(_resolve_cache_dir())
-        # If not provided via kwargs, compute a portable default cache dir.
-        if not getattr(self, "cache_dir", None):
-            object.__setattr__(self, "cache_dir", self.cache_dir)
         if self.device not in {"cpu", "cuda"}:
             logger.debug(f"fastembed does not support device '{self.device}', falling back to CPU.")
             self.device = "cpu"
+
+    @classmethod
+    def create(cls, **kwargs) -> "FastEmbedEmbeddings":
+        """Create a new instance with the given parameters."""
+        return cls(**kwargs)
 
     @staticmethod
     def _normalize_model_name(model_name: str) -> str:
@@ -84,11 +80,9 @@ class FastEmbedEmbeddings(TextEmbeddingFunction):
 
     @property
     def embedding_model(self) -> TextEmbeddingBase:
-        """
-        Lazily create and cache the underlying fastembed model instance.
-        """
+        """Lazily create and cache the underlying fastembed model instance."""
         if self._model_instance is None:
-            self._model_instance = self.get_embedding_model()
+            self._model_instance = self._create_embedding_model()
         return self._model_instance
 
     def ndims(self) -> int:
@@ -102,14 +96,7 @@ class FastEmbedEmbeddings(TextEmbeddingFunction):
         return int(self._dim_size)
 
     def generate_embeddings(self, texts: Union[List[str], np.ndarray], *args, **kwargs) -> List[List[float]]:
-        """
-        Generate embeddings for the provided texts.
-
-        Parameters
-        ----------
-        texts: list[str] or np.ndarray (of str)
-            The texts to embed.
-        """
+        """Generate embeddings for the provided texts."""
         if isinstance(texts, np.ndarray):
             texts = texts.tolist()
         else:
@@ -121,8 +108,8 @@ class FastEmbedEmbeddings(TextEmbeddingFunction):
         embeddings = self.embedding_model.embed(texts, batch_size=self.batch_size)
         return [np.asarray(embedding, dtype=np.float32).tolist() for embedding in embeddings]
 
-    @weak_lru(maxsize=1)
-    def get_embedding_model(self) -> TextEmbeddingBase:
+    @lru_cache(maxsize=1)
+    def _create_embedding_model(self) -> TextEmbeddingBase:
         """
         Create the fastembed ``TextEmbedding`` instance for the configured model.
         Cached so that the model is only loaded once per process.
@@ -144,12 +131,12 @@ class FastEmbedEmbeddings(TextEmbeddingFunction):
             logger.error(f"Failed to initialize fastembed model '{self.name}': {exc}")
             raise
 
+    def __hash__(self):
+        return hash((self.name, self.device, self.batch_size))
+
 
 def _resolve_cache_dir() -> str:
-    """
-    Define the cache directory for fastembed
-    """
-
+    """Define the cache directory for fastembed."""
     from pathlib import Path
 
     if cache_path := os.getenv("FASTEMBED_CACHE_PATH"):
@@ -182,7 +169,8 @@ def check_snapshot(model_name: str, cache_dir: str) -> None:
         repo_id = description.get("sources", {}).get("hf")  # type: ignore[assignment]
     if not repo_id:
         logger.warning(
-            f"FastEmbed does not support models `{model_name}`.Support models: {TextEmbedding.list_supported_models()}"
+            f"FastEmbed does not support models `{model_name}`."
+            f"Support models: {TextEmbedding.list_supported_models()}"
         )
         # Some fastembed models only ship via the GCS mirror; defer to fastembed.
         return

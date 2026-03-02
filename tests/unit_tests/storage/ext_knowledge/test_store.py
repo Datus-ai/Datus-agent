@@ -12,14 +12,14 @@ from datus.storage.ext_knowledge.store import ExtKnowledgeRAG, ExtKnowledgeStore
 
 @pytest.fixture
 def tmp_db(tmp_path):
-    """Create a temporary directory for LanceDB storage."""
+    """Create a temporary directory for vector storage."""
     return str(tmp_path)
 
 
 @pytest.fixture
 def ext_store(tmp_db):
-    """Create an ExtKnowledgeStore instance with real LanceDB."""
-    return ExtKnowledgeStore(db_path=tmp_db, embedding_model=get_db_embedding_model())
+    """Create an ExtKnowledgeStore instance with real vector store."""
+    return ExtKnowledgeStore(scope=tmp_db, embedding_model=get_db_embedding_model())
 
 
 @pytest.fixture

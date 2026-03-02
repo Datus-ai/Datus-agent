@@ -308,6 +308,8 @@ class AgentConfig:
         self.namespaces: Dict[str, Dict[str, DbConfig]] = {}
         self._init_namespace_config(kwargs.get("namespace", {}))
 
+        self._init_dirs()
+
         self.workspace_root = None
         # use default embedding model if not provided
         if storage_config := kwargs.get("storage", {}):
@@ -315,6 +317,14 @@ class AgentConfig:
                 storage_config, openai_configs=self.models, default_openai_config=self.active_model()
             )
             self.workspace_root = storage_config.get("workspace_root")
+
+        # Initialize storage backend configuration (rdb + vector)
+        from datus.storage.backend_config import StorageBackendConfig
+        from datus.storage.backend_holder import init_backends
+
+        backend_config = StorageBackendConfig.from_dict(storage_config)
+        self._backend_config = backend_config
+        init_backends(backend_config, data_dir=self.rag_base_path, namespace=self._current_namespace)
 
         # Initialize unified permission system
         self.permissions_config = self._init_permissions_config(kwargs.get("permissions", {}))
@@ -342,8 +352,6 @@ class AgentConfig:
                     f"Only alphanumeric characters, underscores, and hyphens are allowed.",
                 )
             self.document_configs[name] = DocumentConfig.from_dict(cfg)
-
-        self._init_dirs()
 
     @property
     def current_database(self):
@@ -393,6 +401,11 @@ class AgentConfig:
         self._current_database = ""
         self._current_namespace = value
         self.db_type = list(self.namespaces[self._current_namespace].values())[0].type
+
+        if hasattr(self, "_backend_config"):
+            from datus.storage.backend_holder import init_backends
+
+            init_backends(self._backend_config, data_dir=self.rag_base_path, namespace=value)
 
     def _init_namespace_config(self, namespace_config: Dict[str, Any]):
         for namespace, db_config_dict in namespace_config.items():

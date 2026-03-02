@@ -498,27 +498,19 @@ class TestBenchmarkTutorialInitMetrics:
         config_file = tmp_path / "agent.yml"
         config_file.write_text("agent: {}")
 
-        storage_path = tmp_path / "storage"
-        storage_path.mkdir()
-        semantic_model_path = storage_path / "semantic_model.lance"
-        semantic_model_path.mkdir()
-        metrics_path = storage_path / "metrics.lance"
-        metrics_path.mkdir()
-
         mock_agent_config = MagicMock()
         mock_agent_config.current_namespace = "california_schools"
-        mock_agent_config.rag_storage_path.return_value = str(storage_path)
 
         monkeypatch.setattr(tutorial_module, "load_agent_config", lambda reload, config: mock_agent_config)
 
         mock_parse_subject_tree = MagicMock(return_value=[])
         monkeypatch.setattr(tutorial_module, "parse_subject_tree", mock_parse_subject_tree)
 
-        mock_init_metrics = MagicMock(return_value=(True, "", "mock.yaml"))
-        monkeypatch.setattr(
-            "datus.storage.metric.metric_init.init_success_story_metrics",
-            mock_init_metrics,
-        )
+        # Mock init_metrics (from init_util) at the tutorial module level.
+        # The real init_metrics now calls backend.drop_table() instead of
+        # deleting the filesystem directory, so we verify via mock.
+        mock_init_metrics_fn = MagicMock(return_value=(True, None))
+        monkeypatch.setattr(tutorial_module, "init_metrics", mock_init_metrics_fn)
 
         tutorial = BenchmarkTutorial(config_path=str(config_file))
         tutorial.benchmark_path = tmp_path
@@ -531,9 +523,10 @@ class TestBenchmarkTutorialInitMetrics:
         result = tutorial._init_metrics(success_path)
 
         assert result is True
-        # Verify metrics.lance was deleted but semantic_model.lance was preserved
-        assert semantic_model_path.exists()
-        assert not metrics_path.exists()
+        # Verify init_metrics was called with overwrite mode (which triggers drop_table internally)
+        mock_init_metrics_fn.assert_called_once()
+        call_kwargs = mock_init_metrics_fn.call_args
+        assert call_kwargs[1]["build_model"] == "overwrite"
 
 
 # =============================================================================

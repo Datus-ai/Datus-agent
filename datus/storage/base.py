@@ -2,23 +2,19 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+from __future__ import annotations
+
 import time
 from datetime import datetime
 from threading import Lock
 from typing import Any, Dict, List, Optional, Union
 
-import lancedb
 import pandas as pd
 import pyarrow as pa
-from lancedb.embeddings import EmbeddingFunctionConfig
-from lancedb.pydantic import LanceModel
-from lancedb.query import LanceQueryBuilder
-from lancedb.rerankers import Reranker
-from lancedb.table import Table
-from pydantic import Field
 
+from datus.storage.conditions import Node, WhereExpr, and_, build_where
 from datus.storage.embedding_models import EmbeddingModel
-from datus.storage.lancedb_conditions import Node, WhereExpr, and_, build_where
+from datus.storage.vector.base import VectorDatabase, VectorTable
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -26,27 +22,28 @@ logger = get_logger(__name__)
 
 
 class StorageBase:
-    """Base class for all storage components using LanceDB."""
+    """Base class for all storage components using a vector backend."""
 
-    def __init__(self, db_path: str):
+    def __init__(self, scope: str = ""):
         """Initialize the storage base.
 
         Args:
-            db_path: Path to the LanceDB database directory
+            scope: Override path scope (e.g. ``sub_agents/agent_name``).
+                   Empty string uses default namespace path.
         """
-        self.db_path = db_path
-        self.db = lancedb.connect(db_path)
-        # self._ensure_tables()
+        from datus.storage.backend_holder import create_vector_connection
+
+        self._scope = scope
+        self.db: VectorDatabase = create_vector_connection()
 
     def _ensure_tables(self):
-        """Ensure all required tables exist in LanceDB."""
+        """Ensure all required tables exist."""
         self._ensure_success_story_table()
 
     def _ensure_success_story_table(self):
-        """Ensure the success story table exists in LanceDB."""
+        """Ensure the success story table exists."""
         try:
-            if "success_story" not in self.db.table_names():
-                # Create table schema using PyArrow
+            if not self.db.table_exists("success_story"):
                 schema = pa.schema(
                     [
                         pa.field("sql", pa.string()),
@@ -70,30 +67,24 @@ class StorageBase:
         return datetime.utcnow().isoformat()
 
 
-class BaseModelData(LanceModel):
-    created_at: str = Field(init=True, default="")
-
-    class Config:
-        arbitrary_types_allowed = True
-
-
 class BaseEmbeddingStore(StorageBase):
-    """Base class for all embedding stores using LanceDB.
+    """Base class for all embedding stores using a vector backend.
     table_name: the name of the table to store the embedding
     embedding_field: the field name of the embedding
     """
 
     def __init__(
         self,
-        db_path: str,
         table_name: str,
         embedding_model: EmbeddingModel,
         on_duplicate_columns: str = "vector",
-        schema: Optional[Union[pa.Schema, LanceModel]] = None,
+        schema: Optional[pa.Schema] = None,
         vector_source_name: str = "definition",
         vector_column_name: str = "vector",
+        scope: str = "",
+        unique_columns: Optional[List[str]] = None,
     ):
-        super().__init__(db_path)
+        super().__init__(scope=scope)
         self.model = embedding_model
         self.batch_size = embedding_model.batch_size
         self.table_name = table_name
@@ -101,9 +92,10 @@ class BaseEmbeddingStore(StorageBase):
         self.vector_column_name = vector_column_name
         self.on_duplicate_columns = on_duplicate_columns
         self._schema = schema
+        self._unique_columns = unique_columns
         self._scope_filter: Optional[Node] = None
         # Delay table initialization until first use
-        self.table: Optional[Table] = None
+        self.table: Optional[VectorTable] = None
         self._table_initialized = False
         self._table_lock = Lock()
         self._write_lock = Lock()
@@ -142,17 +134,11 @@ class BaseEmbeddingStore(StorageBase):
     ) -> pa.Table:
         self._ensure_table_ready()
         where = self._apply_scope_filter(where)
-        where_clause = build_where(where)
-        query_builder = self.table.search()
-        if where_clause:
-            query_builder = query_builder.where(where_clause)
-        if select_fields:
-            query_builder = query_builder.select(select_fields)
         if limit:
             row_limit = limit
         else:
-            row_limit = self.table.count_rows(where_clause) if where_clause else self.table.count_rows()
-        result = query_builder.limit(row_limit).to_arrow()
+            row_limit = self.table.count_rows(where) if where else self.table.count_rows()
+        result = self.table.search_all(where=where, select_fields=select_fields, limit=row_limit)
         if self.vector_column_name in result.column_names:
             result = result.drop([self.vector_column_name])
         return result
@@ -180,22 +166,31 @@ class BaseEmbeddingStore(StorageBase):
                 message=f"Embedding model '{self.model.model_name}' initialization failed: {str(e)}",
             ) from e
 
-    def _ensure_table(self, schema: Optional[Union[pa.Schema, LanceModel]] = None):
-        if self.table_name in self.db.table_names(limit=100):
-            self.table = self.db.open_table(self.table_name)
+    def truncate(self) -> None:
+        """Drop the table and reset state. Table will be recreated on next use."""
+        with self._table_lock:
+            self.db.drop_table(self.table_name, ignore_missing=True)
+            self.table = None
+            self._table_initialized = False
+
+    def _ensure_table(self, schema: Optional[pa.Schema] = None):
+        if self.db.table_exists(self.table_name):
+            self.table = self.db.open_table(
+                self.table_name,
+                embedding_function=self.model.model,
+                vector_column=self.vector_column_name,
+                source_column=self.vector_source_name,
+            )
         else:
             try:
-                self.table: Table = self.db.create_table(
+                self.table = self.db.create_table(
                     self.table_name,
                     schema=schema,
-                    embedding_functions=[
-                        EmbeddingFunctionConfig(
-                            vector_column=self.vector_column_name,
-                            source_column=self.vector_source_name,
-                            function=self.model.model,
-                        )
-                    ],
+                    embedding_function=self.model.model,
+                    vector_column=self.vector_column_name,
+                    source_column=self.vector_source_name,
                     exist_ok=True,
+                    unique_columns=self._unique_columns,
                 )
             except Exception as e:
                 raise DatusException(
@@ -213,8 +208,6 @@ class BaseEmbeddingStore(StorageBase):
         Args:
             metric (str): Distance metric for vector search ('cosine', 'l2', or 'dot').
                 Default: 'cosine'.
-            accelerator (str): Optional accelerator ('cuda' for GPU, 'mps' for MPS, None for CPU).
-                Default: none.
         """
         self._ensure_table_ready()
         try:
@@ -226,36 +219,31 @@ class BaseEmbeddingStore(StorageBase):
             logger.debug(f"Selected index type: {index_type}")
 
             # Calculate number of partitions (IVF)
-            # Rule: ~sqrt(n) for large datasets, minimum 1, capped at 1024
             num_partitions = max(1, min(1024, int(row_count**0.5)))
             if row_count < 1000:
-                num_partitions = max(1, row_count // 10)  # Small datasets: 10 vectors per partition
+                num_partitions = max(1, row_count // 10)
             elif row_count < 5000:
-                num_partitions = max(1, row_count // 20)  # Medium datasets: 20 vectors per partition
+                num_partitions = max(1, row_count // 20)
             logger.debug(f"Number of partitions: {num_partitions}")
 
             # Calculate number of sub-vectors (PQ, only for IVF_PQ)
-            # Rule: 8-96, based on vector dimension and dataset size
-            num_sub_vectors = 32  # Default for medium datasets
+            num_sub_vectors = 32
             if index_type == "IVF_PQ":
-                # Get vector dimension (e.g., 1024 for bge-large-en-v1.5)
                 vector_dim = self.model.dim_size
-
                 if row_count < 1000:
-                    num_sub_vectors = min(16, max(8, vector_dim // 64))  # Small datasets: fewer sub-vectors
+                    num_sub_vectors = min(16, max(8, vector_dim // 64))
                 elif row_count < 5000:
-                    num_sub_vectors = min(32, max(16, vector_dim // 32))  # Medium datasets
+                    num_sub_vectors = min(32, max(16, vector_dim // 32))
                 else:
-                    num_sub_vectors = min(96, max(32, vector_dim // 16))  # Large datasets: more sub-vectors
+                    num_sub_vectors = min(96, max(32, vector_dim // 16))
                 logger.debug(f"Number of sub-vectors: {num_sub_vectors}")
 
-            # Create index with calculated parameters
             index_params = {
                 "metric": metric,
                 "vector_column_name": self.vector_column_name,
                 "index_type": index_type,
                 "num_partitions": num_partitions,
-                "replace": True,  # Replace existing index if any
+                "replace": True,
             }
             if index_type == "IVF_PQ":
                 index_params["num_sub_vectors"] = num_sub_vectors
@@ -263,19 +251,17 @@ class BaseEmbeddingStore(StorageBase):
             if accelerator and accelerator == "cuda" or accelerator == "mps":
                 index_params["accelerator"] = accelerator
 
-            self.table.create_index(**index_params)
+            self.table.create_vector_index(self.vector_column_name, **index_params)
             logger.debug(f"Successfully created {index_type} index for {self.table_name}")
 
         except Exception as e:
-            # Does not affect usage, so no exception is thrown.
             logger.warning(f"Failed to create vector index for {self.table_name}: {str(e)}")
 
     def create_fts_index(self, field_names: Union[str, List[str]]):
         self._ensure_table_ready()
         try:
-            self.table.create_fts_index(field_names=field_names, replace=True)
+            self.table.create_fts_index(field_names)
         except Exception as e:
-            # Does not affect usage, so no exception is thrown.
             logger.warning(f"Failed to create fts index for {self.table_name} table: {str(e)}")
 
     def store_batch(self, data: List[Dict[str, Any]]):
@@ -286,8 +272,7 @@ class BaseEmbeddingStore(StorageBase):
             2. Merge insert the data into the table
 
         Args:
-            data: List[BaseModelData] the data to store
-            on_columns: List[str] the columns to merge on duplicate
+            data: List[Dict[str, Any]] the data to store
         """
         if not data:
             return
@@ -354,19 +339,17 @@ class BaseEmbeddingStore(StorageBase):
     def _upsert_with_retry(
         self, frame: pd.DataFrame, on_column: str, max_attempts: int = 3, initial_delay: float = 0.05
     ) -> None:
-        """Upsert a DataFrame into LanceDB with simple retry/backoff on commit conflicts."""
+        """Upsert a DataFrame with simple retry/backoff on commit conflicts."""
         if self.table is None:
             raise DatusException(
                 ErrorCode.STORAGE_SAVE_FAILED,
-                message_args={"error_message": "Lance table is not initialized"},
+                message_args={"error_message": "Table is not initialized"},
             )
 
         last_error: Exception | None = None
         for attempt in range(max_attempts):
             try:
-                self.table.merge_insert(on_column).when_matched_update_all().when_not_matched_insert_all().execute(
-                    frame
-                )
+                self.table.merge_insert(frame, on_column)
                 return
             except Exception as err:
                 error_message = str(err)
@@ -376,22 +359,26 @@ class BaseEmbeddingStore(StorageBase):
                 last_error = err
                 delay = initial_delay * (attempt + 1)
                 logger.warning(
-                    f"Commit conflict detected when upserting to LanceDB table '{self.table_name}' "
+                    f"Commit conflict detected when upserting to table '{self.table_name}' "
                     f"(attempt {attempt + 1}/{max_attempts}). Retrying after {delay:.2f}s."
                 )
-                # Refresh table handle so subsequent attempts see the latest version
-                self.table = self.db.open_table(self.table_name)
+                self.table = self.db.refresh_table(
+                    self.table_name,
+                    embedding_function=self.model.model,
+                    vector_column=self.vector_column_name,
+                    source_column=self.vector_source_name,
+                )
                 time.sleep(delay)
 
         assert last_error is not None  # for type checkers
         raise last_error
 
     def _add_with_retry(self, frame: pd.DataFrame, max_attempts: int = 3, initial_delay: float = 0.05) -> None:
-        """Insert a DataFrame into LanceDB with simple retry/backoff on commit conflicts."""
+        """Insert a DataFrame with simple retry/backoff on commit conflicts."""
         if self.table is None:
             raise DatusException(
                 ErrorCode.STORAGE_SAVE_FAILED,
-                message_args={"error_message": "Lance table is not initialized"},
+                message_args={"error_message": "Table is not initialized"},
             )
 
         last_error: Exception | None = None
@@ -407,11 +394,15 @@ class BaseEmbeddingStore(StorageBase):
                 last_error = err
                 delay = initial_delay * (attempt + 1)
                 logger.warning(
-                    f"Commit conflict detected when writing to LanceDB table '{self.table_name}' "
+                    f"Commit conflict detected when writing to table '{self.table_name}' "
                     f"(attempt {attempt + 1}/{max_attempts}). Retrying after {delay:.2f}s."
                 )
-                # Refresh table handle so subsequent attempts see the latest version
-                self.table = self.db.open_table(self.table_name)
+                self.table = self.db.refresh_table(
+                    self.table_name,
+                    embedding_function=self.model.model,
+                    vector_column=self.vector_column_name,
+                    source_column=self.vector_source_name,
+                )
                 time.sleep(delay)
 
         assert last_error is not None  # for type checkers
@@ -423,14 +414,13 @@ class BaseEmbeddingStore(StorageBase):
         select_fields: Optional[List[str]] = None,
         top_n: Optional[int] = None,
         where: WhereExpr = None,
-        reranker: Optional[Reranker] = None,
+        query_type: str = "vector",
     ) -> pa.Table:
-        # Ensure table is ready before searching
         self._ensure_table_ready()
         where = self._apply_scope_filter(where)
 
-        if reranker:
-            search_result = self._search_hybrid(query_txt, reranker, select_fields, top_n, where)
+        if query_type == "hybrid":
+            search_result = self._search_hybrid(query_txt, select_fields, top_n, where)
         else:
             search_result = self._search_vector(query_txt, select_fields, top_n, where)
         if self.vector_column_name in search_result.column_names:
@@ -440,20 +430,20 @@ class BaseEmbeddingStore(StorageBase):
     def _search_hybrid(
         self,
         query_txt: str,
-        reranker: Reranker,
         select_fields: Optional[List[str]] = None,
         top_n: Optional[int] = None,
         where: WhereExpr = None,
     ) -> pa.Table:
-        where_clause = build_where(where)
         try:
-            query_builder = self.table.search(
-                query=query_txt, query_type="hybrid", vector_column_name=self.vector_source_name
-            )
-            query_builder = BaseEmbeddingStore._fill_query(query_builder, select_fields, where_clause)
             if not top_n:
-                top_n = self.table.count_rows(where_clause) if where_clause else self.table.count_rows()
-            results = query_builder.limit(top_n * 2).rerank(reranker).to_arrow()
+                top_n = self.table.count_rows(where) if where else self.table.count_rows()
+            results = self.table.search_hybrid(
+                query_txt,
+                self.vector_source_name,
+                top_n,
+                where=where,
+                select_fields=select_fields,
+            )
             if len(results) > top_n:
                 results = results[:top_n]
             return results
@@ -468,65 +458,90 @@ class BaseEmbeddingStore(StorageBase):
         top_n: Optional[int] = None,
         where: WhereExpr = None,
     ) -> pa.Table:
-        where_clause = build_where(where)
         try:
-            query_builder = self.table.search(
-                query=query_txt, query_type="vector", vector_column_name=self.vector_column_name
-            )
-            query_builder = BaseEmbeddingStore._fill_query(query_builder, select_fields, where_clause)
             if not top_n:
-                top_n = self.table.count_rows(where_clause) if where_clause else self.table.count_rows()
-            return query_builder.limit(top_n).to_arrow()
+                top_n = self.table.count_rows(where) if where else self.table.count_rows()
+            return self.table.search_vector(
+                query_txt,
+                self.vector_column_name,
+                top_n,
+                where=where,
+                select_fields=select_fields,
+            )
         except Exception as e:
             raise DatusException(
                 ErrorCode.STORAGE_SEARCH_FAILED,
                 message_args={
                     "error_message": str(e),
                     "query": query_txt,
-                    "where_clause": where_clause if where_clause else "(none)",
+                    "where_clause": str(where) if where else "(none)",
                     "top_n": str(top_n or "all"),
                 },
             ) from e
 
     def table_size(self) -> int:
-        # Ensure table is ready before checking size
         self._ensure_table_ready()
         if self._scope_filter is not None:
-            where_clause = build_where(self._scope_filter)
-            return self.table.count_rows(where_clause)
+            return self.table.count_rows(self._scope_filter)
         return self.table.count_rows()
-
-    @classmethod
-    def _fill_query(
-        cls,
-        query_builder: LanceQueryBuilder,
-        select_fields: Optional[List[str]] = None,
-        where: Optional[str] = None,
-    ) -> LanceQueryBuilder:
-        if where:
-            query_builder = query_builder.where(where, True)
-
-        if select_fields and len(select_fields) > 0:
-            query_builder = query_builder.select(select_fields)
-        return query_builder
 
     def update(self, where: WhereExpr, update_values: Dict[str, Any], unique_filter: Optional[WhereExpr] = None):
         self._ensure_table_ready()
         if not update_values:
             return
-        final_where = build_where(where)
-        if not final_where:
+        if not where:
             return
-        unique_where = build_where(unique_filter)
-        if unique_where:
-            existing = self.table.count_rows(unique_where)
+        where = self._apply_scope_filter(where)
+        if unique_filter:
+            unique_filter = self._apply_scope_filter(unique_filter)
+            existing = self.table.count_rows(unique_filter)
             if existing:
                 raise DatusException(
                     ErrorCode.STORAGE_TABLE_OPERATION_FAILED,
                     message_args={
                         "operation": "update",
                         "table_name": self.table_name,
-                        "error_message": f"Conflicting rows already match {unique_where}",
+                        "error_message": f"Conflicting rows already match {unique_filter}",
                     },
                 )
-        self.table.update(where=final_where, values=update_values)
+        self.table.update(where=where, values=update_values)
+
+    # -- Convenience methods for subclasses --
+
+    def _create_scalar_index(self, column: str) -> None:
+        """Create a scalar index on the given column."""
+        self._ensure_table_ready()
+        try:
+            self.table.create_scalar_index(column)
+        except Exception as e:
+            logger.warning(f"Failed to create scalar index on '{column}' for {self.table_name}: {str(e)}")
+
+    def _delete_rows(self, where: WhereExpr) -> None:
+        """Delete rows matching the where clause."""
+        self._ensure_table_ready()
+        if where:
+            where = self._apply_scope_filter(where)
+            self.table.delete(where)
+
+    def _count_rows(self, where: WhereExpr = None) -> int:
+        """Count rows with optional filter."""
+        self._ensure_table_ready()
+        where = self._apply_scope_filter(where)
+        return self.table.count_rows(where)
+
+    def query_with_filter(
+        self,
+        where: WhereExpr = None,
+        select_fields: Optional[List[str]] = None,
+        limit: Optional[int] = None,
+    ) -> pa.Table:
+        """Query rows with filter, field selection, and optional limit."""
+        self._ensure_table_ready()
+        where = self._apply_scope_filter(where)
+        if limit is None:
+            limit = self.table.count_rows(where)
+        return self.table.search_all(
+            where=where,
+            select_fields=select_fields,
+            limit=limit,
+        )

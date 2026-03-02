@@ -361,7 +361,10 @@ class ChatCommands:
                         if action.status == ActionStatus.PROCESSING:
                             # Interactive request: stop rendering, show prompt, wait for user input
                             action_display.stop_live()
-                            user_response = await self._handle_cli_interaction(action)
+                            # Pause ESC listener to avoid intercepting arrow-key escape sequences
+                            # used by prompt_toolkit during interactive selection
+                            with esc_guard.paused():
+                                user_response = await self._handle_cli_interaction(action)
                             if current_node.interaction_broker:
                                 await current_node.interaction_broker.submit(action.action_id, user_response)
                             # Don't restart_live here - wait for SUCCESS
@@ -377,9 +380,9 @@ class ChatCommands:
             # Both normal and plan mode use the same interaction-aware streaming
             # Use interrupt_on_escape to listen for ESC key (replaces suppress_keyboard_input)
             # ESC triggers graceful interrupt; Ctrl+C sends SIGINT for KeyboardInterrupt
-            with interrupt_on_escape(current_node.interrupt_controller), action_display.display_streaming_actions(
-                incremental_actions
-            ):
+            with interrupt_on_escape(
+                current_node.interrupt_controller
+            ) as esc_guard, action_display.display_streaming_actions(incremental_actions):
                 try:
                     asyncio.run(run_chat_stream_with_interactions())
                 except KeyboardInterrupt:

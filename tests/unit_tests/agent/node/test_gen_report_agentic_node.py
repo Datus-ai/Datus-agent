@@ -18,7 +18,7 @@ Tests cover:
 Design principle: NO mock except LLM.
 - Real AgentConfig (from conftest `real_agent_config`)
 - Real SQLite database (california_schools.sqlite) with tables: frpm, satscores, schools
-- Real Storage/RAG (LanceDB in tmp_path)
+- Real Storage/RAG (vector store in tmp_path)
 - Real Tools (DBFuncTool, ContextSearchTools, etc.)
 - Real PromptManager (using built-in templates)
 - Real PathManager

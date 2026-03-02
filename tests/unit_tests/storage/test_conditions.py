@@ -1,7 +1,7 @@
-from datus.storage.lancedb_conditions import And, Or, build_where, eq, ge, gte, in_, lt, ne
+from datus.storage.conditions import And, Or, build_where, eq, ge, gte, in_, lt, ne
 
 
-def test_lancedb_conditions_basic():
+def test_conditions_basic():
     node = And(
         [
             eq("status", "active"),
@@ -19,7 +19,7 @@ def test_lancedb_conditions_basic():
     )
 
 
-def test_lancedb_conditions_gte_and_digit_column():
+def test_conditions_gte_and_digit_column():
     expr = Or(
         [
             And([eq("status", "active"), gte("score", 80)]),

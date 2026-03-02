@@ -5,7 +5,7 @@
 """
 Document Storage Module
 
-Provides vector storage for documents using LanceDB with full-featured schema:
+Provides vector storage for documents with full-featured schema:
 - Version tracking
 - Navigation path (nav_path, group_name, hierarchy)
 - Titles and keywords extraction
@@ -19,9 +19,10 @@ from typing import Any, Dict, List, Optional
 import pyarrow as pa
 
 from datus.storage.base import BaseEmbeddingStore
+from datus.storage.conditions import And, Condition, WhereExpr, eq, in_
 from datus.storage.document.schemas import PlatformDocChunk
 from datus.storage.embedding_models import EmbeddingModel, get_document_embedding_model
-from datus.storage.lancedb_conditions import And, Condition, WhereExpr, eq
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 # Validation pattern for version strings to prevent SQL injection
@@ -30,7 +31,7 @@ _SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z0-9_\-. ]+$")
 logger = get_logger(__name__)
 
 # =============================================================================
-# LanceDB Schema
+# Vector Store Schema
 # =============================================================================
 
 
@@ -70,7 +71,7 @@ def get_platform_doc_schema(embedding_dim: int = 384) -> pa.Schema:
 class DocumentStore(BaseEmbeddingStore):
     """Vector store for documentation with full-featured schema.
 
-    Each platform has its own DocumentStore instance (one LanceDB per platform).
+    Each platform has its own DocumentStore instance.
 
     Features:
     - Semantic search with vector embeddings
@@ -80,7 +81,7 @@ class DocumentStore(BaseEmbeddingStore):
     - Navigation tracking (titles, nav_path, group_name, hierarchy)
 
     Example:
-        >>> store = DocumentStore(db_path, embedding_model)
+        >>> store = DocumentStore(scope, embedding_model)
         >>> store.store_chunks(chunks)
         >>> results = store.search_docs("CREATE TABLE syntax")
     """
@@ -89,18 +90,18 @@ class DocumentStore(BaseEmbeddingStore):
 
     def __init__(
         self,
-        db_path: str,
+        scope: str,
         embedding_model: EmbeddingModel,
     ):
         """Initialize the document store.
 
         Args:
-            db_path: Path to the LanceDB database directory
+            scope: Storage scope (e.g. ``sub_agents/agent_name``).
             embedding_model: Embedding model for vectorization
         """
         schema = get_platform_doc_schema(embedding_model.dim_size)
         super().__init__(
-            db_path=db_path,
+            scope=scope,
             table_name=self.TABLE_NAME,
             embedding_model=embedding_model,
             vector_source_name="chunk_text",
@@ -112,8 +113,8 @@ class DocumentStore(BaseEmbeddingStore):
     def store_chunks(self, chunks: List[PlatformDocChunk]) -> int:
         """Store documentation chunks with automatic embedding.
 
-        Uses delete-then-add instead of merge_insert to avoid lance 0.22.0
-        merge_insert panics. Deduplication is handled by removing existing
+        Uses delete-then-add instead of merge_insert to avoid known
+        merge_insert issues. Deduplication is handled by removing existing
         chunks with matching chunk_ids before inserting.
 
         Args:
@@ -128,12 +129,12 @@ class DocumentStore(BaseEmbeddingStore):
         data = [chunk.to_dict() for chunk in chunks]
 
         # Delete existing chunks with matching chunk_ids to handle deduplication,
-        # then use store_batch (table.add) which is stable in lance 0.22.0.
-        # This avoids merge_insert which has known Rust-level panics.
+        # then use store_batch (table.add) which is stable.
+        # This avoids merge_insert which has known issues.
         self._ensure_table_ready()
         if self.table:
             try:
-                row_count = self.table.count_rows()
+                row_count = self._count_rows()
             except Exception:
                 row_count = 0
 
@@ -143,11 +144,13 @@ class DocumentStore(BaseEmbeddingStore):
                 batch_size = 500
                 for i in range(0, len(chunk_ids), batch_size):
                     batch_ids = chunk_ids[i : i + batch_size]
-                    id_list = ", ".join(f"'{cid}'" for cid in batch_ids)
                     try:
-                        self.table.delete(f"chunk_id IN ({id_list})")
-                    except Exception:
-                        pass  # Ignore if chunks don't exist yet
+                        self.table.delete(in_("chunk_id", batch_ids))
+                    except Exception as e:
+                        raise DatusException(
+                            ErrorCode.STORAGE_FAILED,
+                            message=f"Failed to delete existing chunks during deduplication: {e}",
+                        ) from e
 
         self.store_batch(data)
 
@@ -263,7 +266,7 @@ class DocumentStore(BaseEmbeddingStore):
         self._validate_identifier(version, "version")
 
         all_data = self._search_all(
-            where=f"version = '{version}'",
+            where=eq("version", version),
             select_fields=["doc_path"],
         )
 
@@ -277,19 +280,20 @@ class DocumentStore(BaseEmbeddingStore):
 
     @staticmethod
     def _validate_identifier(value: str, name: str) -> None:
-        """Validate a string to prevent SQL injection.
+        """Validate a string to prevent injection.
 
         Args:
             value: String to validate
             name: Parameter name for error messages
 
         Raises:
-            ValueError: If the string contains unsafe characters
+            DatusException: If the string contains unsafe characters
         """
         if not _SAFE_IDENTIFIER_RE.match(value):
-            raise ValueError(
-                f"Invalid {name}: '{value}'. "
-                f"Only alphanumeric characters, underscores, hyphens, dots, and spaces are allowed."
+            raise DatusException(
+                ErrorCode.COMMON_VALIDATION_FAILED,
+                message=f"Invalid {name}: '{value}'. "
+                f"Only alphanumeric characters, underscores, hyphens, dots, and spaces are allowed.",
             )
 
     def delete_docs(
@@ -301,7 +305,7 @@ class DocumentStore(BaseEmbeddingStore):
         Args:
             version: If specified, only delete this version (with compaction
                      to reclaim disk space); otherwise physically remove the
-                     entire LanceDB directory and reinitialize.
+                     entire storage directory and reinitialize.
 
         Returns:
             Number of chunks deleted
@@ -311,15 +315,14 @@ class DocumentStore(BaseEmbeddingStore):
         """
         self._ensure_table_ready()
 
-        count_before = self.table.count_rows()
+        count_before = self._count_rows()
         if count_before == 0:
             logger.info(f"No chunks exists for version '{version or 'all'}'")
             return 0
 
         if version:
             self._validate_identifier(version, "version")
-            where_clause = f"version = '{version}'"
-            self.table.delete(where_clause)
+            self.table.delete(eq("version", version))
             # Compact and remove old data files to reclaim disk space
             try:
                 self.table.compact_files()
@@ -327,17 +330,12 @@ class DocumentStore(BaseEmbeddingStore):
             except Exception as e:
                 logger.warning(f"Post-delete cleanup failed (non-fatal): {e}")
             # Calculate actual deleted count
-            count_after = self.table.count_rows()
+            count_after = self._count_rows()
             deleted_count = count_before - count_after
         else:
-            # Physically remove the entire lance directory and reinitialize.
-            # This is more thorough than drop_table which leaves orphan files.
-            import shutil
-
-            import lancedb
-
-            shutil.rmtree(self.db_path, ignore_errors=True)
-            self.db = lancedb.connect(self.db_path)
+            # Drop the table via backend abstraction and reinitialize
+            self.db.drop_table(self.table_name, ignore_missing=True)
+            self.table = None
             self._table_initialized = False
             self._ensure_table_ready()
             deleted_count = count_before
@@ -390,9 +388,9 @@ def document_store(storage_path: str) -> DocumentStore:
     """Get a cached DocumentStore instance.
 
     Args:
-        storage_path: Path to LanceDB database
+        storage_path: Storage scope path.
 
     Returns:
         Cached DocumentStore instance
     """
-    return DocumentStore(storage_path, get_document_embedding_model())
+    return DocumentStore(scope=storage_path, embedding_model=get_document_embedding_model())

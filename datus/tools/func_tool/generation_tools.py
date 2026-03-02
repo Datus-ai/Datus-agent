@@ -8,7 +8,7 @@ from typing import Dict, List
 from agents import Tool
 
 from datus.configuration.agent_config import AgentConfig
-from datus.storage.lancedb_conditions import And, build_where, eq
+from datus.storage.conditions import And, build_where, eq
 from datus.storage.metric.store import MetricRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
@@ -54,7 +54,7 @@ class GenerationTools:
         table_context: str = "",
     ) -> FuncToolResult:
         """
-        Check if a semantic object (table, column, metric) already exists in LanceDB.
+        Check if a semantic object (table, column, metric) already exists in vector store.
 
         Use this tool to avoid duplicating work.
 
@@ -146,7 +146,7 @@ class GenerationTools:
         Complete semantic model generation process.
 
         Call this tool when you have finished generating semantic model YAML files.
-        This tool triggers user confirmation workflow for syncing to LanceDB.
+        This tool triggers user confirmation workflow for syncing to vector store.
 
         Args:
             semantic_model_files: List of absolute paths to generated semantic model YAML files
@@ -177,7 +177,7 @@ class GenerationTools:
         Complete metric generation process.
 
         Call this tool when you have finished generating a metric YAML file.
-        This tool triggers user confirmation workflow for syncing to LanceDB.
+        This tool triggers user confirmation workflow for syncing to vector store.
 
         Args:
             metric_file: Absolute path to the generated metric YAML file (required)

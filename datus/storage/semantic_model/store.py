@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 import pyarrow as pa
 
 from datus.storage.base import BaseEmbeddingStore, EmbeddingModel
-from datus.storage.lancedb_conditions import And, WhereExpr, build_where, eq, in_
+from datus.storage.conditions import And, WhereExpr, build_where, eq, in_
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
@@ -19,9 +19,9 @@ logger = get_logger(__name__)
 class SemanticModelStorage(BaseEmbeddingStore):
     """Storage for field-level semantic objects (tables, columns) - excluding metrics."""
 
-    def __init__(self, db_path: str, embedding_model: EmbeddingModel):
+    def __init__(self, scope: str, embedding_model: EmbeddingModel):
         super().__init__(
-            db_path=db_path,
+            scope=scope,
             table_name="semantic_model",
             embedding_model=embedding_model,
             schema=pa.schema(
@@ -66,18 +66,16 @@ class SemanticModelStorage(BaseEmbeddingStore):
             ),
             vector_source_name="description",
             vector_column_name="vector",
+            unique_columns=["id"],
         )
 
     def create_indices(self):
-        # Ensure table is ready before creating indices
         self._ensure_table_ready()
 
-        # Scalar indices for filtering
-        self.table.create_scalar_index("kind", replace=True)
-        self.table.create_scalar_index("table_name", replace=True)
-        self.table.create_scalar_index("id", replace=True)
+        self._create_scalar_index("kind")
+        self._create_scalar_index("table_name")
+        self._create_scalar_index("id")
 
-        # Full Text Search index for precise keyword matching
         self.create_fts_index(["description", "name", "fq_name"])
 
     def search_objects(
@@ -122,6 +120,10 @@ class SemanticModelRAG:
 
         cache = get_storage_cache_instance(agent_config)
         self.storage: SemanticModelStorage = cache.semantic_storage(sub_agent_name)
+
+    def truncate(self) -> None:
+        """Drop the semantic model table and reset state."""
+        self.storage.truncate()
 
     def get_semantic_model(
         self,
@@ -168,7 +170,7 @@ class SemanticModelRAG:
 
         # Fallback 2: Case-insensitive match if still not found
         if not table_objs:
-            # LanceDB eq is case-sensitive. We could iterate or use LIKE for case-insensitivity depending on DB
+            # eq is case-sensitive. We could iterate or use LIKE for case-insensitivity depending on backend
             # For now, let's just log and try one more common normalization
             if table_name.lower() != table_name:
                 lower_conds = [eq("kind", "table"), eq("table_name", table_name.lower())]
@@ -274,9 +276,7 @@ class SemanticModelRAG:
     def get_size(self) -> int:
         """Get count of table-level semantic model objects (excluding columns)."""
         try:
-            self.storage._ensure_table_ready()
-            where_clause = build_where(eq("kind", "table"))
-            return self.storage.table.count_rows(where_clause)
+            return self.storage._count_rows(where=eq("kind", "table"))
         except Exception:
             return 0
 

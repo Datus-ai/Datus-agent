@@ -22,8 +22,8 @@ def safe_rmtree(
     """Safely remove a directory tree with optional confirmation.
 
     This function is intended for directories containing user data that cannot
-    be automatically rebuilt. For .lance directories (which can be rebuilt),
-    use shutil.rmtree directly.
+    be automatically rebuilt. For vector store tables (which can be rebuilt),
+    use backend.drop_table() instead.
 
     Args:
         path: Path to the directory to remove

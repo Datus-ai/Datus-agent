@@ -223,6 +223,8 @@ def init_embedding_models(
     for name, config in storage_config.items():
         if not isinstance(config, dict):
             continue
+        if "model_name" not in config:
+            continue
         if config["model_name"] in models:
             target_model = models[config["model_name"]]
         else:

@@ -136,11 +136,11 @@ class TestRag:
 
     def test_pure_scalar_query(self, metrics_rag: MetricRAG, semantic_rag: SemanticModelRAG):
         semantic_rag.storage._ensure_table_ready()
-        result = semantic_rag.storage.table.search().to_list()
+        result = semantic_rag.storage.table.search_all()
         assert len(result) >= 0  # Changed to >= 0 to allow empty tables
 
         metrics_rag.storage._ensure_table_ready()
-        result = metrics_rag.storage.table.search().to_list()
+        result = metrics_rag.storage.table.search_all()
         assert len(result) >= 0  # Changed to >= 0 to allow empty tables
 
 

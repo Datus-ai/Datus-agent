@@ -125,6 +125,14 @@ agent:
   storage:
     # Data path is now fixed at {agent.home}/data
     # Final storage paths: {home}/data/datus_db_{namespace}, {home}/data/sub_agents/{agent_name}, etc.
+
+    # Storage backend configuration
+    # The base storage layer is backend-agnostic; concrete implementations are pluggable.
+    # rdb:
+    #   type: sqlite              # Relational DB backend: sqlite (default)
+    # vector:
+    #   type: lance               # Vector DB backend: lance (default)
+
     embedding_device_type: cpu # If set to cpu, it will be specified as cpu, otherwise, it will be automatically selected based on the current machine
     # Local model suggestions:
     # 1. if you want extreme performance, choose the small multilingual model with 384 dimensions: all-MiniLM-L6-v2 (~100M) or intfloat/multilingual-e5-small (~460M).

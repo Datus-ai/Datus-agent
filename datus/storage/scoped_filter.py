@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-from datus.storage.lancedb_conditions import Node, and_, eq, like, or_
+from datus.storage.conditions import Node, and_, eq, like, or_
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 from datus.utils.reference_paths import split_reference_path

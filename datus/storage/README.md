@@ -4,7 +4,7 @@ This guide provides instructions and best practices for developing new storage m
 
 ## Overview
 
-The storage system in Datus-agent is built on top of LanceDB and provides two base classes for developers:
+The storage system in Datus-agent provides two base classes for developers:
 
 1. [StorageBase](base.py) - A basic storage class for simple data storage needs
 2. [BaseEmbeddingStore](base.py) - An extended storage class that includes vector embedding capabilities
@@ -15,23 +15,23 @@ Most storage modules will inherit from [BaseEmbeddingStore](base.py) as it provi
 
 ### StorageBase
 
-[StorageBase](base.py) is the fundamental class for all storage components. It provides basic LanceDB connectivity and some utility methods.
+[StorageBase](base.py) is the fundamental class for all storage components. It provides basic vector store connectivity and some utility methods.
 
 Key features:
-- LanceDB database connection management
+- Vector database connection management
 - Utility methods for creating common table schemas
 - Timestamp generation
 
 ```python
 class StorageBase:
-    def __init__(self, db_path: str):
+    def __init__(self, scope: str = ""):
         """Initialize the storage base.
-        
+
         Args:
-            db_path: Path to the LanceDB database directory
+            scope: Storage scope (e.g. ``sub_agents/agent_name``).
         """
-        self.db_path = db_path
-        self.db = lancedb.connect(db_path)
+        self._scope = scope
+        self.db = create_vector_connection(scope)
 ```
 
 ### BaseEmbeddingStore
@@ -48,11 +48,11 @@ Key features:
 class BaseEmbeddingStore(StorageBase):
     def __init__(
         self,
-        db_path: str,
+        scope: str,
         table_name: str,
         embedding_model: EmbeddingModel,
         on_duplicate_columns: str = "vector",
-        schema: Optional[Union[pa.Schema, LanceModel]] = None,
+        schema: Optional[pa.Schema] = None,
         vector_source_name: str = "definition",
         vector_column_name: str = "vector",
     ):
@@ -69,9 +69,9 @@ from datus.storage.base import BaseEmbeddingStore
 from datus.storage.embedding_models import EmbeddingModel
 
 class MyStorage(BaseEmbeddingStore):
-    def __init__(self, db_path: str, embedding_model: EmbeddingModel):
+    def __init__(self, scope: str, embedding_model: EmbeddingModel):
         super().__init__(
-            db_path=db_path,
+            scope=scope,
             table_name="my_table",
             embedding_model=embedding_model,
             schema=pa.schema([
@@ -114,7 +114,7 @@ def search_all(self, catalog_name: str = "", database_name: str = "") -> pa.Tabl
         where += f" AND catalog_name = '{catalog_name}'"
     elif catalog_name:
         where = f"catalog_name = '{catalog_name}'"
-        
+
     return self.table.search().where(where).limit(self.table.count_rows()).to_arrow()
 ```
 
@@ -146,12 +146,11 @@ def create_indices(self):
     # Create scalar indices for frequently queried fields
     self.table.create_scalar_index("database_name", replace=True)
     self.table.create_scalar_index("table_name", replace=True)
-    
+
     # Create full-text search index
     self.create_fts_index(["content", "title"])
-    
+
     # Create vector index for similarity search
-    # ⚠️⚠️⚠️ This index may cause problems with incomplete query data, you should need to adjust the parameters for creating the index, it's not clear at the moment
     self.create_vector_index()
 ```
 
@@ -180,7 +179,7 @@ def store_batch(self, data: List[Dict[str, Any]]):
 
 ### 4. Search Optimization
 
-Implement efficient search methods that leverage LanceDB's capabilities:
+Implement efficient search methods that leverage the vector store's capabilities:
 
 ```python
 def search(
@@ -203,9 +202,9 @@ The [SchemaStorage](schema_metadata/store.py) class in [schema_metadata/store.py
 
 ```python
 class SchemaStorage(BaseMetadataStorage):
-    def __init__(self, db_path: str, embedding_model: EmbeddingModel):
+    def __init__(self, scope: str, embedding_model: EmbeddingModel):
         super().__init__(
-            db_path=db_path,
+            scope=scope,
             table_name="schema_metadata",
             embedding_model=embedding_model,
             vector_source_name="definition",

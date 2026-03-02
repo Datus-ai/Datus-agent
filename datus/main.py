@@ -176,7 +176,7 @@ def create_parser() -> argparse.ArgumentParser:
         type=str,
         help='Comma-separated subject tree categories (e.g., "Sales/Reporting/Daily,Sales/Analytics/Trends"). '
         "If provided, only these predefined categories can be used. "
-        "If not provided, existing categories from LanceDB will be reused or new ones created.",
+        "If not provided, existing categories will be reused or new ones created.",
     )
     bootstrap_parser.add_argument(
         "-y",

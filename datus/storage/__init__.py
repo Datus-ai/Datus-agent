@@ -4,11 +4,10 @@
 
 from datus.storage.fastembed_embeddings import FastEmbedEmbeddings
 
-from .base import BaseEmbeddingStore, BaseModelData, StorageBase
+from .base import BaseEmbeddingStore, StorageBase
 
 __all__ = [
     "BaseEmbeddingStore",
     "StorageBase",
-    "BaseModelData",
     "FastEmbedEmbeddings",
 ]

@@ -71,6 +71,39 @@ def suppress_keyboard_input():
             pass
 
 
+class EscapeGuard:
+    """Guard object for pausing/resuming ESC key listening.
+
+    Returned by interrupt_on_escape context manager. Use paused() to
+    temporarily suspend ESC listening during interactive prompts that
+    use prompt_toolkit or other libraries managing their own terminal mode.
+
+    Arrow keys send escape sequences starting with \\x1b (ESC), which would
+    otherwise be intercepted by the listener and trigger a false interrupt.
+    """
+
+    def __init__(self, pause_event=None, paused_ack=None):
+        self._pause_event = pause_event
+        self._paused_ack = paused_ack
+
+    @contextmanager
+    def paused(self):
+        """Temporarily pause ESC listening and restore terminal settings."""
+        if self._pause_event is None:
+            # No-op guard (non-Unix or non-terminal environment)
+            yield
+            return
+
+        self._paused_ack.clear()
+        self._pause_event.set()
+        # Wait for listener thread to acknowledge the pause
+        self._paused_ack.wait(timeout=1.0)
+        try:
+            yield
+        finally:
+            self._pause_event.clear()
+
+
 @contextmanager
 def interrupt_on_escape(interrupt_controller):
     """Listen for ESC key and trigger interrupt_controller when detected.
@@ -80,6 +113,10 @@ def interrupt_on_escape(interrupt_controller):
     interrupt_controller.interrupt(). Ctrl+C (\\x03) sends SIGINT to
     preserve the original KeyboardInterrupt behavior.
 
+    Yields an EscapeGuard that can temporarily pause listening during
+    interactive prompts (e.g. prompt_toolkit) to avoid intercepting
+    arrow-key escape sequences.
+
     On non-Unix platforms or non-terminal environments this is a no-op.
 
     Args:
@@ -88,17 +125,19 @@ def interrupt_on_escape(interrupt_controller):
     try:
         import termios
     except ImportError:
-        yield
+        yield EscapeGuard()
         return
 
     try:
         fd = sys.stdin.fileno()
         old_settings = termios.tcgetattr(fd)
     except (AttributeError, OSError, termios.error):
-        yield
+        yield EscapeGuard()
         return
 
     stop_event = threading.Event()
+    pause_event = threading.Event()
+    paused_ack = threading.Event()
 
     def _listener():
         try:
@@ -112,6 +151,28 @@ def interrupt_on_escape(interrupt_controller):
             termios.tcsetattr(fd, termios.TCSANOW, new_settings)
 
             while not stop_event.is_set():
+                # Check for pause request (interactive prompt is active)
+                if pause_event.is_set():
+                    # Restore terminal settings for prompt_toolkit
+                    termios.tcsetattr(fd, termios.TCSANOW, old_settings)
+                    paused_ack.set()
+                    # Wait for resume or stop
+                    while pause_event.is_set() and not stop_event.is_set():
+                        stop_event.wait(0.05)
+                    if stop_event.is_set():
+                        break
+                    # Flush leftover input and re-enter raw mode
+                    try:
+                        termios.tcflush(fd, termios.TCIFLUSH)
+                    except termios.error:
+                        pass
+                    new_settings = termios.tcgetattr(fd)
+                    new_settings[3] = new_settings[3] & ~(termios.ICANON | termios.ECHO)
+                    new_settings[6][termios.VMIN] = 0
+                    new_settings[6][termios.VTIME] = 0
+                    termios.tcsetattr(fd, termios.TCSANOW, new_settings)
+                    continue
+
                 # Use select with timeout to avoid busy-waiting
                 ready, _, _ = select.select([fd], [], [], 0.1)
                 if ready:
@@ -137,7 +198,7 @@ def interrupt_on_escape(interrupt_controller):
     listener_thread.start()
 
     try:
-        yield
+        yield EscapeGuard(pause_event, paused_ack)
     finally:
         stop_event.set()
         listener_thread.join(timeout=1.0)

@@ -1428,14 +1428,14 @@ class SubjectScreen(ContextScreen):
             return
 
         try:
-            # Apply the edit to SubjectTreeStore or LanceDB
+            # Apply the edit to SubjectTreeStore or vector store
 
             if node_type == "subject_node":
                 # Rename/move subject node in tree
                 self.subject_tree_store.rename(old_path, new_path)
 
             elif node_type == "subject_entry":
-                # Rename subject_entry in LanceDB (storage)
+                # Rename subject_entry in vector store (storage)
                 # Get entry_type from context to determine which storage to update
                 node_data = context.get("node_data", {})
                 entry_type = node_data.get("entry_type", "")
@@ -2004,7 +2004,7 @@ class SubjectScreen(ContextScreen):
             self._last_tree_selection = None
 
     def _delete_subject_entry(self, node_data: Dict[str, Any]) -> None:
-        """Delete a subject_entry (metric, sql, or ext_knowledge) from lancedb."""
+        """Delete a subject_entry (metric, sql, or ext_knowledge) from vector store."""
         node_id = node_data.get("node_id")  # Parent subject node's ID
         entry_name = node_data.get("name", "")
         entry_type = node_data.get("entry_type", "")
@@ -2027,7 +2027,7 @@ class SubjectScreen(ContextScreen):
         try:
             deleted = False
             if entry_type == "metric":
-                # Delete metric (from lancedb, yaml, and sub-agent storages)
+                # Delete metric (from vector store, yaml, and sub-agent storages)
                 result = self.subject_updater.delete_metric(subject_path, entry_name)
                 deleted = result.get("success", False)
                 if deleted:
@@ -2038,7 +2038,7 @@ class SubjectScreen(ContextScreen):
                     self.app.notify(result.get("message", "Failed to delete metric"), severity="error")
 
             elif entry_type == "sql":
-                # Delete reference SQL (from lancedb and sub-agent storages)
+                # Delete reference SQL (from vector store and sub-agent storages)
                 deleted = self.subject_updater.delete_reference_sql(subject_path, entry_name)
                 if deleted:
                     _sql_details_cache.cache_clear()
@@ -2047,7 +2047,7 @@ class SubjectScreen(ContextScreen):
                     self.app.notify(f"Failed to delete reference SQL: {entry_name}", severity="error")
 
             elif entry_type == "ext_knowledge":
-                # Delete ext_knowledge (from lancedb and sub-agent storages)
+                # Delete ext_knowledge (from vector store and sub-agent storages)
                 deleted = self.subject_updater.delete_ext_knowledge(subject_path, entry_name)
                 if deleted:
                     self.app.notify(f"Deleted knowledge: {entry_name}", severity="success")

@@ -144,7 +144,8 @@ def init_sqlite_schema(
         build_mode=build_mode,
     )
     logger.info(
-        f"Exists data from LanceDB {database_name}, tables={len(all_schema_tables)}, values={len(all_value_tables)}"
+        f"Exists data from vector store {database_name}, "
+        f"tables={len(all_schema_tables)}, values={len(all_value_tables)}"
     )
     if table_type == "table" or table_type == "full":
         tables = sql_connector.get_tables_with_ddl(schema_name=database_name)
@@ -195,7 +196,8 @@ def init_duckdb_schema(
     )
 
     logger.info(
-        f"Exists data from LanceDB {database_name}, tables={len(all_schema_tables)}," f"values={len(all_value_tables)}"
+        f"Exists data from vector store {database_name}, tables={len(all_schema_tables)},"
+        f"values={len(all_value_tables)}"
     )
     sql_connector = db_manager.get_conn(agent_config.current_namespace, database_name)
     if table_type == "table" or table_type == "full":
@@ -252,7 +254,7 @@ def init_mysql_schema(
     )
 
     logger.info(
-        f"Exists data from LanceDB database={database_name}, tables={len(all_schema_tables)}, "
+        f"Exists data from vector store database={database_name}, tables={len(all_schema_tables)}, "
         f"values={len(all_value_tables)}"
     )
     if table_type in ("full", "table"):
@@ -307,7 +309,7 @@ def init_starrocks_schema(
     )
 
     logger.info(
-        f"Exists data from LanceDB {catalog_name}.{database_name}, tables={len(all_schema_tables)}, "
+        f"Exists data from vector store {catalog_name}.{database_name}, tables={len(all_schema_tables)}, "
         f"values={len(all_value_tables)}"
     )
     if table_type in ("full", "table"):
@@ -397,8 +399,8 @@ def init_other_three_level_schema(
     )
 
     logger.info(
-        f"Exists data from LanceDB {catalog_name or '[no catalog]'}.{database_name}, tables={len(all_schema_tables)}, "
-        f"values={len(all_value_tables)}"
+        f"Exists data from vector store {catalog_name or '[no catalog]'}.{database_name}, "
+        f"tables={len(all_schema_tables)}, values={len(all_value_tables)}"
     )
     if table_type == "table" or table_type == "full":
         # Get all tables with DDL

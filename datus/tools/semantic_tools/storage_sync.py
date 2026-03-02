@@ -60,7 +60,7 @@ class SemanticStorageManager:
     def _ensure_subject_tree_store(self) -> SubjectTreeStore:
         """Lazy init subject tree storage."""
         if self.subject_tree_store is None:
-            self.subject_tree_store = SubjectTreeStore(db_path=self.agent_config.db_path)
+            self.subject_tree_store = SubjectTreeStore()
         return self.subject_tree_store
 
     def store_semantic_model(

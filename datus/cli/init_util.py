@@ -4,7 +4,6 @@
 
 import argparse
 import os
-import shutil
 from pathlib import Path
 from typing import Any, List, Literal, Optional
 
@@ -94,13 +93,15 @@ def init_metrics(
     if not console:
         console = Console(log_path=False)
     try:
-        storage_path = agent_config.rag_storage_path()
-
         if build_model == "overwrite":
-            metrics_path = os.path.join(storage_path, "metrics.lance")
-            if os.path.exists(metrics_path):
-                shutil.rmtree(metrics_path)
-                logger.info(f"Deleted existing directory {metrics_path}")
+            from datus.storage.backend_holder import create_vector_connection
+
+            db = create_vector_connection()
+            try:
+                db.drop_table("metrics", ignore_missing=True)
+                logger.info("Dropped existing metrics table")
+            finally:
+                db.close()
             agent_config.save_storage_config("metric")
 
         # Create StreamOutputManager
@@ -196,13 +197,15 @@ def init_semantic_model(
         console = Console(log_path=False)
 
     try:
-        storage_path = agent_config.rag_storage_path()
-
         if build_mode == "overwrite":
-            semantic_model_path = os.path.join(storage_path, "semantic_model.lance")
-            if os.path.exists(semantic_model_path):
-                shutil.rmtree(semantic_model_path)
-                logger.info(f"Deleted existing directory {semantic_model_path}")
+            from datus.storage.backend_holder import create_vector_connection
+
+            db = create_vector_connection()
+            try:
+                db.drop_table("semantic_model", ignore_missing=True)
+                logger.info("Dropped existing semantic_model table")
+            finally:
+                db.close()
             # Also clear semantic_models/{namespace} directory (YAML files)
             path_manager = get_path_manager(datus_home=agent_config.home)
             semantic_yaml_dir = path_manager.semantic_model_path(agent_config.current_namespace)

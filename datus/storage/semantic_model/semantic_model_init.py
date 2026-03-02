@@ -188,7 +188,7 @@ def process_semantic_yaml_file(
     include_metrics: bool = True,
 ) -> tuple[bool, str]:
     """
-    Process semantic YAML file by directly syncing to LanceDB using GenerationHooks.
+    Process semantic YAML file by directly syncing to vector store using GenerationHooks.
 
     Args:
         yaml_file_path: Path to semantic YAML file
@@ -220,15 +220,15 @@ def process_semantic_yaml_file(
             include_metrics=include_metrics,
         )
     except Exception as e:
-        error_msg = f"Failed to sync semantic YAML file '{yaml_file_path}' to LanceDB: {e}"
+        error_msg = f"Failed to sync semantic YAML file '{yaml_file_path}' to vector store: {e}"
         logger.exception(error_msg)
         return False, error_msg
 
     if result.get("success"):
-        logger.info(f"Successfully synced to LanceDB: {result.get('message')}")
+        logger.info(f"Successfully synced to vector store: {result.get('message')}")
         return True, ""
     else:
         error = result.get("error", "Unknown error")
-        error_msg = f"Failed to sync '{yaml_file_path}' to LanceDB: {error}"
+        error_msg = f"Failed to sync '{yaml_file_path}' to vector store: {error}"
         logger.error(error_msg)
         return False, error

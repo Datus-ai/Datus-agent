@@ -512,7 +512,7 @@ Do NOT give up. Continue iterating until verify_sql returns success=1.
             context["subject_tree"] = self.subject_tree
             context["classification_mode"] = "predefined"
         else:
-            # Learning mode: query existing subject_trees from LanceDB (Priority 3)
+            # Learning mode: query existing subject_trees from vector store (Priority 3)
             context["has_subject_tree"] = False
             existing_trees = self._get_existing_subject_trees()
             context["existing_subject_trees"] = existing_trees

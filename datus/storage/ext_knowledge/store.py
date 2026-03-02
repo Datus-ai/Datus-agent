@@ -15,17 +15,17 @@ logger = get_logger(__name__)
 
 
 class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
-    """Store and manage external business knowledge in LanceDB."""
+    """Store and manage external business knowledge."""
 
-    def __init__(self, db_path: str, embedding_model: EmbeddingModel):
+    def __init__(self, scope: str, embedding_model: EmbeddingModel):
         """Initialize the external knowledge store.
 
         Args:
-            db_path: Path to the LanceDB database directory
+            scope: Storage scope (e.g. ``sub_agents/agent_name``).
             embedding_model: Embedding model for vector search
         """
         super().__init__(
-            db_path=db_path,
+            scope=scope,
             table_name="ext_knowledge",
             embedding_model=embedding_model,
             schema=pa.schema(
@@ -38,6 +38,7 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
                 ]
             ),
             vector_source_name="search_text",
+            unique_columns=["id"],
         )
 
     def create_indices(self):
@@ -255,7 +256,7 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
     def delete_knowledge(self, subject_path: List[str], name: str) -> bool:
         """Delete knowledge entry by subject_path and name.
 
-        Only deletes from lancedb, does not modify any files.
+        Only deletes from vector store, does not modify any files.
 
         Args:
             subject_path: Subject hierarchy path (e.g., ['Business', 'Terms'])
@@ -298,6 +299,10 @@ class ExtKnowledgeRAG:
         from datus.storage.cache import get_storage_cache_instance
 
         self.store = get_storage_cache_instance(agent_config).ext_knowledge_storage(sub_agent_name)
+
+    def truncate(self) -> None:
+        """Drop the ext_knowledge table and reset state."""
+        self.store.truncate()
 
     def _parse_subject_path(self, subject_path) -> List[str]:
         """Parse subject_path from string or list format.
@@ -348,7 +353,7 @@ class ExtKnowledgeRAG:
     def delete_knowledge(self, subject_path: List[str], name: str) -> bool:
         """Delete knowledge entry by subject_path and name.
 
-        Only deletes from lancedb, does not modify any files.
+        Only deletes from vector store, does not modify any files.
 
         Args:
             subject_path: Subject hierarchy path (e.g., ['Business', 'Terms'])

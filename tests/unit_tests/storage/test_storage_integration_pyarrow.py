@@ -80,7 +80,7 @@ class TestMetricRAGPyArrow:
 
     def test_search_all_metrics_returns_pyarrow_table(self, temp_db_path, sample_metrics_with_domain_layers):
         """Test that search_all_metrics returns PyArrow Table."""
-        metric_storage = MetricStorage(db_path=temp_db_path, embedding_model=get_metric_embedding_model())
+        metric_storage = MetricStorage(scope=temp_db_path, embedding_model=get_metric_embedding_model())
         metric_storage.batch_store_metrics(sample_metrics_with_domain_layers)
 
         # Mock cache for MetricRAG
@@ -98,7 +98,7 @@ class TestMetricRAGPyArrow:
     ):
         """Test hybrid search using PyArrow filtering operations."""
         # Setup storages
-        metric_storage = MetricStorage(db_path=temp_db_path + "_metrics", embedding_model=get_metric_embedding_model())
+        metric_storage = MetricStorage(scope=temp_db_path + "_metrics", embedding_model=get_metric_embedding_model())
         metric_storage.batch_store_metrics(sample_metrics_with_domain_layers)
 
         semantic_storage = Mock()
@@ -131,7 +131,7 @@ class TestMetricRAGPyArrow:
 
     def test_get_metrics_detail_with_compound_where_clause(self, temp_db_path, sample_metrics_with_domain_layers):
         """Test metrics detail retrieval with compound WHERE clauses."""
-        metric_storage = MetricStorage(db_path=temp_db_path, embedding_model=get_metric_embedding_model())
+        metric_storage = MetricStorage(scope=temp_db_path, embedding_model=get_metric_embedding_model())
         metric_storage.batch_store_metrics(sample_metrics_with_domain_layers)
 
         rag = MetricRAG.__new__(MetricRAG)
@@ -159,7 +159,7 @@ class TestMetricRAGPyArrow:
         ]
 
         # Store and verify
-        metric_storage = MetricStorage(db_path=temp_db_path, embedding_model=get_metric_embedding_model())
+        metric_storage = MetricStorage(scope=temp_db_path, embedding_model=get_metric_embedding_model())
         metric_storage.batch_store_metrics(raw_metrics)
 
         # Verify the stored data can be filtered correctly
@@ -176,7 +176,7 @@ class TestPyArrowComputeIntegration:
 
     def test_complex_filtering_operations(self, temp_db_path, sample_metrics_with_domain_layers):
         """Test complex filtering operations using PyArrow compute."""
-        storage = MetricStorage(db_path=temp_db_path, embedding_model=get_metric_embedding_model())
+        storage = MetricStorage(scope=temp_db_path, embedding_model=get_metric_embedding_model())
         storage.batch_store_metrics(sample_metrics_with_domain_layers)
 
         all_metrics_list = storage.search_all_metrics()
@@ -201,7 +201,7 @@ class TestPyArrowComputeIntegration:
 
     def test_aggregation_operations(self, temp_db_path, sample_metrics_with_domain_layers):
         """Test aggregation operations on PyArrow tables."""
-        storage = MetricStorage(db_path=temp_db_path, embedding_model=get_metric_embedding_model())
+        storage = MetricStorage(scope=temp_db_path, embedding_model=get_metric_embedding_model())
         storage.batch_store_metrics(sample_metrics_with_domain_layers)
 
         all_metrics = pa.Table.from_pylist(storage.search_all_metrics())
@@ -223,7 +223,7 @@ class TestPyArrowComputeIntegration:
 
     def test_string_operations_on_metadata(self, temp_db_path, sample_metrics_with_domain_layers):
         """Test string operations on metadata fields."""
-        storage = MetricStorage(db_path=temp_db_path, embedding_model=get_metric_embedding_model())
+        storage = MetricStorage(scope=temp_db_path, embedding_model=get_metric_embedding_model())
         storage.batch_store_metrics(sample_metrics_with_domain_layers)
 
         all_metrics = pa.Table.from_pylist(storage.search_all_metrics())
@@ -246,7 +246,7 @@ class TestPyArrowComputeIntegration:
 
     def test_sorting_and_ordering(self, temp_db_path, sample_metrics_with_domain_layers):
         """Test sorting operations on PyArrow tables."""
-        storage = MetricStorage(db_path=temp_db_path, embedding_model=get_metric_embedding_model())
+        storage = MetricStorage(scope=temp_db_path, embedding_model=get_metric_embedding_model())
         storage.batch_store_metrics(sample_metrics_with_domain_layers)
 
         all_metrics = pa.Table.from_pylist(storage.search_all_metrics())
@@ -275,7 +275,7 @@ class TestPerformanceOptimizations:
                 }
             )
 
-        storage = MetricStorage(db_path=temp_db_path, embedding_model=get_metric_embedding_model())
+        storage = MetricStorage(scope=temp_db_path, embedding_model=get_metric_embedding_model())
         storage.batch_store_metrics(dataset)
 
         # Test that we can work with subsets without loading everything
@@ -292,7 +292,7 @@ class TestPerformanceOptimizations:
 
     def test_concurrent_read_operations(self, temp_db_path, sample_metrics_with_domain_layers):
         """Test concurrent read operations on PyArrow tables."""
-        storage = MetricStorage(db_path=temp_db_path, embedding_model=get_metric_embedding_model())
+        storage = MetricStorage(scope=temp_db_path, embedding_model=get_metric_embedding_model())
         storage.batch_store_metrics(sample_metrics_with_domain_layers)
 
         import concurrent.futures

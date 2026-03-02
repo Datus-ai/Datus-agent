@@ -6,14 +6,13 @@ import os
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import pyarrow as pa
-from lancedb.rerankers import Reranker
 
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.base import TABLE_TYPE
 from datus.schemas.node_models import TableSchema, TableValue
 from datus.storage.base import BaseEmbeddingStore, WhereExpr
+from datus.storage.conditions import Node, and_, build_where, eq, or_
 from datus.storage.embedding_models import EmbeddingModel
-from datus.storage.lancedb_conditions import Node, and_, build_where, eq, or_
 from datus.utils.constants import DBType
 from datus.utils.json_utils import json2csv
 from datus.utils.loggings import get_logger
@@ -27,7 +26,7 @@ class BaseMetadataStorage(BaseEmbeddingStore):
     """
     Base class for metadata storage, include table, view and materialized view(abbreviated as mv).
     properties:
-        - db_path: str, database path to store the metadata
+        - scope: str, storage scope (e.g. ``sub_agents/agent_name``)
         - embedding_model: EmbeddingModel, embedding model to embed the metadata
         - table_name: str, table name to store the metadata
         - vector_source_name: str, vector source name, required, should define in subclass
@@ -47,13 +46,13 @@ class BaseMetadataStorage(BaseEmbeddingStore):
 
     def __init__(
         self,
-        db_path: str,
+        scope: str,
         embedding_model: EmbeddingModel,
         table_name: str,
         vector_source_name: str,
     ):
         super().__init__(
-            db_path=db_path,
+            scope=scope,
             table_name=table_name,
             embedding_model=embedding_model,
             schema=pa.schema(
@@ -70,7 +69,6 @@ class BaseMetadataStorage(BaseEmbeddingStore):
             ),
             vector_source_name=vector_source_name,
         )
-        self.reranker = None
 
     def search_similar(
         self,
@@ -80,42 +78,36 @@ class BaseMetadataStorage(BaseEmbeddingStore):
         schema_name: str = "",
         top_n: int = 5,
         table_type: TABLE_TYPE = "table",
-        reranker: Optional[Reranker] = None,
+        query_type: str = "vector",
     ) -> pa.Table:
         where = _build_where_clause(
             catalog_name=catalog_name, database_name=database_name, schema_name=schema_name, table_type=table_type
         )
-        return self.do_search_similar(query_text, top_n=top_n, where=where, reranker=reranker)
+        return self.do_search_similar(query_text, top_n=top_n, where=where, query_type=query_type)
 
     def do_search_similar(
         self,
         query_text: str,
         top_n: int = 5,
         where: WhereExpr = None,
-        reranker: Optional[Reranker] = None,
+        query_type: str = "vector",
     ) -> pa.Table:
         return self.search(
             query_text,
             top_n=top_n,
             where=where,
-            reranker=reranker,
+            query_type=query_type,
         )
 
     def create_indices(self):
-        # Ensure table is ready before creating indices
         self._ensure_table_ready()
 
-        # create scalar index
-        try:
-            self.table.create_scalar_index("database_name", replace=True)
-            self.table.create_scalar_index("catalog_name", replace=True)
-            self.table.create_scalar_index("schema_name", replace=True)
-            self.table.create_scalar_index("table_name", replace=True)
-            self.table.create_scalar_index("table_type", replace=True)
-        except Exception as e:
-            logger.warning(f"Failed to create scalar index for {self.table_name} table: {str(e)}")
+        self._create_scalar_index("database_name")
+        self._create_scalar_index("catalog_name")
+        self._create_scalar_index("schema_name")
+        self._create_scalar_index("table_name")
+        self._create_scalar_index("table_type")
 
-        # self.create_vector_index()
         self.create_fts_index(["database_name", "schema_name", "table_name", self.vector_source_name])
 
     def search_all(
@@ -140,39 +132,45 @@ class BaseMetadataStorage(BaseEmbeddingStore):
 
 
 class SchemaStorage(BaseMetadataStorage):
-    """Store and manage schema lineage data in LanceDB."""
+    """Store and manage schema lineage data."""
 
-    def __init__(self, db_path: str, embedding_model: EmbeddingModel):
+    def __init__(self, scope: str, embedding_model: EmbeddingModel):
         """Initialize the schema store.
 
         Args:
-            db_path: Path to the LanceDB database directory
+            scope: Storage scope (e.g. ``sub_agents/agent_name``).
         """
         super().__init__(
-            db_path=db_path,
+            scope=scope,
             table_name="schema_metadata",
             embedding_model=embedding_model,
             vector_source_name="definition",
         )
-        self.reranker = None
-        # self.reranker = CrossEncoderReranker(
-        #     model_name="BAAI/bge-reranker-large", device=get_device(), column="schema_text"
-        # )
 
     def _extract_table_name(self, schema_text: str) -> str:
         """Extract table name from CREATE TABLE statement."""
-        # Simple extraction - can be enhanced for more complex cases
         words = schema_text.split()
-        if len(words) >= 3 and words[0].upper() == "CREATE" and words[1].upper() == "TABLE":
-            return words[2].strip("()").strip()
-        return ""
+        if len(words) < 3 or words[0].upper() != "CREATE" or words[1].upper() != "TABLE":
+            return ""
+        idx = 2
+        # Skip IF NOT EXISTS
+        if idx + 2 < len(words) and words[idx].upper() == "IF" and words[idx + 1].upper() == "NOT":
+            idx += 3  # skip IF NOT EXISTS
+        if idx >= len(words):
+            return ""
+        name = words[idx]
+        # Handle table name with no space before paren, e.g. "mytable(id INT)"
+        paren_pos = name.find("(")
+        if paren_pos > 0:
+            name = name[:paren_pos]
+        return name.strip("()").strip()
 
     def search_all_schemas(self, database_name: str = "", catalog_name: str = "") -> Set[str]:
         search_result = self._search_all(
             where=_build_where_clause(database_name=database_name, catalog_name=catalog_name),
             select_fields=["schema_name"],
         )
-        return {search_result["schema_name"]}
+        return set(search_result["schema_name"].to_pylist())
 
     def search_top_tables_by_every_schema(
         self,
@@ -215,26 +213,20 @@ class SchemaStorage(BaseMetadataStorage):
         where_condition = self._apply_scope_filter(where_condition)
         where_clause = build_where(where_condition)
         self._ensure_table_ready()
-        return (
-            self.table.search()
-            .where(where_clause)
-            .select(["catalog_name", "database_name", "schema_name", "table_name", "table_type", "definition"])
-            .to_arrow()
+        return self.table.search_all(
+            where=where_clause,
+            select_fields=["catalog_name", "database_name", "schema_name", "table_name", "table_type", "definition"],
         )
 
 
 class SchemaValueStorage(BaseMetadataStorage):
-    def __init__(self, db_path: str, embedding_model: EmbeddingModel):
+    def __init__(self, scope: str, embedding_model: EmbeddingModel):
         super().__init__(
-            db_path=db_path,
+            scope=scope,
             embedding_model=embedding_model,
             table_name="schema_value",
             vector_source_name="sample_rows",
         )
-        self.reranker = None
-        # self.reranker = CrossEncoderReranker(
-        #     model_name="BAAI/bge-reranker-large", device=get_device(), column="sample_rows"
-        # )
 
 
 class SchemaWithValueRAG:
@@ -242,12 +234,16 @@ class SchemaWithValueRAG:
         self,
         agent_config: AgentConfig,
         sub_agent_name: Optional[str] = None,
-        # use_rerank: bool = False,
     ):
         from datus.storage.cache import get_storage_cache_instance
 
         self.schema_store = get_storage_cache_instance(agent_config).schema_storage(sub_agent_name)
         self.value_store = get_storage_cache_instance(agent_config).schema_value_storage(sub_agent_name)
+
+    def truncate(self) -> None:
+        """Drop both schema and value tables and reset state."""
+        self.schema_store.truncate()
+        self.value_store.truncate()
 
     def store_batch(self, schemas: List[Dict[str, Any]], values: List[Dict[str, Any]]):
         # Process schemas and values in batches of 500
@@ -288,7 +284,7 @@ class SchemaWithValueRAG:
         catalog_name: str = "",
         database_name: str = "",
         schema_name: str = "",
-        use_rerank: bool = False,
+        query_type: str = "vector",
         table_type: TABLE_TYPE = "table",
         top_n: int = 5,
     ) -> Tuple[pa.Table, pa.Table]:
@@ -302,13 +298,13 @@ class SchemaWithValueRAG:
             query_text,
             top_n=top_n,
             where=where,
-            reranker=self.schema_store.reranker if use_rerank else None,
+            query_type=query_type,
         )
         value_results = self.value_store.do_search_similar(
             query_text,
             top_n=top_n,
             where=where,
-            reranker=self.value_store.reranker if use_rerank else None,
+            query_type=query_type,
         )
         return schema_results, value_results
 
@@ -428,6 +424,7 @@ class SchemaWithValueRAG:
                     )
                 )
 
+        combined_condition = None
         if table_conditions:
             combined_condition = table_conditions[0] if len(table_conditions) == 1 else or_(*table_conditions)
         else:
@@ -436,42 +433,35 @@ class SchemaWithValueRAG:
         # Apply scope filters to respect sub-agent scoped context
         schema_condition = self.schema_store._apply_scope_filter(combined_condition)
         value_condition = self.value_store._apply_scope_filter(combined_condition)
-        schema_where = build_where(schema_condition)
-        value_where = build_where(value_condition)
 
-        if schema_where:
-            schema_query = self.schema_store.table.search().where(schema_where)
-        else:
-            schema_query = self.schema_store.table.search()
-        if value_where:
-            value_query = self.value_store.table.search().where(value_where)
-        else:
-            value_query = self.value_store.table.search()
+        schema_fields = [
+            "identifier",
+            "catalog_name",
+            "database_name",
+            "schema_name",
+            "table_name",
+            "table_type",
+            "definition",
+        ]
+        value_fields = [
+            "identifier",
+            "catalog_name",
+            "database_name",
+            "schema_name",
+            "table_name",
+            "table_type",
+            "sample_rows",
+        ]
 
-        # Search schemas
-        schema_results = (
-            schema_query.select(
-                ["identifier", "catalog_name", "database_name", "schema_name", "table_name", "table_type", "definition"]
-            )
-            .limit(len(tables))
-            .to_arrow()
+        schema_results = self.schema_store.query_with_filter(
+            where=schema_condition,
+            select_fields=schema_fields,
         )
         schemas_result = TableSchema.from_arrow(schema_results)
 
-        value_results = (
-            value_query.select(
-                [
-                    "identifier",
-                    "catalog_name",
-                    "database_name",
-                    "schema_name",
-                    "table_name",
-                    "table_type",
-                    "sample_rows",
-                ]
-            )
-            .limit(len(tables))
-            .to_arrow()
+        value_results = self.value_store.query_with_filter(
+            where=value_condition,
+            select_fields=value_fields,
         )
         values_result = TableValue.from_arrow(value_results)
 
@@ -485,10 +475,6 @@ class SchemaWithValueRAG:
         table_name: str = "",
         table_type: TABLE_TYPE = "table",
     ):
-        # Ensure tables are ready before deletion
-        self.schema_store._ensure_table_ready()
-        self.value_store._ensure_table_ready()
-
         where_condition = _build_where_clause(
             catalog_name=catalog_name,
             database_name=database_name,
@@ -496,9 +482,9 @@ class SchemaWithValueRAG:
             table_name=table_name,
             table_type=table_type,
         )
-        where_clause = build_where(where_condition) if where_condition else None
-        self.schema_store.table.delete(where_clause)
-        self.value_store.table.delete(where_clause)
+        if where_condition:
+            self.schema_store._delete_rows(where_condition)
+            self.value_store._delete_rows(where_condition)
 
 
 def _build_where_clause(

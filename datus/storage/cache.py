@@ -28,8 +28,8 @@ logger = get_logger(__name__)
 @lru_cache(maxsize=12)
 def _cached_storage[
     T: BaseEmbeddingStore
-](factory: Callable[[str, EmbeddingModel], T], path: str, model_name: str) -> T:
-    return factory(path, get_embedding_model(model_name))
+](factory: Callable[[str, EmbeddingModel], T], scope: str, model_name: str) -> T:
+    return factory(scope, get_embedding_model(model_name))
 
 
 # Module-level cache for scoped storage instances so that clear_cache() can
@@ -175,3 +175,7 @@ def clear_cache():
     _scoped_storage_cache.clear()
     global _CACHE_INSTANCE
     _CACHE_INSTANCE = None
+
+    from datus.storage.backend_holder import reset_backends
+
+    reset_backends()

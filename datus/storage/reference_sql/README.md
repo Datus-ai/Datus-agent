@@ -18,7 +18,7 @@ Comment-SQL     Validation    Metadata    Vector DB
 2. **SQL Type Filtering**: Only process SELECT queries (skip INSERT/UPDATE/DELETE/etc.)
 3. **Validation**: Validate SQL syntax using multiple dialects (MySQL, Hive, Spark)
 4. **LLM Analysis**: Extract business metadata using SqlSummaryAgenticNode
-5. **Storage**: Store enriched data in LanceDB for vector search
+5. **Storage**: Store enriched data in vector store for vector search
 6. **Indexing**: Create search indices for efficient retrieval
 
 ## Configuration

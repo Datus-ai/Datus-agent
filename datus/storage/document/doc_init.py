@@ -217,7 +217,7 @@ def init_platform_docs(
          d. Create indices
 
     Args:
-        db_path: Path to LanceDB database
+        db_path: Path to vector store database
         platform: Target platform (snowflake, duckdb, postgresql, etc.)
         cfg: DocumentConfig with source, version, paths, chunk_size,
             include_patterns, exclude_patterns, etc.

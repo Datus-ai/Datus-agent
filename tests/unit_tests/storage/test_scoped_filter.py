@@ -4,7 +4,7 @@
 
 """Tests for datus.storage.scoped_filter — LanceDB WHERE filter builder."""
 
-from datus.storage.lancedb_conditions import build_where
+from datus.storage.conditions import build_where
 from datus.storage.scoped_filter import (
     ScopedFilterBuilder,
     _build_id_condition,

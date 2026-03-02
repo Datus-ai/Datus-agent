@@ -8,7 +8,7 @@ import pyarrow as pa
 
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.base import EmbeddingModel
-from datus.storage.lancedb_conditions import WhereExpr, in_
+from datus.storage.conditions import WhereExpr, in_
 from datus.storage.subject_tree.store import BaseSubjectEmbeddingStore, base_schema_columns
 from datus.utils.loggings import get_logger
 
@@ -16,9 +16,9 @@ logger = get_logger(__name__)
 
 
 class MetricStorage(BaseSubjectEmbeddingStore):
-    def __init__(self, db_path: str, embedding_model: EmbeddingModel):
+    def __init__(self, scope: str, embedding_model: EmbeddingModel):
         super().__init__(
-            db_path=db_path,
+            scope=scope,
             table_name="metrics",
             embedding_model=embedding_model,
             schema=pa.schema(
@@ -49,24 +49,20 @@ class MetricStorage(BaseSubjectEmbeddingStore):
             ),
             vector_source_name="description",
             vector_column_name="vector",
+            unique_columns=["id"],
         )
 
     def create_indices(self):
         """Create scalar and FTS indices for better search performance."""
-        # Ensure table is ready before creating indices
         self._ensure_table_ready()
 
-        # Create metric-specific scalar indices
-        self.table.create_scalar_index("semantic_model_name", replace=True)
-        self.table.create_scalar_index("id", replace=True)
-        self.table.create_scalar_index("catalog_name", replace=True)
-        self.table.create_scalar_index("database_name", replace=True)
-        self.table.create_scalar_index("schema_name", replace=True)
+        self._create_scalar_index("semantic_model_name")
+        self._create_scalar_index("id")
+        self._create_scalar_index("catalog_name")
+        self._create_scalar_index("database_name")
+        self._create_scalar_index("schema_name")
 
-        # Use base class method for subject index
         self.create_subject_index()
-
-        # Full Text Search index
         self.create_fts_index(["description", "name"])
 
     def batch_store_metrics(self, metrics: List[Dict[str, Any]]) -> None:
@@ -179,7 +175,7 @@ class MetricStorage(BaseSubjectEmbeddingStore):
 
         This method:
         1. Queries the metric to get its yaml_path
-        2. Deletes the metric from lancedb
+        2. Deletes the metric from vector store
         3. Removes the metric entry from the yaml file (if yaml_path exists)
 
         Args:
@@ -200,16 +196,15 @@ class MetricStorage(BaseSubjectEmbeddingStore):
 
         import yaml
 
-        # First, query the metric to get yaml_path before deleting
+        # First, query all matching metrics to get their yaml_paths before deleting
         full_path = subject_path.copy()
         full_path.append(name)
         metrics = self.search_all_metrics(subject_path=full_path, select_fields=["name", "yaml_path"])
 
-        yaml_path = None
-        if metrics:
-            yaml_path = metrics[0].get("yaml_path")
+        # Collect all unique yaml_paths from matching metrics
+        yaml_paths = list({m.get("yaml_path") for m in metrics if m.get("yaml_path")})
 
-        # Delete from lancedb using base class method
+        # Delete from vector store using base class method
         deleted = self.delete_entry(subject_path, name)
 
         if not deleted:
@@ -220,12 +215,14 @@ class MetricStorage(BaseSubjectEmbeddingStore):
 
         result = {
             "success": True,
-            "message": f"Deleted metric '{name}' from lancedb",
+            "message": f"Deleted metric '{name}' from vector store",
             "yaml_updated": False,
         }
 
-        # Handle yaml file if yaml_path exists
-        if yaml_path and os.path.exists(yaml_path):
+        # Handle yaml files for all matching metrics
+        for yaml_path in yaml_paths:
+            if not os.path.exists(yaml_path):
+                continue
             try:
                 # Read yaml file (supports multi-document format)
                 with open(yaml_path, "r", encoding="utf-8") as f:
@@ -251,19 +248,19 @@ class MetricStorage(BaseSubjectEmbeddingStore):
                         with open(yaml_path, "w", encoding="utf-8") as f:
                             yaml.safe_dump_all(filtered_docs, f, allow_unicode=True, sort_keys=False)
                         result["yaml_updated"] = True
-                        result["message"] = f"Deleted metric '{name}' from lancedb and yaml file"
+                        result["message"] = f"Deleted metric '{name}' from vector store and yaml file(s)"
                         logger.info(f"Updated yaml file: {yaml_path}")
                     else:
                         # File is empty after removing the metric, delete the file
                         os.remove(yaml_path)
                         result["yaml_updated"] = True
                         result["yaml_deleted"] = True
-                        result["message"] = f"Deleted metric '{name}' from lancedb and removed empty yaml file"
+                        result["message"] = f"Deleted metric '{name}' from vector store and removed empty yaml file"
                         logger.info(f"Deleted empty yaml file: {yaml_path}")
 
             except Exception as e:
                 logger.error(f"Failed to update yaml file {yaml_path}: {e}")
-                result["message"] = f"Deleted metric '{name}' from lancedb, but failed to update yaml: {e}"
+                result["message"] = f"Deleted metric '{name}' from vector store, but failed to update yaml: {e}"
                 result["yaml_error"] = str(e)
 
         return result
@@ -277,6 +274,10 @@ class MetricRAG:
 
         cache = get_storage_cache_instance(agent_config)
         self.storage: MetricStorage = cache.metric_storage(sub_agent_name)
+
+    def truncate(self) -> None:
+        """Drop the metrics table and reset state."""
+        self.storage.truncate()
 
     def store_batch(self, metrics: List[Dict[str, Any]]):
         logger.info(f"store metrics: {metrics}")
@@ -340,7 +341,7 @@ class MetricRAG:
     def delete_metric(self, subject_path: List[str], name: str) -> Dict[str, Any]:
         """Delete metric by subject_path and name.
 
-        This method deletes the metric from lancedb and removes the metric entry
+        This method deletes the metric from vector store and removes the metric entry
         from the yaml file (if yaml_path exists).
 
         Args:

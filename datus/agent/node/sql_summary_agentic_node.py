@@ -246,7 +246,7 @@ class SqlSummaryAgenticNode(AgenticNode):
             context["has_subject_tree"] = True
             context["subject_tree"] = self.subject_tree
         else:
-            # Learning mode: query existing subject_trees from LanceDB
+            # Learning mode: query existing subject_trees from vector store
             context["has_subject_tree"] = False
             existing_trees = self._get_existing_subject_trees()
             context["existing_subject_trees"] = existing_trees

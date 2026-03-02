@@ -47,7 +47,7 @@ Usage:
     )
 
     # Access store for custom operations
-    store = DocumentStore(db_path, embedding_model)
+    store = DocumentStore(scope=db_path, embedding_model=embedding_model)
 """
 
 # Chunker

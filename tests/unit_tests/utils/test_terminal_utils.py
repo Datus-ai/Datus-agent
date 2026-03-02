@@ -24,7 +24,7 @@ import time
 import pytest
 
 from datus.cli.execution_state import InterruptController
-from datus.utils.terminal_utils import interrupt_on_escape, suppress_keyboard_input
+from datus.utils.terminal_utils import EscapeGuard, interrupt_on_escape, suppress_keyboard_input
 
 
 class TestSuppressKeyboardInput:
@@ -63,24 +63,29 @@ class TestInterruptOnEscape:
     """Tests for interrupt_on_escape context manager."""
 
     def test_interrupt_on_escape_is_context_manager(self):
-        """interrupt_on_escape yields control and does not raise."""
+        """interrupt_on_escape yields an EscapeGuard and does not raise."""
         ctrl = InterruptController()
         entered = False
-        with interrupt_on_escape(ctrl):
+        with interrupt_on_escape(ctrl) as guard:
             entered = True
+            assert isinstance(guard, EscapeGuard)
         assert entered is True
         # Controller should not be interrupted (no ESC pressed)
         assert ctrl.is_interrupted is False
 
     def test_interrupt_on_escape_noop_when_no_terminal(self):
-        """In non-terminal environments, interrupt_on_escape is a no-op."""
+        """In non-terminal environments, interrupt_on_escape yields a no-op EscapeGuard."""
         original_stdin = sys.stdin
         try:
             sys.stdin = io.StringIO("test input")
             ctrl = InterruptController()
             executed = False
-            with interrupt_on_escape(ctrl):
+            with interrupt_on_escape(ctrl) as guard:
                 executed = True
+                assert isinstance(guard, EscapeGuard)
+                # No-op guard's paused() should work without error
+                with guard.paused():
+                    pass
             assert executed is True
             assert ctrl.is_interrupted is False
         finally:
@@ -100,8 +105,8 @@ class TestInterruptOnEscape:
         ctrl = InterruptController()
         # This test verifies no exceptions occur during setup/teardown
         # regardless of whether we have a real terminal or not
-        with interrupt_on_escape(ctrl):
-            pass
+        with interrupt_on_escape(ctrl) as guard:
+            assert isinstance(guard, EscapeGuard)
         # After exiting, controller should still be unset (no ESC)
         assert ctrl.is_interrupted is False
 
@@ -192,9 +197,10 @@ class TestInterruptOnEscapeWithPty:
             sys.stdin = os.fdopen(slave_fd, "r", closefd=False)
             try:
                 ctrl = InterruptController()
-                with interrupt_on_escape(ctrl):
+                with interrupt_on_escape(ctrl) as guard:
                     # Listener should be running; controller should not be interrupted yet
                     assert ctrl.is_interrupted is False
+                    assert isinstance(guard, EscapeGuard)
                     time.sleep(0.15)  # Brief pause to let listener start
                 # After exit, listener should be stopped and settings restored
                 assert ctrl.is_interrupted is False
@@ -242,6 +248,65 @@ class TestInterruptOnEscapeWithPty:
                         raise RuntimeError("test")
                 restored = termios.tcgetattr(slave_fd)
                 assert restored[3] == old_settings[3], "Local flags should be restored"
+            finally:
+                sys.stdin = original_stdin
+        finally:
+            os.close(master_fd)
+            os.close(slave_fd)
+
+    @pytest.mark.skipif(not hasattr(os, "openpty"), reason="pty not available on this platform")
+    def test_escape_guard_pause_prevents_esc_detection(self):
+        """ESC key written during guard.paused() should NOT trigger interrupt."""
+        master_fd, slave_fd = os.openpty()
+        try:
+            original_stdin = sys.stdin
+            sys.stdin = os.fdopen(slave_fd, "r", closefd=False)
+            try:
+                ctrl = InterruptController()
+                with interrupt_on_escape(ctrl) as guard:
+                    time.sleep(0.15)  # Let listener start
+                    with guard.paused():
+                        # Write ESC while paused - should NOT be detected
+                        os.write(master_fd, b"\x1b")
+                        time.sleep(0.3)
+                    assert ctrl.is_interrupted is False
+                    # After resume, flush should have cleared the ESC byte
+                assert ctrl.is_interrupted is False
+            finally:
+                sys.stdin = original_stdin
+        finally:
+            os.close(master_fd)
+            os.close(slave_fd)
+
+    @pytest.mark.skipif(not hasattr(os, "openpty"), reason="pty not available on this platform")
+    def test_escape_guard_pause_restores_terminal_settings(self):
+        """guard.paused() restores terminal settings during pause and re-enters raw mode after."""
+        import termios
+
+        master_fd, slave_fd = os.openpty()
+        try:
+            original_stdin = sys.stdin
+            sys.stdin = os.fdopen(slave_fd, "r", closefd=False)
+            try:
+                old_settings = termios.tcgetattr(slave_fd)
+                ctrl = InterruptController()
+                with interrupt_on_escape(ctrl) as guard:
+                    time.sleep(0.15)  # Let listener start and modify terminal
+                    with guard.paused():
+                        # During pause, ICANON and ECHO should be restored
+                        # (kernel may add PENDIN flag during mode switch, so check specific bits)
+                        paused_settings = termios.tcgetattr(slave_fd)
+                        assert (paused_settings[3] & termios.ICANON) == (
+                            old_settings[3] & termios.ICANON
+                        ), "ICANON should be restored during pause"
+                        assert (paused_settings[3] & termios.ECHO) == (
+                            old_settings[3] & termios.ECHO
+                        ), "ECHO should be restored during pause"
+                    # After resume, terminal should be back in raw mode
+                    time.sleep(0.15)  # Let listener re-enter raw mode
+                    raw_settings = termios.tcgetattr(slave_fd)
+                    assert (raw_settings[3] & termios.ICANON) == 0, "ICANON should be off after resume"
+                    assert (raw_settings[3] & termios.ECHO) == 0, "ECHO should be off after resume"
             finally:
                 sys.stdin = original_stdin
         finally:

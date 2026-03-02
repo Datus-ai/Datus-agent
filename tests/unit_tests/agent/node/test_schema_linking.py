@@ -25,8 +25,8 @@ def db_path():
 
 
 @pytest.fixture
-def lancedb_path():
-    """Fixture to create a temporary LanceDB directory"""
+def vector_store_path():
+    """Fixture to create a temporary vector store directory"""
     test_path = tempfile.mkdtemp()
     yield test_path
     # Cleanup after tests

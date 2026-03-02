@@ -2,51 +2,30 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-# SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright The LanceDB Authors
-
-import logging
 from functools import cached_property
 from typing import TYPE_CHECKING, List, Optional, Union
 
-from lancedb.embeddings.base import TextEmbeddingFunction
-from lancedb.embeddings.registry import register
 from openai import AzureOpenAI, BadRequestError, OpenAI
+from pydantic import BaseModel
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
+from datus.storage.vector.base import EmbeddingFunction
+from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     import numpy as np
 
 
-@register("openai")
-class OpenAIEmbeddings(TextEmbeddingFunction):
+class OpenAIEmbeddings(BaseModel, EmbeddingFunction):
     """
-    An embedding function that uses the OpenAI API
+    An embedding function that uses the OpenAI API.
 
     https://platform.openai.com/docs/guides/embeddings
 
     This can also be used for open source models that
     are compatible with the OpenAI API.
-
-    Notes
-    -----
-    If you're running an Ollama server locally,
-    you can just override the `base_url` parameter
-    and provide the Ollama embedding model you want
-    to use (https://ollama.com/library):
-
-    ```python
-    from lancedb.embeddings import get_registry
-    openai = get_registry().get("openai")
-    embedding_function = openai.create(
-        name="<ollama-embedding-model-name>",
-        base_url="http://localhost:11434",
-        )
-    ```
-
     """
 
     name: str = "text-embedding-ada-002"
@@ -59,21 +38,29 @@ class OpenAIEmbeddings(TextEmbeddingFunction):
     # Set true to use Azure OpenAI API
     use_azure: bool = False
 
+    @classmethod
+    def create(cls, **kwargs) -> "OpenAIEmbeddings":
+        """Create a new instance with the given parameters."""
+        return cls(**kwargs)
+
     def __setattr__(self, name, value):
         old_value = getattr(self, name, None)
-        if hasattr(super(), name):
-            super().__setattr__(name, value)
-        else:
-            self.__dict__[name] = value
-        if name in ["name", "dim", "base_url", "use_azure", "api_key"]:
+        super().__setattr__(name, value)
+        if name in {"name", "dim"}:
+            self.__dict__.pop("_ndims", None)
+        if name in {"base_url", "default_headers", "organization", "api_key", "use_azure"}:
+            self.__dict__.pop("_openai_client", None)
+        if name in ["name", "dim", "base_url", "use_azure"]:
             logger.debug(f"Attribute {name} changed from {old_value} to {value}")
+        elif name == "api_key":
+            logger.debug("Attribute api_key changed")
 
     def ndims(self):
         return self._ndims
 
     @staticmethod
     def sensitive_keys():
-        return []
+        return ["api_key"]
 
     @staticmethod
     def model_names():
@@ -92,7 +79,11 @@ class OpenAIEmbeddings(TextEmbeddingFunction):
         elif self.name == "text-embedding-3-small":
             return self.dim or 1536
         else:
-            raise ValueError(f"Unknown model name {self.name}")
+            raise DatusException(
+                ErrorCode.COMMON_UNSUPPORTED,
+                message=f"Unknown embedding model name '{self.name}'. "
+                f"Supported models: {', '.join(self.model_names())}",
+            )
 
     def generate_embeddings(self, texts: Union[List[str], "np.ndarray"]) -> List["np.array"]:
         valid_texts = []
@@ -107,15 +98,15 @@ class OpenAIEmbeddings(TextEmbeddingFunction):
                 "input": valid_texts,
                 "model": self.name,
             }
-            if self.name != "text-embedding-ada-002":
+            if self.name != "text-embedding-ada-002" and self.dim is not None:
                 kwargs["dimensions"] = self.dim
 
-            logger.debug(f"Calling OpenAI API with kwargs: {kwargs}")
+            logger.debug(f"Calling OpenAI API: model={self.name}, text_count={len(valid_texts)}")
             rs = self._openai_client.embeddings.create(**kwargs)
             valid_embeddings = {idx: v.embedding for v, idx in zip(rs.data, valid_indices)}
             logger.debug(f"Successfully generated embeddings for {len(valid_embeddings)} texts")
         except BadRequestError:
-            logger.error(f"Bad request for texts: {texts}")
+            logger.error(f"Bad request when generating embeddings: model={self.name}, text_count={len(texts)}")
             return [None] * len(texts)
         except Exception as e:
             logger.error(f"OpenAI embeddings error: {str(e)}")

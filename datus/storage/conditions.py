@@ -3,16 +3,16 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 """
-Condition Builder for LanceDB `where` Clauses
-=============================================
+Condition Builder for Vector Store `where` Clauses
+===================================================
 
 This module provides a small DSL for building structured query conditions
-that compile into LanceDB-compatible `where` clause strings.
+that compile into SQL-compatible `where` clause strings for vector store backends.
 
 Why?
 ----
-LanceDB supports SQL-like `where` strings, but does not support `IN` and
-complex nested logical grouping directly. This utility lets you compose
+Vector store backends support SQL-like `where` strings, but may not support `IN`
+and complex nested logical grouping directly. This utility lets you compose
 conditions in Python objects, then compile them safely.
 
 Main Features
@@ -52,9 +52,8 @@ Example 4: Using NOT
     >>> build_where(expr)
     "((NOT is_blocked = TRUE) AND (name LIKE 'Alice%' OR name LIKE '%Bob%'))"
 
-Usage in LanceDB
-----------------
-    table = db.table("my_table")
+Usage
+-----
     where_clause = build_where(expr)
     results = table.search("query").where(where_clause)
 
@@ -78,7 +77,7 @@ class Op(str, Enum):
     GTE = ">="
     LT = "<"
     LTE = "<="
-    IN = "IN"  # Will be expanded into OR chain (LanceDB doesn't support native IN)
+    IN = "IN"  # Will be expanded into OR chain (not all backends support native IN)
     LIKE = "LIKE"  # SQL-like semantics with % and _
 
 
@@ -158,7 +157,7 @@ def _escape_identifier(name: str) -> str:
 
 def _escape_value(v: Any) -> str:
     """
-    Convert a Python value into a SQL literal compatible with LanceDB where.
+    Convert a Python value into a SQL literal compatible with vector store where clauses.
     - None is handled in the operator layer (IS NULL / IS NOT NULL) and returns 'NULL' here.
     - Booleans become TRUE/FALSE.
     - Numbers are unquoted.
@@ -251,7 +250,7 @@ WhereExpr = Union[str, Node, None]
 
 def build_where(where: WhereExpr) -> Optional[str]:
     """
-    Compile a structured AST into a LanceDB-compatible where clause.
+    Compile a structured AST into a SQL-compatible where clause string.
 
     Example:
         expr = And([

@@ -9,7 +9,7 @@ Design principle: NO mock except LLM.
 - Real AgentConfig (from config dict)
 - Real SQLite database (in tmp_path)
 - Real db_manager_instance (connecting to real SQLite)
-- Real Storage/RAG (LanceDB in tmp_path)
+- Real Storage/RAG (vector store in tmp_path)
 - Real Tools (DBFuncTool, ContextSearchTools, etc.)
 - Real PromptManager (using built-in templates)
 - Real PathManager

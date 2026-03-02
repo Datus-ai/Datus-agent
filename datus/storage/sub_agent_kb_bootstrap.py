@@ -9,8 +9,8 @@ from typing import Any, Dict, Iterable, List, Literal, Optional
 
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.agent_models import ScopedContextLists, SubAgentConfig
+from datus.storage.conditions import Node, or_
 from datus.storage.ext_knowledge.store import ExtKnowledgeRAG
-from datus.storage.lancedb_conditions import Node, build_where, or_
 from datus.storage.metric.store import MetricRAG
 from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
@@ -170,9 +170,7 @@ class SubAgentBootstrapper:
 
     def _count_rows(self, storage, condition: Optional[Node]) -> int:
         try:
-            storage._ensure_table_ready()
-            where_clause = build_where(condition)
-            return storage.table.count_rows(where_clause)
+            return storage._count_rows(where=condition)
         except Exception:
             return 0
 

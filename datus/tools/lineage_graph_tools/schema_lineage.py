@@ -29,7 +29,7 @@ class SchemaLineageTool(BaseTool):
         """Initialize the schema lineage tool.
 
         Args:
-            db_path: Path to the LanceDB database directory
+            db_path: Path to the vector store database directory
         """
         super().__init__(**kwargs)
         if storage:

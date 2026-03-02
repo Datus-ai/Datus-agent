@@ -15,15 +15,15 @@ logger = get_logger(__name__)
 
 
 class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
-    def __init__(self, db_path: str, embedding_model: EmbeddingModel):
+    def __init__(self, scope: str, embedding_model: EmbeddingModel):
         """Initialize the reference SQL store.
 
         Args:
-            db_path: Path to the LanceDB database directory
+            scope: Storage scope (e.g. ``sub_agents/agent_name``).
             embedding_model: Embedding model for vector search
         """
         super().__init__(
-            db_path=db_path,
+            scope=scope,
             table_name="reference_sql",
             embedding_model=embedding_model,
             schema=pa.schema(
@@ -40,23 +40,18 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
                 ]
             ),
             vector_source_name="search_text",
+            unique_columns=["id"],
         )
-        self.reranker = None
 
     def create_indices(self):
         """Create scalar and full-text search indices."""
-        # Ensure table is ready before creating indices
         self._ensure_table_ready()
 
-        # Create scalar indices
-        self.table.create_scalar_index("id", replace=True)
-        self.table.create_scalar_index("name", replace=True)
-        self.table.create_scalar_index("filepath", replace=True)
+        self._create_scalar_index("id")
+        self._create_scalar_index("name")
+        self._create_scalar_index("filepath")
 
-        # Use base class method for subject index
         self.create_subject_index()
-
-        # Create FTS index for reference SQL-specific fields
         self.create_fts_index(["sql", "name", "summary", "tags", "search_text"])
 
     def batch_store_sql(self, sql_items: List[Dict[str, Any]], subject_path_field: str = "subject_path") -> None:
@@ -163,7 +158,7 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
     def delete_reference_sql(self, subject_path: List[str], name: str) -> bool:
         """Delete reference SQL by subject_path and name.
 
-        Only deletes from lancedb, does not modify any files.
+        Only deletes from vector store, does not modify any files.
 
         Args:
             subject_path: Subject hierarchy path (e.g., ['Analytics', 'Reports'])
@@ -186,6 +181,10 @@ class ReferenceSqlRAG:
         from datus.storage.cache import get_storage_cache_instance
 
         self.reference_sql_storage = get_storage_cache_instance(agent_config).reference_sql_storage(sub_agent_name)
+
+    def truncate(self) -> None:
+        """Drop the reference_sql table and reset state."""
+        self.reference_sql_storage.truncate()
 
     def store_batch(self, reference_sql_items: List[Dict[str, Any]]):
         """Store batch of reference SQL items."""
@@ -264,7 +263,7 @@ class ReferenceSqlRAG:
     def delete_reference_sql(self, subject_path: List[str], name: str) -> bool:
         """Delete reference SQL by subject_path and name.
 
-        Only deletes from lancedb, does not modify any files.
+        Only deletes from vector store, does not modify any files.
 
         Args:
             subject_path: Subject hierarchy path (e.g., ['Analytics', 'Reports'])

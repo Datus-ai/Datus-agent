@@ -404,17 +404,11 @@ class Agent:
 
                 if kb_update_strategy == "overwrite":
                     self.global_config.save_storage_config("database")
-                    schema_metadata_path = os.path.join(dir_path, "schema_metadata.lance")
-                    if os.path.exists(schema_metadata_path):
-                        shutil.rmtree(schema_metadata_path)
-                        logger.info(f"Deleted existing directory {schema_metadata_path}")
-                    schema_value_path = os.path.join(dir_path, "schema_value.lance")
-                    if os.path.exists(schema_value_path):
-                        shutil.rmtree(schema_value_path)
-                        logger.info(f"Deleted existing directory {schema_value_path}")
                 else:
                     self.global_config.check_init_storage_config("database")
                 self.metadata_store = SchemaWithValueRAG(self.global_config)
+                if kb_update_strategy == "overwrite":
+                    self.metadata_store.truncate()
 
                 if not benchmark_platform:
                     self.check_db()
@@ -469,11 +463,7 @@ class Agent:
                 return result
 
             elif component == "semantic_model":
-                semantic_model_path = os.path.join(dir_path, "semantic_model.lance")
                 if kb_update_strategy == "overwrite":
-                    if os.path.exists(semantic_model_path):
-                        shutil.rmtree(semantic_model_path)
-                        logger.info(f"Deleted existing directory {semantic_model_path}")
                     # Only clear semantic_models/{namespace} directory when NOT using --from_adapter
                     # because MetricFlow adapter needs to read YAML files from this directory
                     if not (hasattr(self.args, "from_adapter") and self.args.from_adapter):
@@ -490,6 +480,9 @@ class Agent:
                     self.global_config.save_storage_config("semantic_model")
                 else:
                     self.global_config.check_init_storage_config("semantic_model")
+                temp_rag = SemanticModelRAG(self.global_config)
+                if kb_update_strategy == "overwrite":
+                    temp_rag.truncate()
 
                 # Initialize semantic model
                 if hasattr(self.args, "from_adapter") and self.args.from_adapter:
@@ -507,7 +500,6 @@ class Agent:
                     successful, error_message = init_success_story_semantic_model(self.args, self.global_config)
 
                 if successful:
-                    temp_rag = SemanticModelRAG(self.global_config)
                     result = {
                         "status": "success",
                         "message": f"semantic_model bootstrap completed, "
@@ -520,11 +512,7 @@ class Agent:
                 return result
 
             elif component == "metrics":
-                metrics_path = os.path.join(dir_path, "metrics.lance")
                 if kb_update_strategy == "overwrite":
-                    if os.path.exists(metrics_path):
-                        shutil.rmtree(metrics_path)
-                        logger.info(f"Deleted existing directory {metrics_path}")
                     # Only clear semantic_models/{namespace} directory when NOT using --from_adapter
                     # because MetricFlow adapter needs to read YAML files from this directory
                     if not (hasattr(self.args, "from_adapter") and self.args.from_adapter):
@@ -541,6 +529,9 @@ class Agent:
                     self.global_config.save_storage_config("metric")  # Keep compatibility
                 else:
                     self.global_config.check_init_storage_config("metric")
+                self.metrics_store = MetricRAG(self.global_config)
+                if kb_update_strategy == "overwrite":
+                    self.metrics_store.truncate()
                 self._reset_metrics_stream_state()
 
                 # Initialize metrics
@@ -574,11 +565,7 @@ class Agent:
                     result = {"status": "failed", "message": error_message}
                 return result
             elif component == "ext_knowledge":
-                ext_knowledge_path = os.path.join(dir_path, "ext_knowledge.lance")
                 if kb_update_strategy == "overwrite":
-                    if os.path.exists(ext_knowledge_path):
-                        shutil.rmtree(ext_knowledge_path)
-                        logger.info(f"Deleted existing directory {ext_knowledge_path}")
                     # Also clear ext_knowledge/{namespace} directory
                     path_manager = get_path_manager(datus_home=self.global_config.home)
                     ext_knowledge_dir = path_manager.ext_knowledge_path(self.global_config.current_namespace)
@@ -594,6 +581,8 @@ class Agent:
                 else:
                     self.global_config.check_init_storage_config("ext_knowledge")
                 self.ext_knowledge_rag = ExtKnowledgeRAG(self.global_config)
+                if kb_update_strategy == "overwrite":
+                    self.ext_knowledge_rag.truncate()
                 # Initialize ext_knowledge using appropriate method
                 if hasattr(self.args, "ext_knowledge") and self.args.ext_knowledge:
                     # Use CSV file directly
@@ -617,11 +606,7 @@ class Agent:
                     f"knowledge_size={self.ext_knowledge_rag.store.table_size()}",
                 }
             elif component == "reference_sql":
-                reference_sql_path = os.path.join(dir_path, "reference_sql.lance")
                 if kb_update_strategy == "overwrite":
-                    if os.path.exists(reference_sql_path):
-                        shutil.rmtree(reference_sql_path)
-                        logger.info(f"Deleted existing directory {reference_sql_path}")
                     # Also clear sql_summaries/{namespace} directory (YAML files)
                     path_manager = get_path_manager(datus_home=self.global_config.home)
                     sql_summary_dir = path_manager.sql_summary_path(self.global_config.current_namespace)
@@ -639,6 +624,8 @@ class Agent:
                 from datus.storage.reference_sql.reference_sql_init import init_reference_sql
 
                 self.reference_sql_store = ReferenceSqlRAG(self.global_config)
+                if kb_update_strategy == "overwrite":
+                    self.reference_sql_store.truncate()
                 self._reset_reference_sql_stream_state()
                 result = init_reference_sql(
                     self.reference_sql_store,

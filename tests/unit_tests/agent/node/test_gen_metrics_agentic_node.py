@@ -16,7 +16,7 @@ Tests cover:
 
 Design principle: NO mock except LLM.
 - Real AgentConfig (from conftest `real_agent_config`)
-- Real Storage/RAG (LanceDB in tmp_path)
+- Real Storage/RAG (vector store in tmp_path)
 - Real Tools (FilesystemFuncTool, GenerationTools, SemanticTools)
 - Real PromptManager (using built-in templates)
 - Real PathManager

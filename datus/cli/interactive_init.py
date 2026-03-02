@@ -10,8 +10,6 @@ This module provides an interactive CLI for setting up the basic configuration
 without requiring users to manually write conf/agent.yml files.
 """
 
-import os
-import shutil
 import sys
 from getpass import getpass
 from pathlib import Path
@@ -658,14 +656,15 @@ def init_metadata_and_log_result(namespace_name: str, config_path: str, console:
         try:
             if kb_update_strategy == "overwrite":
                 agent_config.save_storage_config("database")
-                schema_metadata_path = os.path.join(storage_path, "schema_metadata.lance")
-                schema_value_path = os.path.join(storage_path, "schema_value.lance")
-                if os.path.exists(schema_metadata_path):
-                    shutil.rmtree(schema_metadata_path)
-                    logger.info(f"Deleted existing directory {schema_metadata_path}")
-                if os.path.exists(schema_value_path):
-                    shutil.rmtree(schema_value_path)
-                    logger.info(f"Deleted existing directory {schema_value_path}")
+                from datus.storage.backend_holder import create_vector_connection
+
+                db = create_vector_connection()
+                try:
+                    db.drop_table("schema_metadata", ignore_missing=True)
+                    db.drop_table("schema_value", ignore_missing=True)
+                    logger.info("Dropped existing schema_metadata and schema_value tables")
+                finally:
+                    db.close()
             else:
                 agent_config.check_init_storage_config("database")
 
@@ -744,12 +743,17 @@ def do_init_sql_and_log_result(
             console.print("[bold red]Only SQL directories or files are supported[/]")
             return
 
-        storage_path = agent_config.rag_storage_path()
         if kb_update_strategy == "overwrite":
-            reference_sql_path = os.path.join(storage_path, "reference_sql.lance")
-            if os.path.exists(reference_sql_path):
-                shutil.rmtree(reference_sql_path)
-                logger.info(f"Deleted existing directory {reference_sql_path}")
+            agent_config.save_storage_config("reference_sql")
+
+            from datus.storage.backend_holder import create_vector_connection
+
+            db = create_vector_connection()
+            try:
+                db.drop_table("reference_sql", ignore_missing=True)
+                logger.info("Dropped existing reference_sql table")
+            finally:
+                db.close()
             # Also clear sql_summaries/{namespace} directory (YAML files)
             from datus.utils.path_manager import get_path_manager
 
@@ -758,7 +762,6 @@ def do_init_sql_and_log_result(
             if sql_summary_dir.exists() and not safe_rmtree(sql_summary_dir, "SQL summary directory", force=force):
                 console.print("[yellow]Cancelled by user[/yellow]")
                 return False, None
-            agent_config.save_storage_config("reference_sql")
         else:
             agent_config.check_init_storage_config("reference_sql")
 

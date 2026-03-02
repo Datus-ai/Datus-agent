@@ -50,7 +50,7 @@ def find_missing_semantic_models(
     agent_config: AgentConfig,
 ) -> List[str]:
     """
-    Check which tables don't have semantic models in LanceDB.
+    Check which tables don't have semantic models in vector store.
 
     Args:
         tables: Set of table names to check

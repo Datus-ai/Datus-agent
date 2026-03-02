@@ -4,7 +4,6 @@
 
 import argparse
 import csv
-import os
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -54,23 +53,18 @@ class DatusAPIService:
 
     async def initialize(self):
         """Initialize the service with default configurations."""
-        try:
-            # Load default agent configuration
-            self.agent_config = load_agent_config(**vars(self.args))
-            logger.info("Agent configuration loaded successfully")
+        # Load default agent configuration
+        self.agent_config = load_agent_config(**vars(self.args))
+        logger.info("Agent configuration loaded successfully")
 
-            # Initialize task store
-            task_db_path = os.path.join(self.agent_config.rag_base_path, "task")
-            self.task_store = TaskStore(task_db_path)
-            logger.info("Task store initialized successfully")
+        # Initialize task store
+        self.task_store = TaskStore()
+        logger.info("Task store initialized successfully")
 
-            # Clean up old tasks on startup
-            cleaned_count = self.task_store.cleanup_old_tasks(hours=24)
-            if cleaned_count > 0:
-                logger.info(f"Cleaned up {cleaned_count} old task records on startup")
-        except Exception as e:
-            logger.error(f"Failed to load agent configuration: {e}")
-            self.agent_config = None
+        # Clean up old tasks on startup
+        cleaned_count = self.task_store.cleanup_old_tasks(hours=24)
+        if cleaned_count > 0:
+            logger.info(f"Cleaned up {cleaned_count} old task records on startup")
 
     def _parse_csv_to_list(self, csv_string: str) -> List[Dict[str, Any]]:
         """Parse CSV string to list of dictionaries."""
