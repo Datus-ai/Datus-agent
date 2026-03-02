@@ -136,15 +136,14 @@ class TestE2EIntegration:
         for dashboard_item in input_data:
             # Extract configuration
             platform = dashboard_item["platform"]
-            # remove old data:
             dashboard_url = dashboard_item["dashboard_url"]
             api_base_url = dashboard_item["api_base_url"]
             dialect = dashboard_item.get("dialect", "postgresql")
 
-            print(f"\n{'='*70}")
+            print(f"\n{'=' * 70}")
             print(f"Testing Dashboard: {platform}")
             print(f"URL: {dashboard_url}")
-            print(f"{'='*70}\n")
+            print(f"{'=' * 70}\n")
 
             # Get dashboard config from agent_config
             dashboard_config = agent_config.dashboard_config.get(platform)
@@ -259,7 +258,10 @@ class TestE2EIntegration:
                                     print(f"           ✓ SQL validated for chart '{chart.name}'")
 
                             chart_selections.append(
-                                ChartSelection(chart=chart, sql_indices=list(range(len(chart.query.sql))))
+                                ChartSelection(
+                                    chart=chart,
+                                    sql_indices=list(range(len(chart.query.sql))),
+                                )
                             )
 
                     # Verify we found all expected charts
@@ -272,7 +274,10 @@ class TestE2EIntegration:
                     print("\n           No valid_charts specified, using first 2 charts")
                     for chart in charts_with_sql[:2]:
                         chart_selections.append(
-                            ChartSelection(chart=chart, sql_indices=list(range(len(chart.query.sql))))
+                            ChartSelection(
+                                chart=chart,
+                                sql_indices=list(range(len(chart.query.sql))),
+                            )
                         )
 
                 assert len(chart_selections) > 0, "Should have at least one chart selected"
