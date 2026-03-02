@@ -108,9 +108,9 @@ def run_tests(test_paths=None):
 
 
 def parse_test_results(junit_xml_path=None):
+    """Parse JUnit XML to extract test counts and failure details."""
     if junit_xml_path is None:
         junit_xml_path = os.path.join(OUT_DIR, "test-results.xml")
-    """Parse JUnit XML to extract test counts and failure details."""
     total = passed = failed = errors = skipped = 0
     failures = []
 
@@ -156,9 +156,9 @@ def parse_test_results(junit_xml_path=None):
 
 
 def write_test_report(test_results, output_path=None):
+    """Write a markdown report of test failures."""
     if output_path is None:
         output_path = os.path.join(OUT_DIR, "test-report.md")
-    """Write a markdown report of test failures."""
     lines = []
     failures = test_results["failures"]
     total = test_results["total"]
