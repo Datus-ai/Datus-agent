@@ -31,6 +31,7 @@ def mock_adapter(semantic_tools):
     return adapter
 
 
+@pytest.mark.usefixtures("mock_adapter")
 class TestQueryMetricsCompression:
     """Test cases for query_metrics with DataCompressor integration."""
 
@@ -76,7 +77,7 @@ class TestQueryMetricsCompression:
         assert result_dict["columns"] == ["date", "revenue", "orders"]
         assert result_dict["metadata"] == {"execution_time": 0.5}
 
-    def test_query_metrics_small_data_not_compressed(self, semantic_tools, mock_adapter):
+    def test_query_metrics_small_data_not_compressed(self, semantic_tools):
         """Test that small data within token threshold is not compressed."""
         query_result = QueryResult(
             columns=["id", "value"],
@@ -95,7 +96,7 @@ class TestQueryMetricsCompression:
         assert compressed_data["is_compressed"] is False
         assert compressed_data["compression_type"] == "none"
 
-    def test_query_metrics_large_data_row_compressed(self, semantic_tools, mock_adapter):
+    def test_query_metrics_large_data_row_compressed(self, semantic_tools):
         """Test that data exceeding 20 rows triggers row compression."""
         rows = [{"id": i, "value": i * 100} for i in range(50)]
         query_result = QueryResult(
@@ -112,7 +113,7 @@ class TestQueryMetricsCompression:
         assert compressed_data["is_compressed"] is True
         assert compressed_data["compression_type"] in ("rows", "rows_and_columns")
 
-    def test_query_metrics_empty_data(self, semantic_tools, mock_adapter):
+    def test_query_metrics_empty_data(self, semantic_tools):
         """Test query_metrics with empty result set."""
         query_result = QueryResult(
             columns=[],
@@ -138,7 +139,7 @@ class TestQueryMetricsCompression:
         assert result.success == 0
         assert "adapter" in result.error.lower()
 
-    def test_query_metrics_adapter_exception(self, semantic_tools, mock_adapter):
+    def test_query_metrics_adapter_exception(self, semantic_tools):
         """Test query_metrics handles adapter exceptions gracefully."""
         with patch(
             "datus.tools.func_tool.semantic_tools._run_async",
@@ -149,7 +150,7 @@ class TestQueryMetricsCompression:
         assert result.success == 0
         assert "Connection timeout" in result.error
 
-    def test_query_metrics_preserves_columns_and_metadata(self, semantic_tools, mock_adapter):
+    def test_query_metrics_preserves_columns_and_metadata(self, semantic_tools):
         """Test that columns and metadata are preserved unchanged after compression."""
         query_result = QueryResult(
             columns=["metric_time__day", "revenue", "cost"],
@@ -166,7 +167,7 @@ class TestQueryMetricsCompression:
         assert result.result["columns"] == ["metric_time__day", "revenue", "cost"]
         assert result.result["metadata"] == {"sql": "SELECT ...", "row_count": 1}
 
-    def test_query_metrics_compressed_data_contains_original_columns(self, semantic_tools, mock_adapter):
+    def test_query_metrics_compressed_data_contains_original_columns(self, semantic_tools):
         """Test that compressed result includes original column names."""
         query_result = QueryResult(
             columns=["date", "revenue", "orders", "customers"],
