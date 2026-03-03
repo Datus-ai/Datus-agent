@@ -2,6 +2,7 @@ from pathlib import Path
 
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.cache import StorageCache, clear_cache
+from datus.storage.lancedb_conditions import build_where
 
 
 class DummyAgentConfig(AgentConfig):
@@ -101,3 +102,42 @@ def test_ext_knowledge_scoped_uses_global_path(tmp_path):
 
     storage = cache.ext_knowledge_storage("team_a")
     assert storage.db_path == str(tmp_path / "global")
+
+
+def test_table_scoped_storage_has_scope_filter(tmp_path):
+    """Sub-agent with tables scoped context gets a scope filter on the storage."""
+    config = DummyAgentConfig(tmp_path)
+    config.add_sub_agent_with_scoped_context("team_a", {"tables": "public.users"})
+    cache = StorageCache(agent_config=config)
+
+    storage = cache.schema_storage("team_a")
+    assert storage.db_path == str(tmp_path / "global")
+    # The scope filter should be set because 'tables' was specified
+    assert storage._scope_filter is not None
+    clause = build_where(storage._scope_filter)
+    assert "users" in clause
+
+
+def test_build_scope_filter_empty_value_returns_none(tmp_path):
+    """_build_scope_filter returns None when scope value is empty."""
+    config = DummyAgentConfig(tmp_path)
+    config.add_sub_agent_with_scoped_context("team_a", {"tables": ""})
+    cache = StorageCache(agent_config=config)
+
+    # With empty tables value, sub-agent falls back to global cached storage
+    storage = cache.schema_storage("team_a")
+    # No scope filter should be set since tables is empty
+    assert storage._scope_filter is None
+
+
+def test_semantic_scoped_storage_has_scope_filter(tmp_path):
+    """Sub-agent with tables scoped context for semantic storage gets a filter."""
+    config = DummyAgentConfig(tmp_path)
+    config.add_sub_agent_with_scoped_context("team_a", {"tables": "orders"})
+    cache = StorageCache(agent_config=config)
+
+    storage = cache.semantic_storage("team_a")
+    assert storage.db_path == str(tmp_path / "global")
+    assert storage._scope_filter is not None
+    clause = build_where(storage._scope_filter)
+    assert "orders" in clause
