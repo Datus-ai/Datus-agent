@@ -10,12 +10,12 @@ from typing import Any, Dict, Iterable, List, Literal, Optional
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.agent_models import ScopedContextLists, SubAgentConfig
 from datus.storage.ext_knowledge.store import ExtKnowledgeRAG
-from datus.storage.lancedb_conditions import Node, and_, build_where, eq, like, or_
+from datus.storage.lancedb_conditions import Node, build_where, or_
 from datus.storage.metric.store import MetricRAG
 from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
+from datus.storage.scoped_filter import _table_condition_for_token
 from datus.storage.semantic_model.store import SemanticModelRAG
-from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.reference_paths import split_reference_path
@@ -44,10 +44,6 @@ class BootstrapResult:
     storage_path: str
     strategy: SubAgentBootstrapStrategy
     results: List[ComponentResult]
-
-
-def _replace_wildcard(value: str) -> str:
-    return value.replace("*", "%")
 
 
 class SubAgentBootstrapper:
@@ -397,38 +393,7 @@ class SubAgentBootstrapper:
         return mapped, invalid
 
     def _metadata_condition_for_token(self, token: str) -> Optional[Node]:
-        parts = [p.strip() for p in token.split(".") if p.strip()]
-        if not parts:
-            return None
-
-        dialect = self.dialect or ""
-
-        field_order: List[str] = []
-        if DBType.support_catalog(dialect):
-            field_order.append("catalog_name")
-        if DBType.support_database(dialect) or dialect == DBType.SQLITE:
-            field_order.append("database_name")
-        if DBType.support_schema(dialect):
-            field_order.append("schema_name")
-        field_order.append("table_name")
-
-        values: Dict[str, str] = {field: "" for field in field_order}
-        num_fields = len(field_order)
-        trimmed_parts = parts[-num_fields:]
-        start_field_idx = max(0, num_fields - len(trimmed_parts))
-        for i, part in enumerate(trimmed_parts):
-            field_idx = start_field_idx + i
-            if field_idx < num_fields:
-                values[field_order[field_idx]] = part
-        conditions: List[Node] = []
-        for field, value in values.items():
-            if not value:
-                continue
-            conditions.append(self._value_condition(field, value))
-
-        if not conditions:
-            return None
-        return conditions[0] if len(conditions) == 1 else and_(*conditions)
+        return _table_condition_for_token(token, self.dialect or "")
 
     def _combine_conditions(self, condition_map: List[tuple[str, Node]]) -> Optional[Node]:
         if not condition_map:
@@ -462,11 +427,3 @@ class SubAgentBootstrapper:
     @staticmethod
     def _format_subject_identifier(row: Dict[str, Any]) -> str:
         return f"{'/'.join(row.get('subject_path'))}/{row.get('name')}"
-
-    def _value_condition(self, field: str, value: str) -> Node:
-        value = value.strip()
-        if not value:
-            return eq(field, "")
-        if "*" in value:
-            return like(field, _replace_wildcard(value))
-        return eq(field, value)

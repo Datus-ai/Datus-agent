@@ -104,6 +104,17 @@ def test_ext_knowledge_scoped_uses_global_path(tmp_path):
     assert storage.db_path == str(tmp_path / "global")
 
 
+def test_scoped_instances_are_cached_across_calls(tmp_path):
+    """Scoped storage instances are cached so repeated calls return the same object."""
+    config = DummyAgentConfig(tmp_path)
+    config.add_sub_agent_with_scoped_context("team_a", {"tables": "orders"})
+    cache = StorageCache(agent_config=config)
+
+    first = cache.schema_storage("team_a")
+    second = cache.schema_storage("team_a")
+    assert first is second
+
+
 def test_table_scoped_storage_has_scope_filter(tmp_path):
     """Sub-agent with tables scoped context gets a scope filter on the storage."""
     config = DummyAgentConfig(tmp_path)

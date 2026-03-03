@@ -25,6 +25,7 @@ class ScopedContext(BaseModel):
     ext_knowledge: Optional[str] = Field(
         default=None, init=True, description="External knowledge to be used by sub-agents"
     )
+
     @property
     def is_empty(self) -> bool:
         return not self.tables and not self.metrics and not self.sqls and not self.ext_knowledge

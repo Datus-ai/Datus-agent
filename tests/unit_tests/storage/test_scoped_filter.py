@@ -4,8 +4,6 @@
 
 """Tests for datus.storage.scoped_filter — LanceDB WHERE filter builder."""
 
-import pytest
-
 from datus.storage.lancedb_conditions import build_where
 from datus.storage.scoped_filter import (
     ScopedFilterBuilder,
@@ -17,7 +15,6 @@ from datus.storage.scoped_filter import (
     _value_condition,
 )
 from datus.utils.constants import DBType
-
 
 # ---------------------------------------------------------------------------
 # TestReplaceWildcard
@@ -275,10 +272,12 @@ class TestBuildSubjectFilter:
 
     def test_multiple_paths_produce_or(self):
         """Multiple paths with matches produce OR conditions."""
-        tree = _FakeSubjectTree({
-            ("Finance", True): [1],
-            ("Sales", True): [2],
-        })
+        tree = _FakeSubjectTree(
+            {
+                ("Finance", True): [1],
+                ("Sales", True): [2],
+            }
+        )
         node = ScopedFilterBuilder.build_subject_filter("Finance, Sales", tree)
         clause = build_where(node)
         assert "subject_node_id = 1" in clause
@@ -309,10 +308,12 @@ class TestSubjectConditionForParts:
 
     def test_pass2_name_fallback(self):
         """Pass 2: fallback splits last part as name filter."""
-        tree = _FakeSubjectTree({
-            ("Finance.total_revenue", True): [],
-            ("Finance", False): [5],
-        })
+        tree = _FakeSubjectTree(
+            {
+                ("Finance.total_revenue", True): [],
+                ("Finance", False): [5],
+            }
+        )
         node = _subject_condition_for_parts(["Finance", "total_revenue"], tree)
         clause = build_where(node)
         assert "subject_node_id = 5" in clause
@@ -330,10 +331,12 @@ class TestSubjectConditionForParts:
 
     def test_pass2_wildcard_name(self):
         """Pass 2 with wildcard name produces LIKE condition."""
-        tree = _FakeSubjectTree({
-            ("Sales.rev*", True): [],
-            ("Sales", False): [7],
-        })
+        tree = _FakeSubjectTree(
+            {
+                ("Sales.rev*", True): [],
+                ("Sales", False): [7],
+            }
+        )
         node = _subject_condition_for_parts(["Sales", "rev*"], tree)
         clause = build_where(node)
         assert "subject_node_id = 7" in clause

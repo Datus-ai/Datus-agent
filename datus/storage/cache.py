@@ -30,6 +30,11 @@ def _cached_storage[
     return factory(path, get_embedding_model(model_name))
 
 
+# Module-level cache for scoped storage instances so that clear_cache() can
+# invalidate them regardless of which StorageCache instance created them.
+_scoped_storage_cache: dict[tuple[str, str, str], BaseEmbeddingStore] = {}
+
+
 class StorageCacheHolder[T: BaseEmbeddingStore]:
     def __init__(
         self,
@@ -50,14 +55,20 @@ class StorageCacheHolder[T: BaseEmbeddingStore]:
             if sub_agent_config.has_scoped_context_by(self.check_scope_attr):
                 scope_value = getattr(sub_agent_config.scoped_context, self.check_scope_attr, None)
             if scope_value:
+                storage_path = self._agent_config.rag_storage_path()
+                cache_key = (storage_path, sub_agent_name, self.check_scope_attr)
+                cached = _scoped_storage_cache.get(cache_key)
+                if cached is not None:
+                    return cached  # type: ignore[return-value]
                 # Use global storage path with a scope filter instead of a separate sub-agent copy
                 storage = self.storage_factory(
-                    self._agent_config.rag_storage_path(),
+                    storage_path,
                     get_embedding_model(self.embedding_model_conf_name),
                 )
                 scope_filter = self._build_scope_filter(sub_agent_config, storage)
                 if scope_filter is not None:
                     storage._scope_filter = scope_filter
+                _scoped_storage_cache[cache_key] = storage
                 logger.debug(
                     f"Sub agent {sub_agent_name} has scoped context, "
                     f"using global storage with WHERE filter for '{self.check_scope_attr}'"
@@ -143,5 +154,6 @@ def get_storage_cache_instance(agent_config: AgentConfig) -> StorageCache:
 
 def clear_cache():
     _cached_storage.cache_clear()
+    _scoped_storage_cache.clear()
     global _CACHE_INSTANCE
     _CACHE_INSTANCE = None
