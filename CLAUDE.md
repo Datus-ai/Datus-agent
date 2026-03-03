@@ -6,7 +6,7 @@ Datus-Agent is an AI-powered data analysis agent: natural language → SQL, mult
 
 - **Stack**: Python 3.12+, OpenAI Agents SDK + LiteLLM, LanceDB, FastAPI, FastMCP, Streamlit
 - **Package manager**: uv
-- **Version**: 0.2.4 | License: Apache-2.0
+- **Version**: 0.2.5 | License: Apache-2.0
 
 ## Build & Run
 
@@ -118,6 +118,20 @@ Error code ranges: 100000–199999 (common), 200000–299999 (node), 300000–39
 | `tests/` root | `test_{feature_name}.py` | `test_connector_duckdb.py` |
 | `tests/integration/` | `test_integration_{scenario}.py` | `test_integration_mcp_server.py` |
 | `tests/regression/` | `test_regression_{dimension}.py` | `test_regression_llm.py` |
+
+### Source → Test File Mapping Rule
+
+Unit test files **strictly mirror** the source path:
+
+`datus/a/b/c.py` → `tests/unit_tests/a/b/test_c.py`
+
+| Source File | Test File |
+|-------------|-----------|
+| `datus/utils/json_utils.py` | `tests/unit_tests/utils/test_json_utils.py` |
+| `datus/agent/node/gen_sql_agentic_node.py` | `tests/unit_tests/agent/node/test_gen_sql_agentic_node.py` |
+| `datus/tools/func_tool/db_func_tools.py` | `tests/unit_tests/tools/func_tool/test_db_func_tools.py` |
+
+Create intermediate `__init__.py` files when adding tests to new subdirectories.
 
 ### Common Test Patterns
 
