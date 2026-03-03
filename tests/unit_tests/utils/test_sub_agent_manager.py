@@ -34,9 +34,16 @@ class StubPromptManager:
 class StubAgentConfig:
     def __init__(self, base_dir: Path):
         self.rag_base_path = str(base_dir)
+        self.agentic_nodes = {}
+
+    def rag_storage_path(self) -> str:
+        return os.path.join(self.rag_base_path, "global")
 
     def sub_agent_storage_path(self, sub_agent_name: str) -> str:
         return os.path.join(self.rag_base_path, "sub_agents", sub_agent_name)
+
+    def sub_agent_config(self, sub_agent_name: str):
+        return self.agentic_nodes.get(sub_agent_name, {})
 
 
 def _build_manager(tmp_path):
@@ -47,41 +54,30 @@ def _build_manager(tmp_path):
     return manager, config_mgr, agent_config
 
 
-def test_save_agent_renames_scoped_kb_directory(tmp_path):
+def test_save_agent_rename_preserves_config(tmp_path):
+    """When renaming a sub-agent, the old config key is removed and the new key is added."""
     manager, config_mgr, agent_config = _build_manager(tmp_path)
 
     existing_context = ScopedContext(tables="orders")
     existing_config = SubAgentConfig(system_prompt="old_agent", scoped_context=existing_context)
-    existing_config.scoped_kb_path = agent_config.sub_agent_storage_path("old_agent")
-    old_path = Path(existing_config.scoped_kb_path)
-    old_path.mkdir(parents=True)
-    (old_path / "placeholder.txt").write_text("keep me")
     config_mgr.update_item("agentic_nodes", {"old_agent": existing_config.as_payload("demo")}, delete_old_key=True)
 
     updated_context = ScopedContext(tables="orders")
     updated_config = SubAgentConfig(system_prompt="new_agent", scoped_context=updated_context)
-    updated_config.scoped_kb_path = existing_config.scoped_kb_path
 
     result = manager.save_agent(updated_config, previous_name="old_agent")
 
-    assert result["kb_action"] == "renamed"
-    assert not old_path.exists()
-    new_path = Path(agent_config.sub_agent_storage_path("new_agent"))
-    assert new_path.exists()
-    assert (new_path / "placeholder.txt").exists()
-    assert updated_config.scoped_kb_path == str(new_path)
+    assert result["changed"] is True
     assert "new_agent" in manager.list_agents()
     assert "old_agent" not in manager.list_agents()
 
 
-def test_remove_agent_clears_scoped_kb_directory(tmp_path):
+def test_remove_agent_removes_config(tmp_path):
+    """Removing an agent removes its config entry."""
     manager, config_mgr, agent_config = _build_manager(tmp_path)
 
     scoped_context = ScopedContext(tables="sales")
     config = SubAgentConfig(system_prompt="cleanup_agent", scoped_context=scoped_context)
-    kb_path = Path(agent_config.sub_agent_storage_path("cleanup_agent"))
-    config.scoped_kb_path = str(kb_path)
-    kb_path.mkdir(parents=True)
     config_mgr.update_item(
         "agentic_nodes",
         {"cleanup_agent": config.as_payload("demo")},
@@ -91,5 +87,34 @@ def test_remove_agent_clears_scoped_kb_directory(tmp_path):
     removed = manager.remove_agent("cleanup_agent")
 
     assert removed is True
-    assert not kb_path.exists()
     assert "cleanup_agent" not in manager.list_agents()
+
+
+def test_clear_scoped_kb_is_noop(tmp_path):
+    """clear_scoped_kb is now a no-op since sub-agents use global storage."""
+    manager, _, _ = _build_manager(tmp_path)
+    config = SubAgentConfig(system_prompt="test_agent", scoped_context=ScopedContext(tables="orders"))
+    # Should not raise
+    manager.clear_scoped_kb(config)
+
+
+def test_sub_agent_config_with_ext_knowledge(tmp_path):
+    """SubAgentConfig with ext_knowledge scoped context is serialized correctly."""
+    manager, config_mgr, agent_config = _build_manager(tmp_path)
+
+    context = ScopedContext(ext_knowledge="Finance/Revenue, Sales/*")
+    config = SubAgentConfig(system_prompt="knowledge_agent", scoped_context=context)
+
+    assert config.has_scoped_context() is True
+    assert config.scoped_context.is_empty is False
+
+    payload = config.as_payload("demo")
+    assert "scoped_context" in payload
+    assert payload["scoped_context"]["ext_knowledge"] == "Finance/Revenue, Sales/*"
+
+
+def test_sub_agent_config_ext_knowledge_only_not_empty():
+    """ScopedContext with only ext_knowledge is not empty."""
+    context = ScopedContext(ext_knowledge="Finance/*")
+    config = SubAgentConfig(system_prompt="agent", scoped_context=context)
+    assert config.has_scoped_context() is True

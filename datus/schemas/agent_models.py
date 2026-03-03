@@ -11,9 +11,10 @@ class ScopedContextLists(BaseModel):
     tables: List[str] = Field(default_factory=list, description="Normalized table identifiers")
     metrics: List[str] = Field(default_factory=list, description="Normalized metric identifiers")
     sqls: List[str] = Field(default_factory=list, description="Normalized sql identifiers")
+    ext_knowledge: List[str] = Field(default_factory=list, description="Normalized ext knowledge identifiers")
 
     def any(self) -> bool:
-        return bool(self.tables or self.metrics or self.sqls)
+        return bool(self.tables or self.metrics or self.sqls or self.ext_knowledge)
 
 
 class ScopedContext(BaseModel):
@@ -21,10 +22,12 @@ class ScopedContext(BaseModel):
     tables: Optional[str] = Field(default=None, init=True, description="Tables to be used by sub-agents")
     metrics: Optional[str] = Field(default=None, init=True, description="Metrics to be used by sub-agents")
     sqls: Optional[str] = Field(default=None, init=True, description="Reference SQL to be used by sub-agents")
-
+    ext_knowledge: Optional[str] = Field(
+        default=None, init=True, description="External knowledge to be used by sub-agents"
+    )
     @property
     def is_empty(self) -> bool:
-        return not self.tables and not self.metrics and not self.sqls
+        return not self.tables and not self.metrics and not self.sqls and not self.ext_knowledge
 
     def as_lists(self) -> ScopedContextLists:
         def _split(value: Optional[str]) -> List[str]:
@@ -43,6 +46,7 @@ class ScopedContext(BaseModel):
             tables=_split(self.tables),
             metrics=_split(self.metrics),
             sqls=_split(self.sqls),
+            ext_knowledge=_split(self.ext_knowledge),
         )
 
 
@@ -92,8 +96,8 @@ class SubAgentConfig(BaseModel):
         if self.node_class:
             payload["node_class"] = self.node_class
 
-        if self.scoped_kb_path:
-            payload["scoped_kb_path"] = self.scoped_kb_path
+        # scoped_kb_path is deprecated: sub-agents now use the shared global
+        # storage with WHERE filters, so we no longer persist this field.
 
         if self.has_scoped_context():
             self.scoped_context.namespace = namespace

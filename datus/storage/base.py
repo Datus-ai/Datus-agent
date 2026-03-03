@@ -18,7 +18,7 @@ from lancedb.table import Table
 from pydantic import Field
 
 from datus.storage.embedding_models import EmbeddingModel
-from datus.storage.lancedb_conditions import WhereExpr, build_where
+from datus.storage.lancedb_conditions import Node, WhereExpr, and_, build_where
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -101,6 +101,7 @@ class BaseEmbeddingStore(StorageBase):
         self.vector_column_name = vector_column_name
         self.on_duplicate_columns = on_duplicate_columns
         self._schema = schema
+        self._scope_filter: Optional[Node] = None
         # Delay table initialization until first use
         self.table: Optional[Table] = None
         self._table_initialized = False
@@ -123,10 +124,24 @@ class BaseEmbeddingStore(StorageBase):
             self._table_initialized = True
             logger.debug(f"Table {self.table_name} initialized successfully with embedding function")
 
+    def _apply_scope_filter(self, where: WhereExpr = None) -> WhereExpr:
+        """Combine the provided where expression with the scope filter (if any)."""
+        if self._scope_filter is None:
+            return where
+        if where is None:
+            return self._scope_filter
+        # If where is already a string, convert scope_filter to string and combine
+        if isinstance(where, str):
+            scope_str = build_where(self._scope_filter)
+            return f"({where}) AND ({scope_str})" if scope_str else where
+        # Both are Node objects – combine via and_()
+        return and_(self._scope_filter, where)
+
     def _search_all(
         self, where: WhereExpr = None, select_fields: Optional[List[str]] = None, limit: Optional[int] = None
     ) -> pa.Table:
         self._ensure_table_ready()
+        where = self._apply_scope_filter(where)
         where_clause = build_where(where)
         query_builder = self.table.search()
         if where_clause:
@@ -412,6 +427,7 @@ class BaseEmbeddingStore(StorageBase):
     ) -> pa.Table:
         # Ensure table is ready before searching
         self._ensure_table_ready()
+        where = self._apply_scope_filter(where)
 
         if reranker:
             search_result = self._search_hybrid(query_txt, reranker, select_fields, top_n, where)
@@ -475,6 +491,9 @@ class BaseEmbeddingStore(StorageBase):
     def table_size(self) -> int:
         # Ensure table is ready before checking size
         self._ensure_table_ready()
+        if self._scope_filter is not None:
+            where_clause = build_where(self._scope_filter)
+            return self.table.count_rows(where_clause)
         return self.table.count_rows()
 
     @classmethod

@@ -211,7 +211,10 @@ class SchemaStorage(BaseMetadataStorage):
             where_condition = and_(where, table_condition)
         else:
             where_condition = table_condition
+        # Apply scope filter to respect sub-agent scoped context
+        where_condition = self._apply_scope_filter(where_condition)
         where_clause = build_where(where_condition)
+        self._ensure_table_ready()
         return (
             self.table.search()
             .where(where_clause)
@@ -427,11 +430,22 @@ class SchemaWithValueRAG:
 
         if table_conditions:
             combined_condition = table_conditions[0] if len(table_conditions) == 1 else or_(*table_conditions)
-            where_clause = build_where(combined_condition)
-            schema_query = self.schema_store.table.search().where(where_clause)
-            value_query = self.value_store.table.search().where(where_clause)
+        else:
+            combined_condition = None
+
+        # Apply scope filters to respect sub-agent scoped context
+        schema_condition = self.schema_store._apply_scope_filter(combined_condition)
+        value_condition = self.value_store._apply_scope_filter(combined_condition)
+        schema_where = build_where(schema_condition)
+        value_where = build_where(value_condition)
+
+        if schema_where:
+            schema_query = self.schema_store.table.search().where(schema_where)
         else:
             schema_query = self.schema_store.table.search()
+        if value_where:
+            value_query = self.value_store.table.search().where(value_where)
+        else:
             value_query = self.value_store.table.search()
 
         # Search schemas

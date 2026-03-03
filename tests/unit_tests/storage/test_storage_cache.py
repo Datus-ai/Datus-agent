@@ -71,7 +71,7 @@ def test_sub_agent_instances_are_cached_per_name(tmp_path):
 
 def test_invalidate_resets_scope(tmp_path):
     config = DummyAgentConfig(tmp_path)
-    # Add scoped context for team_a to use separate storage path
+    # Add scoped context for team_a to use global storage with scope filter
     # metrics field must be a non-empty string to enable scoped storage
     config.add_sub_agent_with_scoped_context("team_a", {"metrics": "*"})
     cache = StorageCache(agent_config=config)
@@ -81,4 +81,23 @@ def test_invalidate_resets_scope(tmp_path):
     refreshed = cache.metric_storage("team_a")
 
     assert original is not refreshed
-    assert refreshed.db_path == str(tmp_path / "sub_agents" / "team_a")
+    # Sub-agents now use the global storage path with a WHERE scope filter
+    assert refreshed.db_path == str(tmp_path / "global")
+
+
+def test_ext_knowledge_global_instances_are_cached(tmp_path):
+    cache = _build_cache(tmp_path)
+
+    first = cache.ext_knowledge_storage()
+    second = cache.ext_knowledge_storage()
+    assert first is second
+    assert first.db_path == str(tmp_path / "global")
+
+
+def test_ext_knowledge_scoped_uses_global_path(tmp_path):
+    config = DummyAgentConfig(tmp_path)
+    config.add_sub_agent_with_scoped_context("team_a", {"ext_knowledge": "Finance/*"})
+    cache = StorageCache(agent_config=config)
+
+    storage = cache.ext_knowledge_storage("team_a")
+    assert storage.db_path == str(tmp_path / "global")

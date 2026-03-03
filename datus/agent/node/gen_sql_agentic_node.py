@@ -1003,7 +1003,9 @@ def prepare_template_context(
 
     scoped_context = node_config.scoped_context
     if scoped_context:
-        has_scoped_context = bool(scoped_context.tables or scoped_context.metrics or scoped_context.sqls)
+        has_scoped_context = bool(
+            scoped_context.tables or scoped_context.metrics or scoped_context.sqls or scoped_context.ext_knowledge
+        )
 
     context["scoped_context"] = has_scoped_context
 

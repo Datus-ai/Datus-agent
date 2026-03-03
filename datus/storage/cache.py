@@ -16,6 +16,7 @@ from datus.storage.metric.store import MetricStorage
 from datus.storage.reference_sql import ReferenceSqlStorage
 from datus.storage.schema_metadata import SchemaStorage
 from datus.storage.schema_metadata.store import SchemaValueStorage
+from datus.storage.scoped_filter import ScopedFilterBuilder
 from datus.storage.semantic_model.store import SemanticModelStorage
 from datus.utils.loggings import get_logger
 
@@ -45,22 +46,46 @@ class StorageCacheHolder[T: BaseEmbeddingStore]:
     def storage_instance(self, sub_agent_name: Optional[str] = None) -> T:
         if sub_agent_name and (config := self._agent_config.sub_agent_config(sub_agent_name)):
             sub_agent_config = SubAgentConfig.model_validate(config)
-            if sub_agent_config.has_scoped_context_by(self.check_scope_attr) and getattr(
-                sub_agent_config.scoped_context, self.check_scope_attr
-            ):
-                logger.debug(
-                    (
-                        f"Sub agent {sub_agent_name} has a scope context,"
-                        f"so use {self._agent_config.sub_agent_storage_path(sub_agent_name)} for LanceDB"
-                    )
-                )
-                return self.storage_factory(
-                    self._agent_config.sub_agent_storage_path(sub_agent_name),
+            scope_value = None
+            if sub_agent_config.has_scoped_context_by(self.check_scope_attr):
+                scope_value = getattr(sub_agent_config.scoped_context, self.check_scope_attr, None)
+            if scope_value:
+                # Use global storage path with a scope filter instead of a separate sub-agent copy
+                storage = self.storage_factory(
+                    self._agent_config.rag_storage_path(),
                     get_embedding_model(self.embedding_model_conf_name),
                 )
+                scope_filter = self._build_scope_filter(sub_agent_config, storage)
+                if scope_filter is not None:
+                    storage._scope_filter = scope_filter
+                logger.debug(
+                    f"Sub agent {sub_agent_name} has scoped context, "
+                    f"using global storage with WHERE filter for '{self.check_scope_attr}'"
+                )
+                return storage
         return _cached_storage(
             self.storage_factory, self._agent_config.rag_storage_path(), self.embedding_model_conf_name
         )
+
+    def _build_scope_filter(self, sub_agent_config: SubAgentConfig, storage: T):
+        """Build a scope filter Node from the sub-agent's scoped context."""
+        scope_value = getattr(sub_agent_config.scoped_context, self.check_scope_attr, None)
+        if not scope_value:
+            return None
+
+        if self.check_scope_attr == "tables":
+            dialect = getattr(self._agent_config, "db_type", "")
+            return ScopedFilterBuilder.build_table_filter(scope_value, dialect)
+        elif self.check_scope_attr in ("metrics", "sqls", "ext_knowledge"):
+            # Subject-based stores need the subject_tree to resolve paths to node IDs
+            subject_tree = getattr(storage, "subject_tree", None)
+            if subject_tree is None:
+                logger.warning(
+                    f"Storage for '{self.check_scope_attr}' has no subject_tree; cannot build subject filter"
+                )
+                return None
+            return ScopedFilterBuilder.build_subject_filter(scope_value, subject_tree)
+        return None
 
 
 class StorageCache:

@@ -28,12 +28,12 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 import uvicorn
-from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 
 from datus.mcp_server import DatusMCPServer, create_dynamic_app
+from mcp import ClientSession
 
 CONFIG_PATH = str(Path(__file__).resolve().parents[1] / "conf" / "agent.yml")
 

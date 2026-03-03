@@ -610,6 +610,7 @@ class Agent:
                             "status": "failed",
                             "message": error_message,
                         }
+                self._refresh_scoped_agents("ext_knowledge", kb_update_strategy)
                 return {
                     "status": "success",
                     "message": f"ext_knowledge bootstrap completed, "

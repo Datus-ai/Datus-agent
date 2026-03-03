@@ -17,7 +17,12 @@ logger = get_logger(__name__)
 
 
 class SubAgentManager:
-    """Encapsulates sub-agent configuration and prompt management operations."""
+    """Encapsulates sub-agent configuration and prompt management operations.
+
+    Since sub-agents now query the shared global storage via WHERE filters,
+    there is no separate KB directory to manage.  Bootstrap only performs
+    validation (plan mode).
+    """
 
     def __init__(
         self,
@@ -60,13 +65,6 @@ class SubAgentManager:
         if previous_key in agents:
             previous_config = agents.get(previous_key)
 
-        existing_config: Optional[SubAgentConfig] = None
-        if previous_config:
-            try:
-                existing_config = SubAgentConfig.model_validate(previous_config)
-            except Exception as exc:  # pragma: no cover - defensive logging
-                logger.warning("Failed to parse existing sub-agent config '%s': %s", previous_key, exc)
-
         payload = config.as_payload(self._namespace)
         result: Dict[str, Any] = {
             "config_path": str(self.config_path),
@@ -80,53 +78,15 @@ class SubAgentManager:
             result["kb_action"] = "unchanged"
             return result
 
-        previous_had_context = existing_config.has_scoped_context() if existing_config else False
-        current_has_context = config.has_scoped_context()
-
-        sub_agent_bootstrapper = self._build_bootstrapper(config)
-        if previous_had_context and not current_has_context:
-            try:
-                self.clear_scoped_kb(existing_config)
-            except Exception as exc:
-                logger.error("Failed to clear scoped KB for '%s': %s", previous_key, exc)
-                raise
-            config.scoped_kb_path = None
-            result["kb_action"] = "cleared"
-        elif not previous_had_context and not current_has_context:
-            result["kb_action"] = "none"
-        elif previous_name and previous_name != config.system_prompt and current_has_context:
-            # update configuration
+        # Handle renaming: remove old prompt template and config key
+        if previous_name and previous_name != config.system_prompt and previous_config:
             prompt_version = config.prompt_version or "1.0"
-            if previous_config:
-                pre_version = previous_config.get("prompt_version", str(prompt_version))
-                if float(pre_version) > float(prompt_version):
-                    prompt_version = pre_version
+            pre_version = previous_config.get("prompt_version", str(prompt_version))
+            if float(pre_version) > float(prompt_version):
+                prompt_version = pre_version
 
             self._remove_prompt_template(previous_name, prompt_version)
             agents.pop(previous_name, None)
-
-            # update kb
-            try:
-                renamed_path = sub_agent_bootstrapper.rename_scoped_kb_directory(
-                    existing_config, config.system_prompt, previous_name=previous_name
-                )
-            except Exception as exc:
-                logger.error("Failed to rename scoped KB for '%s': %s", previous_key, exc)
-                raise
-            else:
-                if renamed_path:
-                    config.scoped_kb_path = str(renamed_path)
-                    result["kb_action"] = "renamed"
-                elif (
-                    existing_config
-                    and existing_config.scoped_kb_path
-                    and existing_config.scoped_kb_path == config.scoped_kb_path
-                ):
-                    config.scoped_kb_path = self._agent_config.sub_agent_storage_path(config.system_prompt)
-                elif previous_name:
-                    old_default = self._agent_config.sub_agent_storage_path(previous_name)
-                    if config.scoped_kb_path == old_default:
-                        config.scoped_kb_path = self._agent_config.sub_agent_storage_path(config.system_prompt)
 
         agents[config.system_prompt] = config.as_payload(self._namespace)
 
@@ -145,17 +105,10 @@ class SubAgentManager:
         if agent_name not in agents:
             return False
         sub_agent = agents[agent_name]
-        parsed_config: Optional[SubAgentConfig] = None
-        try:
-            parsed_config = SubAgentConfig.model_validate(sub_agent)
-        except Exception as exc:  # pragma: no cover - best effort logging
-            logger.warning("Failed to parse sub-agent '%s' during removal: %s", agent_name, exc)
         try:
             self._configuration_manager.remove_item_recursively("agentic_nodes", agent_name)
             prompt_version = str(sub_agent.get("prompt_version", "1.0"))
             self._remove_prompt_template(agent_name, prompt_version)
-            self.clear_scoped_kb(parsed_config)
-
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.error("Failed to remove agent '%s': %s", agent_name, exc)
             raise
@@ -166,14 +119,16 @@ class SubAgentManager:
         config: SubAgentConfig,
         *,
         components: Optional[Sequence[str]] = None,
-        strategy: SubAgentBootstrapStrategy = "overwrite",
+        strategy: SubAgentBootstrapStrategy = "plan",
     ) -> BootstrapResult:
+        """Run plan-only validation for the sub-agent's scoped context."""
         bootstrapper = self._build_bootstrapper(config)
         selected = list(components) if components else None
         return bootstrapper.run(selected, strategy)
 
     def clear_scoped_kb(self, config: Optional[SubAgentConfig]):
-        self._build_bootstrapper(config).clear_all_components()
+        """No-op: sub-agents no longer have separate KB directories."""
+        pass
 
     def _build_bootstrapper(
         self,
