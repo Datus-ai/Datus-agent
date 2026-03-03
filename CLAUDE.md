@@ -44,7 +44,7 @@ from datus.utils.exceptions import DatusException, ErrorCode
 raise DatusException(ErrorCode.DB_CONNECTION_FAILED, message_args={"error_message": str(e)}) from e
 ```
 
-Error code ranges: 100000–199999 (common), 200000–299999 (node), 300000–399999 (model/LLM), 400000–499999 (tool/storage), 500000–599999 (database).
+Error code ranges: 100000–199999 (common), 200000–299999 (node), 300000–399999 (model/LLM), 400000–499999 (tool/storage), 500000–599999 (database), 600000–699999 (semantic adapter).
 
 ### Async
 
