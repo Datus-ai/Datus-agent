@@ -16,9 +16,9 @@ class ErrorCode(Enum):
     """Error codes with descriptions for Datus exceptions."""
 
     # Common errors
-    COMMON_UNKNOWN = ("1000000", "Unknown error occurred")
+    COMMON_UNKNOWN = ("100000", "Unknown error occurred")
     COMMON_FIELD_INVALID = (
-        "1000001",
+        "100001",
         "Unexcepted value of {field_name}, excepted value: {except_values}, your value: {your_value}",
     )
     COMMON_FILE_NOT_FOUND = ("100002", "{config_name} file not found: {file_name}")
