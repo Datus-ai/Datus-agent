@@ -6,62 +6,14 @@ from enum import Enum
 
 
 class DBType(str, Enum):
-    """SQL database dialect types supported by Datus."""
+    """Built-in database dialect types (zero or minimal dependencies).
+
+    External dialects (mysql, postgresql, snowflake, etc.) are registered
+    dynamically via adapter packages and the ConnectorRegistry.
+    """
 
     SQLITE = "sqlite"
     DUCKDB = "duckdb"
-    MYSQL = "mysql"
-    POSTGRESQL = "postgresql"
-    POSTGRES = "postgres"  # Alternative name for PostgreSQL
-    SNOWFLAKE = "snowflake"
-    CLICKHOUSE = "clickhouse"
-    BIGQUERY = "bigquery"
-    STARROCKS = "starrocks"
-    SQLSERVER = "sqlserver"  # same as mssql
-    MSSQL = "mssql"  # same as sqlserver
-    ORACLE = "oracle"
-    HIVE = "hive"
-    CLICKZETTA = "clickzetta"
-
-    @classmethod
-    def support_catalog(cls, db_type: str) -> bool:
-        # bigquery support project as catalog
-        return db_type in SUPPORT_CATALOG_DIALECTS
-
-    @classmethod
-    def support_database(cls, db_type: str) -> bool:
-        return db_type in SUPPORT_DATABASE_DIALECTS
-
-    @classmethod
-    def support_schema(cls, db_type: str) -> bool:
-        return db_type in SUPPORT_SCHEMA_DIALECTS
-
-
-SUPPORT_CATALOG_DIALECTS = {DBType.STARROCKS, DBType.SNOWFLAKE, DBType.BIGQUERY}
-SUPPORT_DATABASE_DIALECTS = {
-    DBType.STARROCKS,
-    DBType.SNOWFLAKE,
-    DBType.BIGQUERY,
-    DBType.MYSQL,
-    DBType.MSSQL,
-    DBType.SQLSERVER,
-    DBType.ORACLE,
-    DBType.POSTGRES,
-    DBType.POSTGRESQL,
-    DBType.DUCKDB,
-    DBType.CLICKZETTA,
-}
-SUPPORT_SCHEMA_DIALECTS = {
-    DBType.SNOWFLAKE,
-    DBType.BIGQUERY,
-    DBType.MSSQL,
-    DBType.SQLSERVER,
-    DBType.ORACLE,
-    DBType.DUCKDB,
-    DBType.POSTGRES,
-    DBType.POSTGRESQL,
-    DBType.CLICKZETTA,
-}
 
 
 class LLMProvider(str, Enum):

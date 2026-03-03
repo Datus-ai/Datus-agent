@@ -12,7 +12,6 @@ from datus.models.base import LLMBaseModel
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.tools.llms_tools.match_schema import MatchSchemaTool, gen_all_table_dict
-from datus.utils.constants import DBType
 from datus.utils.json_utils import load_jsonl_iterator
 from datus.utils.loggings import configure_logging, get_logger
 from tests.conftest import PROJECT_ROOT
@@ -172,7 +171,7 @@ def do_gen_match_schema(
         try:
             response = llm_tool.match_schema(
                 SchemaLinkingInput(
-                    database_type=DBType.SNOWFLAKE,
+                    database_type="snowflake",
                     database_name=database_name,
                     input_text=user_question,
                     top_n=top_n,

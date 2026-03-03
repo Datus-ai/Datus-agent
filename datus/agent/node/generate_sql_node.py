@@ -14,7 +14,6 @@ from datus.prompts.gen_sql import get_sql_prompt
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import GenerateSQLInput, GenerateSQLResult, SQLContext, SqlTask, TableSchema, TableValue
 from datus.storage.schema_metadata import SchemaWithValueRAG
-from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 from datus.utils.time_utils import get_default_current_date
 from datus.utils.traceable_utils import optional_traceable
@@ -247,7 +246,7 @@ def generate_sql(model: LLMBaseModel, input_data: GenerateSQLInput) -> GenerateS
     try:
         # Format the prompt with schema list
         prompt = get_sql_prompt(
-            database_type=input_data.database_type or DBType.SQLITE.value,
+            database_type=input_data.database_type or "sqlite",
             table_schemas=input_data.table_schemas,
             data_details=input_data.data_details,
             metrics=input_data.metrics,

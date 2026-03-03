@@ -6,10 +6,20 @@ from unittest.mock import Mock
 
 import pytest
 
-from datus.tools.db_tools import BaseSqlConnector
+from datus.tools.db_tools import BaseSqlConnector, connector_registry
 from datus.tools.func_tool import DBFuncTool
 from datus.tools.func_tool.base import FuncToolResult
-from datus.utils.constants import SUPPORT_DATABASE_DIALECTS, SUPPORT_SCHEMA_DIALECTS, DBType
+from datus.utils.constants import DBType
+
+
+@pytest.fixture(autouse=True)
+def _register_test_capabilities():
+    """Ensure test dialects have capabilities registered in the registry."""
+    connector_registry.register_handlers(
+        "postgresql",
+        capabilities={"database", "schema"},
+    )
+    yield
 
 
 class FakeRecordBatch:
@@ -85,9 +95,9 @@ class TestDBFuncTool:
 
         # Should have base tools plus dialect-specific tools
         expected_tool_count = 4  # list_tables, describe_table, read_query, get_table_ddl
-        if mock_connector.dialect in SUPPORT_DATABASE_DIALECTS:
+        if connector_registry.support_database(mock_connector.dialect):
             expected_tool_count += 1
-        if mock_connector.dialect in SUPPORT_SCHEMA_DIALECTS:
+        if connector_registry.support_schema(mock_connector.dialect):
             expected_tool_count += 1
 
         assert len(tools) == expected_tool_count
@@ -97,9 +107,9 @@ class TestDBFuncTool:
         expected_base_tools = {"list_tables", "describe_table", "read_query", "get_table_ddl"}
 
         assert expected_base_tools.issubset(tool_names)
-        if mock_connector.dialect in SUPPORT_DATABASE_DIALECTS:
+        if connector_registry.support_database(mock_connector.dialect):
             assert "list_databases" in tool_names
-        if mock_connector.dialect in SUPPORT_SCHEMA_DIALECTS:
+        if connector_registry.support_schema(mock_connector.dialect):
             assert "list_schemas" in tool_names
         assert "search_table" not in tool_names
 
@@ -507,7 +517,7 @@ class TestDBFuncTool:
 
     def test_read_query_snowflake_uses_arrow(self, db_func_tool, mock_connector):
         """Snowflake dialect should request Arrow results."""
-        mock_connector.dialect = DBType.SNOWFLAKE
+        mock_connector.dialect = "snowflake"
         mock_query_result = Mock()
         mock_query_result.success = True
         mock_query_result.sql_return = [{"id": 1}]
@@ -591,7 +601,7 @@ class TestDBFuncTool:
     def test_catalog_scoped_tables_filter_results(self):
         """Catalog-qualified scopes should restrict databases, schemas, and tables."""
         connector = Mock()
-        connector.dialect = DBType.SNOWFLAKE
+        connector.dialect = "snowflake"
         connector.catalog_name = "cat1"
         connector.database_name = "analytics"
         connector.schema_name = "public"
@@ -704,12 +714,12 @@ class TestDBFuncToolEdgeCases:
     def test_different_dialects(self):
         """Test available_tools with different database dialects."""
         dialects = [
-            DBType.POSTGRES,
-            DBType.MYSQL,
-            DBType.STARROCKS,
+            "postgres",
+            "mysql",
+            "starrocks",
             DBType.DUCKDB,
             DBType.SQLITE,
-            DBType.SNOWFLAKE,
+            "snowflake",
         ]
 
         for dialect in dialects:
@@ -720,9 +730,9 @@ class TestDBFuncToolEdgeCases:
             tools = tool.available_tools()
 
             expected_tool_count = 4
-            if dialect in SUPPORT_DATABASE_DIALECTS:
+            if connector_registry.support_database(dialect):
                 expected_tool_count += 1
-            if dialect in SUPPORT_SCHEMA_DIALECTS:
+            if connector_registry.support_schema(dialect):
                 expected_tool_count += 1
 
             assert len(tools) == expected_tool_count, f"Failed for dialect {dialect}"

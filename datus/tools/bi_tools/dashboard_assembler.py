@@ -281,11 +281,11 @@ class DashboardAssembler:
         self, dialect: Optional[str], catalog_name: str, database_name: str, schema_name: str
     ) -> bool:
         normalized = (dialect or "").strip().lower()
-        if normalized in (DBType.MYSQL, DBType.STARROCKS, DBType.SQLITE):
+        if normalized in ("mysql", "starrocks", DBType.SQLITE):
             return bool(database_name)
-        if normalized in (DBType.POSTGRES, DBType.POSTGRESQL, DBType.ORACLE, DBType.DUCKDB):
+        if normalized in ("postgres", "postgresql", "oracle", DBType.DUCKDB):
             return bool(database_name and schema_name)
-        if normalized == DBType.SNOWFLAKE:
+        if normalized == "snowflake":
             return bool(database_name and schema_name)
         return bool(database_name) or bool(schema_name)
 

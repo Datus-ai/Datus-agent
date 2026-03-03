@@ -258,10 +258,8 @@ def _assert_report_structure(report: dict[str, object]) -> None:
     assert artifacts_mismatch["expected_metrics"]["missing_expected"]
 
 
-@pytest.mark.parametrize("db_type", [DBType.SQLITE, DBType.SNOWFLAKE])
-def test_evaluate_benchmark_and_report_with_csv_manifest(
-    agent_config: AgentConfig, tmp_path: Path, db_type: DBType
-) -> None:
+@pytest.mark.parametrize("db_type", [DBType.SQLITE, "snowflake"])
+def test_evaluate_benchmark_and_report_with_csv_manifest(agent_config: AgentConfig, tmp_path: Path, db_type) -> None:
     benchmark_name = "csv_benchmark_evaluation"
     benchmark_config = BenchmarkConfig(
         benchmark_path=benchmark_name,
@@ -341,10 +339,8 @@ def test_evaluate_benchmark_and_report_with_csv_manifest(
     _assert_report_structure(report)
 
 
-@pytest.mark.parametrize("db_type", [DBType.SQLITE, DBType.SNOWFLAKE])
-def test_evaluate_benchmark_and_report_with_jsonl_manifest(
-    agent_config: AgentConfig, tmp_path: Path, db_type: DBType
-) -> None:
+@pytest.mark.parametrize("db_type", [DBType.SQLITE, "snowflake"])
+def test_evaluate_benchmark_and_report_with_jsonl_manifest(agent_config: AgentConfig, tmp_path: Path, db_type) -> None:
     benchmark_name = "jsonl_benchmark_evaluation"
     benchmark_config = BenchmarkConfig(
         benchmark_path=benchmark_name,

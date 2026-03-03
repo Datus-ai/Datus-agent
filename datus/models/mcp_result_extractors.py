@@ -14,9 +14,9 @@ logger = get_logger(__name__)
 
 # Mapping of mcp server types to their supported query function names
 DB_QUERY_FUNCTIONS: Dict[str, Set[str]] = {
-    DBType.SNOWFLAKE: {"read_query", "list_tables", "describe_table"},
+    "snowflake": {"read_query", "list_tables", "describe_table"},
     DBType.SQLITE: {"read_query", "write_query", "list_tables", "describe_table"},
-    DBType.STARROCKS: {"read_query", "write_query", "table_overview", "db_overview"},
+    "starrocks": {"read_query", "write_query", "table_overview", "db_overview"},
     DBType.DUCKDB: {"query"},
 }
 
@@ -29,7 +29,7 @@ def get_function_call_names(db_type: str) -> Set[str]:
     return DB_QUERY_FUNCTIONS.get(db_type, set())
 
 
-def extract_sql_contexts(result: RunResultBase, db_type: str = DBType.SNOWFLAKE) -> List[SQLContext]:
+def extract_sql_contexts(result: RunResultBase, db_type: str = "snowflake") -> List[SQLContext]:
     """
     Extract SQL contexts from the result
 

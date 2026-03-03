@@ -673,7 +673,7 @@ class AgentConfig:
             # Validate benchmark is supported (will raise exception if not)
             self.benchmark_path(benchmark_platform)
 
-            if benchmark_platform == "spider2" and self.db_type != DBType.SNOWFLAKE:
+            if benchmark_platform == "spider2" and self.db_type != "snowflake":
                 raise DatusException(code=ErrorCode.COMMON_UNSUPPORTED, message="spider2 only support snowflake")
             if benchmark_platform == "bird_dev" and self.db_type != DBType.SQLITE:
                 raise DatusException(code=ErrorCode.COMMON_UNSUPPORTED, message="bird_dev only support sqlite")

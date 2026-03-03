@@ -54,7 +54,7 @@ SQL = """create or replace TABLE GT.GT2.VARIANTS (
 
 
 def test_parse_sql():
-    table_meta = parse_metadata_from_ddl(SQL, DBType.SNOWFLAKE)
+    table_meta = parse_metadata_from_ddl(SQL, "snowflake")
     print(table_meta)
     assert table_meta["table"]["name"] == "VARIANTS"
     assert table_meta["columns"][0]["name"] == "reference_name"
@@ -86,7 +86,7 @@ def test_parse_mysql():
   FOREIGN KEY (`atom_id2`) REFERENCES `atom`(`atom_id`),
   FOREIGN KEY (`bond_id`) REFERENCES `bond`(`bond_id`)
 );""",
-        DBType.MYSQL,
+        "mysql",
     )
     assert table_meta["table"]["name"] == "connected"
     assert table_meta["columns"][0]["name"] == "atom_id"
@@ -109,7 +109,7 @@ account bigint NULL,
     PRIMARY KEY (trans_id),
     FOREIGN KEY (account_id) REFERENCES account(account_id)
 );""",
-        DBType.POSTGRES,
+        "postgres",
     )
     assert table_meta["table"]["name"] == "trans"
     assert table_meta["columns"][0]["name"] == "trans_id"
@@ -170,7 +170,7 @@ def test_parse_sqlserver():
 [LastUpdate] date NOT NULL,
   PRIMARY KEY ([CDSCode])
 );""",
-        DBType.SQLSERVER,
+        "sqlserver",
     )
     assert table_meta["table"]["name"] == "schools"
     assert table_meta["columns"][0]["name"] == "CDSCode"
@@ -468,7 +468,7 @@ ORDER BY
             "TCGA.TCGA_VERSIONED.CLINICAL_GDC_R39",
             "TCGA.TCGA_VERSIONED.RNASEQ_HG19_GDC_2017_02",
         ],
-        dialect=DBType.SNOWFLAKE,
+        dialect="snowflake",
     )
 
     print("-" * 100)
@@ -479,7 +479,7 @@ ORDER BY
         SELECT * FROM cte;
         """,
         ["loan"],
-        dialect=DBType.POSTGRES,
+        dialect="postgres",
     )
 
 
@@ -542,8 +542,8 @@ def test_extract_table_names():
     assert set(extract_table_names("SELECT * FROM default_catalog.bar.baz")) == {"default_catalog.bar.baz"}
     sql_three_part = "SELECT * FROM foo.bar.baz"
     sql_two_part = "SELECT * FROM foo.bar"
-    assert set(extract_table_names(sql_three_part, dialect=DBType.SQLSERVER, ignore_empty=True)) == {"foo.bar.baz"}
-    for dialect in [DBType.SQLSERVER, DBType.POSTGRESQL, DBType.MYSQL, DBType.STARROCKS]:
+    assert set(extract_table_names(sql_three_part, dialect="sqlserver", ignore_empty=True)) == {"foo.bar.baz"}
+    for dialect in ["sqlserver", "postgresql", "mysql", "starrocks"]:
         assert set(extract_table_names(sql_two_part, dialect=dialect, ignore_empty=True)) == {"foo.bar"}
 
 
@@ -554,13 +554,13 @@ def test_parse_full_tables():
     assert table_meta["database_name"] == ""
     assert table_meta["catalog_name"] == ""
 
-    table_meta = parse_table_name_parts("`test`.abc", dialect=DBType.MYSQL)
+    table_meta = parse_table_name_parts("`test`.abc", dialect="mysql")
     assert table_meta["schema_name"] == "test"
     assert table_meta["table_name"] == "abc"
     assert table_meta["database_name"] == ""
     assert table_meta["catalog_name"] == ""
 
-    table_meta = parse_table_name_parts('''TEST_DB."test_schema"."abc"''', dialect=DBType.SNOWFLAKE)
+    table_meta = parse_table_name_parts('''TEST_DB."test_schema"."abc"''', dialect="snowflake")
     assert table_meta["schema_name"] == "test_schema"
     assert table_meta["table_name"] == "abc"
     assert table_meta["database_name"] == "TEST_DB"
@@ -597,7 +597,7 @@ FROM gold_vs_bitcoin"""
     merge_sql = (
         "MERGE INTO target USING source ON target.id = source.id WHEN MATCHED THEN UPDATE SET value = source.value"
     )
-    assert parse_sql_type(merge_sql, dialect=DBType.SNOWFLAKE) == SQLType.MERGE
+    assert parse_sql_type(merge_sql, dialect="snowflake") == SQLType.MERGE
 
     assert parse_sql_type("EXPLAIN SELECT * FROM gold_vs_bitcoin", dialect=DBType.DUCKDB) == SQLType.EXPLAIN
 
@@ -606,9 +606,9 @@ FROM gold_vs_bitcoin"""
     assert parse_sql_type("SHOW CATALOGS", dialect="starrocks") == SQLType.METADATA_SHOW
 
     assert parse_sql_type("USE test", dialect=DBType.DUCKDB) == SQLType.CONTENT_SET
-    assert parse_sql_type("USE test", dialect=DBType.MYSQL) == SQLType.CONTENT_SET
-    assert parse_sql_type("USE test", dialect=DBType.STARROCKS) == SQLType.CONTENT_SET
-    assert parse_sql_type(" USE test ", dialect=DBType.SNOWFLAKE) == SQLType.CONTENT_SET
+    assert parse_sql_type("USE test", dialect="mysql") == SQLType.CONTENT_SET
+    assert parse_sql_type("USE test", dialect="starrocks") == SQLType.CONTENT_SET
+    assert parse_sql_type(" USE test ", dialect="snowflake") == SQLType.CONTENT_SET
 
 
 def test_parse_sql_type_with():
@@ -709,7 +709,7 @@ def test_parse_sql_type_with():
                                  and a.modename= c2.modename
           group by a.dtstatdate,a.modename
     """
-    sql_type = parse_sql_type(sql, dialect=DBType.STARROCKS)
+    sql_type = parse_sql_type(sql, dialect="starrocks")
     assert sql_type == SQLType.SELECT
 
     sql_type = parse_sql_type(
@@ -725,7 +725,7 @@ def test_parse_sql_type_with():
             c.name = 'Action'
     )
     SELECT * FROM action_films;""",
-        dialect=DBType.POSTGRESQL,
+        dialect="postgresql",
     )
     assert sql_type == SQLType.SELECT
 
@@ -766,7 +766,7 @@ def test_parse_context_switch_duckdb():
 
 
 def test_parse_context_switch_mysql():
-    result = parse_context_switch("USE `orders`", dialect=DBType.MYSQL)
+    result = parse_context_switch("USE `orders`", dialect="mysql")
     assert result == {
         "command": "USE",
         "target": "database",
@@ -777,7 +777,7 @@ def test_parse_context_switch_mysql():
         "raw": "USE `orders`",
     }
 
-    result = parse_context_switch("USE orders", dialect=DBType.MYSQL)
+    result = parse_context_switch("USE orders", dialect="mysql")
     assert result == {
         "command": "USE",
         "target": "database",
@@ -791,7 +791,7 @@ def test_parse_context_switch_mysql():
 
 def test_parse_context_switch_starrocks():
     # set_catalog
-    result = parse_context_switch("SET catalog lakehouse", dialect=DBType.STARROCKS)
+    result = parse_context_switch("SET catalog lakehouse", dialect="starrocks")
     assert result == {
         "command": "SET",
         "target": "catalog",
@@ -803,7 +803,7 @@ def test_parse_context_switch_starrocks():
     }
 
     # datalog.db
-    result = parse_context_switch("USE lakehouse.sales", dialect=DBType.STARROCKS)
+    result = parse_context_switch("USE lakehouse.sales", dialect="starrocks")
     assert result == {
         "command": "USE",
         "target": "database",
@@ -815,7 +815,7 @@ def test_parse_context_switch_starrocks():
     }
 
     # db
-    result = parse_context_switch("USE sales", dialect=DBType.STARROCKS)
+    result = parse_context_switch("USE sales", dialect="starrocks")
     assert result == {
         "command": "USE",
         "target": "database",
@@ -828,7 +828,7 @@ def test_parse_context_switch_starrocks():
 
 
 def test_parse_context_switch_snowflake():
-    result = parse_context_switch("USE DATABASE analytics", dialect=DBType.SNOWFLAKE)
+    result = parse_context_switch("USE DATABASE analytics", dialect="snowflake")
     assert result == {
         "command": "USE",
         "target": "database",
@@ -839,7 +839,7 @@ def test_parse_context_switch_snowflake():
         "raw": "USE DATABASE analytics",
     }
 
-    result = parse_context_switch("USE analytics", dialect=DBType.SNOWFLAKE)
+    result = parse_context_switch("USE analytics", dialect="snowflake")
     assert result == {
         "command": "USE",
         "target": "database",
@@ -851,7 +851,7 @@ def test_parse_context_switch_snowflake():
     }
 
     # db.schema
-    result = parse_context_switch("USE sales.analytics", dialect=DBType.SNOWFLAKE)
+    result = parse_context_switch("USE sales.analytics", dialect="snowflake")
     assert result == {
         "command": "USE",
         "target": "schema",
@@ -861,7 +861,7 @@ def test_parse_context_switch_snowflake():
         "fuzzy": False,
         "raw": "USE sales.analytics",
     }
-    result = parse_context_switch("USE schema sales.analytics", dialect=DBType.SNOWFLAKE)
+    result = parse_context_switch("USE schema sales.analytics", dialect="snowflake")
     assert result == {
         "command": "USE",
         "target": "schema",
@@ -873,7 +873,7 @@ def test_parse_context_switch_snowflake():
     }
 
     # schema
-    result = parse_context_switch("USE schema analytics", dialect=DBType.SNOWFLAKE)
+    result = parse_context_switch("USE schema analytics", dialect="snowflake")
     assert result == {
         "command": "USE",
         "target": "schema",

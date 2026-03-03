@@ -25,6 +25,7 @@ from datus.schemas.compare_node_models import CompareInput
 from datus.schemas.node_models import ExecuteSQLInput, GenerateSQLInput, OutputInput, SqlTask
 from datus.schemas.reason_sql_node_models import ReasoningInput
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput
+from datus.tools.db_tools.registry import connector_registry
 from datus.tools.func_tool.context_search import ContextSearchTools
 from datus.tools.output_tools import OutputTool
 from datus.utils.constants import DBType
@@ -414,11 +415,11 @@ class AgentCommands:
         dialect = self.cli.db_connector.dialect
         catalog_name, database_name, schema_name = "", "", ""
 
-        if DBType.support_catalog(dialect):
+        if connector_registry.support_catalog(dialect):
             catalog_name = self.cli.prompt_input("Enter catalog name", default=self.cli_context.current_catalog or "")
-        if DBType.SQLITE == dialect or DBType.support_database(dialect):
+        if DBType.SQLITE == dialect or connector_registry.support_database(dialect):
             database_name = self.cli.prompt_input("Enter database name", default=self.cli_context.current_db_name or "")
-        if DBType.support_schema(dialect):
+        if connector_registry.support_schema(dialect):
             schema_name = self.cli.prompt_input("Enter schema name", default=self.cli_context.current_schema or "")
 
         return catalog_name, database_name, schema_name

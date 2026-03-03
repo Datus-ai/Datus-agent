@@ -292,7 +292,7 @@ def collect_sql_tables(sql_text: Optional[str], dialect: Optional[str] = None) -
     if not sql_text:
         return []
 
-    dialect = dialect or DBType.SNOWFLAKE
+    dialect = dialect or "snowflake"
     tables: list[str] = []
     try:
         extracted_tables = extract_table_names(sql_text, dialect=dialect, ignore_empty=True)
@@ -928,7 +928,7 @@ class SingleFileGoldProvider(ResultProvider):
 
 
 class DirectorySqlProvider(SqlProvider):
-    def __init__(self, directory: str, suffix: str = ".sql", dialect: str = DBType.SNOWFLAKE):
+    def __init__(self, directory: str, suffix: str = ".sql", dialect: str = "snowflake"):
         self.directory = Path(directory)
         self.suffix = suffix
         self.dialect = dialect
@@ -963,7 +963,7 @@ class AgentResultSqlProvider(SqlProvider):
         result_dir: str,
         namespace: str,
         run_id: Optional[str] = None,
-        dialect: str = DBType.SNOWFLAKE,
+        dialect: str = "snowflake",
     ):
         """
         Initialize agent result SQL provider with hierarchical directory structure.
@@ -1867,7 +1867,7 @@ def detect_benchmark_type(benchmark_path: Path) -> str:
 def _default_sql_dialect(benchmark_type: str) -> str:
     if benchmark_type == "bird_dev":
         return DBType.SQLITE
-    return DBType.SNOWFLAKE
+    return "snowflake"
 
 
 def parse_trajectory_filename(filename: str) -> tuple[Optional[str], Optional[float]]:

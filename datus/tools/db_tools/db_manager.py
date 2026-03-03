@@ -2,10 +2,8 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-import re
 from collections import defaultdict
 from typing import Dict, Optional, Tuple, Union
-from urllib.parse import unquote
 
 from sqlalchemy.engine.url import URL, make_url
 
@@ -29,8 +27,8 @@ def _normalize_dialect_name(db_type: Union[str, DBType, None]) -> str:
     else:
         value = str(db_type or "").strip().lower()
     alias_map = {
-        DBType.POSTGRES.value: DBType.POSTGRESQL.value,
-        DBType.SQLSERVER.value: DBType.MSSQL.value,
+        "postgres": "postgresql",
+        "sqlserver": "mssql",
     }
     return alias_map.get(value, value)
 
@@ -68,138 +66,34 @@ def _resolve_connection_context(db_config: DbConfig, uri: str) -> Tuple[str, str
             message=f"Unable to determine database type from uri `{uri}`",
         )
 
-    query_params: Dict[str, str] = {k: _clean_str(v) for k, v in url.query.items()}
-    catalog = ""
-    database = _clean_str(url.database)
-    schema = ""
+    # Delegate to a registered context resolver if available
+    resolver = connector_registry.get_context_resolver(dialect)
+    if resolver:
+        return resolver(db_config, uri)
 
-    if dialect == DBType.POSTGRESQL.value:
-        database = database or _clean_str(db_config.database)
-        schema = (
-            query_params.get("currentSchema")
-            or query_params.get("schema")
-            or _extract_schema_from_pg_options(query_params.get("options", ""))
-            or _clean_str(db_config.schema)
-            or "public"
-        )
-        catalog = ""
-        dialect = DBType.POSTGRESQL.value
-    elif dialect == DBType.CLICKHOUSE.value:
-        database = database or _clean_str(db_config.database) or "default"
-        schema = _clean_str(db_config.schema)
-        catalog = _clean_str(db_config.catalog)
-    elif dialect == DBType.BIGQUERY.value:
-        catalog = _clean_str(url.host) or _clean_str(db_config.catalog)
-        dataset = database or _clean_str(db_config.database) or _clean_str(db_config.schema)
-        database = dataset
-        schema = query_params.get("schema") or dataset
-    elif dialect == DBType.MSSQL.value:
-        database = database or _clean_str(db_config.database)
-        schema = query_params.get("schema") or _clean_str(db_config.schema) or "dbo"
-        catalog = ""
-        dialect = DBType.MSSQL.value
-    elif dialect == DBType.ORACLE.value:
-        service = query_params.get("service_name") or query_params.get("sid")
-        database = service or database or _clean_str(db_config.database)
-        schema = query_params.get("schema") or _clean_str(db_config.schema) or _clean_str(url.username)
-        catalog = ""
-        dialect = DBType.ORACLE.value
-    else:
-        catalog = _clean_str(db_config.catalog)
-        database = database or _clean_str(db_config.database)
-        schema = _clean_str(db_config.schema)
+    # Generic fallback
+    catalog = _clean_str(db_config.catalog)
+    database = _clean_str(url.database) or _clean_str(db_config.database)
+    schema = _clean_str(db_config.schema)
 
     return dialect or "", catalog, database, schema
-
-
-def _extract_schema_from_pg_options(options: str) -> str:
-    if not options:
-        return ""
-    decoded = unquote(options)
-    match = re.search(r"search_path\s*=\s*([^ ,]+)", decoded, flags=re.IGNORECASE)
-    if not match:
-        return ""
-    value = match.group(1)
-    if "," in value:
-        value = value.split(",", 1)[0]
-    return value.strip()
 
 
 def gen_uri(db_config: DbConfig) -> str:
     if db_config.uri:
         return db_config.uri
 
-    normalized_type = _normalize_dialect_name(db_config.type)
+    dialect = _normalize_dialect_name(db_config.type)
 
-    if normalized_type == DBType.POSTGRESQL.value:
-        return str(
-            URL.create(
-                drivername="postgresql+psycopg",
-                username=_value_or_none(db_config.username),
-                password=_value_or_none(db_config.password),
-                host=_value_or_none(db_config.host),
-                port=_port_or_none(db_config.port),
-                database=_value_or_none(db_config.database),
-            )
-        )
-    if normalized_type == DBType.CLICKHOUSE.value:
-        return str(
-            URL.create(
-                drivername="clickhouse",
-                username=_value_or_none(db_config.username),
-                password=_value_or_none(db_config.password),
-                host=_value_or_none(db_config.host),
-                port=_port_or_none(db_config.port),
-                database=_value_or_none(db_config.database),
-            )
-        )
-    if normalized_type == DBType.BIGQUERY.value:
-        project = _clean_str(db_config.catalog) or _clean_str(db_config.host)
-        dataset = _clean_str(db_config.database) or _clean_str(db_config.schema)
-        if not project or not dataset:
-            raise DatusException(
-                code=ErrorCode.COMMON_CONFIG_ERROR,
-                message="BigQuery configuration requires `catalog` (project) and `database` (dataset)",
-            )
-        return str(URL.create(drivername="bigquery", host=project, database=dataset))
-    if normalized_type == DBType.MSSQL.value:
-        query: Dict[str, str] = {"driver": "ODBC Driver 17 for SQL Server"}
-        if db_config.schema:
-            query["schema"] = _clean_str(db_config.schema)
-        return str(
-            URL.create(
-                drivername="mssql+pyodbc",
-                username=_value_or_none(db_config.username),
-                password=_value_or_none(db_config.password),
-                host=_value_or_none(db_config.host),
-                port=_port_or_none(db_config.port),
-                database=_value_or_none(db_config.database),
-                query=query,
-            )
-        )
+    # Delegate to a registered URI builder if available
+    builder = connector_registry.get_uri_builder(dialect)
+    if builder:
+        return builder(db_config)
 
-    if normalized_type == DBType.ORACLE.value:
-        query = {}
-        service = _clean_str(db_config.database)
-        sid = _clean_str(db_config.schema)
-        if service:
-            query["service_name"] = service
-        elif sid:
-            query["sid"] = sid
-        return str(
-            URL.create(
-                drivername="oracle+cx_oracle",
-                username=_value_or_none(db_config.username),
-                password=_value_or_none(db_config.password),
-                host=_value_or_none(db_config.host),
-                port=_port_or_none(db_config.port),
-                query=query or None,
-            )
-        )
-
+    # Generic fallback
     return str(
         URL.create(
-            drivername=normalized_type,
+            drivername=dialect,
             username=_value_or_none(db_config.username),
             password=_value_or_none(db_config.password),
             host=_value_or_none(db_config.host),

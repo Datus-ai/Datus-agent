@@ -13,7 +13,7 @@ Responsibilities:
 5. Provide adapter metadata for dynamic configuration
 """
 
-from typing import Any, Callable, Dict, Optional, Type
+from typing import Any, Callable, Dict, Optional, Set, Type
 
 from datus.tools.db_tools.base import BaseSqlConnector
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -78,7 +78,22 @@ class ConnectorRegistry:
     _connectors: Dict[str, Type[BaseSqlConnector]] = {}
     _factories: Dict[str, Callable] = {}
     _metadata: Dict[str, AdapterMetadata] = {}
+    _capabilities: Dict[str, Set[str]] = {}
+    _uri_builders: Dict[str, Callable] = {}
+    _context_resolvers: Dict[str, Callable] = {}
     _initialized: bool = False
+
+    # Canonical alias map: variant -> primary name
+    _DIALECT_ALIASES: Dict[str, str] = {
+        "postgres": "postgresql",
+        "sqlserver": "mssql",
+    }
+
+    @classmethod
+    def _resolve_key(cls, db_type: str) -> str:
+        """Normalize db_type to its canonical key (lowercase + alias resolution)."""
+        key = db_type.lower()
+        return cls._DIALECT_ALIASES.get(key, key)
 
     @classmethod
     def register(
@@ -88,6 +103,9 @@ class ConnectorRegistry:
         factory: Optional[Callable] = None,
         config_class: Optional[Type] = None,
         display_name: Optional[str] = None,
+        capabilities: Optional[Set[str]] = None,
+        uri_builder: Optional[Callable] = None,
+        context_resolver: Optional[Callable] = None,
     ):
         """
         Register a database connector.
@@ -98,11 +116,20 @@ class ConnectorRegistry:
             factory: Optional factory method for custom instantiation logic
             config_class: Optional Pydantic config model for field metadata
             display_name: Optional display name for the adapter
+            capabilities: Optional set of supported namespaces (e.g., {"catalog", "database", "schema"})
+            uri_builder: Optional callable to build SQLAlchemy URI from DbConfig
+            context_resolver: Optional callable to resolve connection context from URI
         """
         db_type_lower = db_type.lower()
         cls._connectors[db_type_lower] = connector_class
         if factory:
             cls._factories[db_type_lower] = factory
+        if capabilities is not None:
+            cls._capabilities[db_type_lower] = capabilities
+        if uri_builder:
+            cls._uri_builders[db_type_lower] = uri_builder
+        if context_resolver:
+            cls._context_resolvers[db_type_lower] = context_resolver
 
         # Store metadata
         cls._metadata[db_type_lower] = AdapterMetadata(
@@ -129,27 +156,27 @@ class ConnectorRegistry:
         Raises:
             DatusException: If connector is not registered
         """
-        db_type_lower = db_type.lower()
+        key = cls._resolve_key(db_type)
 
         # Try to dynamically load if not registered
-        if db_type_lower not in cls._connectors:
-            cls._try_load_adapter(db_type_lower)
+        if key not in cls._connectors:
+            cls._try_load_adapter(key)
 
         # Check again after attempting to load
-        if db_type_lower not in cls._connectors:
+        if key not in cls._connectors:
             raise DatusException(
                 ErrorCode.DB_CONNECTION_FAILED,
                 message=f"Connector '{db_type}' not found. "
                 f"Available connectors: {list(cls._connectors.keys())}. "
-                f"For additional databases, install: pip install datus-{db_type_lower}",
+                f"For additional databases, install: pip install datus-{key}",
             )
 
         # Prefer factory method if available
-        if db_type_lower in cls._factories:
-            return cls._factories[db_type_lower](config)
+        if key in cls._factories:
+            return cls._factories[key](config)
 
         # Use default construction
-        connector_class = cls._connectors[db_type_lower]
+        connector_class = cls._connectors[key]
         return connector_class(config)
 
     @classmethod
@@ -223,7 +250,7 @@ class ConnectorRegistry:
         Returns:
             True if registered, False otherwise
         """
-        return db_type.lower() in cls._connectors
+        return cls._resolve_key(db_type) in cls._connectors
 
     @classmethod
     def get_metadata(cls, db_type: str) -> Optional[AdapterMetadata]:
@@ -236,7 +263,7 @@ class ConnectorRegistry:
         Returns:
             AdapterMetadata if registered, None otherwise
         """
-        return cls._metadata.get(db_type.lower())
+        return cls._metadata.get(cls._resolve_key(db_type))
 
     @classmethod
     def list_available_adapters(cls) -> Dict[str, AdapterMetadata]:
@@ -251,6 +278,54 @@ class ConnectorRegistry:
 
         # Return copy of metadata dict
         return cls._metadata.copy()
+
+    @classmethod
+    def register_handlers(
+        cls,
+        db_type: str,
+        capabilities: Optional[Set[str]] = None,
+        uri_builder: Optional[Callable] = None,
+        context_resolver: Optional[Callable] = None,
+    ):
+        """
+        Register only capabilities and handlers for a dialect without a connector class.
+
+        Used for dialects (e.g., bigquery, mssql, oracle) that don't have
+        a separate adapter package but still need capability declarations
+        and URI handling registered in the core.
+        """
+        key = cls._resolve_key(db_type)
+        if capabilities is not None:
+            cls._capabilities[key] = capabilities
+        if uri_builder:
+            cls._uri_builders[key] = uri_builder
+        if context_resolver:
+            cls._context_resolvers[key] = context_resolver
+
+    @classmethod
+    def support_catalog(cls, db_type: str) -> bool:
+        """Check if a dialect supports catalog namespace."""
+        return "catalog" in cls._capabilities.get(cls._resolve_key(db_type), set())
+
+    @classmethod
+    def support_database(cls, db_type: str) -> bool:
+        """Check if a dialect supports database namespace."""
+        return "database" in cls._capabilities.get(cls._resolve_key(db_type), set())
+
+    @classmethod
+    def support_schema(cls, db_type: str) -> bool:
+        """Check if a dialect supports schema namespace."""
+        return "schema" in cls._capabilities.get(cls._resolve_key(db_type), set())
+
+    @classmethod
+    def get_uri_builder(cls, db_type: str) -> Optional[Callable]:
+        """Get the URI builder for a dialect, or None for generic handling."""
+        return cls._uri_builders.get(cls._resolve_key(db_type))
+
+    @classmethod
+    def get_context_resolver(cls, db_type: str) -> Optional[Callable]:
+        """Get the context resolver for a dialect, or None for generic handling."""
+        return cls._context_resolvers.get(cls._resolve_key(db_type))
 
 
 # Global instance

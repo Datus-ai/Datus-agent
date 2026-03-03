@@ -113,4 +113,4 @@ def test_get_db_name_type(agent_config: AgentConfig):
     agent_config.current_namespace = "starrocks"
     db_name, db_type = agent_config.current_db_name_type(db_name="ssb")
     assert db_name == "ssb"
-    assert db_type == DBType.STARROCKS
+    assert db_type == "starrocks"

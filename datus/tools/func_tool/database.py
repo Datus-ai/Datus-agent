@@ -16,9 +16,10 @@ from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.db_tools import BaseSqlConnector
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
+from datus.tools.db_tools.registry import connector_registry
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.compress_utils import DataCompressor
-from datus.utils.constants import SUPPORT_DATABASE_DIALECTS, SUPPORT_SCHEMA_DIALECTS, DBType
+from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
 
@@ -226,11 +227,11 @@ class DBFuncTool:
     def _determine_field_order(self) -> Sequence[str]:
         dialect = getattr(self._primary_connector, "dialect", "") or ""
         fields: List[str] = []
-        if DBType.support_catalog(dialect):
+        if connector_registry.support_catalog(dialect):
             fields.append("catalog")
-        if DBType.support_database(dialect) or dialect == DBType.SQLITE:
+        if connector_registry.support_database(dialect) or dialect == DBType.SQLITE:
             fields.append("database")
-        if DBType.support_schema(dialect):
+        if connector_registry.support_schema(dialect):
             fields.append("schema")
         fields.append("table")
         return fields
@@ -534,10 +535,10 @@ class DBFuncTool:
             ]
         )
 
-        if self.connector.dialect in SUPPORT_DATABASE_DIALECTS:
+        if connector_registry.support_database(self.connector.dialect):
             bound_tools.append(trans_to_function_tool(self.list_databases))
 
-        if self.connector.dialect in SUPPORT_SCHEMA_DIALECTS:
+        if connector_registry.support_schema(self.connector.dialect):
             bound_tools.append(trans_to_function_tool(self.list_schemas))
 
         for bound_method in methods_to_convert:
@@ -906,9 +907,7 @@ class DBFuncTool:
         try:
             logger.info(f"read_query sql: {sql}")
             connector = self._get_connector(database)
-            result = connector.execute_query(
-                sql, result_format="arrow" if connector.dialect == DBType.SNOWFLAKE else "list"
-            )
+            result = connector.execute_query(sql, result_format="arrow" if connector.dialect == "snowflake" else "list")
             if result.success:
                 data = result.sql_return
                 return FuncToolResult(result=self.compressor.compress(data))

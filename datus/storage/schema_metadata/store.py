@@ -374,7 +374,7 @@ class SchemaWithValueRAG:
                 )
             elif len(parts) == 3:
                 # Format: database_name.schema_name.table_name
-                if dialect == DBType.STARROCKS:
+                if dialect == "starrocks":
                     cat, db, sch = parts[0], parts[1], ""
                 else:
                     cat, db, sch = catalog_name, parts[0], parts[1]
@@ -390,7 +390,7 @@ class SchemaWithValueRAG:
                 )
             elif len(parts) == 2:
                 # Format: database_name.table_name(Maybe need fix for other dialects)
-                if dialect in (DBType.SQLITE, DBType.MYSQL, DBType.STARROCKS):
+                if dialect in (DBType.SQLITE, "mysql", "starrocks"):
                     cat, db, sch = catalog_name, parts[0], ""
                 else:
                     cat, db, sch = catalog_name, database_name, parts[0]

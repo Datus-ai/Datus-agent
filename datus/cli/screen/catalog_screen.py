@@ -26,6 +26,7 @@ from datus.cli.screen.context_screen import ContextScreen
 from datus.storage.catalog_manager import CatalogUpdater
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.db_tools.base import BaseSqlConnector
+from datus.tools.db_tools.registry import connector_registry
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_pretty_str
@@ -407,20 +408,20 @@ class CatalogScreen(ContextScreen):
                 db_node = tree.root.add(self.database_name, data={"type": "database", "name": self.database_name})
                 db_node.add_leaf("📁 Loading tables...", data={"type": "loading"})
 
-            elif self.db_type == DBType.MYSQL:
+            elif self.db_type == "mysql":
                 # MySQL: show databases with lazy loading for tables
                 self._load_databases_lazy(tree)
             elif self.db_type == DBType.DUCKDB:
                 self._add_db_name(tree, self.database_name)
-            elif self.db_type in [DBType.POSTGRES, DBType.POSTGRESQL]:
+            elif self.db_type in ["postgres", "postgresql"]:
                 # DuckDB/PostgreSQL: show databases with lazy loading for schemas
                 self._load_databases_lazy(tree)
 
-            elif self.db_type == DBType.SNOWFLAKE:
+            elif self.db_type == "snowflake":
                 # Snowflake: show databases with lazy loading for schemas
                 self._load_databases_lazy(tree)
 
-            elif self.db_type == DBType.STARROCKS:
+            elif self.db_type == "starrocks":
                 # StarRocks: show catalogs with lazy loading for databases
                 self._load_catalogs_lazy(tree)
 
@@ -1017,7 +1018,7 @@ class CatalogScreen(ContextScreen):
 
         # Add loading indicator
         if node_type == "database":
-            if DBType.support_schema(self.db_type):
+            if connector_registry.support_schema(self.db_type):
                 node.add_leaf("⏳ Loading schemas...", data={"type": "loading"})
             else:
                 node.add_leaf("⏳ Loading tables...", data={"type": "loading"})
@@ -1051,7 +1052,7 @@ class CatalogScreen(ContextScreen):
 
     def _add_db_name(self, tree: TextualTree, db_name: str):
         db_node = tree.root.add(f"📁 {db_name}", data={"type": "database", "name": db_name})
-        support_schema = DBType.support_schema(self.db_type)
+        support_schema = connector_registry.support_schema(self.db_type)
         db_node.add_leaf(
             f"⏳ Loading {'schemas' if support_schema else 'tables'}...",
             data={"type": "loading"},
@@ -1104,12 +1105,12 @@ class CatalogScreen(ContextScreen):
 
         try:
             if node_type == "database":
-                if DBType.support_schema(self.db_type):
+                if connector_registry.support_schema(self.db_type):
                     self._load_schemas_for_database(node)
                 else:
                     self._load_tables_for_schema(node)
             elif node_type == "catalog":
-                if DBType.support_database(self.db_type):
+                if connector_registry.support_database(self.db_type):
                     self._load_databases_for_catalog(node)
                 else:
                     self._load_schemas_for_database(node)
@@ -1179,10 +1180,10 @@ class CatalogScreen(ContextScreen):
 
     def _load_tables_for_schema(self, schema_node: TreeNode) -> None:
         """Load tables for a schema node."""
-        if not DBType.support_schema(self.db_type):
+        if not connector_registry.support_schema(self.db_type):
             schema_name = ""
             db_name = schema_node.data.get("name")
-            if not DBType.support_catalog(self.db_type):
+            if not connector_registry.support_catalog(self.db_type):
                 catalog_name = ""
             else:
                 catalog_name = "" if not schema_node.parent else schema_node.parent.data.get("name")
@@ -1192,16 +1193,16 @@ class CatalogScreen(ContextScreen):
             parent = schema_node.parent
             if not parent:
                 return
-            if DBType.support_database(self.db_type):
+            if connector_registry.support_database(self.db_type):
                 db_name = parent.data.get("name")
-                if DBType.support_catalog(self.db_type):
+                if connector_registry.support_catalog(self.db_type):
                     parent = parent.parent
                     catalog_name = "" if not parent or not parent.data else parent.data.get("name")
                 else:
                     catalog_name = ""
             else:
                 db_name = ""
-                catalog_name = "" if not DBType.support_catalog(self.db_type) else parent.data.get("name")
+                catalog_name = "" if not connector_registry.support_catalog(self.db_type) else parent.data.get("name")
 
         try:
             tables = self.db_connector.get_tables(

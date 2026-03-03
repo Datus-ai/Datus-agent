@@ -19,6 +19,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.storage.metric.store import MetricRAG
 from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
+from datus.tools.db_tools.registry import connector_registry
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 from datus.utils.path_manager import get_path_manager
@@ -797,7 +798,7 @@ class GenerationHooks(AgentHooks):
             schema_name = schema or getattr(current_db_config, "schema", "")
 
             # For StarRocks, use default_catalog if it's empty
-            if agent_config.db_type == DBType.STARROCKS and not catalog_name:
+            if agent_config.db_type == "starrocks" and not catalog_name:
                 catalog_name = "default_catalog"
 
             # 1. Parse table context from data_source (always, for metric association)
@@ -816,11 +817,11 @@ class GenerationHooks(AgentHooks):
                         # Replicate DBFuncTool._determine_field_order logic for parsing
                         dialect = agent_config.db_type
                         possible_fields = []
-                        if DBType.support_catalog(dialect):
+                        if connector_registry.support_catalog(dialect):
                             possible_fields.append("catalog")
-                        if DBType.support_database(dialect) or dialect == DBType.SQLITE:
+                        if connector_registry.support_database(dialect) or dialect == DBType.SQLITE:
                             possible_fields.append("database")
-                        if DBType.support_schema(dialect):
+                        if connector_registry.support_schema(dialect):
                             possible_fields.append("schema")
 
                         # Assign parts from right to left (excluding the table name itself)
@@ -837,7 +838,7 @@ class GenerationHooks(AgentHooks):
                             idx -= 1
 
                 # Clear schema_name if dialect doesn't support it (e.g. StarRocks, MySQL)
-                if not DBType.support_schema(agent_config.db_type):
+                if not connector_registry.support_schema(agent_config.db_type):
                     schema_name = ""
 
                 # Build fully qualified name (excluding empty parts)

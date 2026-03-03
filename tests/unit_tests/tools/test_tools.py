@@ -164,7 +164,7 @@ class TestLineageTools:
         """Test get table and values functionality"""
         # Use test data from YAML
         input_data = {
-            "database_type": DBType.SNOWFLAKE,
+            "database_type": "snowflake",
             "database_name": "GLOBAL_WEATHER__CLIMATE_DATA_FOR_BI",
             "table_names": ["GLOBAL_WEATHER__CLIMATE_DATA_FOR_BI.STANDARD_TILE.HISTORY_DAY"],
         }

@@ -7,7 +7,6 @@ from typing import Dict, List
 from pydantic import BaseModel
 
 from datus.schemas.node_models import TableSchema, TableValue
-from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
 from .prompt_manager import prompt_manager
@@ -106,12 +105,12 @@ def get_reasoning_prompt(
 
     # Add Snowflake specific notes
     database_notes = ""
-    if database_type.lower() == DBType.SNOWFLAKE.value.lower():
+    if database_type.lower() == "snowflake":
         database_notes = (
             "\nEnclose all column names in double quotes to comply with Snowflake syntax requirements and avoid errors."
             "When referencing table names in Snowflake SQL, you must include both the database_name and schema_name."
         )
-    elif database_type.lower() == DBType.STARROCKS.value.lower():
+    elif database_type.lower() == "starrocks":
         database_notes = ""
 
     user_content = prompt_manager.render_template(

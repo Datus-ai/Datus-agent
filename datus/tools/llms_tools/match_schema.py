@@ -14,7 +14,7 @@ from datus.schemas.node_models import TableSchema
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput, SchemaLinkingResult
 from datus.storage.schema_metadata import SchemaStorage
 from datus.tools.base import BaseTool
-from datus.utils.constants import DBType
+from datus.tools.db_tools.registry import connector_registry
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import llm_result2json
 from datus.utils.loggings import get_logger
@@ -121,7 +121,7 @@ class MatchSchemaTool(BaseTool):
         all_table_dict: Dict[str, Dict[str, Any]],
     ) -> Dict[str, Any]:
         # Extract schema names from PyArrow Table using batch processing
-        if DBType.support_schema(input_data.database_type):
+        if connector_registry.support_schema(input_data.database_type):
             all_schemas = set(table_metadata["schema_name"].unique().to_pylist())
 
             logger.debug(

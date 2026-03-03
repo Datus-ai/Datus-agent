@@ -55,7 +55,7 @@ def init_local_schema(
                 table_type=table_type,
                 build_mode=build_mode,
             )
-        elif db_configs.type == DBType.MYSQL:
+        elif db_configs.type == "mysql":
             init_mysql_schema(
                 table_lineage_store,
                 agent_config,
@@ -65,7 +65,7 @@ def init_local_schema(
                 table_type=table_type,
                 build_mode=build_mode,
             )
-        elif db_configs.type == DBType.STARROCKS:
+        elif db_configs.type == "starrocks":
             init_starrocks_schema(
                 table_lineage_store,
                 agent_config,
@@ -371,13 +371,13 @@ def init_other_three_level_schema(
     if not database_name and hasattr(sql_connector, "database_name"):
         database_name = getattr(sql_connector, "database_name", "")
 
-    if db_type == DBType.STARROCKS:
+    if db_type == "starrocks":
         if hasattr(sql_connector, "default_catalog"):
             catalog_name = catalog_name or sql_connector.default_catalog()
         elif hasattr(sql_connector, "catalog_name"):
             catalog_name = catalog_name or getattr(sql_connector, "catalog_name", "")
         schema_name = ""
-    elif db_type == DBType.SNOWFLAKE:
+    elif db_type == "snowflake":
         catalog_name = ""
         if not schema_name and hasattr(sql_connector, "schema_name"):
             schema_name = getattr(sql_connector, "schema_name", "")
@@ -433,7 +433,7 @@ def init_other_three_level_schema(
                 table["catalog_name"] = catalog_name
             if not table.get("database_name"):
                 table["database_name"] = database_name
-            if db_type == DBType.STARROCKS:
+            if db_type == "starrocks":
                 table["schema_name"] = ""
             elif not table.get("schema_name"):
                 table["schema_name"] = schema_name
@@ -457,7 +457,7 @@ def init_other_three_level_schema(
                 view["catalog_name"] = catalog_name
             if not view.get("database_name"):
                 view["database_name"] = database_name
-            if db_type == DBType.STARROCKS:
+            if db_type == "starrocks":
                 view["schema_name"] = ""
             elif not view.get("schema_name"):
                 view["schema_name"] = schema_name
@@ -479,7 +479,7 @@ def init_other_three_level_schema(
                 mv["catalog_name"] = catalog_name
             if not mv.get("database_name"):
                 mv["database_name"] = database_name
-            if db_type == DBType.STARROCKS:
+            if db_type == "starrocks":
                 mv["schema_name"] = ""
             elif not mv.get("schema_name"):
                 mv["schema_name"] = schema_name

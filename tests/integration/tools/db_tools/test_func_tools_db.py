@@ -280,7 +280,7 @@ class TestDBFuncToolSnowflake:
 
     def test_snowflake_connector_dialect(self, snowflake_tool):
         """Test that Snowflake connector has correct dialect."""
-        assert snowflake_tool.connector.dialect == DBType.SNOWFLAKE
+        assert snowflake_tool.connector.dialect == "snowflake"
 
     def test_snowflake_available_tools_includes_database_and_schema(self, snowflake_tool):
         """Test that Snowflake tools include list_databases and list_schemas."""

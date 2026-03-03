@@ -14,6 +14,7 @@ from rich.box import SIMPLE_HEAD
 from rich.panel import Panel
 from rich.table import Table
 
+from datus.tools.db_tools.registry import connector_registry
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
@@ -190,7 +191,7 @@ class MetadataCommands:
     def cmd_schemas(self, args: str):
         """List all schemas in the current database."""
         dialect = self.cli.db_connector.dialect
-        if not DBType.support_schema(dialect):
+        if not connector_registry.support_schema(dialect):
             self.cli.console.print(f"[bold red]The {dialect} database does not support schema[/]")
             return
         result = self.cli.db_connector.get_schemas(
@@ -223,7 +224,7 @@ class MetadataCommands:
     def cmd_switch_schema(self, args: str):
         """Switch current schema."""
         dialect = self.cli.db_connector.dialect
-        if not DBType.support_schema(dialect):
+        if not connector_registry.support_schema(dialect):
             self.cli.console.print(f"[bold red]The {dialect} database does not support schema[/]")
             return
         schema_name = args.strip()

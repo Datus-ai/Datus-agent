@@ -76,7 +76,7 @@ class TestSqlTask:
         task = SqlTask(
             id="12345",
             task="test task",
-            database_type=DBType.SNOWFLAKE,
+            database_type="snowflake",
             database_name="test_db",
             output_dir="output",
         )
@@ -126,7 +126,7 @@ class TestSqlTask:
         )
         task = SqlTask.from_str(data)
         assert task.id == "sf001"
-        assert task.database_type == DBType.SNOWFLAKE
+        assert task.database_type == "snowflake"
         assert task.database_name == "GLOBAL_WEATHER__CLIMATE_DATA_FOR_BI"
         assert task.output_dir == "output"
 
