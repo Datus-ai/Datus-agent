@@ -83,6 +83,20 @@ def _register_builtin_handlers():
         context_resolver=resolve_oracle_context,
     )
 
+    # Fallback capabilities for dialects with external adapter packages.
+    # When the adapter is installed, its register() call will overwrite these.
+    # When not installed (e.g., CI), these ensure support_*() queries still work.
+    connector_registry.register_handlers("snowflake", capabilities={"catalog", "database", "schema"})
+    connector_registry.register_handlers("postgresql", capabilities={"database", "schema"})
+    connector_registry.register_handlers("mysql", capabilities={"database"})
+    connector_registry.register_handlers("starrocks", capabilities={"catalog", "database"})
+    connector_registry.register_handlers("clickzetta", capabilities={"database", "schema"})
+    connector_registry.register_handlers("hive", capabilities=set())
+    connector_registry.register_handlers("clickhouse", capabilities={"database"})
+    connector_registry.register_handlers("trino", capabilities={"catalog", "schema"})
+    connector_registry.register_handlers("spark", capabilities={"database"})
+    connector_registry.register_handlers("redshift", capabilities={"database", "schema"})
+
 
 # Initialize built-in connectors, handlers, and discover plugins
 _register_builtin_connectors()
