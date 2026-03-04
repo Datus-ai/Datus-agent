@@ -3,6 +3,7 @@ from datus.utils.json_utils import llm_result2json
 from datus.utils.sql_utils import (
     _first_statement,
     extract_table_names,
+    metadata_identifier,
     parse_context_switch,
     parse_metadata_from_ddl,
     parse_sql_type,
@@ -897,3 +898,35 @@ def test_first_statement():
 
     sql = "DO $$ BEGIN RAISE NOTICE 'foo;'; END $$; SELECT 1;"
     assert _first_statement(sql) == "DO $$ BEGIN RAISE NOTICE 'foo;'; END $$"
+
+
+class TestMetadataIdentifier:
+    def test_mysql(self):
+        result = metadata_identifier(database_name="mydb", table_name="t1", dialect="mysql")
+        assert result == "mydb.t1"
+
+    def test_mysql_with_catalog(self):
+        result = metadata_identifier(catalog_name="cat", database_name="mydb", table_name="t1", dialect="mysql")
+        assert result == "cat.mydb.t1"
+
+    def test_starrocks(self):
+        result = metadata_identifier(database_name="db", table_name="t", dialect="starrocks")
+        assert result == "db.t"
+
+    def test_oracle(self):
+        result = metadata_identifier(database_name="db", schema_name="hr", table_name="emp", dialect="oracle")
+        assert result == "db.hr.emp"
+
+    def test_postgresql(self):
+        result = metadata_identifier(database_name="db", schema_name="public", table_name="t", dialect="postgresql")
+        assert result == "db.public.t"
+
+    def test_snowflake(self):
+        result = metadata_identifier(
+            catalog_name="wh", database_name="db", schema_name="s", table_name="t", dialect="snowflake"
+        )
+        assert result == "wh.db.s.t"
+
+    def test_snowflake_no_catalog(self):
+        result = metadata_identifier(database_name="db", schema_name="s", table_name="t", dialect="snowflake")
+        assert result == "db.s.t"

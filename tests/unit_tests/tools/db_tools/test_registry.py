@@ -2,7 +2,11 @@
 
 from unittest.mock import MagicMock
 
+import pytest
+
+from datus.tools.db_tools.base import BaseSqlConnector
 from datus.tools.db_tools.registry import ConnectorRegistry, connector_registry
+from datus.utils.exceptions import DatusException
 
 
 class TestResolveKey:
@@ -125,3 +129,48 @@ class TestGetMetadata:
 
     def test_unknown_metadata_none(self):
         assert connector_registry.get_metadata("unknown_xyz_123") is None
+
+
+class TestRegisterWithHandlers:
+    """Test register() with uri_builder and context_resolver (lines 130, 132)."""
+
+    def test_register_stores_uri_builder_and_context_resolver(self):
+        mock_cls = MagicMock(spec=BaseSqlConnector)
+        mock_cls.__name__ = "TestConn"
+        mock_builder = MagicMock(return_value="test://uri")
+        mock_resolver = MagicMock(return_value=("d", "", "db", "s"))
+        ConnectorRegistry.register(
+            "test_reg_full",
+            mock_cls,
+            uri_builder=mock_builder,
+            context_resolver=mock_resolver,
+        )
+        assert ConnectorRegistry.get_uri_builder("test_reg_full") is mock_builder
+        assert ConnectorRegistry.get_context_resolver("test_reg_full") is mock_resolver
+        # Cleanup
+        ConnectorRegistry._connectors.pop("test_reg_full", None)
+        ConnectorRegistry._metadata.pop("test_reg_full", None)
+        ConnectorRegistry._uri_builders.pop("test_reg_full", None)
+        ConnectorRegistry._context_resolvers.pop("test_reg_full", None)
+
+
+class TestCreateConnector:
+    """Test create_connector() paths (lines 163, 176)."""
+
+    def test_create_with_factory(self):
+        mock_cls = MagicMock(spec=BaseSqlConnector)
+        mock_cls.__name__ = "FactoryConn"
+        mock_instance = MagicMock(spec=BaseSqlConnector)
+        mock_factory = MagicMock(return_value=mock_instance)
+        ConnectorRegistry.register("test_factory_db", mock_cls, factory=mock_factory)
+        result = ConnectorRegistry.create_connector("test_factory_db", {"host": "h"})
+        assert result is mock_instance
+        mock_factory.assert_called_once_with({"host": "h"})
+        # Cleanup
+        ConnectorRegistry._connectors.pop("test_factory_db", None)
+        ConnectorRegistry._factories.pop("test_factory_db", None)
+        ConnectorRegistry._metadata.pop("test_factory_db", None)
+
+    def test_create_triggers_dynamic_load(self):
+        with pytest.raises(DatusException):
+            ConnectorRegistry.create_connector("nonexistent_db_xyz_999", {})
