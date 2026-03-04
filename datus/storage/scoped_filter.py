@@ -127,12 +127,12 @@ def _subject_condition_for_parts(parts: List[str], subject_tree) -> Optional[Nod
     Pass 2 (fallback): if pass 1 yields nothing and len(parts) > 1,
             treat parts[:-1] as the path and parts[-1] as the item name.
     """
-    # Pass 1 – full path
+    # Pass 1 - full path
     matched_ids = subject_tree.get_matched_children_id(parts, True)
     if matched_ids:
         return _build_id_condition(matched_ids)
 
-    # Pass 2 – last component might be a name
+    # Pass 2 - last component might be a name
     if len(parts) > 1:
         path, name = parts[:-1], parts[-1]
         matched_ids = subject_tree.get_matched_children_id(path, False)

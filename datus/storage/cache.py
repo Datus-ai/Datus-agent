@@ -19,6 +19,7 @@ from datus.storage.schema_metadata import SchemaStorage
 from datus.storage.schema_metadata.store import SchemaValueStorage
 from datus.storage.scoped_filter import ScopedFilterBuilder
 from datus.storage.semantic_model.store import SemanticModelStorage
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -58,7 +59,8 @@ class StorageCacheHolder[T: BaseEmbeddingStore]:
             if scope_value:
                 storage_path = self._agent_config.rag_storage_path()
                 scope_hash = hashlib.md5(str(scope_value).encode()).hexdigest()[:8]
-                cache_key = (storage_path, sub_agent_name, self.check_scope_attr, scope_hash)
+                factory_name = self.storage_factory.__name__
+                cache_key = (factory_name, storage_path, sub_agent_name, self.check_scope_attr, scope_hash)
                 cached = _scoped_storage_cache.get(cache_key)
                 if cached is not None:
                     return cached  # type: ignore[return-value]
@@ -75,10 +77,13 @@ class StorageCacheHolder[T: BaseEmbeddingStore]:
                         sub_agent_name,
                         self.check_scope_attr,
                     )
-                    raise ValueError(
-                        f"Cannot build scope filter for sub-agent '{sub_agent_name}' "
-                        f"(scope attr='{self.check_scope_attr}'). "
-                        "Refusing to return unscoped storage."
+                    raise DatusException(
+                        code=ErrorCode.COMMON_VALIDATION_FAILED,
+                        message=(
+                            f"Cannot build scope filter for sub-agent '{sub_agent_name}' "
+                            f"(scope attr='{self.check_scope_attr}'). "
+                            "Refusing to return unscoped storage."
+                        ),
                     )
                 storage._scope_filter = scope_filter
                 _scoped_storage_cache[cache_key] = storage

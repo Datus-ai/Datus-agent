@@ -286,7 +286,7 @@ class SubAgentBootstrapper:
         invalid_tokens = []
         missing = []
         for metric in metrics:
-            parts = split_reference_path(metric)
+            parts = split_reference_path(metric.replace("/", "."))
             if not parts:
                 invalid_tokens.append(metric)
                 continue
@@ -326,7 +326,7 @@ class SubAgentBootstrapper:
         missing = []
         sql_rows = []
         for sql in historical_sql:
-            parts = split_reference_path(sql)
+            parts = split_reference_path(sql.replace("/", "."))
             if not parts:
                 invalid_tokens.append(sql)
                 continue
@@ -368,7 +368,7 @@ class SubAgentBootstrapper:
         missing = []
         knowledge_rows = []
         for token in ext_knowledge_tokens:
-            parts = split_reference_path(token)
+            parts = split_reference_path(token.replace("/", "."))
             if not parts:
                 invalid_tokens.append(token)
                 continue

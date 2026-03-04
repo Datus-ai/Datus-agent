@@ -3,6 +3,7 @@ from pathlib import Path
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.cache import StorageCache, clear_cache
 from datus.storage.lancedb_conditions import build_where
+from datus.utils.exceptions import DatusException
 
 
 class DummyAgentConfig(AgentConfig):
@@ -103,7 +104,7 @@ def test_ext_knowledge_scoped_fails_close_without_subject_tree(tmp_path):
     config.add_sub_agent_with_scoped_context("team_a", {"ext_knowledge": "Finance/*"})
     cache = StorageCache(agent_config=config)
 
-    with pytest.raises(ValueError, match="Cannot build scope filter"):
+    with pytest.raises(DatusException, match="Cannot build scope filter"):
         cache.ext_knowledge_storage("team_a")
 
 
