@@ -9,15 +9,19 @@ Talks to the Town Backend's skills API to search, download, and publish skills.
 """
 
 import logging
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
+import yaml
 
 from datus.tools.skill_tools.skill_bundle import (
     create_bundle,
     extract_bundle_from_bytes,
 )
+
+FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
 
 logger = logging.getLogger(__name__)
 
@@ -142,10 +146,6 @@ class SkillMarketplaceClient:
 
         # Parse frontmatter
         content = skill_md_path.read_text(encoding="utf-8")
-        import yaml
-
-        from datus.tools.skill_tools.skill_registry import FRONTMATTER_PATTERN
-
         match = FRONTMATTER_PATTERN.match(content)
         if not match:
             raise ValueError("No valid YAML frontmatter in SKILL.md")

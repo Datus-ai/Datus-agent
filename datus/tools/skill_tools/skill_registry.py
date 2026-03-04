@@ -306,6 +306,10 @@ class SkillRegistry:
         if not metadata:
             return None
 
+        if name and metadata.name != name:
+            logger.error(f"Marketplace skill name mismatch: requested '{name}' but SKILL.md declares '{metadata.name}'")
+            return None
+
         metadata.source = "marketplace"
         with self._lock:
             self._skills[metadata.name] = metadata

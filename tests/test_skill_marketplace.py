@@ -159,7 +159,7 @@ class TestSkillManagerMarketplace:
         manager = SkillManager(config=config, registry=MagicMock())
         manager.registry.get_skill_count.return_value = 0
 
-        ok, msg = manager.publish_to_marketplace("/nonexistent/path")
+        ok, _msg = manager.publish_to_marketplace("/nonexistent/path")
         assert ok is False
 
 

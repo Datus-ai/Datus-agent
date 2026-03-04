@@ -258,10 +258,12 @@ class SkillManager:
     # --- Marketplace operations ---
 
     def _get_marketplace_client(self):
-        """Lazy-initialize marketplace client."""
-        from datus.tools.skill_tools.marketplace_client import SkillMarketplaceClient
+        """Lazy-initialize and cache marketplace client."""
+        if not hasattr(self, "_marketplace_client") or self._marketplace_client is None:
+            from datus.tools.skill_tools.marketplace_client import SkillMarketplaceClient
 
-        return SkillMarketplaceClient(base_url=self.config.marketplace_url)
+            self._marketplace_client = SkillMarketplaceClient(base_url=self.config.marketplace_url)
+        return self._marketplace_client
 
     def search_marketplace(self, query: str = "", tag: str = "") -> List[dict]:
         """Search skills in the remote marketplace.
@@ -356,7 +358,7 @@ class SkillManager:
             for skill_info in promoted:
                 name = skill_info.get("name")
                 if name and not self.registry.skill_exists(name):
-                    ok, msg = self.install_from_marketplace(name)
+                    ok, _msg = self.install_from_marketplace(name)
                     if ok:
                         synced.append(name)
                         logger.info(f"Auto-synced promoted skill: {name}")

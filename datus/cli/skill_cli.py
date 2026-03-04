@@ -199,6 +199,8 @@ def _cmd_update(manager: SkillManager):
         ok, msg = manager.install_from_marketplace(s.name)
         if ok:
             console.print("  [green]Updated[/]")
+        else:
+            console.print(f"  [red]Failed to update {s.name}: {msg}[/]")
 
 
 def _cmd_remove(manager: SkillManager, name: str):

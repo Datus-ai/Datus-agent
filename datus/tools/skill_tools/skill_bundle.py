@@ -149,5 +149,9 @@ def _safe_members(tar: tarfile.TarFile) -> List[tarfile.TarInfo]:
         if ".." in member.name.split("/"):
             logger.warning(f"Skipping path traversal tar member: {member.name}")
             continue
+        # Reject symlinks and hardlinks (CVE-2007-4559)
+        if member.issym() or member.islnk():
+            logger.warning(f"Skipping symlink/hardlink tar member: {member.name}")
+            continue
         safe.append(member)
     return safe

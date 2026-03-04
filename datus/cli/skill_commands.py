@@ -144,12 +144,13 @@ class SkillCommands:
         for skill in skills:
             source = skill.source or "local"
             tags = ", ".join(skill.tags) if skill.tags else ""
+            desc = skill.description or ""
             table.add_row(
                 skill.name,
                 skill.version or "-",
                 source,
                 tags,
-                (skill.description[:37] + "...") if len(skill.description) > 40 else skill.description,
+                (desc[:37] + "...") if len(desc) > 40 else desc,
             )
 
         self.console.print(table)
@@ -265,9 +266,11 @@ class SkillCommands:
             versions = remote.get("versions", [])
             if versions:
                 self.console.print(f"  Versions: {', '.join(v.get('version', '?') for v in versions)}")
-        except Exception:
+        except Exception as e:
             if not local_skill:
                 self.console.print(f"[yellow]Skill '{name}' not found locally or in marketplace.[/]")
+            else:
+                self.console.print(f"[dim]Marketplace lookup failed: {e}[/]")
 
     def cmd_skill_update(self):
         """Update all marketplace-installed skills to latest."""
