@@ -6,8 +6,6 @@
 import io
 import tarfile
 
-import pytest
-
 from datus.tools.skill_tools.skill_bundle import _safe_members
 
 

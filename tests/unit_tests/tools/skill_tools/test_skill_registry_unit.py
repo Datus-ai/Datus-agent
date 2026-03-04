@@ -3,12 +3,9 @@
 
 """Unit tests for skill_registry.py covering diff lines."""
 
-from pathlib import Path
-from unittest.mock import MagicMock
-
 import pytest
 
-from datus.tools.skill_tools.skill_config import SkillConfig, SkillMetadata
+from datus.tools.skill_tools.skill_config import SkillConfig
 from datus.tools.skill_tools.skill_registry import SkillRegistry
 
 SKILL_MD = """---

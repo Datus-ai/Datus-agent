@@ -4,9 +4,7 @@
 """Unit tests for skill_manager.py covering diff lines."""
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from datus.tools.skill_tools.skill_config import SkillConfig, SkillMetadata
 from datus.tools.skill_tools.skill_manager import SkillManager
@@ -22,7 +20,7 @@ class TestSkillManagerInit:
     def test_default_init(self):
         registry = MagicMock()
         registry.get_skill_count.return_value = 0
-        manager = SkillManager(registry=registry)
+        SkillManager(registry=registry)
         registry.scan_directories.assert_called_once()
 
     def test_custom_config(self):

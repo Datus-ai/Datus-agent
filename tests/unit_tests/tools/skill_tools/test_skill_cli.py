@@ -5,8 +5,6 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 
 class TestRunSkillCommand:
     """Tests for run_skill_command dispatcher."""
