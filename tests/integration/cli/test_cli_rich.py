@@ -273,14 +273,13 @@ def test_chat_command_with_ext_knowledge(mock_args):
     tools_used = exec_stats.get("tools_used", [])
     assert len(tools_used) > 0, "Should have used tools during execution."
 
-    # Verify ext_knowledge specific tools were available and used:
+    # Verify ext_knowledge specific tools were called:
     # 1. list_subject_tree - explores the knowledge hierarchy
     assert "list_subject_tree" in tools_used, "Should call list_subject_tree to explore knowledge hierarchy."
-    # 2. get_knowledge or search_knowledge - should be available (LLM may or may not call them)
-    available_tool_names = [t.name for t in cli.agent.tools]
+    # 2. get_knowledge or search_knowledge - retrieves specific knowledge entries
     assert (
-        "get_knowledge" in available_tool_names or "search_knowledge" in available_tool_names
-    ), "Knowledge retrieval tools should be available in agent tools."
+        "get_knowledge" in tools_used or "search_knowledge" in tools_used
+    ), "Should call get_knowledge to retrieve ext_knowledge entries."
 
     # Check that SQL was generated
     assert response_output.get("sql"), "Should have generated SQL in the response."
