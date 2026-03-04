@@ -9,6 +9,16 @@ from datus.tools.db_tools.registry import ConnectorRegistry, connector_registry
 from datus.utils.exceptions import DatusException
 
 
+@pytest.fixture(autouse=True)
+def _restore_registry():
+    """Snapshot and restore ConnectorRegistry class-level dicts around each test."""
+    attrs = ("_connectors", "_factories", "_metadata", "_capabilities", "_uri_builders", "_context_resolvers")
+    snapshots = {a: getattr(ConnectorRegistry, a).copy() for a in attrs}
+    yield
+    for a, snap in snapshots.items():
+        setattr(ConnectorRegistry, a, snap)
+
+
 class TestResolveKey:
     def test_lowercase(self):
         assert ConnectorRegistry._resolve_key("MySQL") == "mysql"
@@ -61,22 +71,16 @@ class TestRegisterHandlers:
         connector_registry.register_handlers("test_dialect_abc", capabilities={"database"})
         assert connector_registry.support_database("test_dialect_abc") is True
         assert connector_registry.support_catalog("test_dialect_abc") is False
-        # Cleanup
-        ConnectorRegistry._capabilities.pop("test_dialect_abc", None)
 
     def test_register_with_uri_builder(self):
         mock_builder = MagicMock(return_value="test://uri")
         connector_registry.register_handlers("test_dialect_def", uri_builder=mock_builder)
         assert connector_registry.get_uri_builder("test_dialect_def") is mock_builder
-        # Cleanup
-        ConnectorRegistry._uri_builders.pop("test_dialect_def", None)
 
     def test_register_with_context_resolver(self):
         mock_resolver = MagicMock(return_value=("d", "c", "db", "s"))
         connector_registry.register_handlers("test_dialect_ghi", context_resolver=mock_resolver)
         assert connector_registry.get_context_resolver("test_dialect_ghi") is mock_resolver
-        # Cleanup
-        ConnectorRegistry._context_resolvers.pop("test_dialect_ghi", None)
 
 
 class TestGetUriBuilder:
@@ -147,11 +151,6 @@ class TestRegisterWithHandlers:
         )
         assert ConnectorRegistry.get_uri_builder("test_reg_full") is mock_builder
         assert ConnectorRegistry.get_context_resolver("test_reg_full") is mock_resolver
-        # Cleanup
-        ConnectorRegistry._connectors.pop("test_reg_full", None)
-        ConnectorRegistry._metadata.pop("test_reg_full", None)
-        ConnectorRegistry._uri_builders.pop("test_reg_full", None)
-        ConnectorRegistry._context_resolvers.pop("test_reg_full", None)
 
 
 class TestCreateConnector:
@@ -166,10 +165,6 @@ class TestCreateConnector:
         result = ConnectorRegistry.create_connector("test_factory_db", {"host": "h"})
         assert result is mock_instance
         mock_factory.assert_called_once_with({"host": "h"})
-        # Cleanup
-        ConnectorRegistry._connectors.pop("test_factory_db", None)
-        ConnectorRegistry._factories.pop("test_factory_db", None)
-        ConnectorRegistry._metadata.pop("test_factory_db", None)
 
     def test_create_triggers_dynamic_load(self):
         with pytest.raises(DatusException):

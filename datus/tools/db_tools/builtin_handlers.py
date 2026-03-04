@@ -8,11 +8,16 @@ Built-in URI builders and context resolvers for dialects without external adapte
 Covers: BigQuery, MSSQL, Oracle
 """
 
-from typing import Dict, Optional, Tuple, Union
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union
 
 from sqlalchemy.engine.url import URL, make_url
 
 from datus.utils.exceptions import DatusException, ErrorCode
+
+if TYPE_CHECKING:
+    from datus.configuration.agent_config import DbConfig
 
 # ---------------------------------------------------------------------------
 # Tiny helpers (duplicated from db_manager to avoid circular imports)
@@ -50,7 +55,7 @@ def _port_or_none(port_value: Optional[Union[str, int]]) -> Optional[int]:
 # ---------------------------------------------------------------------------
 
 
-def build_bigquery_uri(db_config) -> str:
+def build_bigquery_uri(db_config: DbConfig) -> str:
     project = _clean_str(db_config.catalog) or _clean_str(db_config.host)
     dataset = _clean_str(db_config.database) or _clean_str(db_config.schema)
     if not project or not dataset:
@@ -61,7 +66,7 @@ def build_bigquery_uri(db_config) -> str:
     return str(URL.create(drivername="bigquery", host=project, database=dataset))
 
 
-def resolve_bigquery_context(db_config, uri: str) -> Tuple[str, str, str, str]:
+def resolve_bigquery_context(db_config: DbConfig, uri: str) -> Tuple[str, str, str, str]:
     url = make_url(uri)
     query_params: Dict[str, str] = {k: _clean_str(v) for k, v in url.query.items()}
     database = _clean_str(url.database)
@@ -77,7 +82,7 @@ def resolve_bigquery_context(db_config, uri: str) -> Tuple[str, str, str, str]:
 # ---------------------------------------------------------------------------
 
 
-def build_mssql_uri(db_config) -> str:
+def build_mssql_uri(db_config: DbConfig) -> str:
     query: Dict[str, str] = {"driver": "ODBC Driver 17 for SQL Server"}
     if db_config.schema:
         query["schema"] = _clean_str(db_config.schema)
@@ -94,7 +99,7 @@ def build_mssql_uri(db_config) -> str:
     )
 
 
-def resolve_mssql_context(db_config, uri: str) -> Tuple[str, str, str, str]:
+def resolve_mssql_context(db_config: DbConfig, uri: str) -> Tuple[str, str, str, str]:
     url = make_url(uri)
     query_params: Dict[str, str] = {k: _clean_str(v) for k, v in url.query.items()}
     database = _clean_str(url.database) or _clean_str(db_config.database)
@@ -107,7 +112,7 @@ def resolve_mssql_context(db_config, uri: str) -> Tuple[str, str, str, str]:
 # ---------------------------------------------------------------------------
 
 
-def build_oracle_uri(db_config) -> str:
+def build_oracle_uri(db_config: DbConfig) -> str:
     query: Dict[str, str] = {}
     service = _clean_str(db_config.database)
     sid = _clean_str(db_config.schema)
@@ -127,7 +132,7 @@ def build_oracle_uri(db_config) -> str:
     )
 
 
-def resolve_oracle_context(db_config, uri: str) -> Tuple[str, str, str, str]:
+def resolve_oracle_context(db_config: DbConfig, uri: str) -> Tuple[str, str, str, str]:
     url = make_url(uri)
     query_params: Dict[str, str] = {k: _clean_str(v) for k, v in url.query.items()}
     database = _clean_str(url.database)

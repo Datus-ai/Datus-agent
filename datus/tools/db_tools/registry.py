@@ -120,20 +120,20 @@ class ConnectorRegistry:
             uri_builder: Optional callable to build SQLAlchemy URI from DbConfig
             context_resolver: Optional callable to resolve connection context from URI
         """
-        db_type_lower = db_type.lower()
-        cls._connectors[db_type_lower] = connector_class
+        key = cls._resolve_key(db_type)
+        cls._connectors[key] = connector_class
         if factory:
-            cls._factories[db_type_lower] = factory
+            cls._factories[key] = factory
         if capabilities is not None:
-            cls._capabilities[db_type_lower] = capabilities
+            cls._capabilities[key] = capabilities
         if uri_builder:
-            cls._uri_builders[db_type_lower] = uri_builder
+            cls._uri_builders[key] = uri_builder
         if context_resolver:
-            cls._context_resolvers[db_type_lower] = context_resolver
+            cls._context_resolvers[key] = context_resolver
 
         # Store metadata
-        cls._metadata[db_type_lower] = AdapterMetadata(
-            db_type=db_type_lower,
+        cls._metadata[key] = AdapterMetadata(
+            db_type=key,
             connector_class=connector_class,
             config_class=config_class,
             display_name=display_name,

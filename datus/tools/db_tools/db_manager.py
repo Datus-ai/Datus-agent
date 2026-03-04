@@ -69,7 +69,15 @@ def _resolve_connection_context(db_config: DbConfig, uri: str) -> Tuple[str, str
     # Delegate to a registered context resolver if available
     resolver = connector_registry.get_context_resolver(dialect)
     if resolver:
-        return resolver(db_config, uri)
+        try:
+            return resolver(db_config, uri)
+        except DatusException:
+            raise
+        except Exception as exc:
+            raise DatusException(
+                code=ErrorCode.COMMON_CONFIG_ERROR,
+                message=f"Context resolver failed for dialect '{dialect}': {exc}",
+            ) from exc
 
     # Generic fallback
     catalog = _clean_str(db_config.catalog)
@@ -88,7 +96,15 @@ def gen_uri(db_config: DbConfig) -> str:
     # Delegate to a registered URI builder if available
     builder = connector_registry.get_uri_builder(dialect)
     if builder:
-        return builder(db_config)
+        try:
+            return builder(db_config)
+        except DatusException:
+            raise
+        except Exception as exc:
+            raise DatusException(
+                code=ErrorCode.COMMON_CONFIG_ERROR,
+                message=f"URI builder failed for dialect '{dialect}': {exc}",
+            ) from exc
 
     # Generic fallback
     return str(
