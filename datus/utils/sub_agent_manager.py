@@ -80,12 +80,8 @@ class SubAgentManager:
 
         # Handle renaming: remove old prompt template and config key
         if previous_name and previous_name != config.system_prompt and previous_config:
-            prompt_version = config.prompt_version or "1.0"
-            pre_version = previous_config.get("prompt_version", str(prompt_version))
-            if float(pre_version) > float(prompt_version):
-                prompt_version = pre_version
-
-            self._remove_prompt_template(previous_name, prompt_version)
+            old_prompt_version = str(previous_config.get("prompt_version") or config.prompt_version or "1.0")
+            self._remove_prompt_template(previous_name, old_prompt_version)
             agents.pop(previous_name, None)
 
         agents[config.system_prompt] = config.as_payload(self._namespace)

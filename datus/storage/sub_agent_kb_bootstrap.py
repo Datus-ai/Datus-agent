@@ -110,7 +110,10 @@ class SubAgentBootstrapper:
                 results=[],
             )
         if strategy not in ("overwrite", "plan"):
-            raise ValueError(f"Unsupported strategy '{strategy}'. Expected 'overwrite' or 'plan'.")
+            raise DatusException(
+                code=ErrorCode.COMMON_VALIDATION_FAILED,
+                message=f"Unsupported strategy '{strategy}'. Expected 'overwrite' or 'plan'.",
+            )
 
         if not selected_components:
             selected_components = SUPPORTED_COMPONENTS
@@ -127,7 +130,17 @@ class SubAgentBootstrapper:
             "ext_knowledge": ("ext_knowledge", self._handle_ext_knowledge),
         }
         for component in normalized_components:
-            attr_name, handler = handlers[component]
+            handler_entry = handlers.get(component)
+            if handler_entry is None:
+                results.append(
+                    ComponentResult(
+                        component=component,
+                        status="error",
+                        message=f"Unsupported component '{component}'. Supported: {', '.join(SUPPORTED_COMPONENTS)}",
+                    )
+                )
+                continue
+            attr_name, handler = handler_entry
             try:
                 result = handler(getattr(context_lists, attr_name))
             except Exception as exc:  # pragma: no cover - safety net

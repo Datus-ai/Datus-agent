@@ -170,13 +170,15 @@ def test_metadata_condition_applies_defaults_and_wildcards(bootstrapper):
 
 
 def test_run_with_unsupported_strategy(bootstrapper):
-    """run() raises ValueError for unsupported strategy."""
+    """run() raises DatusException for unsupported strategy."""
+    from datus.utils.exceptions import DatusException
+
     # Give the sub_agent a non-empty scoped_context so it doesn't return early
     bootstrapper.sub_agent = SubAgentConfig(
         system_prompt="tester",
         scoped_context=ScopedContext(tables="users"),
     )
-    with pytest.raises(ValueError, match="Unsupported strategy"):
+    with pytest.raises(DatusException, match="Unsupported strategy"):
         bootstrapper.run(strategy="invalid_strategy")
 
 

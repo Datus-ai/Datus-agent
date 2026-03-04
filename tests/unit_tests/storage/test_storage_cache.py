@@ -73,13 +73,13 @@ def test_sub_agent_instances_are_cached_per_name(tmp_path):
 def test_invalidate_resets_scope(tmp_path):
     config = DummyAgentConfig(tmp_path)
     # Add scoped context for team_a to use global storage with scope filter
-    # metrics field must be a non-empty string to enable scoped storage
-    config.add_sub_agent_with_scoped_context("team_a", {"metrics": "*"})
+    # tables field must be a non-empty string to enable scoped storage
+    config.add_sub_agent_with_scoped_context("team_a", {"tables": "orders"})
     cache = StorageCache(agent_config=config)
 
-    original = cache.metric_storage("team_a")
+    original = cache.schema_storage("team_a")
     clear_cache()
-    refreshed = cache.metric_storage("team_a")
+    refreshed = cache.schema_storage("team_a")
 
     assert original is not refreshed
     # Sub-agents now use the global storage path with a WHERE scope filter
@@ -95,13 +95,16 @@ def test_ext_knowledge_global_instances_are_cached(tmp_path):
     assert first.db_path == str(tmp_path / "global")
 
 
-def test_ext_knowledge_scoped_uses_global_path(tmp_path):
+def test_ext_knowledge_scoped_fails_close_without_subject_tree(tmp_path):
+    """Scoped ext_knowledge raises when subject_tree is unavailable (fail-close)."""
+    import pytest
+
     config = DummyAgentConfig(tmp_path)
     config.add_sub_agent_with_scoped_context("team_a", {"ext_knowledge": "Finance/*"})
     cache = StorageCache(agent_config=config)
 
-    storage = cache.ext_knowledge_storage("team_a")
-    assert storage.db_path == str(tmp_path / "global")
+    with pytest.raises(ValueError, match="Cannot build scope filter"):
+        cache.ext_knowledge_storage("team_a")
 
 
 def test_scoped_instances_are_cached_across_calls(tmp_path):

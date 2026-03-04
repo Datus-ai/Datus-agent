@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from functools import lru_cache
 from typing import Callable, Optional
 
@@ -32,7 +33,7 @@ def _cached_storage[
 
 # Module-level cache for scoped storage instances so that clear_cache() can
 # invalidate them regardless of which StorageCache instance created them.
-_scoped_storage_cache: dict[tuple[str, str, str], BaseEmbeddingStore] = {}
+_scoped_storage_cache: dict[tuple[str, ...], BaseEmbeddingStore] = {}
 
 
 class StorageCacheHolder[T: BaseEmbeddingStore]:
@@ -56,7 +57,8 @@ class StorageCacheHolder[T: BaseEmbeddingStore]:
                 scope_value = getattr(sub_agent_config.scoped_context, self.check_scope_attr, None)
             if scope_value:
                 storage_path = self._agent_config.rag_storage_path()
-                cache_key = (storage_path, sub_agent_name, self.check_scope_attr)
+                scope_hash = hashlib.md5(str(scope_value).encode()).hexdigest()[:8]
+                cache_key = (storage_path, sub_agent_name, self.check_scope_attr, scope_hash)
                 cached = _scoped_storage_cache.get(cache_key)
                 if cached is not None:
                     return cached  # type: ignore[return-value]
@@ -66,8 +68,19 @@ class StorageCacheHolder[T: BaseEmbeddingStore]:
                     get_embedding_model(self.embedding_model_conf_name),
                 )
                 scope_filter = self._build_scope_filter(sub_agent_config, storage)
-                if scope_filter is not None:
-                    storage._scope_filter = scope_filter
+                if scope_filter is None:
+                    logger.warning(
+                        "Failed to build scope filter for sub-agent '%s' (attr='%s'); "
+                        "denying access to prevent unscoped reads.",
+                        sub_agent_name,
+                        self.check_scope_attr,
+                    )
+                    raise ValueError(
+                        f"Cannot build scope filter for sub-agent '{sub_agent_name}' "
+                        f"(scope attr='{self.check_scope_attr}'). "
+                        "Refusing to return unscoped storage."
+                    )
+                storage._scope_filter = scope_filter
                 _scoped_storage_cache[cache_key] = storage
                 logger.debug(
                     f"Sub agent {sub_agent_name} has scoped context, "

@@ -82,7 +82,10 @@ class ScopedFilterBuilder:
 
         token_conditions: List[Node] = []
         for token in tokens:
-            parts = split_reference_path(token)
+            # Normalize '/' separators to '.' before parsing so paths like
+            # "Finance/Revenue" are handled consistently with "Finance.Revenue".
+            normalized_token = token.replace("/", ".")
+            parts = split_reference_path(normalized_token)
             if not parts:
                 continue
 
