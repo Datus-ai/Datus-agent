@@ -27,21 +27,27 @@ def temp_skill_dir(tmp_path):
     scripts_dir.mkdir()
 
     # Create test scripts
-    (scripts_dir / "analyze.py").write_text("""
+    (scripts_dir / "analyze.py").write_text(
+        """
 import sys
 print("Analysis complete")
 print(f"Args: {sys.argv[1:]}")
-""")
+"""
+    )
 
-    (scripts_dir / "process.py").write_text("""
+    (scripts_dir / "process.py").write_text(
+        """
 import json
 print(json.dumps({"status": "processed"}))
-""")
+"""
+    )
 
-    (skill_dir / "run.sh").write_text("""
+    (skill_dir / "run.sh").write_text(
+        """
 #!/bin/bash
 echo "Shell script executed"
-""")
+"""
+    )
 
     return skill_dir
 
@@ -295,10 +301,12 @@ class TestSkillBashToolWorkspaceIsolation:
             workspace_root=str(temp_skill_dir),
         )
         # Create a script that prints cwd
-        (temp_skill_dir / "scripts" / "pwd_test.py").write_text("""
+        (temp_skill_dir / "scripts" / "pwd_test.py").write_text(
+            """
 import os
 print(os.getcwd())
-""")
+"""
+        )
 
         result = tool.execute_command("python scripts/pwd_test.py")
         assert result.success == 1
@@ -316,11 +324,13 @@ class TestSkillBashToolEnvironment:
         )
 
         # Create a script that prints env vars
-        (temp_skill_dir / "scripts" / "env_test.py").write_text("""
+        (temp_skill_dir / "scripts" / "env_test.py").write_text(
+            """
 import os
 print(f"SKILL_NAME={os.environ.get('SKILL_NAME', 'NOT_SET')}")
 print(f"SKILL_DIR={os.environ.get('SKILL_DIR', 'NOT_SET')}")
-""")
+"""
+        )
 
         result = tool.execute_command("python scripts/env_test.py")
         assert result.success == 1
@@ -395,11 +405,13 @@ class TestSkillBashToolTimeout:
         )
 
         # Create a script that sleeps
-        (temp_skill_dir / "scripts" / "sleep_test.py").write_text("""
+        (temp_skill_dir / "scripts" / "sleep_test.py").write_text(
+            """
 import time
 time.sleep(10)
 print("Done")
-""")
+"""
+        )
 
         result = tool.execute_command("python scripts/sleep_test.py")
 

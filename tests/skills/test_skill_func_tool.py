@@ -30,7 +30,8 @@ def temp_skills_dir(tmp_path):
     # Create a simple skill
     simple_dir = skills_dir / "simple-skill"
     simple_dir.mkdir()
-    (simple_dir / "SKILL.md").write_text("""---
+    (simple_dir / "SKILL.md").write_text(
+        """---
 name: simple-skill
 description: A simple test skill
 tags:
@@ -45,12 +46,14 @@ This is a simple skill for testing.
 
 1. Do this
 2. Do that
-""")
+"""
+    )
 
     # Create a skill with scripts
     script_dir = skills_dir / "script-skill"
     script_dir.mkdir()
-    (script_dir / "SKILL.md").write_text("""---
+    (script_dir / "SKILL.md").write_text(
+        """---
 name: script-skill
 description: A skill with scripts
 allowed_commands:
@@ -60,7 +63,8 @@ allowed_commands:
 # Script Skill
 
 Run scripts with: python scripts/analyze.py
-""")
+"""
+    )
     scripts = script_dir / "scripts"
     scripts.mkdir()
     (scripts / "analyze.py").write_text("print('analyzing')")
@@ -68,13 +72,15 @@ Run scripts with: python scripts/analyze.py
     # Create a denied skill
     denied_dir = skills_dir / "internal-skill"
     denied_dir.mkdir()
-    (denied_dir / "SKILL.md").write_text("""---
+    (denied_dir / "SKILL.md").write_text(
+        """---
 name: internal-skill
 description: An internal skill
 ---
 
 # Internal Skill
-""")
+"""
+    )
 
     return skills_dir
 
@@ -246,14 +252,16 @@ class TestSkillFuncToolEdgeCases:
         # Create another skill with scripts
         another_dir = temp_skills_dir / "another-script-skill"
         another_dir.mkdir()
-        (another_dir / "SKILL.md").write_text("""---
+        (another_dir / "SKILL.md").write_text(
+            """---
 name: another-script-skill
 description: Another script skill
 allowed_commands:
   - "sh:*.sh"
 ---
 # Another
-""")
+"""
+        )
 
         # Refresh manager to pick up new skill
         skill_manager.refresh()

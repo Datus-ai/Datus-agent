@@ -279,7 +279,8 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
                 else:
                     result.append(
                         TextArea(
-                            textwrap.dedent(f"""
+                            textwrap.dedent(
+                                f"""
                 {compressed_data}
 
                 ---
@@ -289,7 +290,8 @@ class CollapsibleActionContentGenerator(BaseActionContentGenerator):
                 ---
 
                 **Columns**: {', '.join(data.get("original_columns", []))}
-                """),
+                """
+                            ),
                             language="markdown",
                             theme="monokai",
                         )

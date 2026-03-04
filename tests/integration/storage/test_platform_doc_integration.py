@@ -66,7 +66,8 @@ def local_docs_dir(temp_dir):
 
     # Create Markdown file
     md_file = docs_dir / "guide.md"
-    md_file.write_text("""# User Guide
+    md_file.write_text(
+        """# User Guide
 
 Welcome to the user guide.
 
@@ -102,11 +103,13 @@ You can create custom pipelines using the API.
 ### Performance Tuning
 
 Optimize performance by adjusting batch sizes.
-""")
+"""
+    )
 
     # Create HTML file
     html_file = docs_dir / "api.html"
-    html_file.write_text("""<!DOCTYPE html>
+    html_file.write_text(
+        """<!DOCTYPE html>
 <html>
 <head>
     <title>API Reference</title>
@@ -133,11 +136,13 @@ Optimize performance by adjusting batch sizes.
     <p>All errors return a JSON object with an error message.</p>
 </body>
 </html>
-""")
+"""
+    )
 
     # Create RST file
     rst_file = docs_dir / "changelog.rst"
-    rst_file.write_text("""=========
+    rst_file.write_text(
+        """=========
 Changelog
 =========
 
@@ -169,14 +174,16 @@ Features
 * Basic SQL generation
 * Schema linking
 * Chat interface
-""")
+"""
+    )
 
     # Create subdirectory with nested docs
     sub_dir = docs_dir / "advanced"
     sub_dir.mkdir()
 
     nested_md = sub_dir / "plugins.md"
-    nested_md.write_text("""# Plugin System
+    nested_md.write_text(
+        """# Plugin System
 
 The plugin system allows you to extend functionality.
 
@@ -195,7 +202,8 @@ class MyPlugin(Plugin):
 ## Registering Plugins
 
 Register plugins in the configuration file.
-""")
+"""
+    )
 
     return docs_dir
 
