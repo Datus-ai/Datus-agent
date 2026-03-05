@@ -54,9 +54,6 @@ class TestNormalizeDialectName:
     def test_postgres_alias(self):
         assert _normalize_dialect_name("postgres") == "postgresql"
 
-    def test_sqlserver_alias(self):
-        assert _normalize_dialect_name("sqlserver") == "mssql"
-
     def test_none(self):
         assert _normalize_dialect_name(None) == ""
 

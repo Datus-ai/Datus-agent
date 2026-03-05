@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Union
 
 from datus.tools.bi_tools.base_adaptor import BIAdaptorBase, ChartInfo, DashboardInfo, DatasetInfo
+from datus.tools.db_tools.registry import connector_registry
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import extract_table_names, metadata_identifier, normalize_sql
@@ -281,12 +282,16 @@ class DashboardAssembler:
         self, dialect: Optional[str], catalog_name: str, database_name: str, schema_name: str
     ) -> bool:
         normalized = (dialect or "").strip().lower()
-        if normalized in ("mysql", "starrocks", DBType.SQLITE):
+        # Built-in connectors with known behavior
+        if normalized == DBType.SQLITE:
             return bool(database_name)
-        if normalized in ("postgres", "postgresql", "oracle", DBType.DUCKDB):
+        if normalized == DBType.DUCKDB:
             return bool(database_name and schema_name)
-        if normalized == "snowflake":
+        # External dialects: use registry capabilities
+        if connector_registry.support_schema(normalized):
             return bool(database_name and schema_name)
+        if connector_registry.support_database(normalized):
+            return bool(database_name)
         return bool(database_name) or bool(schema_name)
 
     def _dedupe_tables(self, tables: Iterable[str]) -> List[str]:

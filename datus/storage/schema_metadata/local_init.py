@@ -9,6 +9,7 @@ from datus.schemas.base import TABLE_TYPE
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.tools.db_tools.base import BaseSqlConnector
 from datus.tools.db_tools.db_manager import DBManager
+from datus.tools.db_tools.registry import connector_registry
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
@@ -55,33 +56,13 @@ def init_local_schema(
                 table_type=table_type,
                 build_mode=build_mode,
             )
-        elif db_configs.type == "mysql":
-            init_mysql_schema(
-                table_lineage_store,
-                agent_config,
-                db_configs,
-                db_manager,
-                database_name=init_database_name,
-                table_type=table_type,
-                build_mode=build_mode,
-            )
-        elif db_configs.type == "starrocks":
-            init_starrocks_schema(
-                table_lineage_store,
-                agent_config,
-                db_configs,
-                db_manager,
-                catalog_name=init_catalog_name,
-                database_name=init_database_name,
-                table_type=table_type,
-                build_mode=build_mode,
-            )
         else:
             init_other_three_level_schema(
                 table_lineage_store,
                 agent_config,
                 db_configs,
                 db_manager,
+                catalog_name=init_catalog_name,
                 database_name=init_database_name,
                 table_type=table_type,
                 build_mode=build_mode,
@@ -231,61 +212,7 @@ def init_duckdb_schema(
         )
 
 
-def init_mysql_schema(
-    table_lineage_store: SchemaWithValueRAG,
-    agent_config: AgentConfig,
-    db_config: DbConfig,
-    db_manager: DBManager,
-    database_name: str = "",
-    table_type: TABLE_TYPE = "table",
-    build_mode: str = "overwrite",
-):
-    database_name = database_name or getattr(db_config, "database", "")
-
-    sql_connector = db_manager.get_conn(agent_config.current_namespace)
-
-    all_schema_tables, all_value_tables = exists_table_value(
-        storage=table_lineage_store,
-        database_name=database_name,
-        catalog_name="",
-        schema_name="",
-        table_type=table_type,
-        build_mode=build_mode,
-    )
-
-    logger.info(
-        f"Exists data from vector store database={database_name}, tables={len(all_schema_tables)}, "
-        f"values={len(all_value_tables)}"
-    )
-    if table_type in ("full", "table"):
-        # Get all tables with DDL
-        tables = sql_connector.get_tables_with_ddl(database_name=database_name)
-        logger.info(f"Found {len(tables)} tables from database {database_name}")
-        store_tables(
-            table_lineage_store,
-            database_name,
-            all_schema_tables,
-            all_value_tables,
-            tables,
-            "table",
-            sql_connector,
-        )
-
-    if table_type in ("full", "view"):
-        views = sql_connector.get_views_with_ddl(database_name=database_name)
-
-        store_tables(
-            table_lineage_store,
-            database_name,
-            all_schema_tables,
-            all_value_tables,
-            views,
-            "view",
-            sql_connector,
-        )
-
-
-def init_starrocks_schema(
+def init_other_three_level_schema(
     table_lineage_store: SchemaWithValueRAG,
     agent_config: AgentConfig,
     db_config: DbConfig,
@@ -295,99 +222,24 @@ def init_starrocks_schema(
     table_type: TABLE_TYPE = "table",
     build_mode: str = "overwrite",
 ):
-    sql_connector = db_manager.get_conn(agent_config.current_namespace)
-    catalog_name = catalog_name or getattr(db_config, "catalog", "") or sql_connector.catalog_name
-    database_name = database_name or getattr(db_config, "database", "") or sql_connector.database_name
-
-    all_schema_tables, all_value_tables = exists_table_value(
-        table_lineage_store,
-        database_name=database_name,
-        catalog_name=catalog_name,
-        schema_name="",
-        table_type=table_type,
-        build_mode=build_mode,
-    )
-
-    logger.info(
-        f"Exists data from vector store {catalog_name}.{database_name}, tables={len(all_schema_tables)}, "
-        f"values={len(all_value_tables)}"
-    )
-    if table_type in ("full", "table"):
-        # Get all tables with DDL
-        tables = sql_connector.get_tables_with_ddl(catalog_name=catalog_name, database_name=database_name)
-        logger.info(f"Found {len(tables)} tables from {database_name}")
-        store_tables(
-            table_lineage_store,
-            database_name,
-            all_schema_tables,
-            all_value_tables,
-            tables,
-            "table",
-            sql_connector,
-        )
-
-    if table_type in ("full", "view"):
-        views = sql_connector.get_views_with_ddl(catalog_name=catalog_name, database_name=database_name)
-        store_tables(
-            table_lineage_store,
-            database_name,
-            all_schema_tables,
-            all_value_tables,
-            views,
-            "view",
-            sql_connector,
-        )
-    if table_type in ("full", "view"):
-        materialized_views = sql_connector.get_materialized_views_with_ddl(
-            catalog_name=catalog_name, database_name=database_name
-        )
-        store_tables(
-            table_lineage_store,
-            database_name,
-            all_schema_tables,
-            all_value_tables,
-            materialized_views,
-            "mv",
-            sql_connector,
-        )
-
-
-def init_other_three_level_schema(
-    table_lineage_store: SchemaWithValueRAG,
-    agent_config: AgentConfig,
-    db_config: DbConfig,
-    db_manager: DBManager,
-    database_name: str = "",
-    table_type: TABLE_TYPE = "table",
-    build_mode: str = "overwrite",
-):
     db_type = db_config.type
     database_name = database_name or getattr(db_config, "database", "")
     schema_name = getattr(db_config, "schema", "")
-    catalog_name = getattr(db_config, "catalog", "")
+    catalog_name = catalog_name or getattr(db_config, "catalog", "")
 
     sql_connector = db_manager.get_conn(agent_config.current_namespace)
 
     if not database_name and hasattr(sql_connector, "database_name"):
         database_name = getattr(sql_connector, "database_name", "")
 
-    if db_type == "starrocks":
-        if hasattr(sql_connector, "default_catalog"):
-            catalog_name = catalog_name or sql_connector.default_catalog()
-        elif hasattr(sql_connector, "catalog_name"):
-            catalog_name = catalog_name or getattr(sql_connector, "catalog_name", "")
+    if hasattr(sql_connector, "default_catalog"):
+        catalog_name = catalog_name or sql_connector.default_catalog()
+    elif hasattr(sql_connector, "catalog_name"):
+        catalog_name = catalog_name or getattr(sql_connector, "catalog_name", "")
+    if not connector_registry.support_schema(db_type):
         schema_name = ""
-    elif db_type == "snowflake":
-        catalog_name = ""
-        if not schema_name and hasattr(sql_connector, "schema_name"):
-            schema_name = getattr(sql_connector, "schema_name", "")
-    else:
-        if hasattr(sql_connector, "default_catalog"):
-            catalog_name = catalog_name or sql_connector.default_catalog()
-        elif hasattr(sql_connector, "catalog_name"):
-            catalog_name = catalog_name or getattr(sql_connector, "catalog_name", "")
-        if not schema_name and hasattr(sql_connector, "schema_name"):
-            schema_name = getattr(sql_connector, "schema_name", "")
+    elif not schema_name and hasattr(sql_connector, "schema_name"):
+        schema_name = getattr(sql_connector, "schema_name", "")
 
     all_schema_tables, all_value_tables = exists_table_value(
         table_lineage_store,
@@ -433,7 +285,7 @@ def init_other_three_level_schema(
                 table["catalog_name"] = catalog_name
             if not table.get("database_name"):
                 table["database_name"] = database_name
-            if db_type == "starrocks":
+            if not connector_registry.support_schema(db_type):
                 table["schema_name"] = ""
             elif not table.get("schema_name"):
                 table["schema_name"] = schema_name
@@ -457,7 +309,7 @@ def init_other_three_level_schema(
                 view["catalog_name"] = catalog_name
             if not view.get("database_name"):
                 view["database_name"] = database_name
-            if db_type == "starrocks":
+            if not connector_registry.support_schema(db_type):
                 view["schema_name"] = ""
             elif not view.get("schema_name"):
                 view["schema_name"] = schema_name
@@ -479,7 +331,7 @@ def init_other_three_level_schema(
                 mv["catalog_name"] = catalog_name
             if not mv.get("database_name"):
                 mv["database_name"] = database_name
-            if db_type == "starrocks":
+            if not connector_registry.support_schema(db_type):
                 mv["schema_name"] = ""
             elif not mv.get("schema_name"):
                 mv["schema_name"] = schema_name

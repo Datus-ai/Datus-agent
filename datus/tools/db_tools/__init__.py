@@ -53,52 +53,6 @@ def _register_builtin_connectors():
         pass
 
 
-def _register_builtin_handlers():
-    """Register URI builders and context resolvers for dialects without adapter packages."""
-    from .builtin_handlers import (
-        build_bigquery_uri,
-        build_mssql_uri,
-        build_oracle_uri,
-        resolve_bigquery_context,
-        resolve_mssql_context,
-        resolve_oracle_context,
-    )
-
-    connector_registry.register_handlers(
-        "bigquery",
-        capabilities={"catalog", "database", "schema"},
-        uri_builder=build_bigquery_uri,
-        context_resolver=resolve_bigquery_context,
-    )
-    connector_registry.register_handlers(
-        "mssql",
-        capabilities={"database", "schema"},
-        uri_builder=build_mssql_uri,
-        context_resolver=resolve_mssql_context,
-    )
-    connector_registry.register_handlers(
-        "oracle",
-        capabilities={"database", "schema"},
-        uri_builder=build_oracle_uri,
-        context_resolver=resolve_oracle_context,
-    )
-
-    # Fallback capabilities for dialects with external adapter packages.
-    # When the adapter is installed, its register() call will overwrite these.
-    # When not installed (e.g., CI), these ensure support_*() queries still work.
-    connector_registry.register_handlers("snowflake", capabilities={"catalog", "database", "schema"})
-    connector_registry.register_handlers("postgresql", capabilities={"database", "schema"})
-    connector_registry.register_handlers("mysql", capabilities={"database"})
-    connector_registry.register_handlers("starrocks", capabilities={"catalog", "database"})
-    connector_registry.register_handlers("clickzetta", capabilities={"database", "schema"})
-    connector_registry.register_handlers("hive", capabilities=set())
-    connector_registry.register_handlers("clickhouse", capabilities={"database"})
-    connector_registry.register_handlers("trino", capabilities={"catalog", "schema"})
-    connector_registry.register_handlers("spark", capabilities={"database"})
-    connector_registry.register_handlers("redshift", capabilities={"database", "schema"})
-
-
-# Initialize built-in connectors, handlers, and discover plugins
+# Initialize built-in connectors and discover adapter plugins
 _register_builtin_connectors()
-_register_builtin_handlers()
 connector_registry.discover_adapters()

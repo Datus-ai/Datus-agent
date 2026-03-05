@@ -403,30 +403,16 @@ class CatalogScreen(ContextScreen):
             tree_helper.update("[dim]Loading database structure...[/dim]")
 
             # Get top-level items based on database type - only load first level
-            if self.db_type == DBType.SQLITE:
-                # SQLite: show database node with lazy loading for tables
-                db_node = tree.root.add(self.database_name, data={"type": "database", "name": self.database_name})
-                db_node.add_leaf("📁 Loading tables...", data={"type": "loading"})
-
-            elif self.db_type == "mysql":
-                # MySQL: show databases with lazy loading for tables
-                self._load_databases_lazy(tree)
-            elif self.db_type == DBType.DUCKDB:
+            if self.db_type in (DBType.SQLITE, DBType.DUCKDB):
+                # Built-in single-database connectors: show the known database directly
                 self._add_db_name(tree, self.database_name)
-            elif self.db_type in ["postgres", "postgresql"]:
-                # DuckDB/PostgreSQL: show databases with lazy loading for schemas
-                self._load_databases_lazy(tree)
-
-            elif self.db_type == "snowflake":
-                # Snowflake: show databases with lazy loading for schemas
-                self._load_databases_lazy(tree)
-
-            elif self.db_type == "starrocks":
-                # StarRocks: show catalogs with lazy loading for databases
+            elif connector_registry.support_catalog(self.db_type) and not connector_registry.support_schema(
+                self.db_type
+            ):
+                # Catalog-first dialects (e.g. StarRocks): catalog → database → tables
                 self._load_catalogs_lazy(tree)
-
             else:
-                # Generic: show databases with lazy loading for tables
+                # Standard dialects: database → [schema →] tables
                 self._load_databases_lazy(tree)
 
             # Clear loading message

@@ -13,6 +13,7 @@ from datus.schemas.node_models import TableSchema, TableValue
 from datus.storage.base import BaseEmbeddingStore, WhereExpr
 from datus.storage.conditions import Node, and_, build_where, eq, or_
 from datus.storage.embedding_models import EmbeddingModel
+from datus.tools.db_tools.registry import connector_registry
 from datus.utils.constants import DBType
 from datus.utils.json_utils import json2csv
 from datus.utils.loggings import get_logger
@@ -373,8 +374,10 @@ class SchemaWithValueRAG:
                     )
                 )
             elif len(parts) == 3:
-                # Format: database_name.schema_name.table_name
-                if dialect == "starrocks":
+                # Format depends on dialect capabilities:
+                # - catalog + no schema (e.g., StarRocks): catalog.database.table
+                # - with schema (e.g., PostgreSQL, Snowflake): database.schema.table
+                if connector_registry.support_catalog(dialect) and not connector_registry.support_schema(dialect):
                     cat, db, sch = parts[0], parts[1], ""
                 else:
                     cat, db, sch = catalog_name, parts[0], parts[1]
@@ -389,8 +392,9 @@ class SchemaWithValueRAG:
                     )
                 )
             elif len(parts) == 2:
-                # Format: database_name.table_name(Maybe need fix for other dialects)
-                if dialect in (DBType.SQLITE, "mysql", "starrocks"):
+                # No schema layer: part[0] is database_name
+                # Has schema layer: part[0] is schema_name
+                if not connector_registry.support_schema(dialect):
                     cat, db, sch = catalog_name, parts[0], ""
                 else:
                     cat, db, sch = catalog_name, database_name, parts[0]

@@ -86,7 +86,6 @@ class ConnectorRegistry:
     # Canonical alias map: variant -> primary name
     _DIALECT_ALIASES: Dict[str, str] = {
         "postgres": "postgresql",
-        "sqlserver": "mssql",
     }
 
     @classmethod
@@ -290,9 +289,8 @@ class ConnectorRegistry:
         """
         Register only capabilities and handlers for a dialect without a connector class.
 
-        Used for dialects (e.g., bigquery, mssql, oracle) that don't have
-        a separate adapter package but still need capability declarations
-        and URI handling registered in the core.
+        Used to declare fallback capabilities for external adapter packages so that
+        support_*() queries work even when the adapter is not installed.
         """
         key = cls._resolve_key(db_type)
         if capabilities is not None:

@@ -71,8 +71,6 @@ def get_sql_prompt(
             "\nEnclose all column names in double quotes to comply with Snowflake syntax requirements and avoid erros. "
             "When referencing table names in Snowflake SQL, you must include both the database_name and schema_name."
         )
-    elif database_type.lower() == "starrocks":
-        database_notes = ""
 
     processed_metrics = ""
     if metrics:

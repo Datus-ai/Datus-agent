@@ -4,6 +4,8 @@
 
 """Tests for datus.storage.scoped_filter — LanceDB WHERE filter builder."""
 
+import pytest
+
 from datus.storage.conditions import build_where
 from datus.storage.scoped_filter import (
     ScopedFilterBuilder,
@@ -14,6 +16,16 @@ from datus.storage.scoped_filter import (
     _table_condition_for_token,
     _value_condition,
 )
+from datus.tools.db_tools import connector_registry
+
+
+@pytest.fixture(autouse=True)
+def _register_test_capabilities():
+    """Register capabilities for dialects used in tests."""
+    connector_registry.register_handlers("postgresql", capabilities={"database", "schema"})
+    connector_registry.register_handlers("snowflake", capabilities={"catalog", "database", "schema"})
+    yield
+
 
 # ---------------------------------------------------------------------------
 # TestReplaceWildcard

@@ -110,8 +110,6 @@ def get_reasoning_prompt(
             "\nEnclose all column names in double quotes to comply with Snowflake syntax requirements and avoid errors."
             "When referencing table names in Snowflake SQL, you must include both the database_name and schema_name."
         )
-    elif database_type.lower() == "starrocks":
-        database_notes = ""
 
     user_content = prompt_manager.render_template(
         "reasoning_user",

@@ -1,3 +1,6 @@
+import pytest
+
+from datus.tools.db_tools import connector_registry
 from datus.utils.constants import DBType, SQLType
 from datus.utils.json_utils import llm_result2json
 from datus.utils.sql_utils import (
@@ -9,6 +12,18 @@ from datus.utils.sql_utils import (
     parse_sql_type,
     parse_table_name_parts,
 )
+
+
+@pytest.fixture(autouse=True)
+def _register_test_capabilities():
+    """Register capabilities for dialects used in tests."""
+    connector_registry.register_handlers("mysql", capabilities={"database"})
+    connector_registry.register_handlers("starrocks", capabilities={"catalog", "database"})
+    connector_registry.register_handlers("oracle", capabilities={"database", "schema"})
+    connector_registry.register_handlers("postgresql", capabilities={"database", "schema"})
+    connector_registry.register_handlers("snowflake", capabilities={"catalog", "database", "schema"})
+    yield
+
 
 SQL = """create or replace TABLE GT.GT2.VARIANTS (
     "reference_name" VARCHAR(16777216),
@@ -556,9 +571,9 @@ def test_parse_full_tables():
     assert table_meta["catalog_name"] == ""
 
     table_meta = parse_table_name_parts("`test`.abc", dialect="mysql")
-    assert table_meta["schema_name"] == "test"
+    assert table_meta["database_name"] == "test"
     assert table_meta["table_name"] == "abc"
-    assert table_meta["database_name"] == ""
+    assert table_meta["schema_name"] == ""
     assert table_meta["catalog_name"] == ""
 
     table_meta = parse_table_name_parts('''TEST_DB."test_schema"."abc"''', dialect="snowflake")
@@ -906,8 +921,9 @@ class TestMetadataIdentifier:
         assert result == "mydb.t1"
 
     def test_mysql_with_catalog(self):
+        # MySQL has no catalog support; catalog_name is ignored
         result = metadata_identifier(catalog_name="cat", database_name="mydb", table_name="t1", dialect="mysql")
-        assert result == "cat.mydb.t1"
+        assert result == "mydb.t1"
 
     def test_starrocks(self):
         result = metadata_identifier(database_name="db", table_name="t", dialect="starrocks")

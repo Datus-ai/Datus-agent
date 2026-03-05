@@ -26,41 +26,36 @@ class TestResolveKey:
     def test_postgres_alias(self):
         assert ConnectorRegistry._resolve_key("postgres") == "postgresql"
 
-    def test_sqlserver_alias(self):
-        assert ConnectorRegistry._resolve_key("sqlserver") == "mssql"
-
     def test_passthrough(self):
         assert ConnectorRegistry._resolve_key("snowflake") == "snowflake"
 
 
 class TestSupportCapabilities:
-    """Test that fallback and adapter-registered capabilities work."""
+    """Test register_handlers + support_*() query mechanism."""
 
-    def test_support_catalog_snowflake(self):
-        assert connector_registry.support_catalog("snowflake") is True
+    def test_catalog_database_schema(self):
+        connector_registry.register_handlers("test_full", capabilities={"catalog", "database", "schema"})
+        assert connector_registry.support_catalog("test_full") is True
+        assert connector_registry.support_database("test_full") is True
+        assert connector_registry.support_schema("test_full") is True
 
-    def test_support_database_mysql(self):
-        assert connector_registry.support_database("mysql") is True
+    def test_database_only(self):
+        connector_registry.register_handlers("test_db_only", capabilities={"database"})
+        assert connector_registry.support_database("test_db_only") is True
+        assert connector_registry.support_catalog("test_db_only") is False
+        assert connector_registry.support_schema("test_db_only") is False
 
-    def test_support_schema_postgresql(self):
-        assert connector_registry.support_schema("postgresql") is True
+    def test_empty_capabilities(self):
+        connector_registry.register_handlers("test_empty_caps", capabilities=set())
+        assert connector_registry.support_catalog("test_empty_caps") is False
+        assert connector_registry.support_database("test_empty_caps") is False
+        assert connector_registry.support_schema("test_empty_caps") is False
 
-    def test_support_schema_via_alias(self):
+    def test_alias_resolution(self):
+        connector_registry.register_handlers("postgresql", capabilities={"database", "schema"})
         assert connector_registry.support_schema("postgres") is True
 
-    def test_no_catalog_for_mysql(self):
-        assert connector_registry.support_catalog("mysql") is False
-
-    def test_no_schema_for_clickhouse(self):
-        assert connector_registry.support_schema("clickhouse") is False
-
-    def test_hive_no_schema(self):
-        assert connector_registry.support_schema("hive") is False
-
-    def test_hive_no_database(self):
-        assert connector_registry.support_database("hive") is False
-
-    def test_unknown_dialect(self):
+    def test_unknown_dialect_returns_false(self):
         assert connector_registry.support_catalog("unknown_db_xyz") is False
         assert connector_registry.support_database("unknown_db_xyz") is False
         assert connector_registry.support_schema("unknown_db_xyz") is False
@@ -84,32 +79,11 @@ class TestRegisterHandlers:
 
 
 class TestGetUriBuilder:
-    def test_bigquery_has_builder(self):
-        assert connector_registry.get_uri_builder("bigquery") is not None
-
-    def test_mssql_has_builder(self):
-        assert connector_registry.get_uri_builder("mssql") is not None
-
-    def test_oracle_has_builder(self):
-        assert connector_registry.get_uri_builder("oracle") is not None
-
     def test_mysql_no_builder(self):
         assert connector_registry.get_uri_builder("mysql") is None
 
-    def test_sqlserver_alias_resolves(self):
-        assert connector_registry.get_uri_builder("sqlserver") is not None
-
 
 class TestGetContextResolver:
-    def test_bigquery_has_resolver(self):
-        assert connector_registry.get_context_resolver("bigquery") is not None
-
-    def test_mssql_has_resolver(self):
-        assert connector_registry.get_context_resolver("mssql") is not None
-
-    def test_oracle_has_resolver(self):
-        assert connector_registry.get_context_resolver("oracle") is not None
-
     def test_mysql_no_resolver(self):
         assert connector_registry.get_context_resolver("mysql") is None
 

@@ -28,7 +28,6 @@ def _normalize_dialect_name(db_type: Union[str, DBType, None]) -> str:
         value = str(db_type or "").strip().lower()
     alias_map = {
         "postgres": "postgresql",
-        "sqlserver": "mssql",
     }
     return alias_map.get(value, value)
 
