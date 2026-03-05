@@ -79,7 +79,7 @@ jobs:
             tests/data/datus_db_bird_school
             tests/data/datus_db_bird_sqlite
             tests/data/datus_db_ssb_sqlite
-          key: ${{ runner.os }}-kb-${{ hashFiles('build_scripts/build_test_data.sh', 'sample_data/**', 'datus/storage/**/*.py') }}
+          key: ${{ runner.os }}-kb-${{ hashFiles('build_scripts/build_test_data.sh', 'tests/conf/agent.yml', 'sample_data/**', 'datus/storage/schema_metadata/**', 'datus/storage/reference_sql/**', 'datus/storage/ext_knowledge/**', 'datus/storage/metric/**', 'datus/storage/semantic_model/**', 'datus/storage/subject_tree/**', 'datus/storage/base.py', 'datus/storage/embedding_models.py', 'datus/storage/fastembed_embeddings.py', 'datus/agent/node/sql_summary_agentic_node.py', 'datus/agent/node/gen_ext_knowledge_agentic_node.py', 'datus/agent/node/gen_metrics_agentic_node.py', 'datus/agent/node/gen_semantic_model_agentic_node.py', 'datus/prompts/prompt_templates/*.j2') }}
           restore-keys: |
             ${{ runner.os }}-kb-
 
