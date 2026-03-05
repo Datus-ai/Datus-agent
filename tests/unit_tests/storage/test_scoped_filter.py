@@ -14,7 +14,6 @@ from datus.storage.scoped_filter import (
     _table_condition_for_token,
     _value_condition,
 )
-from datus.utils.constants import DBType
 
 # ---------------------------------------------------------------------------
 # TestReplaceWildcard
@@ -164,14 +163,14 @@ class TestTableConditionForToken:
 
     def test_schema_dot_table_with_postgres(self):
         """schema.table for PostgreSQL maps to schema_name and table_name."""
-        node = _table_condition_for_token("public.users", DBType.POSTGRESQL)
+        node = _table_condition_for_token("public.users", "postgresql")
         clause = build_where(node)
         assert "schema_name = 'public'" in clause
         assert "table_name = 'users'" in clause
 
     def test_database_dot_table_with_sqlite(self):
         """database.table for SQLite maps to database_name and table_name."""
-        node = _table_condition_for_token("main.users", DBType.SQLITE)
+        node = _table_condition_for_token("main.users", "sqlite")
         clause = build_where(node)
         assert "database_name = 'main'" in clause
         assert "table_name = 'users'" in clause
@@ -193,7 +192,7 @@ class TestTableConditionForToken:
 
     def test_three_part_with_snowflake(self):
         """Three-part name with Snowflake maps catalog.database.schema.table."""
-        node = _table_condition_for_token("mydb.public.users", DBType.SNOWFLAKE)
+        node = _table_condition_for_token("mydb.public.users", "snowflake")
         clause = build_where(node)
         assert "table_name = 'users'" in clause
         assert "schema_name = 'public'" in clause
@@ -233,7 +232,7 @@ class TestBuildTableFilter:
 
     def test_with_dialect(self):
         """Dialect is passed through to table condition builder."""
-        node = ScopedFilterBuilder.build_table_filter("public.users", DBType.POSTGRESQL)
+        node = ScopedFilterBuilder.build_table_filter("public.users", "postgresql")
         clause = build_where(node)
         assert "schema_name = 'public'" in clause
         assert "table_name = 'users'" in clause
