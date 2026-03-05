@@ -132,6 +132,7 @@ class TestSubjectUpdaterInit:
         assert updater.reference_sql_storage is cache.reference_sql_storage()
         assert updater.ext_knowledge_storage is cache.ext_knowledge_storage()
 
+
 class TestSubjectUpdaterExecution:
     """Tests for SubjectUpdater update and delete operations on main storage."""
 
