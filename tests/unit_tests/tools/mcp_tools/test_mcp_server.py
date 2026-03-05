@@ -27,6 +27,10 @@ from datus.mcp_server import (
     create_dynamic_app,
     create_server,
 )
+from tests.conftest import TEST_CONF_DIR
+
+# Use the test configuration that contains bird_sqlite and other test namespaces
+TEST_CONF_PATH = str(TEST_CONF_DIR / "agent.yml")
 
 
 class TestMCPServerCreation:
@@ -35,7 +39,7 @@ class TestMCPServerCreation:
     @pytest.fixture
     def server(self):
         """Create a test server instance."""
-        server = create_server(namespace="bird_sqlite")
+        server = create_server(namespace="bird_sqlite", config_path=TEST_CONF_PATH)
         yield server
         server.close()
 
@@ -66,7 +70,7 @@ class TestMCPToolRegistration:
     @pytest.fixture
     def server(self):
         """Create a test server instance."""
-        server = create_server(namespace="bird_sqlite")
+        server = create_server(namespace="bird_sqlite", config_path=TEST_CONF_PATH)
         yield server
         server.close()
 
@@ -96,7 +100,7 @@ class TestMCPToolExecution:
     @pytest.fixture
     def server(self):
         """Create a test server instance."""
-        server = create_server(namespace="bird_sqlite")
+        server = create_server(namespace="bird_sqlite", config_path=TEST_CONF_PATH)
         yield server
         server.close()
 
@@ -121,7 +125,7 @@ class TestMCPServerASGIApp:
     @pytest.fixture
     def server(self):
         """Create a test server instance."""
-        server = create_server(namespace="bird_sqlite")
+        server = create_server(namespace="bird_sqlite", config_path=TEST_CONF_PATH)
         yield server
         server.close()
 
@@ -147,7 +151,7 @@ class TestToolContextManager:
     @pytest.fixture
     def manager(self):
         """Create a ToolContextManager instance."""
-        manager = ToolContextManager(max_size=3)
+        manager = ToolContextManager(config_path=TEST_CONF_PATH, max_size=3)
         yield manager
         manager.close_all()
 
@@ -220,7 +224,7 @@ class TestLightweightDynamicMCPServer:
     @pytest.fixture
     def server(self):
         """Create a dynamic server instance."""
-        server = LightweightDynamicMCPServer(max_cache_size=10)
+        server = LightweightDynamicMCPServer(config_path=TEST_CONF_PATH, max_cache_size=10)
         yield server
         server._context_manager.close_all()
 
@@ -253,7 +257,7 @@ class TestDynamicModeHTTPIntegration:
     @pytest.fixture
     def http_app(self):
         """Create dynamic app with HTTP transport."""
-        return create_dynamic_app(transport="http", max_cache_size=10)
+        return create_dynamic_app(config_path=TEST_CONF_PATH, transport="http", max_cache_size=10)
 
     @pytest_asyncio.fixture
     async def http_client_with_lifespan(self, http_app):
@@ -390,7 +394,7 @@ class TestDynamicModeSSEIntegration:
     @pytest.fixture
     def sse_app(self):
         """Create dynamic app with SSE transport."""
-        return create_dynamic_app(transport="sse", max_cache_size=10)
+        return create_dynamic_app(config_path=TEST_CONF_PATH, transport="sse", max_cache_size=10)
 
     @pytest.mark.asyncio
     async def test_root_endpoint_sse(self, sse_app):
@@ -494,7 +498,7 @@ class TestDynamicRouterPathParsing:
         from datus.mcp_server import LightweightDynamicMCPServer
 
         # Access the inner class through create_asgi_app
-        server = LightweightDynamicMCPServer()
+        server = LightweightDynamicMCPServer(config_path=TEST_CONF_PATH)
         app = server.create_asgi_app(transport="http")
 
         # Get the DynamicRouter class from routes
@@ -518,7 +522,7 @@ class TestDynamicRouterPathParsing:
         """Test parsing namespace with subpath."""
         from datus.mcp_server import LightweightDynamicMCPServer
 
-        server = LightweightDynamicMCPServer()
+        server = LightweightDynamicMCPServer(config_path=TEST_CONF_PATH)
         app = server.create_asgi_app(transport="sse")
 
         from starlette.routing import Mount
@@ -540,7 +544,7 @@ class TestDynamicRouterPathParsing:
         """Test parsing namespace with subagent query param."""
         from datus.mcp_server import LightweightDynamicMCPServer
 
-        server = LightweightDynamicMCPServer()
+        server = LightweightDynamicMCPServer(config_path=TEST_CONF_PATH)
         app = server.create_asgi_app(transport="http")
 
         from starlette.routing import Mount
@@ -562,7 +566,7 @@ class TestDynamicRouterPathParsing:
         """Test parsing when mount prefix is not stripped by Starlette."""
         from datus.mcp_server import LightweightDynamicMCPServer
 
-        server = LightweightDynamicMCPServer()
+        server = LightweightDynamicMCPServer(config_path=TEST_CONF_PATH)
         app = server.create_asgi_app(transport="sse")
 
         from starlette.routing import Mount
@@ -585,7 +589,7 @@ if __name__ == "__main__":
     # Quick manual test
     async def main():
         print("Creating MCP server...")
-        with create_server(namespace="bird_sqlite") as server:
+        with create_server(namespace="bird_sqlite", config_path=TEST_CONF_PATH) as server:
             print(f"Server namespace: {server.namespace}")
             print(f"Has DB tools: {server.db_tool is not None}")
             print(f"Has Context tools: {server.context_tool is not None}")

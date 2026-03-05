@@ -13,13 +13,13 @@ from datus.tools.db_tools.sqlite_connector import SQLiteConnector
 from datus.tools.output_tools.output import OutputTool
 from datus.utils.constants import DBType
 from datus.utils.sql_utils import extract_table_names
-from tests.conftest import TEST_DATA_DIR
+from tests.conftest import TEST_CONF_DIR, TEST_DATA_DIR
 
 
 class TestBirdDevOutput:
     @pytest.fixture
     def global_config(self) -> AgentConfig:
-        return load_agent_config()
+        return load_agent_config(config=str(TEST_CONF_DIR / "agent.yml"))
 
     @pytest.fixture
     def test_data(self, tmp_path) -> dict:
