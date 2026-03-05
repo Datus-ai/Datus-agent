@@ -813,9 +813,16 @@ class AgenticNode(Node):
         """
         Get or create the interaction broker for this node.
 
+        Resets the broker's asyncio.Queue so it binds to the current event loop.
+        This is necessary because each asyncio.run() creates a new event loop,
+        and asyncio.Queue is bound at creation time. Without this reset, reusing
+        a node across multiple asyncio.run() calls would fail with
+        'Queue is bound to a different event loop'.
+
         Returns:
             InteractionBroker instance for this node
         """
+        self.interaction_broker.reset_queue()
         return self.interaction_broker
 
     async def execute_stream_with_interactions(

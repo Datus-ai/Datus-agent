@@ -107,6 +107,16 @@ class InteractionBroker:
         # Use threading.Lock for thread-safe access to _pending
         self._lock: threading.Lock = threading.Lock()
 
+    def reset_queue(self) -> None:
+        """Recreate the asyncio.Queue bound to the current event loop.
+
+        Must be called inside an async context (i.e. within asyncio.run())
+        before each execution cycle. This ensures the queue is always bound
+        to the active event loop, preventing 'bound to a different event loop'
+        errors when a node is reused across separate asyncio.run() calls.
+        """
+        self._output_queue = asyncio.Queue()
+
     async def _queue_put(self, item: ActionHistory) -> None:
         """Put item into queue (non-blocking)."""
         self._output_queue.put_nowait(item)
