@@ -62,7 +62,7 @@ semantic:
 
 **语义模型文件位置**：
 MetricFlow 自动在以下位置查找语义模型文件：
-```
+```text
 {agent.home}/semantic_models/{namespace}/
 ```
 - `agent.home` 从 `agent.yml` 读取（默认为 `~/.datus`）
@@ -188,7 +188,7 @@ datus-agent bootstrap-kb --namespace my_project --components metrics \
 
 ### 包结构
 
-```
+```text
 datus_semantic_myservice/
 ├── pyproject.toml
 └── datus_semantic_myservice/

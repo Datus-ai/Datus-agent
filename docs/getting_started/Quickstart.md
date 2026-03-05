@@ -49,7 +49,7 @@ Datus requires a Python 3.12 environment. Choose your preferred method:
 === "Beta Release"
 
     ```bash
-    pip install --no-deps -i https://test.pypi.org/simple/ datus-agent
+    pip install -i https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ datus-agent
     ```
 
 ### Initialize Configuration

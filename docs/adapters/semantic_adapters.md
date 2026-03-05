@@ -62,7 +62,7 @@ semantic:
 
 **Semantic Model File Location**:
 MetricFlow automatically locates semantic model files at:
-```
+```text
 {agent.home}/semantic_models/{namespace}/
 ```
 - `agent.home` is read from `agent.yml` (defaults to `~/.datus`)
@@ -188,7 +188,7 @@ Your adapter must implement these abstract methods:
 
 ### Package Structure
 
-```
+```text
 datus_semantic_myservice/
 ├── pyproject.toml
 └── datus_semantic_myservice/
