@@ -14,8 +14,8 @@ storage:
   # Database metadata and sample data embedding
   database:
     registry_name: openai            # Embedding provider
-    model_name: text-embedding-v3-small
-    dim_size: 1024
+    model_name: text-embedding-3-small
+    dim_size: 1536
     batch_size: 10
     target_model: openai
     
@@ -65,8 +65,8 @@ For table metadata, schema information, and sample data:
 ```yaml
 database:
   registry_name: openai              # openai or sentence-transformers
-  model_name: text-embedding-v3-small
-  dim_size: 1024
+  model_name: text-embedding-3-small
+  dim_size: 1536
   batch_size: 10
   target_model: openai               # Reference to agent.models
 ```
@@ -77,7 +77,7 @@ database:
 - **`model_name`**: Specific embedding model to use
 - **`dim_size`**: Output embedding dimension size
 - **`batch_size`**: Number of texts to process in each batch
-- **`target_model`**: LLM model key from [`agent.models`](agent.md#models-configuration) (for OpenAI embeddings)
+- **`target_model`**: LLM model key from [`models`](agent.md#models-configuration) (for OpenAI embeddings)
 
 ### Document Embeddings
 
@@ -108,10 +108,10 @@ For high-quality embeddings with cloud API:
 ```yaml
 database:
   registry_name: openai
-  model_name: text-embedding-v3-small    # or text-embedding-v3-large
-  dim_size: 1536                         # 1536 for v3-small, 3072 for v3-large
+  model_name: text-embedding-3-small    # or text-embedding-3-large
+  dim_size: 1536                         # 1536 for 3-small, 3072 for 3-large
   batch_size: 10                         # Adjust based on rate limits
-  target_model: openai                   # Must reference valid model in agent.models
+  target_model: openai                   # Must reference valid model in models configuration
 ```
 
 !!! tip "Environment Variables"
@@ -172,7 +172,7 @@ database:
     ```yaml
     database:
       registry_name: openai
-      model_name: text-embedding-v3-large   # Highest quality
+      model_name: text-embedding-3-large   # Highest quality
       dim_size: 3072
       target_model: openai
     ```
@@ -220,7 +220,7 @@ database:
       # High-quality cloud embeddings for database metadata
       database:
         registry_name: openai
-        model_name: text-embedding-v3-small
+        model_name: text-embedding-3-small
         dim_size: 1536
         batch_size: 10
         target_model: openai
@@ -252,7 +252,7 @@ database:
       # High-quality embeddings across all data types
       database:
         registry_name: openai
-        model_name: text-embedding-v3-large
+        model_name: text-embedding-3-large
         dim_size: 3072
         batch_size: 5                      # Smaller batches for large model
         target_model: openai

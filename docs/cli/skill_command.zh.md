@@ -30,8 +30,8 @@
 # 交互式登录
 datus skill login --marketplace http://datus-marketplace:9000
 
-# 非交互式登录
-datus skill login --marketplace http://datus-marketplace:9000 --email user@example.com --password secret
+# 非交互式登录（使用环境变量避免密码泄露到 shell 历史记录）
+DATUS_PASSWORD='***' datus skill login --marketplace http://datus-marketplace:9000 --email user@example.com --password "$DATUS_PASSWORD"
 
 # 登出
 datus skill logout --marketplace http://datus-marketplace:9000

@@ -20,7 +20,7 @@ nodes:
 ```
 
 !!! tip
-    The `model` parameter in node configurations references the provider names defined in [`agent.models`](agent.md#models-configuration).
+    The `model` parameter in node configurations references provider keys defined in [`models`](agent.md#models-configuration).
 
 ## Core Nodes
 
@@ -37,7 +37,7 @@ schema_linking:
 
 **Configuration Parameters:**
 
-- **model**: LLM model key from agent.models configuration
+- **model**: LLM model key from top-level `models` configuration
 - **matching_rate**: Controls how many matching results to return
     - `fast`: Top 5 matching data (fastest, least comprehensive)
     - `medium`: Top 10 matching data (balanced)

@@ -14,9 +14,9 @@ agent:
 ### 模型提供方（models） {#models-configuration}
 为智能体配置可用的 LLM 提供方：
 
-**必填参数：**
+**每个提供方条目的必填参数：**
 
-- `provider`：提供方名称（键名可自定义）
+- **提供方键名 (`models.<key>`)** —— 逻辑标识符，由 `agent.target` 和节点 `model` 字段引用（可自定义命名）
 - `type`：接口类型（与厂商适配）
 - `base_url`：接口基础地址
 - `api_key`：访问密钥（支持环境变量）

@@ -278,7 +278,7 @@ python -m datus.main benchmark --namespace bird_sqlite --benchmark bird_dev --sc
 ```
 
 ```bash
-python -m datus.main benchmarking --benchmark bird_dev --plan fixed --schema_linking_model medium
+python -m datus.main benchmark --namespace bird_sqlite --benchmark bird_dev --plan fixed --schema_linking_rate medium
 ```
 
 ### Using cli to develop

@@ -30,8 +30,8 @@ The `datus skill` command provides a CLI interface for managing skills locally a
 # Interactive login
 datus skill login --marketplace http://datus-marketplace:9000
 
-# Non-interactive login
-datus skill login --marketplace http://datus-marketplace:9000 --email user@example.com --password secret
+# Non-interactive login (use env var to avoid plaintext password in shell history)
+DATUS_PASSWORD='***' datus skill login --marketplace http://datus-marketplace:9000 --email user@example.com --password "$DATUS_PASSWORD"
 
 # Logout
 datus skill logout --marketplace http://datus-marketplace:9000

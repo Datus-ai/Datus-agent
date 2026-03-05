@@ -8,6 +8,7 @@ Context items are organized into three separate trees:
 
 - `@catalog` — your physical data structure (databases, schemas, tables)
 - `@subject` — your semantic/business layer (domains, layers, semantic models, metrics)
+- `@sql` — historical SQL queries and knowledge
 
 By combining these, you give Datus the same mental model you have — so it can reason with your data instead of guessing.
 

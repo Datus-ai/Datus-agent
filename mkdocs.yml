@@ -215,8 +215,8 @@ markdown_extensions:
   - pymdownx.keys
   - pymdownx.magiclink:
       repo_url_shorthand: true
-      user: squidfunk
-      repo: mkdocs-material
+      user: Datus-ai
+      repo: Datus-agent
   - pymdownx.mark
   - pymdownx.smartsymbols
   - pymdownx.snippets:

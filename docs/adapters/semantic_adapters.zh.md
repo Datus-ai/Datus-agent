@@ -110,17 +110,21 @@ MetricFlow 自动在以下位置查找语义模型文件：
 ### 直接使用适配器
 
 ```python
+import asyncio
 from datus.tools.semantic_tools import semantic_adapter_registry
 from datus_semantic_metricflow.config import MetricFlowConfig
 
-config = MetricFlowConfig(namespace="my_project")
-adapter = semantic_adapter_registry.create_adapter("metricflow", config)
+async def main():
+    config = MetricFlowConfig(namespace="my_project")
+    adapter = semantic_adapter_registry.create_adapter("metricflow", config)
 
-metrics = await adapter.list_metrics(limit=10)
-dimensions = await adapter.get_dimensions(metric_name="revenue")
-result = await adapter.query_metrics(
-    metrics=["revenue"], dimensions=["date"], time_start="2024-01-01"
-)
+    metrics = await adapter.list_metrics(limit=10)
+    dimensions = await adapter.get_dimensions(metric_name="revenue")
+    result = await adapter.query_metrics(
+        metrics=["revenue"], dimensions=["date"], time_start="2024-01-01"
+    )
+
+asyncio.run(main())
 ```
 
 ### Dry Run（SQL 预览）

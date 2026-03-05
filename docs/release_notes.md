@@ -121,14 +121,14 @@ skipped
 - Agentic execution of database tools, file system operations, and automatic to-do list generation.
 - Support for both automatic and manual compaction (.compact). [#125](https://github.com/Datus-ai/Datus-agent/issues/125)
 - Session management with .resume and .clear commands.
-- Provide dedicated context by introducing it with the @ Table, @ file, @ metrics, @sql_history commands. [#134](https://github.com/Datus-ai/Datus-agent/issues/134) [#152](https://github.com/Datus-ai/Datus-agent/issues/152)
+- Provide dedicated context by introducing it with the `@table`, `@file`, `@metrics`, `@sql_history` commands. [#134](https://github.com/Datus-ai/Datus-agent/issues/134) [#152](https://github.com/Datus-ai/Datus-agent/issues/152)
 - Token consumption tracking and estimation for better resource visibility. [#119](https://github.com/Datus-ai/Datus-agent/issues/119)
 - Write-capability confirmations before executing sensitive tool actions.
 - Plan Mode: An AI-assisted planning feature that generates and manages a to-do list. [#147](https://github.com/Datus-ai/Datus-agent/issues/147)
 
 **Automatic building knowledge base**
 
-- Automatic generation of Metric YAML files in MetricFlow format from historyical success stories. [#10](https://github.com/Datus-ai/Datus-agent/issues/10)
+- Automatic generation of Metric YAML files in MetricFlow format from historical success stories. [#10](https://github.com/Datus-ai/Datus-agent/issues/10)
 - Automatic summary and labeling SQL history files from *.sql files in workspace. [#132](https://github.com/Datus-ai/Datus-agent/issues/132)
 - Improves SQL accuracy and generation speed using metrics & SQL history.
 

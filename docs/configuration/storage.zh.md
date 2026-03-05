@@ -10,8 +10,8 @@ storage:
 
   database:
     registry_name: openai
-    model_name: text-embedding-v3-small
-    dim_size: 1024
+    model_name: text-embedding-3-small
+    dim_size: 1536
     batch_size: 10
     target_model: openai
 
@@ -40,10 +40,10 @@ storage:
 ```yaml
 database:
   registry_name: openai                # openai 或 sentence-transformers
-  model_name: text-embedding-v3-small
-  dim_size: 1024
+  model_name: text-embedding-3-small
+  dim_size: 1536
   batch_size: 10
-  target_model: openai                 # 关联 agent.models
+  target_model: openai                 # 关联 models 配置
 ```
 **参数**：`registry_name`、`model_name`、`dim_size`、`batch_size`、`target_model`
 
@@ -67,8 +67,8 @@ metric:
 ```yaml
 database:
   registry_name: openai
-  model_name: text-embedding-v3-small   # 或 v3-large
-  dim_size: 1536                        # small=1536, large=3072
+  model_name: text-embedding-3-small   # 或 3-large
+  dim_size: 1536                        # 3-small=1536, 3-large=3072
   batch_size: 10
   target_model: openai
 ```
@@ -111,7 +111,7 @@ storage:
   embedding_device_type: cpu
   database:
     registry_name: openai
-    model_name: text-embedding-v3-small
+    model_name: text-embedding-3-small
     dim_size: 1536
     batch_size: 10
     target_model: openai
@@ -130,7 +130,7 @@ storage:
   embedding_device_type: cuda
   database:
     registry_name: openai
-    model_name: text-embedding-v3-large
+    model_name: text-embedding-3-large
     dim_size: 3072
     batch_size: 5
     target_model: openai

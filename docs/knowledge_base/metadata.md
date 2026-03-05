@@ -63,6 +63,7 @@ datus-agent bootstrap-kb --namespace <your_namespace> --kb_update_strategy overw
 ### Incremental Update
 ```bash
 datus-agent bootstrap-kb --namespace <your_namespace> --kb_update_strategy incremental
+```
 
 ## Best Practices
 

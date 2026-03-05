@@ -17,9 +17,9 @@ agent:
 
 Configure LLM providers that your agent can use. Each model configuration includes the provider type, API endpoints, credentials, and specific model names.
 
-**Required Parameters:**
+**Required Parameters per provider entry:**
 
-- **`provider`** - The LLM provider name (you can name it as needed, not required to match the actual provider name)
+- **Provider key (`models.<key>`)** - Logical provider identifier, referenced by `agent.target` and node `model` fields (you can name it as needed)
 - **`type`** - Interface type corresponding to LLM manufacturers
 - **`base_url`** - Base address of the model provider's API endpoint
 - **`api_key`** - API key for accessing the LLM service (supports environment variables)
