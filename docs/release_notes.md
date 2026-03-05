@@ -108,7 +108,7 @@ skipped
 - **CLI Display Improvements** - Enhanced table width rendering for better SQL query readability. [#200](https://github.com/Datus-ai/Datus-agent/issues/200)
 - **Improved Initialization** - Enhanced `datus-agent init` command with better error handling and setup flow. [#194](https://github.com/Datus-ai/Datus-agent/issues/194)
 
-**Dependencies changes**
+**Dependency Changes**
 
 - `openai-agents` upgraded to 0.3.2 (requires manual update: `pip install -U openai-agents`)
 - `datus-metricflow` updated to 0.1.2
@@ -126,7 +126,7 @@ skipped
 - Write-capability confirmations before executing sensitive tool actions.
 - Plan Mode: An AI-assisted planning feature that generates and manages a to-do list. [#147](https://github.com/Datus-ai/Datus-agent/issues/147)
 
-**Automatic building knowledge base**
+**Automatic Knowledge Base Building**
 
 - Automatic generation of Metric YAML files in MetricFlow format from historical success stories. [#10](https://github.com/Datus-ai/Datus-agent/issues/10)
 - Automatic summary and labeling SQL history files from *.sql files in workspace. [#132](https://github.com/Datus-ai/Datus-agent/issues/132)
@@ -144,7 +144,7 @@ skipped
 
 **Context Exploration**
 
-- Improve @catalogs to display all databases, schemas, and tables across multiple databases.
+- Improve `@catalog` to display all databases, schemas, and tables across multiple databases.
 - New @subject to show all metrics built with MetricFlow. [#165](https://github.com/Datus-ai/Datus-agent/issues/165)
 - Context search tools integration to enhance recall of metadata and metrics. [#138](https://github.com/Datus-ai/Datus-agent/issues/138)
 
@@ -176,12 +176,12 @@ skipped
 
 **Datus-cli**
 
-- Add fix node, use !fix to quick fix the last sql with error, a simple template to make llm foucs on this task.
+- Added a fix node: use `!fix` to quickly fix the last SQL error, with a focused template for the LLM.
 
 **Datus-agent**
 
-- Peroformance improvement for bootstrap-kb for multi-thread.
-- Other minor bugfixes.
+- Performance improvement for bootstrap-kb with multi-threading.
+- Other minor bug fixes.
 
 ### 0.1.3
 

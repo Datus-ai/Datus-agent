@@ -93,9 +93,9 @@ Initializing AI capabilities in background...
 Datus - AI-powered SQL command-line interface
 Type '.help' for a list of commands or '.exit' to quit.
 
-Namespace duckdb selected
-Connected to duckdb using database duckdb
-Context: Current: database: duckdb
+Namespace duckdb-demo selected
+Connected to duckdb-demo using database duckdb-demo
+Context: Current: database: duckdb-demo
 Type SQL statements or use ! @ . commands to interact.
 Datus>
 ```

@@ -243,6 +243,8 @@ nodes:
 
 ## Model Assignment Strategy
 
+The model names below refer to the `model` field inside each `models.<key>` provider entry (not the `nodes.*.model` key, which should use the provider key name like `openai` or `anthropic`).
+
 **For Schema Linking:**
 
 - Use fast, cost-effective models: `gpt-3.5-turbo`, `deepseek-chat`

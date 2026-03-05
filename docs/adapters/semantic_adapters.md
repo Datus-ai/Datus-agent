@@ -130,8 +130,11 @@ asyncio.run(main())
 ### Dry Run (SQL Preview)
 
 ```python
-result = await adapter.query_metrics(metrics=["revenue"], dry_run=True)
-print(result.data[0]["sql"])
+async def dry_run_example():
+    result = await adapter.query_metrics(metrics=["revenue"], dry_run=True)
+    print(result.data[0]["sql"])
+
+asyncio.run(dry_run_example())
 ```
 
 ### Bootstrap from Adapter
