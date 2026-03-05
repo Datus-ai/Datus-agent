@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Dict, List, Optional
 
 from datus.storage.conditions import Node, and_, eq, like, or_
+from datus.tools.db_tools.registry import connector_registry
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 from datus.utils.reference_paths import split_reference_path
@@ -162,11 +163,11 @@ def _table_condition_for_token(token: str, dialect: str = "") -> Optional[Node]:
         return None
 
     field_order: List[str] = []
-    if DBType.support_catalog(dialect):
+    if connector_registry.support_catalog(dialect):
         field_order.append("catalog_name")
-    if DBType.support_database(dialect) or dialect == DBType.SQLITE:
+    if connector_registry.support_database(dialect) or dialect == DBType.SQLITE:
         field_order.append("database_name")
-    if DBType.support_schema(dialect):
+    if connector_registry.support_schema(dialect):
         field_order.append("schema_name")
     field_order.append("table_name")
 
