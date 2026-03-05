@@ -82,6 +82,11 @@ Error code ranges: 100000–199999 (common), 200000–299999 (node), 300000–39
 2. Register in the MCP server tool list
 3. Add registration + invocation tests in `tests/test_mcp_server.py`
 
+## Commit Workflow
+
+1. **Coverage gate**: Before committing, run `uv run pytest -m ci tests/ --cov=datus --cov-report=term-missing --cov-fail-under=80`. If coverage < 80%, add tests for uncovered lines in modified files until it passes. Do NOT commit until coverage passes.
+2. **Pre-commit hook failures**: Never stop or use `--no-verify`. Auto-fix all issues (run `uv run black . && uv run isort .` for formatting; manually fix flake8 errors), re-stage, and retry the commit until it succeeds.
+
 ## Guardrails
 
 - **No direct DB imports**: Use `ConnectorRegistry` / `db_manager_instance` — never import connector classes directly in business logic
