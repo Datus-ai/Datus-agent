@@ -13,22 +13,14 @@ from datus.storage.ext_knowledge.store import ExtKnowledgeRAG
 from datus.storage.metric.store import MetricRAG
 from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
-from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.tools.func_tool.base import FuncToolResult, normalize_null, trans_to_function_tool
 from datus.utils.loggings import get_logger
 from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
 
 logger = get_logger(__name__)
 
 
-def _normalize_null(value: Any) -> Any:
-    """Convert string 'null' to None for LLM compatibility.
-
-    LLMs sometimes output the string 'null' instead of JSON null.
-    This function normalizes such values to Python None.
-    """
-    if value == "null" or value == "None":
-        return None
-    return value
+_normalize_null = normalize_null
 
 
 _NAME = "context_search_tools"
@@ -282,14 +274,16 @@ class ContextSearchTools:
     @mcp_tool(availability_check="has_metrics")
     def get_metrics(self, subject_path: List[str], name: str = "") -> FuncToolResult:
         """
-        Search for business metrics and KPIs using natural language queries.
+        Get metric details by exact subject path and name.
+        Use `search_metrics` for similarity-based search, use this for precise retrieval
+        when you already know the path.
 
         Args:
-            subject_path: Optional subject hierarchy path (e.g., ['Finance', 'Revenue', 'Q1'])
-            name: The name of the metric
+            subject_path: Subject hierarchy path (e.g., ['Finance', 'Revenue', 'Q1'])
+            name: The exact name of the metric
 
         Returns:
-            FuncToolResult with metrics containing name, description, constraint, and sql_query
+            FuncToolResult with metric detail containing name, description, constraint, and sql_query
         """
         # Normalize null values from LLM
         name = _normalize_null(name) or ""
@@ -347,17 +341,17 @@ class ContextSearchTools:
     @mcp_tool(availability_check="has_reference_sql")
     def get_reference_sql(self, subject_path: List[str], name: str = "") -> FuncToolResult:
         """
-        Get reference SQL query for a domain and layer combination.
+        Get reference SQL detail by exact subject path and name.
 
         Args:
-            subject_path: Optional subject hierarchy path (e.g., ['Finance', 'Revenue', 'Q1'])
-            name: The name of the reference SQL intent.
+            subject_path: Subject hierarchy path (e.g., ['Finance', 'Revenue', 'Q1'])
+            name: The exact name of the reference SQL intent.
 
         Returns:
-            dict: A dictionary with keys:
+            FuncToolResult with keys:
                 - 'success' (int): 1 if the search succeeded, 0 otherwise.
                 - 'error' (str or None): Error message if any.
-                - 'result' (dict): On success, a list of matching entries, each containing:
+                - 'result' (dict): On success, a single matching entry containing:
                     - 'sql'
                     - 'tags'
                     - 'summary'

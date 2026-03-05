@@ -17,7 +17,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.storage.metric.store import MetricRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.func_tool.attribution_utils import DimensionAttributionUtil
-from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.tools.func_tool.base import FuncToolResult, normalize_null, trans_to_function_tool
 from datus.tools.semantic_tools.base import BaseSemanticAdapter
 from datus.tools.semantic_tools.models import AnomalyContext
 from datus.tools.semantic_tools.registry import semantic_adapter_registry
@@ -27,13 +27,7 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
-def _normalize_null(value):
-    """Convert string 'null', 'None', empty, or whitespace-only values to None for LLM compatibility."""
-    if value is None:
-        return None
-    if isinstance(value, str) and value.strip().lower() in ("null", "none", ""):
-        return None
-    return value
+_normalize_null = normalize_null
 
 
 def _run_async(coro):
@@ -64,7 +58,6 @@ class SemanticTools:
     def all_tools_name(cls) -> List[str]:
         """Return list of all tool method names for wizard display."""
         return [
-            "search_metrics",
             "list_metrics",
             "get_dimensions",
             "query_metrics",
@@ -179,7 +172,6 @@ class SemanticTools:
             List of Tool objects for LLM function calling
         """
         tools = [
-            trans_to_function_tool(self.search_metrics),
             trans_to_function_tool(self.list_metrics),
             trans_to_function_tool(self.get_dimensions),
             trans_to_function_tool(self.query_metrics),
@@ -194,65 +186,6 @@ class SemanticTools:
             tools.append(trans_to_function_tool(self.attribution_analyze))
 
         return tools
-
-    def search_metrics(
-        self,
-        query_text: str,
-        subject_path: Optional[List[str]] = None,
-        top_n: int = 5,
-    ) -> FuncToolResult:
-        """
-        Search metrics using vector search in unified storage.
-
-        Args:
-            query_text: Natural language query for metric search
-            subject_path: Optional subject tree path filter (e.g., ["Finance", "Revenue"])
-            top_n: Maximum number of results to return
-
-        Returns:
-            FuncToolResult with matching metrics
-        """
-        # Normalize null values from LLM
-        subject_path = _normalize_null(subject_path)
-        try:
-            results = self.metric_rag.search_metrics(
-                query_text=query_text,
-                subject_path=subject_path,
-                top_n=top_n,
-            )
-
-            if not results:
-                return FuncToolResult(
-                    success=0,
-                    error=f"No metrics found matching '{query_text}'",
-                    result=[],
-                )
-
-            # Format results for LLM
-            formatted_metrics = []
-            for metric in results:
-                formatted_metrics.append(
-                    {
-                        "name": metric.get("name"),
-                        "description": metric.get("description"),
-                        "type": metric.get("metric_type"),
-                        "dimensions": metric.get("dimensions", []),
-                        "measures": metric.get("base_measures", []),
-                        "subject_path": metric.get("subject_path", []),
-                    }
-                )
-
-            return FuncToolResult(
-                success=1,
-                result=formatted_metrics,
-            )
-
-        except Exception as e:
-            logger.error(f"Error searching metrics: {e}")
-            return FuncToolResult(
-                success=0,
-                error=f"Failed to search metrics: {str(e)}",
-            )
 
     def list_metrics(
         self,
