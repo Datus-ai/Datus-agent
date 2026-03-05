@@ -946,3 +946,36 @@ class TestMetadataIdentifier:
     def test_snowflake_no_catalog(self):
         result = metadata_identifier(database_name="db", schema_name="s", table_name="t", dialect="snowflake")
         assert result == "db.s.t"
+
+
+def test_parse_table_name_parts_sqlite():
+    """Cover line 212: sqlite returns ["database_name", "table_name"] mapping."""
+    result = parse_table_name_parts("main.users", dialect=DBType.SQLITE)
+    assert result["database_name"] == "main"
+    assert result["table_name"] == "users"
+    assert result.get("schema_name", "") == ""
+
+    # Single-part table name
+    result = parse_table_name_parts("users", dialect=DBType.SQLITE)
+    assert result["table_name"] == "users"
+
+
+def test_parse_sql_type_starrocks_metadata_none_parse():
+    """Cover line 559: starrocks metadata pattern when sqlglot.parse_one returns None."""
+    from unittest.mock import patch
+
+    # sqlglot.parse_one returns None for certain unparseable starrocks metadata commands
+    with patch("datus.utils.sql_utils.sqlglot.parse_one", return_value=None):
+        result = parse_sql_type("SHOW CREATE TABLE db.tbl", dialect="starrocks")
+        assert result == SQLType.METADATA_SHOW
+
+
+def test_parse_context_switch_duckdb_set_schema():
+    """Cover line 820: DuckDB SET SCHEMA without database sets fuzzy=False."""
+    result = parse_context_switch("SET SCHEMA main", dialect=DBType.DUCKDB)
+    assert result is not None
+    assert result["command"] == "SET"
+    assert result["target"] == "schema"
+    assert result["schema_name"] == "main"
+    assert result["database_name"] == ""
+    assert result["fuzzy"] is False

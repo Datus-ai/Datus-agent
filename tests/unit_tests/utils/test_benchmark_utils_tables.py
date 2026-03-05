@@ -1,4 +1,4 @@
-from datus.utils.benchmark_utils import compute_table_matches
+from datus.utils.benchmark_utils import _default_sql_dialect, collect_sql_tables, compute_table_matches
 
 
 def test_compute_table_matches_backwards_alignment():
@@ -27,3 +27,22 @@ def test_compute_table_matches_handles_simple_and_qualified_equivalence():
     expected_tables = ["orders"]
 
     assert compute_table_matches(actual_tables, expected_tables) == ["orders"]
+
+
+def test_collect_sql_tables_default_dialect():
+    """Cover line 295: dialect defaults to snowflake when None."""
+    tables = collect_sql_tables("SELECT * FROM users JOIN orders ON users.id = orders.user_id")
+    assert "users" in tables
+    assert "orders" in tables
+
+
+def test_collect_sql_tables_empty():
+    assert collect_sql_tables(None) == []
+    assert collect_sql_tables("") == []
+
+
+def test_default_sql_dialect():
+    """Cover line 1870: non-bird benchmark returns snowflake."""
+    assert _default_sql_dialect("bird_dev") == "sqlite"
+    assert _default_sql_dialect("spider2") == "snowflake"
+    assert _default_sql_dialect("other") == "snowflake"
