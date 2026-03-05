@@ -6,7 +6,6 @@
 """Interaction broker for async user interaction flow control."""
 
 import asyncio
-import queue
 import threading
 import uuid
 from dataclasses import dataclass, field
@@ -104,25 +103,19 @@ class InteractionBroker:
 
     def __init__(self):
         self._pending: Dict[str, PendingInteraction] = {}
-        # Use thread-safe queue.Queue to share across different event loops
-        self._output_queue: queue.Queue[ActionHistory] = queue.Queue()
+        self._output_queue: asyncio.Queue[ActionHistory] = asyncio.Queue()
         # Use threading.Lock for thread-safe access to _pending
         self._lock: threading.Lock = threading.Lock()
 
     async def _queue_put(self, item: ActionHistory) -> None:
-        """Put item into queue (non-blocking, thread-safe)."""
+        """Put item into queue (non-blocking)."""
         self._output_queue.put_nowait(item)
 
     async def _queue_get(self, timeout: float = 0.1) -> Optional[ActionHistory]:
         """Get item from queue with timeout, returns None if empty."""
-        loop = asyncio.get_running_loop()
         try:
-            # Run blocking get in executor to avoid blocking the event loop
-            return await asyncio.wait_for(
-                loop.run_in_executor(None, self._output_queue.get, True, timeout),
-                timeout=timeout + 0.1,
-            )
-        except (queue.Empty, asyncio.TimeoutError):
+            return await asyncio.wait_for(self._output_queue.get(), timeout=timeout)
+        except asyncio.TimeoutError:
             return None
 
     async def request(

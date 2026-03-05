@@ -132,19 +132,6 @@ class TestSubjectUpdaterInit:
         assert updater.reference_sql_storage is cache.reference_sql_storage()
         assert updater.ext_knowledge_storage is cache.ext_knowledge_storage()
 
-    def test_sub_agent_storage_ext_knowledge_returns_store(self, real_agent_config):
-        """_sub_agent_storage_ext_knowledge should return an ExtKnowledgeStore for a sub-agent."""
-        clear_cache()
-        from datus.schemas.agent_models import SubAgentConfig
-
-        updater = SubjectUpdater(real_agent_config)
-        sub_config = SubAgentConfig(system_prompt="test_sub_agent")
-        store = updater._sub_agent_storage_ext_knowledge(sub_config)
-
-        assert store is not None
-        assert isinstance(store, ExtKnowledgeStore)
-
-
 class TestSubjectUpdaterExecution:
     """Tests for SubjectUpdater update and delete operations on main storage."""
 
@@ -293,8 +280,8 @@ class TestSubjectUpdaterExecution:
         assert deleted is False
         assert isinstance(deleted, bool)
 
-    def test_update_ext_knowledge_propagates_to_sub_agents(self, real_agent_config):
-        """update_ext_knowledge should iterate over sub-agents in the current namespace."""
+    def test_update_ext_knowledge_with_sub_agents_configured(self, real_agent_config):
+        """update_ext_knowledge should update main storage even when sub-agents are configured."""
         clear_cache()
         sub_agent_name = "test_sub_ext"
         _add_sub_agent_with_namespace(real_agent_config, sub_agent_name, "test_ns")
@@ -302,17 +289,11 @@ class TestSubjectUpdaterExecution:
 
         # Seed data in main storage
         _seed_ext_knowledge(updater.ext_knowledge_storage)
-        # Seed data in sub-agent storage
-        sub_storage = updater._sub_agent_storage_ext_knowledge(
-            __import__("datus.schemas.agent_models", fromlist=["SubAgentConfig"]).SubAgentConfig(
-                system_prompt=sub_agent_name
-            )
-        )
-        _seed_ext_knowledge(sub_storage)
 
         updater.update_ext_knowledge(SUBJECT_PATH, EXT_KNOWLEDGE_NAME, {"explanation": "sub-agent updated"})
 
-        # Verify main storage was updated
+        # Sub-agents now use scoped filters on the shared main storage,
+        # so verifying main storage is sufficient.
         main_results = updater.ext_knowledge_storage.search_knowledge(
             subject_path=SUBJECT_PATH + [EXT_KNOWLEDGE_NAME], top_n=None
         )
