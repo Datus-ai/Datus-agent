@@ -1,254 +1,292 @@
-# Namespace
+# Storage
 
-> Configure database namespaces and connections for different data sources
+Configure storage settings for Datus Agent's embedding models and vector databases. The storage configuration manages how metadata, documents, and metrics are embedded and stored for efficient retrieval during schema linking and knowledge search.
 
-## Overview
+## Storage Configuration Structure
 
-Namespaces in Datus Agent provide a comprehensive data connectivity framework that abstracts and organizes database connections across diverse data ecosystems. Each namespace serves as a logical container that encapsulates database connection configurations, enabling seamless multi-database operations within a unified interface.
-
-The namespace configuration system is built on a **polymorphic architecture** that supports heterogeneous resource types through a unified abstraction layer. This design pattern enables:
-
-* **Universal Connectivity**: Support for cloud data warehouses (Snowflake, StarRocks), local databases (SQLite, DuckDB), and specialized benchmark datasets
-* **Environment Isolation**: Logical separation of development, staging, and production environments
-* **Credential Security**: Environment variable-based credential management with secure connection protocols
-* **Dynamic Discovery**: Pattern-based database discovery for automated inclusion of multiple database files
-* **Scalable Organization**: Hierarchical namespace structure that grows with organizational complexity
-
-The namespace system operates as a **configuration-driven abstraction layer** that translates high-level business requirements into specific database connection parameters, providing developers and analysts with a consistent interface regardless of the underlying database technology.
-
-## Namespace Structure
-
-Namespaces are configured under the `namespace` section and contain resource connection details for different service types:
+The storage configuration defines the base path for vector databases and embedding models for different data types:
 
 ```yaml
-namespace:
-  # service configuration
-  service:
-    type: cloud_provider
-    endpoint: ${SERVICE_ENDPOINT}
-    access_key: ${ACCESS_KEY}
-    secret_key: ${SECRET_KEY}
-    region: ${SERVICE_REGION}
+storage:
+  base_path: data                    # RAG storage base path
+  embedding_device_type: cpu         # Device type for embedding models
+  
+  # Database metadata and sample data embedding
+  database:
+    registry_name: openai            # Embedding provider
+    model_name: text-embedding-v3-small
+    dim_size: 1024
+    batch_size: 10
+    target_model: openai
     
-  # Local resource configuration
-  local_resource:
-    type: local_service
-    resources:
-      - name: primary
-        uri: protocol://path/to/resource
-      - name: secondary
-        uri: protocol://path/to/backup
-```
-
-## Supported Database Types
-
-### Snowflake
-
-```yaml
-snowflake:
-  type: snowflake
-  # Option 1: Using individual parameters
-  account: ${SNOWFLAKE_ACCOUNT}
-  username: ${SNOWFLAKE_USER}
-  password: ${SNOWFLAKE_PASSWORD}
-  database: ${SNOWFLAKE_DATABASE}    # Optional
-  schema: ${SNOWFLAKE_SCHEMA}        # Optional
-  warehouse: ${SNOWFLAKE_WAREHOUSE}  # Optional
-```
-
-### StarRocks
-
-```yaml
-starrocks:
-  type: starrocks
-  host: ${STARROCKS_HOST}
-  port: ${STARROCKS_PORT}
-  username: ${STARROCKS_USER}
-  password: ${STARROCKS_PASSWORD}
-  database: ${STARROCKS_DATABASE}
-  catalog: ${STARROCKS_CATALOG}      # Optional
-```
-
-### SQLite
-
-```yaml
-# Single database configuration
-local_sqlite:
-  type: sqlite
-  name: ssb                          # Required for SQLite
-  uri: sqlite:////Users/xxx/benchmark/SSB.db
-
-# Multiple databases configuration
-local_sqlite_multi:
-  type: sqlite
-  dbs:
-    - name: ssb
-      uri: sqlite:////Users/xxx/benchmark/SSB.db
-    - name: northwind
-      uri: sqlite:////Users/xxx/data/northwind.db
-```
-
-### DuckDB
-
-```yaml
-# Single database configuration
-local_duckdb:
-  type: duckdb
-  name: analytics
-  uri: duckdb:////absolute/path/to/analytics.db
-
-# Multiple databases configuration
-local_duckdb_multi:
-  type: duckdb
-  dbs:
-    - name: ssb
-      uri: duckdb:////absolute/path/to/ssb.db
-    - name: tpch
-      uri: duckdb:///relative/path/to/tpch.duckdb  # Relative path
-```
-
-## Configuration Parameters
-
-### Common Parameters
-
-* **type**: Database dialect/type (required)
-* **name**: Database identifier (required for SQLite and DuckDB)
-* **uri**: Connection URI for local databases
-* **host**: Database server hostname
-* **port**: Database server port
-* **username**: Database username
-* **password**: Database password
-* **database**: Database name
-
-### Database-Specific Parameters
-
-#### Snowflake Parameters
-
-* **account**: Snowflake account identifier (top-level container)
-* **warehouse**: Compute warehouse to use
-* **role**: User role for permissions
-* **schema**: Default schema
-
-#### StarRocks Parameters
-
-* **catalog**: Catalog name for multi-catalog setups
-* **ssl**: Enable SSL connection
-
-#### SQLite/DuckDB Parameters
-
-* **path\_pattern**: Glob pattern for multiple database files
-* **dbs**: Array of database configurations for multi-database setup
-
-## Complete Namespace Configuration
-
-```yaml
-namespace:
-  # Production Snowflake
-  production_snowflake:
-    type: snowflake
-    account: ${SNOWFLAKE_ACCOUNT}
-    username: ${SNOWFLAKE_USER}
-    password: ${SNOWFLAKE_PASSWORD}
-    database: ANALYTICS
-    schema: PUBLIC
-    warehouse: COMPUTE_WH
+  # Document embedding configuration
+  document:
+    model_name: all-MiniLM-L6-v2     # Local embedding model
+    dim_size: 384
     
-  # Development StarRocks
-  dev_starrocks:
-    type: starrocks
-    host: ${STARROCKS_HOST}
-    port: ${STARROCKS_PORT}
-    username: ${STARROCKS_USER}
-    password: ${STARROCKS_PASSWORD}
-    database: dev_analytics
+  # Metrics embedding configuration
+  metric:
+    model_name: all-MiniLM-L6-v2     # Local embedding model
+    dim_size: 384
+```
+
+## Base Configuration
+
+### Storage Path
+```yaml
+storage:
+  base_path: data  # Base directory for vector storage
+```
+
+The final data paths will be:
+
+- `data/datus_db_<namespace_name>` for each configured namespace
+- Example: `data/datus_db_snowflake`, `data/datus_db_local_sqlite`
+
+### Device Configuration
+```yaml
+storage:
+  embedding_device_type: cpu  # cpu, cuda, mps, auto
+```
+
+**Device Options:**
+
+- **`cpu`**: Force CPU usage for embedding models
+- **`cuda`**: Use NVIDIA GPU (if available)
+- **`mps`**: Use Apple Metal Performance Shaders (Apple Silicon)
+- **`auto`**: Automatically select best available device
+
+## Embedding Model Configuration
+
+### Database Embeddings
+
+For table metadata, schema information, and sample data:
+
+```yaml
+database:
+  registry_name: openai              # openai or sentence-transformers
+  model_name: text-embedding-v3-small
+  dim_size: 1024
+  batch_size: 10
+  target_model: openai               # Reference to agent.models
+```
+
+**Configuration Parameters:**
+
+- **`registry_name`**: Embedding provider type (`openai` or `sentence-transformers`)
+- **`model_name`**: Specific embedding model to use
+- **`dim_size`**: Output embedding dimension size
+- **`batch_size`**: Number of texts to process in each batch
+- **`target_model`**: LLM model key from [`agent.models`](agent.md#models-configuration) (for OpenAI embeddings)
+
+### Document Embeddings
+
+For knowledge base documents and extended documentation:
+
+```yaml
+document:
+  model_name: all-MiniLM-L6-v2       # Lightweight model (~100MB)
+  dim_size: 384                      # Smaller dimension for efficiency
+```
+
+### Metric Embeddings
+
+For business metrics and KPI definitions:
+
+```yaml
+metric:
+  model_name: all-MiniLM-L6-v2       # Consistent with document embeddings
+  dim_size: 384                      # Matching dimension size
+```
+
+## Embedding Provider Options
+
+### OpenAI Embeddings (Cloud)
+
+For high-quality embeddings with cloud API:
+
+```yaml
+database:
+  registry_name: openai
+  model_name: text-embedding-v3-small    # or text-embedding-v3-large
+  dim_size: 1536                         # 1536 for v3-small, 3072 for v3-large
+  batch_size: 10                         # Adjust based on rate limits
+  target_model: openai                   # Must reference valid model in agent.models
+```
+
+!!! tip "Environment Variables"
+    Ensure your OpenAI API key is configured:
     
-  # Local SQLite for testing
-  test_sqlite:
-    type: sqlite
-    dbs:
-      - name: orders
-        uri: sqlite:////Users/data/orders.db
-      - name: customers
-        uri: sqlite:////Users/data/customers.db
-      - name: products
-        uri: sqlite:////Users/data/products.db
+    ```bash
+    export OPENAI_API_KEY="your_openai_api_key"
+    ```
+
+### Sentence Transformers (Local)
+
+For local embedding models without external API calls:
+
+```yaml
+database:
+  registry_name: sentence-transformers   # Default local provider
+  model_name: all-MiniLM-L6-v2          # Lightweight option
+  dim_size: 384
+```
+
+!!! info "Alternative Local Models"
+    Consider these high-quality alternatives:
+    
+    - **`intfloat/multilingual-e5-large-instruct`**: 1.2GB, 1024 dimensions, multilingual
+    - **`BAAI/bge-large-en-v1.5`**: 1.2GB, 1024 dimensions (English optimized)
+    - **`BAAI/bge-large-zh-v1.5`**: 1.2GB, 1024 dimensions (Chinese optimized)
+
+## Model Selection Guidelines
+
+=== "Performance-Focused (Small Models)"
+
+    Optimized for speed and minimal resource usage:
+
+    ```yaml
+    document:
+      model_name: all-MiniLM-L6-v2         # ~100MB, 384 dimensions
+      dim_size: 384
+
+    metric:
+      model_name: intfloat/multilingual-e5-small  # ~460MB, 384 dimensions
+      dim_size: 384
+    ```
+
+=== "Balanced Performance and Quality"
+
+    Good balance of speed and retrieval quality:
+
+    ```yaml
+    database:
+      model_name: intfloat/multilingual-e5-large-instruct  # ~1.2GB, 1024 dimensions
+      dim_size: 1024
+    ```
+
+=== "Quality-Focused (Large Models)"
+
+    Maximum retrieval quality with cloud-based embeddings:
+
+    ```yaml
+    database:
+      registry_name: openai
+      model_name: text-embedding-v3-large   # Highest quality
+      dim_size: 3072
+      target_model: openai
+    ```
+
+## Complete Configuration Examples
+
+=== "High-Performance Local Setup"
+
+    Fast local embeddings optimized for development:
+
+    ```yaml
+    storage:
+      base_path: data
+      embedding_device_type: auto          # Use best available device
+      
+      # Fast local embeddings for all data types
+      database:
+        registry_name: sentence-transformers
+        model_name: all-MiniLM-L6-v2
+        dim_size: 384
         
-  # Local DuckDB for analytics
-  analytics_duckdb:
-    type: duckdb
-    dbs:
-      - name: sales
-        uri: duckdb:////opt/data/sales.db
-      - name: marketing
-        uri: duckdb:///data/marketing.duckdb
+      document:
+        model_name: all-MiniLM-L6-v2
+        dim_size: 384
         
-  # BIRD benchmark databases
-  bird_benchmark:
-    type: sqlite
-    path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite
-```
+      metric:
+        model_name: all-MiniLM-L6-v2
+        dim_size: 384
+    ```
 
-## Multi-Database Configuration
+    !!! success "Best For"
+        - Development environments
+        - Resource-constrained systems
+        - Offline deployment requirements
 
-### SQLite Multi-Database Setup
+=== "Hybrid Cloud-Local Setup"
 
-For SQLite and DuckDB, you can configure multiple databases within a single namespace:
+    Combines cloud quality for critical data with local efficiency:
+
+    ```yaml
+    storage:
+      base_path: data
+      embedding_device_type: cpu
+      
+      # High-quality cloud embeddings for database metadata
+      database:
+        registry_name: openai
+        model_name: text-embedding-v3-small
+        dim_size: 1536
+        batch_size: 10
+        target_model: openai
+        
+      # Local embeddings for documents and metrics
+      document:
+        model_name: intfloat/multilingual-e5-large-instruct
+        dim_size: 1024
+        
+      metric:
+        model_name: intfloat/multilingual-e5-large-instruct
+        dim_size: 1024
+    ```
+
+    !!! success "Best For"
+        - Production environments with mixed requirements
+        - Cost-conscious deployments
+        - Balancing quality and performance
+
+=== "Enterprise Quality Setup"
+
+    Maximum quality embeddings for production systems:
+
+    ```yaml
+    storage:
+      base_path: /opt/datus/embeddings
+      embedding_device_type: cuda          # Use GPU acceleration
+      
+      # High-quality embeddings across all data types
+      database:
+        registry_name: openai
+        model_name: text-embedding-v3-large
+        dim_size: 3072
+        batch_size: 5                      # Smaller batches for large model
+        target_model: openai
+        
+      document:
+        model_name: BAAI/bge-large-en-v1.5
+        dim_size: 1024
+        
+      metric:
+        model_name: BAAI/bge-large-en-v1.5
+        dim_size: 1024
+    ```
+
+    !!! success "Best For"
+        - Enterprise production environments
+        - High-accuracy requirements
+        - Systems with GPU acceleration
+
+## Integration with Other Components
+
+### Metrics Configuration
+
+The storage configuration works with the metrics section to embed business metrics:
 
 ```yaml
-multi_sqlite:
-  type: sqlite
-  dbs:
-    - name: sales_2023        # Each database must have a unique name
-      uri: sqlite:////data/sales_2023.db
-    - name: sales_2024
-      uri: sqlite:////data/sales_2024.db
-    - name: customer_master
-      uri: sqlite:////data/customers.db
-```
+metrics:
+  duckdb:                              # Namespace reference
+    domain: sale                       # Business domain
+    layer1: layer1                     # Metric layer classification
+    layer2: layer2                     # Sub-layer classification
+    ext_knowledge: ""                  # Extended knowledge base path
 
-### Path Pattern Configuration
-
-Use glob patterns to automatically include multiple database files:
-
-```yaml
-benchmark_dbs:
-  type: sqlite
-  path_pattern: benchmarks/**/*.sqlite  # Includes all .sqlite files recursively
-```
-
-**Supported patterns:**
-
-* `*.sqlite` - All SQLite files in current directory
-* `**/*.sqlite` - All SQLite files recursively
-* `data/2024/*.db` - All .db files in data/2024 directory
-* `benchmark/bird/**/*.sqlite` - All SQLite files under benchmark/bird
-
-## URI Formats
-
-### SQLite URI Format
-
-```
-sqlite:////absolute/path/to/database.db      # Absolute path
-sqlite:///relative/path/to/database.db       # Relative path
-```
-
-### DuckDB URI Format
-
-```
-duckdb:////absolute/path/to/database.db      # Absolute path
-duckdb:///relative/path/to/database.db       # Relative path
-```
-
-## Security Considerations
-
-### Credential Management
-
-```yaml
-# Good: Using environment variables
-username: ${DB_USERNAME}
-password: ${DB_PASSWORD}
-
-# Avoid: Hardcoded credentials
-username: "actual_username"
-password: "actual_password"
+storage:
+  metric:
+    model_name: all-MiniLM-L6-v2       # Model for embedding metrics
+    dim_size: 384
 ```

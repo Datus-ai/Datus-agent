@@ -8,7 +8,6 @@ Context items are organized into three separate trees:
 
 - `@catalog` — your physical data structure (databases, schemas, tables)
 - `@subject` — your semantic/business layer (domains, layers, semantic models, metrics)
-- `@sql` — your historical knowledge (SQL history, reusable SQL snippets)
 
 By combining these, you give Datus the same mental model you have — so it can reason with your data instead of guessing.
 
@@ -19,7 +18,7 @@ By combining these, you give Datus the same mental model you have — so it can 
 You can summon the context browser by typing `@` and pressing Tab. Depending on which command you choose, you'll see a tree view you can drill down:
 
 ### @catalog
-```
+```text
 catalog
   └── database
       └── schema
@@ -28,17 +27,36 @@ catalog
 
 ![Catalog Screen](../assets/catalog_screen.png)
 
+When your focus is on the panel where the **semantic model** is located and modify it via `Ctrl+e`.
+
+![Catalog Screen_Edit_Semantic](../assets/catalog_screen_edit_semantic.png)
+
 ### @subject
-```
+```text
 domain
   └── layer1
       └── layer2
-          └── metrics/sql
+          └── semantic_model
+              └── metrics
+              └── historical sqls
 ```
 
-![Subject Screen](../assets/subject_screen.png)
+![Subject Screen_Metrics](../assets/subject_screen_metrics.png)
 
-When you select an item, it will be injected into the current chat turn as a reference — Datus will know its metadata, lineage, and purpose when generating SQL.
+![Subject Screen_Historical_SQL](../assets/subject_screen_sql.png)
+
+#### Modify Domain layers and Name
+When your focus is on the **domain tree** on the left, you can modify it via `Ctrl+e`
+
+![Subject Screen_Edit_Domain](../assets/subject_screen_edit_domain.png)
+
+
+#### Modify Metrics Details
+When your focus is on the panel where the **metrics details** are located on the right, you can modify it via `Ctrl+e`.
+![Subject_Screen_Edit_Metrics](../assets/subject_screen_edit_metrics.png)
+#### Modify Historical SQL
+When your focus is on the panel on the right where the **historical SQL details** is located, you can modify it via `Ctrl+e`
+![Subject_Screen_Edit_Historical_SQL](../assets/subject_screen_edit_sql.png)
 
 For the initialization of the context tree, you can refer to the Knowledge Base documentation.
 
@@ -86,4 +104,4 @@ Type `@` (or `@any_text`) followed by any text, then press Tab. Datus will fuzzy
 - Query patterns and best practices
 - Optimization examples
 
-Check the [knowledge base documentation](../knowledge_base/introduction.md) to learn how to build these context trees.  
+Check the [knowledge base documentation](../knowledge_base/introduction.md) to learn how to build these context trees.

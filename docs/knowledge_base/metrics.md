@@ -1,52 +1,65 @@
 # Business Metrics Intelligence
 
-The Metrics component specifically focuses on automatically extracting and generating business metrics from historical SQL queries, establishing an enterprise-level metrics management system.
+Starting from **version 0.2.4**, the Metrics component focuses on creating standardized, queryable business metrics as an independent semantic query layer. Metrics can be executed directly through MetricFlow, rather than serving solely as references for LLM SQL generation.
 
 ## Core Value
 
-### What Problem Does It Solve?
-
-- **Duplicate SQL queries**: Large numbers of similar business query needs in enterprises
-- **Inconsistent metric definitions**: Different developers have different understandings of the same business metrics
-- **Inefficient data analysis**: SQL needs to be rewritten for each query
-
-### What Value Does It Provide?
-
-- **Metric standardization**: Unified business metric definitions ensuring data consistency
-- **Knowledge reuse**: Converting historical SQL experience into reusable metrics library
-- **Intelligent querying**: Directly calling predefined metrics through natural language
+Solves common enterprise challenges:
+- **Duplicate SQL queries**: Query metrics directly instead of rewriting similar SQL
+- **Inconsistent definitions**: Standardize metric definitions across teams through executable specifications
+- **Manual classification**: Organize metrics with hierarchical subject tree taxonomy
+- **Ad-hoc SQL complexity**: Use semantic queries (`query_metrics`) instead of generating SQL for common metrics
 
 ## How It Works
 
-### Data Hierarchy Structure
-Data Table/Historical SQLs → Semantic Model → Business Metrics
+Metrics are business-level calculations built on top of semantic models. Starting from version 0.2.4, they operate independently:
 
-#### 1. Semantic Model
-- Defines table structure and business meaning
-- Contains dimensions, measures, identifiers, and other metadata
-- Provides semantic foundation for SQL queries
+- **Metrics** (this document): Standardized KPIs queryable via MetricFlow
+- **Semantic Models** (see [semantic_model.md](semantic_model.md)): Schema extensions for ad-hoc SQL generation
 
-#### 2. Business Metrics
-- Calculable metrics defined based on semantic models
-- Contains metric name, description, calculation logic
-- Supports complex business calculations
+Both can be generated from historical SQLs, but metrics focus on reusable business logic while semantic models focus on schema understanding.
+
+## Querying Metrics
+
+Once metrics are defined, query them directly using MetricFlow tools:
+
+```python
+# In agent conversation or workflow
+# Search for relevant metrics
+search_semantic_objects(query="daily active users", kinds=["metric"])
+
+# Execute metric query
+query_metrics(
+    metrics=["daily_active_users"],
+    group_by=["platform", "country"],
+    start_time="2024-01-01",
+    end_time="2024-01-31"
+)
+```
+
+**Metrics-First Strategy**: When user queries involve KPIs (e.g., "show me DAU by platform"), the agent will:
+1. Search for matching metrics using `search_semantic_objects`
+2. Execute via `query_metrics` if found (preferred)
+3. Fall back to ad-hoc SQL generation only if no metric exists
+
+This ensures consistent metric definitions across the organization.
 
 ## Usage
+
+**Prerequisites**: This command relies on [datus-semantic-metricflow](../adapters/semantic_adapters.md), install it first with `pip install datus-semantic-metricflow`.
 
 ### Basic Command
 
 ```bash
-# Initialize metrics component from success story CSV
-datus bootstrap-kb \
-    --namespace your_namespace \
+# From CSV (historical SQLs)
+datus-agent bootstrap-kb \
+    --namespace <your_namespace> \
     --components metrics \
     --success_story path/to/success_story.csv
-```
 
-```bash
-# Initialize metrics component from semantic YAML
-datus bootstrap-kb \
-    --namespace your_namespace \
+# From YAML (semantic models)
+datus-agent bootstrap-kb \
+    --namespace <your_namespace> \
     --components metrics \
     --semantic_yaml path/to/semantic_model.yaml
 ```
@@ -57,10 +70,56 @@ datus bootstrap-kb \
 |-----------|----------|-------------|---------|
 | `--namespace` | ✅ | Database namespace | `sales_db` |
 | `--components` | ✅ | Components to initialize | `metrics` |
-| `--success_story` | ⚠️ | A CSV file containing historical SQLs and questions (required if not using `--semantic_yaml`) | `benchmark/semantic_layer/success_story.csv` |
-| `--semantic_yaml` | ⚠️ | Semantic model YAML file (required if not using `--success_story`) | `models/semantic_model.yaml` |
-| `--kb_update_strategy` | ✅ | Update strategy | `overwrite`/`incremental` |
+| `--success_story` | ⚠️ | CSV file with historical SQLs and questions (required if no `--semantic_yaml`) | `success_story.csv` |
+| `--semantic_yaml` | ⚠️ | Semantic model YAML file (required if no `--success_story`) | `semantic_model.yaml` |
+| `--kb_update_strategy` | ❌ | Update strategy | `overwrite`/`incremental` |
+| `--subject_tree` | ❌ | Predefined categories (comma-separated) | `Sales/Reporting/Daily,Finance/Revenue/Monthly` |
 | `--pool_size` | ❌ | Concurrent thread count | `4` |
+
+### Subject Tree Categorization
+
+Organizes metrics using hierarchical taxonomy: `domain/layer1/layer2` (e.g., `Sales/Reporting/Daily`)
+
+**Two modes:**
+- **Predefined**: Use `--subject_tree` to enforce specific categories
+- **Learning**: Omit `--subject_tree` to reuse existing categories or create new ones
+
+```bash
+# Predefined mode example
+--subject_tree "Sales/Reporting/Daily,Finance/Revenue/Monthly"
+
+# Learning mode: omit --subject_tree parameter
+```
+
+**Generated Tag Format:**
+
+When metrics are generated, the subject_tree classification is stored in `locked_metadata.tags` with the format `"subject_tree: {domain}/{layer1}/{layer2}"`:
+
+```yaml
+metric:
+  name: daily_revenue
+  type: simple
+  type_params:
+    measure: revenue
+  locked_metadata:
+    tags:
+      - "Finance"
+      - "subject_tree: Sales/Reporting/Daily"
+```
+
+**Important for YAML Import:**
+
+When using `--semantic_yaml` to sync metrics from YAML files to lancedb, you must manually add the `locked_metadata.tags` with subject_tree format in your YAML file for successful categorization. The system will not automatically classify metrics imported from YAML - you need to include the tags yourself:
+
+```yaml
+metric:
+  name: your_metric
+  # ... other fields
+  locked_metadata:
+    tags:
+      - "YourDomain"
+      - "subject_tree: Domain/Layer1/Layer2"
+```
 
 ## Data Source Formats
 
@@ -72,86 +131,34 @@ How many customers have been added per day?,"SELECT ds AS date, SUM(1) AS new_cu
 What is the total transaction amount?,SELECT SUM(transaction_amount_usd) as total_amount FROM transactions;
 ```
 
-### YAML Format
+### YAML Format (Metrics Only)
+
+When importing metrics from YAML files, the metric definition references an existing semantic model:
 
 ```yaml
-data_source:
-  name: transactions
-  description: "Transaction records"
-  identifiers:
-    - name: transaction_id
-      type: primary
-  dimensions:
-    - name: transaction_date
-      type: time
-    - name: transaction_type
-      type: categorical
-  measures:
-    - name: amount
-      type: double
-      agg: sum
-
 metric:
   name: total_revenue
   description: "Total revenue from all transactions"
-  constraint: "amount > 0"
+  type: simple
+  type_params:
+    measure: amount  # References measure from semantic model
+  filter: "amount > 0"
+  locked_metadata:
+    tags:
+      - "Finance"
+      - "subject_tree: Finance/Revenue/Total"
 ```
 
-## Advanced Features
-
-### 1. Vector Search
-
-Metrics support semantic search, finding relevant metrics through natural language descriptions:
-
-```python
-# Example search logic
-search_results = metrics_store.search("customer retention metrics")
-# Returns related customer retention metrics
-```
-
-### 2. Hierarchical Organization
-
-Metrics are organized by business hierarchy:
-
-```python
-# Metric ID structure
-f"{domain}_{layer1}_{layer2}_{semantic_model}_{metric_name}"
-# Example: ecommerce_revenue_daily_orders_total_amount
-```
-
-### 3. Multi-strategy Updates
-
-- **overwrite**: Completely rebuild metrics library
-- **incremental**: Incrementally update new metrics
-
-## Best Practices
-
-### 1. Data Preparation
-
-- Use high-quality success story data
-- Ensure SQL queries represent typical business scenarios
-- Provide clear business problem descriptions
-
-### 2. Configuration Optimization
-
-```bash
-# Recommended configuration
-datus bootstrap-kb \
-    --namespace your_db \
-    --components metrics \
-    --success_story clean_success_stories.csv \
-    --kb_update_strategy overwrite \
-    --pool_size 4
-```
-
-### 3. Maintenance Strategy
-
-- Regularly update success story library
-- Monitor metrics generation quality
-- Clean up duplicate or outdated metrics
+**Note**: The underlying semantic model (`data_source` with dimensions/measures) should already exist. See [semantic_model.md](semantic_model.md) for how to define semantic models.
 
 ## Summary
 
-The Bootstrap-KB Metrics component is the core functionality of Datus Agent, helping enterprises establish standardized data metrics systems through automated metric generation and management. It not only significantly improves data analysis efficiency but also ensures enterprise data consistency and reusability.
+The Metrics component establishes a **semantic query layer** that transforms historical SQLs into standardized, executable metric definitions. Unlike traditional semantic layers that only serve as LLM references, Datus metrics can be directly queried through MetricFlow, eliminating the need for ad-hoc SQL generation for common KPIs.
 
-By properly using the Metrics component, enterprises can build a strong foundation for data-driven decision making.
+Key differentiators:
+- **Executable Metrics**: Query via `query_metrics` instead of generating SQL
+- **Metrics-First Strategy**: Agent prioritizes metric queries over ad-hoc SQL
+- **Independent from Semantic Models**: Metrics operate as a separate query tool, not embedded in schema definitions
+- **Hierarchical Organization**: Subject tree taxonomy for discoverability
+
+This approach ensures consistent metric definitions across teams while reducing query complexity and improving performance.

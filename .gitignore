@@ -35,6 +35,9 @@ before_reflection_*.yaml
 .claude
 /.omc
 
+# MkDocs build output
+/site
+
 # Coverage & CI output
 ci/htmlcov/
 ci/coverage.xml

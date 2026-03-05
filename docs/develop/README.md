@@ -1,11 +1,9 @@
 # Datus-agent
 
 ---
-
 # Deployment
 
 ## Pulling submodule code locally
-
 ```bash
 git submodule update --init
 ```
@@ -73,13 +71,16 @@ agent:
 
   storage_path: data
 
-  # Benchmark data is stored at {agent.home}/benchmark/{name}
-  # Supported benchmarks: bird_dev, spider2, semantic_layer
+  benchmark:
+    bird_dev:
+      benchmark_path: benchmark/bird/dev_20240627
+    spider2:
+      benchmark_path: benchmark/spider2/spider2-snow
 
   namespace: # namespace is a set of database connections
     local_duckdb:
       type: duckdb
-      uri: ./sample_data/duckdb-demo.duckdb
+      uri: ./tests/duckdb-demo.duckdb
     spider-snow:
       type: snowflake
       warehouse: ${SNOWFLAKE_WAREHOUSE}
@@ -108,7 +109,7 @@ agent:
       model_name: intfloat/multilingual-e5-large-instruct
       dim_size: 1024
     metric:
-      model_name: all-MiniLM-L6-v2
+      model_name:  all-MiniLM-L6-v2
       dim_size: 384
 ```
 
@@ -138,8 +139,7 @@ python -m datus.main probe-llm
 ```
 
 Example Output:
-
-```
+```text
 LLM model test successful
 Final Result: {"status": "success", "message": "LLM model test successful", "response": "Yes, I can 'hear' you! 😊 How can I assist you today?"}
 ```
@@ -189,7 +189,9 @@ Datus> .help
 Update `agent.yml` if needed:
 
 ```yaml
-# Benchmark data is stored at {agent.home}/benchmark/spider2/
+benchmark:
+  spider2:
+    benchmark_path: benchmark/spider2/spider2-snow
 
 namespace:
   spidersnow:
@@ -228,7 +230,6 @@ SQL Task created: 49856268
 Database: snowflake - GOOGLE_TRENDS
 
 ```
-
 ---
 
 # Bird Benchmark
@@ -238,12 +239,14 @@ Database: snowflake - GOOGLE_TRENDS
 Update Configuration:
 
 ```yaml
-# Benchmark data is stored at {agent.home}/benchmark/bird/
+benchmark:
+  bird_dev:
+    benchmark_path: benchmark/bird/dev_20240627
 
 namespace:
   bird_sqlite:
     type: sqlite
-    path_pattern: { agent.home }/benchmark/bird/dev_databases/**/*.sqlite
+    path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite
 ```
 
 ### Download and Extract Bird Dev
@@ -251,7 +254,7 @@ namespace:
 ```bash
 wget https://bird-bench.oss-cn-beijing.aliyuncs.com/dev.zip
 unzip dev.zip
-mkdir -p ~/.datus/benchmark/bird
+mkdir -p benchmark/bird
 mv dev_20240627 benchmark/bird
 cd benchmark/bird/dev_20240627
 unzip dev_databases
@@ -267,7 +270,7 @@ python -m datus.main bootstrap-kb --namespace bird_sqlite --benchmark bird_dev -
 ### Run Tests
 
 ```bash
-python -m datus.main benchmark --namespace bird_sqlite --benchmark bird_dev --workflow fixed --schema_linking_rate medium --benchmark_task_ids 14 15
+python -m datus.main benchmark --namespace bird_sqlite --benchmark bird_dev --plan fixed --schema_linking_rate medium --benchmark_task_ids 14 15
 ```
 
 ```bash
@@ -275,7 +278,7 @@ python -m datus.main benchmark --namespace bird_sqlite --benchmark bird_dev --sc
 ```
 
 ```bash
-python -m datus.main benchmark --benchmark bird_dev --workflow fixed --schema_linking_model medium
+python -m datus.main benchmarking --benchmark bird_dev --plan fixed --schema_linking_model medium
 ```
 
 ### Using cli to develop
@@ -320,16 +323,12 @@ namespace:
     name: duck
     uri: ~/.metricflow/duck.db
 
-# Benchmark data is stored at {agent.home}/benchmark/semantic_layer/
-
-metrics:
-  tutorial:
-    subject_path: sale/layer1/layer2
-    ext_knowledge: ""
+benchmark:
+  semantic_layer:
+    benchmark_path: benchmark/semantic_layer
 ```
 
 Export Environment Variables:
-
 ```bash
 export MF_PATH=</path/to/metricflow>/.venv/bin/mf
 export MF_VERBOSE=true
@@ -345,5 +344,5 @@ python -m datus.main bootstrap-kb --namespace duckdb --components metrics --kb_u
 ### Run Tests
 
 ```bash
-python -m datus.main benchmark --namespace duckdb --benchmark semantic_layer --workflow metric_to_sql
+python -m datus.main benchmark --namespace duckdb --benchmark semantic_layer --plan metric_to_sql
 ```

@@ -1,0 +1,631 @@
+#
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# Default values for superset.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# A README is automatically generated from this file to document it,
+# using helm-docs (see https://github.com/norwoodj/helm-docs)
+# To update it, install helm-docs and run helm-docs from the root of this chart
+
+# -- Provide a name to override the name of the chart
+nameOverride: ~
+# -- Provide a name to override the full names of resources
+fullnameOverride: ~
+
+# -- Labels to be added to all resources
+extraLabels: { }
+
+# -- User ID directive. This user must have enough permissions to run the bootstrap script
+# Running containers as root is not recommended in production. Change this to another UID - e.g. 1000 to be more secure
+runAsUser: 0
+
+# -- Specify rather or not helm should create the secret described in `secret-env.yaml` template
+secretEnv:
+  # -- Change to false in order to support externally created secret (Binami "Sealed Secrets" for Kubernetes or External Secrets Operator)
+  # note: when externally creating the secret, the chart still expects to pull values from a secret with the name of the release defaults to `release-name-superset-env` - full logic located in _helpers.tpl file: `define "superset.fullname"`
+  create: true
+
+# -- Specify service account name to be used
+serviceAccountName: ~
+serviceAccount:
+  # -- Create custom service account for Superset. If create: true and serviceAccountName is not provided, `superset.fullname` will be used.
+  create: false
+  annotations: { }
+
+# -- Install additional packages and do any other bootstrap configuration in this script
+# For production clusters it's recommended to build own image with this step done in CI
+# @default -- see `values.yaml`
+bootstrapScript: |
+  #!/bin/bash
+  set -eu
+  apt-get update
+  apt-get install -y --no-install-recommends build-essential python3-dev libpq-dev 
+  /app/.venv/bin/python -m ensurepip --upgrade || true
+  /app/.venv/bin/python -m pip install --no-cache-dir --upgrade pip setuptools wheel
+  /app/.venv/bin/python -m pip install --no-cache-dir psycopg2 pymysql
+  if [ ! -f ~/bootstrap ]; then echo "Running Superset with uid {{ .Values.runAsUser }}" > ~/bootstrap; fi
+
+# -- The name of the secret which we will use to generate a superset_config.py file
+# Note: this secret must have the key superset_config.py in it and can include other files as well
+configFromSecret: '{{ template "superset.fullname" . }}-config'
+
+# -- The name of the secret which we will use to populate env vars in deployed pods
+# This can be useful for secret keys, etc.
+envFromSecret: '{{ template "superset.fullname" . }}-env'
+# -- This can be a list of templated strings
+envFromSecrets: [ ]
+
+# -- Extra environment variables that will be passed into pods
+extraEnv:
+  SUPERSET__SQLALCHEMY_EXAMPLES_URI: postgresql+psycopg2://superset:superset@superset-postgresql:5432/examples
+  # Different gunicorn settings, refer to the gunicorn documentation
+  # https://docs.gunicorn.org/en/stable/settings.html#
+  # These variables are used as Flags at the gunicorn startup
+  # https://github.com/apache/superset/blob/master/docker/run-server.sh#L22
+  # Extend timeout to allow long running queries.
+  # GUNICORN_TIMEOUT: 300
+  # Increase the gunicorn worker amount, can improve performance drastically
+  # See: https://docs.gunicorn.org/en/stable/design.html#how-many-workers
+  # SERVER_WORKER_AMOUNT: 4
+  # WORKER_MAX_REQUESTS: 0
+  # WORKER_MAX_REQUESTS_JITTER: 0
+  # SERVER_THREADS_AMOUNT: 20
+  # GUNICORN_KEEPALIVE: 2
+  # SERVER_LIMIT_REQUEST_LINE: 0
+  # SERVER_LIMIT_REQUEST_FIELD_SIZE: 0
+
+  # OAUTH_HOME_DOMAIN: ..
+  # # If a whitelist is not set, any address that can use your OAuth2 endpoint will be able to login.
+  # #   this includes any random Gmail address if your OAuth2 Web App is set to External.
+  # OAUTH_WHITELIST_REGEX: ...
+
+# -- Extra environment variables in RAW format that will be passed into pods
+extraEnvRaw: [ ]
+  # Load DB password from other secret (e.g. for zalando operator)
+# - name: DB_PASS
+#   valueFrom:
+#     secretKeyRef:
+#       name: superset.superset-postgres.credentials.postgresql.acid.zalan.do
+#       key: password
+
+# -- Extra environment variables to pass as secrets
+extraSecretEnv:
+  SUPERSET_SECRET_KEY: 'IUz1VMOH8U7YHXjJibFF7fYQIw2FbYtoXv2PGSMQmN7/5nk1R1FEPbQ6'
+  # MAPBOX_API_KEY: ...
+  # # Google API Keys: https://console.cloud.google.com/apis/credentials
+  # GOOGLE_KEY: ...
+  # GOOGLE_SECRET: ...
+  #   # Generate your own secret key for encryption. Use openssl rand -base64 42 to generate a good key
+
+# -- Extra files to be mounted as ConfigMap on the path specified in `extraConfigMountPath`
+extraConfigs: { }
+  # import_datasources.yaml: |
+  #     databases:
+  #     - allow_file_upload: true
+  #       allow_ctas: true
+  #       allow_cvas: true
+  #       database_name: example-db
+#       extra: "{\r\n    \"metadata_params\": {},\r\n    \"engine_params\": {},\r\n    \"\
+#         metadata_cache_timeout\": {},\r\n    \"schemas_allowed_for_file_upload\": []\r\n\
+#         }"
+#       sqlalchemy_uri: example://example-db.local
+#       tables: []
+
+# -- Extra files to be mounted as Secrets on the path specified in `configMountPath`
+extraSecrets: { }
+
+extraVolumes: [ ]
+  # - name: customConfig
+  #   configMap:
+#     name: '{{ template "superset.fullname" . }}-custom-config'
+# - name: additionalSecret
+#   secret:
+#     secretName: my-secret
+#     defaultMode: 0600
+
+extraVolumeMounts: [ ]
+# - name: customConfig
+#   mountPath: /mnt/config
+#   readOnly: true
+# - name: additionalSecret:
+#   mountPath: /mnt/secret
+
+# -- A dictionary of overrides to append at the end of superset_config.py - the name does not matter
+# WARNING: the order is not guaranteed
+# Files can be passed as helm --set-file configOverrides.my-override=my-file.py
+configOverrides:
+  mysql_driver: |
+    import pymysql
+    pymysql.install_as_MySQLdb()
+  examples_uri: |
+    import os
+    # Prefer env var if provided, fallback to default behavior
+    SQLALCHEMY_EXAMPLES_URI = os.getenv(
+        "SUPERSET__SQLALCHEMY_EXAMPLES_URI",
+        os.getenv("SQLALCHEMY_EXAMPLES_URI", "postgresql+psycopg2://superset:superset@superset-postgresql:5432/examples"),
+    )
+  # extend_timeout: |
+  #    # Extend timeout to allow long running queries.
+  #    SUPERSET_WEBSERVER_TIMEOUT = ...
+  # enable_oauth: |
+  #   from flask_appbuilder.security.manager import (AUTH_DB, AUTH_OAUTH)
+  #   AUTH_TYPE = AUTH_OAUTH
+  #   OAUTH_PROVIDERS = [
+  #       {
+  #           "name": "google",
+  #           "whitelist": [ os.getenv("OAUTH_WHITELIST_REGEX", "") ],
+  #           "icon": "fa-google",
+  #           "token_key": "access_token",
+  #           "remote_app": {
+  #               "client_id": os.environ.get("GOOGLE_KEY"),
+  #               "client_secret": os.environ.get("GOOGLE_SECRET"),
+  #               "api_base_url": "https://www.googleapis.com/oauth2/v2/",
+  #               "client_kwargs": {"scope": "email profile"},
+  #               "request_token_url": None,
+  #               "access_token_url": "https://accounts.google.com/o/oauth2/token",
+  #               "authorize_url": "https://accounts.google.com/o/oauth2/auth",
+  #               "authorize_params": {"hd": os.getenv("OAUTH_HOME_DOMAIN", "")}
+  #           }
+  #       }
+  #   ]
+  #   # Map Authlib roles to superset roles
+  #   AUTH_ROLE_ADMIN = 'Admin'
+  #   AUTH_ROLE_PUBLIC = 'Public'
+  #   # Will allow user self registration, allowing to create Flask users from Authorized User
+  #   AUTH_USER_REGISTRATION = True
+  #   # The default user self registration role
+  #   AUTH_USER_REGISTRATION_ROLE = "Admin"
+  # secret: |
+  #   # Generate your own secret key for encryption. Use `openssl rand -base64 42` to generate a good key
+  #   SECRET_KEY = 'CHANGE_ME_TO_A_COMPLEX_RANDOM_SECRET'
+
+# -- Same as above but the values are files
+configOverridesFiles: { }
+# extend_timeout: extend_timeout.py
+# enable_oauth: enable_oauth.py
+
+configMountPath: "/app/pythonpath"
+
+extraConfigMountPath: "/app/configs"
+
+image:
+  repository: apachesuperset.docker.scarf.sh/apache/superset
+  tag: ~
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: [ ]
+
+initImage:
+  repository: apache/superset
+  tag: dockerize
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8088
+  annotations: { }
+  # cloud.google.com/load-balancer-type: "Internal"
+  loadBalancerIP: ~
+  nodePort:
+    # -- (int)
+    http: 8088
+
+ingress:
+  enabled: false
+  ingressClassName: ~
+  annotations: { }
+  # kubernetes.io/tls-acme: "true"
+
+init:
+  # Configure resources
+  # Warning: fab command consumes a lot of ram and can
+  # cause the process to be killed due to OOM if it exceeds limit
+  # Make sure you are giving a strong password for the admin user creation( else make sure you are changing after setup)
+  # Also change the admin email to your own custom email.
+  resources: { }
+    # limits:
+  #   cpu:
+  #   memory:
+  # requests:
+  #   cpu:
+  #   memory:
+  # -- Command
+  # @default -- a `superset_init.sh` command
+  command:
+    - "/bin/sh"
+    - "-c"
+    - ". {{ .Values.configMountPath }}/superset_bootstrap.sh; . {{ .Values.configMountPath }}/superset_init.sh"
+  enabled: true
+  jobAnnotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": "before-hook-creation"
+  loadExamples: true
+  createAdmin: true
+  adminUser:
+    username: admin
+    firstname: Superset
+    lastname: Admin
+    email: admin@superset.com
+    password: admin
+  # -- List of initContainers
+  # @default -- a container waiting for postgres
+  initContainers:
+    - name: wait-for-postgres
+      image: "{{ .Values.initImage.repository }}:{{ .Values.initImage.tag }}"
+      imagePullPolicy: "{{ .Values.initImage.pullPolicy }}"
+      envFrom:
+        - secretRef:
+            name: "{{ tpl .Values.envFromSecret . }}"
+      command:
+        - /bin/sh
+        - -c
+        - dockerize -wait "tcp://$DB_HOST:$DB_PORT" -timeout 120s
+  # -- A Superset init script
+  # @default -- a script to create admin user and initialize roles
+  initscript: |-
+    #!/bin/sh
+    set -eu
+    echo "Upgrading DB schema..."
+    superset db upgrade
+    echo "Initializing roles..."
+    superset init
+    {{ if .Values.init.createAdmin }}
+    echo "Creating admin user..."
+    superset fab create-admin \
+                    --username {{ .Values.init.adminUser.username }} \
+                    --firstname {{ .Values.init.adminUser.firstname }} \
+                    --lastname {{ .Values.init.adminUser.lastname }} \
+                    --email {{ .Values.init.adminUser.email }} \
+                    --password {{ .Values.init.adminUser.password }} \
+                    || true
+    {{- end }}
+    {{ if .Values.init.loadExamples }}
+    echo "Loading examples..."
+    superset load_examples
+    {{- end }}
+    if [ -f "{{ .Values.extraConfigMountPath }}/import_datasources.yaml" ]; then
+      echo "Importing database connections.... "
+      superset import_datasources -p {{ .Values.extraConfigMountPath }}/import_datasources.yaml
+    fi
+    
+    # ============================================
+    # Browser Init: Visit all chart explore pages
+    # to trigger query_context updates
+    # ============================================
+    echo "Starting browser init to update query_context..."
+    
+    # Configuration - use kubernetes service name
+    SUPERSET_URL="http://{{ template "superset.fullname" . }}:{{ .Values.service.port }}"
+    SUPERSET_USER="{{ .Values.init.adminUser.username }}"
+    SUPERSET_PASS="{{ .Values.init.adminUser.password }}"
+    WAIT_TIME="${WAIT_TIME:-0.3}"
+    MAX_WAIT_RETRIES=60
+    
+    # Find Python
+    PYTHON_BIN=""
+    if [ -x "/app/.venv/bin/python3" ]; then
+        PYTHON_BIN="/app/.venv/bin/python3"
+    elif [ -x "/app/.venv/bin/python" ]; then
+        PYTHON_BIN="/app/.venv/bin/python"
+    elif command -v python3 > /dev/null 2>&1; then
+        PYTHON_BIN="python3"
+    fi
+    
+    if [ -z "$PYTHON_BIN" ]; then
+        echo "[WARN] Python not found, skipping browser init"
+    else
+        echo "Using Python: $PYTHON_BIN"
+        echo "Superset URL: $SUPERSET_URL"
+    
+        # Wait for Superset service to be ready
+        echo "Waiting for Superset service to be ready..."
+        RETRY_COUNT=0
+        while [ $RETRY_COUNT -lt $MAX_WAIT_RETRIES ]; do
+            if curl -s -o /dev/null -w "%{http_code}" "${SUPERSET_URL}/health" 2>/dev/null | grep -q "200"; then
+                echo "[OK] Superset service is ready"
+                break
+            fi
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            echo "Waiting for Superset... ($RETRY_COUNT/$MAX_WAIT_RETRIES)"
+            sleep 5
+        done
+    
+        if [ $RETRY_COUNT -ge $MAX_WAIT_RETRIES ]; then
+            echo "[WARN] Superset service not ready after waiting, skipping browser init"
+        else
+            # Find pip
+            PIP_BIN=""
+            if [ -x "/app/.venv/bin/pip" ]; then
+                PIP_BIN="/app/.venv/bin/pip"
+            elif command -v pip3 > /dev/null 2>&1; then
+                PIP_BIN="pip3"
+            else
+                PIP_BIN="$PYTHON_BIN -m pip"
+            fi
+    
+            echo "Using pip: $PIP_BIN"
+    
+            # Install dependencies
+            echo "Installing playwright..."
+            $PIP_BIN install playwright requests -q || true
+            $PYTHON_BIN -m playwright install chromium || true
+            $PYTHON_BIN -m playwright install-deps chromium 2>/dev/null || true
+    
+            # Export env vars and run browser init
+            export SUPERSET_URL SUPERSET_USER SUPERSET_PASS WAIT_TIME
+    
+            $PYTHON_BIN << 'BROWSER_INIT_SCRIPT'
+    import os
+    import sys
+    import json
+    import time
+    import requests
+    import re
+    
+    try:
+        from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+    except ImportError:
+        print("[WARN] Playwright not available, skipping browser init")
+        sys.exit(0)
+    
+    SUPERSET_URL = os.environ.get('SUPERSET_URL', 'http://127.0.0.1:8088')
+    SUPERSET_USER = os.environ.get('SUPERSET_USER', 'admin')
+    SUPERSET_PASS = os.environ.get('SUPERSET_PASS', 'admin')
+    WAIT_TIME = float(os.environ.get('WAIT_TIME', '0.3'))
+    
+    def get_all_slice_ids():
+        print("Fetching all chart slice_ids...")
+        session = requests.Session()
+        try:
+            login_page = session.get(f"{SUPERSET_URL}/login/", timeout=10)
+        except Exception as e:
+            print(f"[ERROR] Cannot connect to Superset: {e}")
+            return []
+    
+        csrf_match = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', login_page.text)
+        csrf_token = csrf_match.group(1) if csrf_match else ""
+        session.post(f"{SUPERSET_URL}/login/", data={
+            'username': SUPERSET_USER, 'password': SUPERSET_PASS, 'csrf_token': csrf_token
+        })
+    
+        slice_ids = []
+        page = 0
+        while True:
+            try:
+                resp = session.get(f"{SUPERSET_URL}/api/v1/chart/",
+                    params={'q': json.dumps({"page": page, "page_size": 100})})
+                if resp.status_code != 200:
+                    break
+                data = resp.json()
+                results = data.get('result', [])
+                if not results:
+                    break
+                for chart in results:
+                    slice_ids.append({'id': chart.get('id'), 'name': chart.get('slice_name', '')})
+                if len(slice_ids) >= data.get('count', 0):
+                    break
+                page += 1
+            except Exception as e:
+                print(f"Error: {e}")
+                break
+        print(f"[OK] Found {len(slice_ids)} charts")
+        return slice_ids
+    
+    def main():
+        charts = get_all_slice_ids()
+        if not charts:
+            print("No charts found")
+            return 0
+    
+        print(f"Visiting {len(charts)} chart pages...")
+        success, failed = 0, 0
+    
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(
+                    headless=True,
+                    args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+                )
+                page = browser.new_page(viewport={'width': 1920, 'height': 1080})
+    
+                # Login
+                print("Logging in...")
+                page.goto(f"{SUPERSET_URL}/login/", timeout=30000)
+                page.wait_for_load_state('networkidle', timeout=10000)
+                page.fill('input[name="username"]', SUPERSET_USER)
+                page.fill('input[name="password"]', SUPERSET_PASS)
+                page.click('input[type="submit"]')
+                page.wait_for_load_state('networkidle', timeout=15000)
+    
+                if '/login' in page.url:
+                    print("[ERROR] Login failed")
+                    return 1
+                print("[OK] Login successful")
+    
+                # Visit each explore page
+                for i, chart in enumerate(charts, 1):
+                    url = f"{SUPERSET_URL}/explore/?slice_id={chart['id']}"
+                    print(f"[{i}/{len(charts)}] slice_id={chart['id']} {chart['name'][:30]}")
+                    try:
+                        page.goto(url, timeout=60000)
+                        page.wait_for_load_state('domcontentloaded', timeout=30000)
+                        try:
+                            page.wait_for_selector('.chart-container, .slice_container, [data-test="chart-container"], #app', timeout=15000)
+                        except:
+                            pass
+                        try:
+                            page.wait_for_selector('.loading, .ant-spin-spinning', state='hidden', timeout=20000)
+                        except:
+                            pass
+                        try:
+                            page.wait_for_load_state('networkidle', timeout=30000)
+                        except:
+                            pass
+                        if WAIT_TIME > 0:
+                            time.sleep(WAIT_TIME)
+                        success += 1
+                    except PlaywrightTimeout:
+                        success += 1
+                    except Exception as e:
+                        print(f"    [ERROR] {e}")
+                        failed += 1
+    
+                browser.close()
+        except Exception as e:
+            print(f"[ERROR] Browser init failed: {e}")
+            return 1
+    
+        print(f"\n[OK] Browser init complete: success={success}, failed={failed}")
+        return 0
+    
+    if __name__ == '__main__':
+        sys.exit(main())
+    BROWSER_INIT_SCRIPT
+        fi
+    fi
+  # -- Launch additional containers into init job pod
+  extraContainers: [ ]
+  ## Annotations to be added to init job pods
+  podAnnotations: { }
+  # Labels to be added to init job pods
+  podLabels: { }
+  podSecurityContext: { }
+  containerSecurityContext: { }
+  ## Tolerations to be added to init job pods
+  tolerations: [ ]
+  ## Affinity to be added to init job pods
+  affinity: { }
+  # -- TopologySpreadConstrains to be added to init job
+  topologySpreadConstraints: [ ]
+  # -- Set priorityClassName for init job pods
+  priorityClassName: ~
+
+# -- Configuration values for the postgresql dependency.
+# ref: https://github.com/bitnami/charts/tree/main/bitnami/postgresql
+# @default -- see `values.yaml`
+postgresql:
+  ##
+  ## Use the PostgreSQL chart dependency.
+  ## Set to false if bringing your own PostgreSQL.
+  enabled: true
+
+  ## Authentication parameters
+  auth:
+    ## The name of an existing secret that contains the postgres password.
+    existingSecret:
+    ## PostgreSQL name for a custom user to create
+    username: superset
+    ## PostgreSQL password for the custom user to create. Ignored if `auth.existingSecret` with key `password` is provided
+    password: superset
+    ## PostgreSQL name for a custom database to create
+    database: superset
+
+  image:
+    tag: "latest"
+
+  ## PostgreSQL Primary parameters
+  primary:
+    initdb:
+      scripts:
+        01-create-examples-db.sql: |
+          CREATE DATABASE examples;
+          GRANT ALL PRIVILEGES ON DATABASE examples TO superset;
+    ##
+    ## Persistent Volume Storage configuration.
+    ## ref: https://kubernetes.io/docs/user-guide/persistent-volumes
+    persistence:
+      ##
+      ## Enable PostgreSQL persistence using Persistent Volume Claims.
+      enabled: true
+      ##
+      ## Persistent class
+      # storageClass: classname
+      ##
+      ## Access modes:
+      accessModes:
+        - ReadWriteOnce
+    ## PostgreSQL port
+    service:
+      ports:
+        postgresql: "5432"
+
+# -- Configuration values for the Redis dependency.
+# ref: https://github.com/bitnami/charts/blob/master/bitnami/redis
+# More documentation can be found here: https://artifacthub.io/packages/helm/bitnami/redis
+# @default -- see `values.yaml`
+redis:
+  ##
+  ## Use the redis chart dependency.
+  ##
+  ## If you are bringing your own redis, you can set the host in supersetNode.connections.redis_host
+  ##
+  ## Set to false if bringing your own redis.
+  enabled: true
+  ##
+  ## Set architecture to standalone/replication
+  architecture: standalone
+  ##
+  ## Auth configuration:
+  ##
+  image:
+    tag: "latest"
+  auth:
+    ## Enable password authentication
+    enabled: false
+    ## The name of an existing secret that contains the redis password.
+    existingSecret: ""
+    ## Name of the key containing the secret.
+    existingSecretKey: ""
+    ## Redis password
+    password: superset
+  ##
+  ## Master configuration
+  ##
+  master:
+    ##
+    ## Image configuration
+    # image:
+    ##
+    ## docker registry secret names (list)
+    # pullSecrets: nil
+    ##
+    ## Configure persistence
+    persistence:
+      ##
+      ## Use a PVC to persist data.
+      enabled: false
+      ##
+      ## Persistent class
+      # storageClass: classname
+      ##
+      ## Access mode:
+      accessModes:
+        - ReadWriteOnce
+
+nodeSelector: { }
+
+tolerations: [ ]
+
+affinity: { }
+
+# -- TopologySpreadConstrains to be added to all deployments
+topologySpreadConstraints: [ ]
+
+# -- Set priorityClassName for superset pods
+priorityClassName: ~

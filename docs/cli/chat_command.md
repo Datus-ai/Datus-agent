@@ -12,13 +12,13 @@ You can chat with Datus in any format — plain English, bullet points, or sketc
 
 Start a new chat session by entering `/` followed by your message:
 
-```
+```text
 / How many orders were placed last week?
 ```
 
 The agent will respond with its reasoning process and a proposed SQL query. You can then follow up naturally:
 
-```
+```text
 / Filter only for VIP customers
 ```
 
@@ -40,10 +40,10 @@ Datus streams the output as it thinks — showing each action's execution result
 
 ### Context Injection
 
-Context Injection allows you to pull existing tables, metrics, SQL history, or files into your conversation. There are two ways to do this:
+Context Injection allows you to pull existing tables, metrics or files into your conversation. There are two ways to do this:
 
 #### Browse Mode
-Type `@` and press Tab to browse your context tree step by step. You can navigate by category (table / file / metrics / reference SQL) and drill down the directory-like structure to select the exact item you need.
+Type `@` and press Tab to browse your context tree step by step. You can navigate by category (table / file / metrics) and drill down the directory-like structure to select the exact item you need.
 
 #### Fuzzy Search Mode
 Type `@` followed by some keywords, then press Tab to trigger a fuzzy search. Datus will suggest context items ranked by textual similarity, letting you quickly find what you need without knowing the exact path.

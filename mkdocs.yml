@@ -1,0 +1,238 @@
+# yaml-language-server: $schema=https://squidfunk.github.io/mkdocs-material/schema.json
+site_name: Datus Docs
+site_url: https://docs.datus.ai
+copyright: "© 2025 Datus AI"
+nav:
+  - Home:
+    - Overview: index.md
+    - Getting Started:
+      - Quickstart: getting_started/Quickstart.md
+      - Contextual Data Engineering: getting_started/contextual_data_engineering.md
+      - Tutorial: getting_started/Datus_tutorial.md
+      - Dashboard Copilot: getting_started/dashboard_copilot.md
+    - CLI:
+      - Introduction: cli/introduction.md
+      - Chat Command: cli/chat_command.md
+      - Context Command: cli/context_command.md
+      - Execution Command: cli/execution_command.md
+      - MCP Extensions: cli/mcp_extensions.md
+      - SQL Execution: cli/sql_execution.md
+      - Skill Command: cli/skill_command.md
+      - Reference: cli/reference.md
+      - Plan Mode: cli/plan_mode.md
+    - Subagent:
+      - Introduction: subagent/introduction.md
+      - Built-in subagents: subagent/builtin_subagents.md
+      - Customized subagents: subagent/customized_subagent.md
+      - Generate Metrics: subagent/gen_metrics.md
+      - Generate Semantic Model: subagent/gen_semantic_model.md
+      - Generate SQL Summary: subagent/gen_sql_summary.md
+    - Chatbot: web_chatbot/introduction.md
+    - Knowledge Base:
+      - Introduction: knowledge_base/introduction.md
+      - External Knowledge: knowledge_base/ext_knowledge.md
+      - Platform Documentation: knowledge_base/platform_doc.md
+      - Metadata: knowledge_base/metadata.md
+      - Semantic Models: knowledge_base/semantic_model.md
+      - Metrics: knowledge_base/metrics.md
+      - Reference SQL: knowledge_base/reference_sql.md
+    - Workflow:
+      - Introduction: workflow/introduction.md
+      - Nodes: workflow/nodes.md
+      - Orchestration: workflow/orchestration.md
+      - API: workflow/api.md
+    - Configuration:
+      - Introduction: configuration/introduction.md
+      - Agent: configuration/agent.md
+      - Workflow: configuration/workflow.md
+      - Benchmark: configuration/benchmark.md
+      - Namespace: configuration/namespace.md
+      - Storage: configuration/storage.md
+      - Nodes: configuration/nodes.md
+    - Adapters:
+      - Database Adapters: adapters/db_adapters.md
+      - Semantic Adapters: adapters/semantic_adapters.md
+    - Benchmark:
+      - Introduction: benchmark/benchmark_manual.md
+    - Metricflow:
+      - Introduction: metricflow/introduction.md
+    - Integration:
+      - MCP: integration/mcp.md
+      - Skills: integration/skills.md
+    - Training:
+      - LLM Trace Usage: training/llm_trace_usage.md
+    - Develop:
+      - Overview: develop/README.md
+      - Architecture: develop/Architecture.md
+      - Contributing: develop/Contributing.md
+
+  - Release Notes: release_notes.md
+
+plugins:
+  - search
+  - i18n:
+      languages:
+        - locale: en
+          name: English
+          default: true
+        - locale: zh
+          name: "中文"
+          nav_translations:
+            Home: 首页
+            Overview: 概览
+            Getting Started: 入门指南
+            Quickstart: 快速开始
+            Contextual Data Engineering: 上下文数据工程
+            Tutorial: 教程
+            Dashboard Copilot: Dashboard Copilot
+            CLI: 命令行
+            Introduction: 介绍
+            Chat Command: 聊天命令
+            Context Command: 上下文命令
+            Execution Command: 执行命令
+            MCP Extensions: MCP 扩展
+            SQL Execution: SQL 执行
+            Skill Command: 技能命令
+            Reference: 参考
+            Plan Mode: 计划模式
+            Subagent: Subagent
+            Built-in subagents: 内置 subagent
+            Customized subagents: 自定义 subagent
+            Chatbot: chatbot
+            Knowledge Base: 知识库
+            External Knowledge: 外部知识
+            Platform Documentation: 平台文档
+            Metadata: 元数据
+            Semantic Models: 语义模型
+            Metrics: 指标
+            Reference SQL: Reference SQL
+            Workflow: 工作流
+            Nodes: 节点
+            Orchestration: 编排
+            API: API
+            Configuration: 配置
+            Adapters: 适配器
+            Database Adapters: 数据库适配器
+            Semantic Adapters: 语义层适配器
+            Benchmark: 基准测试
+            Metricflow: MetricFlow
+            Integration: 集成
+            MCP: MCP
+            Skills: Skills
+            Release Notes: 发布说明
+
+theme:
+  name: material
+  language: en
+  font: false
+  logo: assets/logo-light.png
+  favicon: assets/logo-light.png
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/brightness-auto
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+  features:
+    - navigation.footer
+    - navigation.tabs
+    # - navigation.tabs.sticky
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.tracking
+    - navigation.indexes
+    - content.code.copy
+    - content.code.select
+    - content.action.edit
+    # - header.autohide
+repo_name: Datus-ai/Datus-agent
+repo_url: https://github.com/Datus-ai/Datus-agent
+edit_uri: edit/main/docs/
+
+extra:
+  analytics:
+    provider: google
+    property: G-8HMXHZDV7F
+
+  alternate:
+    - name: English
+      link: /
+      lang: en
+    - name: 中文
+      link: /zh/
+      lang: zh
+
+  social:
+    - icon: material/web
+      link: https://www.datus.ai
+    - icon: fontawesome/brands/github
+      link: https://github.com/Datus-ai/Datus-agent
+    - icon: fontawesome/brands/slack
+      link: https://join.slack.com/t/datus-ai/shared_invite/zt-3g6h4fsdg-iOl5uNoz6A4GOc4xKKWUYg
+    - icon: fontawesome/brands/linkedin
+      link: https://www.linkedin.com/company/datusai
+
+
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.magiclink:
+      repo_url_shorthand: true
+      user: squidfunk
+      repo: mkdocs-material
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets:
+      auto_append:
+        - includes/mkdocs.md
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+extra_css:
+  - stylesheets/extra.css
+

@@ -7,9 +7,11 @@ The Agent is the central configuration unit in Datus. It defines how your agent 
 - **Flexibility at scale**: Configure multiple models, connect to multiple databases, and define node strategies or workflow rules
 - **Agent configuration file**: `agent.yml` is the primary configuration file for both datus-agent and datus-cli
 - **Startup priority**:
-  1. File specified by `-f`
-  2. `./conf/agent.yml`
-  3. `~/.datus/conf/agent.yml`
+
+    1. File specified by `-f`
+    2. `./conf/agent.yml`
+    3. `~/.datus/conf/agent.yml`
+
 - **Separation of concerns**: MCP (Model Context Protocol) configuration is stored in `.mcp.json`, not in `agent.yml`, ensuring a clear boundary between agent settings and MCP server management
 
 With this structure, agents in Datus remain modular, portable, and easy to maintain, giving you full control over how they run across different environments.
@@ -99,7 +101,7 @@ connection_string: "postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT:-543
 
 Configure different environments using separate configuration files:
 
-```
+```text
 conf/
 ├── agent.yml              # Main configuration
 ├── agent.yml.dev          # Development overrides
@@ -114,6 +116,7 @@ Explore the detailed configuration for each component:
 
 - **[Agent Settings](agent.md)**: Configure models, providers, and global settings
 - **[Database Namespaces](namespace.md)**: Set up multi-database connections
+- **[Database Adapters](../adapters/db_adapters.md)**: Install additional database connectors
 - **[Workflow Definitions](workflow.md)**: Define custom execution patterns
 - **[Node Configuration](nodes.md)**: Customize individual node behavior
 - **[Storage Settings](storage.md)**: Configure knowledge base and vector storage

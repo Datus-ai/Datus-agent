@@ -13,9 +13,9 @@ A workflow is a sequence of nodes that:
 - **Shares data**: Information flows between nodes through a shared context
 - **Can be adaptive**: Some workflows can modify themselves during execution
 
-### 2. Workflow Configuration (workflow.yml)
+### 2. Workflow Configuration
 
-The `workflow.yml` file defines different workflow templates:
+Datus provides several built-in workflow templates optimized for different use cases:
 
 ```yaml
 workflow:
@@ -41,6 +41,8 @@ workflow:
     - output
 ```
 
+**Note**: These are built-in workflow templates. To customize workflows or create your own, you need to configure them in `agent.yml` (see [Customizing Workflows](#customizing-workflows) section below).
+
 ## Built-in Workflow Types
 
 ### 1. Reflection Workflow
@@ -53,11 +55,13 @@ Schema Linking → Generate SQL → Execute SQL → Reflect → Output
 ```
 
 **Key Features:**
+
 - **Self-assessment**: Reflect node evaluates results and decides next steps
 - **Adaptive**: Can add new nodes dynamically based on execution results
 - **Robust**: Handles complex queries that may require multiple attempts
 
 **Best For:**
+
 - Complex business queries
 - Situations where perfect SQL isn't generated on first try
 - Queries requiring domain knowledge
@@ -87,12 +91,14 @@ Schema Linking → Generate SQL → Execute SQL → Output
 ```
 
 **Key Features:**
+
 - **Predictable**: Always follows the same execution path
 - **Fast**: No reflection overhead
 - **Simple**: Easy to understand and debug
 - **Reliable**: Consistent behavior for well-understood problems
 
 **Best For:**
+
 - Simple, straightforward queries
 - Well-defined data requirements
 - Situations where you know exactly what you need
@@ -120,12 +126,14 @@ Schema Linking → Search Metrics → Date Parser → Generate SQL → Execute S
 ```
 
 **Key Features:**
+
 - **Metric-driven**: Starts with business metrics rather than raw SQL
 - **Time-aware**: Includes date parsing for temporal queries
 - **Reusable**: Leverages existing metric definitions
 - **Standardized**: Ensures consistent business calculations
 
 **Best For:**
+
 - Business intelligence and reporting
 - Standardized KPI calculations
 - Time-series analysis
@@ -149,25 +157,106 @@ Process:
 
 ### Customizing Workflows
 
-You can create custom workflow templates by modifying `workflow.yml`:
+You can create custom workflow templates by adding them to your `agent.yml` configuration:
 
 ```yaml
-workflow:
-  custom_analytics:
-    - schema_linking
-    - search_metrics
-    - generate_sql
-    - execute_sql
-    - compare
-    - output
+agent:
+  workflow:
+    plan: custom_analytics  # Set your custom plan as default
 
-  data_exploration:
-    - schema_linking
-    - doc_search
-    - generate_sql
-    - execute_sql
-    - reflect
-    - output
+    custom_analytics:
+      - schema_linking
+      - search_metrics
+      - generate_sql
+      - execute_sql
+      - compare
+      - output
+
+    data_exploration:
+      - schema_linking
+      - doc_search
+      - generate_sql
+      - execute_sql
+      - reflect
+      - output
+```
+
+### Advanced Workflow Features
+
+#### Parallel Execution
+
+Workflows support parallel node execution for improved performance:
+
+```yaml
+agent:
+  workflow:
+    plan: bird_para
+
+    bird_para:
+      - schema_linking
+      - parallel:
+        - generate_sql
+        - reasoning
+      - selection
+      - execute_sql
+      - output
+```
+
+#### Sub-workflows
+
+You can define reusable sub-workflows:
+
+```yaml
+agent:
+  workflow:
+    plan: main_workflow
+
+    main_workflow:
+      - schema_linking
+      - parallel:
+        - subworkflow1
+        - subworkflow2
+      - selection
+      - execute_sql
+      - output
+
+    subworkflow1:
+      - search_metrics
+      - generate_sql
+
+    subworkflow2:
+      - search_metrics
+      - reasoning
+```
+
+#### Sub-workflows with Custom Configuration
+
+Sub-workflows can reference separate configuration files:
+
+```yaml
+agent:
+  workflow:
+    plan: multi_agent
+
+    multi_agent:
+      - schema_linking
+      - parallel:
+        - agent1_workflow
+        - agent2_workflow
+      - selection
+      - output
+
+    agent1_workflow:
+      steps:
+        - search_metrics
+        - generate_sql
+      config: multi/agent1.yaml
+
+    agent2_workflow:
+      steps:
+        - reasoning
+        - reflect
+      config: multi/agent2.yaml
 ```
 
 ### Workflow Parameters
@@ -176,92 +265,54 @@ Workflows can be configured with parameters:
 
 ```bash
 # Use specific workflow
-datus run --namespace your_db --task "your query" --workflow reflection
+datus run --namespace <your_namespace> --task "your query" --plan reflection
 
 # Use custom workflow
-datus run --namespace your_db --task "your query" --workflow custom_analytics
+datus run --namespace <your_namespace> --task "your query" --plan custom_analytics
 ```
 
 ### Available Parameters
 
 | Parameter | Description | Default | Options |
 |-----------|-------------|---------|---------|
-| `--workflow` | Workflow type to execute | `reflection` | `reflection`, `fixed`, `metric_to_sql`, custom |
+| `--plan` | Workflow type to execute | `reflection` | `reflection`, `fixed`, `metric_to_sql`, custom |
 | `--namespace` | Database namespace | Required | Any configured namespace |
 | `--task` | Natural language query | Required | Any string |
 | `--max_iterations` | Maximum reflection rounds | `3` | Integer |
 | `--save_dir` | Directory to save workflow state | `./save` | Any valid path |
 
-## Advanced Features
-
-### Dynamic Node Addition
-
-Workflows can add nodes dynamically during execution:
-
-```python
-# In reflection node
-if needs_data_validation:
-    workflow.add_node("validation", after="execute_sql")
-
-if requires_aggregation_fix:
-    workflow.add_node("fix", after="reflect")
-```
-
-### Context Management
-
-Workflows maintain shared context across nodes:
-
-```python
-class WorkflowContext:
-    sql_contexts: List[SQLContext]      # Generated SQL and results
-    table_schemas: List[TableSchema]    # Database schema information
-    metrics: List[BusinessMetric]       # Available business metrics
-    reflections: List[Reflection]       # Reflection results and improvements
-```
-
-### Error Handling and Recovery
-
-Workflows include built-in error handling:
-
-- **Syntax Errors**: Automatically trigger fix nodes
-- **Execution Failures**: Retry with modified queries
-- **Context Limits**: Automatic context compression
-- **Timeout Handling**: Graceful degradation for long-running queries
 
 ## Best Practices
 
 ### Workflow Selection
 
-1. **Use Fixed for Simple Queries**
-   - Direct data retrieval
-   - Well-understood requirements
-   - Performance-critical scenarios
+**Use Fixed for Simple Queries**
 
-2. **Use Reflection for Complex Analysis**
-   - Multi-table joins
-   - Business logic implementation
-   - Uncertain or exploratory queries
+- Direct data retrieval
+- Well-understood requirements
+- Performance-critical scenarios
 
-3. **Use Metric-to-SQL for Standardized Reports**
-   - KPI calculations
-   - Regular business reports
-   - Time-series analysis
+**Use Reflection for Complex Analysis**
 
-### Performance Optimization
+- Multi-table joins
+- Business logic implementation
+- Uncertain or exploratory queries
 
-- **Parallel Execution**: Some nodes can run in parallel
-- **Context Caching**: Reuse schema and metric information
-- **Incremental Processing**: Avoid recomputing unchanged parts
-- **Resource Management**: Monitor memory and CPU usage
+**Use Metric-to-SQL for Standardized Reports**
+
+- KPI calculations
+- Regular business reports
+- Time-series analysis
+
 
 ### Debugging and Monitoring
 
 ```bash
 # Enable debug mode for detailed logging
-datus run --namespace your_db --task "your query" --debug
+datus run --namespace <your_namespace> --task "your query" --debug
 
 # Save workflow state for inspection
-datus run --namespace your_db --task "your query" --save_dir ./debug_session
+datus run --namespace <your_namespace> --task "your query" --save_dir ./debug_session
 
 # Resume from saved state
 datus resume --save_dir ./debug_session

@@ -1,81 +1,114 @@
-# Execution Command `!`
+# Tool Commands `!`
 
 ## 1. Overview
 
-The Execution Command `!` provides direct command execution capabilities within the Datus-CLI environment. This command allows you to run system commands, database operations, and other executable tasks without leaving the interactive session.
+Tool commands (prefixed with `!`) provide specialized AI-powered capabilities and utility operations within the Datus-CLI environment. These commands enable schema discovery, metrics search, SQL reference search, and other intelligent data operations without leaving the interactive session.
 
-## 2. Basic Usage
+## 2. Command Categories
 
-Execute commands by typing `!` followed by the command you want to run:
+### 2.1 Schema Discovery Commands
 
-```bash
-! ls -la
-! python script.py
-! git status
-```
-
-The execution command integrates seamlessly with the chat and context systems, allowing you to:
-
-- Run database maintenance scripts
-- Execute data processing workflows
-- Perform system operations
-- Launch external tools and utilities
-
-### Examples
+#### `!sl` / `!schema_linking`
+Perform intelligent schema linking to discover relevant tables and columns for your query.
 
 ```bash
-# Run a Python data processing script
-! python data_processing.py --input data.csv --output results.csv
-
-# Execute a shell script for data loading
-! ./load_data.sh production_db
-
-# Run database backup commands
-! pg_dump mydb > backup.sql
-
-# Execute system monitoring commands
-! top -n 1
-! df -h
+!sl user purchase information
+!schema_linking sales data by region
 ```
 
-## 3. Advanced Features
+Features:
 
-### Integration with Context
+- Semantic search for relevant database tables
+- Table definition (DDL) display
+- Sample data preview
+- Configurable matching methods: fast, medium, slow, from_llm
+- Adjustable top_n results
 
-The execution command can leverage context from the `@` command system:
+Interactive prompts guide you through:
 
-- Access environment variables set in the session
-- Use file paths and database connections from context
-- Execute scripts that operate on tables referenced in chat
+- Catalog/database/schema selection
+- Number of tables to match
+- Matching method preference
 
-### Session State
+### 2.2 Search & Discovery Commands
 
-Commands executed with `!` maintain awareness of:
+#### `!sm` / `!search_metrics`
+Use natural language to search for corresponding metrics in your data catalog.
 
-- Current working directory
-- Environment variables
-- Database connections established in the session
-- Previous command outputs and error states
+```bash
+!sm monthly active users
+!search_metrics revenue growth rate
+```
 
-### Output Handling
+Allows filtering by:
 
-The execution command provides:
+- Domain
+- Layer1 (business layer)
+- Layer2 (sub-layer)
+- Top N results
 
-- Real-time output streaming
-- Error capturing and display
-- Return code monitoring
-- Integration with chat history for result reference
+#### `!sq` / `!search_sql`
+Search historical SQL queries using natural language descriptions.
 
-### Security Considerations
+```bash
+!sq queries about user retention
+!search_sql monthly sales reports
+```
 
-- Commands run with the same privileges as the Datus-CLI process
-- Environment variables and secrets are handled securely
-- Command history is maintained for audit purposes
-- Interactive commands may require special handling
+Returns:
 
-## Best Practices
+- SQL query text with syntax highlighting
+- Query summary and comments
+- Tags and categorization
+- Domain/layer metadata
+- File path and relevance distance
 
-1. **Use absolute paths** when referencing files to avoid confusion
-2. **Test commands** in a safe environment before running in production
-3. **Monitor output** for errors and unexpected results
-4. **Combine with chat** to explain what commands do before executing them
+### 2.3 Utility Commands
+
+#### `!save`
+Save the last query result to a file.
+
+```bash
+!save
+```
+
+Interactive options:
+
+- File type: json, csv, sql, or all
+- Output directory (defaults to ~/.datus/output)
+- Custom filename
+
+#### `!bash <command>`
+Execute safe bash commands (security restricted).
+
+```bash
+!bash pwd
+!bash ls -la
+!bash cat config.yaml
+```
+
+**Security**: Only whitelisted commands are allowed:
+
+- `pwd` - Print working directory
+- `ls` - List files
+- `cat` - Display file contents
+- `head` - Show file beginning
+- `tail` - Show file end
+- `echo` - Display text
+
+Commands not in the whitelist will be rejected with a security warning.
+
+## 3. Best Practices
+
+1. **Start with Schema Linking** - Use `!sl` to discover relevant tables before writing queries
+2. **Leverage Search** - Use `!sm` and `!sq` to find existing metrics and queries before creating new ones
+3. **Save Results** - Use `!save` to preserve important query results
+4. **Security First** - Be aware of bash command restrictions when using `!bash`
+
+## 4. Security Considerations
+
+- Tool commands run with the same privileges as the Datus-CLI process
+- Bash commands are restricted to a whitelist of safe operations
+- `!bash` commands timeout after 10 seconds to prevent hanging
+- All operations are logged for audit purposes
+- API credentials and database connections are handled securely
