@@ -920,6 +920,10 @@ class StreamlitChatbot:
                             content_generator = ActionContentGenerator(enable_truncation=False)
 
                             for action in self.execute_chat_stream(pending_prompt):
+                                if isinstance(action, str):
+                                    # Error messages from chat_executor are yielded as strings
+                                    st.error(action)
+                                    continue
                                 step_index += 1
                                 self.ui.render_action_item(chat_id, step_index, action, content_generator)
                             status.update(label=f"✓ Completed {step_index} steps", state="complete", expanded=True)
@@ -1065,6 +1069,11 @@ def run_web_interface(args):
     import os
     import subprocess
     import sys
+    from urllib.parse import quote_plus
+
+    from datus.utils.loggings import get_logger
+
+    logger = get_logger(__name__)
 
     try:
         # Get the path to the web chatbot
@@ -1072,22 +1081,22 @@ def run_web_interface(args):
         web_chatbot_path = os.path.join(current_dir, "chatbot.py")
 
         if not os.path.exists(web_chatbot_path):
-            print(f"❌ Error: Web chatbot not found at {web_chatbot_path}")
+            logger.error(f"Web chatbot not found at {web_chatbot_path}")
             sys.exit(1)
 
-        print("🚀 Starting Datus Web Interface...")
+        logger.info("Starting Datus Web Interface...")
         if args.namespace:
-            print(f"🔗 Using namespace: {args.namespace}")
+            logger.info(f"Using namespace: {args.namespace}")
         if args.config:
-            print(f"⚙️ Using config: {args.config}")
+            logger.info(f"Using config: {args.config}")
         if args.database:
-            print(f"📚 Using database: {args.database}")
+            logger.info(f"Using database: {args.database}")
         url = f"http://{args.host}:{args.port}"
         if getattr(args, "subagent", ""):
-            url += f"/?subagent={args.subagent}"
-        print(f"🌐 Starting server at {url}")
-        print("⏹️ Press Ctrl+C to stop server")
-        print("-" * 50)
+            url += f"/?subagent={quote_plus(args.subagent)}"
+        logger.info(f"Starting server at {url}")
+        logger.info("Press Ctrl+C to stop server")
+        logger.info("-" * 50)
 
         # Prepare streamlit command
         cmd = [
