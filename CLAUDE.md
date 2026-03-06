@@ -23,9 +23,9 @@ bash build_scripts/build_test_data.sh       # Build test knowledge base
 
 ### Style
 
-- **Formatter**: black, line-length = 120, target Python 3.12
-- **Linter**: flake8, max-line-length = 120, ignores E203/E266/E501/W503
-- **Imports**: isort; group order: stdlib → third-party → `datus.*`
+- **Formatter**: black, line-length = 120, extend-exclude = `mcp/`
+- **Linter**: flake8 + flake8-bugbear, max-line-length = 120, extend-ignore = E203/W503/B036
+- **Imports**: isort, profile = black, line-length = 120; group order: stdlib → third-party → `datus.*`
 - **Type hints**: use throughout; Pydantic models for data structures
 
 ### Logging
@@ -81,6 +81,12 @@ Error code ranges: 100000–199999 (common), 200000–299999 (node), 300000–39
 1. Add tool function in `datus/tools/func_tool/`
 2. Register in the MCP server tool list
 3. Add registration + invocation tests in `tests/test_mcp_server.py`
+
+## Commit Workflow
+
+1. **Coverage gate**: Before committing, run `uv run pytest -m ci tests/ --cov=datus --cov-report=term-missing --cov-fail-under=80`. If coverage < 80%, add tests for uncovered lines in modified files until it passes. Do NOT commit until coverage passes.
+2. **Pre-commit hook failures**: Never stop or use `--no-verify`. Auto-fix all issues (run `uv run black . && uv run isort .` for formatting; manually fix flake8 errors), re-stage, and retry the commit until it succeeds.
+3. **Push target**: Always push to `origin` only. Never push directly to `upstream`.
 
 ## Guardrails
 
