@@ -1082,7 +1082,10 @@ def run_web_interface(args):
             print(f"⚙️ Using config: {args.config}")
         if args.database:
             print(f"📚 Using database: {args.database}")
-        print(f"🌐 Starting server at http://{args.host}:{args.port}")
+        url = f"http://{args.host}:{args.port}"
+        if getattr(args, "subagent", ""):
+            url += f"/?subagent={args.subagent}"
+        print(f"🌐 Starting server at {url}")
         print("⏹️ Press Ctrl+C to stop server")
         print("-" * 50)
 
@@ -1111,6 +1114,8 @@ def run_web_interface(args):
             web_args.extend(["--database", args.database])
         if getattr(args, "debug", False):
             web_args.append("--debug")
+        if getattr(args, "subagent", ""):
+            web_args.extend(["--subagent", args.subagent])
 
         if web_args:
             cmd.extend(["--"] + web_args)
@@ -1153,13 +1158,17 @@ def main():
             config_path = sys.argv[i + 1]
         elif arg == "--database" and i + 1 < len(sys.argv):
             database = sys.argv[i + 1]
+        elif arg == "--subagent" and i + 1 < len(sys.argv):
+            subagent_name = sys.argv[i + 1]
         elif arg == "--debug":
             debug = True
 
     # Initialize logging once per process
     initialize_logging(debug=debug)
 
-    # Note: Subagent detection is now handled directly in the interface, not here
+    # Set subagent query param from CLI arg so existing URL-based logic picks it up
+    if subagent_name and not st.query_params.get("subagent"):
+        st.query_params["subagent"] = subagent_name
 
     # Store in session state for use by the app
     if "startup_namespace" not in st.session_state:

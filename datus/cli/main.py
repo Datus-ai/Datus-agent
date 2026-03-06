@@ -94,6 +94,13 @@ class ArgumentParser:
             help="Host for web interface (default: localhost)",
         )
 
+        self.parser.add_argument(
+            "--subagent",
+            type=str,
+            default="",
+            help="Subagent name to open directly (for web mode)",
+        )
+
     def parse_args(self):
         return self.parser.parse_args()
 
