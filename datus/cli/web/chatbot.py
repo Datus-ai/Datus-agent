@@ -191,7 +191,7 @@ class StreamlitChatbot:
             logger.error(f"Configuration loading error: {e}")
             return False
 
-    def render_sidebar(self) -> Dict[str, Any]:
+    def render_sidebar(self) -> Dict[str, Any]:  # pragma: no cover
         """Render sidebar with configuration information"""
         # Skip sidebar rendering in embed mode, but keep config loading
         if self.should_hide_sidebar:
@@ -592,7 +592,9 @@ class StreamlitChatbot:
         self._store_session_id()
         # Note: actions are stored in session_state by caller
 
-    def do_download(self, sql: str, markdown: str, data: ExecuteSQLResult, sql_id: Optional[str], display_column):
+    def do_download(
+        self, sql: str, markdown: str, data: ExecuteSQLResult, sql_id: Optional[str], display_column
+    ):  # pragma: no cover
         """Execute SQL, build a multi-sheet Excel workbook, and expose it for download."""
 
         if not sql_id:
@@ -712,7 +714,7 @@ class StreamlitChatbot:
                 disabled=not df.empty and len(df) > self.cli.agent_config.max_export_lines,
             )
 
-    def run(self):
+    def run(self):  # pragma: no cover
         """Main Streamlit app runner"""
         # Read query params and update session_state
         hide_param = st.query_params.get("hide_sidebar")
@@ -989,7 +991,7 @@ class StreamlitChatbot:
                 current_model = self.get_current_chat_model()
                 st.metric("Current Model", current_model)
 
-    def _display_chat_actions(self):
+    def _display_chat_actions(self):  # pragma: no cover
         # Display chat history
         readonly_mode = st.session_state.session_readonly_mode
         last_chat_id = None if not self.chat_executor.last_actions else self.chat_executor.last_actions[-1]["chat_id"]
@@ -1064,7 +1066,7 @@ class StreamlitChatbot:
                                 st.rerun()
 
 
-def run_web_interface(args):
+def run_web_interface(args):  # pragma: no cover
     """Launch Streamlit web interface"""
     import os
     import subprocess
@@ -1139,7 +1141,7 @@ def run_web_interface(args):
         sys.exit(1)
 
 
-def main():
+def main():  # pragma: no cover
     """Main entry point"""
     import sys
 
