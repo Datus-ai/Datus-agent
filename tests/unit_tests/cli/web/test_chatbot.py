@@ -36,7 +36,7 @@ class _SessionState(dict):
         try:
             return self[name]
         except KeyError:
-            raise AttributeError(name)
+            raise AttributeError(name) from None
 
     def __setattr__(self, name, value):
         self[name] = value
@@ -45,7 +45,7 @@ class _SessionState(dict):
         try:
             del self[name]
         except KeyError:
-            raise AttributeError(name)
+            raise AttributeError(name) from None
 
 
 class _QueryParams(dict):
@@ -88,8 +88,11 @@ _COMPONENT_PATCHES = [
 ]
 
 
-def _create_chatbot(mock_st):
-    """Create chatbot with all dependencies mocked. The st patch stays active via the caller."""
+def _create_chatbot():
+    """Create chatbot with all dependencies mocked.
+
+    Caller must patch ``datus.cli.web.chatbot.st`` before calling this.
+    """
     import contextlib
 
     from datus.cli.web.chatbot import StreamlitChatbot
@@ -144,7 +147,8 @@ class TestRunAsync:
 
         try:
             asyncio.set_event_loop(None)
-        except Exception:
+        except (RuntimeError, ValueError):
+            # Some platforms/versions don't allow setting loop to None
             pass
 
         async def value():
@@ -287,7 +291,7 @@ class TestStreamlitChatbotProperties:
     def test_cli_getter(self):
         mock_st = _make_mock_st()
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             mock_cli = MagicMock()
             mock_st.session_state.cli_instance = mock_cli
             assert chatbot.cli is mock_cli
@@ -295,7 +299,7 @@ class TestStreamlitChatbotProperties:
     def test_cli_setter(self):
         mock_st = _make_mock_st()
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             mock_cli = MagicMock()
             chatbot.cli = mock_cli
             assert mock_st.session_state.cli_instance is mock_cli
@@ -304,13 +308,13 @@ class TestStreamlitChatbotProperties:
         qp = _QueryParams({"subagent": "baisheng"})
         mock_st = _make_mock_st(query_params=qp)
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             assert chatbot.current_subagent == "baisheng"
 
     def test_current_subagent_none(self):
         mock_st = _make_mock_st(query_params=_QueryParams())
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             assert chatbot.current_subagent is None
 
     def test_should_hide_sidebar_true(self):
@@ -318,13 +322,13 @@ class TestStreamlitChatbotProperties:
         state["embed_mode"] = True
         mock_st = _make_mock_st(session_state=state)
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             assert chatbot.should_hide_sidebar is True
 
     def test_should_hide_sidebar_default_false(self):
         mock_st = _make_mock_st()
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             assert chatbot.should_hide_sidebar is False
 
 
@@ -360,7 +364,7 @@ class TestStreamlitChatbotInit:
         state = _SessionState()
         mock_st = _make_mock_st(session_state=state)
         with patch("datus.cli.web.chatbot.st", mock_st):
-            _create_chatbot(mock_st)
+            _create_chatbot()
             assert state["messages"] == []
             assert state["current_actions"] == []
             assert state["chat_session_initialized"] is False
@@ -387,7 +391,7 @@ class TestClearChat:
         state["current_chat_id"] = "abc-123"
         mock_st = _make_mock_st(session_state=state)
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             chatbot.clear_chat()
             assert state.messages == []
             assert state.current_actions == []
@@ -399,7 +403,7 @@ class TestClearChat:
         state["cli_instance"] = mock_cli
         mock_st = _make_mock_st(session_state=state)
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             chatbot.clear_chat()
             mock_cli.chat_commands.cmd_clear_chat.assert_called_once_with("")
 
@@ -416,7 +420,7 @@ class TestSetupConfig:
     def test_setup_config_success(self):
         mock_st = _make_mock_st()
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             mock_cli = MagicMock()
             chatbot.config_manager.setup_config.return_value = mock_cli
 
@@ -429,7 +433,7 @@ class TestSetupConfig:
         state["cli_instance"] = MagicMock()
         mock_st = _make_mock_st(session_state=state)
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             result = chatbot.setup_config()
             assert result is True
             chatbot.config_manager.setup_config.assert_not_called()
@@ -437,7 +441,7 @@ class TestSetupConfig:
     def test_setup_config_failure(self):
         mock_st = _make_mock_st()
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             chatbot.config_manager.setup_config.side_effect = RuntimeError("bad config")
 
             result = chatbot.setup_config()
@@ -457,7 +461,7 @@ class TestDelegationMethods:
     def test_get_session_messages_delegates(self):
         mock_st = _make_mock_st()
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             chatbot.session_loader.get_session_messages.return_value = [{"role": "user", "content": "hi"}]
             result = chatbot.get_session_messages("sid-123")
             chatbot.session_loader.get_session_messages.assert_called_once_with("sid-123")
@@ -468,7 +472,7 @@ class TestDelegationMethods:
         state["cli_instance"] = MagicMock()
         mock_st = _make_mock_st(session_state=state)
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             chatbot.session_loader.get_current_session_id.return_value = "session-abc"
             result = chatbot.get_current_session_id()
             assert result == "session-abc"
@@ -478,7 +482,7 @@ class TestDelegationMethods:
         state["cli_instance"] = MagicMock()
         mock_st = _make_mock_st(session_state=state)
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             chatbot.chat_executor.extract_sql_and_response.return_value = ("SELECT 1", "Result")
             actions = [MagicMock()]
             sql, resp = chatbot.extract_sql_and_response(actions)
@@ -488,7 +492,7 @@ class TestDelegationMethods:
     def test_format_action_for_stream_delegates(self):
         mock_st = _make_mock_st()
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             chatbot.chat_executor.format_action_for_stream.return_value = "formatted"
             action = MagicMock()
             result = chatbot._format_action_for_stream(action)
@@ -507,7 +511,7 @@ class TestStoreSessionId:
     def test_store_session_id_success(self):
         mock_st = _make_mock_st()
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             chatbot.session_loader.get_current_session_id.return_value = "sid-999"
             chatbot._store_session_id()
             assert mock_st.session_state.current_session_id == "sid-999"
@@ -515,7 +519,7 @@ class TestStoreSessionId:
     def test_store_session_id_none(self):
         mock_st = _make_mock_st()
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             chatbot.session_loader.get_current_session_id.return_value = None
             chatbot._store_session_id()
             assert "current_session_id" not in mock_st.session_state
@@ -533,7 +537,7 @@ class TestSaveSuccessStory:
     def test_save_success_story_no_session(self):
         mock_st = _make_mock_st()
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             chatbot.session_loader.get_current_session_id.return_value = None
             chatbot.save_success_story("SELECT 1", "test question")
             mock_st.warning.assert_called_once()
@@ -543,7 +547,7 @@ class TestSaveSuccessStory:
         state["subagent_name"] = "test_agent"
         mock_st = _make_mock_st(session_state=state)
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             chatbot.session_loader.get_current_session_id.return_value = "sid-001"
 
             mock_pm = MagicMock()
@@ -566,7 +570,7 @@ class TestSaveSuccessStory:
         state["subagent_name"] = "agent2"
         mock_st = _make_mock_st(session_state=state)
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             chatbot.session_loader.get_current_session_id.return_value = "sid-002"
 
             mock_pm = MagicMock()
@@ -586,7 +590,7 @@ class TestSaveSuccessStory:
         state["subagent_name"] = ".."
         mock_st = _make_mock_st(session_state=state)
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             chatbot.session_loader.get_current_session_id.return_value = "sid-003"
 
             mock_pm = MagicMock()
@@ -601,7 +605,7 @@ class TestSaveSuccessStory:
         state["subagent_name"] = "safe_agent"
         mock_st = _make_mock_st(session_state=state)
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             chatbot.session_loader.get_current_session_id.return_value = "sid-004"
 
             mock_pm = MagicMock()
@@ -629,7 +633,7 @@ class TestLoadSessionFromUrl:
     def test_load_no_session_param(self):
         mock_st = _make_mock_st(query_params=_QueryParams())
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             chatbot.load_session_from_url()
             chatbot.session_manager.session_exists.assert_not_called()
 
@@ -640,7 +644,7 @@ class TestLoadSessionFromUrl:
         qp = _QueryParams({"session": "sid-100", "mode": "readonly"})
         mock_st = _make_mock_st(session_state=state, query_params=qp)
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             chatbot.load_session_from_url()
             chatbot.session_manager.session_exists.assert_not_called()
 
@@ -648,7 +652,7 @@ class TestLoadSessionFromUrl:
         qp = _QueryParams({"session": "sid-200"})
         mock_st = _make_mock_st(query_params=qp)
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             chatbot.session_manager.session_exists.return_value = True
             chatbot.session_loader.get_session_messages.return_value = [{"role": "user", "content": "hi"}]
 
@@ -662,7 +666,7 @@ class TestLoadSessionFromUrl:
         qp = _QueryParams({"session": "sid-300", "mode": "resume"})
         mock_st = _make_mock_st(query_params=qp)
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             chatbot.session_manager.session_exists.return_value = True
 
             with patch.object(chatbot, "resume_session", return_value=True) as mock_resume:
@@ -674,7 +678,7 @@ class TestLoadSessionFromUrl:
         qp = _QueryParams({"session": "sid-404"})
         mock_st = _make_mock_st(query_params=qp)
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             chatbot.session_manager.session_exists.return_value = False
 
             chatbot.load_session_from_url()
@@ -696,7 +700,7 @@ class TestResumeSession:
         state["cli_instance"] = mock_cli
         mock_st = _make_mock_st(session_state=state)
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             chatbot.session_manager.session_exists.return_value = True
             chatbot.session_loader.get_session_messages.return_value = [{"role": "user", "content": "hi"}]
 
@@ -710,7 +714,7 @@ class TestResumeSession:
     def test_resume_nonexistent(self):
         mock_st = _make_mock_st()
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             chatbot.session_manager.session_exists.return_value = False
 
             result = chatbot.resume_session("sid-gone")
@@ -720,7 +724,7 @@ class TestResumeSession:
     def test_resume_cli_not_initialized(self):
         mock_st = _make_mock_st()
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             chatbot.session_manager.session_exists.return_value = True
             # cli_instance is None by default from _fresh_session_state
 
@@ -734,7 +738,7 @@ class TestResumeSession:
         state["cli_instance"] = mock_cli
         mock_st = _make_mock_st(session_state=state)
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             chatbot.session_manager.session_exists.return_value = True
             chatbot.session_loader.get_session_messages.side_effect = RuntimeError("db error")
 
@@ -757,7 +761,7 @@ class TestExecuteChatStream:
         qp = _QueryParams()
         mock_st = _make_mock_st(query_params=qp)
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             action1, action2 = MagicMock(), MagicMock()
             chatbot.chat_executor.execute_chat_stream.return_value = iter([action1, action2])
             chatbot.session_loader.get_current_session_id.return_value = None
@@ -769,7 +773,7 @@ class TestExecuteChatStream:
         qp = _QueryParams()
         mock_st = _make_mock_st(query_params=qp)
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             chatbot.chat_executor.execute_chat_stream.return_value = iter([])
             chatbot.session_loader.get_current_session_id.return_value = "sid-after"
 
@@ -789,7 +793,7 @@ class TestHandleRewind:
     def test_rewind_success(self):
         mock_st = _make_mock_st()
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             chatbot.session_loader.get_current_session_id.return_value = "sid-orig"
             chatbot.session_manager.rewind_session.return_value = "sid-rewound"
 
@@ -804,7 +808,7 @@ class TestHandleRewind:
     def test_rewind_no_session(self):
         mock_st = _make_mock_st()
         with patch("datus.cli.web.chatbot.st", mock_st):
-            chatbot = _create_chatbot(mock_st)
+            chatbot = _create_chatbot()
             chatbot.session_loader.get_current_session_id.return_value = None
 
             chatbot._handle_rewind(1, False)

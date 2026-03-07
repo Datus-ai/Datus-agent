@@ -921,52 +921,59 @@ class StreamlitChatbot:
 
                             content_generator = ActionContentGenerator(enable_truncation=False)
 
+                            stream_failed = False
                             for action in self.execute_chat_stream(pending_prompt):
                                 if isinstance(action, str):
                                     # Error messages from chat_executor are yielded as strings
                                     st.error(action)
+                                    stream_failed = True
                                     continue
                                 step_index += 1
                                 self.ui.render_action_item(chat_id, step_index, action, content_generator)
-                            status.update(label=f"✓ Completed {step_index} steps", state="complete", expanded=True)
-                    # Get complete actions from chat executor
-                    actions = self.chat_executor.last_actions
-                    logger.info(f"Chat execution completed: {len(actions) if actions else 0} actions collected")
+                            if stream_failed:
+                                status.update(label="✗ Failed", state="error", expanded=True)
+                            else:
+                                status.update(label=f"✓ Completed {step_index} steps", state="complete", expanded=True)
 
-                    # Extract SQL and response
-                    sql, response = self.extract_sql_and_response(actions)
+                    if not stream_failed:
+                        # Get complete actions from chat executor
+                        actions = self.chat_executor.last_actions
+                        logger.info(f"Chat execution completed: {len(actions) if actions else 0} actions collected")
 
-                    # Display final response
-                    if response:
-                        self.ui.display_markdown_response(response)
-                    else:
-                        st.markdown(
-                            "Sorry, unable to generate a valid response. "
-                            "Please check execution details for more information."
+                        # Extract SQL and response
+                        sql, response = self.extract_sql_and_response(actions)
+
+                        # Display final response
+                        if response:
+                            self.ui.display_markdown_response(response)
+                        else:
+                            st.markdown(
+                                "Sorry, unable to generate a valid response. "
+                                "Please check execution details for more information."
+                            )
+
+                        # Display SQL if available
+                        if sql:
+                            self.ui.display_sql(sql, self.cli.db_connector.execute_pandas(sql))
+
+                        # Display collapsed action history at bottom
+                        if actions:
+                            self.ui.render_action_history(actions, chat_id, expanded=False)
+
+                        # Save to chat history with complete data
+                        assistant_message = {
+                            "role": "assistant",
+                            "content": response or "Unable to generate valid response",
+                            "sql": sql,
+                            "actions": actions,
+                            "chat_id": chat_id,
+                            "progress_messages": progress_messages,
+                        }
+                        logger.info(
+                            f"Saving message: chat_id={chat_id}, has_sql={sql is not None}, "
+                            f"actions_count={len(actions) if actions else 0}"
                         )
-
-                    # Display SQL if available
-                    if sql:
-                        self.ui.display_sql(sql, self.cli.db_connector.execute_pandas(sql))
-
-                    # Display collapsed action history at bottom
-                    if actions:
-                        self.ui.render_action_history(actions, chat_id, expanded=False)
-
-                    # Save to chat history with complete data
-                    assistant_message = {
-                        "role": "assistant",
-                        "content": response or "Unable to generate valid response",
-                        "sql": sql,
-                        "actions": actions,
-                        "chat_id": chat_id,
-                        "progress_messages": progress_messages,
-                    }
-                    logger.info(
-                        f"Saving message: chat_id={chat_id}, has_sql={sql is not None}, "
-                        f"actions_count={len(actions) if actions else 0}"
-                    )
-                    st.session_state.messages.append(assistant_message)
+                        st.session_state.messages.append(assistant_message)
             finally:
                 st.session_state.is_running = False
                 # Clear stale interrupt controller to avoid leftover state
