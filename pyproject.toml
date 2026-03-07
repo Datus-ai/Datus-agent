@@ -173,7 +173,6 @@ dev = [
 source = ["datus"]
 omit = [
     "datus/prompts/prompt_templates/*",
-    "datus/cli/web/chatbot.py",
     "datus/cli/web/ui_components.py",
     "datus/cli/screen/subject_screen.py",
 ]
