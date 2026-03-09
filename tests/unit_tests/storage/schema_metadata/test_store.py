@@ -4,11 +4,26 @@
 
 """Tests for datus/storage/schema_metadata/store.py — SchemaStorage and _build_where_clause."""
 
+import pytest
+
 from datus.storage.conditions import And, Condition, build_where
 from datus.storage.embedding_models import get_db_embedding_model
 from datus.storage.schema_metadata import SchemaStorage
 from datus.storage.schema_metadata.store import _build_where_clause
-from datus.utils.constants import DBType
+from datus.tools.db_tools import connector_registry
+from datus.tools.db_tools.registry import ConnectorRegistry
+
+
+@pytest.fixture(autouse=True)
+def _register_test_capabilities():
+    """Register capabilities for dialects used in tests, with snapshot/restore for isolation."""
+    attrs = ("_capabilities", "_uri_builders", "_context_resolvers")
+    snapshots = {a: getattr(ConnectorRegistry, a).copy() for a in attrs}
+    connector_registry.register_handlers("starrocks", capabilities={"catalog", "database"})
+    yield
+    for a, snap in snapshots.items():
+        setattr(ConnectorRegistry, a, snap)
+
 
 # ---------------------------------------------------------------------------
 # SchemaStorage._extract_table_name
@@ -267,13 +282,15 @@ class TestSearchTablesNameParsing:
         assert table_name == "orders"
 
     def test_parse_3_part_name_starrocks_dialect(self):
-        """Three-part name with StarRocks dialect: cat=parts[0], db=parts[1], sch=''."""
+        """Three-part name with StarRocks-like dialect (catalog+database, no schema)."""
+        from datus.tools.db_tools import connector_registry
+
         full_table = "mycat.mydb.orders"
         parts = full_table.split(".")
         assert len(parts) == 3
         table_name = parts[-1]
-        dialect = DBType.STARROCKS
-        if dialect == DBType.STARROCKS:
+        dialect = "starrocks"
+        if connector_registry.support_catalog(dialect) and not connector_registry.support_schema(dialect):
             cat, db, sch = parts[0], parts[1], ""
         else:
             cat, db, sch = "catalog", parts[0], parts[1]

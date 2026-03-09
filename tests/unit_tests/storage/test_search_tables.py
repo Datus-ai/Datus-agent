@@ -14,11 +14,17 @@ from datus.tools.db_tools import connector_registry
 
 @pytest.fixture(autouse=True)
 def _register_test_capabilities():
-    """Register dialect capabilities for testing."""
+    """Register dialect capabilities for testing, with snapshot/restore for isolation."""
+    from datus.tools.db_tools.registry import ConnectorRegistry
+
+    attrs = ("_capabilities", "_uri_builders", "_context_resolvers")
+    snapshots = {a: getattr(ConnectorRegistry, a).copy() for a in attrs}
     connector_registry.register_handlers("starrocks", capabilities={"catalog", "database"})
     connector_registry.register_handlers("postgresql", capabilities={"database", "schema"})
     connector_registry.register_handlers("mysql", capabilities={"database"})
     yield
+    for a, snap in snapshots.items():
+        setattr(ConnectorRegistry, a, snap)
 
 
 def _make_mock_rag():
@@ -52,6 +58,10 @@ def _make_mock_rag():
             "sample_rows": pa.array([], type=pa.string()),
         }
     )
+
+    # Mock query_with_filter to return proper arrow tables (used by search_tables)
+    rag.schema_store.query_with_filter.return_value = empty_schema
+    rag.value_store.query_with_filter.return_value = empty_value
 
     mock_search = MagicMock()
     mock_search.where.return_value = mock_search
