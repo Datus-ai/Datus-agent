@@ -52,3 +52,4 @@ ci/.coverage
 
 # Test evaluation output
 evaluation_details.json
+acceptance-test-coverage-analysis.md

@@ -38,9 +38,3 @@ def cleanup_nightly_sub_agent_data(agent_config):
         sub_agent_dir = Path(agent_config.rag_base_path) / "sub_agents" / name
         if sub_agent_dir.exists():
             shutil.rmtree(sub_agent_dir, ignore_errors=True)
-
-
-@pytest.fixture
-def snowflake_config() -> AgentConfig:
-    """Load acceptance config for snowflake namespace."""
-    return load_acceptance_config(namespace="snowflake")
