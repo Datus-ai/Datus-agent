@@ -58,7 +58,7 @@ class TestExistsExtKnowledge:
 
     def test_overwrite_mode_returns_empty_set(self):
         """Test that overwrite mode always returns an empty set regardless of stored data."""
-        with tempfile.TemporaryDirectory() as tmp_dir:
+        with tempfile.TemporaryDirectory():
             storage = ExtKnowledgeStore(embedding_model=get_db_embedding_model())
             storage.batch_store_knowledge(
                 [
@@ -76,7 +76,7 @@ class TestExistsExtKnowledge:
 
     def test_incremental_mode_returns_existing_ids(self):
         """Test that incremental mode returns IDs of existing knowledge entries."""
-        with tempfile.TemporaryDirectory() as tmp_dir:
+        with tempfile.TemporaryDirectory():
             storage = ExtKnowledgeStore(embedding_model=get_db_embedding_model())
             storage.batch_store_knowledge(
                 [
@@ -105,7 +105,7 @@ class TestExistsExtKnowledge:
 
     def test_incremental_mode_empty_store(self):
         """Test incremental mode with no existing knowledge returns empty set."""
-        with tempfile.TemporaryDirectory() as tmp_dir:
+        with tempfile.TemporaryDirectory():
             storage = ExtKnowledgeStore(embedding_model=get_db_embedding_model())
             result = exists_ext_knowledge(storage, build_mode="incremental")
             assert result == set()
