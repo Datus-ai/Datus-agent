@@ -36,14 +36,17 @@ Here's a high-level summary of each module and how they relate:
 The main configuration file follows a hierarchical structure:
 
 ```yaml
-# Global model configurations
+# Global agent target
+agent:
+  target: openai                     # Default model provider key
+
+# Model providers
 models:
-  default: "openai:gpt-4"
-  providers:
-    openai:
-      type: "openai"
-      base_url: "https://api.openai.com/v1"
-      api_key: "${OPENAI_API_KEY}"
+  openai:
+    type: "openai"
+    base_url: "https://api.openai.com/v1"
+    api_key: "${OPENAI_API_KEY}"
+    model: "gpt-4-turbo"
 
 # Database connections
 namespace:
@@ -67,8 +70,8 @@ workflow:
 # Node-specific configurations
 nodes:
   schema_linking:
-    model: "openai:gpt-3.5-turbo"
-    similarity_threshold: 0.7
+    model: openai                    # References the provider key in models
+    matching_rate: fast
 
 # Storage and embeddings
 storage:
