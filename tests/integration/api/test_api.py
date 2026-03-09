@@ -85,7 +85,7 @@ async def authenticated_client(app, agent_args, auth_token):
 
 
 @pytest.mark.nightly
-class TestNightlyAPI:
+class TestAPI:
     """N8: Agent API tests."""
 
     @pytest.mark.asyncio

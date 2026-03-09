@@ -29,7 +29,7 @@ def _wait_for_agent(cli, timeout=120):
 
 
 @pytest.mark.nightly
-class TestNightlyChatAgentic:
+class TestChatAgentic:
     """N5: Chat agentic workflow tests."""
 
     def test_multi_turn_context(self, mock_args):

@@ -9,7 +9,7 @@ from datus.cli.interactive_init import InteractiveInit
 
 
 @pytest.mark.nightly
-class TestNightlyInit:
+class TestInit:
     """N4: Init configuration and connectivity tests."""
 
     def test_llm_config_probe_success(self):

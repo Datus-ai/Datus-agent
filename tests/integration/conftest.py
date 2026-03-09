@@ -9,6 +9,7 @@ Provides reusable AgentConfig, SkillManager, and PermissionManager fixtures
 that load from tests/conf/agent.yml — mirroring the real agent startup flow.
 """
 
+import copy
 import os
 import shutil
 from pathlib import Path
@@ -17,11 +18,7 @@ import pytest
 
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
-from datus.tools.permission.permission_config import (
-    PermissionConfig,
-    PermissionLevel,
-    PermissionRule,
-)
+from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel, PermissionRule
 from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.skill_tools import SkillConfig, SkillFuncTool, SkillManager
 
@@ -186,3 +183,38 @@ def llm_agent_config(tmp_path_factory) -> AgentConfig:
         yes=True,
     )
     return config
+
+
+# ── Sub-agent cleanup fixtures ──
+
+NIGHTLY_SUB_AGENT_NAMES = ["nightly_test", "nightly_n7_test"]
+
+
+@pytest.fixture
+def nightly_agent_config() -> AgentConfig:
+    """Load acceptance config for nightly sub-agent tests.
+
+    Function-scoped with deepcopy of agentic_nodes to prevent test mutations
+    from leaking into the configuration_manager cache.
+    """
+    from tests.conftest import load_acceptance_config
+
+    config = load_acceptance_config(namespace="bird_school")
+    config.rag_base_path = "tests/data"
+    config.agentic_nodes = copy.deepcopy(config.agentic_nodes)
+    return config
+
+
+@pytest.fixture
+def cleanup_sub_agent_data(nightly_agent_config):
+    """Clean up sub-agent artifacts after each test, even on failure.
+
+    Bootstrap tests write LanceDB indexes and other artifacts under
+    ``{rag_base_path}/sub_agents/{name}/``. This fixture ensures stale data
+    is removed after each test run.
+    """
+    yield
+    for name in NIGHTLY_SUB_AGENT_NAMES:
+        sub_agent_dir = Path(nightly_agent_config.rag_base_path) / "sub_agents" / name
+        if sub_agent_dir.exists():
+            shutil.rmtree(sub_agent_dir, ignore_errors=True)

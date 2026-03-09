@@ -24,7 +24,7 @@ def _make_sub_agent_config(
 
 
 @pytest.mark.nightly
-class TestNightlyBootstrapKB:
+class TestBootstrapKB:
     """N1: bootstrap-kb knowledge base initialization tests."""
 
     def _register_and_bootstrap(self, agent_config, sub_agent_config, strategy="overwrite"):

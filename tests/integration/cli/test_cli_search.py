@@ -1,5 +1,5 @@
 """
-Nightly CLI Search Command Tests (N12).
+CLI Search Command Tests (N12).
 
 Tests the search commands (!sl, !sq, !sm, !sd) in the CLI REPL.
 Covers edge cases, filtering, and error handling scenarios.
@@ -27,7 +27,7 @@ def mock_args():
 
 
 @pytest.mark.nightly
-class TestNightlyCLISearch:
+class TestCLISearch:
     """N12: CLI search command tests."""
 
     def test_search_document_command(self, mock_args, capsys):
