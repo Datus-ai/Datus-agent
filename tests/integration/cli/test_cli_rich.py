@@ -220,7 +220,7 @@ def test_chat_command(mock_args, capsys, gen_sql_input: List[Dict[str, Any]]):
     assert stdout.count("Chat Session Info:") > 0, "Should have latest chat session info"
 
 
-@pytest.mark.acceptance
+@pytest.mark.nightly
 def test_chat_command_with_ext_knowledge(mock_args):
     """
     Tests the '/<chat>' command with ext_knowledge context.
