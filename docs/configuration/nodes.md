@@ -92,7 +92,7 @@ Matches relevant metrics through vector search based on user questions.
 ```yaml
 search_metrics:
   model: openai                    # LLM model for metric selection
-  matching_rate: medium            # fast/medium/slow/from_llm
+  matching_rate: medium            # fast/medium/slow
   prompt_version: "1.0"            # Prompt version to use
 ```
 
@@ -190,13 +190,13 @@ nodes:
     model: openai
     matching_rate: fast
     prompt_version: "1.0"
-    
+
   # Metric discovery
   search_metrics:
     model: openai
     matching_rate: medium
     prompt_version: "1.0"
-    
+
   # SQL generation
   generate_sql:
     model: deepseek_v3
@@ -205,7 +205,7 @@ nodes:
     max_data_details_length: 2000
     max_context_length: 8000
     max_value_length: 500
-    
+
   # Advanced reasoning
   reasoning:
     model: anthropic
@@ -214,27 +214,27 @@ nodes:
     max_data_details_length: 2000
     max_context_length: 8000
     max_value_length: 500
-    
+
   # Result reflection and improvement
   reflect:
     prompt_version: "1.0"
-    
+
   # Output formatting and validation
   output:
     model: anthropic
     prompt_version: "1.0"
     check_result: true
-    
+
   # Interactive chat
   chat:
     workspace_root: workspace
     model: anthropic
     max_turns: 25
-    
+
   # Date parsing
   date_parser:
     prompt_version: "1.0"
-    
+
   # SQL fixing
   fix:
     model: openai

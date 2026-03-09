@@ -77,7 +77,37 @@ MCP（Model Context Protocol）是 Datus-CLI 连接外部工具服务器的方�
 
 ```bash
 .mcp call sqlite.list_tables
-.mcp call metricflow.list_metrics
+.mcp call metricflow.query_metrics '{"metrics": "revenue"}'
+```
+
+---
+
+### 移除服务器
+
+```bash
+.mcp remove <name>
+```
+
+从你的 `~/.datus/conf/.mcp.json` 中移除已有的 MCP 服务器配置。
+
+---
+
+### 工具过滤
+
+允许你显式包含或排除服务器暴露的特定工具。
+
+```bash
+# 只允许特定工具（排除其他所有工具）
+.mcp filter set <mcp_name> include read_query,list_tables
+
+# 拒绝特定工具（允许其他所有工具）
+.mcp filter set <mcp_name> exclude write_query,drop_table
+
+# 查看当前的过滤配置
+.mcp filter get <mcp_name>
+
+# 移除该服务器的所有过滤配置
+.mcp filter remove <mcp_name>
 ```
 
 ---
@@ -174,7 +204,7 @@ MCP 配置支持环境变量展开：
 
 # 调用业务指标
 .mcp call metricflow.list_metrics
-.mcp call metricflow.query_metrics --metrics revenue --dimensions customer_segment
+.mcp call metricflow.query_metrics '{"metrics": ["revenue"], "dimensions": ["customer_segment"]}'
 ```
 
 ### 文件系统集成

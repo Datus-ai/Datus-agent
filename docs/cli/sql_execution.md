@@ -42,7 +42,7 @@ Use the built-in metadata commands to explore your database structure:
 .schemas                         # List all schemas (or show details)
 .schema <schema_name>            # Switch current schema
 .tables                          # List all tables in current schema
-.table_schema <table_name>       # Show table DDL
+.table_schema <table_name>       # Show table structure
 .indexes <table_name>            # Show table indexes
 ```
 
@@ -82,8 +82,7 @@ Results can be exported in various formats:
 
 - **CSV**: For data analysis and reporting
 - **JSON**: For API integration and data exchange
-- **Parquet**: For analytical workloads
-- **Excel**: For business reporting
+- **SQL**: For query export and replay
 
 ## Best Practices
 

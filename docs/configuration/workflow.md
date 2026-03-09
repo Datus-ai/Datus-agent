@@ -13,18 +13,18 @@ Workflows are defined in the configuration file under the `workflow` section:
 workflow:
   plan: planA                        # Active execution plan
 
-# Define execution plans
-planA:
-  - schema_linking
-  - generate_sql
-  - output
+  # Define execution plans inside workflow
+  planA:
+    - schema_linking
+    - generate_sql
+    - output
 
-planB:
-  - schema_linking
-  - generate_sql
-  - execute_sql
-  - reflect
-  - output
+  planB:
+    - schema_linking
+    - generate_sql
+    - execute_sql
+    - reflect
+    - output
 ```
 
 ## Basic Workflow Configuration
@@ -35,10 +35,10 @@ planB:
 workflow:
   plan: basic_sql
 
-basic_sql:
-  - schema_linking                   # Find relevant tables
-  - generate_sql                     # Create SQL query
-  - output                          # Format results
+  basic_sql:
+    - schema_linking                   # Find relevant tables
+    - generate_sql                     # Create SQL query
+    - output                          # Format results
 ```
 
 ### Workflow with Execution and Reflection
@@ -47,12 +47,12 @@ basic_sql:
 workflow:
   plan: with_execution
 
-with_execution:
-  - schema_linking                   # Find relevant tables
-  - generate_sql                     # Create SQL query
-  - execute_sql                     # Run the query
-  - reflect                         # Analyze results
-  - output                          # Format final output
+  with_execution:
+    - schema_linking                   # Find relevant tables
+    - generate_sql                     # Create SQL query
+    - execute_sql                     # Run the query
+    - reflect                         # Analyze results
+    - output                          # Format final output
 ```
 
 ## Advanced Workflow Features
@@ -68,14 +68,14 @@ Execute multiple nodes simultaneously and then select the best result:
 workflow:
   plan: parallel_generation
 
-parallel_generation:
-  - schema_linking
-  - parallel:                       # Execute in parallel
-      - generate_sql
-      - reasoning
-  - selection                       # Choose best result
-  - execute_sql
-  - output
+  parallel_generation:
+    - schema_linking
+    - parallel:                       # Execute in parallel
+        - generate_sql
+        - reasoning
+    - selection                       # Choose best result
+    - execute_sql
+    - output
 ```
 
 ### Sub-workflows
@@ -86,28 +86,28 @@ Break complex workflows into reusable sub-components:
 workflow:
   plan: multi_approach
 
-multi_approach:
-  - schema_linking
-  - parallel:
-      - subworkflow1
-      - subworkflow2
-      - subworkflow3
-  - selection
-  - execute_sql
-  - output
+  multi_approach:
+    - schema_linking
+    - parallel:
+        - subworkflow1
+        - subworkflow2
+        - subworkflow3
+    - selection
+    - execute_sql
+    - output
 
-# Define sub-workflows
-subworkflow1:
-  - search_metrics
-  - generate_sql
+  # Define sub-workflows
+  subworkflow1:
+    - search_metrics
+    - generate_sql
 
-subworkflow2:
-  - search_metrics
-  - reasoning
+  subworkflow2:
+    - search_metrics
+    - reasoning
 
-subworkflow3:
-  - reasoning
-  - reflect
+  subworkflow3:
+    - reasoning
+    - reflect
 ```
 
 ### Sub-workflows with Custom Configuration
@@ -118,33 +118,33 @@ Each sub-workflow can use its own configuration file:
 workflow:
   plan: multi_agent
 
-multi_agent:
-  - schema_linking
-  - parallel:
-      - subworkflow1
-      - subworkflow2
-      - subworkflow3
-  - selection
-  - execute_sql
-  - output
+  multi_agent:
+    - schema_linking
+    - parallel:
+        - subworkflow1
+        - subworkflow2
+        - subworkflow3
+    - selection
+    - execute_sql
+    - output
 
-subworkflow1:
-  steps:
-    - search_metrics
-    - generate_sql
-  config: multi/agent1.yaml          # Custom config file
+  subworkflow1:
+    steps:
+      - search_metrics
+      - generate_sql
+    config: multi/agent1.yaml          # Custom config file
 
-subworkflow2:
-  steps:
-    - search_metrics
-    - reasoning
-  config: multi/agent2.yaml
+  subworkflow2:
+    steps:
+      - search_metrics
+      - reasoning
+    config: multi/agent2.yaml
 
-subworkflow3:
-  steps:
-    - reasoning
-    - reflect
-  config: multi/agent3.yaml
+  subworkflow3:
+    steps:
+      - reasoning
+      - reflect
+    config: multi/agent3.yaml
 ```
 
 ## Built-in Workflow Plans
@@ -187,7 +187,6 @@ Datus Agent provides three built-in workflow plans if you don't configure custom
       - date_parser
       - generate_sql
       - execute_sql
-      - reflect
       - output
     ```
 
@@ -203,19 +202,19 @@ reflection_nodes:
     - generate_sql
     - execute_sql
     - reflect
-    
+
   # When document search is needed
   doc_search:
     - doc_search
     - generate_sql
     - execute_sql
     - reflect
-    
+
   # Simple regeneration
   simple_regenerate:
     - execute_sql
     - reflect
-    
+
   # Enhanced reasoning
   reasoning:
     - reasoning

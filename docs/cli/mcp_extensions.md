@@ -77,7 +77,37 @@ Verifies connectivity and prints available tools from that server.
 
 ```bash
 .mcp call sqlite.list_tables
-.mcp call metricflow.list_metrics
+.mcp call metricflow.query_metrics '{"metrics": "revenue"}'
+```
+
+---
+
+### Remove a Server
+
+```bash
+.mcp remove <name>
+```
+
+Removes an existing MCP server configuration from your `~/.datus/conf/.mcp.json`.
+
+---
+
+### Tool Filtering
+
+Allows you to explicitly include or exclude specific tools exposed by a server.
+
+```bash
+# Allow only specific tools
+.mcp filter set <mcp_name> include read_query,list_tables
+
+# Reject specific tools (all others allowed)
+.mcp filter set <mcp_name> exclude write_query,drop_table
+
+# Check current filters
+.mcp filter get <mcp_name>
+
+# Remove all filters for a server
+.mcp filter remove <mcp_name>
 ```
 
 ---
@@ -174,7 +204,7 @@ MCP configurations support environment variable expansion:
 
 # Access business metrics
 .mcp call metricflow.list_metrics
-.mcp call metricflow.query_metrics --metrics revenue --dimensions customer_segment
+.mcp call metricflow.query_metrics '{"metrics": ["revenue"], "dimensions": ["customer_segment"]}'
 ```
 
 ### Filesystem Integration

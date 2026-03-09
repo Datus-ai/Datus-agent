@@ -58,10 +58,9 @@ namespace:
 
 # Workflow execution plans
 workflow:
-  default: "reflection"
-  plans:
-    reflection:
-      - schema_linking
+  plan: reflection
+  reflection:
+    - schema_linking
       - generate_sql
       - execute_sql
       - reflect
@@ -75,14 +74,21 @@ nodes:
 
 # Storage and embeddings
 storage:
-  embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
-  vector_store_path: "./data/vector_store"
+  database:
+    registry_name: sentence-transformers
+    model_name: all-MiniLM-L6-v2
+    dim_size: 384
+  document:
+    model_name: intfloat/multilingual-e5-large-instruct
+    dim_size: 1024
+  metric:
+    model_name: all-MiniLM-L6-v2
+    dim_size: 384
 
 # Benchmark datasets
 benchmark:
-  bird_dev:
-    path: "./benchmark/bird/dev_20240627"
-    database_pattern: "**/*.sqlite"
+  my_custom_benchmark:
+    benchmark_path: benchmark/my_custom
 ```
 
 ## Environment Variable Support
@@ -93,11 +99,11 @@ All configuration values support environment variable expansion with default val
 # Direct environment variable reference
 api_key: ${OPENAI_API_KEY}
 
-# Environment variable with default value
-timeout: ${API_TIMEOUT:-30}
+# Environment variable with fallback
+timeout: ${API_TIMEOUT}
 
 # Complex string interpolation
-connection_string: "postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT:-5432}/${DB_NAME}"
+connection_string: "postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${DB_NAME}"
 ```
 
 ## Multi-Environment Configuration

@@ -54,95 +54,102 @@ Once installed, Datus Agent will automatically detect and load the adapter.
 
 ## Configuration
 
-Configure your database connection in the `config.yaml` file:
+Configure your database connection in the `agent.yml` file:
 
 ### SQLite
 
 ```yaml
-namespace:
-  mydata:
-    type: sqlite
-    uri: sqlite:///path/to/database.db
+agent:
+  namespace:
+    mydata:
+      type: sqlite
+      uri: sqlite:///path/to/database.db
 ```
 
 ### DuckDB
 
 ```yaml
-namespace:
-  analytics:
-    type: duckdb
-    uri: duckdb:///path/to/database.duckdb
+agent:
+  namespace:
+    analytics:
+      type: duckdb
+      uri: duckdb:///path/to/database.duckdb
 ```
 
 ### MySQL
 
 ```yaml
-namespace:
-  production:
-    type: mysql
-    host: localhost
-    port: 3306
-    username: your_username
-    password: your_password
-    database: your_database
+agent:
+  namespace:
+    production:
+      type: mysql
+      host: localhost
+      port: 3306
+      username: your_username
+      password: your_password
+      database: your_database
 ```
 
 ### PostgreSQL
 
 ```yaml
-namespace:
-  production:
-    type: postgresql
-    host: localhost
-    port: 5432
-    username: your_username
-    password: your_password
-    database: your_database
-    schema: public  # optional, default is public
-    sslmode: prefer  # optional, default is prefer
+agent:
+  namespace:
+    production:
+      type: postgresql
+      host: localhost
+      port: 5432
+      username: your_username
+      password: your_password
+      database: your_database
+      schema: public  # optional, default is public
+      sslmode: prefer  # optional, default is prefer
 ```
 
 ### Snowflake
 
 ```yaml
-namespace:
-  warehouse:
-    type: snowflake
-    account: your_account
-    username: your_username
-    password: your_password
-    warehouse: your_warehouse
-    database: your_database
-    schema: your_schema
-    role: your_role  # optional
+agent:
+  namespace:
+    warehouse:
+      type: snowflake
+      account: your_account
+      username: your_username
+      password: your_password
+      warehouse: your_warehouse
+      database: your_database
+      schema: your_schema
+      role: your_role  # optional
 ```
 
 ### StarRocks
 
 ```yaml
-namespace:
-  analytics:
-    type: starrocks
-    host: localhost
-    port: 9030
-    username: root
-    password: your_password
-    database: your_database
+agent:
+  namespace:
+    analytics:
+      type: starrocks
+      host: localhost
+      port: 9030
+      username: root
+      password: your_password
+      database: your_database
 ```
 
 ### ClickZetta
 
 ```yaml
-namespace:
-  lakehouse:
-    type: clickzetta
-    service: CLICKZETTA_SERVICE
-    username: CLICKZETTA_USERNAME
-    password: CLICKZETTA_PASSWORD
-    instance: CLICKZETTA_INSTANCE
-    workspace: CLICKZETTA_WORKSPACE
-    schema: CLICKZETTA_SCHEMA
-    vcluster: CLICKZETTA_VCLUSTER
+agent:
+  namespace:
+    lakehouse:
+      type: clickzetta
+      service: CLICKZETTA_SERVICE
+      username: CLICKZETTA_USERNAME
+      password: CLICKZETTA_PASSWORD
+      instance: CLICKZETTA_INSTANCE
+      workspace: CLICKZETTA_WORKSPACE
+      schema: CLICKZETTA_SCHEMA
+      vcluster: CLICKZETTA_VCLUSTER
 ```
 
 ## Multiple Database Connections
@@ -150,21 +157,22 @@ namespace:
 You can configure multiple databases under the same namespace:
 
 ```yaml
-namespace:
-  project:
-    source_db:
-      type: mysql
-      host: source-server
-      username: reader
-      password: password
-      database: source
-    target_db:
-      type: snowflake
-      account: your_account
-      username: writer
-      password: password
-      warehouse: compute_wh
-      database: target
+agent:
+  namespace:
+    project:
+      source_db:
+        type: mysql
+        host: source-server
+        username: reader
+        password: password
+        database: source
+      target_db:
+        type: snowflake
+        account: your_account
+        username: writer
+        password: password
+        warehouse: compute_wh
+        database: target
 ```
 
 ## Features by Adapter

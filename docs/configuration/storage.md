@@ -8,9 +8,8 @@ The storage configuration defines the base path for vector databases and embeddi
 
 ```yaml
 storage:
-  base_path: data                    # RAG storage base path
   embedding_device_type: cpu         # Device type for embedding models
-  
+
   # Database metadata and sample data embedding
   database:
     registry_name: openai            # Embedding provider
@@ -18,12 +17,12 @@ storage:
     dim_size: 1536
     batch_size: 10
     target_model: openai
-    
+
   # Document embedding configuration
   document:
     model_name: all-MiniLM-L6-v2     # Local embedding model
     dim_size: 384
-    
+
   # Metrics embedding configuration
   metric:
     model_name: all-MiniLM-L6-v2     # Local embedding model
@@ -32,10 +31,10 @@ storage:
 
 ## Base Configuration
 
-### Storage Path
+### Device Type
 ```yaml
 storage:
-  base_path: data  # Base directory for vector storage
+  embedding_device_type: cpu  # Or cude/mps
 ```
 
 The final data paths will be:
@@ -116,7 +115,7 @@ database:
 
 !!! tip "Environment Variables"
     Ensure your OpenAI API key is configured:
-    
+
     ```bash
     export OPENAI_API_KEY="your_openai_api_key"
     ```
@@ -134,7 +133,7 @@ database:
 
 !!! info "Alternative Local Models"
     Consider these high-quality alternatives:
-    
+
     - **`intfloat/multilingual-e5-large-instruct`**: 1.2GB, 1024 dimensions, multilingual
     - **`BAAI/bge-large-en-v1.5`**: 1.2GB, 1024 dimensions (English optimized)
     - **`BAAI/bge-large-zh-v1.5`**: 1.2GB, 1024 dimensions (Chinese optimized)
@@ -187,17 +186,17 @@ database:
     storage:
       base_path: data
       embedding_device_type: auto          # Use best available device
-      
+
       # Fast local embeddings for all data types
       database:
         registry_name: sentence-transformers
         model_name: all-MiniLM-L6-v2
         dim_size: 384
-        
+
       document:
         model_name: all-MiniLM-L6-v2
         dim_size: 384
-        
+
       metric:
         model_name: all-MiniLM-L6-v2
         dim_size: 384
@@ -216,7 +215,7 @@ database:
     storage:
       base_path: data
       embedding_device_type: cpu
-      
+
       # High-quality cloud embeddings for database metadata
       database:
         registry_name: openai
@@ -224,12 +223,12 @@ database:
         dim_size: 1536
         batch_size: 10
         target_model: openai
-        
+
       # Local embeddings for documents and metrics
       document:
         model_name: intfloat/multilingual-e5-large-instruct
         dim_size: 1024
-        
+
       metric:
         model_name: intfloat/multilingual-e5-large-instruct
         dim_size: 1024
@@ -248,7 +247,7 @@ database:
     storage:
       base_path: /opt/datus/embeddings
       embedding_device_type: cuda          # Use GPU acceleration
-      
+
       # High-quality embeddings across all data types
       database:
         registry_name: openai
@@ -256,11 +255,11 @@ database:
         dim_size: 3072
         batch_size: 5                      # Smaller batches for large model
         target_model: openai
-        
+
       document:
         model_name: BAAI/bge-large-en-v1.5
         dim_size: 1024
-        
+
       metric:
         model_name: BAAI/bge-large-en-v1.5
         dim_size: 1024

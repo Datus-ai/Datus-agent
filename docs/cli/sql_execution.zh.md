@@ -42,7 +42,7 @@ Returned 5 rows in 0.01 seconds
 .schemas                         # 列出所有 Schema（或展示详情）
 .schema <schema_name>            # 切换当前 Schema
 .tables                          # 列出当前 Schema 的所有表
-.table_schema <table_name>       # 查看表的 DDL
+.table_schema <table_name>       # 查看表结构详情
 .indexes <table_name>            # 查看表索引
 ```
 
@@ -82,8 +82,7 @@ SQL 结果会带来：
 
 - **CSV**：用于数据分析与报表
 - **JSON**：用于 API 集成与数据交换
-- **Parquet**：适合分析型工作负载
-- **Excel**：满足业务报表需求
+- **SQL**：用于查询导出与回放
 
 ## 最佳实践
 

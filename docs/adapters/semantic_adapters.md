@@ -48,7 +48,7 @@ Once installed, Datus Agent will automatically detect and load the adapter.
 
 ## Configuration
 
-Configure your semantic layer in the `config.yaml` file under the `semantic` section:
+Configure your semantic layer in the `agent.yml` file under the `semantic` section:
 
 ### MetricFlow
 
@@ -56,7 +56,7 @@ Configure your semantic layer in the `config.yaml` file under the `semantic` sec
 semantic:
   type: metricflow
   namespace: my_project
-  timeout: 300  # optional, default is 300 seconds
+  timeout: 30  # optional, default is 30 seconds
   config_path: /path/to/agent.yml  # optional, uses default lookup if not specified
 ```
 

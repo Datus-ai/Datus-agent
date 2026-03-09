@@ -16,50 +16,19 @@ Configure benchmarks in the `benchmark` section of your configuration file:
 
 ```yaml
 benchmark:
-  bird_dev:                          # Benchmark namespace
-    benchmark_path: benchmark/bird/dev_20240627
-    
-  spider2:
-    benchmark_path: benchmark/spider2/spider2-snow
-    
-  semantic_layer:
-    benchmark_path: benchmark/semantic_layer
+  custom_bird:                       # Custom benchmark namespace
+    benchmark_path: benchmark/custom_bird/dev_data
+
+  custom_spider:
+    benchmark_path: path/to/spider/data
 ```
 
 ## BIRD-DEV Benchmark
 
 The BIRD (Big Bench for Large-scale Database Grounded Text-to-SQL Evaluation) benchmark tests complex SQL generation capabilities.
 
-### Configuration
+### Pre-configured Built-in Benchmarks
 
-```yaml
-benchmark:
-  bird_dev:
-    benchmark_path: benchmark/bird/dev_20240627
-```
+The `bird_dev`, `spider2`, and `semantic_layer` benchmarks are built-in and their paths are pre-configured in the system. You do not need (and cannot) override their `benchmark_path` in `agent.yml`.
 
-## Spider2 Benchmark
-
-Spider2 is an advanced benchmark that tests SQL generation across multiple databases and complex scenarios.
-
-### Configuration
-
-```yaml
-benchmark:
-  spider2:
-    benchmark_path: benchmark/spider2/spider2-snow
-```
-
-## Semantic Layer Benchmark
-
-Tests the agent's ability to understand business metrics and semantic relationships.
-
-### Configuration
-
-```yaml
-benchmark:
-  semantic_layer:
-    benchmark_path: benchmark/semantic_layer
-```
-
-For detailed usage instructions and advanced configuration options, see the [Benchmarks](../benchmark/benchmark_manual.md) chapter.
+For detailed usage instructions and advanced custom configuration options, see the [Benchmarks](../benchmark/benchmark_manual.md) chapter.

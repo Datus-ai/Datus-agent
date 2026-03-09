@@ -50,7 +50,7 @@ datus-agent bootstrap-kb \
 | `--success_story`      | ⚠️       | Path to success story CSV file (required if no `--ext_knowledge`) | `/data/success_story.csv`         |
 | `--kb_update_strategy` | ✅       | Update strategy                                                   | `overwrite`/`incremental`         |
 | `--subject_tree`       | ❌       | Predefined subject tree categories                                | `Finance/Revenue,User/Engagement` |
-| `--pool_size`          | ❌       | Concurrent processing threads, default is 1                       | `8`                               |
+| `--pool_size`          | ❌       | Concurrent processing threads, default is 4                       | `8`                               |
 
 ## Data Source Formats
 
