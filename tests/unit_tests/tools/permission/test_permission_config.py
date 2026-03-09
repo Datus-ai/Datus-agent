@@ -10,11 +10,7 @@ Tests PermissionLevel, PermissionRule, and PermissionConfig classes.
 
 import pytest
 
-from datus.tools.permission.permission_config import (
-    PermissionConfig,
-    PermissionLevel,
-    PermissionRule,
-)
+from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel, PermissionRule
 
 
 class TestPermissionLevel:

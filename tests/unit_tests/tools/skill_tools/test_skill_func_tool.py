@@ -10,11 +10,7 @@ Tests the load_skill native tool functionality.
 
 import pytest
 
-from datus.tools.permission.permission_config import (
-    PermissionConfig,
-    PermissionLevel,
-    PermissionRule,
-)
+from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel, PermissionRule
 from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.skill_tools.skill_config import SkillConfig
 from datus.tools.skill_tools.skill_func_tool import SkillFuncTool

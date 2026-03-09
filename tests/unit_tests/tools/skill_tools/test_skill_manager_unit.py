@@ -195,6 +195,25 @@ class TestMarketplaceOperations:
         assert synced == []
 
 
+class TestGenerateSkillsXmlContent:
+    def test_generate_xml_includes_description(self):
+        registry = MagicMock()
+        registry.get_skill_count.return_value = 1
+        registry.list_skills.return_value = [_make_skill(description="SQL query optimization techniques")]
+        manager = SkillManager(registry=registry)
+        xml = manager.generate_available_skills_xml("node")
+        assert "<description>" in xml
+        assert "SQL query optimization techniques" in xml
+
+    def test_generate_xml_includes_tags(self):
+        registry = MagicMock()
+        registry.get_skill_count.return_value = 1
+        registry.list_skills.return_value = [_make_skill(tags=["sql", "performance"])]
+        manager = SkillManager(registry=registry)
+        xml = manager.generate_available_skills_xml("node")
+        assert "<tags>" in xml
+
+
 class TestUtilityMethods:
     def test_get_skill(self):
         registry = MagicMock()
@@ -223,6 +242,7 @@ class TestUtilityMethods:
         manager = SkillManager(registry=registry)
         assert manager.parse_skill_patterns("") == []
         assert manager.parse_skill_patterns("sql-*, data-*") == ["sql-*", "data-*"]
+        assert manager.parse_skill_patterns("  sql-*  ,  data-*  ") == ["sql-*", "data-*"]
 
     def test_check_skill_permission_no_manager(self):
         from datus.tools.permission.permission_config import PermissionLevel

@@ -10,11 +10,7 @@ import pytest
 
 from datus.cli.execution_state import InteractionBroker
 from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel, PermissionRule
-from datus.tools.permission.permission_hooks import (
-    CompositeHooks,
-    PermissionDeniedException,
-    PermissionHooks,
-)
+from datus.tools.permission.permission_hooks import CompositeHooks, PermissionDeniedException, PermissionHooks
 from datus.tools.permission.permission_manager import PermissionManager
 
 

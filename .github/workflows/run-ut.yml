@@ -86,7 +86,6 @@ jobs:
       - name: run unit tests (no external deps, before KB build)
         run: |
           python -m pytest tests/unit_tests/ -m "not nightly" -q --tb=short
-          python -m pytest tests/skills/ -q --tb=short
 
       - name: Build test data
         if: steps.kb-cache.outputs.cache-hit != 'true' || inputs.force-rebuild-kb == true

@@ -168,6 +168,58 @@ class TestSkillRegistryDuplicateWarning:
         assert registry.get_skill_count() == 1
 
 
+class TestSkillRegistryDiscoveryExtended:
+    """Extended discovery tests for scripts, disabled model, and location type."""
+
+    def test_discover_skill_with_scripts(self, tmp_path):
+        skill_dir = tmp_path / "skills" / "script-skill"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: script-skill\ndescription: A skill with scripts\n"
+            'tags: [scripts]\nallowed_commands:\n  - "python:scripts/*.py"\n  - "sh:*.sh"\n---\n\n# Script Skill\n'
+        )
+        scripts_dir = skill_dir / "scripts"
+        scripts_dir.mkdir()
+        (scripts_dir / "analyze.py").write_text("print('analyzing')")
+
+        config = SkillConfig(directories=[str(tmp_path / "skills")])
+        registry = SkillRegistry(config=config)
+        registry.scan_directories()
+        skill = registry.get_skill("script-skill")
+        assert skill is not None
+        assert skill.has_scripts() is True
+        assert "python:scripts/*.py" in skill.allowed_commands
+        assert "sh:*.sh" in skill.allowed_commands
+
+    def test_discover_skill_disabled_model(self, tmp_path):
+        skill_dir = tmp_path / "skills" / "user-only-skill"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: user-only-skill\ndescription: User-only skill\n"
+            "disable_model_invocation: true\n---\n\n# User-Only Skill\n"
+        )
+        config = SkillConfig(directories=[str(tmp_path / "skills")])
+        registry = SkillRegistry(config=config)
+        registry.scan_directories()
+        skill = registry.get_skill("user-only-skill")
+        assert skill is not None
+        assert skill.disable_model_invocation is True
+        assert skill.is_model_invocable() is False
+
+    def test_skill_location_is_path(self, tmp_path):
+        from pathlib import Path
+
+        skill_dir = tmp_path / "skills" / "loc-skill"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(SKILL_MD)
+        config = SkillConfig(directories=[str(tmp_path / "skills")])
+        registry = SkillRegistry(config=config)
+        registry.scan_directories()
+        skill = registry.get_skill("test-skill")
+        assert isinstance(skill.location, Path)
+        assert skill.location.exists()
+
+
 class TestSkillRegistryParseErrors:
     def test_invalid_yaml(self, tmp_path):
         d = tmp_path / "bad-skill"
