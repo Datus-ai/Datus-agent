@@ -7,6 +7,20 @@ import pytest
 from datus.schemas.agent_models import ScopedContext, ScopedContextLists, SubAgentConfig
 from datus.storage.conditions import build_where
 from datus.storage.sub_agent_kb_bootstrap import SUPPORTED_COMPONENTS, SubAgentBootstrapper
+from datus.tools.db_tools import connector_registry
+from datus.tools.db_tools.registry import ConnectorRegistry
+
+
+@pytest.fixture(autouse=True)
+def _register_test_capabilities():
+    """Register capabilities for dialects used in tests, with snapshot/restore for isolation."""
+    attrs = ("_capabilities", "_uri_builders", "_context_resolvers")
+    snapshots = {a: getattr(ConnectorRegistry, a).copy() for a in attrs}
+    connector_registry.register_handlers("postgresql", capabilities={"database", "schema"})
+    connector_registry.register_handlers("snowflake", capabilities={"catalog", "database", "schema"})
+    yield
+    for a, snap in snapshots.items():
+        setattr(ConnectorRegistry, a, snap)
 
 
 class DummyAgentConfig:
