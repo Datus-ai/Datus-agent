@@ -8,7 +8,6 @@ Context items are organized into three separate trees:
 
 - `@catalog` — your physical data structure (databases, schemas, tables)
 - `@subject` — your semantic/business layer (domains, layers, semantic models, metrics)
-- `@sql` — historical SQL queries and knowledge
 
 By combining these, you give Datus the same mental model you have — so it can reason with your data instead of guessing.
 
@@ -99,10 +98,19 @@ Type `@` (or `@any_text`) followed by any text, then press Tab. Datus will fuzzy
 - Calculated metrics and KPIs
 - Business glossary and definitions
 
-#### Historical Knowledge (`@sql`)
-- Previously executed SQL queries
+#### Historical Knowledge (`@Sql`)
+- Historical SQL queries execution (inline only)
 - Reusable SQL snippets and templates
 - Query patterns and best practices
 - Optimization examples
 
-Check the [knowledge base documentation](../knowledge_base/introduction.md) to learn how to build these context trees.
+### Inline Context Injection
+In addition to the standalone UI commands (`@catalog` and `@subject`), you can explicitly reference entities *inline* within a chat command simply by typing `@` followed by the entity type or name. The autocomplete (`AtReferenceCompleter`) will help you inject:
+- `@Table`
+- `@Metrics`
+- `@Sql`
+- `@File`
+
+This inline injection brings specific context objects into the current `/` command prompt without requiring you to open the context browser.
+
+For more details on how to build these context trees, please refer to the [Knowledge Base Documentation](../knowledge_base/introduction.md).

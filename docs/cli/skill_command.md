@@ -1,5 +1,8 @@
 # Skill Command
 
+!!! warning "Planned Feature"
+    The `datus skill` CLI and Town Skills Marketplace integration are planned for a future release. The functionality described in this document is currently under development and not yet available in the latest version.
+
 The `datus skill` command provides a CLI interface for managing skills locally and interacting with the Town Skills Marketplace.
 
 ## Subcommands
