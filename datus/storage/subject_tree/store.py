@@ -14,7 +14,7 @@ import pyarrow as pa
 from datus.storage import BaseEmbeddingStore
 from datus.storage.conditions import and_, in_, like
 from datus.storage.embedding_models import EmbeddingModel
-from datus.storage.rdb.base import ColumnDef, IndexDef, IntegrityError, TableDefinition, WhereOp
+from datus.storage.rdb.base import ColumnDef, IndexDef, TableDefinition, UniqueViolationError, WhereOp
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -132,10 +132,8 @@ class SubjectTreeStore:
             logger.info(f"Created node: {self.get_full_path(node_id)} (node_id={node_id})")
             return created_node
 
-        except IntegrityError as e:
-            if "UNIQUE constraint failed" in str(e):
-                raise ValueError(f"Node with name '{name}' already exists under parent {parent_id}") from e
-            raise
+        except UniqueViolationError as e:
+            raise ValueError(f"Node with name '{name}' already exists under parent {parent_id}") from e
         except Exception as e:
             logger.error(f"Failed to create node: {e}")
             raise
@@ -221,10 +219,8 @@ class SubjectTreeStore:
             self._table.update(data, where={"node_id": node_id})
             logger.info(f"Updated node {node_id}")
             return True
-        except IntegrityError as e:
-            if "UNIQUE constraint failed" in str(e):
-                raise ValueError(f"Node with name '{name}' already exists under parent {parent_id}") from e
-            raise
+        except UniqueViolationError as e:
+            raise ValueError(f"Node with name '{name}' already exists under parent {parent_id}") from e
         except Exception as e:
             logger.error(f"Failed to update node {node_id}: {e}")
             raise

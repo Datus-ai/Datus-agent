@@ -12,6 +12,7 @@ from datus.storage.rdb.base import (
     RdbDatabase,
     RdbTable,
     TableDefinition,
+    UniqueViolationError,
     WhereOp,
 )
 from datus.storage.rdb.registry import RdbRegistry
@@ -28,6 +29,7 @@ __all__ = [
     "ColumnDef",
     "IndexDef",
     "IntegrityError",
+    "UniqueViolationError",
     "RdbDatabase",
     "RdbTable",
     "TableDefinition",

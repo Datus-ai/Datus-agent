@@ -20,6 +20,7 @@ from datus.storage.rdb.base import (
     RdbTable,
     T,
     TableDefinition,
+    UniqueViolationError,
     WhereClause,
     WhereOp,
     _normalize_where,
@@ -271,6 +272,8 @@ class SqliteRdbDatabase(RdbDatabase):
                 cursor = conn.execute(sql, tuple(data.values()))
                 return cursor.lastrowid
         except sqlite3.IntegrityError as e:
+            if "UNIQUE constraint failed" in str(e):
+                raise UniqueViolationError(str(e)) from e
             raise IntegrityError(str(e)) from e
 
     def _query(
@@ -303,6 +306,8 @@ class SqliteRdbDatabase(RdbDatabase):
                 cursor = conn.execute(sql, params)
                 return cursor.rowcount
         except sqlite3.IntegrityError as e:
+            if "UNIQUE constraint failed" in str(e):
+                raise UniqueViolationError(str(e)) from e
             raise IntegrityError(str(e)) from e
 
     def _delete(self, table: str, where: Optional[WhereClause] = None) -> int:
@@ -322,6 +327,8 @@ class SqliteRdbDatabase(RdbDatabase):
             with self._auto_conn() as conn:
                 conn.execute(sql, tuple(data.values()))
         except sqlite3.IntegrityError as e:
+            if "UNIQUE constraint failed" in str(e):
+                raise UniqueViolationError(str(e)) from e
             raise IntegrityError(str(e)) from e
 
     @property

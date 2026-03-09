@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from datus.storage.rdb.base import ColumnDef, IndexDef, IntegrityError, TableDefinition, WhereOp
+from datus.storage.rdb.base import ColumnDef, IndexDef, IntegrityError, TableDefinition, UniqueViolationError, WhereOp
 from datus.storage.rdb.sqlite_backend import SqliteRdbDatabase
 from datus.utils.exceptions import DatusException
 
@@ -73,6 +73,13 @@ class TestSqliteRdbDatabaseInsert:
         table = database.ensure_table(table_def)
         table.insert(_Item(name="unique_key", value="v1"))
         with pytest.raises(IntegrityError):
+            table.insert(_Item(name="unique_key", value="v2"))
+
+    def test_insert_duplicate_raises_unique_violation_error(self, database, table_def):
+        """insert() raises UniqueViolationError (an IntegrityError subclass) on unique constraint violation."""
+        table = database.ensure_table(table_def)
+        table.insert(_Item(name="unique_key", value="v1"))
+        with pytest.raises(UniqueViolationError):
             table.insert(_Item(name="unique_key", value="v2"))
 
 

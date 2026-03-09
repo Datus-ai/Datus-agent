@@ -31,8 +31,20 @@ def _init_storage_backends(request, tmp_path, storage_test_namespace):
     )
     init_backends(config=config, data_dir=str(tmp_path), namespace=storage_test_namespace)
     yield backend
+    # 1. Clear cache and reset backends (close connection pools)
     clear_cache()
     reset_backends()
+    # 2. Clear server-side data (after connection pools are closed)
+    if backend.rdb_test_env is not None:
+        try:
+            backend.rdb_test_env.clear_data(storage_test_namespace)
+        except Exception:
+            pass
+    if backend.vector_test_env is not None:
+        try:
+            backend.vector_test_env.clear_data(storage_test_namespace)
+        except Exception:
+            pass
 
 
 def pytest_sessionfinish(session, exitstatus):

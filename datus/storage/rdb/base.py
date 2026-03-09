@@ -41,6 +41,10 @@ class IntegrityError(Exception):
     """Backend-agnostic constraint violation (wraps sqlite3.IntegrityError etc.)."""
 
 
+class UniqueViolationError(IntegrityError):
+    """Raised when a UNIQUE or PRIMARY KEY constraint is violated."""
+
+
 T = TypeVar("T")
 
 
@@ -99,7 +103,12 @@ class RdbTable(ABC):
 
     @abstractmethod
     def insert(self, record: Any) -> int:
-        """Insert a dataclass record and return lastrowid."""
+        """Insert a dataclass record and return lastrowid.
+
+        Raises:
+            UniqueViolationError: When a UNIQUE constraint is violated.
+            IntegrityError: On other integrity constraint violations.
+        """
 
     @abstractmethod
     def query(
@@ -113,7 +122,12 @@ class RdbTable(ABC):
 
     @abstractmethod
     def update(self, data: Dict[str, Any], where: Optional[WhereClause] = None) -> int:
-        """Update rows and return affected count."""
+        """Update rows and return affected count.
+
+        Raises:
+            UniqueViolationError: When a UNIQUE constraint is violated.
+            IntegrityError: On other integrity constraint violations.
+        """
 
     @abstractmethod
     def delete(self, where: Optional[WhereClause] = None) -> int:
@@ -166,23 +180,3 @@ class BaseRdbBackend(ABC):
     @abstractmethod
     def close(self) -> None:
         """Release resources held by this backend."""
-
-    # -- Test lifecycle hooks (override in adapters) --
-
-    @classmethod
-    def setup_test_env(cls) -> Optional[Dict[str, Any]]:
-        """Create test environment and return config for initialize().
-
-        Override in adapters to start containers, create databases, etc.
-        Returns None if the backend cannot be tested (default).
-        """
-        return None
-
-    @classmethod
-    def teardown_test_env(cls, config: Dict[str, Any]) -> None:
-        """Destroy test environment created by setup_test_env().
-
-        Override in adapters to stop containers, drop databases, etc.
-        Default: no-op.
-        """
-        pass
