@@ -15,8 +15,6 @@ import pytest
 from datus.tools.skill_tools.skill_bash_tool import SkillBashTool
 from datus.tools.skill_tools.skill_config import SkillMetadata
 
-pytestmark = pytest.mark.nightly
-
 
 @pytest.fixture
 def temp_skill_dir(tmp_path):

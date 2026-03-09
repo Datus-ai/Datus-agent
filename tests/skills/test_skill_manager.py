@@ -15,8 +15,6 @@ from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.skill_tools.skill_config import SkillConfig
 from datus.tools.skill_tools.skill_manager import SkillManager
 
-pytestmark = pytest.mark.nightly
-
 
 @pytest.fixture
 def temp_skills_dir(tmp_path):

@@ -15,6 +15,7 @@
 /tests/data/datus_db_bird_school
 /tests/data/datus_db_bird_sqlite
 /tests/data/datus_db_ssb_sqlite
+/tests/data/sub_agents
 /tests/save
 /tests/sessions
 /tests/semantic_models
@@ -48,3 +49,6 @@ ci/pytest-coverage.txt
 ci/test-report.md
 ci/dir-cover.json
 ci/.coverage
+
+# Test evaluation output
+evaluation_details.json

@@ -26,14 +26,6 @@ import pytest
 from datus.configuration.agent_config import AgentConfig, NodeConfig
 from tests.unit_tests.mock_llm_model import MockLLMModel
 
-
-def pytest_collection_modifyitems(items):
-    """Automatically mark all tests under unit_tests/ with the 'ci' marker."""
-    for item in items:
-        if "unit_tests" in str(item.fspath):
-            item.add_marker(pytest.mark.ci)
-
-
 # ---------------------------------------------------------------------------
 # Singleton cleanup
 # ---------------------------------------------------------------------------

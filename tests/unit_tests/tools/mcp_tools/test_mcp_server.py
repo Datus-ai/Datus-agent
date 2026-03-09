@@ -96,6 +96,7 @@ class TestMCPToolRegistration:
         assert "list_subject_tree" in tool_names
 
 
+@pytest.mark.nightly
 class TestMCPToolExecution:
     """Test MCP tool execution."""
 
@@ -121,6 +122,7 @@ class TestMCPToolExecution:
         assert result is not None
 
 
+@pytest.mark.nightly
 class TestMCPServerASGIApp:
     """Test ASGI app creation for HTTP mode."""
 
@@ -147,6 +149,7 @@ class TestMCPServerASGIApp:
 # ============================================================================
 
 
+@pytest.mark.nightly
 class TestToolContextManager:
     """Test ToolContextManager for dynamic mode."""
 
@@ -220,6 +223,7 @@ class TestToolContextManager:
         assert key1 != key2
 
 
+@pytest.mark.nightly
 class TestLightweightDynamicMCPServer:
     """Test LightweightDynamicMCPServer."""
 
@@ -253,6 +257,7 @@ class TestLightweightDynamicMCPServer:
         assert "read_query" in tool_names
 
 
+@pytest.mark.nightly
 class TestDynamicModeHTTPIntegration:
     """Integration tests for dynamic mode with HTTP transport."""
 
@@ -390,6 +395,7 @@ class TestDynamicModeHTTPIntegration:
         assert response.status_code != 404, "Namespace routing failed"
 
 
+@pytest.mark.nightly
 class TestDynamicModeSSEIntegration:
     """Integration tests for dynamic mode with SSE transport."""
 
@@ -492,7 +498,6 @@ class TestDynamicModeSSEIntegration:
             assert "Unknown session_id" in response.json()["error"]
 
 
-@pytest.mark.nightly
 class TestDynamicRouterPathParsing:
     """Test DynamicRouter path parsing logic."""
 

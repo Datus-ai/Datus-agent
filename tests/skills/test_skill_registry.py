@@ -15,8 +15,6 @@ import pytest
 from datus.tools.skill_tools.skill_config import SkillConfig
 from datus.tools.skill_tools.skill_registry import SkillRegistry
 
-pytestmark = pytest.mark.nightly
-
 
 @pytest.fixture
 def temp_skills_dir(tmp_path):

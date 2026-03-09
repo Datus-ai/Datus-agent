@@ -12,9 +12,9 @@ Datus-Agent is an AI-powered data analysis agent: natural language → SQL, mult
 
 ```bash
 uv sync                                    # Install dependencies
-uv run pytest -m ci tests/                  # CI tests (zero external deps)
-uv run pytest -m "ci or nightly" tests/     # Nightly tests (needs API keys)
-uv run pytest -m "ci or nightly or regression" tests/  # Full regression
+uv run pytest tests/unit_tests/ tests/skills/ -q  # CI tests (zero external deps)
+uv run pytest -m nightly tests/             # Nightly tests (needs API keys)
+uv run pytest -m "nightly or regression" tests/  # Full regression
 uv run black . && uv run flake8 && uv run isort .      # Lint & format
 bash build_scripts/build_test_data.sh       # Build test knowledge base
 ```
@@ -104,7 +104,7 @@ Error code ranges: 100000–199999 (common), 200000–299999 (node), 300000–39
 
 | Tier | Marker | Criteria |
 |------|--------|----------|
-| CI | `@pytest.mark.ci` | Zero external deps, zero pre-built data, deterministic, < 5s per test |
+| CI | No marker (run by directory) | Zero external deps, zero pre-built data, deterministic, < 5s per test |
 | Nightly | `@pytest.mark.nightly` | Requires real LLM API or pre-built LanceDB indexes |
 | Regression | `@pytest.mark.regression` | Requires external DB instances or multiple LLM providers |
 
