@@ -4,6 +4,8 @@
 
 """Tests for datus/storage/document/store.py -- DocumentStore."""
 
+from unittest.mock import patch
+
 import pytest
 
 from datus.storage.document.schemas import PlatformDocChunk
@@ -417,6 +419,29 @@ class TestDocumentStoreCreateIndices:
         # Verify search still works
         results = doc_store.search_docs("database operations", top_n=2)
         assert len(results) > 0
+
+    def test_create_indices_calls_vector_index(self, doc_store):
+        """create_indices must delegate to the backend's create_vector_index."""
+        doc_store.store_chunks(_make_chunks(3))
+        with patch.object(doc_store.table, "create_vector_index", wraps=doc_store.table.create_vector_index) as mock_vi:
+            doc_store.create_indices()
+            mock_vi.assert_called_once()
+            args, kwargs = mock_vi.call_args
+            # First positional arg is the vector column name
+            assert args[0] == "vector"
+            assert kwargs.get("metric") == "cosine"
+            assert kwargs.get("replace") is True
+
+    def test_create_indices_calls_fts_index(self, doc_store):
+        """create_indices must delegate to the backend's create_fts_index."""
+        doc_store.store_chunks(_make_chunks(3))
+        with patch.object(doc_store.table, "create_fts_index", wraps=doc_store.table.create_fts_index) as mock_fts:
+            doc_store.create_indices()
+            mock_fts.assert_called_once()
+            args, kwargs = mock_fts.call_args
+            # field_names is passed positionally from base.create_fts_index
+            field_names = kwargs.get("field_names") or args[0]
+            assert set(field_names) == {"chunk_text", "title", "hierarchy"}
 
 
 # ============================================================

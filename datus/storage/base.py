@@ -239,8 +239,6 @@ class BaseEmbeddingStore(StorageBase):
                 logger.debug(f"Number of sub-vectors: {num_sub_vectors}")
 
             index_params = {
-                "metric": metric,
-                "vector_column_name": self.vector_column_name,
                 "index_type": index_type,
                 "num_partitions": num_partitions,
                 "replace": True,
@@ -251,7 +249,7 @@ class BaseEmbeddingStore(StorageBase):
             if accelerator and accelerator == "cuda" or accelerator == "mps":
                 index_params["accelerator"] = accelerator
 
-            self.table.create_vector_index(self.vector_column_name, **index_params)
+            self.table.create_vector_index(self.vector_column_name, metric=metric, **index_params)
             logger.debug(f"Successfully created {index_type} index for {self.table_name}")
 
         except Exception as e:
