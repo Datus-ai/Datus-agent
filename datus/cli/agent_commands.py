@@ -417,6 +417,7 @@ class AgentCommands:
 
         if connector_registry.support_catalog(dialect):
             catalog_name = self.cli.prompt_input("Enter catalog name", default=self.cli_context.current_catalog or "")
+        # SQLite has no "database" capability but still needs a database (file) prompt
         if DBType.SQLITE == dialect or connector_registry.support_database(dialect):
             database_name = self.cli.prompt_input("Enter database name", default=self.cli_context.current_db_name or "")
         if connector_registry.support_schema(dialect):
