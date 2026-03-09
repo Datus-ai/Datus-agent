@@ -624,7 +624,6 @@ def base_schema_columns() -> List:
 class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
     def __init__(
         self,
-        scope: str,
         table_name: str,
         embedding_model: EmbeddingModel,
         on_duplicate_columns: str = "vector",
@@ -634,7 +633,6 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
         unique_columns: Optional[List[str]] = None,
     ):
         super().__init__(
-            scope=scope,
             table_name=table_name,
             embedding_model=embedding_model,
             on_duplicate_columns=on_duplicate_columns,

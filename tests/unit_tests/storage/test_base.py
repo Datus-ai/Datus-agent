@@ -25,27 +25,27 @@ class TestGetCurrentTimestamp:
 
     def test_get_current_timestamp_returns_iso_format(self, tmp_path):
         """Timestamp string must be parseable as ISO-8601."""
-        base = StorageBase(scope=str(tmp_path))
+        base = StorageBase()
         ts = base._get_current_timestamp()
         parsed = datetime.fromisoformat(ts)
         assert isinstance(parsed, datetime)
 
     def test_get_current_timestamp_format_contains_T_separator(self, tmp_path):
         """ISO format should contain the 'T' separator between date and time."""
-        base = StorageBase(scope=str(tmp_path))
+        base = StorageBase()
         ts = base._get_current_timestamp()
         assert "T" in ts
 
     def test_get_current_timestamp_matches_iso_regex(self, tmp_path):
         """Timestamp must match YYYY-MM-DDTHH:MM:SS pattern."""
-        base = StorageBase(scope=str(tmp_path))
+        base = StorageBase()
         ts = base._get_current_timestamp()
         pattern = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}"
         assert re.match(pattern, ts), f"Timestamp '{ts}' does not match ISO-8601 pattern"
 
     def test_get_current_timestamp_is_recent(self, tmp_path):
         """Returned timestamp should be within a few seconds of now."""
-        base = StorageBase(scope=str(tmp_path))
+        base = StorageBase()
         before = datetime.utcnow()
         ts = base._get_current_timestamp()
         after = datetime.utcnow()
@@ -62,7 +62,7 @@ class TestApplyScopeFilterAdditional:
     """Additional tests for _apply_scope_filter not covered in test_base_scope_filter.py."""
 
     def _make_store(self, tmp_path) -> SchemaStorage:
-        return SchemaStorage(str(tmp_path), get_db_embedding_model())
+        return SchemaStorage(get_db_embedding_model())
 
     def test_apply_scope_filter_string_where_with_complex_scope(self, tmp_path):
         """Scope filter with multiple conditions combined with a string where."""
@@ -195,7 +195,7 @@ class TestStoreBatchSplitting:
     """Tests for store_batch batch splitting logic using a real SchemaStorage."""
 
     def _make_store(self, tmp_path) -> SchemaStorage:
-        return SchemaStorage(str(tmp_path), get_db_embedding_model())
+        return SchemaStorage(get_db_embedding_model())
 
     def _make_row(self, idx: int) -> dict:
         return {
@@ -265,7 +265,6 @@ class TestCheckEmbeddingModelReady:
         model.model_error_message = "Download failed"
 
         store = BaseEmbeddingStore(
-            scope=str(tmp_path),
             table_name="test_table",
             embedding_model=model,
         )
@@ -286,7 +285,7 @@ class TestTruncate:
 
     def test_truncate_resets_table_state(self, tmp_path):
         """After truncate, table should be None and _table_initialized should be False."""
-        store = SchemaStorage(str(tmp_path), get_db_embedding_model())
+        store = SchemaStorage(get_db_embedding_model())
         # Force table initialization
         store._ensure_table_ready()
         assert store._table_initialized is True
@@ -298,7 +297,7 @@ class TestTruncate:
 
     def test_truncate_allows_reinitialization(self, tmp_path):
         """After truncate, calling _ensure_table_ready should recreate the table."""
-        store = SchemaStorage(str(tmp_path), get_db_embedding_model())
+        store = SchemaStorage(get_db_embedding_model())
         row = {
             "identifier": "1",
             "catalog_name": "c",
@@ -326,7 +325,7 @@ class TestUpsertWithRetry:
     """Tests for _upsert_with_retry retry logic."""
 
     def _make_store(self, tmp_path) -> SchemaStorage:
-        return SchemaStorage(str(tmp_path), get_db_embedding_model())
+        return SchemaStorage(get_db_embedding_model())
 
     def _make_row(self, idx: int) -> dict:
         return {
@@ -381,7 +380,7 @@ class TestAddWithRetry:
     """Tests for _add_with_retry retry logic."""
 
     def _make_store(self, tmp_path) -> SchemaStorage:
-        return SchemaStorage(str(tmp_path), get_db_embedding_model())
+        return SchemaStorage(get_db_embedding_model())
 
     def test_add_with_retry_raises_when_table_none(self, tmp_path):
         """Raises DatusException when table is None."""
@@ -422,7 +421,7 @@ class TestSearchRouting:
     """Tests for search() vector vs hybrid routing."""
 
     def _make_store(self, tmp_path) -> SchemaStorage:
-        return SchemaStorage(str(tmp_path), get_db_embedding_model())
+        return SchemaStorage(get_db_embedding_model())
 
     def _make_row(self, idx: int) -> dict:
         return {
@@ -467,7 +466,7 @@ class TestTableSize:
     """Tests for table_size with and without scope filter."""
 
     def _make_store(self, tmp_path) -> SchemaStorage:
-        return SchemaStorage(str(tmp_path), get_db_embedding_model())
+        return SchemaStorage(get_db_embedding_model())
 
     def _make_row(self, idx: int, db_name: str = "db") -> dict:
         return {
@@ -516,7 +515,7 @@ class TestEnsureTableReady:
 
     def test_ensure_table_ready_sets_initialized(self, tmp_path):
         """After _ensure_table_ready, _table_initialized is True."""
-        store = SchemaStorage(str(tmp_path), get_db_embedding_model())
+        store = SchemaStorage(get_db_embedding_model())
         assert store._table_initialized is False
         store._ensure_table_ready()
         assert store._table_initialized is True
@@ -524,7 +523,7 @@ class TestEnsureTableReady:
 
     def test_ensure_table_ready_idempotent(self, tmp_path):
         """Calling _ensure_table_ready twice doesn't cause errors."""
-        store = SchemaStorage(str(tmp_path), get_db_embedding_model())
+        store = SchemaStorage(get_db_embedding_model())
         store._ensure_table_ready()
         first_table = store.table
         store._ensure_table_ready()
@@ -540,7 +539,7 @@ class TestUpdate:
     """Tests for update() with and without unique_filter."""
 
     def _make_store(self, tmp_path) -> SchemaStorage:
-        return SchemaStorage(str(tmp_path), get_db_embedding_model())
+        return SchemaStorage(get_db_embedding_model())
 
     def _make_row(self, idx: int) -> dict:
         return {
@@ -598,7 +597,7 @@ class TestQueryWithFilter:
     """Tests for query_with_filter."""
 
     def _make_store(self, tmp_path) -> SchemaStorage:
-        return SchemaStorage(str(tmp_path), get_db_embedding_model())
+        return SchemaStorage(get_db_embedding_model())
 
     def _make_row(self, idx: int, db_name: str = "db") -> dict:
         return {
@@ -659,7 +658,7 @@ class TestCreateFtsIndex:
 
     def test_create_fts_index_no_error(self, tmp_path):
         """create_fts_index should not raise even if index creation fails."""
-        store = SchemaStorage(str(tmp_path), get_db_embedding_model())
+        store = SchemaStorage(get_db_embedding_model())
         store.store_batch(
             [
                 {
@@ -678,7 +677,7 @@ class TestCreateFtsIndex:
 
     def test_create_fts_index_with_multiple_fields(self, tmp_path):
         """create_fts_index with multiple fields should not raise."""
-        store = SchemaStorage(str(tmp_path), get_db_embedding_model())
+        store = SchemaStorage(get_db_embedding_model())
         store.store_batch(
             [
                 {
@@ -704,7 +703,7 @@ class TestStoreMethod:
     """Tests for store() method."""
 
     def _make_store(self, tmp_path) -> SchemaStorage:
-        return SchemaStorage(str(tmp_path), get_db_embedding_model())
+        return SchemaStorage(get_db_embedding_model())
 
     def test_store_single_row(self, tmp_path):
         """store() adds a single row to the table."""
@@ -749,7 +748,7 @@ class TestDeleteAndCountRows:
     """Tests for _delete_rows and _count_rows convenience methods."""
 
     def _make_store(self, tmp_path) -> SchemaStorage:
-        return SchemaStorage(str(tmp_path), get_db_embedding_model())
+        return SchemaStorage(get_db_embedding_model())
 
     def _make_row(self, idx: int) -> dict:
         return {
@@ -799,7 +798,7 @@ class TestSearchAll:
     """Tests for _search_all method."""
 
     def _make_store(self, tmp_path) -> SchemaStorage:
-        return SchemaStorage(str(tmp_path), get_db_embedding_model())
+        return SchemaStorage(get_db_embedding_model())
 
     def _make_row(self, idx: int) -> dict:
         return {

@@ -19,7 +19,7 @@ def tmp_db(tmp_path):
 @pytest.fixture
 def ext_store(tmp_db):
     """Create an ExtKnowledgeStore instance with real vector store."""
-    return ExtKnowledgeStore(scope=tmp_db, embedding_model=get_db_embedding_model())
+    return ExtKnowledgeStore(embedding_model=get_db_embedding_model())
 
 
 @pytest.fixture

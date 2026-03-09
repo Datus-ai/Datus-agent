@@ -22,7 +22,7 @@ from tests.unit_tests.mock_llm_model import build_simple_response
 @pytest.fixture
 def ext_store(tmp_path):
     """Create an ExtKnowledgeStore instance with real vector store."""
-    return ExtKnowledgeStore(scope=str(tmp_path / "db"), embedding_model=get_db_embedding_model())
+    return ExtKnowledgeStore(embedding_model=get_db_embedding_model())
 
 
 @pytest.fixture

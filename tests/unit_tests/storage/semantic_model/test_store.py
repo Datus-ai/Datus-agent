@@ -109,7 +109,7 @@ def _make_column_object(
 @pytest.fixture
 def sem_storage(tmp_path) -> SemanticModelStorage:
     """Create a SemanticModelStorage with real vector backend."""
-    return SemanticModelStorage(scope=str(tmp_path), embedding_model=get_db_embedding_model())
+    return SemanticModelStorage(embedding_model=get_db_embedding_model())
 
 
 @pytest.fixture

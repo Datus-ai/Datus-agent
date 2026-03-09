@@ -17,15 +17,13 @@ logger = get_logger(__name__)
 class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
     """Store and manage external business knowledge."""
 
-    def __init__(self, scope: str, embedding_model: EmbeddingModel):
+    def __init__(self, embedding_model: EmbeddingModel):
         """Initialize the external knowledge store.
 
         Args:
-            scope: Storage scope (e.g. ``sub_agents/agent_name``).
             embedding_model: Embedding model for vector search
         """
         super().__init__(
-            scope=scope,
             table_name="ext_knowledge",
             embedding_model=embedding_model,
             schema=pa.schema(

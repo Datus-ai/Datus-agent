@@ -149,7 +149,7 @@ class TestSchemaStoragePyArrow:
 
     def test_search_similar_returns_pyarrow_table(self, temp_db_path, sample_schema_data):
         """Test that search_similar returns PyArrow Table instead of List[Dict]."""
-        storage = SchemaStorage(scope=temp_db_path, embedding_model=get_db_embedding_model())
+        storage = SchemaStorage(embedding_model=get_db_embedding_model())
         storage.store(sample_schema_data)
 
         result = storage.search_similar("user table", top_n=2)
@@ -166,7 +166,7 @@ class TestSchemaStoragePyArrow:
 
     def test_search_all_returns_pyarrow_table(self, temp_db_path, sample_schema_data):
         """Test that search_all returns PyArrow Table."""
-        storage = SchemaStorage(scope=temp_db_path, embedding_model=get_db_embedding_model())
+        storage = SchemaStorage(embedding_model=get_db_embedding_model())
         storage.store(sample_schema_data)
 
         result = storage.search_all(catalog_name="test_catalog")
@@ -180,7 +180,7 @@ class TestSchemaStoragePyArrow:
 
     def test_get_schema_method(self, temp_db_path, sample_schema_data):
         """Test the new get_schema method."""
-        storage = SchemaStorage(scope=temp_db_path, embedding_model=get_db_embedding_model())
+        storage = SchemaStorage(embedding_model=get_db_embedding_model())
         storage.store(sample_schema_data)
 
         result = storage.get_schema(
@@ -193,7 +193,7 @@ class TestSchemaStoragePyArrow:
 
     def test_pyarrow_performance_with_large_dataset(self, temp_db_path):
         """Test performance with larger dataset using PyArrow operations."""
-        storage = SchemaStorage(scope=temp_db_path, embedding_model=get_db_embedding_model())
+        storage = SchemaStorage(embedding_model=get_db_embedding_model())
 
         # Generate larger dataset
         large_dataset = []
@@ -230,7 +230,7 @@ class TestDocumentStorePyArrow:
 
     def test_search_similar_documents_returns_pyarrow_table(self, temp_db_path, sample_document_data):
         """Test that search_similar_documents returns PyArrow Table."""
-        storage = DocumentStore(scope=temp_db_path, embedding_model=get_db_embedding_model())
+        storage = DocumentStore(embedding_model=get_db_embedding_model())
         storage.store(sample_document_data)
 
         result = storage.search_docs(
@@ -247,7 +247,7 @@ class TestDocumentStorePyArrow:
 
     def test_document_search_with_pyarrow_compute(self, temp_db_path, sample_document_data):
         """Test document search with PyArrow compute operations."""
-        storage = DocumentStore(scope=temp_db_path, embedding_model=get_db_embedding_model())
+        storage = DocumentStore(embedding_model=get_db_embedding_model())
         storage.store(sample_document_data)
 
         # Search all documents
@@ -269,7 +269,7 @@ class TestExtKnowledgeStorePyArrow:
 
     def test_search_similar_knowledge(self, temp_db_path, sample_ext_knowledge_data):
         """Test that search_similar_knowledge returns PyArrow Table."""
-        storage = ExtKnowledgeStore(scope=temp_db_path, embedding_model=get_db_embedding_model())
+        storage = ExtKnowledgeStore(embedding_model=get_db_embedding_model())
         storage.batch_store_knowledge(sample_ext_knowledge_data)
 
         result = storage.search_knowledge(query_text="financial metrics", subject_path=["Finance"], top_n=2)
@@ -278,7 +278,7 @@ class TestExtKnowledgeStorePyArrow:
 
     def test_get_all_knowledge_returns_pyarrow_table(self, temp_db_path, sample_ext_knowledge_data):
         """Test that get_all_knowledge returns PyArrow Table."""
-        storage = ExtKnowledgeStore(scope=temp_db_path, embedding_model=get_db_embedding_model())
+        storage = ExtKnowledgeStore(embedding_model=get_db_embedding_model())
         storage.batch_store_knowledge(sample_ext_knowledge_data)
 
         results = storage.search_all_knowledge(["Finance"])
@@ -289,7 +289,7 @@ class TestExtKnowledgeStorePyArrow:
 
     def test_search_knowledge_wildcard(self, temp_db_path, sample_ext_knowledge_data):
         """Test search_knowledge wildcard."""
-        storage = ExtKnowledgeStore(scope=temp_db_path, embedding_model=get_db_embedding_model())
+        storage = ExtKnowledgeStore(embedding_model=get_db_embedding_model())
         storage.batch_store_knowledge(sample_ext_knowledge_data)
 
         result = storage.search_all_knowledge(["Finance", "Banking", "Retail", "APR"])
@@ -297,7 +297,7 @@ class TestExtKnowledgeStorePyArrow:
 
     def test_knowledge_pyarrow_operations(self, temp_db_path, sample_ext_knowledge_data):
         """Test PyArrow operations on knowledge data."""
-        storage = ExtKnowledgeStore(scope=temp_db_path, embedding_model=get_db_embedding_model())
+        storage = ExtKnowledgeStore(embedding_model=get_db_embedding_model())
         storage.batch_store_knowledge(sample_ext_knowledge_data)
 
         all_knowledge = storage.search_all_knowledge()
@@ -314,7 +314,7 @@ class TestExtKnowledgeStorePyArrow:
 
     def test_rename_subject_node(self, temp_db_path, sample_ext_knowledge_data):
         """Test renaming a subject node in ExtKnowledgeStore."""
-        storage = ExtKnowledgeStore(scope=temp_db_path, embedding_model=get_db_embedding_model())
+        storage = ExtKnowledgeStore(embedding_model=get_db_embedding_model())
         storage.batch_store_knowledge(sample_ext_knowledge_data)
 
         # Rename subject node: Finance -> Banking -> Retail to Finance -> Banking -> Consumer
@@ -332,7 +332,7 @@ class TestExtKnowledgeStorePyArrow:
 
     def test_rename_knowledge_item(self, temp_db_path):
         """Test renaming a knowledge item in vector store."""
-        storage = ExtKnowledgeStore(scope=temp_db_path, embedding_model=get_db_embedding_model())
+        storage = ExtKnowledgeStore(embedding_model=get_db_embedding_model())
 
         # Store knowledge with subject path that exists
         knowledge_data = [
@@ -360,7 +360,7 @@ class TestExtKnowledgeStorePyArrow:
 
     def test_rename_knowledge_item_different_parent(self, temp_db_path):
         """Test that renaming with different parent path."""
-        storage = ExtKnowledgeStore(scope=temp_db_path, embedding_model=get_db_embedding_model())
+        storage = ExtKnowledgeStore(embedding_model=get_db_embedding_model())
 
         knowledge_data = [
             {
@@ -383,7 +383,7 @@ class TestMetricStoragePyArrow:
 
     def test_search_all_metrics_returns_pyarrow_table(self, temp_db_path, sample_metric_data):
         """Test that search_all_metrics returns PyArrow Table."""
-        storage = MetricStorage(scope=temp_db_path, embedding_model=get_metric_embedding_model())
+        storage = MetricStorage(embedding_model=get_metric_embedding_model())
         storage.batch_store_metrics(sample_metric_data)
 
         # Simulate MetricRAG usage
@@ -404,7 +404,7 @@ class TestMetricStoragePyArrow:
 
     def test_metrics_detail_retrieval(self, temp_db_path, sample_metric_data):
         """Test metrics detail retrieval with PyArrow operations."""
-        storage = MetricStorage(scope=temp_db_path, embedding_model=get_metric_embedding_model())
+        storage = MetricStorage(embedding_model=get_metric_embedding_model())
         storage.batch_store_metrics(sample_metric_data)
 
         # Test direct table querying
@@ -415,7 +415,7 @@ class TestMetricStoragePyArrow:
 
     def test_rename_subject_node(self, temp_db_path, sample_metric_data):
         """Test renaming a subject node in MetricStorage."""
-        storage = MetricStorage(scope=temp_db_path, embedding_model=get_metric_embedding_model())
+        storage = MetricStorage(embedding_model=get_metric_embedding_model())
         storage.batch_store_metrics(sample_metric_data)
 
         # Rename subject node: Sales -> Revenue -> Monthly to Sales -> Revenue -> MonthlyTotal
@@ -435,7 +435,7 @@ class TestMetricStoragePyArrow:
 
     def test_rename_metric_item(self, temp_db_path):
         """Test renaming a metric item in vector store."""
-        storage = MetricStorage(scope=temp_db_path, embedding_model=get_metric_embedding_model())
+        storage = MetricStorage(embedding_model=get_metric_embedding_model())
 
         # Store metric with subject path
         metric_data = [
@@ -463,7 +463,7 @@ class TestMetricStoragePyArrow:
 
     def test_rename_metric_item_different_parent(self, temp_db_path):
         """Test that renaming metric with different parent path fails."""
-        storage = MetricStorage(scope=temp_db_path, embedding_model=get_metric_embedding_model())
+        storage = MetricStorage(embedding_model=get_metric_embedding_model())
 
         metric_data = [
             {
@@ -514,7 +514,7 @@ class TestPyArrowPerformance:
     def test_memory_efficient_operations(self, temp_db_path):
         """Test memory-efficient PyArrow operations."""
         # Create schema storage with moderate dataset
-        storage = SchemaStorage(scope=temp_db_path, embedding_model=get_db_embedding_model())
+        storage = SchemaStorage(embedding_model=get_db_embedding_model())
 
         datasets = []
         for i in range(500):
@@ -547,7 +547,7 @@ class TestPyArrowPerformance:
 
     def test_pyarrow_compute_integration(self, temp_db_path, sample_schema_data):
         """Test integration with PyArrow compute functions."""
-        storage = SchemaStorage(scope=temp_db_path, embedding_model=get_db_embedding_model())
+        storage = SchemaStorage(embedding_model=get_db_embedding_model())
         storage.store(sample_schema_data)
 
         result = storage.search_all()
@@ -577,7 +577,7 @@ class TestReturnTypeConsistency:
     def test_all_search_methods_return_pyarrow_tables(self, temp_db_path):
         """Test that all search methods consistently return PyArrow Tables."""
         # Schema storage
-        schema_storage = SchemaStorage(scope=temp_db_path, embedding_model=get_db_embedding_model())
+        schema_storage = SchemaStorage(embedding_model=get_db_embedding_model())
         schema_data = [
             {
                 "identifier": "1",
@@ -595,7 +595,7 @@ class TestReturnTypeConsistency:
         assert isinstance(schema_result, pa.Table)
 
         # Document storage
-        doc_storage = DocumentStore(scope=temp_db_path + "_doc", embedding_model=get_db_embedding_model())
+        doc_storage = DocumentStore(embedding_model=get_db_embedding_model())
         doc_data = [
             {
                 "title": "Test Doc",
@@ -611,7 +611,7 @@ class TestReturnTypeConsistency:
         assert isinstance(doc_result, list)
 
         # External knowledge storage
-        ext_storage = ExtKnowledgeStore(scope=temp_db_path + "_ext", embedding_model=get_db_embedding_model())
+        ext_storage = ExtKnowledgeStore(embedding_model=get_db_embedding_model())
         ext_data = [
             {
                 "subject_path": ["Test", "L1", "L2"],
@@ -628,7 +628,7 @@ class TestReturnTypeConsistency:
 
     def test_backwards_compatibility_with_to_pylist(self, temp_db_path, sample_schema_data):
         """Test that PyArrow Tables can be easily converted to previous List[Dict] format."""
-        storage = SchemaStorage(scope=temp_db_path, embedding_model=get_db_embedding_model())
+        storage = SchemaStorage(embedding_model=get_db_embedding_model())
         storage.store(sample_schema_data)
 
         result = storage.search_all()
@@ -650,7 +650,7 @@ class TestReferenceSqlStoragePyArrow:
 
     def test_rename_subject_node(self, temp_db_path, sample_reference_sql_data):
         """Test renaming a subject node in ReferenceSqlStorage."""
-        storage = ReferenceSqlStorage(scope=temp_db_path, embedding_model=get_db_embedding_model())
+        storage = ReferenceSqlStorage(embedding_model=get_db_embedding_model())
         storage.batch_store_sql(sample_reference_sql_data)
 
         # Rename subject node: Analytics -> Reports -> Daily to Analytics -> Reports -> DailyReports
@@ -670,7 +670,7 @@ class TestReferenceSqlStoragePyArrow:
 
     def test_rename_sql_item(self, temp_db_path):
         """Test renaming a reference SQL item in vector store."""
-        storage = ReferenceSqlStorage(scope=temp_db_path, embedding_model=get_db_embedding_model())
+        storage = ReferenceSqlStorage(embedding_model=get_db_embedding_model())
 
         # Store SQL with subject path
         sql_data = [
@@ -703,7 +703,7 @@ class TestReferenceSqlStoragePyArrow:
 
     def test_rename_sql_item_different_parent(self, temp_db_path):
         """Test that renaming SQL with different parent path fails."""
-        storage = ReferenceSqlStorage(scope=temp_db_path, embedding_model=get_db_embedding_model())
+        storage = ReferenceSqlStorage(embedding_model=get_db_embedding_model())
 
         sql_data = [
             {

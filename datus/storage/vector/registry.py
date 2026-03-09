@@ -5,7 +5,7 @@
 """Registry for vector database backends."""
 
 from threading import Lock
-from typing import Any, Callable, Dict, Optional, Type
+from typing import Any, Callable, Dict, List, Optional, Type
 
 from datus.storage.vector.base import BaseVectorBackend
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -108,6 +108,18 @@ class VectorRegistry:
                 logger.debug(f"Entry point discovery not available: {e}")
 
             cls._initialized = True
+
+    @classmethod
+    def registered_types(cls) -> List[str]:
+        """Return all registered backend type names (triggers discovery)."""
+        cls.discover_adapters()
+        return list(cls._backends.keys())
+
+    @classmethod
+    def get_backend_class(cls, backend_type: str) -> Optional[Type[BaseVectorBackend]]:
+        """Return the registered backend class, or None."""
+        cls.discover_adapters()
+        return cls._backends.get(backend_type.lower())
 
     @classmethod
     def is_registered(cls, backend_type: str) -> bool:

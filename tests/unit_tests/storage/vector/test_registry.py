@@ -142,6 +142,39 @@ class TestVectorRegistryCreateBackend:
         assert isinstance(backend, _DummyVectorBackend)
 
 
+class TestVectorRegistryPublicAPI:
+    """Tests for registered_types() and get_backend_class()."""
+
+    def test_registered_types_returns_all(self):
+        """registered_types() returns all registered backend names."""
+        VectorRegistry.register("dummy", _DummyVectorBackend)
+        VectorRegistry.register("another", _DummyVectorBackend)
+        types = VectorRegistry.registered_types()
+        assert "dummy" in types
+        assert "another" in types
+
+    def test_registered_types_triggers_discovery(self):
+        """registered_types() triggers discover_adapters(), so lance is always present."""
+        types = VectorRegistry.registered_types()
+        assert "lance" in types
+
+    def test_get_backend_class_found(self):
+        """get_backend_class() returns the registered class."""
+        VectorRegistry.register("dummy", _DummyVectorBackend)
+        cls = VectorRegistry.get_backend_class("dummy")
+        assert cls is _DummyVectorBackend
+
+    def test_get_backend_class_case_insensitive(self):
+        """get_backend_class() is case-insensitive."""
+        VectorRegistry.register("Dummy", _DummyVectorBackend)
+        assert VectorRegistry.get_backend_class("DUMMY") is _DummyVectorBackend
+        assert VectorRegistry.get_backend_class("dummy") is _DummyVectorBackend
+
+    def test_get_backend_class_not_found(self):
+        """get_backend_class() returns None for unknown types."""
+        assert VectorRegistry.get_backend_class("nonexistent") is None
+
+
 class TestVectorRegistryReset:
     """Tests for reset()."""
 

@@ -28,8 +28,8 @@ logger = get_logger(__name__)
 @lru_cache(maxsize=12)
 def _cached_storage[
     T: BaseEmbeddingStore
-](factory: Callable[[str, EmbeddingModel], T], scope: str, model_name: str) -> T:
-    return factory(scope, get_embedding_model(model_name))
+](factory: Callable[[EmbeddingModel], T], storage_path: str, model_name: str) -> T:
+    return factory(get_embedding_model(model_name))
 
 
 # Module-level cache for scoped storage instances so that clear_cache() can
@@ -40,7 +40,7 @@ _scoped_storage_cache: dict[tuple[str, ...], BaseEmbeddingStore] = {}
 class StorageCacheHolder[T: BaseEmbeddingStore]:
     def __init__(
         self,
-        storage_factory: Callable[[str, EmbeddingModel], T],
+        storage_factory: Callable[[EmbeddingModel], T],
         agent_config: AgentConfig,
         embedding_model_conf_name: str,
         check_scope_attr: str,
@@ -64,9 +64,8 @@ class StorageCacheHolder[T: BaseEmbeddingStore]:
                 cached = _scoped_storage_cache.get(cache_key)
                 if cached is not None:
                     return cached  # type: ignore[return-value]
-                # Use global storage path with a scope filter instead of a separate sub-agent copy
+                # Use global storage with a scope filter instead of a separate sub-agent copy
                 storage = self.storage_factory(
-                    storage_path,
                     get_embedding_model(self.embedding_model_conf_name),
                 )
                 scope_filter = self._build_scope_filter(sub_agent_config, storage)

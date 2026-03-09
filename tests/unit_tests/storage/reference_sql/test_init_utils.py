@@ -95,7 +95,7 @@ class TestExistsReferenceSql:
 
     def _make_storage(self, scope_dir):
         """Create a ReferenceSqlStorage in a temporary directory."""
-        return ReferenceSqlStorage(scope=scope_dir, embedding_model=get_db_embedding_model())
+        return ReferenceSqlStorage(embedding_model=get_db_embedding_model())
 
     def test_overwrite_mode_returns_empty_set(self):
         """Overwrite mode always returns an empty set regardless of stored data."""

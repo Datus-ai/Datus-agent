@@ -148,7 +148,7 @@ def temp_db_path():
 
 
 def test_save_batch(temp_db_path: str):
-    store = SchemaStorage(scope=temp_db_path, embedding_model=get_db_embedding_model())
+    store = SchemaStorage(embedding_model=get_db_embedding_model())
     store.store(
         [
             {

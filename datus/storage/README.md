@@ -24,14 +24,9 @@ Key features:
 
 ```python
 class StorageBase:
-    def __init__(self, scope: str = ""):
-        """Initialize the storage base.
-
-        Args:
-            scope: Storage scope (e.g. ``sub_agents/agent_name``).
-        """
-        self._scope = scope
-        self.db = create_vector_connection(scope)
+    def __init__(self):
+        """Initialize the storage base."""
+        self.db = create_vector_connection()
 ```
 
 ### BaseEmbeddingStore

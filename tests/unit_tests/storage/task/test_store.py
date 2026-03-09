@@ -2,27 +2,16 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""Tests for TaskStore using real SQLite backend."""
-
-import sqlite3
+"""Tests for TaskStore across all available storage backends."""
 
 import pytest
 
-from datus.storage.backend_holder import init_backends, reset_backends
 from datus.storage.task.store import TaskStore
-
-
-@pytest.fixture(autouse=True)
-def _setup_backends(tmp_path):
-    """Initialize backend holder so stores can resolve paths."""
-    init_backends(data_dir=str(tmp_path), namespace="test")
-    yield
-    reset_backends()
 
 
 @pytest.fixture
 def task_store():
-    """Create a TaskStore backed by a real SQLite database."""
+    """Create a TaskStore backed by the current test backend."""
     return TaskStore()
 
 
@@ -30,14 +19,9 @@ class TestTaskStoreInit:
     """Tests for TaskStore initialization."""
 
     def test_table_created(self, task_store):
-        """The tasks table is created on initialization."""
-        db_file = task_store._rdb.db_file
-        conn = sqlite3.connect(db_file)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'")
-        rows = cursor.fetchall()
-        conn.close()
-        assert len(rows) == 1
+        """The tasks table is created and queryable on initialization."""
+        task = task_store.get_task("nonexistent")
+        assert task is None
 
 
 class TestTaskStoreCrud:

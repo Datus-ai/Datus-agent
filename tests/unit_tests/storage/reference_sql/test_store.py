@@ -51,7 +51,7 @@ def _make_sql_item(
 @pytest.fixture
 def ref_sql_storage(tmp_path) -> ReferenceSqlStorage:
     """Create a ReferenceSqlStorage with real vector backend."""
-    return ReferenceSqlStorage(scope=str(tmp_path), embedding_model=get_db_embedding_model())
+    return ReferenceSqlStorage(embedding_model=get_db_embedding_model())
 
 
 # ============================================================

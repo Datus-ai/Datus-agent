@@ -69,7 +69,7 @@ def _make_chunks(count: int, version: str = "v1.0.0", doc_path: str = "docs/guid
 @pytest.fixture
 def doc_store(tmp_path) -> DocumentStore:
     """Create a DocumentStore with real vector backend."""
-    return DocumentStore(scope=str(tmp_path), embedding_model=get_document_embedding_model())
+    return DocumentStore(embedding_model=get_document_embedding_model())
 
 
 # ============================================================

@@ -26,7 +26,6 @@ class BaseMetadataStorage(BaseEmbeddingStore):
     """
     Base class for metadata storage, include table, view and materialized view(abbreviated as mv).
     properties:
-        - scope: str, storage scope (e.g. ``sub_agents/agent_name``)
         - embedding_model: EmbeddingModel, embedding model to embed the metadata
         - table_name: str, table name to store the metadata
         - vector_source_name: str, vector source name, required, should define in subclass
@@ -46,13 +45,11 @@ class BaseMetadataStorage(BaseEmbeddingStore):
 
     def __init__(
         self,
-        scope: str,
         embedding_model: EmbeddingModel,
         table_name: str,
         vector_source_name: str,
     ):
         super().__init__(
-            scope=scope,
             table_name=table_name,
             embedding_model=embedding_model,
             schema=pa.schema(
@@ -134,14 +131,9 @@ class BaseMetadataStorage(BaseEmbeddingStore):
 class SchemaStorage(BaseMetadataStorage):
     """Store and manage schema lineage data."""
 
-    def __init__(self, scope: str, embedding_model: EmbeddingModel):
-        """Initialize the schema store.
-
-        Args:
-            scope: Storage scope (e.g. ``sub_agents/agent_name``).
-        """
+    def __init__(self, embedding_model: EmbeddingModel):
+        """Initialize the schema store."""
         super().__init__(
-            scope=scope,
             table_name="schema_metadata",
             embedding_model=embedding_model,
             vector_source_name="definition",
@@ -220,9 +212,8 @@ class SchemaStorage(BaseMetadataStorage):
 
 
 class SchemaValueStorage(BaseMetadataStorage):
-    def __init__(self, scope: str, embedding_model: EmbeddingModel):
+    def __init__(self, embedding_model: EmbeddingModel):
         super().__init__(
-            scope=scope,
             embedding_model=embedding_model,
             table_name="schema_value",
             vector_source_name="sample_rows",

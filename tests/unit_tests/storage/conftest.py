@@ -1,15 +1,56 @@
-"""Shared fixtures for storage tests."""
+"""Shared fixtures for storage tests.
+
+The autouse ``_init_storage_backends`` fixture is parameterized across all
+discovered backends so that store-level tests automatically repeat on every
+available rdb+vector combination.
+"""
 
 import pytest
 
+from datus.storage.backend_config import RdbBackendConfig, StorageBackendConfig, VectorBackendConfig
 from datus.storage.backend_holder import init_backends, reset_backends
 from datus.storage.cache import clear_cache
+from tests.unit_tests.storage._backend_discovery import discover_test_backends
+
+_BACKENDS = discover_test_backends()
 
 
-@pytest.fixture(autouse=True)
-def _init_storage_backends(tmp_path):
+@pytest.fixture
+def storage_test_namespace():
+    """Override in subdirectory conftest to customize namespace."""
+    return ""
+
+
+@pytest.fixture(autouse=True, params=_BACKENDS, ids=lambda b: b.id)
+def _init_storage_backends(request, tmp_path, storage_test_namespace):
     """Ensure storage backends are configured with a valid data_dir for every storage test."""
-    init_backends(data_dir=str(tmp_path))
-    yield
+    backend = request.param
+    config = StorageBackendConfig(
+        rdb=RdbBackendConfig(type=backend.rdb_type, params=backend.rdb_params),
+        vector=VectorBackendConfig(type=backend.vector_type, params=backend.vector_params),
+    )
+    init_backends(config=config, data_dir=str(tmp_path), namespace=storage_test_namespace)
+    yield backend
     clear_cache()
     reset_backends()
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Clean up backend test environments at session end."""
+    from tests.unit_tests.storage._backend_discovery import cleanup_test_environments
+
+    cleanup_test_environments()
+
+
+def pytest_runtest_setup(item):
+    """Skip tests based on backend_specific marker."""
+    for marker in item.iter_markers("backend_specific"):
+        required = marker.args[0] if marker.args else None
+        if not required:
+            continue
+        # Find the backend config from the _init_storage_backends param
+        backend = None
+        if hasattr(item, "callspec") and "_init_storage_backends" in item.callspec.params:
+            backend = item.callspec.params["_init_storage_backends"]
+        if backend and required != backend.rdb_type and required != backend.vector_type:
+            pytest.skip(f"Requires {required} backend")

@@ -38,7 +38,7 @@ class TestLLMsTools:
 
         # FIXME Modify it according to your configuration
         test_db_path = Path(__file__).parent.parent / "data/datus_db_bird_sqlite"
-        storage = SchemaStorage(str(test_db_path), embedding_model=get_db_embedding_model())
+        storage = SchemaStorage(embedding_model=get_db_embedding_model())
         return storage
 
     def test_reasoning_sql(self, mock_llm_create, test_data):

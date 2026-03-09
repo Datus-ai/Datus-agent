@@ -19,7 +19,7 @@ class TestExtractTableName:
     """Tests for SchemaStorage._extract_table_name parsing CREATE TABLE statements."""
 
     def _make_store(self, tmp_path) -> SchemaStorage:
-        return SchemaStorage(str(tmp_path), get_db_embedding_model())
+        return SchemaStorage(get_db_embedding_model())
 
     def test_extract_simple_create_table(self, tmp_path):
         """Standard CREATE TABLE should extract the table name."""
@@ -339,7 +339,7 @@ class TestSearchSimilar:
     """Tests for search_similar and do_search_similar."""
 
     def _make_store(self, tmp_path) -> SchemaStorage:
-        return SchemaStorage(str(tmp_path), get_db_embedding_model())
+        return SchemaStorage(get_db_embedding_model())
 
     def _make_row(self, idx: int, db_name: str = "db", schema: str = "sch") -> dict:
         return {
@@ -389,7 +389,7 @@ class TestSearchAllSchemas:
     """Tests for SchemaStorage.search_all_schemas query construction."""
 
     def _make_store(self, tmp_path) -> SchemaStorage:
-        return SchemaStorage(str(tmp_path), get_db_embedding_model())
+        return SchemaStorage(get_db_embedding_model())
 
     def _make_row(self, idx: int, schema: str = "public") -> dict:
         return {
@@ -420,7 +420,7 @@ class TestGetSchema:
     """Tests for SchemaStorage.get_schema."""
 
     def _make_store(self, tmp_path) -> SchemaStorage:
-        return SchemaStorage(str(tmp_path), get_db_embedding_model())
+        return SchemaStorage(get_db_embedding_model())
 
     def _make_row(self, idx: int) -> dict:
         return {

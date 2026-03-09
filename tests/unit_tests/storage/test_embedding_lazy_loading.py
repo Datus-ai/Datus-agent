@@ -78,7 +78,7 @@ def test_storage_error_handling():
     try:
         # Create storage instance - should not fail at this point
         print("Creating storage instance...")
-        storage = BaseEmbeddingStore(scope=temp_dir, table_name="test_table", embedding_model=failed_model)
+        storage = BaseEmbeddingStore(table_name="test_table", embedding_model=failed_model)
         print("Storage instance created successfully (no immediate model loading)")
 
         # Now try to search - this should trigger the error
@@ -118,7 +118,7 @@ def test_successful_workflow():
 
         # Create storage instance
         print("Creating storage instance with valid model...")
-        storage = BaseEmbeddingStore(scope=temp_dir, table_name="test_table", embedding_model=model)
+        storage = BaseEmbeddingStore(table_name="test_table", embedding_model=model)
 
         # Try to get table size - should trigger model loading
         print("Getting table size (should trigger model loading)...")

@@ -24,16 +24,10 @@ logger = get_logger(__name__)
 class StorageBase:
     """Base class for all storage components using a vector backend."""
 
-    def __init__(self, scope: str = ""):
-        """Initialize the storage base.
-
-        Args:
-            scope: Override path scope (e.g. ``sub_agents/agent_name``).
-                   Empty string uses default namespace path.
-        """
+    def __init__(self):
+        """Initialize the storage base."""
         from datus.storage.backend_holder import create_vector_connection
 
-        self._scope = scope
         self.db: VectorDatabase = create_vector_connection()
 
     def _ensure_tables(self):
@@ -81,10 +75,9 @@ class BaseEmbeddingStore(StorageBase):
         schema: Optional[pa.Schema] = None,
         vector_source_name: str = "definition",
         vector_column_name: str = "vector",
-        scope: str = "",
         unique_columns: Optional[List[str]] = None,
     ):
-        super().__init__(scope=scope)
+        super().__init__()
         self.model = embedding_model
         self.batch_size = embedding_model.batch_size
         self.table_name = table_name

@@ -81,7 +81,7 @@ class DocumentStore(BaseEmbeddingStore):
     - Navigation tracking (titles, nav_path, group_name, hierarchy)
 
     Example:
-        >>> store = DocumentStore(scope, embedding_model)
+        >>> store = DocumentStore(embedding_model)
         >>> store.store_chunks(chunks)
         >>> results = store.search_docs("CREATE TABLE syntax")
     """
@@ -90,18 +90,15 @@ class DocumentStore(BaseEmbeddingStore):
 
     def __init__(
         self,
-        scope: str,
         embedding_model: EmbeddingModel,
     ):
         """Initialize the document store.
 
         Args:
-            scope: Storage scope (e.g. ``sub_agents/agent_name``).
             embedding_model: Embedding model for vectorization
         """
         schema = get_platform_doc_schema(embedding_model.dim_size)
         super().__init__(
-            scope=scope,
             table_name=self.TABLE_NAME,
             embedding_model=embedding_model,
             vector_source_name="chunk_text",
@@ -388,9 +385,9 @@ def document_store(storage_path: str) -> DocumentStore:
     """Get a cached DocumentStore instance.
 
     Args:
-        storage_path: Storage scope path.
+        storage_path: Storage path (used as cache key).
 
     Returns:
         Cached DocumentStore instance
     """
-    return DocumentStore(scope=storage_path, embedding_model=get_document_embedding_model())
+    return DocumentStore(embedding_model=get_document_embedding_model())

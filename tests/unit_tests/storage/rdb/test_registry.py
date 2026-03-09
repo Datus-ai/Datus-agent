@@ -124,6 +124,39 @@ class TestRdbRegistryCreateBackend:
         assert isinstance(backend, _DummyRdbBackend)
 
 
+class TestRdbRegistryPublicAPI:
+    """Tests for registered_types() and get_backend_class()."""
+
+    def test_registered_types_returns_all(self):
+        """registered_types() returns all registered backend names."""
+        RdbRegistry.register("dummy", _DummyRdbBackend)
+        RdbRegistry.register("another", _DummyRdbBackend)
+        types = RdbRegistry.registered_types()
+        assert "dummy" in types
+        assert "another" in types
+
+    def test_registered_types_triggers_discovery(self):
+        """registered_types() triggers discover_adapters(), so sqlite is always present."""
+        types = RdbRegistry.registered_types()
+        assert "sqlite" in types
+
+    def test_get_backend_class_found(self):
+        """get_backend_class() returns the registered class."""
+        RdbRegistry.register("dummy", _DummyRdbBackend)
+        cls = RdbRegistry.get_backend_class("dummy")
+        assert cls is _DummyRdbBackend
+
+    def test_get_backend_class_case_insensitive(self):
+        """get_backend_class() is case-insensitive."""
+        RdbRegistry.register("Dummy", _DummyRdbBackend)
+        assert RdbRegistry.get_backend_class("DUMMY") is _DummyRdbBackend
+        assert RdbRegistry.get_backend_class("dummy") is _DummyRdbBackend
+
+    def test_get_backend_class_not_found(self):
+        """get_backend_class() returns None for unknown types."""
+        assert RdbRegistry.get_backend_class("nonexistent") is None
+
+
 class TestRdbRegistryReset:
     """Tests for reset()."""
 

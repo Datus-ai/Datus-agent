@@ -153,11 +153,11 @@ class TestExistingSemanticMetrics:
 
     def _make_semantic_storage(self, scope_dir):
         """Create a SemanticModelStorage in a temporary directory."""
-        return SemanticModelStorage(scope=scope_dir, embedding_model=get_db_embedding_model())
+        return SemanticModelStorage(embedding_model=get_db_embedding_model())
 
     def _make_metric_storage(self, scope_dir):
         """Create a MetricStorage in a temporary directory."""
-        return MetricStorage(scope=scope_dir, embedding_model=get_metric_embedding_model())
+        return MetricStorage(embedding_model=get_metric_embedding_model())
 
     def test_empty_stores_return_empty_sets(self):
         """Empty stores return two empty sets."""

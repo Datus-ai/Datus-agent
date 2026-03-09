@@ -166,3 +166,23 @@ class BaseRdbBackend(ABC):
     @abstractmethod
     def close(self) -> None:
         """Release resources held by this backend."""
+
+    # -- Test lifecycle hooks (override in adapters) --
+
+    @classmethod
+    def setup_test_env(cls) -> Optional[Dict[str, Any]]:
+        """Create test environment and return config for initialize().
+
+        Override in adapters to start containers, create databases, etc.
+        Returns None if the backend cannot be tested (default).
+        """
+        return None
+
+    @classmethod
+    def teardown_test_env(cls, config: Dict[str, Any]) -> None:
+        """Destroy test environment created by setup_test_env().
+
+        Override in adapters to stop containers, drop databases, etc.
+        Default: no-op.
+        """
+        pass

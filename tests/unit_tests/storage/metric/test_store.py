@@ -17,7 +17,7 @@ from datus.storage.metric.store import MetricStorage
 @pytest.fixture
 def metric_storage(tmp_path) -> MetricStorage:
     """Create a MetricStorage instance backed by a tmp_path vector store."""
-    return MetricStorage(scope=str(tmp_path), embedding_model=get_metric_embedding_model())
+    return MetricStorage(embedding_model=get_metric_embedding_model())
 
 
 def _make_metric(idx: int, subject_path: list[str] | None = None, yaml_path: str = "") -> dict:
