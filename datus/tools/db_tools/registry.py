@@ -86,6 +86,7 @@ class ConnectorRegistry:
     # Canonical alias map: variant -> primary name
     _DIALECT_ALIASES: Dict[str, str] = {
         "postgres": "postgresql",
+        "sqlserver": "mssql",
     }
 
     @classmethod

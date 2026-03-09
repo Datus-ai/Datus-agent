@@ -266,6 +266,9 @@ def parse_table_name_parts(full_table_name: str, dialect: str = "snowflake") -> 
     # Initialize result with empty strings
     result = {"catalog_name": "", "database_name": "", "schema_name": "", "table_name": ""}
 
+    if not parts:
+        return result
+
     # Get field mapping for the dialect, or use default mapping
     field_mapping = _build_field_mapping(dialect)
     if len(field_mapping) > 1:
