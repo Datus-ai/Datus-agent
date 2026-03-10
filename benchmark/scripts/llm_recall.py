@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Set, Union
 import pytest
 from pandas import DataFrame
 
+from benchmark.scripts.schema_recall_spider2 import load_gold_tables
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.base import LLMBaseModel
@@ -15,7 +16,6 @@ from datus.tools.llms_tools.match_schema import MatchSchemaTool, gen_all_table_d
 from datus.utils.json_utils import load_jsonl_iterator
 from datus.utils.loggings import configure_logging, get_logger
 from tests.conftest import PROJECT_ROOT
-from tests.integration.agent.test_schema_recall_spider2 import load_gold_tables
 
 pytestmark = pytest.mark.regression
 

@@ -10,7 +10,7 @@ from unittest.mock import patch
 import pytest
 
 from datus.cli.repl import DatusCLI
-from tests.integration.cli.conftest import wait_for_agent
+from tests.integration.conftest import wait_for_agent
 
 
 @pytest.mark.nightly

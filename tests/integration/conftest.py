@@ -12,6 +12,8 @@ that load from tests/conf/agent.yml — mirroring the real agent startup flow.
 import copy
 import os
 import shutil
+import time
+from argparse import Namespace
 from pathlib import Path
 
 import pytest
@@ -183,6 +185,31 @@ def llm_agent_config(tmp_path_factory) -> AgentConfig:
         yes=True,
     )
     return config
+
+
+# ── CLI shared fixtures ──
+
+
+@pytest.fixture
+def mock_args():
+    """Provides default mock arguments for initializing DatusCLI."""
+    return Namespace(
+        history_file="~/.datus/reference_sql",
+        debug=False,
+        namespace="bird_school",
+        database="california_schools",
+        config=str(CONF_DIR / "agent.yml"),
+        storage_path="tests/data",
+    )
+
+
+def wait_for_agent(cli, timeout=120):
+    """Wait for agent to be ready with timeout."""
+    start_time = time.time()
+    while not cli.agent_ready:
+        if time.time() - start_time > timeout:
+            pytest.fail("Agent initialization timed out.")
+        time.sleep(0.5)
 
 
 # ── Sub-agent cleanup fixtures ──

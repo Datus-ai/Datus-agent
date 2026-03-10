@@ -1,31 +1,9 @@
-import time
-from argparse import Namespace
 from unittest.mock import patch
 
 import pytest
 
 from datus.cli.repl import DatusCLI
-
-
-@pytest.fixture
-def mock_args():
-    return Namespace(
-        history_file="~/.datus/reference_sql",
-        debug=False,
-        namespace="bird_school",
-        database="california_schools",
-        config="tests/conf/agent.yml",
-        storage_path="tests/data",
-    )
-
-
-def _wait_for_agent(cli, timeout=120):
-    """Wait for agent to be ready with timeout."""
-    start_time = time.time()
-    while not cli.agent_ready:
-        if time.time() - start_time > timeout:
-            pytest.fail("Agent initialization timed out.")
-        time.sleep(0.5)
+from tests.integration.conftest import wait_for_agent
 
 
 @pytest.mark.nightly
@@ -51,7 +29,7 @@ class TestChatAgentic:
                 mock_internal.side_effect = ["n", "n"]
                 cli = DatusCLI(args=mock_args)
 
-                _wait_for_agent(cli)
+                wait_for_agent(cli)
                 cli.run()
 
         actions = cli.actions.get_actions()
@@ -76,7 +54,7 @@ class TestChatAgentic:
                 mock_internal.side_effect = ["n"]
                 cli = DatusCLI(args=mock_args)
 
-                _wait_for_agent(cli)
+                wait_for_agent(cli)
                 cli.run()
 
         actions = cli.actions.get_actions()
@@ -103,7 +81,7 @@ class TestChatAgentic:
                 mock_internal.side_effect = ["n"]
                 cli = DatusCLI(args=mock_args)
 
-                _wait_for_agent(cli)
+                wait_for_agent(cli)
                 cli.run()
 
         actions = cli.actions.get_actions()
