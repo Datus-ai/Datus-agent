@@ -11,6 +11,8 @@ from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.utils.constants import DBType
 from tests.conftest import load_acceptance_config
 
+pytestmark = pytest.mark.acceptance
+
 
 @pytest.fixture
 def agent_config() -> AgentConfig:

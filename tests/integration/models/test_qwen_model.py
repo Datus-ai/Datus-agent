@@ -11,6 +11,8 @@ from tests.conftest import load_acceptance_config
 logger = get_logger(__name__)
 set_tracing_disabled(True)
 
+pytestmark = pytest.mark.nightly
+
 
 @pytest.fixture
 def agent_config() -> AgentConfig:

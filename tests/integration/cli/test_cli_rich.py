@@ -1,4 +1,3 @@
-from argparse import Namespace
 from typing import Any, Dict, List
 from unittest.mock import patch
 
@@ -8,22 +7,6 @@ import yaml
 from datus.cli.repl import DatusCLI
 from datus.schemas.node_models import TableSchema
 from tests.conftest import TEST_DATA_DIR
-
-
-@pytest.fixture
-def mock_args():
-    """Provides default mock arguments for initializing DatusCLI."""
-    from tests.conftest import TEST_CONF_DIR
-
-    return Namespace(
-        history_file="~/.datus/reference_sql",
-        debug=False,
-        namespace="bird_school",
-        database="california_schools",
-        # Add any other required args with default values
-        config=str(TEST_CONF_DIR / "agent.yml"),
-        storage_path="tests/data",
-    )
 
 
 @pytest.fixture
