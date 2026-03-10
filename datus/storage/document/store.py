@@ -91,11 +91,13 @@ class DocumentStore(BaseEmbeddingStore):
     def __init__(
         self,
         embedding_model: EmbeddingModel,
+        db=None,
     ):
         """Initialize the document store.
 
         Args:
             embedding_model: Embedding model for vectorization
+            db: Optional pre-created VectorDatabase for per-platform isolation.
         """
         schema = get_platform_doc_schema(embedding_model.dim_size)
         super().__init__(
@@ -105,7 +107,18 @@ class DocumentStore(BaseEmbeddingStore):
             vector_column_name="vector",
             on_duplicate_columns="chunk_id",
             schema=schema,
+            db=db,
         )
+
+    def has_data(self) -> bool:
+        """Return True if the document table exists and contains rows."""
+        try:
+            if not self.db.table_exists(self.TABLE_NAME):
+                return False
+            return self._count_rows() > 0
+        except Exception as e:
+            logger.debug(f"has_data() check failed for table '{self.TABLE_NAME}': {e}")
+            return False
 
     def store_chunks(self, chunks: List[PlatformDocChunk]) -> int:
         """Store documentation chunks with automatic embedding.
@@ -380,14 +393,38 @@ class DocumentStore(BaseEmbeddingStore):
 # =============================================================================
 
 
+_DOCUMENT_NS_PREFIX = "docstore__"
+
+
 @lru_cache(maxsize=8)
-def document_store(storage_path: str) -> DocumentStore:
-    """Get a cached DocumentStore instance.
+def document_store(platform: str) -> DocumentStore:
+    """Get a cached DocumentStore instance for a platform.
+
+    Each unique *platform* produces an isolated vector database via a
+    dedicated namespace (``docstore__{platform}``), so different platforms
+    never share the same table.  This is backend-agnostic — LanceDB
+    creates a separate directory, pgvector would use a separate schema.
 
     Args:
-        storage_path: Storage path (used as cache key).
+        platform: Platform name (e.g. ``polaris``, ``snowflake``).
+            Must contain only alphanumeric characters, underscores,
+            and hyphens.
 
     Returns:
-        Cached DocumentStore instance
+        Cached DocumentStore instance for the given platform.
+
+    Raises:
+        DatusException: If *platform* is empty or contains invalid characters.
     """
-    return DocumentStore(embedding_model=get_document_embedding_model())
+    _PLATFORM_NAME_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
+    if not platform or not _PLATFORM_NAME_RE.match(platform):
+        raise DatusException(
+            ErrorCode.COMMON_VALIDATION_FAILED,
+            message=f"Invalid platform name: '{platform}'. "
+            f"Only alphanumeric characters, underscores, and hyphens are allowed.",
+        )
+
+    from datus.storage.backend_holder import create_vector_connection
+
+    db = create_vector_connection(namespace=f"{_DOCUMENT_NS_PREFIX}{platform}")
+    return DocumentStore(embedding_model=get_document_embedding_model(), db=db)

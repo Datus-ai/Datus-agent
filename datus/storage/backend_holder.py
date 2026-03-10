@@ -117,10 +117,17 @@ def create_rdb_for_store(store_db_name: str) -> RdbDatabase:
     return backend.connect(_namespace, store_db_name)
 
 
-def create_vector_connection() -> VectorDatabase:
-    """Create a vector db connection."""
+def create_vector_connection(namespace: str = "") -> VectorDatabase:
+    """Create a vector db connection.
+
+    Args:
+        namespace: Logical namespace for data isolation.  When empty
+            (the default), the global namespace set by ``init_backends``
+            is used.  Pass an explicit namespace to create an isolated
+            connection (e.g. for per-platform document stores).
+    """
     backend = get_vector_backend()
-    return backend.connect(namespace=_namespace)
+    return backend.connect(namespace=namespace or _namespace)
 
 
 def reset_backends() -> None:

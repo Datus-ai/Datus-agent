@@ -1067,8 +1067,6 @@ def bootstrap_platform_doc(args: argparse.Namespace, agent_config: AgentConfig):
     base_cfg = agent_config.document_configs.get(doc_platform, DocumentConfig())
     cfg = base_cfg.merge_cli_args(args)
 
-    dir_path = agent_config.document_storage_path(doc_platform)
-
     if not cfg.source:
         print(f"\nPlatform Doc: skipped (no document source configured for '{doc_platform}')")
         return None
@@ -1076,7 +1074,6 @@ def bootstrap_platform_doc(args: argparse.Namespace, agent_config: AgentConfig):
     logger.info(f"Initializing document from {cfg.source} (type: {cfg.type})")
 
     result = init_platform_docs(
-        db_path=dir_path,
         platform=doc_platform,
         cfg=cfg,
         build_mode=update_strategy,

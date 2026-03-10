@@ -422,7 +422,7 @@ class TestSearchTool:
     def setup_store(self, agent_config: AgentConfig):
         """Import documents into the store once for all tests in this class."""
         self.agent_config = agent_config
-        self.store = document_store(agent_config.document_storage_path(self.TEST_PLATFORM))
+        self.store = document_store(self.TEST_PLATFORM)
 
         from datus.tools.search_tools.search_tool import SearchTool
 
@@ -547,7 +547,7 @@ class TestSearchTool:
 
         tmp_dir = tempfile.mkdtemp()
         try:
-            tmp_store = document_store(tmp_dir)
+            tmp_store = document_store("test_version_filter")
 
             # Insert chunks for two versions
             chunks_v1 = [
@@ -608,7 +608,7 @@ class TestSearchTool:
 
         tmp_dir = tempfile.mkdtemp()
         try:
-            tmp_store = document_store(tmp_dir)
+            tmp_store = document_store("test_get_stats")
 
             chunks = [
                 PlatformDocChunk(
@@ -644,7 +644,7 @@ class TestSearchTool:
 
         tmp_dir = tempfile.mkdtemp()
         try:
-            tmp_store = document_store(tmp_dir)
+            tmp_store = document_store("test_delete_empty")
             deleted = tmp_store.delete_docs(version="v1")
             assert deleted == 0
         finally:

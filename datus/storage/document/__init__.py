@@ -41,7 +41,6 @@ Usage:
 
     cfg = DocumentConfig(type="local", source="/path/to/docs")
     result = init_platform_docs(
-        db_path="/path/to/db",
         platform="custom",
         cfg=cfg,
     )

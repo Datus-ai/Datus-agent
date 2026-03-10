@@ -35,19 +35,20 @@ class SearchTool(BaseTool):
     def _get_document_store(self, platform: str) -> Optional[DocumentStore]:
         """Get document store for a specific platform.
 
-        Per-platform store is resolved via ``agent_config.document_storage_path(platform)``,
-        which returns ``{home}/data/document/{platform}/``.
+        Each platform gets an isolated vector database via a dedicated
+        namespace (``docstore__{platform}``).  Returns ``None`` when the
+        store has no data (table does not exist or is empty).
 
         Args:
             platform: Platform name (e.g., snowflake, starrocks, duckdb)
 
         Returns:
-            DocumentStore instance if the platform directory exists, None otherwise.
+            DocumentStore instance, or None if no data has been stored yet.
         """
-        store_path = self.agent_config.document_storage_path(platform)
-        if not os.path.exists(store_path):
+        store = document_store(platform)
+        if not store.has_data():
             return None
-        return document_store(store_path)
+        return store
 
     @staticmethod
     def _version_sort_key(version_str: str):

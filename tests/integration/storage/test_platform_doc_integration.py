@@ -58,6 +58,13 @@ def temp_dir():
     shutil.rmtree(tmp, ignore_errors=True)
 
 
+@pytest.fixture(autouse=True)
+def clear_document_store_cache():
+    document_store.cache_clear()
+    yield
+    document_store.cache_clear()
+
+
 @pytest.fixture
 def local_docs_dir(temp_dir):
     """Create a temporary directory with sample documentation files."""
@@ -499,8 +506,6 @@ class TestFullPipelineIntegration:
 
     def test_init_platform_docs_local_overwrite(self, local_docs_dir, temp_dir):
         """Test full pipeline with local source in overwrite mode."""
-        db_path = str(Path(temp_dir) / "store")
-
         cfg = DocumentConfig(
             type="local",
             source=str(local_docs_dir),
@@ -509,7 +514,6 @@ class TestFullPipelineIntegration:
         )
 
         result = init_platform_docs(
-            db_path=db_path,
             platform="test_local",
             cfg=cfg,
             build_mode="overwrite",
@@ -525,8 +529,6 @@ class TestFullPipelineIntegration:
 
     def test_init_platform_docs_check_mode(self, local_docs_dir, temp_dir):
         """Test check mode returns existing stats without fetching."""
-        db_path = str(Path(temp_dir) / "store")
-
         cfg = DocumentConfig(
             type="local",
             source=str(local_docs_dir),
@@ -535,7 +537,6 @@ class TestFullPipelineIntegration:
 
         # First, populate the store
         init_platform_docs(
-            db_path=db_path,
             platform="test_local",
             cfg=cfg,
             build_mode="overwrite",
@@ -543,7 +544,6 @@ class TestFullPipelineIntegration:
 
         # Now check mode
         result = init_platform_docs(
-            db_path=db_path,
             platform="test_local",
             cfg=cfg,
             build_mode="check",
@@ -554,8 +554,6 @@ class TestFullPipelineIntegration:
 
     def test_init_platform_docs_with_include_patterns(self, local_docs_dir, temp_dir):
         """Test pipeline with include patterns (only Markdown)."""
-        db_path = str(Path(temp_dir) / "store")
-
         cfg = DocumentConfig(
             type="local",
             source=str(local_docs_dir),
@@ -564,7 +562,6 @@ class TestFullPipelineIntegration:
         )
 
         result = init_platform_docs(
-            db_path=db_path,
             platform="test_local",
             cfg=cfg,
             build_mode="overwrite",
@@ -575,7 +572,6 @@ class TestFullPipelineIntegration:
 
     def test_init_platform_docs_empty_source(self, temp_dir):
         """Test pipeline with empty source directory."""
-        db_path = str(Path(temp_dir) / "store")
         empty_dir = Path(temp_dir) / "empty"
         empty_dir.mkdir()
 
@@ -586,7 +582,6 @@ class TestFullPipelineIntegration:
         )
 
         result = init_platform_docs(
-            db_path=db_path,
             platform="test_empty",
             cfg=cfg,
             build_mode="overwrite",
@@ -606,10 +601,8 @@ class TestSearchToolIntegration:
     """Integration tests for SearchTool after storing documents."""
 
     @pytest.fixture
-    def populated_store(self, local_docs_dir, temp_dir, agent_config):
+    def populated_store(self, local_docs_dir, agent_config):
         """Create a populated store for search tests."""
-        db_path = str(Path(temp_dir) / "store")
-
         cfg = DocumentConfig(
             type="local",
             source=str(local_docs_dir),
@@ -618,26 +611,19 @@ class TestSearchToolIntegration:
         )
 
         result = init_platform_docs(
-            db_path=db_path,
             platform="test_search",
             cfg=cfg,
             build_mode="overwrite",
         )
         assert result.success
 
-        # Create a modified agent_config that uses our temp store
-        class TestAgentConfig:
-            def document_storage_path(self, platform):
-                return db_path
+        return "test_search"
 
-        return TestAgentConfig(), db_path
-
-    def test_list_document_nav(self, populated_store):
+    def test_list_document_nav(self, populated_store, agent_config):
         """Test list_document_nav returns navigation tree."""
-        test_config, _ = populated_store
-        tool = SearchTool(agent_config=test_config)
+        tool = SearchTool(agent_config=agent_config)
 
-        result = tool.list_document_nav(platform="test_search")
+        result = tool.list_document_nav(platform=populated_store)
 
         assert result.success, f"list_document_nav failed: {result.error}"
         assert result.platform == "test_search"
@@ -648,13 +634,12 @@ class TestSearchToolIntegration:
         for item in result.nav_tree:
             assert "name" in item or "version" in item
 
-    def test_get_document_by_title(self, populated_store):
+    def test_get_document_by_title(self, populated_store, agent_config):
         """Test get_document retrieves document chunks."""
-        test_config, _ = populated_store
-        tool = SearchTool(agent_config=test_config)
+        tool = SearchTool(agent_config=agent_config)
 
         # First get nav to find a title
-        _nav_result = tool.list_document_nav(platform="test_search")
+        _nav_result = tool.list_document_nav(platform=populated_store)
         assert _nav_result.success
 
         # Find a leaf node (document title)
@@ -662,20 +647,19 @@ class TestSearchToolIntegration:
         assert title, "Should find at least one document title"
 
         # Get document by title
-        result = tool.get_document(platform="test_search", titles=[title])
+        result = tool.get_document(platform=populated_store, titles=[title])
 
         assert result.success, f"get_document failed: {result.error}"
         assert result.chunk_count > 0
         assert len(result.chunks) == result.chunk_count
 
-    def test_search_document_semantic(self, populated_store):
+    def test_search_document_semantic(self, populated_store, agent_config):
         """Test search_document finds relevant documents."""
-        test_config, _ = populated_store
-        tool = SearchTool(agent_config=test_config)
+        tool = SearchTool(agent_config=agent_config)
 
         # Search for content we know exists
         result = tool.search_document(
-            platform="test_search",
+            platform=populated_store,
             keywords=["installation", "plugin"],
             top_n=3,
         )
@@ -688,10 +672,9 @@ class TestSearchToolIntegration:
             assert keyword in result.docs
             assert len(result.docs[keyword]) > 0
 
-    def test_search_no_results(self, populated_store):
+    def test_search_no_results(self, populated_store, agent_config):
         """Test search with non-matching keywords."""
-        test_config, _ = populated_store
-        tool = SearchTool(agent_config=test_config)
+        tool = SearchTool(agent_config=agent_config)
 
         result = tool.search_document(
             platform="test_search",
@@ -723,7 +706,7 @@ class TestStoreOperationsIntegration:
 
     def test_store_and_retrieve_chunks(self, temp_dir):
         """Test storing and retrieving chunks."""
-        store = document_store(temp_dir)
+        store = document_store("test_store_retrieve")
 
         chunks = [
             PlatformDocChunk(
@@ -754,7 +737,7 @@ class TestStoreOperationsIntegration:
 
     def test_store_search_with_version_filter(self, temp_dir):
         """Test search with version filtering."""
-        store = document_store(temp_dir)
+        store = document_store("test_store_version_filter")
 
         # Store chunks for two versions
         for version in ["v1", "v2"]:
@@ -786,7 +769,7 @@ class TestStoreOperationsIntegration:
 
     def test_store_delete_by_version(self, temp_dir):
         """Test deleting chunks by version."""
-        store = document_store(temp_dir)
+        store = document_store("test_store_delete")
 
         # Store chunks for two versions
         for version in ["v1", "v2"]:
@@ -818,7 +801,7 @@ class TestStoreOperationsIntegration:
 
     def test_store_list_versions(self, temp_dir):
         """Test listing available versions."""
-        store = document_store(temp_dir)
+        store = document_store("test_store_versions")
 
         # Store chunks for multiple versions
         for version in ["v1.0", "v2.0", "v3.0"]:
@@ -858,8 +841,7 @@ class TestStreamingProcessorIntegration:
         """Test streaming processor with local documents."""
         from datus.storage.document.fetcher.local_fetcher import LocalFetcher
 
-        db_path = str(Path(temp_dir) / "store")
-        store = document_store(db_path)
+        store = document_store("test_streaming_local")
 
         # Fetch documents
         fetcher = LocalFetcher(platform="test_streaming", version="v1.0")
@@ -892,8 +874,7 @@ class TestStreamingProcessorIntegration:
         """Test that streaming processor tracks progress correctly."""
         from datus.storage.document.fetcher.local_fetcher import LocalFetcher
 
-        db_path = str(Path(temp_dir) / "store")
-        store = document_store(db_path)
+        store = document_store("test_streaming_progress")
 
         fetcher = LocalFetcher(platform="test_progress", version="v1.0")
         documents = fetcher.fetch(source=str(local_docs_dir), recursive=True)
@@ -959,8 +940,7 @@ class TestGitHubFetcherIntegration:
         """Test streaming processor with GitHub source (apache/polaris)."""
         from datus.storage.document.fetcher.github_fetcher import GitHubFetcher
 
-        db_path = str(Path(temp_dir) / "store")
-        store = document_store(db_path)
+        store = document_store("test_streaming_github")
 
         fetcher = GitHubFetcher(
             platform="polaris",
@@ -990,8 +970,6 @@ class TestGitHubFetcherIntegration:
 
     def test_init_platform_docs_github_polaris(self, temp_dir):
         """Test full pipeline with GitHub source (apache/polaris versioned paths)."""
-        db_path = str(Path(temp_dir) / "store")
-
         cfg = DocumentConfig(
             type="github",
             source="apache/polaris",
@@ -1001,7 +979,6 @@ class TestGitHubFetcherIntegration:
         )
 
         result = init_platform_docs(
-            db_path=db_path,
             platform="polaris",
             cfg=cfg,
             build_mode="overwrite",
@@ -1014,8 +991,6 @@ class TestGitHubFetcherIntegration:
 
     def test_init_platform_docs_github_starrocks(self, temp_dir):
         """Test full pipeline with GitHub source (StarRocks/starrocks)."""
-        db_path = str(Path(temp_dir) / "store")
-
         cfg = DocumentConfig(
             type="github",
             source="StarRocks/starrocks",
@@ -1025,7 +1000,6 @@ class TestGitHubFetcherIntegration:
         )
 
         result = init_platform_docs(
-            db_path=db_path,
             platform="starrocks",
             cfg=cfg,
             build_mode="overwrite",
@@ -1077,8 +1051,7 @@ class TestWebFetcherIntegration:
         """Test streaming processor with website source."""
         from datus.storage.document.fetcher.web_fetcher import WebFetcher
 
-        db_path = str(Path(temp_dir) / "store")
-        store = document_store(db_path)
+        store = document_store("test_streaming_website")
 
         fetcher = WebFetcher(platform="snowflake", version="latest", pool_size=2)
 
@@ -1103,8 +1076,6 @@ class TestWebFetcherIntegration:
 
     def test_init_platform_docs_website(self, temp_dir):
         """Test full pipeline with website source (snowflake)."""
-        db_path = str(Path(temp_dir) / "store")
-
         cfg = DocumentConfig(
             type="website",
             source="https://docs.snowflake.com/en/",
@@ -1113,7 +1084,6 @@ class TestWebFetcherIntegration:
         )
 
         result = init_platform_docs(
-            db_path=db_path,
             platform="snowflake",
             cfg=cfg,
             build_mode="overwrite",
@@ -1144,14 +1114,13 @@ def _find_nav_leaf(nodes):
     return None
 
 
-def _run_e2e_workflow(db_path, platform, cfg, search_keywords):
+def _run_e2e_workflow(platform, cfg, search_keywords):
     """Run the complete E2E workflow: init -> list_nav -> search -> get_document.
 
     Returns (_init_result, _nav_result, _search_result, _doc_result) tuple.
     """
     # Step 1: Initialize platform docs
     _init_result = init_platform_docs(
-        db_path=db_path,
         platform=platform,
         cfg=cfg,
         build_mode="overwrite",
@@ -1167,7 +1136,7 @@ def _run_e2e_workflow(db_path, platform, cfg, search_keywords):
     # Step 2: Create SearchTool with test config
     class _TestConfig:
         def document_storage_path(self, _platform):
-            return db_path
+            return ""
 
     tool = SearchTool(agent_config=_TestConfig())
 
@@ -1209,8 +1178,6 @@ class TestEndToEndIntegration:
 
     def test_complete_workflow(self, local_docs_dir, temp_dir, agent_config):
         """Test complete workflow: init → search → get_document."""
-        db_path = str(Path(temp_dir) / "store")
-
         cfg = DocumentConfig(
             type="local",
             source=str(local_docs_dir),
@@ -1219,7 +1186,6 @@ class TestEndToEndIntegration:
         )
 
         _init_result, _nav_result, _search_result, _doc_result = _run_e2e_workflow(
-            db_path=db_path,
             platform="test_e2e",
             cfg=cfg,
             search_keywords=["installation", "configuration"],
@@ -1233,7 +1199,6 @@ class TestEndToEndIntegration:
 
     def test_complete_workflow_local_multi_dir(self, temp_dir):
         """Test complete workflow with multiple separate local doc directories."""
-        db_path = str(Path(temp_dir) / "store")
         root_dir = Path(temp_dir) / "multi_docs"
         root_dir.mkdir()
 
@@ -1343,7 +1308,6 @@ User Query → Parser → Linker → Generator → Database → Results
         )
 
         _init_result, _nav_result, _search_result, _doc_result = _run_e2e_workflow(
-            db_path=db_path,
             platform="test_multi_dir",
             cfg=cfg,
             search_keywords=["authentication", "installation", "schema linker"],
@@ -1372,8 +1336,6 @@ class TestEndToEndRealPlatforms:
     )
     def test_complete_workflow_starrocks(self, temp_dir):
         """Test complete workflow with StarRocks GitHub documentation."""
-        db_path = str(Path(temp_dir) / "store")
-
         cfg = DocumentConfig(
             type="github",
             source="StarRocks/starrocks",
@@ -1384,7 +1346,6 @@ class TestEndToEndRealPlatforms:
         )
 
         _init_result, _nav_result, _search_result, _doc_result = _run_e2e_workflow(
-            db_path=db_path,
             platform="starrocks_e2e",
             cfg=cfg,
             search_keywords=["CREATE TABLE", "materialized view"],
@@ -1399,8 +1360,6 @@ class TestEndToEndRealPlatforms:
     )
     def test_complete_workflow_starrocks_multi_dir(self, temp_dir):
         """Test complete workflow with StarRocks using multiple directory paths."""
-        db_path = str(Path(temp_dir) / "store")
-
         cfg = DocumentConfig(
             type="github",
             source="StarRocks/starrocks",
@@ -1411,7 +1370,6 @@ class TestEndToEndRealPlatforms:
         )
 
         _init_result, _nav_result, _search_result, _doc_result = _run_e2e_workflow(
-            db_path=db_path,
             platform="starrocks_multi_e2e",
             cfg=cfg,
             search_keywords=["CREATE TABLE", "BROKER LOAD"],
@@ -1427,8 +1385,6 @@ class TestEndToEndRealPlatforms:
     )
     def test_complete_workflow_polaris(self, temp_dir):
         """Test complete workflow with Apache Polaris multi-version documentation."""
-        db_path = str(Path(temp_dir) / "store")
-
         cfg = DocumentConfig(
             type="github",
             source="apache/polaris",
@@ -1439,7 +1395,6 @@ class TestEndToEndRealPlatforms:
         )
 
         _init_result, _nav_result, _search_result, _doc_result = _run_e2e_workflow(
-            db_path=db_path,
             platform="polaris_e2e",
             cfg=cfg,
             search_keywords=["catalog", "namespace"],
@@ -1455,8 +1410,6 @@ class TestEndToEndRealPlatforms:
     )
     def test_complete_workflow_snowflake(self, temp_dir):
         """Test complete workflow with Snowflake website documentation."""
-        db_path = str(Path(temp_dir) / "store")
-
         cfg = DocumentConfig(
             type="website",
             source="https://docs.snowflake.com/en/",
@@ -1466,7 +1419,6 @@ class TestEndToEndRealPlatforms:
         )
 
         _run_e2e_workflow(
-            db_path=db_path,
             platform="snowflake_e2e",
             cfg=cfg,
             search_keywords=["CREATE TABLE", "warehouse"],

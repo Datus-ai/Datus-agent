@@ -24,11 +24,21 @@ logger = get_logger(__name__)
 class StorageBase:
     """Base class for all storage components using a vector backend."""
 
-    def __init__(self):
-        """Initialize the storage base."""
-        from datus.storage.backend_holder import create_vector_connection
+    def __init__(self, db: Optional[VectorDatabase] = None):
+        """Initialize the storage base.
 
-        self.db: VectorDatabase = create_vector_connection()
+        Args:
+            db: Optional pre-created VectorDatabase connection.
+                If provided, it is used directly instead of the global
+                namespace connection.  This allows stores like DocumentStore
+                to use per-platform isolated databases.
+        """
+        if db is not None:
+            self.db: VectorDatabase = db
+        else:
+            from datus.storage.backend_holder import create_vector_connection
+
+            self.db = create_vector_connection()
 
     def _ensure_tables(self):
         """Ensure all required tables exist."""
@@ -76,8 +86,9 @@ class BaseEmbeddingStore(StorageBase):
         vector_source_name: str = "definition",
         vector_column_name: str = "vector",
         unique_columns: Optional[List[str]] = None,
+        db: Optional[VectorDatabase] = None,
     ):
-        super().__init__()
+        super().__init__(db=db)
         self.model = embedding_model
         self.batch_size = embedding_model.batch_size
         self.table_name = table_name
