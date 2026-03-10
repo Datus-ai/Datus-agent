@@ -78,7 +78,7 @@ async def test_catalog_command(agent_config: AgentConfig, db_manager: DBManager)
 
         columns_table = columns_panel.renderable
         assert isinstance(columns_table, Table)
-        assert len(columns_table.columns) == 6
+        assert len(columns_table.columns) == 7
         app.exit()
 
 
@@ -107,7 +107,7 @@ async def exec_domains_textual(pilot, tree_id: str):
     domain_nodes = tree.cursor_node.children
     assert len(domain_nodes) > 0
 
-    assert domain_nodes[0].data["type"] == "domain"
+    assert domain_nodes[0].data["type"] == "subject_node"
 
     tree.select_node(domain_nodes[0])
     await pilot.pause()
@@ -117,7 +117,7 @@ async def exec_domains_textual(pilot, tree_id: str):
     layer1_nodes = tree.cursor_node.children
     assert len(layer1_nodes) > 0
 
-    assert layer1_nodes[0].data["type"] == "layer1"
+    assert layer1_nodes[0].data["type"] == "subject_node"
     tree.select_node(layer1_nodes[0])
     await pilot.pause()
     await pilot.press("enter")
@@ -127,7 +127,7 @@ async def exec_domains_textual(pilot, tree_id: str):
 
     assert len(layer2_nodes) > 0
 
-    assert layer2_nodes[0].data["type"] == "layer2"
+    assert layer2_nodes[0].data["type"] == "subject_node"
 
     tree.select_node(layer2_nodes[0])
     await pilot.pause()
