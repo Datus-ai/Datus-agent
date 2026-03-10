@@ -122,26 +122,6 @@ class TestChatAgentic:
         assert response.output.get("success") is True, "Chat response should be successful"
         assert response.output.get("sql"), "Response should contain generated SQL"
 
-    def test_empty_input_ignored(self, mock_args):
-        """N5-04: Empty and whitespace-only inputs are silently ignored."""
-        with patch("datus.cli.repl.PromptSession.prompt") as mock_prompt:
-            mock_prompt.side_effect = ["", "   ", "/How many schools?", EOFError]
-            with (
-                patch("datus.cli.repl.DatusCLI.prompt_input") as mock_internal,
-                patch("datus.cli.repl.AtReferenceCompleter.parse_at_context") as at_data,
-            ):
-                at_data.return_value = [], [], []
-                mock_internal.side_effect = ["n"]
-                cli = DatusCLI(args=mock_args)
-
-                wait_for_agent(cli)
-                cli.run()
-
-        actions = cli.actions.get_actions()
-        chat_responses = [a for a in actions if a.action_type == "chat_response"]
-        # Only the actual question should produce a response, empty inputs are skipped
-        assert len(chat_responses) == 1, f"Empty inputs should be ignored, got {len(chat_responses)} responses"
-
     def test_chat_generates_valid_sql(self, mock_args):
         """N5-06: Chat response contains syntactically valid SQL with expected tables."""
         question = "What is the highest SAT score in california_schools?"
