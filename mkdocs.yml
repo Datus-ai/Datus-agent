@@ -152,8 +152,6 @@ theme:
     - navigation.footer
     - navigation.tabs
     # - navigation.tabs.sticky
-    - navigation.instant
-    - navigation.instant.progress
     - navigation.tracking
     - navigation.indexes
     - content.code.copy
