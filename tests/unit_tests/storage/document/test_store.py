@@ -497,9 +497,9 @@ class TestDocumentStoreHasData:
             assert doc_store.has_data() is False
 
     def test_has_data_count_rows_exception_returns_false(self, doc_store):
-        """has_data should return False when _count_rows raises."""
+        """has_data should return False when table.count_rows raises."""
         doc_store.store_chunks(_make_chunks(1))
-        with patch.object(doc_store, "_count_rows", side_effect=RuntimeError("broken")):
+        with patch.object(doc_store.table, "count_rows", side_effect=RuntimeError("broken")):
             assert doc_store.has_data() is False
 
 

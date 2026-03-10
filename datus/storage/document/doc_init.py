@@ -23,6 +23,7 @@ from datus.storage.document.fetcher import GitHubFetcher, LocalFetcher, RateLimi
 from datus.storage.document.schemas import SOURCE_TYPE_GITHUB, SOURCE_TYPE_LOCAL
 from datus.storage.document.store import document_store
 from datus.storage.document.streaming_processor import StreamingDocProcessor
+from datus.utils.exceptions import DatusException
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
@@ -245,7 +246,10 @@ def init_platform_docs(
 
     logger.info(f"Initializing {platform} documentation from {source} ({source_type})")
 
-    store = document_store(platform)
+    try:
+        store = document_store(platform)
+    except DatusException as exc:
+        return _make_empty_result(platform, version, source, start_time, errors=[str(exc)])
 
     # ==================================================================
     # Check mode: return existing store stats without any I/O or fetching

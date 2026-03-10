@@ -114,11 +114,17 @@ class DocumentStore(BaseEmbeddingStore):
         )
 
     def has_data(self) -> bool:
-        """Return True if the document table exists and contains rows."""
+        """Return True if the document table exists and contains rows.
+
+        This method avoids booting the embedding model by opening the
+        table directly through the vector backend instead of calling
+        ``_count_rows()`` (which triggers ``_ensure_table_ready()``).
+        """
         try:
             if not self.db.table_exists(self.TABLE_NAME):
                 return False
-            return self._count_rows() > 0
+            table = self.table or self.db.open_table(self.TABLE_NAME)
+            return table.count_rows() > 0
         except Exception as e:
             logger.debug(f"has_data() check failed for table '{self.TABLE_NAME}': {e}")
             return False

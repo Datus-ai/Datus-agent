@@ -541,114 +541,98 @@ class TestSearchTool:
 
     def test_delete_docs_by_version(self):
         """delete_docs(version=...) should remove only chunks of that version."""
-        # Create a temporary store to avoid polluting the shared fixture
-        import shutil
-        import tempfile
+        tmp_store = document_store("test_version_filter")
+        # Clear any leftover data from previous runs
+        tmp_store.delete_docs(version=None)
 
-        tmp_dir = tempfile.mkdtemp()
-        try:
-            tmp_store = document_store("test_version_filter")
+        # Insert chunks for two versions
+        chunks_v1 = [
+            PlatformDocChunk(
+                chunk_id=PlatformDocChunk.generate_chunk_id("a.md", i, "v1"),
+                chunk_text=f"v1 chunk {i}",
+                chunk_index=i,
+                title="Doc A",
+                titles=["Doc A"],
+                nav_path=[],
+                group_name="",
+                hierarchy="Doc A",
+                version="v1",
+                source_type="local",
+                source_url="",
+                doc_path="a.md",
+            )
+            for i in range(3)
+        ]
+        chunks_v2 = [
+            PlatformDocChunk(
+                chunk_id=PlatformDocChunk.generate_chunk_id("b.md", i, "v2"),
+                chunk_text=f"v2 chunk {i}",
+                chunk_index=i,
+                title="Doc B",
+                titles=["Doc B"],
+                nav_path=[],
+                group_name="",
+                hierarchy="Doc B",
+                version="v2",
+                source_type="local",
+                source_url="",
+                doc_path="b.md",
+            )
+            for i in range(2)
+        ]
+        tmp_store.store_chunks(chunks_v1 + chunks_v2)
 
-            # Insert chunks for two versions
-            chunks_v1 = [
-                PlatformDocChunk(
-                    chunk_id=PlatformDocChunk.generate_chunk_id("a.md", i, "v1"),
-                    chunk_text=f"v1 chunk {i}",
-                    chunk_index=i,
-                    title="Doc A",
-                    titles=["Doc A"],
-                    nav_path=[],
-                    group_name="",
-                    hierarchy="Doc A",
-                    version="v1",
-                    source_type="local",
-                    source_url="",
-                    doc_path="a.md",
-                )
-                for i in range(3)
-            ]
-            chunks_v2 = [
-                PlatformDocChunk(
-                    chunk_id=PlatformDocChunk.generate_chunk_id("b.md", i, "v2"),
-                    chunk_text=f"v2 chunk {i}",
-                    chunk_index=i,
-                    title="Doc B",
-                    titles=["Doc B"],
-                    nav_path=[],
-                    group_name="",
-                    hierarchy="Doc B",
-                    version="v2",
-                    source_type="local",
-                    source_url="",
-                    doc_path="b.md",
-                )
-                for i in range(2)
-            ]
-            tmp_store.store_chunks(chunks_v1 + chunks_v2)
+        # Verify both versions exist
+        assert tmp_store.table.count_rows() == 5
 
-            # Verify both versions exist
-            assert tmp_store.table.count_rows() == 5
+        # Delete v1 only
+        deleted = tmp_store.delete_docs(version="v1")
+        assert deleted == 3
 
-            # Delete v1 only
-            deleted = tmp_store.delete_docs(version="v1")
-            assert deleted == 3
-
-            # v2 should remain
-            remaining = tmp_store.table.count_rows()
-            assert remaining == 2
-        finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+        # v2 should remain
+        remaining = tmp_store.table.count_rows()
+        assert remaining == 2
 
     def test_delete_docs_all(self):
         """delete_docs(version=None) should remove all chunks (drop + recreate)."""
-        import shutil
-        import tempfile
-
         from datus.storage.document.schemas import PlatformDocChunk
 
-        tmp_dir = tempfile.mkdtemp()
-        try:
-            tmp_store = document_store("test_get_stats")
+        tmp_store = document_store("test_get_stats")
+        # Clear any leftover data from previous runs
+        tmp_store.delete_docs(version=None)
 
-            chunks = [
-                PlatformDocChunk(
-                    chunk_id=PlatformDocChunk.generate_chunk_id("c.md", i, "v1"),
-                    chunk_text=f"chunk {i}",
-                    chunk_index=i,
-                    title="Doc C",
-                    titles=["Doc C"],
-                    nav_path=[],
-                    group_name="",
-                    hierarchy="Doc C",
-                    version="v1",
-                    source_type="local",
-                    source_url="",
-                    doc_path="c.md",
-                )
-                for i in range(4)
-            ]
-            tmp_store.store_chunks(chunks)
-            assert tmp_store.table.count_rows() == 4
+        chunks = [
+            PlatformDocChunk(
+                chunk_id=PlatformDocChunk.generate_chunk_id("c.md", i, "v1"),
+                chunk_text=f"chunk {i}",
+                chunk_index=i,
+                title="Doc C",
+                titles=["Doc C"],
+                nav_path=[],
+                group_name="",
+                hierarchy="Doc C",
+                version="v1",
+                source_type="local",
+                source_url="",
+                doc_path="c.md",
+            )
+            for i in range(4)
+        ]
+        tmp_store.store_chunks(chunks)
+        assert tmp_store.table.count_rows() == 4
 
-            # Delete all
-            deleted = tmp_store.delete_docs(version=None)
-            assert deleted == 4
-            assert tmp_store.table.count_rows() == 0
-        finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+        # Delete all
+        deleted = tmp_store.delete_docs(version=None)
+        assert deleted == 4
+        assert tmp_store.table.count_rows() == 0
 
     def test_delete_docs_empty_store(self):
         """delete_docs on an empty store should return 0."""
-        import shutil
-        import tempfile
-
-        tmp_dir = tempfile.mkdtemp()
-        try:
-            tmp_store = document_store("test_delete_empty")
-            deleted = tmp_store.delete_docs(version="v1")
-            assert deleted == 0
-        finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+        tmp_store = document_store("test_delete_empty")
+        # Clear any leftover data from previous runs
+        tmp_store.delete_docs(version=None)
+        deleted = tmp_store.delete_docs(version="v1")
+        assert deleted == 0
 
     def test_search_document_wrong_platform(self):
         """search_document on a non-existent platform returns empty results."""
