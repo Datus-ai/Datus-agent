@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from datus.storage.document.schemas import PlatformDocChunk
-from datus.storage.document.store import DocumentStore, get_platform_doc_schema
+from datus.storage.document.store import DocumentStore, document_store, get_platform_doc_schema
 from datus.storage.embedding_models import get_document_embedding_model
 from datus.utils.exceptions import DatusException
 
@@ -471,3 +471,69 @@ class TestDocumentStoreGetAllRows:
         for r in results:
             assert "chunk_text" in r
             assert "version" in r
+
+
+# ============================================================
+# DocumentStore.has_data
+# ============================================================
+
+
+class TestDocumentStoreHasData:
+    """Tests for has_data method."""
+
+    def test_has_data_empty_store(self, doc_store):
+        """Empty store should return False."""
+        assert doc_store.has_data() is False
+
+    def test_has_data_with_data(self, doc_store):
+        """Store with chunks should return True."""
+        doc_store.store_chunks(_make_chunks(2))
+        assert doc_store.has_data() is True
+
+    def test_has_data_exception_returns_false(self, doc_store):
+        """has_data should return False when an exception occurs."""
+        with patch.object(doc_store, "db") as mock_db:
+            mock_db.table_exists.side_effect = RuntimeError("connection lost")
+            assert doc_store.has_data() is False
+
+    def test_has_data_count_rows_exception_returns_false(self, doc_store):
+        """has_data should return False when _count_rows raises."""
+        doc_store.store_chunks(_make_chunks(1))
+        with patch.object(doc_store, "_count_rows", side_effect=RuntimeError("broken")):
+            assert doc_store.has_data() is False
+
+
+# ============================================================
+# document_store factory
+# ============================================================
+
+
+class TestDocumentStoreFactory:
+    """Tests for the document_store() factory function."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self):
+        """Clear lru_cache before each test."""
+        document_store.cache_clear()
+        yield
+        document_store.cache_clear()
+
+    def test_valid_platform(self):
+        """Valid platform name should return a DocumentStore."""
+        store = document_store("test_factory_valid")
+        assert isinstance(store, DocumentStore)
+
+    def test_invalid_platform_empty(self):
+        """Empty platform should raise DatusException."""
+        with pytest.raises(DatusException, match="Invalid platform name"):
+            document_store("")
+
+    def test_invalid_platform_special_chars(self):
+        """Platform with spaces/dots should raise DatusException."""
+        with pytest.raises(DatusException, match="Invalid platform name"):
+            document_store("my platform.v1")
+
+    def test_invalid_platform_sql_injection(self):
+        """Platform with SQL injection attempt should raise DatusException."""
+        with pytest.raises(DatusException, match="Invalid platform name"):
+            document_store("test; DROP TABLE")

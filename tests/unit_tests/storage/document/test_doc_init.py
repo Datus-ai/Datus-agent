@@ -4,8 +4,9 @@
 
 """Unit tests for datus.storage.document.doc_init."""
 
+import warnings
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -19,6 +20,7 @@ from datus.storage.document.doc_init import (
     _detect_versions_from_paths,
     _make_empty_result,
     infer_platform_from_source,
+    init_platform_docs,
 )
 
 # ---------------------------------------------------------------------------
@@ -368,3 +370,75 @@ class TestInferPlatformFromSource:
         """Local path with -documentation suffix."""
         result = infer_platform_from_source("/data/mysql-documentation")
         assert result == "mysql"
+
+
+# ---------------------------------------------------------------------------
+# init_platform_docs db_path deprecation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.ci
+class TestInitPlatformDocsDbPathDeprecation:
+    """Tests for db_path deprecation warning in init_platform_docs."""
+
+    def test_db_path_emits_deprecation_warning(self):
+        """Passing db_path should emit a DeprecationWarning."""
+        mock_cfg = MagicMock()
+        mock_cfg.source = "/some/path"
+        mock_cfg.type = "local"
+        mock_cfg.version = "v1"
+        mock_cfg.paths = []
+        mock_cfg.chunk_size = 512
+        mock_cfg.chunk_overlap = 50
+        mock_cfg.include_patterns = []
+        mock_cfg.exclude_patterns = []
+
+        with (
+            warnings.catch_warnings(record=True) as w,
+            patch("datus.storage.document.doc_init.document_store") as mock_store_fn,
+        ):
+            warnings.simplefilter("always")
+            mock_store = MagicMock()
+            mock_store.get_stats.return_value = {"versions": [], "total_chunks": 0, "doc_count": 0}
+            mock_store_fn.return_value = mock_store
+
+            init_platform_docs(
+                platform="test_deprecation",
+                cfg=mock_cfg,
+                build_mode="check",
+                db_path="/old/path",
+            )
+
+            deprecation_warnings = [x for x in w if issubclass(x.category, DeprecationWarning)]
+            assert len(deprecation_warnings) == 1
+            assert "db_path is deprecated" in str(deprecation_warnings[0].message)
+
+    def test_no_db_path_no_warning(self):
+        """Not passing db_path should not emit a DeprecationWarning."""
+        mock_cfg = MagicMock()
+        mock_cfg.source = "/some/path"
+        mock_cfg.type = "local"
+        mock_cfg.version = "v1"
+        mock_cfg.paths = []
+        mock_cfg.chunk_size = 512
+        mock_cfg.chunk_overlap = 50
+        mock_cfg.include_patterns = []
+        mock_cfg.exclude_patterns = []
+
+        with (
+            warnings.catch_warnings(record=True) as w,
+            patch("datus.storage.document.doc_init.document_store") as mock_store_fn,
+        ):
+            warnings.simplefilter("always")
+            mock_store = MagicMock()
+            mock_store.get_stats.return_value = {"versions": [], "total_chunks": 0, "doc_count": 0}
+            mock_store_fn.return_value = mock_store
+
+            init_platform_docs(
+                platform="test_no_deprecation",
+                cfg=mock_cfg,
+                build_mode="check",
+            )
+
+            deprecation_warnings = [x for x in w if issubclass(x.category, DeprecationWarning)]
+            assert len(deprecation_warnings) == 0

@@ -14,9 +14,12 @@ Provides vector storage for documents with full-featured schema:
 
 import re
 from functools import lru_cache
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import pyarrow as pa
+
+if TYPE_CHECKING:
+    from datus.storage.vector.base import VectorDatabase
 
 from datus.storage.base import BaseEmbeddingStore
 from datus.storage.conditions import And, Condition, WhereExpr, eq, in_
@@ -91,7 +94,7 @@ class DocumentStore(BaseEmbeddingStore):
     def __init__(
         self,
         embedding_model: EmbeddingModel,
-        db=None,
+        db: Optional["VectorDatabase"] = None,
     ):
         """Initialize the document store.
 
