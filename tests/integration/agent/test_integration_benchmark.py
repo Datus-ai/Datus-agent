@@ -10,6 +10,8 @@ from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.utils.benchmark_utils import load_benchmark_tasks
 from tests.conftest import load_acceptance_config
 
+pytestmark = pytest.mark.nightly
+
 
 @pytest.fixture
 def agent_config() -> AgentConfig:

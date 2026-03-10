@@ -13,6 +13,8 @@ from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.utils.json_utils import load_jsonl
 from tests.conftest import PROJECT_ROOT
 
+pytestmark = pytest.mark.regression
+
 
 @pytest.fixture
 def agent_config() -> AgentConfig:

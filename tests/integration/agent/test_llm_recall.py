@@ -17,6 +17,8 @@ from datus.utils.loggings import configure_logging, get_logger
 from tests.conftest import PROJECT_ROOT
 from tests.integration.agent.test_schema_recall_spider2 import load_gold_tables
 
+pytestmark = pytest.mark.regression
+
 configure_logging(debug=True)
 logger = get_logger(__name__)
 

@@ -1,5 +1,6 @@
 import csv
 import json
+import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -11,10 +12,16 @@ from datus.configuration.agent_config_loader import load_agent_config
 from datus.utils.benchmark_utils import evaluate_benchmark_and_report
 from datus.utils.constants import DBType
 
+TESTS_ROOT = Path(__file__).resolve().parent.parent.parent  # tests/
+CONF_DIR = TESTS_ROOT / "conf"
+
 
 @pytest.fixture
 def agent_config(tmp_path: Path) -> AgentConfig:
-    agent_config = load_agent_config(namespace="bird_school", home=tmp_path)
+    src = CONF_DIR / "agent.yml"
+    tmp_cfg = tmp_path / "agent.yml"
+    shutil.copy2(src, tmp_cfg)
+    agent_config = load_agent_config(config=str(tmp_cfg), namespace="bird_school", home=tmp_path)
     return agent_config
 
 
@@ -324,8 +331,8 @@ def test_evaluate_benchmark_and_report_with_csv_manifest(agent_config: AgentConf
     )
     _write_sql(result_dir / "task-456.sql", "SELECT name, total FROM other_table;")
 
-    # Arrange trajectories
-    trajectory_dir = Path(agent_config.trajectory_dir)
+    # Arrange trajectories (must be under {trajectory_dir}/{namespace}/)
+    trajectory_dir = Path(agent_config.trajectory_dir) / agent_config.current_namespace
     _write_trajectory(trajectory_dir / "task-123_1.yaml", "task-123", _match_tool_actions())
     _write_trajectory(trajectory_dir / "task-456_1.yaml", "task-456", _mismatch_tool_actions())
 
@@ -403,7 +410,7 @@ def test_evaluate_benchmark_and_report_with_jsonl_manifest(agent_config: AgentCo
     )
     _write_sql(result_dir / "task-456.sql", "SELECT name, total FROM other_table;")
 
-    trajectory_dir = Path(agent_config.trajectory_dir)
+    trajectory_dir = Path(agent_config.trajectory_dir) / agent_config.current_namespace
     _write_trajectory(trajectory_dir / "task-123_1.yaml", "task-123", _match_tool_actions())
     _write_trajectory(trajectory_dir / "task-456_1.yaml", "task-456", _mismatch_tool_actions())
 

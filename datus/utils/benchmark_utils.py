@@ -1122,6 +1122,8 @@ class JsonMappingSqlProvider(SqlProvider):
         if isinstance(payload, Mapping):
             self._consume_record(payload)
             for task_id, value in payload.items():
+                if not isinstance(value, MutableMapping):
+                    continue
                 if self.task_id_key not in value:
                     value[self.task_id_key] = task_id
                 self._consume_record(value)

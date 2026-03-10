@@ -13,6 +13,8 @@ from datus.utils.constants import DBType
 from datus.utils.sql_utils import extract_table_names
 from tests.conftest import PROJECT_ROOT
 
+pytestmark = pytest.mark.nightly
+
 
 def match_result(target_schema: set[str], full_name_set: set[str]) -> dict[str, Any]:
     """Match the target schema with the schema tables"""
