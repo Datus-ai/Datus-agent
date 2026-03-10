@@ -207,14 +207,20 @@ def nightly_agent_config() -> AgentConfig:
 
 @pytest.fixture
 def cleanup_sub_agent_data(nightly_agent_config):
-    """Clean up sub-agent artifacts after each test, even on failure.
+    """Clean up sub-agent artifacts before and after each test, even on failure.
 
     Bootstrap tests write LanceDB indexes and other artifacts under
     ``{rag_base_path}/sub_agents/{name}/``. This fixture ensures stale data
-    is removed after each test run.
+    from interrupted runs is removed before the test starts, and cleaned up
+    after each test run.
     """
+
+    def _cleanup():
+        for name in NIGHTLY_SUB_AGENT_NAMES:
+            sub_agent_dir = Path(nightly_agent_config.rag_base_path) / "sub_agents" / name
+            if sub_agent_dir.exists():
+                shutil.rmtree(sub_agent_dir, ignore_errors=True)
+
+    _cleanup()
     yield
-    for name in NIGHTLY_SUB_AGENT_NAMES:
-        sub_agent_dir = Path(nightly_agent_config.rag_base_path) / "sub_agents" / name
-        if sub_agent_dir.exists():
-            shutil.rmtree(sub_agent_dir, ignore_errors=True)
+    _cleanup()

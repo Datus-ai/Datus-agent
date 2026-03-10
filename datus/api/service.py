@@ -504,6 +504,8 @@ def create_app(agent_args: argparse.Namespace) -> FastAPI:
                 # Synchronous mode - original behavior
                 return await service.run_workflow(req, current_client)
 
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Workflow execution error: {e}")
             raise HTTPException(status_code=500, detail=str(e))

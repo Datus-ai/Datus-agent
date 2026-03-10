@@ -12,7 +12,7 @@ Datus-Agent is an AI-powered data analysis agent: natural language → SQL, mult
 
 ```bash
 uv sync                                    # Install dependencies
-uv run pytest tests/unit_tests/ tests/skills/ -q  # CI tests (zero external deps)
+uv run pytest tests/unit_tests/ -q                # CI tests (zero external deps)
 uv run pytest -m nightly tests/             # Nightly tests (needs API keys)
 uv run pytest -m "nightly or regression" tests/  # Full regression
 uv run black . && uv run flake8 && uv run isort .      # Lint & format

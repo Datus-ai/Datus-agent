@@ -146,8 +146,8 @@ class TestBootstrapKB:
         metadata_results1 = [r for r in result1.results if r.component == "metadata"]
         initial_count = metadata_results1[0].details.get("stored_tables", 0) if metadata_results1 else 0
 
-        # Second: another overwrite should produce same or more data
-        _, result2 = self._register_and_bootstrap(agent_config, sub_agent_config, strategy="overwrite")
+        # Second: incremental update should preserve existing data
+        _, result2 = self._register_and_bootstrap(agent_config, sub_agent_config, strategy="incremental")
         assert result2 is not None, "Second bootstrap result should not be None"
 
         metadata_results2 = [r for r in result2.results if r.component == "metadata"]

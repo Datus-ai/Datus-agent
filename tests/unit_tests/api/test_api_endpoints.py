@@ -254,7 +254,9 @@ class TestWorkflowEndpoint:
             headers=auth_headers,
         )
         # Should fail because Accept header doesn't include text/event-stream
-        assert response.status_code in (400, 500)
+        assert (
+            response.status_code == 400
+        ), f"Expected 400 for missing SSE Accept header, got {response.status_code}: {response.text}"
 
 
 # ---------------------------------------------------------------------------

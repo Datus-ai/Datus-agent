@@ -211,7 +211,7 @@ class TestGenerateSkillsXmlContent:
         registry.list_skills.return_value = [_make_skill(tags=["sql", "performance"])]
         manager = SkillManager(registry=registry)
         xml = manager.generate_available_skills_xml("node")
-        assert "<tags>" in xml
+        assert "<tags>sql, performance</tags>" in xml
 
 
 class TestUtilityMethods:

@@ -100,31 +100,37 @@ class TestGetMCPTools:
 
 class TestMCPToolClassDecorator:
     def test_registers_class_in_global_registry(self):
-        initial_count = len(get_tool_registry())
+        initial_registry = list(get_tool_registry())
 
-        @mcp_tool_class(name="test_tool_xyz", availability_property="has_test_xyz")
-        class TestToolXYZ:
-            @classmethod
-            def create_dynamic(cls, agent_config, sub_agent_name=None):
-                return cls()
+        try:
 
-            @classmethod
-            def create_static(cls, agent_config, sub_agent_name=None, database_name=None):
-                return cls()
+            @mcp_tool_class(name="test_tool_xyz", availability_property="has_test_xyz")
+            class TestToolXYZ:
+                @classmethod
+                def create_dynamic(cls, agent_config, sub_agent_name=None):
+                    return cls()
 
-            @mcp_tool()
-            def do_something(self, q: str):
-                """Do something."""
-                pass
+                @classmethod
+                def create_static(cls, agent_config, sub_agent_name=None, database_name=None):
+                    return cls()
 
-        registry = get_tool_registry()
-        assert len(registry) > initial_count
+                @mcp_tool()
+                def do_something(self, q: str):
+                    """Do something."""
+                    pass
 
-        # Find our registered class
-        registered = [c for c in registry if c.name == "test_tool_xyz"]
-        assert len(registered) == 1
-        assert registered[0].tool_class is TestToolXYZ
-        assert registered[0].availability_property == "has_test_xyz"
+            registry = get_tool_registry()
+            assert len(registry) > len(initial_registry)
+
+            # Find our registered class
+            registered = [c for c in registry if c.name == "test_tool_xyz"]
+            assert len(registered) == 1
+            assert registered[0].tool_class is TestToolXYZ
+            assert registered[0].availability_property == "has_test_xyz"
+        finally:
+            # Restore the registry to avoid polluting other tests
+            registry = get_tool_registry()
+            registry[:] = initial_registry
 
     def test_requires_create_dynamic(self):
         with pytest.raises(TypeError, match="create_dynamic"):
