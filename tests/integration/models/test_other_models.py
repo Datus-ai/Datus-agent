@@ -323,12 +323,6 @@ class TestGeminiModel:
 
         logger.debug(f"Gemini generated response: {result}")
 
-    def test_multimodal_capability(self):
-        """Test Gemini's multimodal capabilities (when supported)."""
-        # This is a placeholder for multimodal testing
-        # Implementation depends on Gemini model's multimodal support
-        pytest.skip("Multimodal test to be implemented when Gemini config is added")
-
     def test_generate_with_json_output(self):
         """Test JSON output generation."""
         prompt = "Respond with a JSON object containing 'response': 'hello world'"

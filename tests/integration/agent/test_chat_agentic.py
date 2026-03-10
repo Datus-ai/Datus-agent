@@ -93,7 +93,9 @@ class TestChatAgentic:
 
         # Verify session info
         assert cli.chat_commands.current_node is not None, "Should have an active chat node"
-        session_info = cli.chat_commands.current_node.get_session_info()
+        import asyncio
+
+        session_info = asyncio.get_event_loop().run_until_complete(cli.chat_commands.current_node.get_session_info())
         assert session_info.get("session_id"), "Should have a valid session ID"
         assert session_info.get("action_count", 0) > 0, "Session should have recorded actions"
 

@@ -23,6 +23,9 @@ import pytest
 from datus.tools.permission.permission_config import PermissionLevel
 from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.skill_tools import SkillConfig, SkillManager
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
 
 # ============================================================================
 # 1. Skill Discovery Integration
@@ -290,6 +293,7 @@ class TestPermissionIntegration:
 # ============================================================================
 
 
+@pytest.mark.nightly
 class TestAgenticNodeSkillFiltering:
     """Test skill filtering based on agentic_nodes configuration in agent.yml.
 
@@ -512,40 +516,40 @@ class TestRealLLMSkillIntegration:
         has_load_skill = "load_skill" in action_types or "load_skill" in action_messages
         has_skill_exec = "skill_execute_command" in action_types or "skill_execute_command" in action_messages
 
-        print(f"\n{separator}")
-        print()
-        print("  SKILL INTEGRATION TEST SUMMARY")
-        print()
-        print(separator)
-        print()
-        print(f"  Model:            {model_name}")
-        print(f"  Total Duration:   {duration:.1f}s")
-        print(f"  Total Actions:    {len(all_actions)}")
-        print(
+        logger.info(f"\n{separator}")
+        logger.info("")
+        logger.info("  SKILL INTEGRATION TEST SUMMARY")
+        logger.info("")
+        logger.info(separator)
+        logger.info("")
+        logger.info(f"  Model:            {model_name}")
+        logger.info(f"  Total Duration:   {duration:.1f}s")
+        logger.info(f"  Total Actions:    {len(all_actions)}")
+        logger.info(
             f"  Tool Calls:       {len(tool_actions)}  "
             f"(pass {len(success_tools)} success, fail {len(failed_tools)} failed)"
         )
 
         # Successful tools
         if success_tools:
-            print()
-            print("  SUCCESSFUL TOOLS:")
+            logger.info("")
+            logger.info("  SUCCESSFUL TOOLS:")
             for i, a in enumerate(success_tools, 1):
                 name = a.action_type or a.function_name()
-                print(f"    {i}. {name:<30} -> success")
+                logger.info(f"    {i}. {name:<30} -> success")
 
         # Failed tools
         if failed_tools:
-            print()
-            print("  FAILED TOOLS:")
+            logger.info("")
+            logger.info("  FAILED TOOLS:")
             for i, a in enumerate(failed_tools, 1):
                 name = a.action_type or a.function_name()
-                print(f"    {i}. {name}")
+                logger.info(f"    {i}. {name}")
                 if a.input:
                     args_str = json.dumps(a.input, default=str, ensure_ascii=False)
                     if len(args_str) > 200:
                         args_str = args_str[:200] + "..."
-                    print(f"       Args: {args_str}")
+                    logger.info(f"       Args: {args_str}")
                 error_msg = ""
                 if a.output and isinstance(a.output, dict):
                     error_msg = a.output.get("error", "") or a.output.get("message", "")
@@ -554,16 +558,16 @@ class TestRealLLMSkillIntegration:
                 if error_msg:
                     if len(str(error_msg)) > 200:
                         error_msg = str(error_msg)[:200] + "..."
-                    print(f"       Error: {error_msg}")
+                    logger.info(f"       Error: {error_msg}")
 
         # Skill invocation summary
-        print()
-        print("  SKILL INVOCATION:")
-        print(f"    load_skill:             {'Found' if has_load_skill else 'Not found'}")
-        print(f"    skill_execute_command:   {'Found' if has_skill_exec else 'Not found'}")
+        logger.info("")
+        logger.info("  SKILL INVOCATION:")
+        logger.info(f"    load_skill:             {'Found' if has_load_skill else 'Not found'}")
+        logger.info(f"    skill_execute_command:   {'Found' if has_skill_exec else 'Not found'}")
 
-        print()
-        print(separator)
+        logger.info("")
+        logger.info(separator)
 
     @pytest.mark.asyncio
     async def test_skill_invocation_in_chat(self, llm_agent_config):

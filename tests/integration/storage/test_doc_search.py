@@ -3,17 +3,10 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 """
-Tests for Document Storage Module
+Integration tests for Document SearchTool.
 
-Includes tests for:
-- DocumentStore and search functionality
-- Document schemas and data models
-- Parsers (Markdown, HTML)
-- Chunker (SemanticChunker)
-- Cleaner (DocumentCleaner)
-- Metadata extraction
-- Rate limiter
-- Integration tests (Fetch → Parse → Clean → Chunk)
+Tests list_document_nav, get_document, search_document, and delete_docs
+against a real LanceDB-backed store with pre-populated benchmark data.
 """
 
 from typing import List
@@ -22,15 +15,8 @@ import pytest
 
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
-from datus.storage.document.schemas import (
-    CONTENT_TYPE_MARKDOWN,
-    SOURCE_TYPE_GITHUB,
-    FetchedDocument,
-    ParsedDocument,
-    ParsedSection,
-    PlatformDocChunk,
-)
-from datus.storage.document.store import document_store, get_platform_doc_schema
+from datus.storage.document.schemas import PlatformDocChunk
+from datus.storage.document.store import document_store
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -41,373 +27,7 @@ def agent_config() -> AgentConfig:
     return load_agent_config()
 
 
-# =============================================================================
-# Schema Tests
-# =============================================================================
-
-
-class TestSchemas:
-    """Test data model schemas."""
-
-    def test_fetched_document_creation(self):
-        """Test FetchedDocument creation."""
-        doc = FetchedDocument(
-            platform="snowflake",
-            version="v1.2.3",
-            source_url="https://github.com/test/repo",
-            source_type=SOURCE_TYPE_GITHUB,
-            doc_path="docs/intro.md",
-            raw_content="# Introduction\n\nTest content.",
-            content_type=CONTENT_TYPE_MARKDOWN,
-        )
-
-        assert doc.platform == "snowflake"
-        assert doc.version == "v1.2.3"
-        assert doc.content_type == CONTENT_TYPE_MARKDOWN
-
-    def test_parsed_section_get_all_content(self):
-        """Test ParsedSection content aggregation."""
-        child = ParsedSection(level=2, title="Child", content="Child content")
-        parent = ParsedSection(
-            level=1,
-            title="Parent",
-            content="Parent content",
-            children=[child],
-        )
-
-        all_content = parent.get_all_content()
-        assert "Parent content" in all_content
-        assert "Child content" in all_content
-
-    def test_platform_doc_chunk_generate_id(self):
-        """Test chunk ID generation is deterministic."""
-        id1 = PlatformDocChunk.generate_chunk_id(
-            doc_path="docs/intro.md",
-            chunk_index=0,
-            version="v1.0.0",
-        )
-        id2 = PlatformDocChunk.generate_chunk_id(
-            doc_path="docs/intro.md",
-            chunk_index=0,
-            version="v1.0.0",
-        )
-
-        assert id1 == id2
-        assert len(id1) == 32  # MD5 hash length
-
-    def test_platform_doc_chunk_different_inputs(self):
-        """Test that different inputs produce different IDs."""
-        id1 = PlatformDocChunk.generate_chunk_id("docs/a.md", 0, "v1")
-        id2 = PlatformDocChunk.generate_chunk_id("docs/b.md", 0, "v1")
-        id3 = PlatformDocChunk.generate_chunk_id("docs/a.md", 1, "v1")
-
-        assert id1 != id2
-        assert id1 != id3
-
-    def test_get_platform_doc_schema(self):
-        """Test schema generation."""
-        schema = get_platform_doc_schema(embedding_dim=384)
-
-        field_names = [field.name for field in schema]
-        assert "chunk_id" in field_names
-        assert "chunk_text" in field_names
-        assert "vector" in field_names
-        assert "version" in field_names
-        assert "titles" in field_names
-        assert "platform" not in field_names
-
-
-# =============================================================================
-# Parser Tests
-# =============================================================================
-
-
-class TestMarkdownParser:
-    """Test Markdown parser."""
-
-    def test_parse_simple_document(self):
-        """Test parsing a simple Markdown document."""
-        from datus.storage.document.parser.markdown_parser import MarkdownParser
-
-        parser = MarkdownParser()
-
-        doc = FetchedDocument(
-            platform="test",
-            version="v1",
-            source_url="http://test",
-            source_type=SOURCE_TYPE_GITHUB,
-            doc_path="test.md",
-            raw_content="# Title\n\nSome content.\n\n## Section\n\nMore content.",
-            content_type=CONTENT_TYPE_MARKDOWN,
-        )
-
-        parsed = parser.parse(doc)
-
-        assert parsed.title == "Title"
-        assert len(parsed.sections) > 0
-
-    def test_parse_with_code_blocks(self):
-        """Test parsing preserves code blocks."""
-        from datus.storage.document.parser.markdown_parser import MarkdownParser
-
-        parser = MarkdownParser()
-
-        content = """# Guide
-
-Here is code:
-
-```python
-def hello():
-    print("Hello")
-```
-
-More text.
-"""
-        doc = FetchedDocument(
-            platform="test",
-            version="v1",
-            source_url="http://test",
-            source_type=SOURCE_TYPE_GITHUB,
-            doc_path="test.md",
-            raw_content=content,
-            content_type=CONTENT_TYPE_MARKDOWN,
-        )
-
-        parsed = parser.parse(doc)
-
-        # Check code block is preserved somewhere in the content
-        all_content = ""
-        for section in parsed.sections:
-            all_content += section.get_all_content()
-
-        assert "```python" in all_content or "def hello" in all_content
-
-
-# =============================================================================
-# Chunker Tests
-# =============================================================================
-
-
-class TestSemanticChunker:
-    """Test semantic chunker."""
-
-    def test_chunk_simple_document(self):
-        """Test chunking a simple document."""
-        from datus.storage.document.chunker.semantic_chunker import SemanticChunker
-
-        chunker = SemanticChunker()
-
-        parsed = ParsedDocument(
-            title="Test Document",
-            sections=[
-                ParsedSection(
-                    level=1,
-                    title="Introduction",
-                    content="This is the introduction.",
-                    children=[],
-                ),
-                ParsedSection(
-                    level=2,
-                    title="Details",
-                    content="These are the details.",
-                    children=[],
-                ),
-            ],
-            metadata={
-                "nav_path": ["Guides", "User Guide"],
-                "group_name": "Guides",
-            },
-        )
-
-        metadata = {
-            "platform": "test",
-            "version": "v1",
-            "source_type": "github",
-            "source_url": "http://test",
-            "doc_path": "test.md",
-        }
-
-        chunks = chunker.chunk(parsed, metadata)
-
-        assert len(chunks) > 0
-        assert all(isinstance(c, PlatformDocChunk) for c in chunks)
-        # Verify new fields
-        for chunk in chunks:
-            assert chunk.nav_path == ["Guides", "User Guide"]
-            assert chunk.group_name == "Guides"
-            assert "Guides" in chunk.hierarchy
-
-    def test_chunk_preserves_code_blocks(self):
-        """Test that chunking preserves code blocks."""
-        from datus.storage.document.chunker.semantic_chunker import ChunkingConfig, SemanticChunker
-
-        config = ChunkingConfig(chunk_size=100, preserve_code_blocks=True)
-        chunker = SemanticChunker(config=config)
-
-        code_content = """Here is code:
-
-```python
-def very_long_function():
-    # This is a long function
-    x = 1
-    y = 2
-    z = 3
-    return x + y + z
-```
-
-End of section."""
-
-        parsed = ParsedDocument(
-            title="Code Test",
-            sections=[
-                ParsedSection(level=1, title="Code", content=code_content, children=[]),
-            ],
-        )
-
-        metadata = {
-            "platform": "test",
-            "version": "v1",
-            "source_type": "github",
-            "source_url": "http://test",
-            "doc_path": "test.md",
-        }
-
-        chunks = chunker.chunk(parsed, metadata)
-
-        # Find the chunk with the code block
-        code_chunks = [c for c in chunks if "```python" in c.chunk_text]
-        assert len(code_chunks) > 0
-
-        # Verify code block is complete (has both opening and closing)
-        for chunk in code_chunks:
-            if "```python" in chunk.chunk_text:
-                assert chunk.chunk_text.count("```") >= 2
-
-
-# =============================================================================
-# Cleaner Tests
-# =============================================================================
-
-
-class TestDocumentCleaner:
-    """Test document cleaner."""
-
-    def test_clean_text(self):
-        """Test basic text cleaning."""
-        from datus.storage.document.cleaner.doc_cleaner import DocumentCleaner
-
-        cleaner = DocumentCleaner()
-
-        # Test control character removal
-        text = "Hello\x00World\x07!"
-        cleaned = cleaner.clean_text(text)
-        assert "\x00" not in cleaned
-        assert "\x07" not in cleaned
-
-    def test_clean_preserves_code_blocks(self):
-        """Test that cleaning preserves code blocks."""
-        from datus.storage.document.cleaner.doc_cleaner import DocumentCleaner
-
-        cleaner = DocumentCleaner(preserve_code_blocks=True)
-
-        text = """Some text.
-
-```python
-def   hello():
-    pass
-```
-
-More text."""
-
-        cleaned = cleaner.clean_text(text)
-        assert "```python" in cleaned
-        assert "def   hello" in cleaned  # Spaces in code preserved
-
-
-# =============================================================================
-# Metadata Extractor Tests
-# =============================================================================
-
-
-class TestMetadataExtractor:
-    """Test metadata extractor."""
-
-    def test_extract_keywords(self):
-        """Test keyword extraction."""
-        from datus.storage.document.parser.metadata_extractor import MetadataExtractor
-
-        extractor = MetadataExtractor()
-
-        text = """
-        This document describes how to CREATE TABLE in Snowflake.
-        You can use SELECT to query data and JOIN tables together.
-        The PRIMARY KEY constraint ensures uniqueness.
-        Use CREATE TABLE to create a new table. SELECT is also common.
-        """
-
-        keywords = extractor.extract_keywords(text, platform="snowflake")
-
-        assert len(keywords) > 0
-        # Should find SQL keywords or compound terms
-        keyword_str = " ".join(keywords).lower()
-        # Check for either single keywords or compound terms
-        assert any(term in keyword_str for term in ["create", "select", "join", "table", "primary_key", "create_table"])
-
-    def test_detect_language_english(self):
-        """Test English language detection."""
-        from datus.storage.document.parser.metadata_extractor import MetadataExtractor
-
-        extractor = MetadataExtractor()
-
-        text = "This is a test document in English."
-        lang = extractor._detect_language(text)
-        assert lang == "en"
-
-    def test_detect_language_chinese(self):
-        """Test Chinese language detection."""
-        from datus.storage.document.parser.metadata_extractor import MetadataExtractor
-
-        extractor = MetadataExtractor()
-
-        text = "这是一个中文测试文档，包含很多中文字符。"
-        lang = extractor._detect_language(text)
-        assert lang == "zh"
-
-
-# =============================================================================
-# Rate Limiter Tests
-# =============================================================================
-
-
-class TestRateLimiter:
-    """Test rate limiter."""
-
-    def test_rate_limiter_initialization(self):
-        """Test rate limiter initializes correctly."""
-        from datus.storage.document.fetcher.rate_limiter import RateLimiter
-
-        limiter = RateLimiter()
-
-        # Should have default configs
-        assert "api.github.com" in limiter._configs
-        assert "default" in limiter._configs
-
-    def test_configure_github_authenticated(self):
-        """Test GitHub authenticated configuration."""
-        from datus.storage.document.fetcher.rate_limiter import RateLimiter
-
-        limiter = RateLimiter()
-        limiter.configure_github_authenticated(requests_per_hour=5000)
-
-        config = limiter._configs["api.github.com"]
-        assert config.requests_per_hour == 5000
-
-
-# =============================================================================
-# SearchTool Tests
-# =============================================================================
-
-
+@pytest.mark.nightly
 class TestSearchTool:
     """Test SearchTool methods: list_document_nav, get_document, search_document.
 
@@ -466,16 +86,13 @@ class TestSearchTool:
         assert nav_result.success and len(nav_result.nav_tree) > 0
 
         # Find a leaf node (node with empty children) from the pure tree
-        # Handles both single-version (name/children) and multi-version (version/tree) formats
         def _find_first_doc(nodes):
             for node in nodes:
-                # Multi-version format: {"version": ..., "tree": [...]}
                 if "tree" in node:
                     found = _find_first_doc(node["tree"])
                     if found:
                         return found
                     continue
-                # Leaf node: has name but empty children
                 if not node.get("children"):
                     return node.get("name")
                 found = _find_first_doc(node["children"])
@@ -634,6 +251,21 @@ class TestSearchTool:
         deleted = tmp_store.delete_docs(version="v1")
         assert deleted == 0
 
+    @pytest.mark.parametrize("platform,version,keywords", [("starrocks", "", ["DATE_TRUNC", "CURRENT_DATE"])])
+    def test_search_document_multiple_keywords(self, platform: str, version: str, keywords: List[str]):
+        """search_document with multiple keywords returns results for each."""
+        result = self.tool.search_document(
+            platform=platform,
+            keywords=keywords,
+            version=version if version else None,
+            top_n=3,
+        )
+
+        assert result.success, f"search_document failed: {result.error}"
+        # Each keyword should have its own entry in the docs dict
+        for keyword in keywords:
+            assert keyword in result.docs, f"Keyword '{keyword}' missing from result.docs"
+
     def test_search_document_wrong_platform(self):
         """search_document on a non-existent platform returns empty results."""
         result = self.tool.search_document(
@@ -644,163 +276,3 @@ class TestSearchTool:
 
         assert result.success
         assert result.doc_count == 0
-
-
-# =============================================================================
-# Integration Tests
-# =============================================================================
-
-
-class TestIntegration:
-    """Integration tests (require network access)."""
-
-    @pytest.mark.skip(reason="Requires GitHub token")
-    def test_github_fetcher_integration(self):
-        """Test GitHub fetcher with real API."""
-        from datus.storage.document.fetcher.github_fetcher import GitHubFetcher
-
-        fetcher = GitHubFetcher(platform="test")
-        info = fetcher.get_repo_info("duckdb/duckdb")
-
-        assert info["full_name"] == "duckdb/duckdb"
-        assert "description" in info
-
-    @pytest.mark.skip(reason="Requires network access to docs.snowflake.com")
-    def test_web_fetcher_integration(self):
-        """Full integration test: Fetch → Parse → Clean → Chunk.
-
-        Tests the complete documentation processing pipeline:
-        1. Fetch HTML documents from Snowflake docs
-        2. Parse HTML to extract structured content
-        3. Clean the parsed content
-        4. Chunk into embedding-ready PlatformDocChunk objects
-
-        Note: Using max_depth=0 to limit crawling scope.
-        """
-        from datus.storage.document.chunker.semantic_chunker import ChunkingConfig, SemanticChunker
-        from datus.storage.document.cleaner.doc_cleaner import DocumentCleaner
-        from datus.storage.document.fetcher.web_fetcher import WebFetcher
-        from datus.storage.document.parser.html_parser import HTMLParser
-
-        # ========== Step 1: Fetch ==========
-        print("\n" + "=" * 60)
-        print("Step 1: FETCH - Fetching documents from Snowflake docs...")
-        print("=" * 60)
-
-        fetcher = WebFetcher(platform="snowflake", version="latest")
-        fetched_docs = fetcher.fetch(
-            "https://docs.snowflake.com/en/user-guide/data-load-snowpipe-intro",
-            max_depth=0,
-        )
-
-        print(f"✓ Fetched {len(fetched_docs)} document(s)")
-        for i, doc in enumerate(fetched_docs[:3]):
-            print(f"  [{i+1}] {doc.doc_path} ({len(doc.raw_content)} bytes)")
-
-        assert len(fetched_docs) >= 1
-        assert fetched_docs[0].platform == "snowflake"
-
-        # ========== Step 2: Parse ==========
-        print("\n" + "=" * 60)
-        print("Step 2: PARSE - Parsing HTML documents...")
-        print("=" * 60)
-
-        parser = HTMLParser()
-        parsed_docs = []
-
-        for doc in fetched_docs:
-            try:
-                parsed = parser.parse(doc)
-                parsed_docs.append((doc, parsed))
-                print(f"✓ Parsed: {parsed.title or doc.doc_path}")
-                print(f"    Sections: {len(parsed.sections)}")
-            except Exception as e:
-                print(f"✗ Failed to parse {doc.doc_path}: {e}")
-
-        assert len(parsed_docs) >= 1
-        print(f"✓ Successfully parsed {len(parsed_docs)} document(s)")
-
-        # ========== Step 3: Clean ==========
-        print("\n" + "=" * 60)
-        print("Step 3: CLEAN - Cleaning parsed content...")
-        print("=" * 60)
-
-        cleaner = DocumentCleaner(preserve_code_blocks=True)
-
-        for _doc, parsed in parsed_docs:
-            for section in parsed.sections:
-                section.content = cleaner.clean_text(section.content)
-                for child in section.children:
-                    child.content = cleaner.clean_text(child.content)
-
-        print(f"✓ Cleaned {len(parsed_docs)} document(s)")
-
-        # ========== Step 4: Chunk ==========
-        print("\n" + "=" * 60)
-        print("Step 4: CHUNK - Creating embedding-ready chunks...")
-        print("=" * 60)
-
-        config = ChunkingConfig(
-            chunk_size=512,
-            chunk_overlap=50,
-            preserve_code_blocks=True,
-        )
-        chunker = SemanticChunker(config=config)
-
-        all_chunks: list[PlatformDocChunk] = []
-
-        for doc, parsed in parsed_docs:
-            metadata = {
-                "platform": doc.platform,
-                "version": doc.version,
-                "source_type": doc.source_type,
-                "source_url": doc.source_url,
-                "doc_path": doc.doc_path,
-            }
-            chunks = chunker.chunk(parsed, metadata)
-            all_chunks.extend(chunks)
-            print(f"✓ {doc.doc_path}: {len(chunks)} chunks")
-
-        print(f"\n✓ Total chunks created: {len(all_chunks)}")
-
-        # ========== Validate Results ==========
-        assert len(all_chunks) > 0
-        assert all(isinstance(c, PlatformDocChunk) for c in all_chunks)
-
-        # Print sample chunks
-        print("\n" + "=" * 60)
-        print("RESULTS: Sample PlatformDocChunk objects")
-        print("=" * 60)
-
-        for i, chunk in enumerate(all_chunks[:3]):
-            print(f"\n--- Chunk {i+1}/{len(all_chunks)} ---")
-            print(f"  chunk_id:    {chunk.chunk_id}")
-            print(f"  version:     {chunk.version}")
-            print(f"  title:       {chunk.title}")
-            print(f"  titles:      {chunk.titles}")
-            print(f"  nav_path:    {chunk.nav_path}")
-            print(f"  group_name:  {chunk.group_name}")
-            print(f"  hierarchy:   {chunk.hierarchy}")
-            print(f"  keywords:    {chunk.keywords}")
-            print(f"  language:    {chunk.language}")
-            print(f"  chunk_text:  ({len(chunk.chunk_text)} chars)")
-
-        # ========== Summary ==========
-        print("\n" + "=" * 60)
-        print("SUMMARY")
-        print("=" * 60)
-        print(f"  Documents fetched:  {len(fetched_docs)}")
-        print(f"  Documents parsed:   {len(parsed_docs)}")
-        print(f"  Total chunks:       {len(all_chunks)}")
-        print(f"  Avg chunk length:   {sum(len(c.chunk_text) for c in all_chunks) // len(all_chunks)} chars")
-        print("=" * 60)
-
-        # Final assertions
-        for chunk in all_chunks:
-            assert chunk.chunk_id, "chunk_id should not be empty"
-            assert chunk.chunk_text, "chunk_text should not be empty"
-            assert chunk.version, "version should not be empty"
-            assert chunk.titles is not None, "titles should not be None"
-            assert chunk.nav_path is not None, "nav_path should not be None"
-            assert chunk.group_name is not None, "group_name should not be None"
-            assert chunk.hierarchy is not None, "hierarchy should not be None"

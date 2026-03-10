@@ -112,6 +112,7 @@ class TestDBFuncToolIntegrationReal:
         assert tool.connector is not None
 
 
+@pytest.mark.nightly
 class TestSqliteMultiConnector:
     @pytest.fixture
     def agent_config(self):
@@ -230,6 +231,41 @@ class TestDuckDBTool:
         assert "list_tables" in tool_names
         assert "describe_table" in tool_names
         assert "read_query" in tool_names
+
+
+# =============================================================================
+# Connector interface tests (merged from test_regression_db.py)
+# =============================================================================
+
+
+class TestConnectorInterface:
+    """Test BaseSqlConnector.test_connection() directly."""
+
+    def test_sqlite_test_connection(self):
+        """Test SQLite connector test_connection() health check."""
+        from datus.tools.db_tools.config import SQLiteConfig
+        from datus.tools.db_tools.registry import connector_registry
+
+        config = SQLiteConfig(db_path="tests/data/SSB.db")
+        connector = connector_registry.create_connector("sqlite", config)
+        try:
+            result = connector.test_connection()
+            assert result is not None
+        finally:
+            connector.close()
+
+    def test_duckdb_test_connection(self):
+        """Test DuckDB connector test_connection() health check."""
+        from datus.tools.db_tools.config import DuckDBConfig
+        from datus.tools.db_tools.registry import connector_registry
+
+        config = DuckDBConfig(db_path="tests/data/datus_metricflow_db/duck.db")
+        connector = connector_registry.create_connector("duckdb", config)
+        try:
+            result = connector.test_connection()
+            assert result is not None
+        finally:
+            connector.close()
 
 
 # =============================================================================

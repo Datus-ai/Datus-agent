@@ -238,3 +238,28 @@ class TestBootstrapKB:
         assert (
             sql_result.details.get("match_count", 0) > 0
         ), f"Reference SQL wildcard should match entries, got {sql_result.details.get('match_count', 0)}"
+
+    def test_invalid_scoped_context(self, agent_config: AgentConfig):
+        """N1-10: Invalid scoped context (nonexistent tables/metrics) handles gracefully."""
+        sub_agent_config = _make_sub_agent_config(
+            tables="nonexistent_db.nonexistent_table",
+            metrics="nonexistent_db",
+            sqls="nonexistent_db",
+        )
+        agent_config.agentic_nodes[sub_agent_config.system_prompt] = sub_agent_config
+        bootstrapper = SubAgentBootstrapper(sub_agent=sub_agent_config, agent_config=agent_config)
+
+        result = bootstrapper.run(strategy="plan")
+        assert result is not None, "Plan result should not be None even with invalid context"
+
+        # Metadata should find zero matches
+        metadata_result = [r for r in result.results if r.component == "metadata"][0]
+        assert (
+            metadata_result.details.get("match_count", 0) == 0
+        ), f"Invalid table pattern should match 0 tables, got {metadata_result.details.get('match_count', 0)}"
+
+        # Metrics should find zero matches
+        metrics_result = [r for r in result.results if r.component == "metrics"][0]
+        assert (
+            metrics_result.details.get("match_count", 0) == 0
+        ), f"Invalid metrics pattern should match 0, got {metrics_result.details.get('match_count', 0)}"

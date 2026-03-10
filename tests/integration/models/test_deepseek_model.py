@@ -1,3 +1,5 @@
+import uuid
+
 import pytest
 from agents import set_tracing_disabled
 from dotenv import load_dotenv
@@ -318,8 +320,6 @@ class TestDeepSeekModel:
     @pytest.mark.asyncio
     async def test_generate_with_mcp_session(self):
         """Test MCP integration with session management."""
-        import uuid
-
         session_id = f"test_mcp_session_{uuid.uuid4().hex[:8]}"
 
         # Create session
@@ -390,8 +390,6 @@ class TestDeepSeekModel:
     @pytest.mark.asyncio
     async def test_generate_with_mcp_stream_session(self):
         """Test MCP streaming with session management."""
-        import uuid
-
         session_id = f"test_stream_session_{uuid.uuid4().hex[:8]}"
 
         # Create session
@@ -591,8 +589,6 @@ class TestDeepSeekModel:
     @pytest.mark.asyncio
     async def test_generate_with_mcp_stream_session_acceptance(self):
         """Acceptance test for MCP streaming with session management."""
-        import uuid
-
         session_id = f"test_acceptance_session_{uuid.uuid4().hex[:8]}"
 
         # Create session

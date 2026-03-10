@@ -7,6 +7,9 @@ import yaml
 from datus.cli.repl import DatusCLI
 from datus.schemas.node_models import TableSchema
 from tests.conftest import TEST_DATA_DIR
+from tests.integration.conftest import wait_for_agent
+
+pytestmark = pytest.mark.nightly
 
 
 @pytest.fixture
@@ -178,16 +181,7 @@ def test_chat_command(mock_args, capsys, gen_sql_input: List[Dict[str, Any]]):
             mock_internal_prompt.side_effect = ["n"]
             cli = DatusCLI(args=mock_args)
 
-            import time
-
-            # Wait for agent to be ready to avoid flakiness
-            timeout = 60  # seconds
-            start_time = time.time()
-            while not cli.agent_ready:
-                if time.time() - start_time > timeout:
-                    pytest.fail("Agent initialization timed out.")
-                time.sleep(0.5)
-
+            wait_for_agent(cli)
             cli.run()
 
     captured = capsys.readouterr()
@@ -211,6 +205,7 @@ def test_chat_command_with_ext_knowledge(mock_args):
     Verifies that the query with 'consider all knowledge' triggers knowledge search
     and generates SQL correctly.
     """
+    import asyncio
 
     # bird california_schools q2
     question = (
@@ -228,16 +223,7 @@ def test_chat_command_with_ext_knowledge(mock_args):
             mock_internal_prompt.side_effect = ["n"]
             cli = DatusCLI(args=mock_args)
 
-            import time
-
-            # Wait for agent to be ready to avoid flakiness
-            timeout = 60  # seconds
-            start_time = time.time()
-            while not cli.agent_ready:
-                if time.time() - start_time > timeout:
-                    pytest.fail("Agent initialization timed out.")
-                time.sleep(0.5)
-
+            wait_for_agent(cli)
             cli.run()
 
     # Use internal state for assertions instead of capsys,
@@ -272,8 +258,6 @@ def test_chat_command_with_ext_knowledge(mock_args):
 
     # Check that a chat node was created and has an active session
     assert cli.chat_commands.current_node is not None, "Should have an active chat node."
-    import asyncio
-
     session_info = asyncio.run(cli.chat_commands.current_node.get_session_info())
     assert session_info.get("session_id"), "Should have a valid session ID."
     assert session_info.get("action_count", 0) > 0, "Session should have recorded actions."
@@ -296,12 +280,10 @@ def test_chat_info(mock_args, capsys):
     captured = capsys.readouterr()
     stdout = captured.out
 
-    # print("$$$", stdout)
-
-    # Check for "Tool cal" responses
     assert stdout.strip().endswith("No active session.")
 
 
+@pytest.mark.acceptance
 def test_save_command(mock_args, capsys):
     """
     Tests the '!save' command with successful file save.
@@ -337,3 +319,119 @@ def test_save_command(mock_args, capsys):
 
     assert "Save Output" in stdout
     assert "saved to" in stdout or "test_output" in stdout
+
+
+# ── Search edge case tests (merged from test_cli_search.py) ──
+
+
+@pytest.mark.nightly
+class TestCLISearch:
+    """N12: CLI search command edge case tests."""
+
+    def test_search_document_command(self, mock_args, capsys):
+        """N12-04: !sd (search_document) command executes and returns results."""
+        with patch("datus.cli.repl.PromptSession.prompt") as mock_repl_prompt:
+            mock_repl_prompt.side_effect = ["!sd", EOFError]
+
+            with patch("datus.cli.repl.DatusCLI.prompt_input") as mock_internal:
+                # !sd prompts: platform, version, keywords, top_n
+                mock_internal.side_effect = [
+                    "snowflake",  # platform name
+                    "",  # version (optional)
+                    "SELECT, WHERE",  # keywords
+                    "5",  # top_n
+                ]
+
+                cli = DatusCLI(args=mock_args)
+                wait_for_agent(cli)
+                cli.run()
+
+        captured = capsys.readouterr()
+        stdout = captured.out
+
+        # Command should execute
+        assert "Search Document" in stdout, f"Should show 'Search Document' header, got: {stdout[:200]}"
+        # Should not have unhandled exceptions
+        assert "Traceback" not in stdout, "Should not have Python traceback in output"
+
+    def test_schema_linking_no_results(self, mock_args, capsys):
+        """N12-05: !sl with nonsense query handles gracefully."""
+        with patch("datus.cli.repl.PromptSession.prompt") as mock_repl_prompt:
+            mock_repl_prompt.side_effect = ["!sl", EOFError]
+
+            with patch("datus.cli.repl.DatusCLI.prompt_input") as mock_internal:
+                mock_internal.side_effect = [
+                    "xyznonexistent_random_query_12345_abcdef",  # nonsense query
+                    "california_schools",  # database
+                    "5",  # top_n
+                ]
+
+                cli = DatusCLI(args=mock_args)
+                wait_for_agent(cli)
+                cli.run()
+
+        captured = capsys.readouterr()
+        stdout = captured.out
+
+        # Command should execute without crash
+        assert "Schema Linking" in stdout, f"Should show 'Schema Linking' header, got: {stdout[:200]}"
+        # Should not crash
+        assert "Traceback" not in stdout, "Should not have Python traceback"
+        assert "Error during schema linking" not in stdout, "Should not have error during schema linking"
+
+    def test_search_reference_sql_with_subject_path(self, mock_args, capsys):
+        """N12-06: !sq with subject_path filter works correctly."""
+        with patch("datus.cli.repl.PromptSession.prompt") as mock_repl_prompt:
+            mock_repl_prompt.side_effect = ["!sq", EOFError]
+
+            with patch("datus.cli.repl.DatusCLI.prompt_input") as mock_internal:
+                mock_internal.side_effect = [
+                    "schools with high test scores",  # query_text
+                    "california_schools",  # subject_path
+                    "5",  # top_n
+                ]
+
+                cli = DatusCLI(args=mock_args)
+                wait_for_agent(cli)
+                cli.run()
+
+        captured = capsys.readouterr()
+        stdout = captured.out
+
+        # Command should execute
+        assert "Search Reference SQL" in stdout, f"Should show search header, got: {stdout[:200]}"
+        # Should have results or no-results message
+        assert (
+            "Reference SQL Search Results" in stdout or "No reference SQL" in stdout
+        ), f"Should show results or no-results message, got: {stdout[:300]}"
+        # Should not have errors
+        assert "Error searching reference sql:" not in stdout, "Should not have error message"
+        assert "Traceback" not in stdout
+
+    def test_search_metrics_special_characters(self, mock_args, capsys):
+        """N12-07: !sm handles special characters in query gracefully."""
+        with patch("datus.cli.repl.PromptSession.prompt") as mock_repl_prompt:
+            mock_repl_prompt.side_effect = ["!sm", EOFError]
+
+            with patch("datus.cli.repl.DatusCLI.prompt_input") as mock_internal:
+                mock_internal.side_effect = [
+                    "revenue & profit (2024)",  # query with special chars
+                    "",  # empty subject_path
+                    "3",  # top_n
+                ]
+
+                cli = DatusCLI(args=mock_args)
+                wait_for_agent(cli)
+                cli.run()
+
+        captured = capsys.readouterr()
+        stdout = captured.out
+
+        # Command should execute
+        assert "Search Metrics" in stdout, f"Should show 'Search Metrics' header, got: {stdout[:200]}"
+        # Should handle gracefully
+        assert "Traceback" not in stdout, "Should not have Python traceback"
+        # Should show results or appropriate message
+        assert (
+            "Metrics Search Results" in stdout or "No metrics found" in stdout or "Found" in stdout
+        ), f"Should show results or no-results message, got: {stdout[:300]}"

@@ -1,3 +1,5 @@
+import uuid
+
 import pytest
 from agents import set_tracing_disabled
 from dotenv import load_dotenv
@@ -160,8 +162,6 @@ class TestClaudeModel:
     @pytest.mark.asyncio
     async def test_generate_with_tools_session(self):
         """Test MCP integration with session management."""
-        import uuid
-
         session_id = f"test_mcp_session_{uuid.uuid4().hex[:8]}"
 
         # Create session

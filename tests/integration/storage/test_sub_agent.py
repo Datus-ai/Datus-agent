@@ -7,9 +7,6 @@ import pytest
 
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.agent_models import ScopedContext, SubAgentConfig
-from datus.storage.metric.store import MetricRAG
-from datus.storage.reference_sql import ReferenceSqlRAG
-from datus.storage.schema_metadata import SchemaWithValueRAG
 from datus.storage.sub_agent_kb_bootstrap import SUPPORTED_COMPONENTS, SubAgentBootstrapper
 from datus.tools.func_tool.context_search import ContextSearchTools
 from datus.utils.sub_agent_manager import SubAgentManager
@@ -22,105 +19,6 @@ def agent_config() -> AgentConfig:
     agent_config.rag_base_path = "tests/data"
     agent_config.agentic_nodes = copy.deepcopy(agent_config.agentic_nodes)
     return agent_config
-
-
-class TestBootstrap:
-    def _setup_sub_agent_config(
-        self,
-        tables: str = "california_schools.*",
-        metrics: str = "california_schools",
-        sqls: str = "california_schools",
-    ) -> SubAgentConfig:
-        scoped_context = ScopedContext(tables=tables, metrics=metrics, sqls=sqls)
-        return SubAgentConfig(
-            system_prompt="test",
-            agent_description="this is a test agent",
-            tools="",
-            mcp="",
-            scoped_context=scoped_context,
-        )
-
-    @pytest.mark.nightly
-    def test_plan(self, agent_config: AgentConfig):
-        sub_agent_config = self._setup_sub_agent_config()
-        scoped_context = sub_agent_config.scoped_context
-
-        agent_config.agentic_nodes[sub_agent_config.system_prompt] = sub_agent_config
-
-        bootstrapper = SubAgentBootstrapper(sub_agent=sub_agent_config, agent_config=agent_config)
-
-        result = bootstrapper.run(strategy="plan")
-        assert result
-        assert result.storage_path == "tests/data/sub_agents/test"
-        component_results = result.results
-        assert len(component_results) == len(
-            SUPPORTED_COMPONENTS
-        ), f"Expected {len(SUPPORTED_COMPONENTS)} components, got {len(component_results)}"
-
-        # Filter by component name instead of positional index
-        metadata = [r for r in component_results if r.component == "metadata"][0]
-        metrics = [r for r in component_results if r.component == "metrics"][0]
-        sql = [r for r in component_results if r.component == "reference_sql"][0]
-
-        assert (
-            metadata.details.get("match_count", 0) >= 3
-        ), f"Metadata should match >= 3 tables, got {metadata.details.get('match_count', 0)}"
-        assert (
-            metrics.details.get("match_count", 0) == 1
-        ), f"Metrics should match 1, got {metrics.details.get('match_count', 0)}"
-        assert sql.details.get("match_count", 0) == 13, f"SQL should match 13, got {sql.details.get('match_count', 0)}"
-
-        # Part 2: wildcard patterns
-        scoped_context.tables = "california_schools.*"
-        scoped_context.metrics = "california_schools.*"
-        scoped_context.sqls = "california_schools.*"
-
-        bootstrapper = SubAgentBootstrapper(sub_agent=sub_agent_config, agent_config=agent_config)
-
-        result = bootstrapper.run(strategy="plan")
-        assert result
-        component_results = result.results
-        assert len(component_results) == len(SUPPORTED_COMPONENTS)
-
-        metadata = [r for r in component_results if r.component == "metadata"][0]
-        metrics = [r for r in component_results if r.component == "metrics"][0]
-        sql = [r for r in component_results if r.component == "reference_sql"][0]
-
-        assert metadata.details.get("match_count", 0) >= 3
-        assert metrics.details.get("match_count", 0) == 1
-        assert sql.details.get("match_count", 0) == 13
-
-    @pytest.mark.nightly
-    def test_overwrite(self, agent_config: AgentConfig):
-        sub_agent_config = self._setup_sub_agent_config()
-        agent_config.agentic_nodes[sub_agent_config.system_prompt] = sub_agent_config
-        bootstrapper = SubAgentBootstrapper(sub_agent=sub_agent_config, agent_config=agent_config)
-
-        result = bootstrapper.run(strategy="overwrite")
-        assert result
-        assert result.storage_path == "tests/data/sub_agents/test"
-
-        component_results = result.results
-
-        # Filter by component name instead of positional index
-        metadata_result = [r for r in component_results if r.component == "metadata"][0]
-        metrics_result = [r for r in component_results if r.component == "metrics"][0]
-        sql_result = [r for r in component_results if r.component == "reference_sql"][0]
-
-        # metadata
-        table_schema_rag = SchemaWithValueRAG(agent_config, sub_agent_name="test")
-        assert metadata_result.details.get("stored_tables", 0) == table_schema_rag.schema_store.table_size()
-
-        # metrics
-        metrics_rag = MetricRAG(agent_config, sub_agent_name="test")
-        assert metrics_result.details.get("stored_metrics", 0) == metrics_rag.storage.table_size()
-
-        # sql
-        sql_rag = ReferenceSqlRAG(agent_config, sub_agent_name="test")
-        assert sql_result.details.get("stored_sqls", 0) == sql_rag.reference_sql_storage.table_size()
-
-        for component in SUPPORTED_COMPONENTS:
-            bootstrapper._clear_component(component)
 
 
 # =============================================================================
@@ -247,6 +145,67 @@ class TestSubAgentManager:
         # Test get_agent for nonexistent
         nonexistent = manager.get_agent("nonexistent_agent_xyz")
         assert nonexistent is None, "get_agent for nonexistent agent should return None"
+
+    def test_update_and_rename_sub_agent(self, tmp_path):
+        """N7-03: Update an existing sub-agent and rename it."""
+        manager, config_mgr, stub_agent_config = _build_manager(tmp_path)
+
+        # Create initial agent
+        original = SubAgentConfig(
+            system_prompt="original_agent",
+            agent_description="Original description",
+            scoped_context=ScopedContext(tables="db.table_a"),
+        )
+        manager.save_agent(original)
+        assert "original_agent" in manager.list_agents()
+
+        # Update description without renaming
+        updated = SubAgentConfig(
+            system_prompt="original_agent",
+            agent_description="Updated description",
+            scoped_context=ScopedContext(tables="db.table_a,db.table_b"),
+        )
+        result = manager.save_agent(updated, previous_name="original_agent")
+        assert result["changed"] is True
+
+        retrieved = manager.get_agent("original_agent")
+        assert retrieved["agent_description"] == "Updated description"
+
+        # Rename agent
+        renamed = SubAgentConfig(
+            system_prompt="renamed_agent",
+            agent_description="Updated description",
+            scoped_context=ScopedContext(tables="db.table_a,db.table_b"),
+        )
+        result = manager.save_agent(renamed, previous_name="original_agent")
+        assert result["changed"] is True
+
+        agents = manager.list_agents()
+        assert "renamed_agent" in agents, "Renamed agent should exist"
+        assert "original_agent" not in agents, "Old name should be removed"
+
+    def test_delete_sub_agent(self, tmp_path):
+        """N7-04: Delete a sub-agent and verify removal."""
+        manager, config_mgr, stub_agent_config = _build_manager(tmp_path)
+
+        # Create agent
+        config = SubAgentConfig(
+            system_prompt="to_delete",
+            agent_description="Agent to be deleted",
+            scoped_context=ScopedContext(tables="db.temp_table"),
+        )
+        manager.save_agent(config)
+        assert "to_delete" in manager.list_agents()
+
+        # Delete agent
+        removed = manager.remove_agent("to_delete")
+        assert removed is True, "remove_agent should return True for existing agent"
+        assert "to_delete" not in manager.list_agents(), "Deleted agent should not appear in list"
+        assert manager.get_agent("to_delete") is None, "get_agent should return None for deleted agent"
+
+        # Delete nonexistent agent
+        removed_again = manager.remove_agent("nonexistent_xyz")
+        assert removed_again is False, "remove_agent should return False for nonexistent agent"
 
     def test_sub_agent_scoped_kb_execution(self, agent_config: AgentConfig):
         """N7-06: Sub-agent with scoped context can query knowledge base."""

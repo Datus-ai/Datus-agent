@@ -122,7 +122,7 @@ Error code ranges: 100000–199999 (common), 200000–299999 (node), 300000–39
 |----------|---------|---------|
 | `tests/unit_tests/` | `test_{module_name}.py` | `test_sql_utils.py` |
 | `tests/` root | `test_{feature_name}.py` | `test_connector_duckdb.py` |
-| `tests/integration/` | `test_integration_{scenario}.py` | `test_integration_mcp_server.py` |
+| `tests/integration/` | `test_{scenario}.py` | `test_mcp_server.py` |
 | `tests/regression/` | `test_regression_{dimension}.py` | `test_regression_llm.py` |
 
 ### Source → Test File Mapping Rule
@@ -157,14 +157,14 @@ Create intermediate `__init__.py` files when adding tests to new subdirectories.
 | `datus/models/{provider}_model.py` | integration/models/test_*_model.py, regression/test_regression_llm.py |
 | `datus/agent/node/` | test_node.py, test_schema_linking.py, test_date_parser_*.py |
 | `datus/agent/workflow.py` | test_workflow.py, test_planning.py |
-| `datus/cli/repl.py` | test_cli_rich.py, regression/test_regression_web*.py |
+| `datus/cli/repl.py` | test_cli_commands.py, regression/test_regression_web*.py |
 | `datus/cli/tutorial.py` | test_tutorial.py |
 | `datus/cli/bi_dashboard.py` | test_bi_dashboard.py, unit_tests/test_bi_superset_adaptor.py |
 | `datus/tools/func_tool/` | unit_tests/test_db_func_tools.py, unit_tests/test_context_search_tools.py, test_func_tools_db.py |
 | `datus/tools/skill_tools/` | test_skill_config.py, test_skill_registry.py, test_skill_manager.py, test_skill_bash_tool.py, test_skill_func_tool.py |
 | `datus/tools/permission/` | test_permission_config.py, test_permission_hooks.py, test_permission_manager.py |
 | `datus/tools/bi_tools/` | unit_tests/test_bi_superset_adaptor.py, test_bi_dashboard.py |
-| `datus/mcp_server.py` | test_mcp_server.py, integration/test_integration_mcp_server.py |
+| `datus/mcp_server.py` | test_mcp_server.py, integration/tools/test_mcp_server.py |
 | `datus/storage/` | unit_tests/test_storage_*.py, unit_tests/test_subject_tree_store.py, test_storage.py |
 | `datus/storage/schema_metadata/` | test_schema_recall_*.py, test_llm_recall.py |
 | `datus/storage/document/` | test_doc_search.py, integration/test_integration_platform_doc.py |
@@ -178,6 +178,6 @@ Create intermediate `__init__.py` files when adding tests to new subdirectories.
 - **New public functions/classes** → CI-level tests in `tests/unit_tests/`
 - **New agent nodes** → nightly test in `test_node.py`
 - **New LLM adaptors** → register in `regression/test_regression_llm.py`
-- **New CLI commands** → test in `test_cli_rich.py`
+- **New CLI commands** → test in `test_cli_commands.py`
 - **New MCP tools** → test in `test_mcp_server.py`
 - **New connectors** → tests following `test_connector_duckdb.py`

@@ -704,6 +704,24 @@ class TestSearchToolIntegration:
 class TestStoreOperationsIntegration:
     """Integration tests for DocumentStore operations."""
 
+    @pytest.fixture(autouse=True)
+    def clean_store(self):
+        """Clear shared table and document_store cache before each test.
+
+        Workaround: document_store() ignores storage_path and all instances
+        share the same global LanceDB table, causing data to accumulate
+        across tests. This fixture drops the table and clears the cache
+        so each test starts with a clean state.
+        """
+        # Drop existing table data if a cached store exists
+        try:
+            cached_store = document_store("__cleanup__")
+            cached_store.delete_docs()
+        except Exception:
+            pass
+        document_store.cache_clear()
+        yield
+
     def test_store_and_retrieve_chunks(self, temp_dir):
         """Test storing and retrieving chunks."""
         store = document_store("test_store_retrieve")
@@ -836,6 +854,17 @@ class TestStoreOperationsIntegration:
 
 class TestStreamingProcessorIntegration:
     """Integration tests for StreamingDocProcessor."""
+
+    @pytest.fixture(autouse=True)
+    def clean_store(self):
+        """Clear shared table before each test (same workaround as TestStoreOperationsIntegration)."""
+        try:
+            cached_store = document_store("__cleanup__")
+            cached_store.delete_docs()
+        except Exception:
+            pass
+        document_store.cache_clear()
+        yield
 
     def test_streaming_processor_local(self, local_docs_dir, temp_dir):
         """Test streaming processor with local documents."""

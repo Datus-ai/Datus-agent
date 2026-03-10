@@ -97,6 +97,15 @@ agent:
     gen_semantic_model:
       max_turns: 40
       system_prompt: gen_semantic_model
+    gen_metrics:
+      max_turns: 5
+      system_prompt: gen_metrics
+    gen_ext_knowledge:
+      max_turns: 5
+      system_prompt: gen_ext_knowledge
+    gen_sql_summary:
+      max_turns: 5
+      system_prompt: gen_sql_summary
     chatbot:
       model: deepseek
       system_prompt: gen_sql
