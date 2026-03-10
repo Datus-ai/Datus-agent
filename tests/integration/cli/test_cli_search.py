@@ -5,12 +5,22 @@ Tests the search commands (!sl, !sq, !sm, !sd) in the CLI REPL.
 Covers edge cases, filtering, and error handling scenarios.
 """
 
+import time
 from argparse import Namespace
 from unittest.mock import patch
 
 import pytest
 
 from datus.cli.repl import DatusCLI
+
+
+def _wait_for_agent(cli, timeout=120):
+    """Wait for agent to be ready with timeout."""
+    start_time = time.time()
+    while not cli.agent_ready:
+        if time.time() - start_time > timeout:
+            pytest.fail("Agent initialization timed out.")
+        time.sleep(0.5)
 
 
 @pytest.fixture
@@ -45,6 +55,7 @@ class TestCLISearch:
                 ]
 
                 cli = DatusCLI(args=mock_args)
+                _wait_for_agent(cli)
                 cli.run()
 
         captured = capsys.readouterr()
@@ -68,6 +79,7 @@ class TestCLISearch:
                 ]
 
                 cli = DatusCLI(args=mock_args)
+                _wait_for_agent(cli)
                 cli.run()
 
         captured = capsys.readouterr()
@@ -92,6 +104,7 @@ class TestCLISearch:
                 ]
 
                 cli = DatusCLI(args=mock_args)
+                _wait_for_agent(cli)
                 cli.run()
 
         captured = capsys.readouterr()
@@ -120,6 +133,7 @@ class TestCLISearch:
                 ]
 
                 cli = DatusCLI(args=mock_args)
+                _wait_for_agent(cli)
                 cli.run()
 
         captured = capsys.readouterr()

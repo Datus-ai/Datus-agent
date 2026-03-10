@@ -2,13 +2,11 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 import yaml
 
 from datus.cli.interactive_init import InteractiveInit
 
 
-@pytest.mark.nightly
 class TestInit:
     """N4: Init configuration and connectivity tests."""
 

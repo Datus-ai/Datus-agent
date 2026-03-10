@@ -36,7 +36,7 @@ from mcp.client.streamable_http import streamablehttp_client
 from datus.mcp_server import DatusMCPServer, create_dynamic_app
 from mcp import ClientSession
 
-CONFIG_PATH = str(Path(__file__).resolve().parents[1] / "conf" / "agent.yml")
+CONFIG_PATH = str(Path(__file__).resolve().parents[3] / "conf" / "agent.yml")
 
 # Expected tool names for assertion reuse
 STATIC_EXPECTED_TOOLS = {
