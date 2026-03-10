@@ -30,8 +30,16 @@ For each temporal expression found:
    - 'relative': Single relative points (e.g., "yesterday", "tomorrow", "next Friday")
 3. Assign a confidence score (0.0-1.0) based on how clear the temporal reference is
 
-IMPORTANT: When you see range expressions like "从A到B" (from A to B), "A到B",
-extract the ENTIRE range as ONE expression, not as separate start/end points.
+IMPORTANT: When you see range expressions, extract the ENTIRE range as ONE expression, not as separate start/end points.
+Range patterns include:
+- English: "from A to B", "A to B", "since A", "between A and B", "A through B"
+- Chinese: "从A到B", "A到B", "自从A", "A至B"
+Examples that MUST be extracted as a SINGLE range expression:
+- "from last month to next month" → ONE expression with date_type "range"
+- "end of 2024 to now" → ONE expression with date_type "range"
+- "从去年到今天" → ONE expression with date_type "range"
+- "2024年底到现在" → ONE expression with date_type "range"
+Do NOT split these into two separate expressions.
 
 Return your response as a JSON object with a "dates" array containing the extracted temporal expressions.
 

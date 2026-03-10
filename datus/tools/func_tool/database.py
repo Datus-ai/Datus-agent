@@ -565,7 +565,7 @@ class DBFuncTool:
         bound_tools = []
         methods_to_convert: List[Callable] = [self.list_tables, self.describe_table]
 
-        if self.schema_rag:
+        if self.has_schema:
             methods_to_convert.append(self.search_table)
 
         methods_to_convert.extend(
