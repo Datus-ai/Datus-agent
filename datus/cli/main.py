@@ -101,6 +101,14 @@ class ArgumentParser:
             help="Subagent name to open directly (for web mode)",
         )
 
+        self.parser.add_argument(
+            "-p",
+            "--prompt",
+            type=str,
+            default=None,
+            help="Run a single prompt non-interactively and print the result to stdout",
+        )
+
     def parse_args(self):
         return self.parser.parse_args()
 
@@ -118,7 +126,10 @@ class Application:
             self.arg_parser.parser.print_help()
             return
 
-        if args.web:
+        if args.prompt:
+            cli = DatusCLI(args, interactive=False)
+            cli.run_prompt(args.prompt)
+        elif args.web:
             self._run_web_interface(args)
         else:
             cli = DatusCLI(args)

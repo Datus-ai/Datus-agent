@@ -74,6 +74,7 @@ class AgenticNode(Node):
         self.actions: List[ActionHistory] = []
         self.session_id: Optional[str] = None
         self._session: Optional[AdvancedSQLiteSession] = None
+        self.ephemeral: bool = False  # When True, use in-memory session (no SQLite persistence)
         self.last_summary: Optional[str] = None
         self.context_length: Optional[int] = None
 
@@ -82,6 +83,11 @@ class AgenticNode(Node):
         self.skill_manager: Optional["SkillManager"] = None
         self.skill_func_tool = None
         self._permission_callback: Optional[Callable[[str, str, Dict[str, Any]], Awaitable[bool]]] = None
+
+        # ActionBus - merges tool sub-actions into the main action stream
+        from datus.schemas.action_bus import ActionBus
+
+        self.action_bus = ActionBus()
 
         # Parse node configuration from agent.yml (available to all agentic nodes)
         self.node_config = self._parse_node_config(agent_config, self.get_node_name())
@@ -224,8 +230,17 @@ class AgenticNode(Node):
                 logger.info(f"Generated new session ID: {self.session_id}")
 
             if self.model:
-                self._session = self.model.create_session(self.session_id)
-                logger.debug(f"Created session: {self.session_id}")
+                if self.ephemeral:
+                    # In-memory session for sub-agents — no SQLite persistence
+                    self._session = AdvancedSQLiteSession(
+                        session_id=self.session_id,
+                        db_path=":memory:",
+                        create_tables=True,
+                    )
+                    logger.debug(f"Created ephemeral in-memory session: {self.session_id}")
+                else:
+                    self._session = self.model.create_session(self.session_id)
+                    logger.debug(f"Created session: {self.session_id}")
 
                 # If we have a summary from previous compact, return it
                 if self.last_summary:
@@ -388,6 +403,8 @@ class AgenticNode(Node):
             "scoped_context",
             "scoped_kb_path",
             "adapter_type",
+            "sql_file_threshold",
+            "sql_preview_lines",
         ]
         for attr in direct_attributes:
             # Handle both dict and object access patterns
@@ -829,7 +846,8 @@ class AgenticNode(Node):
         self, action_history_manager: Optional[ActionHistoryManager] = None
     ) -> AsyncGenerator[ActionHistory, None]:
         """
-        Execute with interaction support, merging execute_stream with broker.
+        Execute with interaction support, merging execute_stream with broker
+        and any tool action channels (e.g. sub-agent task actions).
 
         This is the method that UI components should call instead of execute_stream()
         when they want to handle interactions from hooks.
@@ -841,16 +859,19 @@ class AgenticNode(Node):
             action_history_manager: Optional action history manager for tracking
 
         Yields:
-            ActionHistory: Progress updates during execution, including INTERACTION actions
+            ActionHistory: Progress updates during execution, including
+            INTERACTION actions and tool sub-actions.
         """
-        from datus.cli.execution_state import merge_interaction_stream
-
         self.interrupt_controller.reset()
         broker = self._get_or_create_broker()
 
         action_stream = self.execute_stream(action_history_manager)
         try:
-            async for action in merge_interaction_stream(action_stream, broker):
+            async for action in self.action_bus.merge(
+                action_stream,
+                broker.fetch(),
+                on_primary_done=broker.close,
+            ):
                 self.interrupt_controller.check()
                 yield action
         except ExecutionInterrupted:

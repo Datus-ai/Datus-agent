@@ -2,6 +2,7 @@
 Test cases for DBFuncTool class in datus/tools/tools.py
 """
 
+import os
 from unittest.mock import Mock
 
 import pytest
@@ -1139,3 +1140,156 @@ class TestDBFuncToolMultiConnector:
         assert result.success == 1
         mock_db_manager.get_conn.assert_called_with("test_ns", "db2")
         mock_connector.execute_query.assert_called_once()
+
+
+class TestReadQueryWithSqlFilePath:
+    """Test cases for read_query SQL file path support."""
+
+    @pytest.fixture
+    def mock_connector(self):
+        connector = Mock()
+        connector.dialect = "postgresql"
+        connector.catalog_name = ""
+        connector.database_name = "db1"
+        connector.schema_name = "schema1"
+
+        mock_result = Mock()
+        mock_result.success = True
+        mock_result.sql_return = [{"id": 1, "name": "test"}]
+        connector.execute_query.return_value = mock_result
+        return connector
+
+    @pytest.fixture
+    def db_func_tool(self, mock_connector):
+        return DBFuncTool(mock_connector)
+
+    @pytest.mark.ci
+    def test_read_query_with_sql_file_path(self, db_func_tool, mock_connector, tmp_path):
+        """SQL file path should be read and executed."""
+        sql_content = "SELECT id, name FROM users WHERE active = 1;"
+        sql_file = tmp_path / "query.sql"
+        sql_file.write_text(sql_content, encoding="utf-8")
+
+        # Set workspace_root to tmp_path via agent_config
+        mock_config = Mock()
+        mock_config.workspace_root = str(tmp_path)
+        # Make storage attr not exist so it falls to legacy path
+        del mock_config.storage
+        db_func_tool.agent_config = mock_config
+
+        result = db_func_tool.read_query(sql=str(sql_file.relative_to(tmp_path)))
+
+        assert result.success == 1
+        mock_connector.execute_query.assert_called_once()
+        actual_sql = mock_connector.execute_query.call_args[0][0]
+        assert actual_sql == sql_content
+
+    @pytest.mark.ci
+    def test_read_query_with_nested_sql_file_path(self, db_func_tool, mock_connector, tmp_path):
+        """Nested SQL file path like sql/session_1/task.sql should work."""
+        sql_dir = tmp_path / "sql" / "session_1"
+        sql_dir.mkdir(parents=True)
+        sql_content = "SELECT COUNT(*) FROM orders;"
+        sql_file = sql_dir / "task.sql"
+        sql_file.write_text(sql_content, encoding="utf-8")
+
+        mock_config = Mock()
+        mock_config.workspace_root = str(tmp_path)
+        del mock_config.storage
+        db_func_tool.agent_config = mock_config
+
+        result = db_func_tool.read_query(sql="sql/session_1/task.sql")
+
+        assert result.success == 1
+        actual_sql = mock_connector.execute_query.call_args[0][0]
+        assert actual_sql == sql_content
+
+    @pytest.mark.ci
+    def test_read_query_with_nonexistent_file(self, db_func_tool, tmp_path):
+        """Non-existent SQL file should return error."""
+        mock_config = Mock()
+        mock_config.workspace_root = str(tmp_path)
+        del mock_config.storage
+        db_func_tool.agent_config = mock_config
+
+        result = db_func_tool.read_query(sql="nonexistent/query.sql")
+
+        assert result.success == 0
+        assert "SQL file not found" in result.error
+
+    @pytest.mark.ci
+    def test_read_query_with_inline_sql_unchanged(self, db_func_tool, mock_connector):
+        """Inline SQL text should execute as before without file reading."""
+        result = db_func_tool.read_query(sql="SELECT 1")
+
+        assert result.success == 1
+        mock_connector.execute_query.assert_called_once()
+        actual_sql = mock_connector.execute_query.call_args[0][0]
+        assert actual_sql == "SELECT 1"
+
+    @pytest.mark.ci
+    def test_read_query_with_sql_file_path_whitespace(self, db_func_tool, mock_connector, tmp_path):
+        """SQL file path with leading/trailing whitespace should still work."""
+        sql_content = "SELECT * FROM products;"
+        sql_file = tmp_path / "query.sql"
+        sql_file.write_text(sql_content, encoding="utf-8")
+
+        mock_config = Mock()
+        mock_config.workspace_root = str(tmp_path)
+        del mock_config.storage
+        db_func_tool.agent_config = mock_config
+
+        result = db_func_tool.read_query(sql="  query.sql  ")
+
+        assert result.success == 1
+        actual_sql = mock_connector.execute_query.call_args[0][0]
+        assert actual_sql == sql_content
+
+    @pytest.mark.ci
+    def test_read_query_default_workspace_root(self, db_func_tool, mock_connector, tmp_path, monkeypatch):
+        """When no agent_config, workspace_root should default to '.'."""
+        sql_content = "SELECT 1 AS val;"
+        sql_file = tmp_path / "test.sql"
+        sql_file.write_text(sql_content, encoding="utf-8")
+
+        db_func_tool.agent_config = None
+        monkeypatch.chdir(tmp_path)
+
+        result = db_func_tool.read_query(sql="test.sql")
+
+        assert result.success == 1
+        actual_sql = mock_connector.execute_query.call_args[0][0]
+        assert actual_sql == sql_content
+
+    @pytest.mark.ci
+    def test_resolve_workspace_root_priority(self, db_func_tool):
+        """Test workspace_root resolution priority: storage > legacy > default."""
+        # Priority 1: storage.workspace_root
+        mock_config = Mock()
+        mock_config.storage.workspace_root = "/from/storage"
+        mock_config.workspace_root = "/from/legacy"
+        db_func_tool.agent_config = mock_config
+        assert db_func_tool._resolve_workspace_root() == "/from/storage"
+
+        # Priority 2: legacy workspace_root
+        mock_config2 = Mock()
+        del mock_config2.storage
+        mock_config2.workspace_root = "/from/legacy"
+        db_func_tool.agent_config = mock_config2
+        assert db_func_tool._resolve_workspace_root() == "/from/legacy"
+
+        # Priority 3: default "."
+        db_func_tool.agent_config = None
+        assert db_func_tool._resolve_workspace_root() == "."
+
+    @pytest.mark.ci
+    def test_resolve_workspace_root_expands_tilde(self, db_func_tool):
+        """Test that ~ in workspace_root is expanded to user home."""
+        mock_config = Mock()
+        del mock_config.storage
+        mock_config.workspace_root = "~/workspace"
+        db_func_tool.agent_config = mock_config
+
+        result = db_func_tool._resolve_workspace_root()
+        assert result == os.path.expanduser("~/workspace")
+        assert "~" not in result

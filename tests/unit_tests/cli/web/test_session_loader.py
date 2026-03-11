@@ -71,7 +71,7 @@ class TestParseOutputFromAction:
         )
         group = {"role": "assistant", "content": "", "timestamp": "2025-01-01"}
 
-        result = loader._parse_final_output(action, group)
+        result = loader._parse_final_output([action], group)
 
         assert result is not None
         assert result.role == ActionRole.ASSISTANT
@@ -79,8 +79,8 @@ class TestParseOutputFromAction:
         assert group["sql"] == "SELECT * FROM t"
         assert group["content"] == "3 rows"
 
-    def test_parse_final_output_non_json_returns_none(self):
-        """_parse_final_output returns None for non-JSON messages."""
+    def test_parse_final_output_non_json_sets_content(self):
+        """_parse_final_output sets content to raw text for non-JSON messages."""
         loader = SessionLoader()
         action = ActionHistory(
             action_id="test2",
@@ -91,11 +91,12 @@ class TestParseOutputFromAction:
         )
         group = {"role": "assistant", "content": ""}
 
-        result = loader._parse_final_output(action, group)
+        result = loader._parse_final_output([action], group)
         assert result is None
+        assert group["content"] == "Just a plain text response"
 
-    def test_parse_final_output_tool_role_returns_none(self):
-        """_parse_final_output returns None for non-assistant actions."""
+    def test_parse_final_output_tool_role_only_returns_none(self):
+        """_parse_final_output returns None when only non-assistant actions exist."""
         loader = SessionLoader()
         action = ActionHistory(
             action_id="test3",
@@ -106,8 +107,60 @@ class TestParseOutputFromAction:
         )
         group = {"role": "assistant", "content": ""}
 
-        result = loader._parse_final_output(action, group)
+        result = loader._parse_final_output([action], group)
         assert result is None
+        assert group["content"] == ""
+
+    def test_parse_final_output_finds_last_assistant(self):
+        """_parse_final_output searches backwards for the last assistant action."""
+        loader = SessionLoader()
+        assistant_action = ActionHistory(
+            action_id="a1",
+            role=ActionRole.ASSISTANT,
+            messages=json.dumps({"sql": "SELECT 1", "output": "result"}),
+            action_type="thinking",
+            status=ActionStatus.SUCCESS,
+        )
+        tool_action = ActionHistory(
+            action_id="a2",
+            role=ActionRole.TOOL,
+            messages="tool output",
+            action_type="read_query",
+            status=ActionStatus.SUCCESS,
+        )
+        group = {"role": "assistant", "content": ""}
+
+        # Tool action is last, but assistant action should be found
+        result = loader._parse_final_output([assistant_action, tool_action], group)
+        assert result is not None
+        assert group["sql"] == "SELECT 1"
+        assert group["content"] == "result"
+
+    def test_parse_final_output_empty_list(self):
+        """_parse_final_output returns None for empty action list."""
+        loader = SessionLoader()
+        group = {"role": "assistant", "content": ""}
+
+        result = loader._parse_final_output([], group)
+        assert result is None
+        assert group["content"] == ""
+
+    def test_parse_final_output_markdown_content(self):
+        """_parse_final_output preserves markdown text as content for chat agents."""
+        loader = SessionLoader()
+        markdown = "## Analysis\n\nHere are the key findings:\n\n| Col | Val |\n|-----|-----|\n| A | 1 |"
+        action = ActionHistory(
+            action_id="md1",
+            role=ActionRole.ASSISTANT,
+            messages=markdown,
+            action_type="thinking",
+            status=ActionStatus.SUCCESS,
+        )
+        group = {"role": "assistant", "content": ""}
+
+        result = loader._parse_final_output([action], group)
+        assert result is None
+        assert group["content"] == markdown
 
 
 class TestGetSessionMessages:

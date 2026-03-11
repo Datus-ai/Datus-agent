@@ -769,6 +769,8 @@ class OpenAICompatibleModel(LLMBaseModel):
                 # Phase 1: Stream events with detailed progress
                 # Track tool calls and results for immediate feedback
                 temp_tool_calls = {}  # {call_id: ActionHistory}
+                pending_start_actions = []  # Buffer PROCESSING actions until ASSISTANT arrives
+                early_assistant_yielded = False  # Flag to skip duplicate message_output_item
 
                 while not result.is_complete:
                     if interrupt_controller and interrupt_controller.is_interrupted:
@@ -780,6 +782,49 @@ class OpenAICompatibleModel(LLMBaseModel):
                             from datus.cli.execution_state import ExecutionInterrupted
 
                             raise ExecutionInterrupted("Interrupted by user")
+
+                        # Capture assistant text from raw response events BEFORE tool execution.
+                        # The SDK emits ResponseOutputItemDoneEvent(type="message") before
+                        # executing tools, but only wraps it as RunItemStreamEvent(message_output_created)
+                        # AFTER tool execution. By processing the raw event early, we ensure the
+                        # assistant thinking text is yielded before any subagent bus actions.
+                        if hasattr(event, "type") and event.type == "raw_response_event":
+                            raw_data = getattr(event, "data", None)
+                            if raw_data and getattr(raw_data, "type", None) == "response.output_item.done":
+                                raw_item = getattr(raw_data, "item", None)
+                                if raw_item and getattr(raw_item, "type", None) == "message":
+                                    content_list = getattr(raw_item, "content", [])
+                                    text_parts = []
+                                    for content_part in content_list or []:
+                                        part_text = getattr(content_part, "text", None)
+                                        if part_text:
+                                            text_parts.append(part_text)
+                                    full_text = "\n".join(text_parts).strip()
+                                    if full_text:
+                                        text_content_split = (
+                                            full_text if len(full_text) <= 200 else f"{full_text[:200]}..."
+                                        )
+                                        is_thinking = len(pending_start_actions) > 0
+                                        thinking_action = ActionHistory(
+                                            action_id=f"assistant_{uuid.uuid4().hex[:8]}",
+                                            role=ActionRole.ASSISTANT,
+                                            messages=f"Thinking: {text_content_split}",
+                                            action_type="response",
+                                            input={},
+                                            output={"raw_output": full_text, "is_thinking": is_thinking},
+                                            status=ActionStatus.SUCCESS,
+                                        )
+                                        action_history_manager.add_action(thinking_action)
+                                        yield thinking_action
+
+                                        # Flush buffered PROCESSING actions after ASSISTANT
+                                        for _pending in pending_start_actions:
+                                            yield _pending
+                                        pending_start_actions.clear()
+
+                                        early_assistant_yielded = True
+                            continue
+
                         if not hasattr(event, "type") or event.type != "run_item_stream_event":
                             continue
 
@@ -817,6 +862,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                                     "tool_name": tool_name,
                                     "arguments": arguments,
                                     "args_display": args_str,
+                                    "start_time": datetime.now(),
                                 }
                                 start_action = ActionHistory(
                                     action_id=call_id,
@@ -832,7 +878,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                                     f"Stored tool call: {tool_name} "
                                     f"(call_id={call_id[:20] if call_id else 'None'}...)"
                                 )
-                                yield start_action
+                                pending_start_actions.append(start_action)
 
                         # Handle tool call completion
                         elif item_type == "tool_call_output_item":
@@ -886,10 +932,20 @@ class OpenAICompatibleModel(LLMBaseModel):
                                         "status_message": result_summary,
                                     },
                                     status=ActionStatus.SUCCESS,
+                                    start_time=tool_info["start_time"],
                                 )
                                 complete_action.end_time = datetime.now()
 
                                 logger.debug(f"Matched tool: {tool_name}({args_display[:30]}...) -> {result_summary}")
+
+                                # Flush any buffered PROCESSING action for this call_id before yielding SUCCESS
+                                remaining = []
+                                for _pending in pending_start_actions:
+                                    if _pending.action_id == call_id:
+                                        yield _pending
+                                    else:
+                                        remaining.append(_pending)
+                                pending_start_actions[:] = remaining
 
                                 # Add to action_history_manager before yielding (consistent with thinking messages)
                                 action_history_manager.add_action(complete_action)
@@ -917,12 +973,25 @@ class OpenAICompatibleModel(LLMBaseModel):
                                 )
                                 orphan_action.end_time = datetime.now()
 
+                                # Flush any buffered PROCESSING action for this call_id before yielding
+                                remaining = []
+                                for _pending in pending_start_actions:
+                                    if _pending.action_id == call_id:
+                                        yield _pending
+                                    else:
+                                        remaining.append(_pending)
+                                pending_start_actions[:] = remaining
+
                                 # Add to action_history_manager before yielding (consistent with other actions)
                                 action_history_manager.add_action(orphan_action)
                                 yield orphan_action
 
                         # Handle thinking messages
                         elif item_type == "message_output_item":
+                            # Skip if already captured from raw response event
+                            if early_assistant_yielded:
+                                early_assistant_yielded = False
+                                continue
                             raw_item = getattr(event.item, "raw_item", None)
                             if raw_item and hasattr(raw_item, "content"):
                                 content = raw_item.content
@@ -938,17 +1007,28 @@ class OpenAICompatibleModel(LLMBaseModel):
                                     text_content_split = (
                                         text_content if len(text_content) <= 200 else f"{text_content[:200]}..."
                                     )
+                                    is_thinking = len(pending_start_actions) > 0
                                     thinking_action = ActionHistory(
                                         action_id=f"assistant_{uuid.uuid4().hex[:8]}",
                                         role=ActionRole.ASSISTANT,
                                         messages=f"Thinking: {text_content_split}",
                                         action_type="response",
                                         input={},
-                                        output={"raw_output": text_content},
+                                        output={"raw_output": text_content, "is_thinking": is_thinking},
                                         status=ActionStatus.SUCCESS,
                                     )
                                     action_history_manager.add_action(thinking_action)
                                     yield thinking_action
+
+                                    # Flush buffered PROCESSING actions after ASSISTANT message
+                                    for _pending in pending_start_actions:
+                                        yield _pending
+                                    pending_start_actions.clear()
+
+                    # Flush any remaining buffered PROCESSING actions at end of turn
+                    for _pending in pending_start_actions:
+                        yield _pending
+                    pending_start_actions.clear()
 
                 # Save LLM trace if method exists
                 if hasattr(self, "_save_llm_trace"):

@@ -65,9 +65,10 @@ class CommandType(Enum):
 class DatusCLI:
     """Main REPL for the Datus CLI application."""
 
-    def __init__(self, args):
+    def __init__(self, args, interactive: bool = True):
         """Initialize the CLI with the given arguments."""
         self.args = args
+        self.interactive = interactive
         self.console = Console(log_path=False)
         self.console_column_width = 16
         self.selected_catalog_path = ""
@@ -100,7 +101,10 @@ class DatusCLI:
         history_file.parent.mkdir(parents=True, exist_ok=True)
         self.history = FileHistory(str(history_file))
         self.at_completer: AtReferenceCompleter
-        self._init_prompt_session()
+        if self.interactive:
+            self._init_prompt_session()
+        else:
+            self.at_completer = AtReferenceCompleter(self.agent_config)
 
         # Last executed SQL and result
         self.last_sql = None
@@ -257,6 +261,15 @@ class DatusCLI:
 
         return kb
 
+    def _echo_user_input(self, prompt_text: str, user_input: str):
+        """Re-echo user input with Pygments syntax highlighting matching prompt_toolkit style."""
+        from pygments import highlight
+        from pygments.formatters import TerminalTrueColorFormatter
+
+        highlighted = highlight(user_input, CustomSqlLexer(), TerminalTrueColorFormatter(style=CustomPygmentsStyle))
+        # Print prompt prefix (green bold) + highlighted input (strip trailing newline from pygments)
+        self.console.print(f"[green bold]{prompt_text}[/green bold]{highlighted.rstrip()}", highlight=False)
+
     def _get_prompt_text(self):
         """Get the current prompt text based on mode"""
         if self.plan_mode_active:
@@ -277,10 +290,11 @@ class DatusCLI:
             auto_suggest=AutoSuggestFromHistory(),
             lexer=PygmentsLexer(CustomSqlLexer),
             completer=self.create_combined_completer(),
-            multiline=False,
+            multiline=True,
             key_bindings=self._create_custom_key_bindings(),
             enable_history_search=True,
             search_ignore_case=True,
+            erase_when_done=True,
             style=merge_styles(
                 [
                     style_from_pygments_cls(CustomPygmentsStyle),
@@ -331,15 +345,15 @@ class DatusCLI:
                     continue
                 if user_input_raw == "_open_chat_sql_details":
                     if not self.streamlit_mode and self.chat_commands and self.chat_commands.last_actions:
-                        from datus.cli.screen.action_display_app import ChatApp
-
-                        app = ChatApp(self.chat_commands.last_actions)
-                        app.run()
+                        self.chat_commands.display_inline_trace_details(self.chat_commands.last_actions)
                     continue
                 user_input = user_input_raw.strip()
 
                 if not user_input:
                     continue
+
+                # Re-echo user input with syntax highlighting (prompt_toolkit erased on submit)
+                self._echo_user_input(prompt_text, user_input)
 
                 # Parse and execute the command
                 cmd_type, cmd, args = self._parse_command(user_input)
@@ -369,6 +383,13 @@ class DatusCLI:
                     continue
                 logger.error(f"Error: {str(e)}")
                 self.console.print(f"[bold red]Error:[/] {str(e)}")
+
+    def run_prompt(self, message: str):
+        """Run a single prompt non-interactively and exit."""
+        if not self._wait_for_agent_available(max_attempts=30, delay=1):
+            logger.error("Agent initialization failed or timed out")
+            return
+        self.chat_commands.execute_prompt_command(message)
 
     def _async_init_agent(self):
         """Initialize the agent asynchronously in a background thread."""

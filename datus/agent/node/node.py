@@ -114,6 +114,10 @@ class Node(ABC):
             return ChatAgenticNode(node_id, description, node_type, input_data, agent_config, tools)
         elif node_type == NodeType.TYPE_GENSQL:
             return GenSQLAgenticNode(node_id, description, node_type, input_data, agent_config, tools, node_name)
+        elif node_type == NodeType.TYPE_GEN_REPORT:
+            from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
+
+            return GenReportAgenticNode(node_id, description, node_type, input_data, agent_config, tools, node_name)
         else:
             raise ValueError(f"Invalid node type: {node_type}")
 
@@ -373,6 +377,10 @@ class Node(ABC):
                     input_data = ChatNodeInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_GENSQL:
                     input_data = GenSQLNodeInput(**input_data)
+                elif node_dict["type"] == NodeType.TYPE_GEN_REPORT:
+                    from datus.schemas.gen_report_agentic_node_models import GenReportNodeInput
+
+                    input_data = GenReportNodeInput(**input_data)
             except Exception as e:
                 logger.warning(f"Failed to convert input data for {node_dict['type']}: {e}")
                 input_data = None
@@ -409,6 +417,10 @@ class Node(ABC):
                     result_data = ChatNodeResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_GENSQL:
                     result_data = GenSQLNodeResult(**result_data)
+                elif node_dict["type"] == NodeType.TYPE_GEN_REPORT:
+                    from datus.schemas.gen_report_agentic_node_models import GenReportNodeResult
+
+                    result_data = GenReportNodeResult(**result_data)
                 elif "success" in result_data:
                     result_data = BaseResult(**result_data)
             except Exception as e:

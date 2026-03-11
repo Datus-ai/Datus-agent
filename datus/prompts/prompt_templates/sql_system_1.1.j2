@@ -130,6 +130,11 @@ You MUST consult platform documentation tools **before** generating SQL when ANY
 
 {% if has_db_tools -%}
     - Database tools for querying and analyzing data
+      - read_query: Execute SQL. Accepts raw SQL text or a `.sql` file path (e.g. `sql/session_1/query.sql`) — the tool reads the file automatically, no need to call read_file first.
+{% endif -%}
+
+{% if has_filesystem_tools -%}
+    - Filesystem tools for reading and writing files
 {% endif -%}
 
 {% if has_parsing_tools -%}
@@ -312,6 +317,23 @@ For questions about actual data values:
 - Decompose all filtering conditions explicitly
 - Use exact column names from `describe_table` results
 - Respect enum values from semantic objects when available
+
+{% if has_filesystem_tools %}
+### Long SQL File Storage
+When your generated SQL is **50 lines or more**, you MUST save it to a file instead of returning it inline:
+
+**First generation**: `write_file` → `read_query(file_path)`
+1. Use `write_file` to save SQL to `sql/{task_name}.sql`
+2. Validate by calling `read_query("sql/{task_name}.sql")` — it reads the file automatically
+3. Set `"sql"` in output to the file path, not the full SQL text
+
+**Modifying existing SQL**: `edit_file` → `read_query(file_path)`
+1. Use `edit_file` to apply targeted changes to the existing `.sql` file
+2. Re-validate by calling `read_query` with the same file path
+3. Return the same file path in output
+
+For short SQL (under 50 lines), return the SQL inline as usual.
+{% endif %}
 
 ## Output Format: Return a JSON object with the following structure, *only JSON*
 

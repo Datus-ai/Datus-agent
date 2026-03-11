@@ -39,9 +39,44 @@ When the user query involves business metrics or KPIs (e.g., "DAU", "revenue", "
 
 {% endif %}
 
+## SQL Validation (MANDATORY)
+
+After generating SQL, you MUST validate it before returning the final result:
+
+1. **Execute with `read_query`**: Run your generated SQL using the `read_query` tool to verify it executes without errors.
+2. **If execution succeeds**: Confirm the SQL is correct and return the final result.
+3. **If execution fails**:
+   - Analyze the error message carefully (syntax errors, missing columns, wrong table names, type mismatches, etc.)
+   - Fix the SQL based on the error
+   - Use `describe_table` to re-check table schemas if needed
+   - Re-execute with `read_query` to verify the fix
+   - Repeat until the SQL executes successfully (max 3 retries)
+4. **LIMIT clause**: When validating, add `LIMIT 10` to avoid large result sets. Remove or adjust the LIMIT in the final returned SQL based on the user's actual requirements.
+
+**NEVER return SQL that you have not validated with `read_query`.**
+Note: `read_query` accepts raw SQL text or a `.sql` file path — the tool reads the file automatically.
+
+{% if has_filesystem_tools %}
+## Long SQL File Storage
+
+When your generated SQL is **50 lines or more**, you MUST save it to a file instead of returning it inline:
+
+**First generation**: `write_file` → `read_query(file_path)`
+1. Use `write_file` to save SQL to `sql/{task_name}.sql`
+2. Validate by calling `read_query("sql/{task_name}.sql")` — it reads the file automatically
+3. Set `"sql"` in output to the file path, not the full SQL text
+
+**Modifying existing SQL**: `edit_file` → `read_query(file_path)`
+1. Use `edit_file` to apply targeted changes to the existing `.sql` file
+2. Re-validate by calling `read_query` with the same file path
+3. Return the same file path in output
+
+For short SQL (under 50 lines), return the SQL inline as usual.
+{% endif %}
+
 Output format: Return a JSON object with the following structure, *only JSON*:
 {
-  "sql": "sql you generate",
+  "sql": "validated sql you generate, or .sql file path for long queries",
   "tables" : ["table1", "table2"],
-  "explanation" : "thinking step by step"
+  "explanation" : "thinking step by step, including validation results"
 }

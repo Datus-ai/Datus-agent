@@ -424,7 +424,8 @@ class TestChatAgenticNodeInit:
     """Tests for ChatAgenticNode initialization with real config."""
 
     def test_chat_init_with_real_config(self, real_agent_config, mock_llm_create):
-        """ChatAgenticNode initializes correctly, extends GenSQLAgenticNode."""
+        """ChatAgenticNode initializes correctly, inherits from AgenticNode (not GenSQLAgenticNode)."""
+        from datus.agent.node.agentic_node import AgenticNode
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 
@@ -438,7 +439,8 @@ class TestChatAgenticNodeInit:
         assert node.id == "test_chat_1"
         assert node.type == NodeType.TYPE_CHAT
         assert node.description == "Test Chat node"
-        assert isinstance(node, GenSQLAgenticNode)
+        assert isinstance(node, AgenticNode)
+        assert not isinstance(node, GenSQLAgenticNode)
         assert node.get_node_name() == "chat"
         assert isinstance(node.model, MockLLMModel)
 
@@ -518,10 +520,9 @@ class TestChatAgenticNodeExecution:
         # First action: USER
         assert actions[0].role == ActionRole.USER
         assert actions[0].status == ActionStatus.PROCESSING
-        # Last action: ASSISTANT with chat_response
+        # Last action: ASSISTANT (no separate chat_response final action)
         assert actions[-1].role == ActionRole.ASSISTANT
         assert actions[-1].status == ActionStatus.SUCCESS
-        assert actions[-1].action_type == "chat_response"
 
     @pytest.mark.asyncio
     async def test_chat_with_db_tool_calls(self, real_agent_config, mock_llm_create):
@@ -1676,3 +1677,79 @@ class TestBuildEnhancedMessageWithContext:
         assert "analytics" in result
         assert "public" in result
         assert "Query sales" in result
+
+
+# ===========================================================================
+# SQL File Storage Helper Tests
+# ===========================================================================
+
+
+class TestSqlFileStorageHelpers:
+    """Tests for GenSQLAgenticNode SQL file storage helper methods."""
+
+    def _make_node(self, real_agent_config, mock_llm_create, node_config_overrides=None):
+        """Helper to create a GenSQLAgenticNode for testing."""
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+        node = GenSQLAgenticNode(
+            node_id="test_sql_file",
+            description="Test SQL file storage",
+            node_type=NodeType.TYPE_GENSQL,
+            agent_config=real_agent_config,
+            node_name="gensql",
+        )
+        if node_config_overrides:
+            node.node_config.update(node_config_overrides)
+        return node
+
+    def test_get_sql_preview_lines_default(self, real_agent_config, mock_llm_create):
+        node = self._make_node(real_agent_config, mock_llm_create)
+        assert node._get_sql_preview_lines() == 5
+
+    def test_get_sql_preview_lines_custom(self, real_agent_config, mock_llm_create):
+        node = self._make_node(real_agent_config, mock_llm_create, {"sql_preview_lines": 10})
+        assert node._get_sql_preview_lines() == 10
+
+    def test_get_sql_preview_short(self):
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+        sql = "SELECT 1;\nSELECT 2;\nSELECT 3;"
+        preview = GenSQLAgenticNode._get_sql_preview(sql, max_lines=5)
+        assert preview == sql
+
+    def test_get_sql_preview_long(self):
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+        lines = [f"SELECT col_{i}" for i in range(20)]
+        sql = "\n".join(lines)
+        preview = GenSQLAgenticNode._get_sql_preview(sql, max_lines=3)
+        assert "SELECT col_0" in preview
+        assert "SELECT col_2" in preview
+        assert "17 more lines" in preview
+
+    def test_read_existing_sql_file_not_found(self, real_agent_config, mock_llm_create):
+        from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+
+        node = self._make_node(real_agent_config, mock_llm_create)
+        workspace_root = node._resolve_workspace_root()
+        node.filesystem_func_tool = FilesystemFuncTool(root_path=workspace_root)
+        result = node._read_existing_sql_file("nonexistent/file.sql")
+        assert result is None
+
+    def test_read_existing_sql_file_success(self, real_agent_config, mock_llm_create):
+        from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+
+        node = self._make_node(real_agent_config, mock_llm_create)
+        workspace_root = node._resolve_workspace_root()
+        node.filesystem_func_tool = FilesystemFuncTool(root_path=workspace_root)
+
+        # Write a file first
+        node.filesystem_func_tool.write_file("sql/test/existing.sql", "SELECT old")
+        result = node._read_existing_sql_file("sql/test/existing.sql")
+        assert result == "SELECT old"
+
+    def test_read_existing_sql_file_no_tool(self, real_agent_config, mock_llm_create):
+        node = self._make_node(real_agent_config, mock_llm_create)
+        node.filesystem_func_tool = None
+        result = node._read_existing_sql_file("any/path.sql")
+        assert result is None

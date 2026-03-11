@@ -51,6 +51,5 @@ class ChatNodeResult(BaseResult):
     Result model for ChatAgenticNode interactions.
     """
 
-    response: str = Field(..., description="AI assistant's response")
-    sql: Optional[str] = Field(default=None, description="SQL query generated or referenced in response")
+    response: str = Field(..., description="AI assistant's response in markdown format")
     tokens_used: int = Field(default=0, description="Total tokens used in this interaction")

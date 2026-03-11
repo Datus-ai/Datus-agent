@@ -49,5 +49,10 @@ class GenSQLNodeResult(BaseResult):
 
     response: str = Field(..., description="AI assistant's response")
     sql: Optional[str] = Field(default=None, description="SQL query generated or referenced in response")
+    sql_file_path: Optional[str] = Field(
+        default=None, description="Relative path to SQL file when SQL exceeds threshold"
+    )
+    sql_preview: Optional[str] = Field(default=None, description="First N lines of SQL for preview when file-stored")
+    sql_diff: Optional[str] = Field(default=None, description="Unified diff of SQL modifications")
     tokens_used: int = Field(default=0, description="Total tokens used in this interaction")
     error: Optional[str] = Field(default=None, description="Error message if interaction failed")

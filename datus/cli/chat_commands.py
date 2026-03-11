@@ -13,6 +13,7 @@ import json
 import platform
 import re
 import subprocess
+import sys
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
 from rich.markdown import Markdown
@@ -49,6 +50,8 @@ class ChatCommands:
         self.current_subagent_name: str | None = None  # Track current subagent name
         self.chat_history = []
         self.last_actions = []
+        self.all_turn_actions: List[Tuple[str, List[ActionHistory]]] = []
+        self._trace_verbose = False  # toggle state for post-run Ctrl+O
 
     def update_chat_node_tools(self):
         """Update current node tools when namespace changes."""
@@ -299,7 +302,60 @@ class ChatCommands:
     def execute_chat_command(
         self, message: str, plan_mode: bool = False, subagent_name: str = None, compact_when_new_subagent: bool = True
     ):
-        """Execute a chat command with simplified node management."""
+        """Execute a chat command in interactive REPL mode."""
+        self._execute_chat(
+            message,
+            plan_mode=plan_mode,
+            subagent_name=subagent_name,
+            compact_when_new_subagent=compact_when_new_subagent,
+            interactive=True,
+        )
+
+    def _resolve_clean_output(
+        self,
+        sql: Optional[str],
+        response: Optional[str],
+        extracted_sql: Optional[str],
+        extracted_output: Optional[str],
+    ) -> Optional[str]:
+        """Resolve clean output text from response and extraction results.
+
+        Used by both interactive (execute_chat_command) and non-interactive (execute_prompt_command) paths.
+        """
+        if sql:
+            return extracted_output or response
+        elif isinstance(extracted_output, dict):
+            return extracted_output.get("raw_output", str(extracted_output))
+        else:
+            clean_output = self._extract_report_from_json(response)
+            if not clean_output:
+                if response is None:
+                    clean_output = ""
+                else:
+                    try:
+                        import ast
+
+                        response_dict = ast.literal_eval(response)
+                        clean_output = (
+                            response_dict.get("raw_output", response) if isinstance(response_dict, dict) else response
+                        )
+                    except (ValueError, SyntaxError, TypeError):
+                        clean_output = response
+            return clean_output
+
+    def execute_prompt_command(self, message: str):
+        """Execute a single prompt non-interactively (reuses interactive logic)."""
+        self._execute_chat(message, plan_mode=False, interactive=False)
+
+    def _execute_chat(
+        self,
+        message: str,
+        plan_mode: bool = False,
+        subagent_name: str = None,
+        compact_when_new_subagent: bool = True,
+        interactive: bool = True,
+    ):
+        """Core chat execution logic shared by interactive and non-interactive modes."""
         if not message.strip():
             self.console.print("[yellow]Please provide a message to chat with the AI.[/]")
             return
@@ -307,183 +363,247 @@ class ChatCommands:
         try:
             at_tables, at_metrics, at_sqls = self.cli.at_completer.parse_at_context(message)
 
-            # Decision logic: determine if we need to create a new node
-            need_new_node = self._should_create_new_node(subagent_name)
+            if interactive:
+                # Decision logic: determine if we need to create a new node
+                need_new_node = self._should_create_new_node(subagent_name)
 
-            # If creating new node and have existing node, trigger compact
-            if need_new_node and self.current_node is not None and compact_when_new_subagent:
-                self._trigger_compact_for_current_node()
+                # If creating new node and have existing node, trigger compact
+                if need_new_node and self.current_node is not None and compact_when_new_subagent:
+                    self._trigger_compact_for_current_node()
 
-            # Get or create node
-            if need_new_node:
-                self.current_node = self._create_new_node(subagent_name)
-                self.current_subagent_name = subagent_name if subagent_name else None
-                if not subagent_name:
-                    self.chat_node = self.current_node
+                # Get or create node
+                if need_new_node:
+                    self.current_node = self._create_new_node(subagent_name)
+                    self.current_subagent_name = subagent_name if subagent_name else None
+                    self.all_turn_actions = []
+                    if not subagent_name:
+                        self.chat_node = self.current_node
 
-            # Use current node
-            current_node = self.current_node
+                current_node = self.current_node
 
-            # Show session info for existing session
-            if not need_new_node:
-                session_info = asyncio.run(current_node.get_session_info())
-                if session_info.get("session_id"):
-                    session_display = (
-                        f"[dim]Using existing session: {session_info['session_id']} "
-                        f"(tokens: {session_info['token_count']}, actions: {session_info['action_count']})[/]"
-                    )
-                    self.console.print(session_display)
+                # Show session info for existing session
+                if not need_new_node:
+                    session_info = asyncio.run(current_node.get_session_info())
+                    if session_info.get("session_id"):
+                        session_display = (
+                            f"[dim]Using existing session: {session_info['session_id']} "
+                            f"(tokens: {session_info['token_count']}, actions: {session_info['action_count']})[/]"
+                        )
+                        self.console.print(session_display)
+            else:
+                # Non-interactive: always create a new node
+                self.current_node = self._create_new_node(None)
+                current_node = self.current_node
 
             # Create input using shared method
             node_input, node_type = self.create_node_input(
                 message, current_node, at_tables, at_metrics, at_sqls, plan_mode
             )
-
-            # Set input on the node (new interface: input is accessed from self.input)
             current_node.input = node_input
 
-            # Display streaming execution
-            self.console.print(f"[bold green]Processing {node_type} request...[/]")
-            self.console.print("[dim]Press ESC or Ctrl+C to interrupt[/dim]")
-
-            # Initialize action history display for incremental actions only
+            # Initialize action history display
             action_display = ActionHistoryDisplay(self.console)
             incremental_actions = []
+            node_final_action = None  # Node's final ASSISTANT action (e.g. chat_response)
 
-            # Run streaming execution with real-time display using interaction-aware stream
-            async def run_chat_stream_with_interactions():
-                """Run chat stream handling INTERACTION actions inline."""
-                async for action in current_node.execute_stream_with_interactions(
-                    action_history_manager=self.cli.actions
-                ):
-                    # INTERACTION role actions: distinguish by status (PROCESSING vs SUCCESS)
-                    if action.role == ActionRole.INTERACTION and action.action_type == "request_choice":
-                        if action.status == ActionStatus.PROCESSING:
-                            # Interactive request: stop rendering, show prompt, wait for user input
-                            action_display.stop_live()
-                            # Pause ESC listener to avoid intercepting arrow-key escape sequences
-                            # used by prompt_toolkit during interactive selection
-                            with esc_guard.paused():
-                                user_response = await self._handle_cli_interaction(action)
-                            if current_node.interaction_broker:
-                                await current_node.interaction_broker.submit(action.action_id, user_response)
-                            # Don't restart_live here - wait for SUCCESS
-                        elif action.status == ActionStatus.SUCCESS:
-                            # Success callback: display content and resume rendering
-                            self._display_success(action)
+            if interactive:
+                self.console.print("[dim]Press ESC or Ctrl+C to interrupt[/dim]")
+
+                async def run_chat_stream_with_interactions():
+                    """Run chat stream handling INTERACTION actions inline."""
+                    async for action in current_node.execute_stream_with_interactions(
+                        action_history_manager=self.cli.actions
+                    ):
+                        if action.role == ActionRole.INTERACTION and action.action_type == "request_choice":
+                            if action.status == ActionStatus.PROCESSING:
+                                action_display.stop_live()
+                                with esc_guard.paused():
+                                    user_response = await self._handle_cli_interaction(action)
+                                if current_node.interaction_broker:
+                                    await current_node.interaction_broker.submit(action.action_id, user_response)
+                            elif action.status == ActionStatus.SUCCESS:
+                                self._display_success(action)
+                                incremental_actions.append(action)
+                                action_display.restart_live()
+                        else:
+                            # Skip TOOL PROCESSING entries — SUCCESS version follows
+                            if action.role == ActionRole.TOOL and action.status == ActionStatus.PROCESSING:
+                                continue
+                            # Skip non-thinking ASSISTANT actions (final output) —
+                            # rendered by the final response display below instead.
+                            if (
+                                action.role == ActionRole.ASSISTANT
+                                and isinstance(action.output, dict)
+                                and not action.output.get("is_thinking", True)
+                            ):
+                                continue
+                            # Node final actions (e.g. chat_response) — keep for
+                            # final response rendering but skip streaming trace.
+                            if (
+                                action.role == ActionRole.ASSISTANT
+                                and action.action_type
+                                and action.action_type.endswith("_response")
+                            ):
+                                nonlocal node_final_action
+                                node_final_action = action
+                                continue
                             incremental_actions.append(action)
-                            action_display.restart_live()
-                    else:
-                        # Regular actions: add to incremental actions for display
+
+                streaming_ctx = action_display.display_streaming_actions(
+                    incremental_actions,
+                    history_turns=self.all_turn_actions,
+                    current_user_message=message,
+                )
+                with interrupt_on_escape(
+                    current_node.interrupt_controller,
+                    key_callbacks={b"\x0f": streaming_ctx.toggle_verbose},
+                ) as esc_guard, streaming_ctx:
+                    try:
+                        asyncio.run(run_chat_stream_with_interactions())
+                    except KeyboardInterrupt:
+                        current_node.interrupt_controller.interrupt()
+                        logger.info("KeyboardInterrupt caught, execution interrupted gracefully")
+                    except ExecutionInterrupted:
+                        logger.info("ExecutionInterrupted caught, execution stopped gracefully")
+            else:
+
+                async def run_stream():
+                    async for action in current_node.execute_stream_with_interactions(
+                        action_history_manager=self.cli.actions
+                    ):
+                        if action.role == ActionRole.INTERACTION:
+                            continue
+                        if action.role == ActionRole.TOOL and action.status == ActionStatus.PROCESSING:
+                            continue
+                        # Skip non-thinking ASSISTANT actions (final output) —
+                        # rendered by the final response display below instead.
+                        if (
+                            action.role == ActionRole.ASSISTANT
+                            and isinstance(action.output, dict)
+                            and not action.output.get("is_thinking", True)
+                        ):
+                            continue
+                        # Node final actions (e.g. chat_response) — keep for
+                        # final response rendering but skip streaming trace.
+                        if (
+                            action.role == ActionRole.ASSISTANT
+                            and action.action_type
+                            and action.action_type.endswith("_response")
+                        ):
+                            node_final_action = action
+                            continue
                         incremental_actions.append(action)
 
-            # Both normal and plan mode use the same interaction-aware streaming
-            # Use interrupt_on_escape to listen for ESC key (replaces suppress_keyboard_input)
-            # ESC triggers graceful interrupt; Ctrl+C sends SIGINT for KeyboardInterrupt
-            with interrupt_on_escape(
-                current_node.interrupt_controller
-            ) as esc_guard, action_display.display_streaming_actions(incremental_actions):
-                try:
-                    asyncio.run(run_chat_stream_with_interactions())
-                except KeyboardInterrupt:
-                    # Ctrl+C: trigger graceful interrupt via the controller
-                    current_node.interrupt_controller.interrupt()
-                    logger.info("KeyboardInterrupt caught, execution interrupted gracefully")
-                except ExecutionInterrupted:
-                    logger.info("ExecutionInterrupted caught, execution stopped gracefully")
+                with action_display.display_streaming_actions(incremental_actions):
+                    try:
+                        asyncio.run(run_stream())
+                    except KeyboardInterrupt:
+                        current_node.interrupt_controller.interrupt()
+                        logger.info("KeyboardInterrupt caught, execution interrupted gracefully")
+                    except ExecutionInterrupted:
+                        logger.info("ExecutionInterrupted caught, execution stopped gracefully")
 
-            # Display final response from the last successful action
-            if incremental_actions:
+            # Display final response from the node's final action
+            # (separated from incremental_actions to avoid streaming trace rendering)
+            if node_final_action:
+                final_action = node_final_action
+            elif incremental_actions:
                 final_action = incremental_actions[-1]
+            else:
+                final_action = None
+
+            if final_action:
 
                 if (
                     final_action.output
                     and isinstance(final_action.output, dict)
                     and final_action.status == ActionStatus.SUCCESS
                 ):
-                    # Parse response to extract clean SQL and output
-                    sql = None
-                    clean_output = None
-
-                    # First check if SQL and response are directly available
                     sql = final_action.output.get("sql")
                     response = final_action.output.get("response")
 
-                    # Try to extract SQL and output from the string response
                     extracted_sql, extracted_output = self._extract_sql_and_output_from_content(response)
                     sql = sql or extracted_sql
 
-                    # Determine clean_output based on sql and extracted_output
-                    clean_output = None
+                    clean_output = self._resolve_clean_output(sql, response, extracted_sql, extracted_output)
 
                     if sql:
-                        # Has SQL: use extracted_output or fallback to response
-                        clean_output = extracted_output or response
                         self.add_in_sql_context(sql, clean_output, incremental_actions)
-                    elif isinstance(extracted_output, dict):
-                        # No SQL, extracted_output is dict: get raw_output from dict
-                        clean_output = extracted_output.get("raw_output", str(extracted_output))
-                    else:
-                        # No SQL, no extracted_output: try to parse response
-                        # First try to extract 'report' field from gen_report JSON format
-                        clean_output = self._extract_report_from_json(response)
-                        if not clean_output:
-                            # Fallback: try to parse raw_output from response string
-                            if response is None:
-                                clean_output = ""
-                            else:
-                                try:
-                                    import ast
 
-                                    response_dict = ast.literal_eval(response)
-                                    clean_output = (
-                                        response_dict.get("raw_output", response)
-                                        if isinstance(response_dict, dict)
-                                        else response
-                                    )
-                                except (ValueError, SyntaxError, TypeError):
-                                    clean_output = response
+                    self._render_final_response(final_action)
 
-                    # Display using simple, focused methods
-                    if sql:
-                        self._display_sql_with_copy(sql)
+                    # Merge node_final_action back for history tracking
+                    all_actions = incremental_actions + ([node_final_action] if node_final_action else [])
+                    self.last_actions = all_actions
+                    self.all_turn_actions.append((message, all_actions))
+                    self._trace_verbose = False  # reset toggle for new chat round
 
-                    # Check for semantic_models field (from SemanticAgenticNode)
-                    semantic_models = final_action.output.get("semantic_models")
-                    if semantic_models:
-                        self._display_semantic_model(semantic_models)
+                if interactive:
+                    self.cli.console.print("[bold bright_black]Press Ctrl+O to toggle trace details.[/]")
 
-                    # Check for sql_summary_file field (from SqlSummaryAgenticNode)
-                    sql_summary_file = final_action.output.get("sql_summary_file")
-                    if sql_summary_file:
-                        self._display_sql_summary_file(sql_summary_file)
-
-                    # Check for ext_knowledge_file field (from ExtKnowledgeAgenticNode)
-                    ext_knowledge_file = final_action.output.get("ext_knowledge_file")
-                    if ext_knowledge_file:
-                        self._display_ext_knowledge_file(ext_knowledge_file)
-
-                    if clean_output:
-                        self._display_markdown_response(clean_output)
-                    self.last_actions = incremental_actions
-                self.cli.console.print("[bold bright_black]Use `Ctrl+O` to display trace details.[/]")
-
-            # Update chat history for potential context in future interactions
-            self.chat_history.append(
-                {
-                    "user": message,
-                    "response": (
-                        incremental_actions[-1].output.get("response", "")
-                        if incremental_actions and incremental_actions[-1].output
-                        else ""
-                    ),
-                    "actions": len(incremental_actions),
-                }
-            )
+            if interactive:
+                self.chat_history.append(
+                    {
+                        "user": message,
+                        "response": (
+                            incremental_actions[-1].output.get("response", "")
+                            if incremental_actions and incremental_actions[-1].output
+                            else ""
+                        ),
+                        "actions": len(incremental_actions),
+                    }
+                )
 
         except Exception as e:
             logger.error(f"Chat error: {str(e)}")
             self.console.print(f"[bold red]Error:[/] {str(e)}")
+
+    def _render_final_response(self, final_action: "ActionHistory") -> None:
+        """Render the final response output (SQL, markdown, etc.) from a node action.
+
+        This is used both after streaming completes and when Ctrl+O re-renders.
+        Side-effect free — does not modify history or state.
+        """
+        if (
+            not final_action
+            or not final_action.output
+            or not isinstance(final_action.output, dict)
+            or final_action.status != ActionStatus.SUCCESS
+        ):
+            return
+
+        sql = final_action.output.get("sql")
+        response = final_action.output.get("response")
+
+        extracted_sql, extracted_output = self._extract_sql_and_output_from_content(response)
+        sql = sql or extracted_sql
+
+        clean_output = self._resolve_clean_output(sql, response, extracted_sql, extracted_output)
+
+        if sql:
+            self._display_sql_with_copy(sql)
+
+        semantic_models = final_action.output.get("semantic_models")
+        if semantic_models:
+            self._display_semantic_model(semantic_models)
+
+        sql_summary_file = final_action.output.get("sql_summary_file")
+        if sql_summary_file:
+            self._display_sql_summary_file(sql_summary_file)
+
+        ext_knowledge_file = final_action.output.get("ext_knowledge_file")
+        if ext_knowledge_file:
+            self._display_ext_knowledge_file(ext_knowledge_file)
+
+        if clean_output:
+            self._display_markdown_response(clean_output)
+
+    def _find_node_final_action(self, actions: List["ActionHistory"]) -> Optional["ActionHistory"]:
+        """Find the node final action (e.g. chat_response) from an action list."""
+        for a in reversed(actions):
+            if a.role == ActionRole.ASSISTANT and a.action_type and a.action_type.endswith("_response"):
+                return a
+        return None
 
     def _display_sql_with_copy(self, sql: str):
         """
@@ -848,6 +968,7 @@ class ChatCommands:
         # Reset all node references
         self.current_node = None
         self.chat_node = None  # Keep backward compatibility
+        self.all_turn_actions = []
 
     def cmd_chat_info(self, args: str):
         """Display information about the current session."""
@@ -872,6 +993,30 @@ class ChatCommands:
                 self.console.print("[yellow]No active session.[/]")
         else:
             self.console.print("[yellow]No active session.[/]")
+
+    def display_inline_trace_details(self, actions: List[ActionHistory]) -> None:
+        """Toggle action history between compact and verbose modes (post-run Ctrl+O)."""
+        if not actions:
+            self.console.print("[dim]No actions to display[/dim]")
+            return
+        self._trace_verbose = not self._trace_verbose
+        mode_label = "verbose" if self._trace_verbose else "compact"
+        self.console.clear()
+        sys.stdout.write("\033[3J")
+        sys.stdout.flush()
+        self.console.print(f"[bold bright_black]  ⎯ switched to {mode_label} mode ⎯[/]")
+        action_display = ActionHistoryDisplay(self.console)
+        if self.all_turn_actions:
+            action_display.render_multi_turn_history(self.all_turn_actions, verbose=self._trace_verbose)
+        else:
+            action_display.render_action_history(actions, verbose=self._trace_verbose)
+
+        # Re-render final response output (SQL, markdown, etc.) after the trace
+        last_turn_actions = self.all_turn_actions[-1][1] if self.all_turn_actions else actions
+        final_action = self._find_node_final_action(last_turn_actions)
+        if final_action:
+            self._render_final_response(final_action)
+            self.cli.console.print("[bold bright_black]Press Ctrl+O to toggle trace details.[/]")
 
     def cmd_compact(self, args: str):
         """Manually compact the current session by summarizing conversation history."""
@@ -1081,6 +1226,7 @@ class ChatCommands:
             if messages:
                 self.console.print(f"\n[bold green]Session resumed![/] Showing {len(messages)} message(s):\n")
                 action_display = ActionHistoryDisplay(self.console)
+                last_assistant_actions = []
                 for msg in messages:
                     role = msg.get("role", "unknown")
                     content = msg.get("content", "")
@@ -1090,6 +1236,7 @@ class ChatCommands:
                         actions = msg.get("actions")
                         if actions:
                             action_display.display_action_list(actions)
+                            last_assistant_actions = actions
                         sql = msg.get("sql")
                         if sql:
                             self._display_sql_with_copy(sql)
@@ -1100,6 +1247,22 @@ class ChatCommands:
                                 self._display_markdown_response(content)
                     self.console.print(Rule(style="dim"))
                 self.console.print()
+                if last_assistant_actions:
+                    self.last_actions = last_assistant_actions
+                    self._trace_verbose = False
+
+                # Rebuild all_turn_actions from session messages
+                self.all_turn_actions = []
+                current_user_msg = ""
+                for msg in messages:
+                    role = msg.get("role", "unknown")
+                    if role == "user":
+                        current_user_msg = msg.get("content", "")
+                    else:
+                        actions = msg.get("actions", [])
+                        if actions and current_user_msg:
+                            self.all_turn_actions.append((current_user_msg, actions))
+                        current_user_msg = ""
 
             # Get session info to check token usage
             info = session_manager.get_session_info(target_session_id)
@@ -1227,6 +1390,19 @@ class ChatCommands:
                                 self._display_markdown_response(content)
                     self.console.print(Rule(style="dim"))
                 self.console.print()
+
+                # Rebuild all_turn_actions from rewound messages
+                self.all_turn_actions = []
+                current_user_msg = ""
+                for msg in new_messages:
+                    role = msg.get("role", "unknown")
+                    if role == "user":
+                        current_user_msg = msg.get("content", "")
+                    else:
+                        actions = msg.get("actions", [])
+                        if actions and current_user_msg:
+                            self.all_turn_actions.append((current_user_msg, actions))
+                        current_user_msg = ""
 
             self.console.print("[green]You can now continue the conversation from this point.[/]")
 

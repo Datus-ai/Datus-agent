@@ -571,3 +571,82 @@ class TestMergeInteractionStream:
         assert "exec-1" in action_ids
         assert "broker-0" in action_ids
         assert len(actions) == 3
+
+
+# ===========================================================================
+# InteractionBroker close / sentinel Tests
+# ===========================================================================
+
+
+class TestInteractionBrokerClose:
+    """Tests for InteractionBroker.close() sentinel termination."""
+
+    def test_close_sets_closed(self):
+        """close() sets the _closed flag."""
+        broker = InteractionBroker()
+        assert broker._closed is False
+        broker.close()
+        assert broker._closed is True
+
+    def test_close_is_idempotent(self):
+        """Calling close() twice enqueues only one sentinel."""
+        broker = InteractionBroker()
+        broker.close()
+        broker.close()
+        assert broker._closed is True
+        # Only one sentinel in the queue
+        assert broker._output_queue.qsize() == 1
+
+    @pytest.mark.asyncio
+    async def test_fetch_terminates_on_sentinel(self):
+        """fetch() stops generating after the sentinel is dequeued."""
+        broker = InteractionBroker()
+
+        action = ActionHistory(
+            action_id="before-close",
+            role=ActionRole.INTERACTION,
+            status=ActionStatus.PROCESSING,
+            action_type="request_choice",
+            messages="test",
+            input={},
+            output=None,
+        )
+        broker._output_queue.put_nowait(action)
+        broker.close()
+
+        fetched = []
+        async for item in broker.fetch():
+            fetched.append(item)
+
+        assert len(fetched) == 1
+        assert fetched[0].action_id == "before-close"
+
+    @pytest.mark.asyncio
+    async def test_reset_queue_clears_closed(self):
+        """reset_queue() resets the _closed flag and creates a fresh queue."""
+        broker = InteractionBroker()
+        broker.close()
+        assert broker._closed is True
+
+        broker.reset_queue()
+        assert broker._closed is False
+        assert broker.is_queue_empty() is True
+
+    @pytest.mark.asyncio
+    async def test_queue_put_after_close_ignored(self):
+        """_queue_put() after close() drops the item with a warning."""
+        broker = InteractionBroker()
+        broker.close()
+
+        action = ActionHistory(
+            action_id="ignored",
+            role=ActionRole.INTERACTION,
+            status=ActionStatus.PROCESSING,
+            action_type="test",
+            messages="test",
+            input={},
+            output=None,
+        )
+        await broker._queue_put(action)
+        # Queue should only contain the sentinel, not the ignored action
+        assert broker._output_queue.qsize() == 1

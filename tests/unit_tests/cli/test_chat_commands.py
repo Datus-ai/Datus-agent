@@ -32,6 +32,7 @@ import os
 import sqlite3
 from datetime import datetime, timedelta
 
+import pytest
 from rich.console import Console
 
 from datus.cli.chat_commands import ChatCommands
@@ -391,16 +392,14 @@ class TestCreateNewNode:
 class TestCreateNodeInput:
     """Tests for create_node_input returning correct input types.
 
-    Note: ChatAgenticNode extends GenSQLAgenticNode, so the isinstance check
-    for GenSQLAgenticNode matches ChatAgenticNode too. Therefore, ChatAgenticNode
-    receives GenSQLNodeInput (not ChatNodeInput) from create_node_input.
-    ChatNodeInput is only returned for node types that don't match any specific check.
+    ChatAgenticNode is independent from GenSQLAgenticNode (no inheritance).
+    ChatAgenticNode receives ChatNodeInput; GenSQLAgenticNode receives GenSQLNodeInput.
     """
 
-    def test_chat_node_gets_gensql_input(self, real_agent_config, mock_llm_create):
-        """ChatAgenticNode (subclass of GenSQLAgenticNode) gets GenSQLNodeInput with 'gensql' type."""
+    def test_chat_node_gets_chat_input(self, real_agent_config, mock_llm_create):
+        """ChatAgenticNode gets ChatNodeInput with 'chat' type."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
-        from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
+        from datus.schemas.chat_agentic_node_models import ChatNodeInput
 
         cmds = _make_chat_commands(real_agent_config)
         node = cmds._create_new_node()
@@ -408,9 +407,9 @@ class TestCreateNodeInput:
 
         node_input, node_type = cmds.create_node_input("Hello", node, [], [], [])
 
-        # ChatAgenticNode IS a GenSQLAgenticNode, so it matches the GenSQL branch
-        assert isinstance(node_input, GenSQLNodeInput)
-        assert node_type == "gensql"
+        # ChatAgenticNode is NOT a GenSQLAgenticNode, so it falls to the else branch
+        assert isinstance(node_input, ChatNodeInput)
+        assert node_type == "chat"
         assert node_input.user_message == "Hello"
 
     def test_gensql_node_input(self, real_agent_config, mock_llm_create):
@@ -503,18 +502,18 @@ class TestCreateNodeInput:
         assert node_type == "gen_report"
         assert node_input.user_message == "Generate report"
 
-    def test_gensql_node_input_with_plan_mode(self, real_agent_config, mock_llm_create):
-        """GenSQLNodeInput has plan_mode set when plan_mode=True (via ChatAgenticNode)."""
-        from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
+    def test_chat_node_input_with_plan_mode(self, real_agent_config, mock_llm_create):
+        """ChatNodeInput has plan_mode set when plan_mode=True (via ChatAgenticNode)."""
+        from datus.schemas.chat_agentic_node_models import ChatNodeInput
 
         cmds = _make_chat_commands(real_agent_config)
-        node = cmds._create_new_node()  # ChatAgenticNode -> isinstance GenSQLAgenticNode
+        node = cmds._create_new_node()  # ChatAgenticNode (independent from GenSQLAgenticNode)
 
         node_input, node_type = cmds.create_node_input("Test", node, [], [], [], plan_mode=True)
 
-        assert isinstance(node_input, GenSQLNodeInput)
+        assert isinstance(node_input, ChatNodeInput)
         assert node_input.plan_mode is True
-        assert node_type == "gensql"
+        assert node_type == "chat"
 
     def test_gensql_node_input_with_at_context(self, real_agent_config, mock_llm_create):
         """GenSQLNodeInput passes through at_tables, at_metrics, at_sqls."""
@@ -1259,18 +1258,18 @@ class TestEdgeCases:
 
     def test_create_node_input_with_cli_context_values(self, real_agent_config, mock_llm_create):
         """create_node_input reads catalog/database/schema from cli_context."""
-        from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
+        from datus.schemas.chat_agentic_node_models import ChatNodeInput
 
         cmds = _make_chat_commands(real_agent_config)
         cmds.cli.cli_context.current_catalog = "my_catalog"
         cmds.cli.cli_context.current_db_name = "my_db"
         cmds.cli.cli_context.current_schema = "my_schema"
 
-        # ChatAgenticNode is subclass of GenSQLAgenticNode -> GenSQLNodeInput
+        # ChatAgenticNode is independent from GenSQLAgenticNode -> ChatNodeInput
         node = cmds._create_new_node()
         node_input, node_type = cmds.create_node_input("Test", node, [], [], [])
 
-        assert isinstance(node_input, GenSQLNodeInput)
+        assert isinstance(node_input, ChatNodeInput)
         assert node_input.catalog == "my_catalog"
         assert node_input.database == "my_db"
         assert node_input.db_schema == "my_schema"
@@ -1353,7 +1352,7 @@ class TestEdgeCases:
 
     def test_create_node_input_cli_context_none_values(self, real_agent_config, mock_llm_create):
         """create_node_input passes None for catalog/database/schema when cli_context has no values."""
-        from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
+        from datus.schemas.chat_agentic_node_models import ChatNodeInput
 
         cmds = _make_chat_commands(real_agent_config)
         # cli_context defaults have None for catalog/db_name/schema
@@ -1364,7 +1363,7 @@ class TestEdgeCases:
         node = cmds._create_new_node()
         node_input, node_type = cmds.create_node_input("Test", node, [], [], [])
 
-        assert isinstance(node_input, GenSQLNodeInput)
+        assert isinstance(node_input, ChatNodeInput)
         assert node_input.catalog is None
         assert node_input.database is None
         assert node_input.db_schema is None
@@ -3077,3 +3076,134 @@ class TestResumeListingLongMessage:
         output = _get_console_output(console)
         # The long message should be truncated with "..."
         assert "..." in output
+
+
+# ===========================================================================
+# TestAllTurnActions
+# ===========================================================================
+
+
+def _make_action_for_chat(
+    role=ActionRole.TOOL,
+    status=ActionStatus.SUCCESS,
+    messages="tool result",
+    input_data=None,
+    output_data=None,
+):
+    """Helper to create ActionHistory instances for chat_commands tests."""
+    import uuid
+
+    return ActionHistory(
+        action_id=str(uuid.uuid4()),
+        role=role,
+        messages=messages,
+        action_type="test",
+        input=input_data,
+        output=output_data,
+        status=status,
+        start_time=datetime.now(),
+        end_time=datetime.now(),
+        depth=0,
+    )
+
+
+@pytest.mark.ci
+class TestAllTurnActions:
+    """Tests for all_turn_actions multi-turn accumulation."""
+
+    def test_init_all_turn_actions_empty(self, real_agent_config, mock_llm_create):
+        """all_turn_actions is initialized as empty list."""
+        cmds = _make_chat_commands(real_agent_config)
+        assert cmds.all_turn_actions == []
+
+    def test_all_turn_actions_accumulates(self, real_agent_config, mock_llm_create):
+        """all_turn_actions accumulates (message, actions) tuples."""
+        cmds = _make_chat_commands(real_agent_config)
+
+        actions1 = [_make_action_for_chat(messages="result1")]
+        actions2 = [_make_action_for_chat(messages="result2")]
+
+        cmds.all_turn_actions.append(("Question 1", actions1))
+        cmds.all_turn_actions.append(("Question 2", actions2))
+
+        assert len(cmds.all_turn_actions) == 2
+        assert cmds.all_turn_actions[0][0] == "Question 1"
+        assert cmds.all_turn_actions[1][0] == "Question 2"
+        assert cmds.all_turn_actions[0][1] is actions1
+        assert cmds.all_turn_actions[1][1] is actions2
+
+    def test_cmd_clear_chat_resets_all_turn_actions(self, real_agent_config, mock_llm_create):
+        """cmd_clear_chat resets all_turn_actions to empty."""
+        console = Console(file=io.StringIO(), no_color=True)
+        cmds = _make_chat_commands(real_agent_config, console=console)
+
+        # Simulate accumulated turns
+        cmds.all_turn_actions.append(("Q1", [_make_action_for_chat()]))
+        cmds.all_turn_actions.append(("Q2", [_make_action_for_chat()]))
+        assert len(cmds.all_turn_actions) == 2
+
+        cmds.cmd_clear_chat("")
+
+        assert cmds.all_turn_actions == []
+
+    def test_display_inline_trace_uses_all_turn_actions(self, real_agent_config, mock_llm_create):
+        """display_inline_trace_details uses all_turn_actions when populated."""
+        console = Console(file=io.StringIO(), no_color=True)
+        cmds = _make_chat_commands(real_agent_config, console=console)
+
+        actions1 = [_make_action_for_chat(messages="r1", input_data={"function_name": "read_query"})]
+        actions2 = [_make_action_for_chat(messages="r2", input_data={"function_name": "list_tables"})]
+
+        cmds.all_turn_actions = [("Turn 1 question", actions1), ("Turn 2 question", actions2)]
+        cmds.last_actions = actions2
+
+        # Reset console buffer
+        console.file = io.StringIO()
+        cmds.display_inline_trace_details(cmds.last_actions)
+        output = _get_console_output(console)
+
+        # Both turns should appear in output
+        assert "Turn 1 question" in output
+        assert "Turn 2 question" in output
+
+    def test_display_inline_trace_fallback_without_all_turn_actions(self, real_agent_config, mock_llm_create):
+        """display_inline_trace_details falls back to actions param when all_turn_actions is empty."""
+        console = Console(file=io.StringIO(), no_color=True)
+        cmds = _make_chat_commands(real_agent_config, console=console)
+
+        actions = [_make_action_for_chat(messages="single result", input_data={"function_name": "read_query"})]
+        cmds.last_actions = actions
+        cmds.all_turn_actions = []  # No accumulated turns
+
+        console.file = io.StringIO()
+        cmds.display_inline_trace_details(actions)
+        output = _get_console_output(console)
+
+        # Should still render the actions (just not with multi-turn headers)
+        assert "switched to verbose mode" in output
+
+    def test_display_inline_trace_rerenders_final_response(self, real_agent_config, mock_llm_create):
+        """display_inline_trace_details re-renders node final action output after the trace."""
+        console = Console(file=io.StringIO(), no_color=True)
+        cmds = _make_chat_commands(real_agent_config, console=console)
+
+        tool_action = _make_action_for_chat(messages="tool result", input_data={"function_name": "read_query"})
+        node_final = _make_action_for_chat(
+            role=ActionRole.ASSISTANT,
+            messages="Chat interaction completed successfully",
+            output_data={"response": "This is the final markdown answer", "sql": None},
+        )
+        # Patch action_type to end with _response
+        node_final.action_type = "chat_response"
+
+        actions = [tool_action, node_final]
+        cmds.all_turn_actions = [("user question", actions)]
+        cmds.last_actions = actions
+
+        console.file = io.StringIO()
+        cmds.display_inline_trace_details(cmds.last_actions)
+        output = _get_console_output(console)
+
+        assert "switched to verbose mode" in output
+        # Final markdown response should be re-rendered
+        assert "final markdown answer" in output

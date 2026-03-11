@@ -3,9 +3,11 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 # -*- coding: utf-8 -*-
+import os
 from collections import OrderedDict
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
+from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Union
 
 from agents import Tool
@@ -390,6 +392,36 @@ class DBFuncTool:
         except Exception as e:
             logger.warning(f"Failed to enrich {field_type} with descriptions: {e}")
             return []
+
+    def _resolve_workspace_root(self) -> str:
+        """Resolve workspace_root with priority: storage config > legacy config > default."""
+        workspace_root = None
+
+        if self.agent_config:
+            # Priority 1: storage.workspace_root
+            if hasattr(self.agent_config, "storage") and hasattr(self.agent_config.storage, "workspace_root"):
+                ws = self.agent_config.storage.workspace_root
+                if ws:
+                    workspace_root = ws
+
+            # Priority 2: legacy agent_config.workspace_root
+            if workspace_root is None and hasattr(self.agent_config, "workspace_root"):
+                ws = self.agent_config.workspace_root
+                if ws is not None:
+                    workspace_root = ws
+
+        if workspace_root is None:
+            workspace_root = "."
+
+        return os.path.expanduser(workspace_root)
+
+    def _read_sql_from_file(self, file_path: str) -> str:
+        """Read SQL content from a file path relative to workspace root."""
+        workspace_root = self._resolve_workspace_root()
+        full_path = Path(workspace_root) / file_path
+        if not full_path.exists():
+            raise FileNotFoundError(f"SQL file not found: {file_path}")
+        return full_path.read_text(encoding="utf-8")
 
     @staticmethod
     def _normalize_identifier_part(value: Optional[str]) -> str:
@@ -897,7 +929,8 @@ class DBFuncTool:
         Execute arbitrary SQL and return the result rows (optionally compressed).
 
         Args:
-            sql: SQL text to run against the connector.
+            sql: SQL text to run, or a .sql file path (e.g. "sql/session_1/query.sql")
+                 to read and execute from the workspace.
             database: Optional database name for multi-database scenarios.
 
         Returns:
@@ -905,6 +938,10 @@ class DBFuncTool:
             underlying error message from the connector.
         """
         try:
+            # Support SQL file path: if sql ends with .sql, read from file
+            if sql.strip().endswith(".sql"):
+                sql = self._read_sql_from_file(sql.strip())
+
             logger.info(f"read_query sql: {sql}")
             connector = self._get_connector(database)
             result = connector.execute_query(sql, result_format="arrow" if connector.dialect == "snowflake" else "list")

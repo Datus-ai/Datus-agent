@@ -151,10 +151,11 @@ class ClaudeModel(OpenAICompatibleModel):
         }
 
     def generate(self, prompt: Any, enable_thinking: bool = False, **kwargs) -> str:
-        """Generate response using native Anthropic API.
+        """Generate response using LiteLLM (default) or native Anthropic API.
 
-        Override parent class to use native Anthropic client since
-        Anthropic API doesn't support OpenAI-compatible format.
+        Default uses LiteLLM path for consistent api_key/base_url handling across
+        all code paths (generate, generate_with_json_output, generate_with_tools_stream).
+        Set use_native_api=True in model config to use native Anthropic client instead.
 
         Args:
             prompt: The input prompt (str or list of messages)
@@ -164,6 +165,14 @@ class ClaudeModel(OpenAICompatibleModel):
         Returns:
             Generated text response
         """
+        if not self.use_native_api:
+            # Claude API does not allow both temperature and top_p simultaneously.
+            # Force top_p into kwargs so the parent skips its default top_p=1.0,
+            # then LiteLLM receives top_p=None which it omits from the request.
+            kwargs.setdefault("top_p", None)
+            return super().generate(prompt, enable_thinking=enable_thinking, **kwargs)
+
+        # Native Anthropic client path (only when use_native_api=True)
         # Build messages
         if isinstance(prompt, list):
             messages = prompt

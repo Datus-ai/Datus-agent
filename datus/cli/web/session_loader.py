@@ -30,29 +30,48 @@ logger = structlog.get_logger(__name__)
 class SessionLoader:
     """Loads and reconstructs chat sessions from SQLite storage."""
 
-    def _parse_final_output(self, last_action: ActionHistory, current_assistant_group: Dict) -> Optional[ActionHistory]:
-        """Try to parse sql/output from last action's messages and update assistant group."""
+    def _parse_final_output(
+        self, actions: List[ActionHistory], current_assistant_group: Dict
+    ) -> Optional[ActionHistory]:
+        """Try to parse sql/output from the last assistant action's messages and update assistant group.
 
-        if last_action.role == ActionRole.ASSISTANT and last_action.messages:
-            result_json = llm_result2json(last_action.messages)
-            if isinstance(result_json, dict) and ("sql" in result_json or "output" in result_json):
-                output = {}
-                if "sql" in result_json:
-                    output["sql"] = result_json["sql"]
-                if "output" in result_json:
-                    output["response"] = result_json["output"]
-                current_assistant_group["content"] = result_json.get("output", "")
-                current_assistant_group["sql"] = result_json.get("sql", "")
-                # Create final action
-                final_action = ActionHistory.create_action(
-                    role=ActionRole.ASSISTANT,
-                    action_type="chat_response",
-                    messages="Chat interaction completed successfully",
-                    input_data={},
-                    output_data=output,
-                    status=ActionStatus.SUCCESS,
-                )
-                return final_action
+        Searches *actions* in reverse for the last ASSISTANT action and attempts
+        to extract structured JSON (sql/output).  When JSON extraction fails
+        (e.g. chat agent producing plain markdown), the raw text is used as
+        ``content`` so it can be rendered as markdown during resume.
+        """
+        # Find last assistant action (may not be the very last action)
+        last_assistant = None
+        for action in reversed(actions):
+            if action.role == ActionRole.ASSISTANT:
+                last_assistant = action
+                break
+
+        if not last_assistant or not last_assistant.messages:
+            return None
+
+        result_json = llm_result2json(last_assistant.messages)
+        if isinstance(result_json, dict) and ("sql" in result_json or "output" in result_json):
+            output = {}
+            if "sql" in result_json:
+                output["sql"] = result_json["sql"]
+            if "output" in result_json:
+                output["response"] = result_json["output"]
+            current_assistant_group["content"] = result_json.get("output", "")
+            current_assistant_group["sql"] = result_json.get("sql", "")
+            # Create final action
+            final_action = ActionHistory.create_action(
+                role=ActionRole.ASSISTANT,
+                action_type="chat_response",
+                messages="Chat interaction completed successfully",
+                input_data={},
+                output_data=output,
+                status=ActionStatus.SUCCESS,
+            )
+            return final_action
+
+        # Non-JSON output (e.g. chat agent markdown) — use raw text as content
+        current_assistant_group["content"] = last_assistant.messages
         return None
 
     def get_session_messages(self, session_id: str) -> List[Dict]:
@@ -118,7 +137,7 @@ class SessionLoader:
                         if role == "user":
                             # Before adding user message, flush any pending assistant group
                             if current_assistant_group:
-                                final_action = self._parse_final_output(current_actions[-1], current_assistant_group)
+                                final_action = self._parse_final_output(current_actions, current_assistant_group)
                                 if final_action:
                                     current_actions.append(final_action)
 
@@ -254,7 +273,7 @@ class SessionLoader:
 
                 # Flush any remaining assistant group
                 if current_assistant_group:
-                    final_action = self._parse_final_output(current_actions[-1], current_assistant_group)
+                    final_action = self._parse_final_output(current_actions, current_assistant_group)
                     if final_action:
                         current_actions.append(final_action)
 

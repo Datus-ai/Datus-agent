@@ -10,6 +10,7 @@ SQL generation with support for limited context, enhanced template variables,
 and flexible configuration through agent.yml.
 """
 
+
 from typing import Any, AsyncGenerator, Dict, Optional, Union
 
 from datus.agent.node.agentic_node import AgenticNode
@@ -215,15 +216,16 @@ class GenSQLAgenticNode(AgenticNode):
         if self._platform_doc_tool:
             self.tools.extend(self._platform_doc_tool.available_tools())
 
+    # Default tools when not configured in agent.yml
+    DEFAULT_TOOLS = "db_tools.*, filesystem_tools.*"
+
     def setup_tools(self):
-        """Setup tools based on configuration."""
+        """Setup tools based on configuration, falling back to DEFAULT_TOOLS."""
         if not self.agent_config:
             return
 
         self.tools = []
-        config_value = self.node_config.get("tools", "")
-        if not config_value:
-            return
+        config_value = self.node_config.get("tools", "") or self.DEFAULT_TOOLS
 
         tool_patterns = [p.strip() for p in config_value.split(",") if p.strip()]
         for pattern in tool_patterns:
@@ -509,6 +511,35 @@ class GenSQLAgenticNode(AgenticNode):
                 message_args={"config_error": f"Template loading failed for '{template_name}': {str(e)}"},
             ) from e
 
+    # ── SQL file storage helpers ─────────────────────────────────────
+
+    def _get_sql_preview_lines(self) -> int:
+        """Get the number of preview lines from node_config, default 5."""
+        return int(self.node_config.get("sql_preview_lines", 5))
+
+    @staticmethod
+    def _get_sql_preview(sql: str, max_lines: int = 5) -> str:
+        """Return the first N lines of SQL as a preview."""
+        lines = sql.splitlines()
+        preview_lines = lines[:max_lines]
+        preview = "\n".join(preview_lines)
+        if len(lines) > max_lines:
+            preview += f"\n-- ... ({len(lines) - max_lines} more lines)"
+        return preview
+
+    def _read_existing_sql_file(self, file_path: str) -> Optional[str]:
+        """Read SQL file content via FilesystemFuncTool.
+
+        Returns:
+            File content string on success, None if file doesn't exist or read fails.
+        """
+        if not self.filesystem_func_tool or not file_path:
+            return None
+        result = self.filesystem_func_tool.read_file(path=file_path)
+        if result.success and result.result:
+            return result.result if isinstance(result.result, str) else None
+        return None
+
     async def execute_stream(
         self, action_history_manager: Optional[ActionHistoryManager] = None
     ) -> AsyncGenerator[ActionHistory, None]:
@@ -687,11 +718,26 @@ class GenSQLAgenticNode(AgenticNode):
                 "total_tokens": int(tokens_used),
             }
 
+            # Detect if LLM returned a .sql file path instead of inline SQL
+            sql_file_path = None
+            sql_preview = None
+            result_sql = sql_content
+
+            if sql_content and sql_content.strip().endswith(".sql"):
+                # LLM saved SQL to file via write_file and returned the path
+                sql_file_path = sql_content.strip()
+                full_sql = self._read_existing_sql_file(sql_file_path)
+                if full_sql:
+                    sql_preview = self._get_sql_preview(full_sql, self._get_sql_preview_lines())
+                result_sql = None  # Clear inline SQL — file path is the reference
+
             # Create final result with action history
             result = GenSQLNodeResult(
                 success=True,
                 response=response_content,
-                sql=sql_content,
+                sql=result_sql,
+                sql_file_path=sql_file_path,
+                sql_preview=sql_preview,
                 tokens_used=int(tokens_used),
                 action_history=[action.model_dump() for action in all_actions],
                 execution_stats=execution_stats,

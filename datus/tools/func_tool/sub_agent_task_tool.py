@@ -1,0 +1,616 @@
+# Copyright 2025-present DatusAI, Inc.
+# Licensed under the Apache License, Version 2.0.
+# See http://www.apache.org/licenses/LICENSE-2.0 for details.
+
+"""
+SubAgentTaskTool for delegating specialized tasks to AgenticNode instances.
+
+This module provides a tool that enables ChatAgenticNode to delegate tasks
+(e.g., SQL generation) to specialized AgenticNode instances (e.g., GenSQLAgenticNode),
+giving each subagent full node capabilities: independent session, config-driven
+tools, template rendering, and action history.
+"""
+
+from __future__ import annotations
+
+import json
+import uuid
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+from agents import FunctionTool, Tool
+
+from datus.configuration.agent_config import AgentConfig
+from datus.configuration.node_type import NodeType
+from datus.schemas.action_history import (
+    SUBAGENT_COMPLETE_ACTION_TYPE,
+    ActionHistory,
+    ActionHistoryManager,
+    ActionRole,
+    ActionStatus,
+)
+from datus.schemas.agent_models import SubAgentConfig
+from datus.tools.func_tool.base import FuncToolResult
+from datus.utils.constants import SYS_SUB_AGENTS
+from datus.utils.loggings import get_logger
+
+if TYPE_CHECKING:
+    from datus.cli.execution_state import InteractionBroker
+    from datus.schemas.action_bus import ActionBus
+
+logger = get_logger(__name__)
+
+# Mapping from subagent type string to NodeType constants
+NODE_CLASS_MAP = {
+    "gen_sql": NodeType.TYPE_GENSQL,
+    "chat": NodeType.TYPE_CHAT,
+    "gen_report": NodeType.TYPE_GEN_REPORT,
+    "ext_knowledge": NodeType.TYPE_EXT_KNOWLEDGE,
+    "semantic": NodeType.TYPE_SEMANTIC,
+    "sql_summary": NodeType.TYPE_SQL_SUMMARY,
+}
+
+# Descriptions for built-in system subagents (used in task tool description for LLM)
+BUILTIN_SUBAGENT_DESCRIPTIONS = {
+    "gen_semantic_model": (
+        "Generate MetricFlow semantic model YAML files from database table structures. "
+        "Use when asked to create or update semantic models, define entities, relationships, or dimensions. "
+        "Prompt MUST contain table name(s), e.g. 'orders' or 'orders, customers, products'. "
+        "Returns JSON with {response, semantic_models (list of file paths), tokens_used}."
+    ),
+    "gen_metrics": (
+        "Extract core business metrics from SQL queries and generate MetricFlow metric definitions. "
+        "Use when asked to create metrics, KPIs, or business measures from SQL. "
+        "Prompt MUST contain one or more complete SQL queries for analysis. "
+        "Returns JSON with {response, tokens_used}."
+    ),
+    "gen_sql_summary": (
+        "Analyze and summarize SQL queries into reusable knowledge base entries for semantic search. "
+        "Use when asked to summarize, document, or index SQL queries for future reference. "
+        "Prompt MUST contain a complete SQL query, optionally with business context description. "
+        "Returns JSON with {response, sql_summary_file, tokens_used}."
+    ),
+    "gen_ext_knowledge": (
+        "Discover and extract business knowledge through blind-test → verify → extract workflow. "
+        "Use when asked to generate business knowledge entries, define domain concepts, or build knowledge base. "
+        "Prompt MUST contain a natural language business question AND the gold SQL (reference answer), "
+        "e.g. 'What is the total revenue by region? SELECT region, SUM(revenue) FROM sales GROUP BY region'. "
+        "The agent will parse both from the prompt, autonomously explore the database, write SQL, "
+        "verify against the gold SQL reference, and extract knowledge. "
+        "Returns JSON with {response, ext_knowledge_file, tokens_used}."
+    ),
+}
+
+
+class SubAgentTaskTool:
+    """Delegate specialized tasks to AgenticNode instances within ChatAgenticNode.
+
+    Supports an internal ``gen_sql`` type (always available) and any custom
+    subagents declared in ``agent.yml`` under ``agentic_nodes``.
+
+    Each subagent is a real AgenticNode instance (e.g., GenSQLAgenticNode)
+    with its own session, tools, and configuration. A fresh node is created
+    for every task invocation to ensure fully independent context.
+    """
+
+    def __init__(self, agent_config: AgentConfig):
+        self.agent_config = agent_config
+        self._action_bus: Optional["ActionBus"] = None
+        self._interaction_broker: Optional["InteractionBroker"] = None
+
+    def set_action_bus(self, bus: "ActionBus") -> None:
+        """Inject the :class:`ActionBus` for forwarding sub-agent actions."""
+        self._action_bus = bus
+
+    def set_interaction_broker(self, broker: "InteractionBroker") -> None:
+        """Inject the parent's :class:`InteractionBroker` for transparent pass-through.
+
+        When set, sub-agent hooks will use the parent's broker for user interactions.
+        This ensures that CLI/Web ``submit()`` calls on ``current_node.interaction_broker``
+        correctly resolve sub-agent interaction futures.
+        """
+        self._interaction_broker = broker
+
+    # ── public API ──────────────────────────────────────────────────────
+
+    def available_tools(self) -> List[Tool]:
+        """Return a single ``task`` FunctionTool with a dynamic description."""
+        description = self._build_task_description()
+        schema: Dict[str, Any] = {
+            "type": "object",
+            "properties": {
+                "type": {
+                    "type": "string",
+                    "description": "The subagent type to delegate to",
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": "The task/question to send to the subagent",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "A short one-line summary of the task goal (shown in compact display)",
+                },
+            },
+            "required": ["type", "prompt"],
+        }
+
+        async def _invoke(_tool_ctx, args_str) -> dict:
+            try:
+                args = json.loads(args_str) if isinstance(args_str, str) else dict(args_str or {})
+            except (TypeError, json.JSONDecodeError):
+                return FuncToolResult(success=0, error="Invalid JSON arguments for task tool").model_dump()
+            # Resolve parent call_id from SDK ToolContext for action linking
+            call_id = getattr(_tool_ctx, "tool_call_id", None) if _tool_ctx else None
+            result = await self.task(call_id=call_id, **args)
+            return result.model_dump()
+
+        return [
+            FunctionTool(
+                name="task",
+                description=description,
+                params_json_schema=schema,
+                on_invoke_tool=_invoke,
+                strict_json_schema=False,
+            )
+        ]
+
+    async def task(
+        self, type: str = "", prompt: str = "", description: str = "", call_id: Optional[str] = None
+    ) -> FuncToolResult:
+        """Execute a subagent task of the given *type*."""
+        if not type:
+            return FuncToolResult(success=0, error="Missing required parameter: type")
+        if not prompt:
+            return FuncToolResult(success=0, error="Missing required parameter: prompt")
+
+        try:
+            return await self._execute_node(type, prompt, description=description, call_id=call_id)
+        except Exception as e:
+            logger.error(f"Task tool execution error (type={type}): {e}")
+            return FuncToolResult(success=0, error=f"Task execution failed: {str(e)}")
+
+    # ── node creation ─────────────────────────────────────────────────
+
+    def _create_node(self, subagent_type: str):
+        """Create a new AgenticNode instance for the given subagent type."""
+        # Builtin system subagents have non-standard constructors
+        if subagent_type in SYS_SUB_AGENTS:
+            return self._create_builtin_node(subagent_type)
+
+        node_type, node_name = self._resolve_node_type(subagent_type)
+        node_id = f"task_{subagent_type}_{uuid.uuid4().hex[:8]}"
+        description = f"SubAgent task: {subagent_type}"
+
+        from datus.agent.node.node import Node
+
+        return Node.new_instance(
+            node_id=node_id,
+            description=description,
+            node_type=node_type,
+            agent_config=self.agent_config,
+            node_name=node_name,
+        )
+
+    def _create_builtin_node(self, subagent_type: str):
+        """Create a builtin system subagent node with its non-standard constructor."""
+        if subagent_type == "gen_semantic_model":
+            from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+
+            return GenSemanticModelAgenticNode(
+                agent_config=self.agent_config,
+                execution_mode="interactive",
+            )
+        elif subagent_type == "gen_metrics":
+            from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+
+            return GenMetricsAgenticNode(
+                agent_config=self.agent_config,
+                execution_mode="interactive",
+            )
+        elif subagent_type == "gen_sql_summary":
+            from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
+
+            return SqlSummaryAgenticNode(
+                node_name="gen_sql_summary",
+                agent_config=self.agent_config,
+                execution_mode="interactive",
+            )
+        elif subagent_type == "gen_ext_knowledge":
+            from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
+
+            return GenExtKnowledgeAgenticNode(
+                node_name="gen_ext_knowledge",
+                agent_config=self.agent_config,
+                execution_mode="interactive",
+            )
+        else:
+            raise ValueError(f"Unknown builtin subagent type: {subagent_type}")
+
+    def _resolve_node_type(self, subagent_type: str) -> tuple:
+        """Resolve subagent type string to (NodeType, node_name) tuple.
+
+        Returns:
+            Tuple of (node_type_constant, node_name_for_config).
+
+        Raises:
+            ValueError: If the subagent type is not recognized.
+        """
+        # Built-in gen_sql type
+        if subagent_type == "gen_sql":
+            for key in ("gen_sql", "gensql"):
+                if key in self.agent_config.agentic_nodes:
+                    return NodeType.TYPE_GENSQL, key
+            return NodeType.TYPE_GENSQL, "gen_sql"
+
+        # Built-in system subagents (SYS_SUB_AGENTS)
+        builtin_type_map = {
+            "gen_semantic_model": (NodeType.TYPE_SEMANTIC, "gen_semantic_model"),
+            "gen_metrics": (NodeType.TYPE_SEMANTIC, "gen_metrics"),
+            "gen_sql_summary": (NodeType.TYPE_SQL_SUMMARY, "gen_sql_summary"),
+            "gen_ext_knowledge": (NodeType.TYPE_EXT_KNOWLEDGE, "gen_ext_knowledge"),
+        }
+        if subagent_type in builtin_type_map:
+            return builtin_type_map[subagent_type]
+
+        # Custom subagent from agent.yml agentic_nodes
+        sub_config = self.agent_config.sub_agent_config(subagent_type)
+        if not sub_config:
+            raise ValueError(f"Unknown subagent type: {subagent_type}")
+
+        node_class = (
+            sub_config.get("node_class") if isinstance(sub_config, dict) else getattr(sub_config, "node_class", None)
+        )
+        node_type = NODE_CLASS_MAP.get(node_class or "gen_sql", NodeType.TYPE_GENSQL)
+        return node_type, subagent_type
+
+    # ── broker injection ──────────────────────────────────────────────
+
+    def _inject_broker(self, node, broker: "InteractionBroker") -> None:
+        """Inject the parent's InteractionBroker into a sub-agent node and its hooks.
+
+        This replaces the sub-agent's own broker so that INTERACTION actions
+        are routed through the parent's broker queue.  The parent's
+        ``action_bus.merge(execute_stream, broker.fetch())`` then picks them up
+        and the CLI/Web ``submit()`` call on ``current_node.interaction_broker``
+        correctly resolves the pending futures.
+        """
+        node.interaction_broker = broker
+
+        # Update broker references on hooks that were already initialised
+        # with the node's original (now stale) broker.
+        for attr in ("hooks", "permission_hooks", "plan_hooks"):
+            hooks_obj = getattr(node, attr, None)
+            if hooks_obj is None:
+                continue
+            # Direct hook (GenerationHooks, PermissionHooks, PlanModeHooks)
+            if hasattr(hooks_obj, "broker"):
+                hooks_obj.broker = broker
+            # CompositeHooks wrapping multiple hooks
+            if hasattr(hooks_obj, "hooks_list"):
+                for h in hooks_obj.hooks_list:
+                    if hasattr(h, "broker"):
+                        h.broker = broker
+
+    # ── execution via execute_stream ───────────────────────────────────
+
+    async def _execute_node(
+        self, subagent_type: str, prompt: str, description: str = "", call_id: Optional[str] = None
+    ) -> FuncToolResult:
+        """Execute a subagent by running an AgenticNode's execute_stream."""
+        node = self._create_node(subagent_type)
+        node.ephemeral = True  # Use in-memory session — no SQLite persistence for sub-agents
+
+        # Set input on the node
+        node.input = self._build_node_input(node, prompt)
+
+        # Inject parent's InteractionBroker so that sub-agent INTERACTION
+        # actions are routed through the parent's broker queue.  When injected,
+        # we call execute_stream() (not execute_stream_with_interactions()) to
+        # avoid dual-consuming the same broker.fetch() stream.
+        if self._interaction_broker is not None:
+            self._inject_broker(node, self._interaction_broker)
+
+        # Iterate the async generator directly (we're already in async context)
+        action_history_manager = ActionHistoryManager()
+        final_output = None
+
+        # When parent broker is injected, INTERACTION actions flow through the
+        # parent's broker.fetch() → parent merge → CLI.  We only need
+        # execute_stream() here; otherwise fall back to the full merge.
+        if self._interaction_broker is not None:
+            stream = node.execute_stream(action_history_manager)
+        else:
+            stream = node.execute_stream_with_interactions(action_history_manager)
+
+        stream_start_time = datetime.now()
+        tool_count = 0
+        subagent_status = ActionStatus.SUCCESS
+        first_user_seen = False
+
+        try:
+            async for action in stream:
+                # Inject _task_description into the first USER action for display
+                if not first_user_seen and action.role == ActionRole.USER:
+                    if description:
+                        if action.input is None:
+                            action.input = {}
+                        if isinstance(action.input, dict):
+                            action.input["_task_description"] = description
+                    first_user_seen = True
+
+                # Forward sub-action to the ActionBus (real-time CoT streaming)
+                if self._action_bus is not None:
+                    action.depth = 1
+                    if call_id:
+                        action.parent_action_id = call_id
+                    logger.debug(
+                        "SubAgentTaskTool bus.put",
+                        action_type=action.action_type,
+                        role=str(action.role),
+                        status=str(action.status),
+                    )
+                    self._action_bus.put(action)
+
+                if action.role == ActionRole.TOOL:
+                    tool_count += 1
+
+                if action.status == ActionStatus.SUCCESS and action.output:
+                    final_output = action.output
+        except Exception:
+            subagent_status = ActionStatus.FAILED
+            raise
+        finally:
+            self._emit_complete_action(subagent_type, call_id, stream_start_time, tool_count, subagent_status)
+
+        return self._convert_to_func_result(final_output)
+
+    def _emit_complete_action(
+        self,
+        subagent_type: str,
+        call_id: Optional[str],
+        stream_start_time: datetime,
+        tool_count: int,
+        status: ActionStatus,
+    ) -> None:
+        """Emit a ``subagent_complete`` action to signal that a sub-agent has finished."""
+        if self._action_bus is None:
+            return
+
+        complete = ActionHistory.create_action(
+            role=ActionRole.SYSTEM,
+            action_type=SUBAGENT_COMPLETE_ACTION_TYPE,
+            messages="",
+            input_data=None,
+            status=status,
+        )
+        complete.depth = 1
+        complete.parent_action_id = call_id
+        complete.end_time = datetime.now()
+        complete.start_time = stream_start_time
+        complete.output = {"subagent_type": subagent_type, "tool_count": tool_count}
+        self._action_bus.put(complete)
+
+    # ── input building ─────────────────────────────────────────────────
+
+    def _build_node_input(self, node, prompt: str):
+        """Build the appropriate input object for the given node."""
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+        from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
+
+        if isinstance(node, GenSQLAgenticNode):
+            return GenSQLNodeInput(
+                user_message=prompt,
+                database=self.agent_config.current_database,
+            )
+
+        # Built-in system subagent input types
+        from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+        from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
+
+        if isinstance(node, (GenSemanticModelAgenticNode, GenMetricsAgenticNode)):
+            from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
+
+            return SemanticNodeInput(
+                user_message=prompt,
+                database=self.agent_config.current_database,
+            )
+
+        if isinstance(node, SqlSummaryAgenticNode):
+            from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput
+
+            return SqlSummaryNodeInput(
+                user_message=prompt,
+                database=self.agent_config.current_database,
+            )
+
+        if isinstance(node, GenExtKnowledgeAgenticNode):
+            from datus.schemas.ext_knowledge_agentic_node_models import ExtKnowledgeNodeInput
+
+            return ExtKnowledgeNodeInput(user_message=prompt)
+
+        from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
+
+        if isinstance(node, GenReportAgenticNode):
+            from datus.schemas.gen_report_agentic_node_models import GenReportNodeInput
+
+            return GenReportNodeInput(
+                user_message=prompt,
+                database=self.agent_config.current_database,
+            )
+
+        # Generic fallback for other agentic node types
+        from datus.schemas.base import BaseInput
+
+        # Try to use the node's type-specific input if available
+        try:
+            input_cls = NodeType.type_input(node.type, {}, ignore_require_check=True)
+            if hasattr(input_cls, "user_message"):
+                input_cls.user_message = prompt
+            return input_cls
+        except Exception:
+            pass
+
+        return BaseInput()
+
+    # ── result conversion ──────────────────────────────────────────────
+
+    def _convert_to_func_result(self, output) -> FuncToolResult:
+        """Convert AgenticNode output to FuncToolResult."""
+        if not output or not isinstance(output, dict):
+            return FuncToolResult(success=0, error="No result from subagent")
+
+        response = output.get("response", "")
+        tokens = output.get("tokens_used", 0)
+
+        # File-based SQL result: sql_file_path present
+        sql_file_path = output.get("sql_file_path")
+        if sql_file_path:
+            result_dict: Dict[str, Any] = {
+                "sql_file_path": sql_file_path,
+                "sql_preview": output.get("sql_preview", ""),
+                "response": response,
+                "tokens_used": tokens,
+            }
+            sql_diff = output.get("sql_diff")
+            if sql_diff:
+                result_dict["sql_diff"] = sql_diff
+            return FuncToolResult(result=result_dict)
+
+        # Inline SQL result: has 'sql' key
+        sql = output.get("sql")
+        if sql is not None:
+            return FuncToolResult(
+                result={
+                    "sql": sql,
+                    "response": response,
+                    "tokens_used": tokens,
+                }
+            )
+
+        # Semantic model result: has 'semantic_models' key
+        semantic_models = output.get("semantic_models")
+        if semantic_models is not None:
+            return FuncToolResult(
+                result={
+                    "response": response,
+                    "semantic_models": semantic_models,
+                    "tokens_used": tokens,
+                }
+            )
+
+        # SQL summary result: has 'sql_summary_file' key
+        sql_summary_file = output.get("sql_summary_file")
+        if sql_summary_file is not None:
+            return FuncToolResult(
+                result={
+                    "response": response,
+                    "sql_summary_file": sql_summary_file,
+                    "tokens_used": tokens,
+                }
+            )
+
+        # External knowledge result: has 'ext_knowledge_file' key
+        ext_knowledge_file = output.get("ext_knowledge_file")
+        if ext_knowledge_file is not None:
+            return FuncToolResult(
+                result={
+                    "response": response,
+                    "ext_knowledge_file": ext_knowledge_file,
+                    "tokens_used": tokens,
+                }
+            )
+
+        # Report result: has 'report_result' key
+        report_result = output.get("report_result")
+        if report_result is not None:
+            return FuncToolResult(
+                result={
+                    "response": response,
+                    "report_result": report_result,
+                    "tokens_used": tokens,
+                }
+            )
+
+        # Generic format
+        return FuncToolResult(
+            result={
+                "response": response or output.get("content", ""),
+                "tokens_used": tokens,
+            }
+        )
+
+    # ── description builder ────────────────────────────────────────────
+
+    def _build_task_description(self) -> str:
+        """Build a dynamic description for the task tool."""
+        available = self._get_available_types()
+
+        lines = [
+            "Delegate a specialized task to a subagent for better quality results.",
+            "",
+            "Available types:",
+        ]
+
+        for t in available:
+            if t == "gen_sql":
+                lines.append(
+                    "- gen_sql: Generate optimized SQL queries. Returns JSON with {sql, response, tokens_used}. "
+                    "For complex SQL (50+ lines), returns {sql_file_path, sql_preview, response} instead - "
+                    "pass sql_file_path directly to read_query() to execute (no need to read_file() first). "
+                    "Modifications return sql_diff in unified diff format. "
+                    "Use for data queries, analysis, and report SQL. Prompt: provide the question directly."
+                )
+            elif t in BUILTIN_SUBAGENT_DESCRIPTIONS:
+                lines.append(f"- {t}: {BUILTIN_SUBAGENT_DESCRIPTIONS[t]}")
+            else:
+                sub_raw = self.agent_config.sub_agent_config(t)
+                desc = ""
+                if isinstance(sub_raw, dict):
+                    desc = sub_raw.get("agent_description", "") or ""
+                elif hasattr(sub_raw, "agent_description"):
+                    desc = getattr(sub_raw, "agent_description", "") or ""
+                lines.append(f"- {t}: {desc}" if desc else f"- {t}")
+
+        lines.extend(
+            [
+                "",
+                "Guidelines:",
+                '- Use task(type="gen_sql") for SQL generation requiring multi-step reasoning',
+                "- Use direct db tools (list_tables, describe_table) for quick schema exploration",
+                "- In plan mode, use task() for each SQL sub-step",
+                "- Always provide a short 'description' summarizing the task goal (e.g. 'Generate monthly sales report')",
+            ]
+        )
+
+        return "\n".join(lines)
+
+    def _get_available_types(self) -> List[str]:
+        """Discover available subagent types."""
+        types = ["gen_sql"]
+
+        # Add built-in system subagents (always available)
+        types.extend(sorted(SYS_SUB_AGENTS))
+
+        if not self.agent_config or not hasattr(self.agent_config, "agentic_nodes"):
+            return types
+
+        current_namespace = self.agent_config.current_namespace
+
+        for name, config in self.agent_config.agentic_nodes.items():
+            if name in ("chat", "gen_sql") or name in SYS_SUB_AGENTS:
+                continue
+
+            # If scoped_context is configured, namespace must match current namespace
+            try:
+                sub_config = SubAgentConfig.model_validate(config)
+                if sub_config.has_scoped_context() and not sub_config.is_in_namespace(current_namespace):
+                    continue
+            except Exception:
+                pass
+
+            types.append(name)
+
+        return types

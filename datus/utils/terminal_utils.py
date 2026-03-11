@@ -105,13 +105,17 @@ class EscapeGuard:
 
 
 @contextmanager
-def interrupt_on_escape(interrupt_controller):
+def interrupt_on_escape(interrupt_controller, key_callbacks=None):
     """Listen for ESC key and trigger interrupt_controller when detected.
 
     Starts a daemon thread that puts the terminal in non-canonical, no-echo
     mode and polls stdin for ESC (\\x1b). On detection, calls
     interrupt_controller.interrupt(). Ctrl+C (\\x03) sends SIGINT to
     preserve the original KeyboardInterrupt behavior.
+
+    Additional key callbacks can be registered via key_callbacks dict,
+    mapping raw byte values to callables. These callbacks are invoked
+    without breaking the listener loop (e.g. Ctrl+O = b"\\x0f").
 
     Yields an EscapeGuard that can temporarily pause listening during
     interactive prompts (e.g. prompt_toolkit) to avoid intercepting
@@ -121,6 +125,8 @@ def interrupt_on_escape(interrupt_controller):
 
     Args:
         interrupt_controller: InterruptController instance to signal on ESC
+        key_callbacks: Optional dict mapping bytes to callables, invoked
+            when the corresponding key is detected (without breaking the loop).
     """
     try:
         import termios
@@ -143,8 +149,11 @@ def interrupt_on_escape(interrupt_controller):
         try:
             # Set terminal to raw-like mode: non-canonical, no echo
             new_settings = termios.tcgetattr(fd)
-            # Turn off ICANON and ECHO in lflag
-            new_settings[3] = new_settings[3] & ~(termios.ICANON | termios.ECHO)
+            # Turn off ICANON, ECHO and IEXTEN in lflag.
+            # IEXTEN must be cleared so that Ctrl+O (VDISCARD) and other
+            # extended characters are passed through to os.read() instead
+            # of being intercepted by the terminal driver.
+            new_settings[3] = new_settings[3] & ~(termios.ICANON | termios.ECHO | termios.IEXTEN)
             # Set VMIN=0, VTIME=0 for non-blocking reads
             new_settings[6][termios.VMIN] = 0
             new_settings[6][termios.VTIME] = 0
@@ -167,7 +176,7 @@ def interrupt_on_escape(interrupt_controller):
                     except termios.error:
                         pass
                     new_settings = termios.tcgetattr(fd)
-                    new_settings[3] = new_settings[3] & ~(termios.ICANON | termios.ECHO)
+                    new_settings[3] = new_settings[3] & ~(termios.ICANON | termios.ECHO | termios.IEXTEN)
                     new_settings[6][termios.VMIN] = 0
                     new_settings[6][termios.VTIME] = 0
                     termios.tcsetattr(fd, termios.TCSANOW, new_settings)
@@ -190,6 +199,11 @@ def interrupt_on_escape(interrupt_controller):
 
                         os.kill(os.getpid(), signal.SIGINT)
                         break
+                    elif key_callbacks and ch in key_callbacks:
+                        try:
+                            key_callbacks[ch]()
+                        except Exception:
+                            pass
         except Exception:
             # Silently ignore errors in the listener thread
             pass

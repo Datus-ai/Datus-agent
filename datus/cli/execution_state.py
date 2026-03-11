@@ -72,6 +72,7 @@ class InteractionBroker:
                  returns (choice, callback) where callback generates SUCCESS action
     - fetch(): AsyncGenerator for node to consume interaction ActionHistory objects
     - submit(): For UI to submit responses
+    - close(): Place a sentinel so fetch() terminates naturally
 
     Usage in hooks:
         choice, callback = await broker.request(
@@ -101,11 +102,14 @@ class InteractionBroker:
                     display_success_content(action)
     """
 
+    _STOP_SENTINEL = object()
+
     def __init__(self):
         self._pending: Dict[str, PendingInteraction] = {}
         self._output_queue: asyncio.Queue[ActionHistory] = asyncio.Queue()
         # Use threading.Lock for thread-safe access to _pending
         self._lock: threading.Lock = threading.Lock()
+        self._closed: bool = False
 
     def reset_queue(self) -> None:
         """Recreate the asyncio.Queue bound to the current event loop.
@@ -116,9 +120,23 @@ class InteractionBroker:
         errors when a node is reused across separate asyncio.run() calls.
         """
         self._output_queue = asyncio.Queue()
+        self._closed = False
+
+    def close(self) -> None:
+        """Place a sentinel so ``fetch()`` terminates naturally.
+
+        Idempotent – calling close() more than once is a no-op.
+        """
+        if self._closed:
+            return
+        self._closed = True
+        self._output_queue.put_nowait(self._STOP_SENTINEL)
 
     async def _queue_put(self, item: ActionHistory) -> None:
         """Put item into queue (non-blocking)."""
+        if self._closed:
+            logger.warning("InteractionBroker._queue_put() called after close()")
+            return
         self._output_queue.put_nowait(item)
 
     async def _queue_get(self, timeout: float = 0.1) -> Optional[ActionHistory]:
@@ -231,17 +249,19 @@ class InteractionBroker:
         """
         Async generator that yields ActionHistory objects for interactions.
 
-        Used by the node to consume interaction actions and merge with
-        execute_stream output.
+        Blocks on ``queue.get()`` and terminates when the sentinel
+        ``_STOP_SENTINEL`` is dequeued.  FIFO ordering guarantees all
+        items enqueued before the sentinel are yielded first.
 
         Yields:
             ActionHistory objects with INTERACTION role (request_choice and success types)
         """
         while True:
             try:
-                action = await self._queue_get(timeout=0.1)
-                if action is not None:
-                    yield action
+                item = await self._output_queue.get()
+                if item is self._STOP_SENTINEL:
+                    return
+                yield item
             except asyncio.CancelledError:
                 break
 
@@ -297,9 +317,8 @@ async def merge_interaction_stream(
     """
     Merge execute_stream output with interaction broker output.
 
-    This allows the UI to receive both:
-    1. Normal execution actions (TOOL, ASSISTANT, etc.)
-    2. Interaction actions (INTERACTION role): request_choice and success
+    Delegates to ``ActionBus.merge()`` with ``on_primary_done=broker.close``
+    so that all streams terminate naturally via sentinel.
 
     Args:
         execute_stream: The node's execute_stream() generator
@@ -308,90 +327,8 @@ async def merge_interaction_stream(
     Yields:
         ActionHistory objects from both streams, interleaved
     """
-    execute_iter = execute_stream.__aiter__()
-    fetch_iter = broker.fetch().__aiter__()
+    from datus.schemas.action_bus import ActionBus
 
-    execute_exhausted = False
-    execute_task: Optional[asyncio.Task] = None
-    fetch_task: Optional[asyncio.Task] = None
-
-    _EXHAUSTED = object()  # Sentinel for exhausted iterator
-
-    async def safe_anext(iterable, sentinel):
-        """Safely get next item, return sentinel on exhaustion."""
-        try:
-            return await iterable.__anext__()
-        except StopAsyncIteration:
-            return sentinel
-
-    try:
-        while not execute_exhausted or broker.has_pending or not broker.is_queue_empty():
-            tasks_to_wait = []
-
-            # Handle execute task - process if done during yield, otherwise add to wait list
-            if execute_task is not None:
-                if execute_task.done():
-                    # Task completed during yield, process it now
-                    result = execute_task.result()
-                    execute_task = None
-                    if result is _EXHAUSTED:
-                        execute_exhausted = True
-                        logger.debug("merge_interaction_stream: execute_stream exhausted (during yield)")
-                    else:
-                        yield result
-                else:
-                    tasks_to_wait.append(execute_task)
-
-            # Create new execute task if needed
-            if not execute_exhausted and execute_task is None:
-                execute_task = asyncio.create_task(safe_anext(execute_iter, _EXHAUSTED), name="execute")
-                tasks_to_wait.append(execute_task)
-
-            # Handle fetch task - process if done during yield, otherwise add to wait list
-            if fetch_task is not None:
-                if fetch_task.done():
-                    # Task completed during yield, process it now
-                    result = fetch_task.result()
-                    fetch_task = None
-                    if result is not _EXHAUSTED:
-                        yield result
-                else:
-                    tasks_to_wait.append(fetch_task)
-
-            # Create new fetch task if needed
-            if fetch_task is None:
-                fetch_task = asyncio.create_task(safe_anext(fetch_iter, _EXHAUSTED), name="fetch")
-                tasks_to_wait.append(fetch_task)
-
-            if not tasks_to_wait:
-                # Both exhausted and no pending
-                break
-
-            # Wait for first completed task
-            done, _ = await asyncio.wait(tasks_to_wait, return_when=asyncio.FIRST_COMPLETED)
-
-            for task in done:
-                result = task.result()
-
-                if task.get_name() == "execute":
-                    execute_task = None
-                    if result is _EXHAUSTED:
-                        execute_exhausted = True
-                        logger.debug("merge_interaction_stream: execute_stream exhausted")
-                    else:
-                        yield result
-
-                elif task.get_name() == "fetch":
-                    fetch_task = None
-                    if result is not _EXHAUSTED:
-                        yield result
-
-    finally:
-        # Clean up any remaining tasks
-        for task in [execute_task, fetch_task]:
-            if task and not task.done():
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
+    bus = ActionBus()
+    async for action in bus.merge(execute_stream, broker.fetch(), on_primary_done=broker.close):
+        yield action

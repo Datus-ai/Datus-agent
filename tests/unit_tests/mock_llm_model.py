@@ -316,6 +316,7 @@ class MockLLMModel(LLMBaseModel):
                     "status_message": "Success",
                 },
                 status=ActionStatus.SUCCESS,
+                start_time=start_action.start_time,
             )
             complete_action.end_time = datetime.now()
             action_history_manager.add_action(complete_action)
