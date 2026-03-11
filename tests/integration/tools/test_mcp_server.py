@@ -33,7 +33,7 @@ from mcp.client.sse import sse_client
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 
-from datus.mcp_server import DatusMCPServer, create_dynamic_app
+from datus.mcp_server import DatusMCPServer, create_dynamic_app, create_server
 from mcp import ClientSession
 
 CONFIG_PATH = str(Path(__file__).resolve().parents[3] / "tests" / "conf" / "agent.yml")
@@ -386,6 +386,7 @@ class TestStaticModeStdio(StaticModeTestBase):
 
 
 @pytest.mark.asyncio
+@pytest.mark.nightly
 class TestDynamicModeHTTPStreamable(DynamicModeTestBase):
     """Test LightweightDynamicMCPServer with HTTP Streamable transport."""
 
@@ -415,6 +416,7 @@ class TestDynamicModeHTTPStreamable(DynamicModeTestBase):
 
 
 @pytest.mark.asyncio
+@pytest.mark.nightly
 class TestDynamicModeSSE(DynamicModeTestBase):
     """Test LightweightDynamicMCPServer with SSE transport."""
 
@@ -523,3 +525,63 @@ class TestMCPClient:
                 data = parse_tool_result(result)
                 assert data["success"] == 1, f"Concurrent call {i} should succeed, got error: {data.get('error')}"
                 assert data["result"] is not None, f"Concurrent call {i} should have result"
+
+
+# =============================================================================
+# Static Mode: Tool Registration & Execution (needs real DB/KB)
+# =============================================================================
+
+
+@pytest.mark.nightly
+class TestMCPToolRegistration:
+    """Test MCP tool registration with real server."""
+
+    @pytest.fixture
+    def server(self):
+        """Create a test server instance."""
+        server = create_server(namespace="bird_sqlite", config_path=CONFIG_PATH)
+        yield server
+        server.close()
+
+    @pytest.mark.asyncio
+    async def test_list_tools(self, server):
+        """Test that tools are registered with FastMCP."""
+        tools = await server.mcp.list_tools()
+        assert len(tools) > 0
+
+        tool_names = [t.name for t in tools]
+        assert "list_tables" in tool_names
+        assert "describe_table" in tool_names
+        assert "read_query" in tool_names
+
+    @pytest.mark.asyncio
+    async def test_list_subject_tree_tool(self, server):
+        """Test list_subject_tree tool is registered."""
+        tools = await server.mcp.list_tools()
+        tool_names = [t.name for t in tools]
+        assert "list_subject_tree" in tool_names
+
+
+@pytest.mark.nightly
+class TestMCPToolExecution:
+    """Test MCP tool execution with real server."""
+
+    @pytest.fixture
+    def server(self):
+        """Create a test server instance."""
+        server = create_server(namespace="bird_sqlite", config_path=CONFIG_PATH)
+        yield server
+        server.close()
+
+    @pytest.mark.asyncio
+    async def test_call_list_tables(self, server):
+        """Test calling list_tables tool."""
+        result = await server.mcp.call_tool("list_tables", {})
+        assert result is not None
+        assert len(result) > 0
+
+    @pytest.mark.asyncio
+    async def test_call_list_subject_tree(self, server):
+        """Test calling list_subject_tree tool."""
+        result = await server.mcp.call_tool("list_subject_tree", {})
+        assert result is not None
