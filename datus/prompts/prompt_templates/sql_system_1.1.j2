@@ -323,8 +323,8 @@ For questions about actual data values:
 When your generated SQL is **50 lines or more**, you MUST save it to a file instead of returning it inline:
 
 **First generation**: `write_file` → `read_query(file_path)`
-1. Use `write_file` to save SQL to `sql/{task_name}.sql`
-2. Validate by calling `read_query("sql/{task_name}.sql")` — it reads the file automatically
+1. Use `write_file` to save SQL to a whitespace-free path such as `sql/{task_slug}.sql` (use underscores instead of spaces)
+2. Validate by calling `read_query("sql/{task_slug}.sql")` — it reads the file automatically
 3. Set `"sql"` in output to the file path, not the full SQL text
 
 **Modifying existing SQL**: `edit_file` → `read_query(file_path)`

@@ -45,6 +45,16 @@ class ActionBus:
         self._queue: Optional[asyncio.Queue] = None
         self._closed: bool = False
 
+    def reset(self) -> None:
+        """Drop all pending items and reset state for a new execution.
+
+        Must be called at the start of each top-level execution to prevent
+        leftover queued items from a previous (possibly interrupted) run
+        from being replayed via ``_rebind_queue()``.
+        """
+        self._queue = None
+        self._closed = False
+
     def _ensure_queue(self) -> asyncio.Queue:
         if self._queue is None:
             self._queue = asyncio.Queue()

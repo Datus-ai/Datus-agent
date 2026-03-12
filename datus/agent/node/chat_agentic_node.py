@@ -343,6 +343,7 @@ class ChatAgenticNode(AgenticNode):
                         logger.info(
                             f"Setup metricflow_mcp MCP server for database: {self.agent_config.current_database}"
                         )
+                    continue
 
                 server = self._setup_mcp_server_from_config(server_name)
                 if server:

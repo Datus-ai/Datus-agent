@@ -727,9 +727,10 @@ class GenSQLAgenticNode(AgenticNode):
 
             if sql_content and sql_content.strip().endswith(".sql"):
                 # LLM saved SQL to file via write_file and returned the path
-                sql_file_path = sql_content.strip()
-                full_sql = self._read_existing_sql_file(sql_file_path)
+                candidate_path = sql_content.strip()
+                full_sql = self._read_existing_sql_file(candidate_path)
                 if full_sql:
+                    sql_file_path = candidate_path
                     sql_preview = self._get_sql_preview(full_sql, self._get_sql_preview_lines())
                     # Only clear inline SQL when file read succeeds — preserve as fallback
                     result_sql = full_sql

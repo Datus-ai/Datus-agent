@@ -752,18 +752,18 @@ class TestChatAgenticNodeExecuteStreamErrors:
         node.input = ChatNodeInput(user_message="Test error", database="california_schools")
         ahm = ActionHistoryManager()
 
-        actions = []
-        async for action in node.execute_stream(ahm):
-            actions.append(action)
+        try:
+            actions = []
+            async for action in node.execute_stream(ahm):
+                actions.append(action)
 
-        # Restore original method
-        mock_llm_create.generate_with_tools_stream = original_method
-
-        # Should have yielded at least the initial user action and a failure action
-        assert len(actions) >= 2
-        final_action = actions[-1]
-        assert final_action.status == ActionStatus.FAILED
-        assert "Simulated LLM failure" in str(final_action.output.get("error", ""))
+            # Should have yielded at least the initial user action and a failure action
+            assert len(actions) >= 2
+            final_action = actions[-1]
+            assert final_action.status == ActionStatus.FAILED
+            assert "Simulated LLM failure" in str(final_action.output.get("error", ""))
+        finally:
+            mock_llm_create.generate_with_tools_stream = original_method
 
     @pytest.mark.asyncio
     async def test_execute_stream_handles_user_cancellation(self, real_agent_config, mock_llm_create):
@@ -788,16 +788,17 @@ class TestChatAgenticNodeExecuteStreamErrors:
         node.input = ChatNodeInput(user_message="Cancel me", database="california_schools")
         ahm = ActionHistoryManager()
 
-        actions = []
-        async for action in node.execute_stream(ahm):
-            actions.append(action)
+        try:
+            actions = []
+            async for action in node.execute_stream(ahm):
+                actions.append(action)
 
-        mock_llm_create.generate_with_tools_stream = original_method
-
-        assert len(actions) >= 2
-        final_action = actions[-1]
-        assert final_action.status == ActionStatus.SUCCESS
-        assert final_action.action_type == "user_cancellation"
+            assert len(actions) >= 2
+            final_action = actions[-1]
+            assert final_action.status == ActionStatus.SUCCESS
+            assert final_action.action_type == "user_cancellation"
+        finally:
+            mock_llm_create.generate_with_tools_stream = original_method
 
     @pytest.mark.asyncio
     async def test_execute_stream_propagates_execution_interrupted(self, real_agent_config, mock_llm_create):
@@ -823,11 +824,12 @@ class TestChatAgenticNodeExecuteStreamErrors:
         node.input = ChatNodeInput(user_message="Interrupt me", database="california_schools")
         ahm = ActionHistoryManager()
 
-        with pytest.raises(ExecutionInterrupted):
-            async for _ in node.execute_stream(ahm):
-                pass
-
-        mock_llm_create.generate_with_tools_stream = original_method
+        try:
+            with pytest.raises(ExecutionInterrupted):
+                async for _ in node.execute_stream(ahm):
+                    pass
+        finally:
+            mock_llm_create.generate_with_tools_stream = original_method
 
     @pytest.mark.asyncio
     async def test_execute_stream_creates_default_action_history_manager(self, real_agent_config, mock_llm_create):

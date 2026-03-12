@@ -870,6 +870,7 @@ class AgenticNode(Node):
             INTERACTION actions and tool sub-actions.
         """
         self.interrupt_controller.reset()
+        self.action_bus.reset()
         broker = self._get_or_create_broker()
 
         action_stream = self.execute_stream(action_history_manager)

@@ -355,7 +355,11 @@ class SubAgentTaskTool:
                 if action.role == ActionRole.TOOL:
                     tool_count += 1
 
-                if action.status == ActionStatus.SUCCESS and action.output:
+                if action.status == ActionStatus.FAILED:
+                    subagent_status = ActionStatus.FAILED
+                    if action.output:
+                        final_output = action.output
+                elif action.status == ActionStatus.SUCCESS and action.output:
                     final_output = action.output
         except Exception:
             subagent_status = ActionStatus.FAILED

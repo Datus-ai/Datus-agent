@@ -127,7 +127,7 @@ class Application:
             self.arg_parser.parser.print_help()
             return
 
-        if args.prompt:
+        if args.prompt is not None:
             cli = DatusCLI(args, interactive=False)
             cli.run_prompt(args.prompt)
         elif args.web:

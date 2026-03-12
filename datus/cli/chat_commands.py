@@ -478,10 +478,7 @@ class ChatCommands:
                         if action.role == ActionRole.INTERACTION:
                             # In non-interactive mode, auto-submit default choice for
                             # PROCESSING interactions so the node is not left hanging.
-                            if (
-                                action.action_type == "request_choice"
-                                and action.status == ActionStatus.PROCESSING
-                            ):
+                            if action.action_type == "request_choice" and action.status == ActionStatus.PROCESSING:
                                 broker = current_node.interaction_broker
                                 if broker:
                                     input_data = action.input or {}
@@ -494,12 +491,15 @@ class ChatCommands:
                                         )
                                     elif not choices:
                                         await broker.submit(action.action_id, "")
-                                        logger.info("Non-interactive mode auto-submitted empty string for free-text input")
+                                        logger.info(
+                                            "Non-interactive mode auto-submitted empty string for free-text input"
+                                        )
                                     elif choices:
                                         first_key = next(iter(choices.keys()))
                                         await broker.submit(action.action_id, first_key)
                                         logger.info(
-                                            f"Non-interactive mode auto-submitted first choice (no default): {first_key}"
+                                            "Non-interactive mode auto-submitted first choice "
+                                            f"(no default): {first_key}"
                                         )
                             continue
                         if action.role == ActionRole.TOOL and action.status == ActionStatus.PROCESSING:
@@ -574,8 +574,8 @@ class ChatCommands:
                     {
                         "user": message,
                         "response": (
-                            incremental_actions[-1].output.get("response", "")
-                            if incremental_actions and incremental_actions[-1].output
+                            final_action.output.get("response", "")
+                            if final_action and final_action.output and isinstance(final_action.output, dict)
                             else ""
                         ),
                         "actions": len(incremental_actions),
