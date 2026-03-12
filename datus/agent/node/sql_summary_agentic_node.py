@@ -8,8 +8,15 @@ SqlSummaryAgenticNode implementation for SQL summary generation workflow.
 This module provides a specialized implementation of AgenticNode focused on
 SQL query summarization and classification with support for filesystem tools,
 generation tools, and hooks.
+
+.. deprecated::
+    This node is deprecated in favor of the ``sql-summary`` skill.
+    For interactive mode, use ChatAgenticNode with ``load_skill("sql-summary")``.
+    This class is retained only for backward compatibility with workflow mode
+    (reference_sql_init.py) and will be removed in a future version.
 """
 
+import warnings
 from typing import AsyncGenerator, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
@@ -58,6 +65,12 @@ class SqlSummaryAgenticNode(AgenticNode):
             build_mode: "overwrite" or "incremental" (default: "incremental")
             subject_tree: Optional predefined subject tree categories
         """
+        warnings.warn(
+            "SqlSummaryAgenticNode is deprecated. Use ChatAgenticNode with the 'sql-summary' skill instead. "
+            "This class will be removed in a future version.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.configured_node_name = node_name
         self.execution_mode = execution_mode
         self.build_mode = build_mode

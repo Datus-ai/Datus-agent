@@ -201,9 +201,23 @@ class ChatAgenticNode(AgenticNode):
             self.skill_manager = SkillManager(
                 permission_manager=self.permission_manager,
             )
+            # Build extra_env so skill scripts can access agent config via environment variables
+            skill_extra_env = {}
+            if self.agent_config:
+                skill_extra_env["DATUS_HOME"] = str(self.agent_config.home) if self.agent_config.home else ""
+                skill_extra_env["DATUS_NAMESPACE"] = self.agent_config.current_namespace or ""
+                # config_path lives on ConfigurationManager, not AgentConfig
+                try:
+                    from datus.configuration.agent_config_loader import configuration_manager
+
+                    cm = configuration_manager()
+                    skill_extra_env["DATUS_CONFIG_PATH"] = str(cm.config_path) if cm and cm.config_path else ""
+                except Exception:
+                    skill_extra_env["DATUS_CONFIG_PATH"] = ""
             self.skill_func_tool = SkillFuncTool(
                 manager=self.skill_manager,
                 node_name="chat",
+                extra_env=skill_extra_env,
             )
             logger.debug(f"Setup skill tools: {self.skill_manager.get_skill_count()} skills discovered")
         except Exception as e:

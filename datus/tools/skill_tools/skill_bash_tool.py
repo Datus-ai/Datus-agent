@@ -65,6 +65,7 @@ class SkillBashTool:
         skill_metadata: SkillMetadata,
         workspace_root: str,
         timeout: int = DEFAULT_TIMEOUT,
+        extra_env: dict = None,
     ):
         """Initialize the skill bash tool.
 
@@ -72,11 +73,13 @@ class SkillBashTool:
             skill_metadata: SkillMetadata with allowed_commands
             workspace_root: Root directory for script execution
             timeout: Maximum execution time in seconds
+            extra_env: Additional environment variables to inject into subprocess
         """
         self.skill = skill_metadata
         self.workspace_root = Path(workspace_root).resolve()
         self.allowed_patterns = skill_metadata.allowed_commands
         self.timeout = timeout
+        self.extra_env = extra_env or {}
         self._tool_context: Any = None
 
         logger.debug(f"SkillBashTool created for '{skill_metadata.name}' " f"with patterns: {self.allowed_patterns}")
@@ -278,6 +281,9 @@ class SkillBashTool:
         # Add skill-specific environment variables
         env["SKILL_NAME"] = self.skill.name
         env["SKILL_DIR"] = str(self.workspace_root)
+
+        # Add extra environment variables (e.g., DATUS_HOME, DATUS_NAMESPACE)
+        env.update(self.extra_env)
 
         return env
 

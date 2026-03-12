@@ -374,15 +374,15 @@ class ActionContentGenerator(BaseActionContentGenerator):
                 # Don't truncate SQL queries if truncation is disabled
                 if key.lower() in ["sql_query", "sql", "query", "sql_return"] and isinstance(value, str):
                     formatted.append(f"  {key}: {value}")
-                elif isinstance(value, str) and self.enable_truncation and len(value) > 50:
-                    value = value[:50] + "..."
+                elif isinstance(value, str) and self.enable_truncation and len(value) > 500:
+                    value = value[:500] + "..."
                     formatted.append(f"  {key}: {value}")
                 else:
                     formatted.append(f"  {key}: {value}")
             return "\n".join(formatted)
         elif isinstance(data, str):
-            if self.enable_truncation and len(data) > 100:
-                return data[:100] + "..."
+            if self.enable_truncation and len(data) > 500:
+                return data[:500] + "..."
             return data
         else:
             return str(data)
@@ -395,15 +395,15 @@ class ActionContentGenerator(BaseActionContentGenerator):
                 # Show SQL query with truncation control
                 if "sql_query" in data and data["sql_query"]:
                     sql_preview = data["sql_query"]
-                    if self.enable_truncation and len(sql_preview) > 200:
-                        sql_preview = sql_preview[:200] + "..."
+                    if self.enable_truncation and len(sql_preview) > 500:
+                        sql_preview = sql_preview[:500] + "..."
                     return f"{status} SQL: {sql_preview}"
                 return f"{status} {len(data)} fields"
             else:
                 return f"{len(data)} fields"
         elif isinstance(data, str):
-            if self.enable_truncation and len(data) > 30:
-                return data[:30] + "..."
+            if self.enable_truncation and len(data) > 500:
+                return data[:500] + "..."
             return data
         else:
             data_str = str(data)
@@ -419,19 +419,19 @@ class ActionContentGenerator(BaseActionContentGenerator):
                 # Show first key-value pair or query if present
                 if "query" in args:
                     query = str(args["query"])
-                    if self.enable_truncation and len(query) > 200:
-                        return f"query='{query[:200]}...'"
+                    if self.enable_truncation and len(query) > 500:
+                        return f"query='{query[:500]}...'"
                     return f"query='{query}'"
                 elif args:
                     key, value = next(iter(args.items()))
                     value_str = str(value)
-                    if self.enable_truncation and len(value_str) > 50:
-                        return f"{key}='{value_str[:50]}...'"
+                    if self.enable_truncation and len(value_str) > 500:
+                        return f"{key}='{value_str[:500]}...'"
                     return f"{key}='{value_str}'"
             else:
                 args_str = str(args)
-                if self.enable_truncation and len(args_str) > 50:
-                    return f"'{args_str[:50]}...'"
+                if self.enable_truncation and len(args_str) > 500:
+                    return f"'{args_str[:500]}...'"
                 return f"'{args_str}'"
         return ""
 
@@ -465,7 +465,7 @@ class ActionContentGenerator(BaseActionContentGenerator):
         items = None
         if "success" in data and not data["success"]:
             if "error" in data:
-                error = data["error"] if len(data["error"]) <= 50 else data["error"][:50] + "..."
+                error = data["error"] if len(data["error"]) <= 500 else data["error"][:500] + "..."
                 return f"✗ Failed:({error})"
             return "✗ Failed"
 
@@ -478,8 +478,8 @@ class ActionContentGenerator(BaseActionContentGenerator):
                 items = json.loads(cleaned_text)
             except Exception:
                 # If JSON parsing fails, treat as plain text and show preview
-                if self.enable_truncation and len(text_content) > 50:
-                    return f"{text_content[:50]}..."
+                if self.enable_truncation and len(text_content) > 500:
+                    return f"{text_content[:500]}..."
                 return text_content
         elif "result" in data:
             items = data["result"]

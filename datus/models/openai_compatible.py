@@ -854,9 +854,9 @@ class OpenAICompatibleModel(LLMBaseModel):
                                 # Try to format arguments
                                 try:
                                     args_dict = json.loads(arguments) if arguments else {}
-                                    args_str = to_str(args_dict)[:80]
+                                    args_str = to_str(args_dict)[:500]
                                 except Exception:
-                                    args_str = str(arguments)[:80]
+                                    args_str = str(arguments)[:500]
 
                                 # Store tool call info for matching with result
                                 temp_tool_calls[call_id] = {

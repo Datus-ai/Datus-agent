@@ -47,15 +47,18 @@ class SkillFuncTool:
         self,
         manager: SkillManager,
         node_name: str,
+        extra_env: dict = None,
     ):
         """Initialize the skill function tool.
 
         Args:
             manager: SkillManager for skill operations
             node_name: Name of the current agentic node
+            extra_env: Additional environment variables to inject into skill script subprocesses
         """
         self.manager = manager
         self.node_name = node_name
+        self.extra_env = extra_env or {}
         self._tool_context: Any = None
         self._permission_callback: Optional[Callable[[str, str, Dict[str, Any]], Awaitable[bool]]] = None
 
@@ -168,6 +171,7 @@ class SkillFuncTool:
             bash_tool = SkillBashTool(
                 skill_metadata=skill,
                 workspace_root=str(skill.location),
+                extra_env=self.extra_env,
             )
             self._loaded_skills[skill.name] = bash_tool
             logger.debug(f"Created SkillBashTool for skill '{skill.name}'")

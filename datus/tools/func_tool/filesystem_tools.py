@@ -81,9 +81,19 @@ class FilesystemFuncTool(BaseTool):
             bound_tools.append(trans_to_function_tool(bound_method))
         return bound_tools
 
-    def _get_safe_path(self, path: str) -> Optional[Path]:
-        """Get a safe path within the root directory"""
+    def _get_safe_path(self, path: str, allow_absolute: bool = False) -> Optional[Path]:
+        """Get a safe path within the root directory.
+
+        Args:
+            path: File path (relative or absolute).
+            allow_absolute: If True, allow absolute paths outside the root directory (read-only use).
+        """
         try:
+            resolved = Path(path).resolve()
+            # If the path is absolute and allow_absolute is set, return it directly
+            if allow_absolute and os.path.isabs(path) and resolved.exists():
+                return resolved
+
             root = Path(self.config.root_path).resolve()
             target = (root / path).resolve()
             if not str(target).startswith(str(root)):
@@ -101,10 +111,11 @@ class FilesystemFuncTool(BaseTool):
 
     def read_file(self, path: str) -> FuncToolResult:
         """
-        Read the contents of a file.
+        Read the contents of a file. Supports both relative paths (within workspace)
+        and absolute paths.
 
         Args:
-            path: The path of the file to read
+            path: The path of the file to read (relative or absolute)
 
         Returns:
             dict: A dictionary with the execution result, containing these keys:
@@ -113,7 +124,7 @@ class FilesystemFuncTool(BaseTool):
                   - 'result' (Optional[str]): File contents on success.
         """
         try:
-            target_path = self._get_safe_path(path)
+            target_path = self._get_safe_path(path, allow_absolute=True)
 
             if not target_path or not target_path.exists():
                 return FuncToolResult(success=0, error=f"File not found: {path}")
@@ -156,7 +167,7 @@ class FilesystemFuncTool(BaseTool):
             results = {}
 
             for path in paths:
-                target_path = self._get_safe_path(path)
+                target_path = self._get_safe_path(path, allow_absolute=True)
                 if not target_path or not target_path.exists():
                     results[path] = f"File not found: {path}"
                     continue
