@@ -549,6 +549,10 @@ class OpenAICompatibleModel(LLMBaseModel):
                     "include_usage": True,
                 }
 
+                # Apply temperature from model config (e.g., kimi-k2.5 requires temperature=1)
+                if self.model_config.temperature is not None:
+                    model_settings_kwargs["temperature"] = self.model_config.temperature
+
                 # Enable reasoning/thinking mode for thinking models (deepseek-r1, o1, kimi-k2.5, etc.)
                 # This enables preserve_thinking_blocks in LitellmModel to correctly handle
                 # reasoning_content in multi-turn conversations with tool calls
@@ -725,6 +729,10 @@ class OpenAICompatibleModel(LLMBaseModel):
                 model_settings_kwargs = {
                     "include_usage": True,
                 }
+
+                # Apply temperature from model config (e.g., kimi-k2.5 requires temperature=1)
+                if self.model_config.temperature is not None:
+                    model_settings_kwargs["temperature"] = self.model_config.temperature
 
                 # Enable reasoning/thinking mode for thinking models (deepseek-r1, o1, kimi-k2.5, etc.)
                 # This enables preserve_thinking_blocks in LitellmModel to correctly handle
