@@ -99,7 +99,9 @@ class TestBootstrapKB:
                 "skipped",
                 "error",
             ), f"Component {comp_result.component} should have plan/skipped/error status, got {comp_result.status}"
-            assert comp_result.details is not None, f"Component {comp_result.component} should have details"
+            # details may be None for skipped/error components (e.g. ext_knowledge with no config)
+            if comp_result.status == "plan":
+                assert comp_result.details is not None, f"Component {comp_result.component} should have details"
 
         metadata_results = [r for r in result.results if r.component == "metadata"]
         assert len(metadata_results) == 1, "Should have metadata result"
