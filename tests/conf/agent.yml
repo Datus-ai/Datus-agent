@@ -43,6 +43,7 @@ agent:
       api_key: ${KIMI_API_KEY}
       model: kimi-k2.5
       temperature: 1
+      top_p: 0.95
     openai-4o-mini:
       type: openai
       vendor: openai
