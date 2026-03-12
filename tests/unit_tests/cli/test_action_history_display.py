@@ -3,7 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 """
-Unit tests for datus/cli/action_history_display.py — SubAgent group display.
+Unit tests for datus/cli/action_history_display.py.
 
 Tests cover:
 - Sub-agent group header printed on first depth>0 action
@@ -13,6 +13,17 @@ Tests cover:
 - Normal depth=0 flow unchanged
 - Multiple sub-agent groups handled sequentially
 - Task SUCCESS action skipped after Done line
+- ActionContentGenerator: format_streaming_action, format_inline_completed,
+  format_inline_expanded, _format_tool_output_verbose, generate_streaming_content,
+  _create_result_table, format_data, get_data_summary, _get_tool_args_preview,
+  _get_tool_output_preview, format_inline_processing, get_role_color
+- ActionHistoryDisplay: format_action_summary, format_action_detail,
+  _extract_subagent_response, _render_subagent_response, _render_task_tool_as_subagent,
+  display_action_list, display_final_action_history, _get_data_summary_with_full_sql,
+  render_action_history (skip patterns)
+- InlineStreamingContext: context manager, _flush_remaining_actions, _print_completed_action,
+  stop_display, restart_display, toggle_verbose
+- create_action_display factory
 """
 
 from datetime import datetime, timedelta
@@ -23,7 +34,15 @@ import pytest
 from rich.console import Console
 from rich.markdown import Markdown
 
-from datus.cli.action_history_display import ActionHistoryDisplay, InlineStreamingContext, _truncate_middle
+from datus.cli.action_history_display import (
+    ActionContentGenerator,
+    ActionHistoryDisplay,
+    BaseActionContentGenerator,
+    InlineStreamingContext,
+    _get_assistant_content,
+    _truncate_middle,
+    create_action_display,
+)
 from datus.schemas.action_history import (
     SUBAGENT_COMPLETE_ACTION_TYPE,
     ActionHistory,
@@ -1755,3 +1774,1902 @@ class TestReprintHistoryWithTurns:
         output = buf.getvalue()
         # Should not crash, should render current actions
         assert output is not None
+
+
+# ── _get_assistant_content helper ──────────────────────────────────
+
+
+@pytest.mark.ci
+class TestGetAssistantContent:
+    """Tests for the module-level _get_assistant_content function."""
+
+    def test_returns_raw_output_when_present(self):
+        """Prefers output.raw_output over messages."""
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            messages="fallback message",
+            output_data={"raw_output": "preferred content"},
+        )
+        assert _get_assistant_content(action) == "preferred content"
+
+    def test_returns_messages_when_no_raw_output(self):
+        """Falls back to messages when raw_output is empty."""
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            messages="my message",
+            output_data={"raw_output": ""},
+        )
+        assert _get_assistant_content(action) == "my message"
+
+    def test_returns_messages_when_output_not_dict(self):
+        """Falls back to messages when output is not a dict."""
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            messages="my message",
+        )
+        action.output = "string output"
+        assert _get_assistant_content(action) == "my message"
+
+    def test_returns_empty_string_when_no_messages_and_no_output(self):
+        """Returns empty string when both messages and output are empty."""
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            messages="",
+        )
+        assert _get_assistant_content(action) == ""
+
+
+# ── BaseActionContentGenerator ─────────────────────────────────────
+
+
+@pytest.mark.ci
+class TestBaseActionContentGenerator:
+    """Tests for BaseActionContentGenerator._get_action_dot and get_status_icon."""
+
+    def test_get_action_dot_tool(self):
+        """TOOL role returns tool emoji."""
+        gen = BaseActionContentGenerator()
+        action = _make_action(ActionRole.TOOL, ActionStatus.SUCCESS)
+        assert gen._get_action_dot(action) == "🔧"
+
+    def test_get_action_dot_assistant(self):
+        """ASSISTANT role returns chat emoji."""
+        gen = BaseActionContentGenerator()
+        action = _make_action(ActionRole.ASSISTANT, ActionStatus.SUCCESS)
+        assert gen._get_action_dot(action) == "💬"
+
+    def test_get_action_dot_workflow_uses_status(self):
+        """WORKFLOW role uses status-based dot."""
+        gen = BaseActionContentGenerator()
+        action = _make_action(ActionRole.WORKFLOW, ActionStatus.SUCCESS)
+        assert gen._get_action_dot(action) == "🟢"
+
+    def test_get_action_dot_user_failed(self):
+        """USER role with FAILED status returns red dot."""
+        gen = BaseActionContentGenerator()
+        action = _make_action(ActionRole.USER, ActionStatus.FAILED)
+        assert gen._get_action_dot(action) == "🔴"
+
+    def test_get_action_dot_system_processing(self):
+        """SYSTEM role with PROCESSING status returns yellow dot."""
+        gen = BaseActionContentGenerator()
+        action = _make_action(ActionRole.SYSTEM, ActionStatus.PROCESSING)
+        assert gen._get_action_dot(action) == "🟡"
+
+    def test_get_status_icon_processing(self):
+        """PROCESSING status returns hourglass icon."""
+        gen = BaseActionContentGenerator()
+        action = _make_action(ActionRole.TOOL, ActionStatus.PROCESSING)
+        assert gen.get_status_icon(action) == "⏳"
+
+    def test_get_status_icon_success(self):
+        """SUCCESS status returns check mark icon."""
+        gen = BaseActionContentGenerator()
+        action = _make_action(ActionRole.TOOL, ActionStatus.SUCCESS)
+        assert gen.get_status_icon(action) == "✅"
+
+    def test_get_status_icon_failed(self):
+        """FAILED status returns X icon."""
+        gen = BaseActionContentGenerator()
+        action = _make_action(ActionRole.TOOL, ActionStatus.FAILED)
+        assert gen.get_status_icon(action) == "❌"
+
+
+# ── ActionContentGenerator ─────────────────────────────────────────
+
+
+@pytest.mark.ci
+class TestActionContentGeneratorFormatStreaming:
+    """Tests for ActionContentGenerator.format_streaming_action."""
+
+    def test_tool_processing_shows_only_messages(self):
+        """PROCESSING tool shows tool emoji and messages, no status suffix."""
+        gen = ActionContentGenerator()
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            messages="describe_table(school_name=...)",
+        )
+        result = gen.format_streaming_action(action)
+        assert "🔧" in result
+        assert "describe_table" in result
+        assert "✓" not in result
+        assert "✗" not in result
+
+    def test_tool_success_with_duration(self):
+        """SUCCESS tool shows check mark and duration."""
+        t0 = datetime(2025, 1, 1, 12, 0, 0)
+        t1 = t0 + timedelta(seconds=2.5)
+        gen = ActionContentGenerator()
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            messages="read_query(SELECT 1)",
+            start_time=t0,
+            end_time=t1,
+        )
+        result = gen.format_streaming_action(action)
+        assert "✓" in result
+        assert "2.5s" in result
+
+    def test_tool_failed_shows_cross(self):
+        """FAILED tool shows cross mark."""
+        gen = ActionContentGenerator()
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.FAILED,
+            messages="read_query(bad)",
+        )
+        result = gen.format_streaming_action(action)
+        assert "✗" in result
+
+    def test_tool_success_with_output_preview(self):
+        """SUCCESS tool with output shows preview on next line."""
+        gen = ActionContentGenerator()
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            messages="list_tables()",
+            input_data={"function_name": "list_tables"},
+            output_data={"raw_output": '{"result": [{"name": "t1"}, {"name": "t2"}]}'},
+        )
+        result = gen.format_streaming_action(action)
+        assert "2 tables" in result
+
+    def test_non_tool_role_shows_dot_and_messages(self):
+        """Non-TOOL roles show role-appropriate dot and messages."""
+        gen = ActionContentGenerator()
+        action = _make_action(ActionRole.ASSISTANT, ActionStatus.SUCCESS, messages="thinking about query")
+        result = gen.format_streaming_action(action)
+        assert "💬" in result
+        assert "thinking about query" in result
+
+
+@pytest.mark.ci
+class TestActionContentGeneratorFormatInlineCompleted:
+    """Tests for ActionContentGenerator.format_inline_completed."""
+
+    def test_assistant_with_raw_output(self):
+        """ASSISTANT action shows raw_output content."""
+        gen = ActionContentGenerator()
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            messages="fallback",
+            output_data={"raw_output": "Generated SQL query"},
+        )
+        lines = gen.format_inline_completed(action)
+        assert len(lines) == 1
+        assert "💬" in lines[0]
+        assert "Generated SQL query" in lines[0]
+
+    def test_tool_success_has_green_dot(self):
+        """SUCCESS TOOL action gets green status dot."""
+        gen = ActionContentGenerator()
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            messages="read_query(SELECT 1)",
+        )
+        lines = gen.format_inline_completed(action)
+        assert len(lines) == 1
+        assert "[green]⏺[/green]" in lines[0]
+
+    def test_tool_failed_has_red_dot(self):
+        """FAILED TOOL action gets red status dot."""
+        gen = ActionContentGenerator()
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.FAILED,
+            messages="read_query(bad SQL)",
+        )
+        lines = gen.format_inline_completed(action)
+        assert len(lines) == 1
+        assert "[red]⏺[/red]" in lines[0]
+
+    def test_workflow_role(self):
+        """WORKFLOW action shows yellow dot and messages."""
+        gen = ActionContentGenerator()
+        action = _make_action(ActionRole.WORKFLOW, ActionStatus.SUCCESS, messages="Executing workflow step")
+        lines = gen.format_inline_completed(action)
+        assert len(lines) == 1
+        assert "🟡" in lines[0]
+        assert "Executing workflow step" in lines[0]
+
+    def test_system_role(self):
+        """SYSTEM action shows purple dot and messages."""
+        gen = ActionContentGenerator()
+        action = _make_action(ActionRole.SYSTEM, ActionStatus.SUCCESS, messages="System init")
+        lines = gen.format_inline_completed(action)
+        assert len(lines) == 1
+        assert "🟣" in lines[0]
+        assert "System init" in lines[0]
+
+    def test_interaction_role_returns_empty(self):
+        """INTERACTION actions return empty list (handled elsewhere)."""
+        gen = ActionContentGenerator()
+        action = _make_action(ActionRole.INTERACTION, ActionStatus.SUCCESS, messages="user input")
+        lines = gen.format_inline_completed(action)
+        assert lines == []
+
+
+@pytest.mark.ci
+class TestActionContentGeneratorFormatInlineExpanded:
+    """Tests for ActionContentGenerator.format_inline_expanded (verbose mode)."""
+
+    def test_tool_expanded_with_dict_args(self):
+        """Verbose TOOL shows function name, args dict keys, and output."""
+        t0 = datetime(2025, 1, 1, 12, 0, 0)
+        t1 = t0 + timedelta(seconds=1.5)
+        gen = ActionContentGenerator()
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            messages="read_query",
+            input_data={"function_name": "read_query", "arguments": {"sql": "SELECT 1", "limit": 10}},
+            output_data={"raw_output": '{"result": [{"col": "val"}]}'},
+            start_time=t0,
+            end_time=t1,
+        )
+        lines = gen.format_inline_expanded(action)
+        assert any("read_query" in line for line in lines)
+        assert any("sql: SELECT 1" in line for line in lines)
+        assert any("limit: 10" in line for line in lines)
+        assert any("✓" in line for line in lines)
+        assert any("1.5s" in line for line in lines)
+
+    def test_tool_expanded_with_non_dict_args(self):
+        """Verbose TOOL with non-dict arguments shows 'args:' prefix."""
+        gen = ActionContentGenerator()
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            input_data={"function_name": "search", "arguments": "plain string arg"},
+        )
+        lines = gen.format_inline_expanded(action)
+        assert any("args: plain string arg" in line for line in lines)
+
+    def test_tool_expanded_no_args(self):
+        """Verbose TOOL with no arguments shows just function name and status."""
+        gen = ActionContentGenerator()
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.FAILED,
+            input_data={"function_name": "broken_tool"},
+        )
+        lines = gen.format_inline_expanded(action)
+        assert any("broken_tool" in line for line in lines)
+        assert any("✗" in line for line in lines)
+
+    def test_assistant_expanded(self):
+        """Verbose ASSISTANT shows content from raw_output."""
+        gen = ActionContentGenerator()
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            messages="fallback",
+            output_data={"raw_output": "Full expanded assistant content"},
+        )
+        lines = gen.format_inline_expanded(action)
+        assert any("Full expanded assistant content" in line for line in lines)
+
+    def test_workflow_expanded(self):
+        """Verbose WORKFLOW shows messages."""
+        gen = ActionContentGenerator()
+        action = _make_action(ActionRole.WORKFLOW, ActionStatus.SUCCESS, messages="Step 1: fetch data")
+        lines = gen.format_inline_expanded(action)
+        assert any("Step 1: fetch data" in line for line in lines)
+
+    def test_system_expanded(self):
+        """Verbose SYSTEM shows messages."""
+        gen = ActionContentGenerator()
+        action = _make_action(ActionRole.SYSTEM, ActionStatus.SUCCESS, messages="System ready")
+        lines = gen.format_inline_expanded(action)
+        assert any("System ready" in line for line in lines)
+
+
+@pytest.mark.ci
+class TestFormatToolOutputVerbose:
+    """Tests for ActionContentGenerator._format_tool_output_verbose."""
+
+    def test_empty_output(self):
+        """Empty output returns no lines."""
+        gen = ActionContentGenerator()
+        assert gen._format_tool_output_verbose(None) == []
+        assert gen._format_tool_output_verbose("") == []
+        assert gen._format_tool_output_verbose({}) == []
+
+    def test_string_json_parsed(self):
+        """JSON string is parsed into dict entries."""
+        gen = ActionContentGenerator()
+        lines = gen._format_tool_output_verbose('{"key": "value"}')
+        assert any("key: value" in line for line in lines)
+
+    def test_invalid_json_string(self):
+        """Non-JSON string is shown as-is."""
+        gen = ActionContentGenerator()
+        lines = gen._format_tool_output_verbose("plain text output")
+        assert any("output: plain text output" in line for line in lines)
+
+    def test_non_dict_non_string(self):
+        """Non-dict, non-string data is shown with output prefix."""
+        gen = ActionContentGenerator()
+        lines = gen._format_tool_output_verbose([1, 2, 3])
+        assert any("output:" in line for line in lines)
+
+    def test_dict_with_raw_output_string(self):
+        """Dict with raw_output string that is valid JSON."""
+        gen = ActionContentGenerator()
+        lines = gen._format_tool_output_verbose({"raw_output": '{"foo": "bar"}'})
+        assert any("foo: bar" in line for line in lines)
+
+    def test_dict_with_raw_output_invalid_json(self):
+        """Dict with raw_output string that is not valid JSON."""
+        gen = ActionContentGenerator()
+        lines = gen._format_tool_output_verbose({"raw_output": "not json"})
+        assert any("output: not json" in line for line in lines)
+
+    def test_dict_with_multiline_values(self):
+        """Dict values containing newlines are split into continuation lines."""
+        gen = ActionContentGenerator()
+        lines = gen._format_tool_output_verbose({"raw_output": {"sql": "SELECT\n  col\nFROM t"}})
+        assert any("sql:" in line for line in lines)
+        assert any("SELECT" in line for line in lines)
+        assert any("FROM t" in line for line in lines)
+
+    def test_dict_raw_output_non_dict(self):
+        """Dict with raw_output that resolves to a non-dict after parsing."""
+        gen = ActionContentGenerator()
+        lines = gen._format_tool_output_verbose({"raw_output": "[1, 2, 3]"})
+        assert any("output:" in line for line in lines)
+
+    def test_custom_indent(self):
+        """Custom indent is applied to output lines."""
+        gen = ActionContentGenerator()
+        lines = gen._format_tool_output_verbose({"raw_output": {"key": "val"}}, indent=">>")
+        assert lines[0].startswith(">>")
+
+
+@pytest.mark.ci
+class TestFormatInlineProcessing:
+    """Tests for ActionContentGenerator.format_inline_processing."""
+
+    def test_processing_with_function_name(self):
+        """Shows function name with blinking frame."""
+        gen = ActionContentGenerator()
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            messages="describe_table",
+            input_data={"function_name": "describe_table"},
+        )
+        result = gen.format_inline_processing(action, "●")
+        assert "●" in result
+        assert "🔧" in result
+        assert "describe_table" in result
+
+    def test_processing_without_input(self):
+        """Falls back to messages when input is None."""
+        gen = ActionContentGenerator()
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            messages="some_tool",
+        )
+        result = gen.format_inline_processing(action, "○")
+        assert "some_tool..." in result
+
+
+@pytest.mark.ci
+class TestGetRoleColor:
+    """Tests for ActionContentGenerator.get_role_color."""
+
+    def test_known_roles(self):
+        """Known roles return their assigned colors."""
+        gen = ActionContentGenerator()
+        assert gen.get_role_color(ActionRole.SYSTEM) == "bright_magenta"
+        assert gen.get_role_color(ActionRole.ASSISTANT) == "bright_blue"
+        assert gen.get_role_color(ActionRole.USER) == "bright_green"
+        assert gen.get_role_color(ActionRole.TOOL) == "bright_cyan"
+        assert gen.get_role_color(ActionRole.WORKFLOW) == "bright_yellow"
+
+
+@pytest.mark.ci
+class TestGenerateStreamingContent:
+    """Tests for ActionContentGenerator.generate_streaming_content."""
+
+    def test_empty_actions(self):
+        """Empty action list returns waiting message."""
+        gen = ActionContentGenerator()
+        result = gen.generate_streaming_content([])
+        assert "Waiting for actions" in result
+
+    def test_truncation_enabled_uses_simple_text(self):
+        """With truncation enabled, returns plain text format."""
+        gen = ActionContentGenerator(enable_truncation=True)
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            messages="thinking",
+        )
+        result = gen.generate_streaming_content([action])
+        assert isinstance(result, str)
+        assert "thinking" in result
+
+    def test_simple_text_skips_processing_tools(self):
+        """_generate_simple_text_content skips PROCESSING TOOL actions."""
+        gen = ActionContentGenerator(enable_truncation=True)
+        actions = [
+            _make_action(ActionRole.TOOL, ActionStatus.PROCESSING, messages="loading..."),
+            _make_action(ActionRole.ASSISTANT, ActionStatus.SUCCESS, messages="done thinking"),
+        ]
+        result = gen.generate_streaming_content(actions)
+        assert "loading" not in result
+        assert "done thinking" in result
+
+    def test_truncation_disabled_uses_rich_panel(self):
+        """With truncation disabled, returns rich Group object."""
+        gen = ActionContentGenerator(enable_truncation=False)
+        action = _make_action(ActionRole.ASSISTANT, ActionStatus.SUCCESS, messages="test")
+        result = gen.generate_streaming_content([action])
+        # Should be a rich Group (not str)
+        assert not isinstance(result, str)
+
+    def test_rich_panel_content_empty(self):
+        """Rich panel with no displayable actions returns dim message."""
+        gen = ActionContentGenerator(enable_truncation=False)
+        # All actions are INTERACTION (filtered out in practice, but _generate_rich_panel_content
+        # would show them since it doesn't filter)
+        result = gen._generate_rich_panel_content([])
+        assert "No actions to display" in str(result)
+
+
+@pytest.mark.ci
+class TestCreateResultTable:
+    """Tests for ActionContentGenerator._create_result_table."""
+
+    def test_no_output_returns_none(self):
+        """Action with no output returns None."""
+        gen = ActionContentGenerator()
+        action = _make_action(ActionRole.TOOL, ActionStatus.SUCCESS)
+        assert gen._create_result_table(action) is None
+
+    def test_string_json_output_parsed(self):
+        """JSON string output is parsed into table."""
+        gen = ActionContentGenerator()
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            output_data={"raw_output": '{"result": [{"name": "t1", "type": "table"}, {"name": "t2", "type": "view"}]}'},
+        )
+        table = gen._create_result_table(action)
+        assert table is not None
+
+    def test_invalid_json_string_returns_none(self):
+        """Invalid JSON string output returns None."""
+        gen = ActionContentGenerator()
+        action = _make_action(ActionRole.TOOL, ActionStatus.SUCCESS)
+        action.output = "not json"
+        assert gen._create_result_table(action) is None
+
+    def test_non_dict_output_returns_none(self):
+        """Non-dict output returns None."""
+        gen = ActionContentGenerator()
+        action = _make_action(ActionRole.TOOL, ActionStatus.SUCCESS)
+        action.output = [1, 2, 3]
+        assert gen._create_result_table(action) is None
+
+    def test_text_field_parsed_as_json_array(self):
+        """Text field containing JSON array creates a table."""
+        gen = ActionContentGenerator()
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            output_data={"raw_output": {"text": '[{"col1": "a", "col2": "b"}]'}},
+        )
+        table = gen._create_result_table(action)
+        assert table is not None
+
+    def test_empty_list_returns_none(self):
+        """Empty result list returns None."""
+        gen = ActionContentGenerator()
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            output_data={"raw_output": {"result": []}},
+        )
+        assert gen._create_result_table(action) is None
+
+    def test_non_dict_items_returns_none(self):
+        """List of non-dict items returns None."""
+        gen = ActionContentGenerator()
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            output_data={"raw_output": {"result": ["a", "b"]}},
+        )
+        assert gen._create_result_table(action) is None
+
+    def test_long_values_truncated_in_table(self):
+        """Values longer than 50 chars are truncated in the table."""
+        gen = ActionContentGenerator()
+        long_val = "x" * 100
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            output_data={"raw_output": {"result": [{"field": long_val}]}},
+        )
+        table = gen._create_result_table(action)
+        assert table is not None
+
+    def test_more_than_10_rows_shows_summary(self):
+        """More than 10 items shows summary row."""
+        gen = ActionContentGenerator()
+        items = [{"id": str(i)} for i in range(15)]
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            output_data={"raw_output": {"result": items}},
+        )
+        table = gen._create_result_table(action)
+        assert table is not None
+        # Table should have 11 rows (10 data + 1 summary)
+        assert len(table.rows) == 11
+
+
+@pytest.mark.ci
+class TestFormatData:
+    """Tests for ActionContentGenerator.format_data."""
+
+    def test_dict_with_sql_key_not_truncated(self):
+        """SQL-related keys are never truncated."""
+        gen = ActionContentGenerator(enable_truncation=True)
+        long_sql = "SELECT " + "col, " * 100
+        result = gen.format_data({"sql_query": long_sql})
+        assert long_sql in result
+
+    def test_dict_with_long_value_truncated(self):
+        """Long non-SQL values are truncated with truncation enabled."""
+        gen = ActionContentGenerator(enable_truncation=True)
+        result = gen.format_data({"description": "a" * 200})
+        assert "..." in result
+        assert len(result.split("description:")[1].strip()) < 200
+
+    def test_dict_without_truncation(self):
+        """With truncation disabled, long values are preserved."""
+        gen = ActionContentGenerator(enable_truncation=False)
+        long_val = "a" * 200
+        result = gen.format_data({"description": long_val})
+        assert long_val in result
+
+    def test_string_truncated(self):
+        """Long string input is truncated with truncation enabled."""
+        gen = ActionContentGenerator(enable_truncation=True)
+        long_str = "x" * 200
+        result = gen.format_data(long_str)
+        assert len(result) < 200
+        assert result.endswith("...")
+
+    def test_string_not_truncated(self):
+        """Short string is returned as-is."""
+        gen = ActionContentGenerator(enable_truncation=True)
+        result = gen.format_data("short string")
+        assert result == "short string"
+
+    def test_other_types(self):
+        """Non-dict, non-string data is converted to string."""
+        gen = ActionContentGenerator()
+        result = gen.format_data(42)
+        assert result == "42"
+
+
+@pytest.mark.ci
+class TestGetDataSummary:
+    """Tests for ActionContentGenerator.get_data_summary."""
+
+    def test_dict_with_success_and_sql(self):
+        """Dict with success=True and sql_query shows SQL."""
+        gen = ActionContentGenerator()
+        result = gen.get_data_summary({"success": True, "sql_query": "SELECT 1"})
+        assert "✅" in result
+        assert "SQL: SELECT 1" in result
+
+    def test_dict_with_success_no_sql(self):
+        """Dict with success but no sql shows field count."""
+        gen = ActionContentGenerator()
+        result = gen.get_data_summary({"success": True, "data": "value"})
+        assert "✅" in result
+        assert "2 fields" in result
+
+    def test_dict_with_failure(self):
+        """Dict with success=False shows failure icon."""
+        gen = ActionContentGenerator()
+        result = gen.get_data_summary({"success": False})
+        assert "❌" in result
+
+    def test_dict_without_success_key(self):
+        """Dict without 'success' key shows field count."""
+        gen = ActionContentGenerator()
+        result = gen.get_data_summary({"a": 1, "b": 2})
+        assert "2 fields" in result
+
+    def test_long_string_truncated(self):
+        """Long string is truncated to 30 chars."""
+        gen = ActionContentGenerator(enable_truncation=True)
+        result = gen.get_data_summary("a" * 50)
+        assert len(result) <= 34  # 30 + "..."
+        assert result.endswith("...")
+
+    def test_short_string(self):
+        """Short string is returned as-is."""
+        gen = ActionContentGenerator()
+        result = gen.get_data_summary("hello")
+        assert result == "hello"
+
+    def test_other_types(self):
+        """Non-dict, non-string data is converted to string."""
+        gen = ActionContentGenerator(enable_truncation=True)
+        result = gen.get_data_summary(12345)
+        assert "12345" in result
+
+    def test_long_sql_truncated(self):
+        """Long SQL query is truncated with truncation enabled."""
+        gen = ActionContentGenerator(enable_truncation=True)
+        long_sql = "SELECT " + "x" * 300
+        result = gen.get_data_summary({"success": True, "sql_query": long_sql})
+        assert "..." in result
+
+
+@pytest.mark.ci
+class TestGetToolArgsPreview:
+    """Tests for ActionContentGenerator._get_tool_args_preview."""
+
+    def test_with_query_argument(self):
+        """Shows query argument value."""
+        gen = ActionContentGenerator()
+        result = gen._get_tool_args_preview({"arguments": {"query": "SELECT 1"}})
+        assert "query='SELECT 1'" in result
+
+    def test_with_other_dict_arg(self):
+        """Shows first key-value pair for non-query args."""
+        gen = ActionContentGenerator()
+        result = gen._get_tool_args_preview({"arguments": {"table_name": "users"}})
+        assert "table_name='users'" in result
+
+    def test_with_long_query_truncated(self):
+        """Long query is truncated with truncation enabled."""
+        gen = ActionContentGenerator(enable_truncation=True)
+        long_q = "a" * 300
+        result = gen._get_tool_args_preview({"arguments": {"query": long_q}})
+        assert "..." in result
+
+    def test_with_non_dict_args(self):
+        """Non-dict arguments are shown as quoted string."""
+        gen = ActionContentGenerator()
+        result = gen._get_tool_args_preview({"arguments": "plain string"})
+        assert "'plain string'" in result
+
+    def test_empty_arguments(self):
+        """Empty or missing arguments returns empty string."""
+        gen = ActionContentGenerator()
+        assert gen._get_tool_args_preview({}) == ""
+        assert gen._get_tool_args_preview({"arguments": None}) == ""
+        assert gen._get_tool_args_preview({"arguments": {}}) == ""
+
+    def test_long_non_dict_args_truncated(self):
+        """Long non-dict args are truncated."""
+        gen = ActionContentGenerator(enable_truncation=True)
+        result = gen._get_tool_args_preview({"arguments": "x" * 100})
+        assert "..." in result
+
+    def test_long_value_truncated(self):
+        """Long first value in dict args is truncated."""
+        gen = ActionContentGenerator(enable_truncation=True)
+        result = gen._get_tool_args_preview({"arguments": {"key": "y" * 100}})
+        assert "..." in result
+
+
+@pytest.mark.ci
+class TestGetToolOutputPreview:
+    """Tests for ActionContentGenerator._get_tool_output_preview."""
+
+    def test_empty_output(self):
+        """Empty output returns empty string."""
+        gen = ActionContentGenerator()
+        assert gen._get_tool_output_preview(None) == ""
+        assert gen._get_tool_output_preview({}) == ""
+
+    def test_string_json_parsed(self):
+        """JSON string output is parsed correctly."""
+        gen = ActionContentGenerator()
+        result = gen._get_tool_output_preview('{"result": [{"id": 1}, {"id": 2}]}')
+        assert "2 items" in result
+
+    def test_invalid_json_string(self):
+        """Invalid JSON string returns preview unavailable."""
+        gen = ActionContentGenerator()
+        result = gen._get_tool_output_preview("not json")
+        assert "preview unavailable" in result
+
+    def test_non_dict_output(self):
+        """Non-dict output returns preview unavailable."""
+        gen = ActionContentGenerator()
+        result = gen._get_tool_output_preview([1, 2])
+        assert "preview unavailable" in result
+
+    def test_list_tables_function(self):
+        """list_tables function shows table count."""
+        gen = ActionContentGenerator()
+        result = gen._get_tool_output_preview(
+            {"raw_output": '{"result": [{"name": "t1"}, {"name": "t2"}]}'},
+            function_name="list_tables",
+        )
+        assert "2 tables" in result
+
+    def test_describe_table_function(self):
+        """describe_table function shows column count."""
+        gen = ActionContentGenerator()
+        result = gen._get_tool_output_preview(
+            {"raw_output": '{"result": [{"col": "a"}, {"col": "b"}, {"col": "c"}]}'},
+            function_name="describe_table",
+        )
+        assert "3 columns" in result
+
+    def test_error_output(self):
+        """Failed output with error message shows failure."""
+        gen = ActionContentGenerator()
+        result = gen._get_tool_output_preview(
+            {"raw_output": '{"success": false, "error": "connection timeout"}'},
+        )
+        assert "Failed" in result
+        assert "connection timeout" in result
+
+    def test_error_output_long_error_truncated(self):
+        """Long error message is truncated to 50 chars."""
+        gen = ActionContentGenerator()
+        long_error = "e" * 100
+        result = gen._get_tool_output_preview(
+            {"raw_output": f'{{"success": false, "error": "{long_error}"}}'},
+        )
+        assert "..." in result
+
+    def test_error_without_message(self):
+        """Failed output without error message shows generic failure."""
+        gen = ActionContentGenerator()
+        result = gen._get_tool_output_preview(
+            {"raw_output": '{"success": false}'},
+        )
+        assert "Failed" in result
+
+    def test_text_field_plain_text(self):
+        """Plain text in 'text' field shown as preview."""
+        gen = ActionContentGenerator()
+        result = gen._get_tool_output_preview(
+            {"raw_output": {"text": "Some plain text result"}},
+        )
+        assert "Some plain text result" in result
+
+    def test_text_field_long_truncated(self):
+        """Long plain text is truncated."""
+        gen = ActionContentGenerator(enable_truncation=True)
+        result = gen._get_tool_output_preview(
+            {"raw_output": {"text": "x" * 100}},
+        )
+        assert "..." in result
+
+    def test_read_query_with_original_rows(self):
+        """read_query function shows row count from original_rows."""
+        gen = ActionContentGenerator()
+        result = gen._get_tool_output_preview(
+            {"raw_output": '{"result": {"original_rows": 42}}'},
+            function_name="read_query",
+        )
+        assert "42 rows" in result
+
+    def test_search_table_function(self):
+        """search_table function shows metadata and sample counts."""
+        gen = ActionContentGenerator()
+        result = gen._get_tool_output_preview(
+            {"raw_output": '{"result": {"metadata": [{"t": 1}, {"t": 2}], "sample_data": [{"r": 1}]}}'},
+            function_name="search_table",
+        )
+        assert "2 tables" in result
+        assert "1 sample rows" in result
+
+    def test_search_metrics_function(self):
+        """search_metrics function shows metrics count."""
+        gen = ActionContentGenerator()
+        result = gen._get_tool_output_preview(
+            {"raw_output": '{"result": {"m1": "v1", "m2": "v2"}}'},
+            function_name="search_metrics",
+        )
+        assert "metrics" in result
+
+    def test_search_reference_sql_function(self):
+        """search_reference_sql function shows SQL count."""
+        gen = ActionContentGenerator()
+        result = gen._get_tool_output_preview(
+            {"raw_output": '{"result": {"sql1": "v1"}}'},
+            function_name="search_reference_sql",
+        )
+        assert "reference SQLs" in result
+
+    def test_search_external_knowledge_function(self):
+        """search_external_knowledge function shows knowledge count."""
+        gen = ActionContentGenerator()
+        result = gen._get_tool_output_preview(
+            {"raw_output": '{"result": {"k1": "v1"}}'},
+            function_name="search_external_knowledge",
+        )
+        assert "extensions of knowledge" in result
+
+    def test_search_documents_function(self):
+        """search_documents function shows document count."""
+        gen = ActionContentGenerator()
+        result = gen._get_tool_output_preview(
+            {"raw_output": '{"result": {"d1": "v1"}}'},
+            function_name="search_documents",
+        )
+        assert "documents" in result
+
+    def test_generic_success_fallback(self):
+        """Generic success output without items shows 'Success'."""
+        gen = ActionContentGenerator()
+        result = gen._get_tool_output_preview({"success": True, "raw_output": '{"noitems": true}'})
+        assert "Success" in result
+
+    def test_generic_failure_fallback(self):
+        """Generic failure output shows 'Failed'."""
+        gen = ActionContentGenerator()
+        result = gen._get_tool_output_preview({"success": False, "raw_output": '{"noitems": true}'})
+        assert "Failed" in result
+
+    def test_generic_completed_fallback(self):
+        """No success key and no items returns 'Completed'."""
+        gen = ActionContentGenerator()
+        result = gen._get_tool_output_preview({"raw_output": '{"noitems": true}'})
+        assert "Completed" in result
+
+
+# ── ActionHistoryDisplay methods ───────────────────────────────────
+
+
+@pytest.mark.ci
+class TestFormatActionSummary:
+    """Tests for ActionHistoryDisplay.format_action_summary."""
+
+    def test_summary_contains_icon_and_message(self):
+        """Summary includes status icon and action message."""
+        display = ActionHistoryDisplay()
+        action = _make_action(ActionRole.TOOL, ActionStatus.SUCCESS, messages="query executed")
+        result = display.format_action_summary(action)
+        assert "✅" in result
+        assert "query executed" in result
+        assert "bright_cyan" in result
+
+    def test_summary_failed_action(self):
+        """Failed action shows failure icon."""
+        display = ActionHistoryDisplay()
+        action = _make_action(ActionRole.ASSISTANT, ActionStatus.FAILED, messages="generation failed")
+        result = display.format_action_summary(action)
+        assert "❌" in result
+
+
+@pytest.mark.ci
+class TestFormatActionDetail:
+    """Tests for ActionHistoryDisplay.format_action_detail."""
+
+    def test_detail_panel_with_input_output(self):
+        """Detail panel includes input and output data."""
+        t0 = datetime(2025, 1, 1, 12, 0, 0)
+        t1 = t0 + timedelta(seconds=3.14)
+        display = ActionHistoryDisplay()
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            messages="read_query",
+            input_data={"sql": "SELECT 1"},
+            output_data={"result": "ok"},
+            start_time=t0,
+            end_time=t1,
+        )
+        panel = display.format_action_detail(action)
+        # Panel should be a rich Panel object
+        from rich.panel import Panel
+
+        assert isinstance(panel, Panel)
+
+    def test_detail_panel_without_input_output(self):
+        """Detail panel works without input/output."""
+        display = ActionHistoryDisplay()
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            messages="thinking",
+        )
+        panel = display.format_action_detail(action)
+        from rich.panel import Panel
+
+        assert isinstance(panel, Panel)
+
+
+@pytest.mark.ci
+class TestExtractSubagentResponse:
+    """Tests for ActionHistoryDisplay._extract_subagent_response."""
+
+    def test_extract_from_json_string_raw_output(self):
+        """Extracts response from JSON-encoded raw_output."""
+        result = ActionHistoryDisplay._extract_subagent_response(
+            {"raw_output": '{"success": 1, "result": {"response": "The total is 42"}}'}
+        )
+        assert result == "The total is 42"
+
+    def test_extract_from_dict_raw_output(self):
+        """Extracts response from dict raw_output."""
+        result = ActionHistoryDisplay._extract_subagent_response(
+            {"raw_output": {"success": 1, "result": {"response": "Hello"}}}
+        )
+        assert result == "Hello"
+
+    def test_extract_flat_response(self):
+        """Extracts response from flat dict format."""
+        result = ActionHistoryDisplay._extract_subagent_response({"response": "Direct response"})
+        assert result == "Direct response"
+
+    def test_invalid_json_returns_empty(self):
+        """Invalid JSON in raw_output returns empty string."""
+        result = ActionHistoryDisplay._extract_subagent_response({"raw_output": "not json"})
+        assert result == ""
+
+    def test_no_response_key(self):
+        """Missing response key returns empty string."""
+        result = ActionHistoryDisplay._extract_subagent_response({"raw_output": {"other": "data"}})
+        assert result == ""
+
+    def test_no_raw_output(self):
+        """Dict without raw_output falls back to direct access."""
+        result = ActionHistoryDisplay._extract_subagent_response({"some_key": "val"})
+        assert result == ""
+
+
+@pytest.mark.ci
+class TestRenderSubagentResponse:
+    """Tests for ActionHistoryDisplay._render_subagent_response."""
+
+    def test_renders_single_line_response(self):
+        """Single-line response is rendered with 'response:' label."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            output_data={"raw_output": '{"success": 1, "result": {"response": "Answer is 42"}}'},
+        )
+        display._render_subagent_response(action)
+        output = buf.getvalue()
+        assert "response:" in output
+        assert "Answer is 42" in output
+
+    def test_renders_multiline_response(self):
+        """Multi-line response renders each line."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            output_data={"raw_output": '{"success": 1, "result": {"response": "Line 1\\nLine 2"}}'},
+        )
+        display._render_subagent_response(action)
+        output = buf.getvalue()
+        assert "response:" in output
+        assert "Line 1" in output
+        assert "Line 2" in output
+
+    def test_skips_when_no_output(self):
+        """Does nothing when output is None."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        action = _make_action(ActionRole.TOOL, ActionStatus.SUCCESS)
+        display._render_subagent_response(action)
+        assert buf.getvalue() == ""
+
+    def test_skips_when_output_not_dict(self):
+        """Does nothing when output is not a dict."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        action = _make_action(ActionRole.TOOL, ActionStatus.SUCCESS)
+        action.output = "string output"
+        display._render_subagent_response(action)
+        assert buf.getvalue() == ""
+
+
+@pytest.mark.ci
+class TestRenderTaskToolAsSubagent:
+    """Tests for ActionHistoryDisplay._render_task_tool_as_subagent."""
+
+    def test_compact_mode_with_output(self):
+        """Compact mode shows header with result summary."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        t0 = datetime(2025, 1, 1, 12, 0, 0)
+        t1 = t0 + timedelta(seconds=5)
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            input_data={"function_name": "task", "type": "gen_sql", "prompt": "query"},
+            output_data={"raw_output": '{"success": true}'},
+            start_time=t0,
+            end_time=t1,
+        )
+        display._render_task_tool_as_subagent(action, verbose=False)
+        output = buf.getvalue()
+        assert "gen_sql" in output
+        assert "✓" in output
+        assert "5.0s" in output
+
+    def test_verbose_mode_with_response(self):
+        """Verbose mode shows full prompt and response."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            input_data={"function_name": "task", "type": "fix_sql", "prompt": "Fix the query"},
+            output_data={"raw_output": '{"success": 1, "result": {"response": "Fixed output"}}'},
+        )
+        display._render_task_tool_as_subagent(action, verbose=True)
+        output = buf.getvalue()
+        assert "fix_sql" in output
+        assert "prompt:" in output
+        assert "Fix the query" in output
+        assert "response:" in output
+        assert "Fixed output" in output
+
+    def test_failed_status(self):
+        """Failed task tool shows cross mark."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.FAILED,
+            input_data={"function_name": "task", "type": "gen_sql"},
+            output_data={"raw_output": '{"success": false}'},
+        )
+        display._render_task_tool_as_subagent(action, verbose=False)
+        output = buf.getvalue()
+        assert "✗" in output
+
+
+@pytest.mark.ci
+class TestRenderMainAction:
+    """Tests for ActionHistoryDisplay._render_main_action."""
+
+    def test_user_action_strips_prefix(self):
+        """USER action strips 'User: ' prefix."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        action = _make_action(ActionRole.USER, ActionStatus.SUCCESS, messages="User: What is revenue?")
+        display._render_main_action(action, verbose=False)
+        output = buf.getvalue()
+        assert "Datus>" in output
+        assert "What is revenue?" in output
+
+    def test_user_action_without_prefix(self):
+        """USER action without 'User: ' prefix shows message directly."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        action = _make_action(ActionRole.USER, ActionStatus.SUCCESS, messages="Direct message")
+        display._render_main_action(action, verbose=False)
+        output = buf.getvalue()
+        assert "Direct message" in output
+
+    def test_assistant_action_with_content(self):
+        """ASSISTANT action renders content with Markdown."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            messages="some thinking",
+            output_data={"raw_output": "Here is the result"},
+        )
+        display._render_main_action(action, verbose=False)
+        output = buf.getvalue()
+        assert "Here is the result" in output
+
+    def test_assistant_response_skipped(self):
+        """ASSISTANT with _response action_type is skipped by render_action_history."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            action_type="chat_response",
+            messages="should be skipped",
+        )
+        display.render_action_history([action])
+        output = buf.getvalue()
+        assert "should be skipped" not in output
+
+    def test_verbose_mode_uses_expanded_format(self):
+        """Verbose mode delegates to format_inline_expanded."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        action = _make_action(
+            ActionRole.WORKFLOW,
+            ActionStatus.SUCCESS,
+            messages="workflow step",
+        )
+        display._render_main_action(action, verbose=True)
+        output = buf.getvalue()
+        assert "workflow step" in output
+
+
+@pytest.mark.ci
+class TestDisplayActionList:
+    """Tests for ActionHistoryDisplay.display_action_list."""
+
+    def test_empty_list(self):
+        """Empty action list shows 'No actions' message."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        display.display_action_list([])
+        output = buf.getvalue()
+        assert "No actions to display" in output
+
+    def test_with_actions(self):
+        """Non-empty list delegates to render_action_history."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        actions = [
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                messages="list_tables()",
+                input_data={"function_name": "list_tables"},
+            )
+        ]
+        display.display_action_list(actions)
+        output = buf.getvalue()
+        assert "list_tables" in output
+
+
+@pytest.mark.ci
+class TestDisplayFinalActionHistory:
+    """Tests for ActionHistoryDisplay.display_final_action_history."""
+
+    def test_empty_list(self):
+        """Empty list shows 'No actions' message."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        display.display_final_action_history([])
+        output = buf.getvalue()
+        assert "No actions to display" in output
+
+    def test_with_dict_input_output(self):
+        """Actions with dict input/output are rendered in tree format."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        t0 = datetime(2025, 1, 1, 12, 0, 0)
+        t1 = t0 + timedelta(seconds=2.5)
+        actions = [
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                messages="read_query",
+                input_data={"function_name": "read_query", "sql": "SELECT 1"},
+                output_data={"result": "ok", "rows": 5},
+                start_time=t0,
+                end_time=t1,
+            )
+        ]
+        display.display_final_action_history(actions)
+        output = buf.getvalue()
+        assert "Action History" in output
+        assert "read_query" in output
+
+    def test_with_non_dict_input_output(self):
+        """Actions with non-dict input/output are rendered as strings."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            messages="thinking",
+        )
+        action.input = "plain string input"
+        action.output = "plain string output"
+        display.display_final_action_history([action])
+        output = buf.getvalue()
+        assert "Input:" in output
+        assert "Output:" in output
+
+
+@pytest.mark.ci
+class TestGetDataSummaryWithFullSql:
+    """Tests for ActionHistoryDisplay._get_data_summary_with_full_sql."""
+
+    def test_dict_with_success_and_sql(self):
+        """Shows full SQL without truncation."""
+        display = ActionHistoryDisplay()
+        long_sql = "SELECT " + "x" * 500
+        result = display._get_data_summary_with_full_sql({"success": True, "sql_query": long_sql})
+        assert long_sql in result
+        assert "✅" in result
+
+    def test_dict_with_success_no_sql(self):
+        """Shows field count when no SQL."""
+        display = ActionHistoryDisplay()
+        result = display._get_data_summary_with_full_sql({"success": True, "data": 1})
+        assert "2 fields" in result
+
+    def test_dict_with_failure(self):
+        """Shows failure icon."""
+        display = ActionHistoryDisplay()
+        result = display._get_data_summary_with_full_sql({"success": False})
+        assert "❌" in result
+
+    def test_dict_without_success(self):
+        """Shows field count without success key."""
+        display = ActionHistoryDisplay()
+        result = display._get_data_summary_with_full_sql({"a": 1, "b": 2, "c": 3})
+        assert "3 fields" in result
+
+    def test_string(self):
+        """String is returned as-is."""
+        display = ActionHistoryDisplay()
+        assert display._get_data_summary_with_full_sql("hello") == "hello"
+
+    def test_other_types(self):
+        """Other types are converted to string."""
+        display = ActionHistoryDisplay()
+        assert display._get_data_summary_with_full_sql(42) == "42"
+
+
+# ── render_action_history skip patterns ───────────────────────────
+
+
+@pytest.mark.ci
+class TestRenderActionHistorySkipPatterns:
+    """Tests for skip conditions in render_action_history."""
+
+    def test_skips_interaction_actions(self):
+        """INTERACTION actions are skipped."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        actions = [
+            _make_action(ActionRole.INTERACTION, ActionStatus.SUCCESS, messages="user input request"),
+            _make_action(ActionRole.WORKFLOW, ActionStatus.SUCCESS, messages="should appear"),
+        ]
+        display.render_action_history(actions)
+        output = buf.getvalue()
+        assert "user input request" not in output
+        assert "should appear" in output
+
+    def test_skips_processing_tools(self):
+        """PROCESSING TOOL actions are skipped."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        actions = [
+            _make_action(ActionRole.TOOL, ActionStatus.PROCESSING, messages="loading..."),
+            _make_action(ActionRole.TOOL, ActionStatus.SUCCESS, messages="done"),
+        ]
+        display.render_action_history(actions)
+        output = buf.getvalue()
+        assert "loading" not in output
+
+    def test_skip_task_tools_reset_on_non_task_tool(self):
+        """skip_task_tools flag resets when a non-task TOOL action appears."""
+        t0 = datetime(2025, 1, 1, 12, 0, 0)
+        t1 = t0 + timedelta(seconds=2)
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+
+        call_id = "call_1"
+        actions = [
+            # Subagent group
+            _make_action(
+                ActionRole.USER,
+                ActionStatus.PROCESSING,
+                depth=1,
+                action_type="gen_sql",
+                start_time=t0,
+                parent_action_id=call_id,
+            ),
+            _make_action(
+                ActionRole.SYSTEM,
+                ActionStatus.SUCCESS,
+                depth=1,
+                action_type=SUBAGENT_COMPLETE_ACTION_TYPE,
+                start_time=t0,
+                end_time=t1,
+                parent_action_id=call_id,
+            ),
+            # task tool should be skipped
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=0,
+                action_type="task",
+                input_data={"function_name": "task"},
+                end_time=t1,
+            ),
+            # non-task tool should NOT be skipped (resets the flag)
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=0,
+                messages="read_query(SELECT 1)",
+                input_data={"function_name": "read_query"},
+            ),
+        ]
+        display.render_action_history(actions)
+        output = buf.getvalue()
+        assert "read_query" in output
+
+    def test_verbose_shows_subagent_response_for_task_tool(self):
+        """In verbose mode, task tool after subagent_complete shows response."""
+        t0 = datetime(2025, 1, 1, 12, 0, 0)
+        t1 = t0 + timedelta(seconds=2)
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+
+        call_id = "call_verbose"
+        actions = [
+            _make_action(
+                ActionRole.USER,
+                ActionStatus.PROCESSING,
+                depth=1,
+                action_type="gen_sql",
+                start_time=t0,
+                parent_action_id=call_id,
+            ),
+            _make_action(
+                ActionRole.SYSTEM,
+                ActionStatus.SUCCESS,
+                depth=1,
+                action_type=SUBAGENT_COMPLETE_ACTION_TYPE,
+                start_time=t0,
+                end_time=t1,
+                parent_action_id=call_id,
+            ),
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=0,
+                action_type="task",
+                input_data={"function_name": "task"},
+                output_data={"raw_output": '{"success": 1, "result": {"response": "SQL generated"}}'},
+                end_time=t1,
+            ),
+        ]
+        display.render_action_history(actions, verbose=True)
+        output = buf.getvalue()
+        assert "response:" in output
+        assert "SQL generated" in output
+
+
+@pytest.mark.ci
+class TestRenderSubagentOtherRoles:
+    """Tests for _render_subagent_action with non-TOOL/ASSISTANT/USER roles."""
+
+    def test_other_role_in_subagent_compact(self):
+        """WORKFLOW action in subagent group is shown with truncation in compact mode."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        action = _make_action(
+            ActionRole.WORKFLOW,
+            ActionStatus.SUCCESS,
+            depth=1,
+            messages="executing step 1",
+        )
+        display._render_subagent_action(action, verbose=False)
+        output = buf.getvalue()
+        assert "executing step 1" in output
+
+    def test_other_role_long_message_truncated(self):
+        """Long messages in non-TOOL/ASSISTANT roles are truncated in compact mode."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        long_msg = "x" * 300
+        action = _make_action(
+            ActionRole.SYSTEM,
+            ActionStatus.SUCCESS,
+            depth=1,
+            messages=long_msg,
+        )
+        display._render_subagent_action(action, verbose=False)
+        output = buf.getvalue()
+        assert " ... " in output
+
+    def test_verbose_tool_with_output(self):
+        """Verbose mode for TOOL actions in subagent shows full output."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            depth=1,
+            input_data={"function_name": "read_query", "arguments": {"sql": "SELECT 1"}},
+            output_data={"raw_output": '{"result": "ok"}'},
+        )
+        display._render_subagent_action(action, verbose=True)
+        output = buf.getvalue()
+        assert "sql: SELECT 1" in output
+
+
+# ── InlineStreamingContext ─────────────────────────────────────────
+
+
+@pytest.mark.ci
+class TestInlineStreamingContextProperties:
+    """Tests for InlineStreamingContext properties and simple methods."""
+
+    def test_live_property_initially_none(self):
+        """live property is None before any PROCESSING tool."""
+        display = ActionHistoryDisplay()
+        ctx = InlineStreamingContext([], display)
+        assert ctx.live is None
+
+    def test_stop_display(self):
+        """stop_display sets _paused to True."""
+        display = ActionHistoryDisplay()
+        ctx = InlineStreamingContext([], display)
+        ctx._paused = False
+        ctx.stop_display()
+        assert ctx._paused is True
+
+    def test_restart_display(self):
+        """restart_display sets _paused to False."""
+        display = ActionHistoryDisplay()
+        ctx = InlineStreamingContext([], display)
+        ctx._paused = True
+        ctx.restart_display()
+        assert ctx._paused is False
+
+    def test_toggle_verbose(self):
+        """toggle_verbose sets the event."""
+        display = ActionHistoryDisplay()
+        ctx = InlineStreamingContext([], display)
+        assert not ctx._verbose_toggle_event.is_set()
+        ctx.toggle_verbose()
+        assert ctx._verbose_toggle_event.is_set()
+
+    def test_recreate_live_display_calls_restart(self):
+        """recreate_live_display is a compatibility shim for restart_display."""
+        display = ActionHistoryDisplay()
+        ctx = InlineStreamingContext([], display)
+        ctx._paused = True
+        ctx.recreate_live_display()
+        assert ctx._paused is False
+
+
+@pytest.mark.ci
+class TestInlineStreamingContextFlush:
+    """Tests for InlineStreamingContext._flush_remaining_actions."""
+
+    def test_flush_skips_interaction(self):
+        """Flush skips INTERACTION actions."""
+        display = ActionHistoryDisplay()
+        actions = [
+            _make_action(ActionRole.INTERACTION, ActionStatus.SUCCESS, messages="skip me"),
+        ]
+        ctx = InlineStreamingContext(actions, display)
+        ctx._processed_index = 0
+        ctx._flush_remaining_actions()
+        assert ctx._processed_index == 1
+
+    def test_flush_skips_processing_tools(self):
+        """Flush skips PROCESSING TOOL actions."""
+        display = ActionHistoryDisplay()
+        actions = [
+            _make_action(ActionRole.TOOL, ActionStatus.PROCESSING, messages="loading"),
+        ]
+        ctx = InlineStreamingContext(actions, display)
+        ctx._processed_index = 0
+        ctx._flush_remaining_actions()
+        assert ctx._processed_index == 1
+
+    def test_flush_handles_subagent_complete(self):
+        """Flush closes groups via subagent_complete."""
+        t0 = datetime(2025, 1, 1, 12, 0, 0)
+        t1 = t0 + timedelta(seconds=3)
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+
+        call_id = "flush_call"
+        actions = [
+            _make_action(
+                ActionRole.USER,
+                ActionStatus.PROCESSING,
+                depth=1,
+                action_type="gen_sql",
+                start_time=t0,
+                parent_action_id=call_id,
+            ),
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=1,
+                input_data={"function_name": "describe_table"},
+                start_time=t0,
+                parent_action_id=call_id,
+            ),
+            _make_action(
+                ActionRole.SYSTEM,
+                ActionStatus.SUCCESS,
+                depth=1,
+                action_type=SUBAGENT_COMPLETE_ACTION_TYPE,
+                start_time=t0,
+                end_time=t1,
+                parent_action_id=call_id,
+            ),
+        ]
+        ctx = InlineStreamingContext(actions, display)
+        ctx._processed_index = 0
+        ctx._flush_remaining_actions()
+
+        output = buf.getvalue()
+        assert "Done" in output
+        assert ctx._processed_index == 3
+
+    def test_flush_closes_unclosed_groups(self):
+        """Flush closes groups that never received subagent_complete."""
+        t0 = datetime(2025, 1, 1, 12, 0, 0)
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+
+        actions = [
+            _make_action(
+                ActionRole.USER,
+                ActionStatus.PROCESSING,
+                depth=1,
+                action_type="gen_sql",
+                start_time=t0,
+                parent_action_id="orphan",
+            ),
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=1,
+                input_data={"function_name": "read_query"},
+                start_time=t0,
+                parent_action_id="orphan",
+            ),
+        ]
+        ctx = InlineStreamingContext(actions, display)
+        ctx._processed_index = 0
+        ctx._flush_remaining_actions()
+
+        output = buf.getvalue()
+        assert "Done" in output
+        assert "1 tool uses" in output
+
+    def test_flush_depth0_completed_action(self):
+        """Flush prints normal depth=0 completed actions."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+
+        actions = [
+            _make_action(ActionRole.WORKFLOW, ActionStatus.SUCCESS, messages="step done"),
+        ]
+        ctx = InlineStreamingContext(actions, display)
+        ctx._processed_index = 0
+        ctx._flush_remaining_actions()
+
+        output = buf.getvalue()
+        assert "step done" in output
+
+
+@pytest.mark.ci
+class TestInlineStreamingContextProcess:
+    """Tests for InlineStreamingContext._process_actions specific branches."""
+
+    def test_process_skips_interaction(self):
+        """INTERACTION actions are skipped during processing."""
+        display = ActionHistoryDisplay()
+        actions = [
+            _make_action(ActionRole.INTERACTION, ActionStatus.SUCCESS, messages="input request"),
+        ]
+        ctx = InlineStreamingContext(actions, display)
+        ctx._processed_index = 0
+        ctx._tick = 0
+        ctx._process_actions()
+        assert ctx._processed_index == 1
+
+    def test_process_skips_depth1_processing_tools(self):
+        """PROCESSING tools in subagent groups are skipped."""
+        display = ActionHistoryDisplay()
+        actions = [
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.PROCESSING,
+                depth=1,
+                input_data={"function_name": "read_query"},
+                parent_action_id="call1",
+            ),
+        ]
+        ctx = InlineStreamingContext(actions, display)
+        ctx._processed_index = 0
+        ctx._tick = 0
+
+        printed = []
+        with patch.object(display.console, "print", side_effect=lambda *a, **kw: printed.append(str(a[0]))):
+            ctx._process_actions()
+
+        assert ctx._processed_index == 1
+
+    def test_print_completed_action_skips_task_tool(self):
+        """_print_completed_action skips 'task' function tool calls."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        ctx = InlineStreamingContext([], display)
+
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            input_data={"function_name": "task"},
+        )
+        ctx._print_completed_action(action)
+        assert buf.getvalue() == ""
+
+    def test_print_completed_action_assistant(self):
+        """_print_completed_action renders ASSISTANT with Markdown."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        ctx = InlineStreamingContext([], display)
+
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            messages="my thought",
+            output_data={"raw_output": "Result content"},
+        )
+        ctx._print_completed_action(action)
+        output = buf.getvalue()
+        assert "Result content" in output
+
+    def test_print_completed_verbose(self):
+        """_print_completed_action in verbose mode uses expanded format."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        ctx = InlineStreamingContext([], display)
+        ctx._verbose = True
+
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            input_data={"function_name": "read_query", "arguments": {"sql": "SELECT 1"}},
+        )
+        ctx._print_completed_action(action)
+        output = buf.getvalue()
+        assert "sql: SELECT 1" in output
+
+    def test_print_completed_empty_lines_skipped(self):
+        """_print_completed_action does nothing for roles that return empty lines."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        ctx = InlineStreamingContext([], display)
+
+        action = _make_action(ActionRole.INTERACTION, ActionStatus.SUCCESS, messages="skip")
+        ctx._print_completed_action(action)
+        assert buf.getvalue() == ""
+
+
+@pytest.mark.ci
+class TestStopAndStartLive:
+    """Tests for ActionHistoryDisplay.stop_live and restart_live."""
+
+    def test_stop_live_no_context(self):
+        """stop_live does nothing when no current context."""
+        display = ActionHistoryDisplay()
+        display.stop_live()  # Should not raise
+
+    def test_restart_live_no_context(self):
+        """restart_live does nothing when no current context."""
+        display = ActionHistoryDisplay()
+        display.restart_live()  # Should not raise
+
+    def test_stop_live_with_context(self):
+        """stop_live calls stop_display on current context."""
+        display = ActionHistoryDisplay()
+        ctx = InlineStreamingContext([], display)
+        display._current_context = ctx
+        display.stop_live()
+        assert ctx._paused is True
+
+    def test_restart_live_with_context(self):
+        """restart_live calls restart_display on current context."""
+        display = ActionHistoryDisplay()
+        ctx = InlineStreamingContext([], display)
+        ctx._paused = True
+        display._current_context = ctx
+        display.restart_live()
+        assert ctx._paused is False
+
+
+# ── create_action_display factory ──────────────────────────────────
+
+
+@pytest.mark.ci
+class TestCreateActionDisplay:
+    """Tests for the create_action_display factory function."""
+
+    def test_default_params(self):
+        """Creates display with default console and truncation enabled."""
+        display = create_action_display()
+        assert isinstance(display, ActionHistoryDisplay)
+        assert display.enable_truncation is True
+
+    def test_custom_params(self):
+        """Creates display with custom console and truncation disabled."""
+        buf = StringIO()
+        console = Console(file=buf)
+        display = create_action_display(console=console, enable_truncation=False)
+        assert display.console is console
+        assert display.enable_truncation is False
+
+
+# ── InlineStreamingContext: _update_subagent_display branches ──────
+
+
+@pytest.mark.ci
+class TestUpdateSubagentDisplayBranches:
+    """Tests for InlineStreamingContext._update_subagent_display edge cases."""
+
+    def test_verbose_tool_with_non_dict_args(self):
+        """Verbose tool with non-dict arguments shows 'args:' label."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        ctx = InlineStreamingContext([], display)
+        ctx._verbose = True
+        ctx._subagent_groups = {"g1": {"start_time": datetime.now(), "tool_count": 0, "subagent_type": "gen_sql"}}
+
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            depth=1,
+            input_data={"function_name": "search", "arguments": "plain text"},
+            parent_action_id="g1",
+        )
+        ctx._update_subagent_display(action, group_key="g1")
+        output = buf.getvalue()
+        assert "args: plain text" in output
+        assert ctx._subagent_groups["g1"]["tool_count"] == 1
+
+    def test_other_role_verbose(self):
+        """Non-TOOL/ASSISTANT/USER role in verbose mode shows full message."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        ctx = InlineStreamingContext([], display)
+        ctx._verbose = True
+        ctx._subagent_groups = {"g2": {"start_time": datetime.now(), "tool_count": 0, "subagent_type": "fix_sql"}}
+
+        action = _make_action(
+            ActionRole.SYSTEM,
+            ActionStatus.SUCCESS,
+            depth=1,
+            messages="system message in subagent",
+            parent_action_id="g2",
+        )
+        ctx._update_subagent_display(action, group_key="g2")
+        output = buf.getvalue()
+        assert "system message in subagent" in output
+
+    def test_other_role_compact_truncated(self):
+        """Non-TOOL/ASSISTANT/USER role in compact mode truncates long messages."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        ctx = InlineStreamingContext([], display)
+        ctx._verbose = False
+        ctx._subagent_groups = {"g3": {"start_time": datetime.now(), "tool_count": 0, "subagent_type": "gen_sql"}}
+
+        long_msg = "z" * 300
+        action = _make_action(
+            ActionRole.WORKFLOW,
+            ActionStatus.SUCCESS,
+            depth=1,
+            messages=long_msg,
+            parent_action_id="g3",
+        )
+        ctx._update_subagent_display(action, group_key="g3")
+        output = buf.getvalue()
+        assert " ... " in output
+
+    def test_assistant_empty_content_skips(self):
+        """ASSISTANT with empty content is not printed."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        ctx = InlineStreamingContext([], display)
+        ctx._subagent_groups = {"g4": {"start_time": datetime.now(), "tool_count": 0, "subagent_type": "gen_sql"}}
+
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            depth=1,
+            messages="",
+            parent_action_id="g4",
+        )
+        ctx._update_subagent_display(action, group_key="g4")
+        assert buf.getvalue() == ""
+
+
+@pytest.mark.ci
+class TestEndSubagentGroupByKey:
+    """Tests for InlineStreamingContext._end_subagent_group_by_key."""
+
+    def test_unknown_group_key_noop(self):
+        """Ending a group with unknown key does nothing."""
+        display = ActionHistoryDisplay()
+        ctx = InlineStreamingContext([], display)
+        ctx._end_subagent_group_by_key("nonexistent", _make_action(ActionRole.SYSTEM, ActionStatus.SUCCESS))
+        # Should not crash
+
+    def test_none_group_key_not_added_to_completed(self):
+        """None group key is not added to _completed_group_ids."""
+        display = ActionHistoryDisplay()
+        ctx = InlineStreamingContext([], display)
+        ctx._subagent_groups = {None: {"start_time": datetime.now(), "tool_count": 1, "subagent_type": "gen_sql"}}
+
+        end_action = _make_action(ActionRole.SYSTEM, ActionStatus.SUCCESS, end_time=datetime.now())
+        ctx._end_subagent_group_by_key(None, end_action)
+        assert None not in ctx._completed_group_ids
