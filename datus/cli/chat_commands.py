@@ -476,6 +476,31 @@ class ChatCommands:
                         action_history_manager=self.cli.actions
                     ):
                         if action.role == ActionRole.INTERACTION:
+                            # In non-interactive mode, auto-submit default choice for
+                            # PROCESSING interactions so the node is not left hanging.
+                            if (
+                                action.action_type == "request_choice"
+                                and action.status == ActionStatus.PROCESSING
+                            ):
+                                broker = current_node.interaction_broker
+                                if broker:
+                                    input_data = action.input or {}
+                                    choices = input_data.get("choices", {})
+                                    default_choice = input_data.get("default_choice", "")
+                                    if choices and default_choice:
+                                        await broker.submit(action.action_id, default_choice)
+                                        logger.info(
+                                            f"Non-interactive mode auto-submitted default choice: {default_choice}"
+                                        )
+                                    elif not choices:
+                                        await broker.submit(action.action_id, "")
+                                        logger.info("Non-interactive mode auto-submitted empty string for free-text input")
+                                    elif choices:
+                                        first_key = next(iter(choices.keys()))
+                                        await broker.submit(action.action_id, first_key)
+                                        logger.info(
+                                            f"Non-interactive mode auto-submitted first choice (no default): {first_key}"
+                                        )
                             continue
                         if action.role == ActionRole.TOOL and action.status == ActionStatus.PROCESSING:
                             continue
