@@ -14,6 +14,7 @@ class DBType(str, Enum):
 
     SQLITE = "sqlite"
     DUCKDB = "duckdb"
+    POSTGRESQL = "postgresql"
 
 
 class LLMProvider(str, Enum):

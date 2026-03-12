@@ -87,11 +87,12 @@ jobs:
 
       - name: Run nightly tests
         id: nightly_tests
+        timeout-minutes: 60
         run: |
           set -o pipefail
           LOG_FILE="test_output_nightly_$(date +%Y%m%d_%H%M%S).log"
           echo "log_file=$LOG_FILE" >> "$GITHUB_OUTPUT"
-          python -m pytest -m nightly tests/ --tb=short --verbose | tee "$LOG_FILE"
+          python -m pytest -m nightly tests/ --tb=short --verbose --timeout=120 | tee "$LOG_FILE"
           test_exit_code=${PIPESTATUS[0]}
           echo "test_exit_code=$test_exit_code" >> "$GITHUB_OUTPUT"
           exit "$test_exit_code"
