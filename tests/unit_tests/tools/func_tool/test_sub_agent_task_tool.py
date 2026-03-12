@@ -1415,9 +1415,7 @@ class TestDescriptionParameter:
 
         with patch.object(task_tool, "_create_node", return_value=mock_node):
             with patch.object(task_tool, "_build_node_input", return_value=Mock()):
-                await task_tool.task(
-                    type="gen_sql", prompt="First message", description="Task goal"
-                )
+                await task_tool.task(type="gen_sql", prompt="First message", description="Task goal")
 
         assert user_action_1.input["_task_description"] == "Task goal"
         assert "_task_description" not in user_action_2.input
@@ -1458,9 +1456,7 @@ class TestDescriptionParameter:
 
         with patch.object(task_tool, "_create_node", return_value=mock_node):
             with patch.object(task_tool, "_build_node_input", return_value=Mock()):
-                await task_tool.task(
-                    type="gen_sql", prompt="Show all users", description="List users"
-                )
+                await task_tool.task(type="gen_sql", prompt="Show all users", description="List users")
 
         assert user_action.input["_task_description"] == "List users"
 

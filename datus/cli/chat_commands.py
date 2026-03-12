@@ -468,6 +468,7 @@ class ChatCommands:
             else:
 
                 async def run_stream():
+                    nonlocal node_final_action
                     async for action in current_node.execute_stream_with_interactions(
                         action_history_manager=self.cli.actions
                     ):
@@ -513,7 +514,6 @@ class ChatCommands:
                 final_action = None
 
             if final_action:
-
                 if (
                     final_action.output
                     and isinstance(final_action.output, dict)

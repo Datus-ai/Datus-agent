@@ -802,11 +802,7 @@ class ActionHistoryDisplay:
             if action.role == ActionRole.TOOL and action.status == ActionStatus.PROCESSING:
                 continue
             # Skip node final actions (e.g. chat_response) — rendered separately
-            if (
-                action.role == ActionRole.ASSISTANT
-                and action.action_type
-                and action.action_type.endswith("_response")
-            ):
+            if action.role == ActionRole.ASSISTANT and action.action_type and action.action_type.endswith("_response"):
                 continue
 
             # -- subagent_complete action closes a group --

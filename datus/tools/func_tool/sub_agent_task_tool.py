@@ -581,7 +581,7 @@ class SubAgentTaskTool:
                 '- Use task(type="gen_sql") for SQL generation requiring multi-step reasoning',
                 "- Use direct db tools (list_tables, describe_table) for quick schema exploration",
                 "- In plan mode, use task() for each SQL sub-step",
-                "- Always provide a short 'description' summarizing the task goal (e.g. 'Generate monthly sales report')",
+                "- Always provide a short 'description' summarizing the task goal",
             ]
         )
 
