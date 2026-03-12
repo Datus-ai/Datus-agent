@@ -55,7 +55,9 @@ class SessionLoader:
             # Plain string output — use directly as content
             current_assistant_group["content"] = result_json
             return None
-        if isinstance(result_json, dict) and ("sql" in result_json or "output" in result_json or "response" in result_json):
+        if isinstance(result_json, dict) and (
+            "sql" in result_json or "output" in result_json or "response" in result_json
+        ):
             output = {}
             if "sql" in result_json:
                 output["sql"] = result_json["sql"]

@@ -266,7 +266,6 @@ class DatusCLI:
         """Re-echo user input with Pygments syntax highlighting matching prompt_toolkit style."""
         from pygments import highlight
         from pygments.formatters import TerminalTrueColorFormatter
-
         from rich.text import Text
 
         highlighted = highlight(user_input, CustomSqlLexer(), TerminalTrueColorFormatter(style=CustomPygmentsStyle))
