@@ -272,6 +272,13 @@ class AgenticNode(Node):
         Returns:
             Dict with success, summary, and summary_token count
         """
+        if self.ephemeral:
+            # Ephemeral in-memory sessions don't need compaction — just reset
+            self._session = None
+            self.session_id = None
+            logger.debug("Skipped compaction for ephemeral session")
+            return {"success": False, "summary": "", "summary_token": 0}
+
         if not self.model or not self._session:
             logger.warning("Cannot compact: no model or session available")
             return {"success": False, "summary": "", "summary_token": 0}
@@ -886,6 +893,10 @@ class AgenticNode(Node):
 
     def clear_session(self) -> None:
         """Clear the current session."""
+        if self.ephemeral:
+            self._session = None
+            logger.debug(f"Cleared ephemeral session: {self.session_id}")
+            return
         if self.model and self.session_id:
             self.model.clear_session(self.session_id)
             self._session = None
@@ -893,6 +904,11 @@ class AgenticNode(Node):
 
     def delete_session(self) -> None:
         """Delete the current session completely."""
+        if self.ephemeral:
+            self._session = None
+            self.session_id = None
+            logger.debug("Deleted ephemeral session")
+            return
         if self.model and self.session_id:
             self.model.delete_session(self.session_id)
             self._session = None

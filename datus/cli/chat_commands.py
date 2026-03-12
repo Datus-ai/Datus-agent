@@ -300,7 +300,11 @@ class ChatCommands:
             )
 
     def execute_chat_command(
-        self, message: str, plan_mode: bool = False, subagent_name: str = None, compact_when_new_subagent: bool = True
+        self,
+        message: str,
+        plan_mode: bool = False,
+        subagent_name: Optional[str] = None,
+        compact_when_new_subagent: bool = True,
     ):
         """Execute a chat command in interactive REPL mode."""
         self._execute_chat(
@@ -315,7 +319,6 @@ class ChatCommands:
         self,
         sql: Optional[str],
         response: Optional[str],
-        extracted_sql: Optional[str],
         extracted_output: Optional[str],
     ) -> Optional[str]:
         """Resolve clean output text from response and extraction results.
@@ -351,7 +354,7 @@ class ChatCommands:
         self,
         message: str,
         plan_mode: bool = False,
-        subagent_name: str = None,
+        subagent_name: Optional[str] = None,
         compact_when_new_subagent: bool = True,
         interactive: bool = True,
     ):
@@ -525,7 +528,7 @@ class ChatCommands:
                     extracted_sql, extracted_output = self._extract_sql_and_output_from_content(response)
                     sql = sql or extracted_sql
 
-                    clean_output = self._resolve_clean_output(sql, response, extracted_sql, extracted_output)
+                    clean_output = self._resolve_clean_output(sql, response, extracted_output)
 
                     if sql:
                         self.add_in_sql_context(sql, clean_output, incremental_actions)
@@ -578,7 +581,7 @@ class ChatCommands:
         extracted_sql, extracted_output = self._extract_sql_and_output_from_content(response)
         sql = sql or extracted_sql
 
-        clean_output = self._resolve_clean_output(sql, response, extracted_sql, extracted_output)
+        clean_output = self._resolve_clean_output(sql, response, extracted_output)
 
         if sql:
             self._display_sql_with_copy(sql)

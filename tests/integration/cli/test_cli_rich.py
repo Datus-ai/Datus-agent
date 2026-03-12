@@ -212,8 +212,8 @@ def test_chat_command(mock_args, capsys, gen_sql_input: List[Dict[str, Any]]):
     # Check for "Tool cal" responses
     assert stdout.count("Tool call") > 0, "Should have some tool_call."
 
-    # Check for "Thinking:" responses
-    assert stdout.count("Thinking:") > 0, "Should have thinking step."
+    # Check for assistant messages (thinking/response steps shown as 💬)
+    assert stdout.count("💬") > 0, "Should have assistant message steps."
     assert stdout.count("Generated SQL") == 1, "Should have `Generated SQL`"
 
     # Check chat info
@@ -281,8 +281,10 @@ def test_chat_command_with_ext_knowledge(mock_args):
         "get_knowledge" in tools_used or "search_knowledge" in tools_used
     ), "Should call get_knowledge to retrieve ext_knowledge entries."
 
-    # Check that SQL was generated
-    assert response_output.get("sql"), "Should have generated SQL in the response."
+    # Check that SQL was generated in the response text
+    # ChatNodeResult stores SQL within the response field (no separate sql field)
+    response_text = response_output.get("response", "")
+    assert "SELECT" in response_text.upper(), "Should have generated SQL in the response."
 
     # Check that a chat node was created and has an active session
     assert cli.chat_commands.current_node is not None, "Should have an active chat node."

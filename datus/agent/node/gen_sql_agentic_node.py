@@ -225,7 +225,9 @@ class GenSQLAgenticNode(AgenticNode):
             return
 
         self.tools = []
-        config_value = self.node_config.get("tools", "") or self.DEFAULT_TOOLS
+        config_value = self.node_config.get("tools")
+        if config_value is None:
+            config_value = self.DEFAULT_TOOLS
 
         tool_patterns = [p.strip() for p in config_value.split(",") if p.strip()]
         for pattern in tool_patterns:
@@ -729,7 +731,8 @@ class GenSQLAgenticNode(AgenticNode):
                 full_sql = self._read_existing_sql_file(sql_file_path)
                 if full_sql:
                     sql_preview = self._get_sql_preview(full_sql, self._get_sql_preview_lines())
-                result_sql = None  # Clear inline SQL — file path is the reference
+                    # Only clear inline SQL when file read succeeds — preserve as fallback
+                    result_sql = full_sql
 
             # Create final result with action history
             result = GenSQLNodeResult(

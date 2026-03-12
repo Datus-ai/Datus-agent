@@ -100,6 +100,7 @@ class DatusCLI:
             history_file = get_path_manager().history_file_path()
         history_file.parent.mkdir(parents=True, exist_ok=True)
         self.history = FileHistory(str(history_file))
+        self.session: PromptSession | None = None
         self.at_completer: AtReferenceCompleter
         if self.interactive:
             self._init_prompt_session()
@@ -266,9 +267,12 @@ class DatusCLI:
         from pygments import highlight
         from pygments.formatters import TerminalTrueColorFormatter
 
+        from rich.text import Text
+
         highlighted = highlight(user_input, CustomSqlLexer(), TerminalTrueColorFormatter(style=CustomPygmentsStyle))
-        # Print prompt prefix (green bold) + highlighted input (strip trailing newline from pygments)
-        self.console.print(f"[green bold]{prompt_text}[/green bold]{highlighted.rstrip()}", highlight=False)
+        echoed = Text(prompt_text, style="green bold")
+        echoed.append_text(Text.from_ansi(highlighted.rstrip("\n")))
+        self.console.print(echoed)
 
     def _get_prompt_text(self):
         """Get the current prompt text based on mode"""
@@ -1060,8 +1064,9 @@ Type '.help' for a list of commands or '.exit' to quit.
         Returns:
             User input string or default value
         """
+        session_style = self.session.style if self.session is not None else Style.from_dict({})
         return prompt_input(
-            self.console, message, default=default, choices=choices, multiline=multiline, style=self.session.style
+            self.console, message, default=default, choices=choices, multiline=multiline, style=session_style
         )
 
     def _init_connection(self, timeout_seconds: int = 30):

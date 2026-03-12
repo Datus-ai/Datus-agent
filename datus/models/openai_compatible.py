@@ -819,6 +819,7 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                                         # Flush buffered PROCESSING actions after ASSISTANT
                                         for _pending in pending_start_actions:
+                                            action_history_manager.add_action(_pending)
                                             yield _pending
                                         pending_start_actions.clear()
 
@@ -873,7 +874,6 @@ class OpenAICompatibleModel(LLMBaseModel):
                                     output={},
                                     status=ActionStatus.PROCESSING,
                                 )
-                                action_history_manager.add_action(start_action)
                                 logger.debug(
                                     f"Stored tool call: {tool_name} "
                                     f"(call_id={call_id[:20] if call_id else 'None'}...)"
@@ -942,6 +942,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                                 remaining = []
                                 for _pending in pending_start_actions:
                                     if _pending.action_id == call_id:
+                                        action_history_manager.add_action(_pending)
                                         yield _pending
                                     else:
                                         remaining.append(_pending)
@@ -977,6 +978,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                                 remaining = []
                                 for _pending in pending_start_actions:
                                     if _pending.action_id == call_id:
+                                        action_history_manager.add_action(_pending)
                                         yield _pending
                                     else:
                                         remaining.append(_pending)
@@ -1022,11 +1024,13 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                                     # Flush buffered PROCESSING actions after ASSISTANT message
                                     for _pending in pending_start_actions:
+                                        action_history_manager.add_action(_pending)
                                         yield _pending
                                     pending_start_actions.clear()
 
                     # Flush any remaining buffered PROCESSING actions at end of turn
                     for _pending in pending_start_actions:
+                        action_history_manager.add_action(_pending)
                         yield _pending
                     pending_start_actions.clear()
 

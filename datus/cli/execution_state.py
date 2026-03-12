@@ -125,11 +125,28 @@ class InteractionBroker:
     def close(self) -> None:
         """Place a sentinel so ``fetch()`` terminates naturally.
 
+        Also cancels any pending interactions so callers blocked in
+        ``request()`` are released with ``InteractionCancelled``.
+
         Idempotent – calling close() more than once is a no-op.
         """
         if self._closed:
             return
         self._closed = True
+        # Release callers blocked in request()
+        with self._lock:
+            pending = list(self._pending.values())
+            self._pending.clear()
+        for interaction in pending:
+            if not interaction.future.done():
+                try:
+                    loop = interaction.future.get_loop()
+                    loop.call_soon_threadsafe(
+                        interaction.future.set_exception,
+                        InteractionCancelled("Broker closed"),
+                    )
+                except RuntimeError:
+                    pass  # Loop already closed
         self._output_queue.put_nowait(self._STOP_SENTINEL)
 
     async def _queue_put(self, item: ActionHistory) -> None:

@@ -51,13 +51,18 @@ class SessionLoader:
             return None
 
         result_json = llm_result2json(last_assistant.messages)
-        if isinstance(result_json, dict) and ("sql" in result_json or "output" in result_json):
+        if isinstance(result_json, str):
+            # Plain string output — use directly as content
+            current_assistant_group["content"] = result_json
+            return None
+        if isinstance(result_json, dict) and ("sql" in result_json or "output" in result_json or "response" in result_json):
             output = {}
             if "sql" in result_json:
                 output["sql"] = result_json["sql"]
-            if "output" in result_json:
-                output["response"] = result_json["output"]
-            current_assistant_group["content"] = result_json.get("output", "")
+            # Treat "response" as alias for "output" (prefer "response" if present)
+            content_value = result_json.get("response") or result_json.get("output", "")
+            output["response"] = content_value
+            current_assistant_group["content"] = content_value
             current_assistant_group["sql"] = result_json.get("sql", "")
             # Create final action
             final_action = ActionHistory.create_action(

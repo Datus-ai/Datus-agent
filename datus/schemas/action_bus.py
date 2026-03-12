@@ -62,11 +62,14 @@ class ActionBus:
         old = self._queue
         self._queue = asyncio.Queue()
         if old is not None:
-            try:
-                while not old.empty():
-                    self._queue.put_nowait(old.get_nowait())
-            except Exception:
-                pass
+            while True:
+                try:
+                    item = old.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                if item is self._STOP:
+                    continue
+                self._queue.put_nowait(item)
         return self._queue
 
     # -- push side ----------------------------------------------------------

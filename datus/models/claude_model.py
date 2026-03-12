@@ -167,9 +167,9 @@ class ClaudeModel(OpenAICompatibleModel):
         """
         if not self.use_native_api:
             # Claude API does not allow both temperature and top_p simultaneously.
-            # Force top_p into kwargs so the parent skips its default top_p=1.0,
-            # then LiteLLM receives top_p=None which it omits from the request.
-            kwargs.setdefault("top_p", None)
+            # Explicitly override top_p to None so the parent's default top_p=1.0
+            # is not added to the request — LiteLLM omits None-valued parameters.
+            kwargs["top_p"] = None
             return super().generate(prompt, enable_thinking=enable_thinking, **kwargs)
 
         # Native Anthropic client path (only when use_native_api=True)

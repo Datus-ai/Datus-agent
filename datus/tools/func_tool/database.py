@@ -13,6 +13,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Unio
 from agents import Tool
 
 from datus.configuration.agent_config import AgentConfig
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.schemas.agent_models import SubAgentConfig
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
@@ -417,10 +418,17 @@ class DBFuncTool:
 
     def _read_sql_from_file(self, file_path: str) -> str:
         """Read SQL content from a file path relative to workspace root."""
+        if ".." in file_path:
+            raise DatusException(
+                ErrorCode.TOOL_INVALID_INPUT, message_args={"error_message": f"Invalid SQL file path: {file_path}"}
+            )
         workspace_root = self._resolve_workspace_root()
         full_path = Path(workspace_root) / file_path
         if not full_path.exists():
-            raise FileNotFoundError(f"SQL file not found: {file_path}")
+            raise DatusException(
+                ErrorCode.COMMON_FILE_NOT_FOUND,
+                message_args={"config_name": "SQL", "file_name": file_path},
+            )
         return full_path.read_text(encoding="utf-8")
 
     @staticmethod
@@ -938,9 +946,10 @@ class DBFuncTool:
             underlying error message from the connector.
         """
         try:
-            # Support SQL file path: if sql ends with .sql, read from file
-            if sql.strip().endswith(".sql"):
-                sql = self._read_sql_from_file(sql.strip())
+            # Support SQL file path: if sql is a simple path ending with .sql, read from file
+            sql_stripped = sql.strip()
+            if sql_stripped.endswith(".sql") and "\n" not in sql_stripped and " " not in sql_stripped:
+                sql = self._read_sql_from_file(sql_stripped)
 
             logger.info(f"read_query sql: {sql}")
             connector = self._get_connector(database)

@@ -318,7 +318,7 @@ For questions about actual data values:
 - Use exact column names from `describe_table` results
 - Respect enum values from semantic objects when available
 
-{% if has_filesystem_tools %}
+{% if has_filesystem_tools and has_db_tools %}
 ### Long SQL File Storage
 When your generated SQL is **50 lines or more**, you MUST save it to a file instead of returning it inline:
 

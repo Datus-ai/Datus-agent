@@ -203,7 +203,7 @@ def interrupt_on_escape(interrupt_controller, key_callbacks=None):
                         try:
                             key_callbacks[ch]()
                         except Exception:
-                            pass
+                            logger.exception("Key callback failed", extra={"key": ch.hex()})
         except Exception:
             # Silently ignore errors in the listener thread
             pass

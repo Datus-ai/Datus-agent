@@ -12,7 +12,7 @@ from agents.extensions.memory import AdvancedSQLiteSession
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.configuration.agent_config import AgentConfig
-from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionStatus
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.tools.func_tool.sub_agent_task_tool import SubAgentTaskTool
 
 
@@ -128,6 +128,7 @@ class TestSubAgentTaskSetsEphemeral:
         tool = SubAgentTaskTool(agent_config=mock_agent_config)
 
         mock_action = Mock(spec=ActionHistory)
+        mock_action.role = ActionRole.TOOL
         mock_action.status = ActionStatus.SUCCESS
         mock_action.output = {"sql": "SELECT 1", "response": "ok", "tokens_used": 10}
 
@@ -137,7 +138,7 @@ class TestSubAgentTaskSetsEphemeral:
         async def mock_stream(ahm):
             yield mock_action
 
-        mock_node.execute_stream = mock_stream
+        mock_node.execute_stream_with_interactions = mock_stream
 
         with patch.object(tool, "_create_node", return_value=mock_node):
             with patch.object(tool, "_build_node_input", return_value=Mock()):

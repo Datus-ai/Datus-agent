@@ -1157,15 +1157,7 @@ class InlineStreamingContext:
 
     def _flush_remaining_actions(self) -> None:
         """Flush all remaining actions at exit time without waiting for status changes."""
-        # End all active sub-agent groups
-        if self._subagent_groups:
-            self._stop_processing_live()
-            for group_key in list(self._subagent_groups.keys()):
-                group = self._subagent_groups.pop(group_key)
-                duration_sec = (datetime.now() - group["start_time"]).total_seconds()
-                summary = f"  \u23bf  Done ({group['tool_count']} tool uses \u00b7 {duration_sec:.1f}s)"
-                self.display.console.print(f"[dim]{summary}[/dim]")
-
+        # First drain all remaining actions (keeping groups open so tool_count stays accurate)
         while self._processed_index < len(self.actions):
             action = self.actions[self._processed_index]
 
@@ -1178,12 +1170,18 @@ class InlineStreamingContext:
                 self._processed_index += 1
                 continue
 
-            # depth>0 in flush: print remaining sub-agent actions
+            # subagent_complete closes the group
+            if action.action_type == SUBAGENT_COMPLETE_ACTION_TYPE:
+                group_key = action.parent_action_id
+                self._end_subagent_group_by_key(group_key, action)
+                self._processed_index += 1
+                continue
+
+            # depth>0: render inside the sub-agent group
             if action.depth > 0:
                 group_key = action.parent_action_id
                 if group_key not in self._subagent_groups:
-                    # Group may have been closed already; just render inline
-                    pass
+                    self._start_subagent_group(action, group_key)
                 self._update_subagent_display(action, group_key)
                 self._processed_index += 1
                 continue
@@ -1191,6 +1189,15 @@ class InlineStreamingContext:
             self._stop_processing_live()
             self._print_completed_action(action)
             self._processed_index += 1
+
+        # Now close any sub-agent groups that are still open (no subagent_complete arrived)
+        if self._subagent_groups:
+            self._stop_processing_live()
+            for group_key in list(self._subagent_groups.keys()):
+                group = self._subagent_groups.pop(group_key)
+                duration_sec = (datetime.now() - group["start_time"]).total_seconds()
+                summary = f"  \u23bf  Done ({group['tool_count']} tool uses \u00b7 {duration_sec:.1f}s)"
+                self.display.console.print(f"[dim]{summary}[/dim]")
 
     # -- sub-agent group display --------------------------------------------
 
@@ -1220,11 +1227,11 @@ class InlineStreamingContext:
 
         with self._print_lock:
             self.display.console.print(header)
-        self._subagent_groups[group_key] = {
-            "start_time": first_action.start_time,
-            "tool_count": 0,
-            "subagent_type": subagent_type,
-        }
+            self._subagent_groups[group_key] = {
+                "start_time": first_action.start_time,
+                "tool_count": 0,
+                "subagent_type": subagent_type,
+            }
 
     def _update_subagent_display(self, action: ActionHistory, group_key: Optional[str] = None) -> None:
         """Print sub-agent action permanently (non-collapsing, appended)."""

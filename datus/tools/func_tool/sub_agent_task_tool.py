@@ -450,8 +450,8 @@ class SubAgentTaskTool:
             if hasattr(input_cls, "user_message"):
                 input_cls.user_message = prompt
             return input_cls
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to build type-specific input for {node.type}: {e}")
 
         return BaseInput()
 
@@ -461,6 +461,13 @@ class SubAgentTaskTool:
         """Convert AgenticNode output to FuncToolResult."""
         if not output or not isinstance(output, dict):
             return FuncToolResult(success=0, error="No result from subagent")
+
+        # Check for explicit failure from subagent
+        if output.get("success") is False:
+            return FuncToolResult(
+                success=0,
+                error=output.get("error") or output.get("response") or output.get("content", "Subagent failed"),
+            )
 
         response = output.get("response", "")
         tokens = output.get("tokens_used", 0)
@@ -608,8 +615,9 @@ class SubAgentTaskTool:
                 sub_config = SubAgentConfig.model_validate(config)
                 if sub_config.has_scoped_context() and not sub_config.is_in_namespace(current_namespace):
                     continue
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Skipping invalid subagent config '{name}': {e}")
+                continue
 
             types.append(name)
 
