@@ -6,6 +6,8 @@
 """Get sample rows from database tables using datus connector API."""
 
 import argparse
+import csv
+import io
 import json
 import os
 import sys
@@ -48,11 +50,12 @@ def main():
                     name = item.get("table_name", "")
                     csv_data = item.get("sample_rows", "")
                     if name and csv_data:
-                        # Parse CSV string into columns and rows
-                        lines = csv_data.strip().split("\n")
-                        if lines:
-                            columns = lines[0].split(",")
-                            rows = [line.split(",") for line in lines[1:]] if len(lines) > 1 else []
+                        # Parse CSV properly to handle quoted fields and embedded commas
+                        reader = csv.reader(io.StringIO(csv_data.strip()))
+                        parsed = list(reader)
+                        if parsed:
+                            columns = parsed[0]
+                            rows = parsed[1:]
                             results[name] = {"columns": columns, "rows": rows, "count": len(rows)}
                         else:
                             results[name] = {"columns": [], "rows": [], "count": 0}
