@@ -44,6 +44,7 @@ agent:
       model: kimi-k2.5
       temperature: 1
       top_p: 0.95
+      enable_thinking: true
     openai-4o-mini:
       type: openai
       vendor: openai
