@@ -58,8 +58,8 @@ class ExploreAgenticNode(AgenticNode):
     ):
         self.configured_node_name = node_name
 
-        # Default max_turns = 20, can be overridden by agent.yml
-        self.max_turns = 20
+        # Default max_turns = 15, can be overridden by agent.yml
+        self.max_turns = 15
         if agent_config and hasattr(agent_config, "agentic_nodes") and node_name in agent_config.agentic_nodes:
             agentic_node_config = agent_config.agentic_nodes[node_name]
             if isinstance(agentic_node_config, dict):

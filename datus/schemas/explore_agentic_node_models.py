@@ -24,7 +24,6 @@ class ExploreNodeInput(BaseInput):
 
     user_message: str = Field(..., description="Exploration task description")
     database: Optional[str] = Field(default=None, description="Database name for context")
-    max_turns: int = Field(default=15, description="Maximum conversation turns per interaction")
 
 
 class ExploreNodeResult(BaseResult):

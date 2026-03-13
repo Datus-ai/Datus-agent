@@ -29,23 +29,15 @@ class TestExploreNodeInput:
         inp = ExploreNodeInput(user_message="Find sales tables")
         assert inp.user_message == "Find sales tables"
         assert inp.database is None
-        assert inp.max_turns == 15
 
     def test_full_creation(self):
         """Create with all fields."""
         inp = ExploreNodeInput(
             user_message="Explore order tables",
             database="test_db",
-            max_turns=10,
         )
         assert inp.user_message == "Explore order tables"
         assert inp.database == "test_db"
-        assert inp.max_turns == 10
-
-    def test_default_max_turns(self):
-        """Default max_turns should be 15."""
-        inp = ExploreNodeInput(user_message="test")
-        assert inp.max_turns == 15
 
     def test_serialization(self):
         """Model should serialize and deserialize correctly."""
@@ -53,7 +45,6 @@ class TestExploreNodeInput:
         d = inp.model_dump()
         assert d["user_message"] == "test"
         assert d["database"] == "mydb"
-        assert d["max_turns"] == 15
 
         restored = ExploreNodeInput(**d)
         assert restored.user_message == "test"
