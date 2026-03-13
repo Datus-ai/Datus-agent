@@ -16,7 +16,6 @@ from tests.conftest import load_acceptance_config
 @pytest.fixture
 def agent_config() -> AgentConfig:
     agent_config = load_acceptance_config(namespace="bird_school")
-    agent_config.rag_base_path = "tests/data"
     agent_config.agentic_nodes = copy.deepcopy(agent_config.agentic_nodes)
     return agent_config
 
