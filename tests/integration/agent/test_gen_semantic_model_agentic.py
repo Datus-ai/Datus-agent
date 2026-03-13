@@ -74,17 +74,24 @@ class TestGenSemanticModelAgentic:
         assert node.hooks is not None, "Interactive mode should have hooks"
 
     @pytest.mark.asyncio
-    async def test_execute_stream_produces_actions(self, nightly_agent_config):
-        """N7-04: execute_stream produces valid action sequence with real LLM."""
+    async def test_execute_stream_generates_semantic_model(self, nightly_agent_config):
+        """N7-04: execute_stream generates a semantic model for the satscores table."""
         node = GenSemanticModelAgenticNode(
             agent_config=nightly_agent_config,
             execution_mode="workflow",
         )
 
         node.input = SemanticNodeInput(
-            user_message="List the directory to check existing semantic model files.",
+            user_message=(
+                "Generate a semantic model YAML for the `satscores` table in the california_schools database. "
+                "The table has columns: cds (primary key), sname (school name), dname (district name), "
+                "cname (county name), AvgScrRead (average reading score), AvgScrMath (average math score), "
+                "AvgScrWrite (average writing score), NumTstTakr (number of test takers). "
+                "Create measures for average scores and test taker counts. "
+                "Use the end_semantic_model_generation tool when done."
+            ),
             database="california_schools",
-            max_turns=3,
+            max_turns=5,
         )
 
         action_manager = ActionHistoryManager()

@@ -76,8 +76,8 @@ class TestGenExtKnowledgeAgentic:
         assert node.hooks is not None, "Interactive mode should have hooks"
 
     @pytest.mark.asyncio
-    async def test_execute_stream_produces_actions(self, nightly_agent_config):
-        """N8-04: execute_stream produces valid action sequence with real LLM."""
+    async def test_execute_stream_generates_ext_knowledge(self, nightly_agent_config):
+        """N8-04: execute_stream generates external knowledge for a business concept."""
         node = GenExtKnowledgeAgenticNode(
             node_name="gen_ext_knowledge",
             agent_config=nightly_agent_config,
@@ -85,7 +85,15 @@ class TestGenExtKnowledgeAgentic:
         )
 
         node.input = ExtKnowledgeNodeInput(
-            user_message="List the directory to check existing external knowledge files.",
+            user_message=(
+                "Generate external knowledge for the concept 'Eligible Free Rate' in California schools. "
+                "This is the ratio of Free Meal Count (K-12) to total Enrollment (K-12) from the frpm table. "
+                "The SQL to compute it is: SELECT `Free Meal Count (K-12)` * 1.0 / `Enrollment (K-12)` FROM frpm. "
+                "Write the knowledge YAML file with appropriate search_text and explanation."
+            ),
+            question="What is the Eligible Free Rate for California schools?",
+            search_text="Eligible Free Rate",
+            gold_sql="SELECT `Free Meal Count (K-12)` * 1.0 / `Enrollment (K-12)` AS eligible_free_rate FROM frpm",
         )
 
         action_manager = ActionHistoryManager()

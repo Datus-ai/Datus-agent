@@ -53,16 +53,23 @@ class TestGenMetricsAgentic:
         assert node.hooks is not None, "Interactive mode should have hooks"
 
     @pytest.mark.asyncio
-    async def test_execute_stream_produces_actions(self, nightly_agent_config):
-        """N6-03: execute_stream produces valid action sequence with real LLM."""
+    async def test_execute_stream_generates_metric(self, nightly_agent_config):
+        """N6-03: execute_stream generates a metric from existing data source."""
         node = GenMetricsAgenticNode(
             agent_config=nightly_agent_config,
             execution_mode="workflow",
         )
 
         node.input = SemanticNodeInput(
-            user_message="List the files in the current directory to see existing metrics.",
-            max_turns=3,
+            user_message=(
+                "Generate a derived metric called 'free_meal_rate' that calculates "
+                "the ratio of total_free_meal_count_k12 to total_enrollment_k12 from the frpm data source. "
+                "The frpm.yml semantic model already exists with measures: "
+                "total_enrollment_k12, total_free_meal_count_k12. "
+                "Read frpm.yml first to understand the existing data source, then create the metric. "
+                "Use the end_metric_generation tool when done."
+            ),
+            max_turns=5,
         )
 
         action_manager = ActionHistoryManager()
@@ -92,8 +99,9 @@ class TestGenMetricsAgentic:
 
         node.input = SemanticNodeInput(
             user_message=(
-                "Please list the directory to check existing metric files, "
-                "then generate a simple revenue metric YAML file."
+                "Read the frpm.yml data source file and generate a metric for total FRPM count. "
+                "The frpm data source has a measure called total_frpm_count_k12 with SUM aggregation. "
+                "Use the end_metric_generation tool when done."
             ),
             max_turns=5,
         )
