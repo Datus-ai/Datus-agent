@@ -378,6 +378,34 @@ class TestStaticModeStdio(StaticModeTestBase):
             env=os.environ.copy(),
         )
 
+    @pytest.fixture(autouse=True)
+    def verify_subprocess(self):
+        """Pre-flight check: verify the MCP server subprocess can start."""
+        import subprocess
+
+        params = self._server_params()
+        proc = subprocess.Popen(
+            [params.command] + list(params.args),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=params.env,
+        )
+        import time
+
+        time.sleep(2)
+        exit_code = proc.poll()
+        if exit_code is not None:
+            stderr = proc.stderr.read().decode(errors="replace")
+            stdout = proc.stdout.read().decode(errors="replace")
+            pytest.fail(
+                f"MCP stdio subprocess exited with code {exit_code}.\n"
+                f"stderr: {stderr[:1000]}\nstdout: {stdout[:500]}"
+            )
+        proc.stdin.close()
+        proc.terminate()
+        proc.wait(timeout=5)
+
     def _session(self):
         return mcp_stdio_session(self._server_params())
 
