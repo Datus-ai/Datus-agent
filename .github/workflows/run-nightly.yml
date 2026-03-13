@@ -85,8 +85,14 @@ jobs:
           set -o pipefail
           LOG_FILE="test_output_nightly_$(date +%Y%m%d_%H%M%S).log"
           echo "log_file=$LOG_FILE" >> "$GITHUB_OUTPUT"
-          uv run pytest -m nightly tests/ --tb=short --verbose --timeout=300 | tee "$LOG_FILE"
-          test_exit_code=${PIPESTATUS[0]}
+          # Run MCP stdio tests first in a clean process to avoid event loop contamination
+          uv run pytest -m nightly tests/integration/tools/test_mcp_server.py::TestStaticModeStdio --tb=short --verbose --timeout=300 2>&1 | tee "$LOG_FILE"
+          stdio_exit=${PIPESTATUS[0]}
+          # Run remaining nightly tests (deselect stdio tests already run)
+          uv run pytest -m nightly tests/ --deselect tests/integration/tools/test_mcp_server.py::TestStaticModeStdio --tb=short --verbose --timeout=300 2>&1 | tee -a "$LOG_FILE"
+          main_exit=${PIPESTATUS[0]}
+          # Fail if either run failed
+          test_exit_code=$((stdio_exit > main_exit ? stdio_exit : main_exit))
           echo "test_exit_code=$test_exit_code" >> "$GITHUB_OUTPUT"
           exit "$test_exit_code"
 
