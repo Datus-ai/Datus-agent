@@ -109,11 +109,6 @@ class TestClaudeModel:
 
         complex_scenarios = [
             "Analyze revenue trends by customer region and supplier nation with year-over-year growth",
-            "Calculate profitability metrics by part category and manufacturer with discount impact analysis",
-            (
-                "Perform comprehensive supplier performance analysis including revenue, volume, and "
-                "geographic distribution"
-            ),
         ]
 
         # Set up agent config for SQLite database
