@@ -44,6 +44,7 @@ class ActionBus:
         # (e.g. successive asyncio.run / run_until_complete calls).
         self._queue: Optional[asyncio.Queue] = None
         self._closed: bool = False
+        self._bound_loop: Optional[asyncio.AbstractEventLoop] = None
 
     def reset(self) -> None:
         """Drop all pending items and reset state for a new execution.
@@ -54,10 +55,22 @@ class ActionBus:
         """
         self._queue = None
         self._closed = False
+        self._bound_loop = None
 
     def _ensure_queue(self) -> asyncio.Queue:
+        """Return the internal queue, rebinding if the event loop has changed."""
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+
+        if self._queue is not None and current_loop is not None and current_loop is not self._bound_loop:
+            # Event loop changed — rebind the queue to avoid RuntimeError
+            self._queue = self._rebind_queue()
+
         if self._queue is None:
             self._queue = asyncio.Queue()
+            self._bound_loop = current_loop
         return self._queue
 
     def _rebind_queue(self) -> asyncio.Queue:
@@ -71,6 +84,10 @@ class ActionBus:
         """
         old = self._queue
         self._queue = asyncio.Queue()
+        try:
+            self._bound_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._bound_loop = None
         if old is not None:
             while True:
                 try:
@@ -238,14 +255,13 @@ class ActionBus:
                         )
                         yield result
 
-        finally:
-            # Drain any remaining done tasks that hold unprocessed results
+            # Drain remaining done tasks after the loop exits normally
             for name, result in _drain_done():
                 _at = getattr(result, "action_type", "?")
                 _role = getattr(result, "role", "?")
                 _depth = getattr(result, "depth", "?")
                 logger.debug(
-                    "ActionBus.merge yield (finally-drain)",
+                    "ActionBus.merge yield (post-loop drain)",
                     stream=name,
                     action_type=_at,
                     role=str(_role),
@@ -253,6 +269,9 @@ class ActionBus:
                 )
                 yield result
 
+        finally:
+            # Only cleanup here — no yielding to avoid RuntimeError
+            # when async generator is closed via aclose() or GC.
             for task in tasks.values():
                 if not task.done():
                     task.cancel()

@@ -298,6 +298,14 @@ class SubAgentTaskTool:
         self, subagent_type: str, prompt: str, description: str = "", call_id: Optional[str] = None
     ) -> FuncToolResult:
         """Execute a subagent by running an AgenticNode's execute_stream."""
+        # Validate subagent type against the allowlist to prevent privilege escalation
+        allowed_types = self._get_available_types()
+        if subagent_type not in allowed_types:
+            return FuncToolResult(
+                success=0,
+                error=f"Unknown or disallowed subagent type: '{subagent_type}'. Available types: {allowed_types}",
+            )
+
         node = self._create_node(subagent_type)
         node.ephemeral = True  # Use in-memory session — no SQLite persistence for sub-agents
 
@@ -366,6 +374,11 @@ class SubAgentTaskTool:
             raise
         finally:
             self._emit_complete_action(subagent_type, call_id, stream_start_time, tool_count, subagent_status)
+            # Cleanup node resources (MCP connections, sessions, file handles)
+            try:
+                node.delete_session()
+            except Exception:
+                logger.debug("Failed to cleanup sub-agent node session", exc_info=True)
 
         return self._convert_to_func_result(final_output)
 

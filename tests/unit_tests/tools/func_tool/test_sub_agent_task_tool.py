@@ -337,7 +337,7 @@ class TestTaskExecution:
     async def test_execute_unknown_type(self, task_tool):
         result = await task_tool.task(type="nonexistent", prompt="test")
         assert result.success == 0
-        assert "Unknown subagent type" in result.error
+        assert "disallowed subagent type" in result.error
 
     @pytest.mark.asyncio
     async def test_execute_missing_type(self, task_tool):
