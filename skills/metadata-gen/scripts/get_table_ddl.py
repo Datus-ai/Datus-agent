@@ -39,6 +39,8 @@ def main():
 
         try:
             table_names = [t.strip() for t in args.tables.split(",") if t.strip()]
+            if not table_names:
+                output_error("No valid table names provided in --tables")
             results = {}
 
             # Get tables with DDL

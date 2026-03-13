@@ -47,10 +47,12 @@ def main():
     subject_tree = []
     if args.subject_tree:
         try:
-            subject_tree = json.loads(args.subject_tree)
-            has_subject_tree = bool(subject_tree)
+            parsed = json.loads(args.subject_tree)
+            if isinstance(parsed, list) and parsed:
+                subject_tree = parsed
+                has_subject_tree = True
         except json.JSONDecodeError:
-            pass
+            print("Warning: --subject-tree is not valid JSON, ignoring", file=sys.stderr)
 
     existing_subject_trees = []
     if not has_subject_tree:

@@ -27,9 +27,14 @@ def build_agent_config():
         print(json.dumps({"success": False, "error": "DATUS_CONFIG_PATH environment variable not set"}))
         sys.exit(1)
 
-    from datus.configuration.agent_config_loader import load_agent_config
+    try:
+        from datus.configuration.agent_config_loader import load_agent_config
 
-    agent_config = load_agent_config(config=config_path)
+        agent_config = load_agent_config(config=config_path)
+    except Exception as e:
+        print(json.dumps({"success": False, "error": f"Failed to load config from {config_path}: {e}"}))
+        sys.exit(1)
+
     override_kwargs = {}
     if home:
         override_kwargs["home"] = home

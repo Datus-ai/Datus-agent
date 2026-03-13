@@ -20,14 +20,14 @@ from _skill_common import build_agent_config  # noqa: E402
 
 
 def get_subject_tree(agent_config, subject_tree_json):
-    """Get predefined subject tree if provided."""
+    """Get predefined subject tree if provided. Expects a JSON list."""
     if subject_tree_json:
         try:
             tree = json.loads(subject_tree_json)
-            if tree:
+            if isinstance(tree, list) and tree:
                 return True, tree
         except json.JSONDecodeError:
-            pass
+            print("Warning: --subject-tree is not valid JSON, ignoring", file=sys.stderr)
     return False, []
 
 
