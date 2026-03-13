@@ -189,10 +189,28 @@ def interrupt_on_escape(interrupt_controller, key_callbacks=None):
                         ch = os.read(fd, 1)
                     except OSError:
                         break
-                    if ch == b"\x1b":  # ESC
-                        logger.info("ESC key detected, triggering interrupt")
-                        interrupt_controller.interrupt()
-                        break
+                    if ch == b"\x1b":  # ESC byte received
+                        # Arrow keys and other special keys send escape sequences
+                        # starting with \x1b (e.g. \x1b[A for Up). Wait briefly to
+                        # check if more bytes follow. If they do, it's an escape
+                        # sequence (not a standalone ESC press) — consume and ignore.
+                        follow_ready, _, _ = select.select([fd], [], [], 0.05)
+                        if follow_ready:
+                            # More bytes available — this is an escape sequence, not ESC.
+                            # Drain the remaining bytes of the sequence.
+                            try:
+                                os.read(fd, 16)
+                            except OSError:
+                                pass
+                        elif not interrupt_controller.is_interrupted:
+                            # No follow-up bytes and not already interrupted
+                            # — genuine ESC key press
+                            logger.info("ESC key detected, triggering interrupt")
+                            interrupt_controller.interrupt()
+                            # Do NOT break here: keep the listener alive so that
+                            # key_callbacks (e.g. Ctrl+O for verbose toggle) remain
+                            # functional while the interrupt propagates through the
+                            # async execution stack.
                     elif ch == b"\x03":  # Ctrl+C
                         # Send SIGINT to preserve original behavior
                         import signal

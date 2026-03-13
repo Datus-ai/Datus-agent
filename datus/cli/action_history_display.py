@@ -872,7 +872,11 @@ class ActionHistoryDisplay:
         for user_message, actions in turns:
             self.console.print(f"[green bold]Datus> [/green bold]{user_message}")
             self.console.print("[dim]" + "\u2500" * 40 + "[/dim]")
-            self.render_action_history(actions, verbose=verbose, show_partial_done=show_partial_done)
+            # Filter out top-level (depth==0) USER actions to avoid duplicate user message display
+            # (user message is already rendered as the turn header above).
+            # Keep depth>0 USER actions — they are needed for subagent group creation/headers.
+            non_user_actions = [a for a in actions if not (a.role == ActionRole.USER and a.depth == 0)]
+            self.render_action_history(non_user_actions, verbose=verbose, show_partial_done=show_partial_done)
             self.console.print()
 
     def display_action_list(self, actions: List[ActionHistory]) -> None:
@@ -1095,8 +1099,14 @@ class InlineStreamingContext:
             if self._current_user_message:
                 self.display.console.print(f"[green bold]Datus> [/green bold]{self._current_user_message}")
                 self.display.console.print("[dim]" + "\u2500" * 40 + "[/dim]")
+            # Filter out top-level (depth==0) USER actions to avoid duplicate user message display
+            # (user message is already rendered as the turn header above).
+            # Keep depth>0 USER actions — they are needed for subagent group creation/headers.
+            current_actions = [
+                a for a in self.actions[: self._processed_index] if not (a.role == ActionRole.USER and a.depth == 0)
+            ]
             self.display.render_action_history(
-                self.actions[: self._processed_index],
+                current_actions,
                 verbose=self._verbose,
                 show_partial_done=False,
             )

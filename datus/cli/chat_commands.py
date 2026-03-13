@@ -442,10 +442,15 @@ class ChatCommands:
                                 continue
                             # Node final actions (e.g. chat_response) — keep for
                             # final response rendering but skip streaming trace.
+                            # Only capture depth-0 (main node) responses; sub-agent
+                            # responses (depth=1) should flow into incremental_actions
+                            # so they are not mistakenly rendered as the final answer
+                            # when the user interrupts execution via ESC.
                             if (
                                 action.role == ActionRole.ASSISTANT
                                 and action.action_type
                                 and action.action_type.endswith("_response")
+                                and action.depth == 0
                             ):
                                 nonlocal node_final_action
                                 node_final_action = action
@@ -514,10 +519,15 @@ class ChatCommands:
                             continue
                         # Node final actions (e.g. chat_response) — keep for
                         # final response rendering but skip streaming trace.
+                        # Only capture depth-0 (main node) responses; sub-agent
+                        # responses (depth=1) should flow into incremental_actions
+                        # so they are not mistakenly rendered as the final answer
+                        # when the user interrupts execution via ESC.
                         if (
                             action.role == ActionRole.ASSISTANT
                             and action.action_type
                             and action.action_type.endswith("_response")
+                            and action.depth == 0
                         ):
                             node_final_action = action
                             continue
