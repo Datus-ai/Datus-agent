@@ -21,6 +21,7 @@ Namespaces tested:
 
 import asyncio
 import json
+import os
 import socket
 import sys
 from contextlib import asynccontextmanager
@@ -374,6 +375,7 @@ class TestStaticModeStdio(StaticModeTestBase):
                 "--config",
                 CONFIG_PATH,
             ],
+            env=os.environ.copy(),
         )
 
     def _session(self):
