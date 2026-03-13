@@ -268,13 +268,6 @@ agent:
       - reflect
       config: multi/agent3.yaml
 
-  # ── Skills configuration ──
-  skills:
-    directories:
-      - ./skills
-      - ~/.datus/skills
-    warn_duplicates: true
-
   agentic_nodes:
     gen_semantic_model:
       model: anthropic
