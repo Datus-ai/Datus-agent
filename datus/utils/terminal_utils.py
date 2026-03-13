@@ -37,12 +37,17 @@ def suppress_keyboard_input():
         yield
         return
 
+    # Check for non-terminal environments (CI, piped stdin, web servers) outside
+    # the except block to avoid Python chaining termios.error as __context__
+    # on any exception raised inside the `with` body.
+    _has_terminal = True
     try:
         fd = sys.stdin.fileno()
         old_settings = termios.tcgetattr(fd)
     except (AttributeError, OSError, termios.error):
-        # AttributeError: stdin replaced with object lacking fileno() (e.g. Streamlit, Jupyter)
-        # OSError/termios.error: stdin is not a real terminal (e.g. piped, /dev/null, web server)
+        _has_terminal = False
+
+    if not _has_terminal:
         yield
         return
 
@@ -134,10 +139,16 @@ def interrupt_on_escape(interrupt_controller, key_callbacks=None):
         yield EscapeGuard()
         return
 
+    # Check for non-terminal environments outside the except block to avoid
+    # Python chaining termios.error as __context__ on caller exceptions.
+    _has_terminal = True
     try:
         fd = sys.stdin.fileno()
         old_settings = termios.tcgetattr(fd)
     except (AttributeError, OSError, termios.error):
+        _has_terminal = False
+
+    if not _has_terminal:
         yield EscapeGuard()
         return
 
