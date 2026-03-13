@@ -231,11 +231,12 @@ class TestSubAgentManager:
             result = bootstrapper.run(strategy="overwrite")
             assert result is not None, "Bootstrap should return a result"
 
-            # Verify at least some components succeeded
-            success_count = sum(1 for r in result.results if r.status == "success")
+            # Verify at least some components produced a plan (SubAgentBootstrapper.run()
+            # is a plan-only API that validates scoped context against global storage)
+            plan_count = sum(1 for r in result.results if r.status == "plan")
             assert (
-                success_count > 0
-            ), f"At least one component should succeed, got statuses: {[r.status for r in result.results]}"
+                plan_count > 0
+            ), f"At least one component should produce a plan, got statuses: {[r.status for r in result.results]}"
 
             # Create ContextSearchTools with sub-agent name
             ctx_tools = ContextSearchTools(agent_config, sub_agent_name=sub_agent_name)
