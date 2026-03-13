@@ -125,7 +125,7 @@ class TestSubAgentGroupStart:
 
         # Group state should be set
         assert len(ctx._subagent_groups) == 1
-        group = list(ctx._subagent_groups.values())[0]
+        group = next(iter(ctx._subagent_groups.values()))
         assert group["subagent_type"] == "gen_sql"
         assert group["tool_count"] == 0
         assert group["first_action"] is first_action
@@ -226,7 +226,7 @@ class TestSubAgentDisplayUpdates:
             ctx._process_actions()
 
         assert len(ctx._subagent_groups) == 1
-        group = list(ctx._subagent_groups.values())[0]
+        group = next(iter(ctx._subagent_groups.values()))
         assert group["tool_count"] == 2
         assert len(group["actions"]) == 2  # USER is skipped, 2 TOOL actions buffered
 
@@ -251,7 +251,7 @@ class TestSubAgentDisplayUpdates:
             with patch("datus.cli.action_history_display.Live"):
                 ctx._process_actions()
 
-        group = list(ctx._subagent_groups.values())[0]
+        group = next(iter(ctx._subagent_groups.values()))
         assert group["tool_count"] == 0
 
 

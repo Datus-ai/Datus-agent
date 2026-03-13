@@ -7,6 +7,7 @@ Unit tests for ExploreAgenticNode schema models.
 """
 
 import pytest
+from pydantic import ValidationError
 
 from datus.schemas.base import BaseInput, BaseResult
 from datus.schemas.explore_agentic_node_models import ExploreNodeInput, ExploreNodeResult
@@ -21,7 +22,7 @@ class TestExploreNodeInput:
 
     def test_required_user_message(self):
         """user_message is required."""
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ExploreNodeInput()
 
     def test_minimal_creation(self):

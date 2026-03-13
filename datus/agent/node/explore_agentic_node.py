@@ -112,7 +112,7 @@ class ExploreAgenticNode(AgenticNode):
             )
             self.tools.extend(self.db_func_tool.available_tools())
         except Exception as e:
-            logger.error(f"Failed to setup database tools: {e}")
+            logger.warning(f"Failed to setup database tools, continuing without: {e}")
 
     def _setup_context_search_tools(self):
         """Setup context search tools."""
@@ -120,7 +120,7 @@ class ExploreAgenticNode(AgenticNode):
             self.context_search_tools = ContextSearchTools(self.agent_config)
             self.tools.extend(self.context_search_tools.available_tools())
         except Exception as e:
-            logger.error(f"Failed to setup context search tools: {e}")
+            logger.warning(f"Failed to setup context search tools, continuing without: {e}")
 
     def _setup_readonly_filesystem_tools(self):
         """Setup only read-only filesystem tools (no write/edit/create/move)."""
@@ -133,7 +133,7 @@ class ExploreAgenticNode(AgenticNode):
                     self.tools.append(trans_to_function_tool(method))
             logger.debug(f"Setup readonly filesystem tools with root path: {root_path}")
         except Exception as e:
-            logger.error(f"Failed to setup filesystem tools: {e}")
+            logger.warning(f"Failed to setup filesystem tools, continuing without: {e}")
 
     def _setup_date_parsing_tools(self):
         """Setup date parsing tools."""
@@ -141,7 +141,7 @@ class ExploreAgenticNode(AgenticNode):
             self.date_parsing_tools = DateParsingTools(self.agent_config, self.model)
             self.tools.extend(self.date_parsing_tools.available_tools())
         except Exception as e:
-            logger.error(f"Failed to setup date parsing tools: {e}")
+            logger.warning(f"Failed to setup date parsing tools, continuing without: {e}")
 
     def _get_system_prompt(
         self, conversation_summary: Optional[str] = None, prompt_version: Optional[str] = None

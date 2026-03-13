@@ -603,13 +603,14 @@ class ActionHistoryDisplay:
             description = action.input.get("_task_description", "")
 
         goal = description or (("" if verbose else _truncate_middle(prompt, max_len=200)) if prompt else "")
+        goal_esc = rich_escape(goal) if goal else ""
         header = (
-            f"[bold bright_cyan]\u23fa {subagent_type}[/bold bright_cyan]({goal})"
+            f"[bold bright_cyan]\u23fa {subagent_type}[/bold bright_cyan]({goal_esc})"
             if goal
             else f"[bold bright_cyan]\u23fa {subagent_type}[/bold bright_cyan]"
         )
         if verbose and prompt:
-            header += f"\n  ⎿  [yellow]prompt:[/yellow] [dim]{prompt}[/dim]"
+            header += f"\n  ⎿  [yellow]prompt:[/yellow] [dim]{rich_escape(prompt)}[/dim]"
         self.console.print(header)
 
     def _render_subagent_action(self, action: ActionHistory, verbose: bool) -> None:
@@ -619,9 +620,9 @@ class ActionHistoryDisplay:
             return
         if action.role == ActionRole.TOOL:
             function_name = action.input.get("function_name", "") if action.input else ""
-            label = action.messages or function_name
+            label = rich_escape(action.messages or function_name)
             if not verbose:
-                label = _truncate_middle(label, max_len=200)
+                label = rich_escape(_truncate_middle(action.messages or function_name, max_len=200))
             status_text = "✓" if action.status == ActionStatus.SUCCESS else "✗"
             duration = ""
             if action.end_time and action.start_time:
@@ -634,24 +635,24 @@ class ActionHistoryDisplay:
                     args = action.input["arguments"]
                     if isinstance(args, dict):
                         for k, v in args.items():
-                            self.console.print(f"[dim]  ⎿      {k}: {v}[/dim]")
+                            self.console.print(f"[dim]  ⎿      {rich_escape(str(k))}: {rich_escape(str(v))}[/dim]")
                     else:
-                        self.console.print(f"[dim]  ⎿      args: {args}[/dim]")
+                        self.console.print(f"[dim]  ⎿      args: {rich_escape(str(args))}[/dim]")
                 if action.output:
                     output_lines = self.content_generator._format_tool_output_verbose(action.output, indent="  ⎿      ")
                     for ol in output_lines:
-                        self.console.print(f"[dim]{ol}[/dim]")
+                        self.console.print(f"[dim]{rich_escape(ol)}[/dim]")
             return
         if action.role == ActionRole.ASSISTANT:
             content = _get_assistant_content(action)
             if content:
-                self.console.print(f"[dim]  ⎿  💬 {content}[/dim]")
+                self.console.print(f"[dim]  ⎿  💬 {rich_escape(content)}[/dim]")
             return
         # Other roles
         label = action.messages or action.action_type
         if not verbose:
             label = _truncate_middle(label, max_len=200)
-        self.console.print(f"[dim]  ⎿  {label}[/dim]")
+        self.console.print(f"[dim]  ⎿  {rich_escape(label)}[/dim]")
 
     def _render_subagent_done(
         self, tool_count: int, start_time: Optional[datetime], next_action: ActionHistory
@@ -681,8 +682,9 @@ class ActionHistoryDisplay:
         if first_action.input and isinstance(first_action.input, dict):
             description = first_action.input.get("_task_description", "")
         goal = description or (_truncate_middle(prompt, max_len=200) if prompt else "")
+        goal_esc = rich_escape(goal) if goal else ""
         header = (
-            f"[bold bright_cyan]\u23f4 {subagent_type}[/bold bright_cyan]({goal})"
+            f"[bold bright_cyan]\u23f4 {subagent_type}[/bold bright_cyan]({goal_esc})"
             if goal
             else f"[bold bright_cyan]\u23f4 {subagent_type}[/bold bright_cyan]"
         )
@@ -731,9 +733,9 @@ class ActionHistoryDisplay:
             lines = response.splitlines()
             for i, line in enumerate(lines):
                 if i == 0:
-                    self.console.print(f"  ⎿  [yellow]response:[/yellow] [dim]{line}[/dim]")
+                    self.console.print(f"  ⎿  [yellow]response:[/yellow] [dim]{rich_escape(line)}[/dim]")
                 else:
-                    self.console.print(f"[dim]  ⎿  {line}[/dim]")
+                    self.console.print(f"[dim]  ⎿  {rich_escape(line)}[/dim]")
 
     def _render_deferred_group(
         self,
@@ -782,13 +784,14 @@ class ActionHistoryDisplay:
 
         # Header
         goal = description or (("" if verbose else _truncate_middle(prompt, max_len=200)) if prompt else "")
+        goal_esc = rich_escape(goal) if goal else ""
         header = (
-            f"[bold bright_cyan]\u23fa {subagent_type}[/bold bright_cyan]({goal})"
+            f"[bold bright_cyan]\u23fa {subagent_type}[/bold bright_cyan]({goal_esc})"
             if goal
             else f"[bold bright_cyan]\u23fa {subagent_type}[/bold bright_cyan]"
         )
         if verbose and prompt:
-            header += f"\n  ⎿  [yellow]prompt:[/yellow] [dim]{prompt}[/dim]"
+            header += f"\n  ⎿  [yellow]prompt:[/yellow] [dim]{rich_escape(prompt)}[/dim]"
         self.console.print(header)
 
         # Output summary
@@ -806,15 +809,15 @@ class ActionHistoryDisplay:
                     lines = response.splitlines()
                     for i, line in enumerate(lines):
                         if i == 0:
-                            self.console.print(f"  ⎿  [yellow]response:[/yellow] [dim]{line}[/dim]")
+                            self.console.print(f"  ⎿  [yellow]response:[/yellow] [dim]{rich_escape(line)}[/dim]")
                         else:
-                            self.console.print(f"[dim]  ⎿  {line}[/dim]")
+                            self.console.print(f"[dim]  ⎿  {rich_escape(line)}[/dim]")
             else:
                 # Compact: show one-line summary
                 preview = self.content_generator._get_tool_output_preview(output, "task")
                 line = f"  ⎿  result - {status_text}{duration}"
                 if preview:
-                    line += f"  {preview}"
+                    line += f"  {rich_escape(preview)}"
                 self.console.print(f"[dim]{line}[/dim]")
 
     def _render_main_action(self, action: ActionHistory, verbose: bool) -> None:
@@ -905,7 +908,7 @@ class ActionHistoryDisplay:
                         # Defer rendering until we pair with the task tool response,
                         # so that each group's response stays under its own header.
                         deferred_groups.append((group, action))
-                pending_task_tool_skips += 1
+                    pending_task_tool_skips += 1
                 continue
 
             # -- sub-agent group handling --
@@ -1535,12 +1538,13 @@ class InlineStreamingContext:
 
     def _stop_subagent_live(self) -> None:
         """Stop the subagent Live display if running."""
-        if self._subagent_live is not None:
-            try:
-                self._subagent_live.stop()
-            except Exception:
-                pass
-            self._subagent_live = None
+        with self._print_lock:
+            if self._subagent_live is not None:
+                try:
+                    self._subagent_live.stop()
+                except Exception as e:
+                    logger.debug(f"Error stopping subagent live display: {e}")
+                self._subagent_live = None
 
     def _build_subagent_groups_renderable(self) -> Group:
         """Build a Group renderable showing all active subagent groups with actions grouped.
