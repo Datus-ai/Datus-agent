@@ -132,6 +132,7 @@ class TestClaudeModel:
                     output_type=str,
                     tools=tools,
                     instruction=instructions,
+                    max_turns=30,
                 ):
                     action_count += 1
                     assert action is not None, f"Stream action should not be None for scenario {i+1}"
