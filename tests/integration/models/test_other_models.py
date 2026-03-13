@@ -227,7 +227,8 @@ class TestKimiModel:
     def test_generate_basic(self):
         """Test basic text generation functionality."""
         # Kimi/Moonshot API requires temperature=1 for this model; use model config default
-        result = self.model.generate("Say hello in one word", max_tokens=10)
+        # Note: kimi-k2.5 is a reasoning model, needs sufficient tokens for thinking + response
+        result = self.model.generate("Say hello in one word", max_tokens=100)
 
         assert result is not None, "Response should not be None"
         assert isinstance(result, str), "Response should be a string"

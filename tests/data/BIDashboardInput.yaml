@@ -26,10 +26,10 @@
           LIMIT 50000;
       - name: "Rural Breakdown"
         sql: >
-          SELECT region AS region, country_name AS country_name, sum("SP_POP_TOTL") AS "sum__SP_POP_TOTL", sum("SP_RUR_TOTL") AS "Rural Population"
+          SELECT sum("SP_POP_TOTL") AS "sum__SP_POP_TOTL", sum("SP_RUR_TOTL") AS "Rural Population"
           FROM public.wb_health_population
-          WHERE year >= TO_TIMESTAMP('2011-01-01 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND year < TO_TIMESTAMP('2011-01-02 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') GROUP BY region, country_name
-           LIMIT 50000;
+          WHERE year >= TO_TIMESTAMP('2011-01-01 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND year < TO_TIMESTAMP('2011-01-02 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US')
+          LIMIT 50000;
 
 - input:
     platform: superset

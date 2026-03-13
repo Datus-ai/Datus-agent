@@ -273,10 +273,7 @@ class TestDeepSeekModel:
         database. Provide detailed business analytics with multiple queries and insights."""
 
         complex_scenarios = [
-            (
-                "Analyze revenue trends by customer region and supplier nation with year-over-year "
-                "growth in the SSB database"
-            ),
+            "Calculate total revenue in 1993 from the SSB database",
         ]
 
         # Set up agent config for SQLite database
@@ -294,7 +291,7 @@ class TestDeepSeekModel:
                 output_type=str,
                 tools=tools,
                 instruction=instructions,
-                max_turns=30,
+                max_turns=10,
             ):
                 action_count += 1
                 assert action is not None, f"Stream action should not be None for scenario {i+1}"

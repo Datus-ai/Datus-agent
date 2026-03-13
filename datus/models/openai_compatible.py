@@ -306,7 +306,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                     reasoning_content = message.reasoning_content
                     # If main content is empty but reasoning_content exists, use reasoning_content
                     if not content or content.strip() == "":
-                        content = reasoning_content + "\n" + content
+                        content = reasoning_content
                     logger.debug(f"Found reasoning_content: {reasoning_content[:100]}...")
 
             final_content = content or ""
