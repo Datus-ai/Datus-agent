@@ -1,5 +1,5 @@
 ---
-name: metadata-gen
+name: gen-metadata
 description: >
   Bootstrap schema metadata for a datus-agent namespace. Extracts table DDL,
   column definitions, and sample rows from the database into the knowledge base.
@@ -72,7 +72,7 @@ No additional parameters are needed unless the user wants to override defaults.
 Call `skill_execute_command` to list all tables:
 
 ```
-skill_execute_command(skill_name="metadata-gen", command="python scripts/list_tables.py")
+skill_execute_command(skill_name="gen-metadata", command="python scripts/list_tables.py")
 ```
 
 Returns: `{success, namespace, count, tables: [{name, type, comment}]}`
@@ -83,7 +83,7 @@ Review the table list with the user. If too many tables, ask the user to select 
 
 For each table (or a subset selected by the user):
 ```
-skill_execute_command(skill_name="metadata-gen", command="python scripts/get_table_ddl.py --tables T1,T2,T3")
+skill_execute_command(skill_name="gen-metadata", command="python scripts/get_table_ddl.py --tables T1,T2,T3")
 ```
 
 Returns: `{success, tables: {T1: {definition, table_type, identifier}}}`
@@ -91,7 +91,7 @@ Returns: `{success, tables: {T1: {definition, table_type, identifier}}}`
 ### Step 4: Get Sample Rows
 
 ```
-skill_execute_command(skill_name="metadata-gen", command="python scripts/get_sample_rows.py --tables T1,T2,T3 --limit 5")
+skill_execute_command(skill_name="gen-metadata", command="python scripts/get_sample_rows.py --tables T1,T2,T3 --limit 5")
 ```
 
 Returns: `{success, tables: {T1: {columns, rows, count}}}`
@@ -138,7 +138,7 @@ Save as a temporary file using `write_file` (e.g. `/tmp/metadata_input.json`).
 ### Step 6: Write to Knowledge Base
 
 ```
-skill_execute_command(skill_name="metadata-gen", command="python scripts/write_metadata.py --input_file /tmp/metadata_input.json --mode overwrite")
+skill_execute_command(skill_name="gen-metadata", command="python scripts/write_metadata.py --input_file /tmp/metadata_input.json --mode overwrite")
 ```
 
 Returns:

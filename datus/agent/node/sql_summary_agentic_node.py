@@ -10,8 +10,8 @@ SQL query summarization and classification with support for filesystem tools,
 generation tools, and hooks.
 
 .. deprecated::
-    This node is deprecated in favor of the ``sql-summary`` skill.
-    For interactive mode, use ChatAgenticNode with ``load_skill("sql-summary")``.
+    This node is deprecated in favor of the ``gen-sql-summary`` skill.
+    For interactive mode, use ChatAgenticNode with ``load_skill("gen-sql-summary")``.
     This class is retained only for backward compatibility with workflow mode
     (reference_sql_init.py) and will be removed in a future version.
 """
@@ -66,7 +66,7 @@ class SqlSummaryAgenticNode(AgenticNode):
             subject_tree: Optional predefined subject tree categories
         """
         warnings.warn(
-            "SqlSummaryAgenticNode is deprecated. Use ChatAgenticNode with the 'sql-summary' skill instead. "
+            "SqlSummaryAgenticNode is deprecated. Use ChatAgenticNode with the 'gen-sql-summary' skill instead. "
             "This class will be removed in a future version.",
             DeprecationWarning,
             stacklevel=2,

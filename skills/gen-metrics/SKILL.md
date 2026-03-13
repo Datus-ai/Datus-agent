@@ -1,5 +1,5 @@
 ---
-name: metrics-gen
+name: gen-metrics
 description: Extract core metrics from SQL queries and generate MetricFlow metric definitions
 tags:
   - metrics
@@ -37,7 +37,7 @@ You are a MetricFlow expert specializing in extracting core metrics from SQL que
 Call `skill_execute_command` to prepare dynamic context:
 
 ```
-skill_execute_command(skill_name="metrics-gen", command="python scripts/prepare_context.py")
+skill_execute_command(skill_name="gen-metrics", command="python scripts/prepare_context.py")
 ```
 
 This returns JSON with:
@@ -161,7 +161,7 @@ end_metric_generation(
 Then save to knowledge base:
 
 ```
-skill_execute_command(skill_name="metrics-gen", command="python scripts/save_to_db.py --file-path <filename> --metric-sqls-json '<json>'")
+skill_execute_command(skill_name="gen-metrics", command="python scripts/save_to_db.py --file-path <filename> --metric-sqls-json '<json>'")
 ```
 
 ## Subject Classification

@@ -3,7 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 """
-CI-level tests for the metrics-gen skill.
+CI-level tests for the gen-metrics skill.
 
 Tests SKILL.md parsing, script existence, and skill discovery.
 """
@@ -21,10 +21,10 @@ from datus.tools.skill_tools.skill_registry import SkillRegistry
 
 @pytest.fixture
 def skill_dir():
-    """Return the path to the metrics-gen skill directory."""
-    d = Path(__file__).resolve().parents[4] / "skills" / "metrics-gen"
+    """Return the path to the gen-metrics skill directory."""
+    d = Path(__file__).resolve().parents[4] / "skills" / "gen-metrics"
     if not d.exists():
-        pytest.skip("skills/metrics-gen directory not found")
+        pytest.skip("skills/gen-metrics directory not found")
     return d
 
 
@@ -49,7 +49,7 @@ class TestMetricsGenSkillMd:
         assert (skill_dir / "SKILL.md").exists()
 
     def test_frontmatter_name(self, skill_metadata):
-        assert skill_metadata.name == "metrics-gen"
+        assert skill_metadata.name == "gen-metrics"
 
     def test_frontmatter_description(self, skill_metadata):
         assert skill_metadata.description
@@ -81,18 +81,18 @@ class TestMetricsGenSkillMd:
 
 @pytest.mark.ci
 class TestMetricsGenSkillDiscovery:
-    """Test that metrics-gen skill is discoverable by SkillRegistry."""
+    """Test that gen-metrics skill is discoverable by SkillRegistry."""
 
     def test_registry_discovers_skill(self, skill_dir):
         registry = SkillRegistry(directories=[str(skill_dir.parent)])
         skill_names = [s.name for s in registry.list_skills()]
-        assert "metrics-gen" in skill_names
+        assert "gen-metrics" in skill_names
 
     def test_registry_get_skill(self, skill_dir):
         registry = SkillRegistry(directories=[str(skill_dir.parent)])
-        skill = registry.get_skill("metrics-gen")
+        skill = registry.get_skill("gen-metrics")
         assert skill is not None
-        assert skill.name == "metrics-gen"
+        assert skill.name == "gen-metrics"
 
 
 # ── SKILL.md Content Tests ──

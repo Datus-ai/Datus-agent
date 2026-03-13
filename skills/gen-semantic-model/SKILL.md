@@ -1,5 +1,5 @@
 ---
-name: semantic-model-gen
+name: gen-semantic-model
 description: Generate MetricFlow-compatible semantic model YAML from database table schemas
 tags:
   - semantic
@@ -40,7 +40,7 @@ When user mentions multiple tables (e.g., "orders, customers, products"), you sh
 Call `skill_execute_command` to prepare dynamic context:
 
 ```
-skill_execute_command(skill_name="semantic-model-gen", command="python scripts/prepare_context.py")
+skill_execute_command(skill_name="gen-semantic-model", command="python scripts/prepare_context.py")
 ```
 
 This returns JSON with:
@@ -98,7 +98,7 @@ This returns JSON with:
 - Then call `skill_execute_command` to save to knowledge base:
 
 ```
-skill_execute_command(skill_name="semantic-model-gen", command="python scripts/save_to_db.py --file-path <filename>")
+skill_execute_command(skill_name="gen-semantic-model", command="python scripts/save_to_db.py --file-path <filename>")
 ```
 
 - Your final response MUST be a JSON object (see Output Format section)

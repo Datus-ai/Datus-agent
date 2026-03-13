@@ -1,5 +1,5 @@
 ---
-name: sql-summary
+name: gen-sql-summary
 description: Generate reference SQL summaries from SQL queries for knowledge extraction and reuse. Use this skill when user asks to generate reference SQL, create SQL summary, or build SQL knowledge base.
 tags:
   - sql
@@ -38,7 +38,7 @@ Follow these steps to generate SQL summary:
 Call `skill_execute_command` to prepare dynamic context:
 
 ```
-skill_execute_command(skill_name="sql-summary", command="python scripts/prepare_context.py --sql-query '<first 200 chars of SQL>'")
+skill_execute_command(skill_name="gen-sql-summary", command="python scripts/prepare_context.py --sql-query '<first 200 chars of SQL>'")
 ```
 
 This returns JSON with:
@@ -50,7 +50,7 @@ This returns JSON with:
 ### Step 2: Generate Unique ID
 
 ```
-skill_execute_command(skill_name="sql-summary", command="python scripts/generate_id.py --sql-query '<full SQL>'")
+skill_execute_command(skill_name="gen-sql-summary", command="python scripts/generate_id.py --sql-query '<full SQL>'")
 ```
 
 This returns a unique ID based on the SQL query content.
@@ -69,7 +69,7 @@ This returns a unique ID based on the SQL query content.
 ### Step 4: Save to Knowledge Base
 
 ```
-skill_execute_command(skill_name="sql-summary", command="python scripts/save_to_db.py --file-path <filename> --build-mode incremental")
+skill_execute_command(skill_name="gen-sql-summary", command="python scripts/save_to_db.py --file-path <filename> --build-mode incremental")
 ```
 
 ## YAML Structure

@@ -3,7 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 """
-CI-level tests for the semantic-model-gen skill.
+CI-level tests for the gen-semantic-model skill.
 
 Tests SKILL.md parsing, script existence, and skill discovery.
 """
@@ -21,10 +21,10 @@ from datus.tools.skill_tools.skill_registry import SkillRegistry
 
 @pytest.fixture
 def skill_dir():
-    """Return the path to the semantic-model-gen skill directory."""
-    d = Path(__file__).resolve().parents[4] / "skills" / "semantic-model-gen"
+    """Return the path to the gen-semantic-model skill directory."""
+    d = Path(__file__).resolve().parents[4] / "skills" / "gen-semantic-model"
     if not d.exists():
-        pytest.skip("skills/semantic-model-gen directory not found")
+        pytest.skip("skills/gen-semantic-model directory not found")
     return d
 
 
@@ -49,7 +49,7 @@ class TestSemanticModelGenSkillMd:
         assert (skill_dir / "SKILL.md").exists()
 
     def test_frontmatter_name(self, skill_metadata):
-        assert skill_metadata.name == "semantic-model-gen"
+        assert skill_metadata.name == "gen-semantic-model"
 
     def test_frontmatter_description(self, skill_metadata):
         assert skill_metadata.description
@@ -82,18 +82,18 @@ class TestSemanticModelGenSkillMd:
 
 @pytest.mark.ci
 class TestSemanticModelGenSkillDiscovery:
-    """Test that semantic-model-gen skill is discoverable by SkillRegistry."""
+    """Test that gen-semantic-model skill is discoverable by SkillRegistry."""
 
     def test_registry_discovers_skill(self, skill_dir):
         registry = SkillRegistry(directories=[str(skill_dir.parent)])
         skill_names = [s.name for s in registry.list_skills()]
-        assert "semantic-model-gen" in skill_names
+        assert "gen-semantic-model" in skill_names
 
     def test_registry_get_skill(self, skill_dir):
         registry = SkillRegistry(directories=[str(skill_dir.parent)])
-        skill = registry.get_skill("semantic-model-gen")
+        skill = registry.get_skill("gen-semantic-model")
         assert skill is not None
-        assert skill.name == "semantic-model-gen"
+        assert skill.name == "gen-semantic-model"
 
 
 # ── SKILL.md Content Tests ──

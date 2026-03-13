@@ -3,7 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 """
-CI-level tests for the metadata-gen skill.
+CI-level tests for the gen-metadata skill.
 
 Tests SKILL.md parsing, script existence, skill discovery, and CSV parsing logic.
 """
@@ -23,10 +23,10 @@ from datus.tools.skill_tools.skill_registry import SkillRegistry
 
 @pytest.fixture
 def skill_dir():
-    """Return the path to the metadata-gen skill directory."""
-    d = Path(__file__).resolve().parents[4] / "skills" / "metadata-gen"
+    """Return the path to the gen-metadata skill directory."""
+    d = Path(__file__).resolve().parents[4] / "skills" / "gen-metadata"
     if not d.exists():
-        pytest.skip("skills/metadata-gen directory not found")
+        pytest.skip("skills/gen-metadata directory not found")
     return d
 
 
@@ -51,7 +51,7 @@ class TestMetadataGenSkillMd:
         assert (skill_dir / "SKILL.md").exists()
 
     def test_frontmatter_name(self, skill_metadata):
-        assert skill_metadata.name == "metadata-gen"
+        assert skill_metadata.name == "gen-metadata"
 
     def test_frontmatter_description(self, skill_metadata):
         assert skill_metadata.description
@@ -85,18 +85,18 @@ class TestMetadataGenSkillMd:
 
 @pytest.mark.ci
 class TestMetadataGenSkillDiscovery:
-    """Test that metadata-gen skill is discoverable by SkillRegistry."""
+    """Test that gen-metadata skill is discoverable by SkillRegistry."""
 
     def test_registry_discovers_skill(self, skill_dir):
         registry = SkillRegistry(directories=[str(skill_dir.parent)])
         skill_names = [s.name for s in registry.list_skills()]
-        assert "metadata-gen" in skill_names
+        assert "gen-metadata" in skill_names
 
     def test_registry_get_skill(self, skill_dir):
         registry = SkillRegistry(directories=[str(skill_dir.parent)])
-        skill = registry.get_skill("metadata-gen")
+        skill = registry.get_skill("gen-metadata")
         assert skill is not None
-        assert skill.name == "metadata-gen"
+        assert skill.name == "gen-metadata"
 
 
 # ── CSV Parsing Tests ──

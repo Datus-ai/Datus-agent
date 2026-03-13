@@ -3,7 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 """
-CI-level tests for the sql-summary skill.
+CI-level tests for the gen-sql-summary skill.
 
 Tests SKILL.md parsing, extra_env injection, and script execution patterns.
 """
@@ -26,16 +26,16 @@ from datus.tools.skill_tools.skill_registry import SkillRegistry
 
 @pytest.fixture
 def sql_summary_skill_dir():
-    """Return the path to the sql-summary skill directory."""
-    skill_dir = Path(__file__).resolve().parents[4] / "skills" / "sql-summary"
+    """Return the path to the gen-sql-summary skill directory."""
+    skill_dir = Path(__file__).resolve().parents[4] / "skills" / "gen-sql-summary"
     if not skill_dir.exists():
-        pytest.skip("skills/sql-summary directory not found")
+        pytest.skip("skills/gen-sql-summary directory not found")
     return skill_dir
 
 
 @pytest.fixture
 def sql_summary_metadata(sql_summary_skill_dir):
-    """Parse and return SkillMetadata from sql-summary SKILL.md."""
+    """Parse and return SkillMetadata from gen-sql-summary SKILL.md."""
     skill_md = sql_summary_skill_dir / "SKILL.md"
     content = skill_md.read_text(encoding="utf-8")
 
@@ -61,8 +61,8 @@ class TestSqlSummarySkillMd:
         assert (sql_summary_skill_dir / "SKILL.md").exists()
 
     def test_frontmatter_name(self, sql_summary_metadata):
-        """Skill name is 'sql-summary'."""
-        assert sql_summary_metadata.name == "sql-summary"
+        """Skill name is 'gen-sql-summary'."""
+        assert sql_summary_metadata.name == "gen-sql-summary"
 
     def test_frontmatter_description(self, sql_summary_metadata):
         """Skill has a description."""
@@ -102,21 +102,21 @@ class TestSqlSummarySkillMd:
 
 @pytest.mark.ci
 class TestSqlSummarySkillDiscovery:
-    """Test that sql-summary skill is discoverable by SkillRegistry."""
+    """Test that gen-sql-summary skill is discoverable by SkillRegistry."""
 
     def test_registry_discovers_skill(self, sql_summary_skill_dir):
-        """SkillRegistry discovers sql-summary from its parent directory."""
+        """SkillRegistry discovers gen-sql-summary from its parent directory."""
         registry = SkillRegistry(directories=[str(sql_summary_skill_dir.parent)])
         skills = registry.list_skills()
         skill_names = [s.name for s in skills]
-        assert "sql-summary" in skill_names
+        assert "gen-sql-summary" in skill_names
 
     def test_registry_get_skill(self, sql_summary_skill_dir):
-        """SkillRegistry can retrieve sql-summary by name."""
+        """SkillRegistry can retrieve gen-sql-summary by name."""
         registry = SkillRegistry(directories=[str(sql_summary_skill_dir.parent)])
-        skill = registry.get_skill("sql-summary")
+        skill = registry.get_skill("gen-sql-summary")
         assert skill is not None
-        assert skill.name == "sql-summary"
+        assert skill.name == "gen-sql-summary"
 
 
 # ── Extra Env Injection Tests ──
@@ -142,7 +142,7 @@ class TestExtraEnvInjection:
         assert env["DATUS_HOME"] == "/tmp/test_home"
         assert env["DATUS_NAMESPACE"] == "test_ns"
         assert env["DATUS_CONFIG_PATH"] == "/tmp/agent.yml"
-        assert env["SKILL_NAME"] == "sql-summary"
+        assert env["SKILL_NAME"] == "gen-sql-summary"
 
     def test_skill_bash_tool_empty_extra_env(self, sql_summary_metadata):
         """SkillBashTool works with no extra_env."""
@@ -151,7 +151,7 @@ class TestExtraEnvInjection:
             workspace_root=str(sql_summary_metadata.location),
         )
         env = bash_tool._get_safe_env()
-        assert env["SKILL_NAME"] == "sql-summary"
+        assert env["SKILL_NAME"] == "gen-sql-summary"
         # Should not have DATUS_* unless already in os.environ
         assert "DATUS_NAMESPACE" not in env or env["DATUS_NAMESPACE"] == ""
 
@@ -292,4 +292,4 @@ class TestSqlSummaryNodeDeprecation:
 
         deprecation_warnings = [x for x in w if issubclass(x.category, DeprecationWarning)]
         assert len(deprecation_warnings) >= 1, f"Expected DeprecationWarning, got: {[x.category for x in w]}"
-        assert "sql-summary" in str(deprecation_warnings[0].message)
+        assert "gen-sql-summary" in str(deprecation_warnings[0].message)

@@ -1,5 +1,5 @@
 ---
-name: ext-knowledge-gen
+name: gen-ext-knowledge
 description: Bootstrap external knowledge for a datus-agent namespace from SQL verification
 tags:
   - ext-knowledge
@@ -30,7 +30,7 @@ You are a business knowledge discovery expert. Your task is to analyze SQL queri
 Call `skill_execute_command` to prepare dynamic context:
 
 ```
-skill_execute_command(skill_name="ext-knowledge-gen", command="python scripts/prepare_context.py")
+skill_execute_command(skill_name="gen-ext-knowledge", command="python scripts/prepare_context.py")
 ```
 
 This returns JSON with:
@@ -100,7 +100,7 @@ Your knowledge will be used as instructions for SQL generation. Ask yourself:
 4. Sync to KB:
 
 ```
-skill_execute_command(skill_name="ext-knowledge-gen", command="python scripts/save_to_db.py --file-path <filename>")
+skill_execute_command(skill_name="gen-ext-knowledge", command="python scripts/save_to_db.py --file-path <filename>")
 ```
 
 **YAML format rules:**
