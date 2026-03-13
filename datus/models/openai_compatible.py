@@ -549,6 +549,14 @@ class OpenAICompatibleModel(LLMBaseModel):
                     "include_usage": True,
                 }
 
+                # Apply temperature from model config (e.g., kimi-k2.5 requires temperature=1)
+                if self.model_config.temperature is not None:
+                    model_settings_kwargs["temperature"] = self.model_config.temperature
+
+                # Apply top_p from model config (e.g., kimi-k2.5 requires top_p=0.95)
+                if self.model_config.top_p is not None:
+                    model_settings_kwargs["top_p"] = self.model_config.top_p
+
                 # Enable reasoning/thinking mode for thinking models (deepseek-r1, o1, kimi-k2.5, etc.)
                 # This enables preserve_thinking_blocks in LitellmModel to correctly handle
                 # reasoning_content in multi-turn conversations with tool calls
@@ -726,6 +734,14 @@ class OpenAICompatibleModel(LLMBaseModel):
                     "include_usage": True,
                 }
 
+                # Apply temperature from model config (e.g., kimi-k2.5 requires temperature=1)
+                if self.model_config.temperature is not None:
+                    model_settings_kwargs["temperature"] = self.model_config.temperature
+
+                # Apply top_p from model config (e.g., kimi-k2.5 requires top_p=0.95)
+                if self.model_config.top_p is not None:
+                    model_settings_kwargs["top_p"] = self.model_config.top_p
+
                 # Enable reasoning/thinking mode for thinking models (deepseek-r1, o1, kimi-k2.5, etc.)
                 # This enables preserve_thinking_blocks in LitellmModel to correctly handle
                 # reasoning_content in multi-turn conversations with tool calls
@@ -854,9 +870,9 @@ class OpenAICompatibleModel(LLMBaseModel):
                                 # Try to format arguments
                                 try:
                                     args_dict = json.loads(arguments) if arguments else {}
-                                    args_str = to_str(args_dict)[:500]
+                                    args_str = to_str(args_dict)[:80]
                                 except Exception:
-                                    args_str = str(arguments)[:500]
+                                    args_str = str(arguments)[:80]
 
                                 # Store tool call info for matching with result
                                 temp_tool_calls[call_id] = {

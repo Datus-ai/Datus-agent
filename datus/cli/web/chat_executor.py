@@ -171,8 +171,8 @@ class ChatExecutor:
                 # Show key parameters (limit to first 100 chars)
                 params = {k: v for k, v in action.input.items() if k != "function_name"}
                 if params:
-                    param_str = str(params)[:800]
-                    if len(str(params)) > 800:
+                    param_str = str(params)[:100]
+                    if len(str(params)) > 100:
                         param_str += "..."
                     input_preview = f" ({param_str})"
 
@@ -183,16 +183,16 @@ class ChatExecutor:
                     if isinstance(action.output, dict):
                         # Show first key-value or length
                         if "result" in action.output:
-                            result_str = str(action.output["result"])[:800]
+                            result_str = str(action.output["result"])[:80]
                             output_preview = (
-                                f" → {result_str}..." if len(str(action.output["result"])) > 800 else f" → {result_str}"
+                                f" → {result_str}..." if len(str(action.output["result"])) > 80 else f" → {result_str}"
                             )
                         elif len(action.output) > 0:
                             first_key = list(action.output.keys())[0]
                             output_preview = f" → {first_key}: ..."
                     else:
-                        output_str = str(action.output)[:800]
-                        output_preview = f" → {output_str}..." if len(str(action.output)) > 800 else f" → {output_str}"
+                        output_str = str(action.output)[:80]
+                        output_preview = f" → {output_str}..." if len(str(action.output)) > 80 else f" → {output_str}"
 
                 return f"✓Tool call: {function_name}{input_preview}{output_preview}"
             elif action.status == ActionStatus.PROCESSING:
