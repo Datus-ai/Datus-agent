@@ -25,8 +25,7 @@ from datus.tools.skill_tools.skill_registry import SkillRegistry
 def sql_summary_skill_dir():
     """Return the path to the gen-sql-summary skill directory."""
     skill_dir = Path(__file__).resolve().parents[4] / "skills" / "gen-sql-summary"
-    if not skill_dir.exists():
-        pytest.skip("skills/gen-sql-summary directory not found")
+    assert skill_dir.exists(), f"skills/gen-sql-summary directory not found at {skill_dir}"
     return skill_dir
 
 
@@ -196,7 +195,10 @@ class TestGenerateId:
         from datus.storage.reference_sql.init_utils import gen_reference_sql_id
 
         sql = "SELECT user_id, COUNT(*) FROM orders GROUP BY user_id"
-        assert gen_reference_sql_id(sql) == gen_reference_sql_id(sql)
+        id1 = gen_reference_sql_id(sql)
+        id2 = gen_reference_sql_id(sql)
+        assert id1, "gen_reference_sql_id returned empty result"
+        assert id1 == id2
 
     def test_generate_id_different_sql(self):
         """Different SQL produces different IDs."""

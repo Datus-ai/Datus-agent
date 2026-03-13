@@ -25,8 +25,7 @@ from datus.tools.skill_tools.skill_registry import SkillRegistry
 def skill_dir():
     """Return the path to the gen-metadata skill directory."""
     d = Path(__file__).resolve().parents[4] / "skills" / "gen-metadata"
-    if not d.exists():
-        pytest.skip("skills/gen-metadata directory not found")
+    assert d.exists(), f"skills/gen-metadata directory not found at {d}"
     return d
 
 

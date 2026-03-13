@@ -23,8 +23,7 @@ from datus.tools.skill_tools.skill_registry import SkillRegistry
 def skill_dir():
     """Return the path to the gen-ext-knowledge skill directory."""
     d = Path(__file__).resolve().parents[4] / "skills" / "gen-ext-knowledge"
-    if not d.exists():
-        pytest.skip("skills/gen-ext-knowledge directory not found")
+    assert d.exists(), f"skills/gen-ext-knowledge directory not found at {d}"
     return d
 
 

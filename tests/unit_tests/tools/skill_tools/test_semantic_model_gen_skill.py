@@ -23,8 +23,7 @@ from datus.tools.skill_tools.skill_registry import SkillRegistry
 def skill_dir():
     """Return the path to the gen-semantic-model skill directory."""
     d = Path(__file__).resolve().parents[4] / "skills" / "gen-semantic-model"
-    if not d.exists():
-        pytest.skip("skills/gen-semantic-model directory not found")
+    assert d.exists(), f"skills/gen-semantic-model directory not found at {d}"
     return d
 
 

@@ -23,8 +23,7 @@ from datus.tools.skill_tools.skill_registry import SkillRegistry
 def skill_dir():
     """Return the path to the gen-metrics skill directory."""
     d = Path(__file__).resolve().parents[4] / "skills" / "gen-metrics"
-    if not d.exists():
-        pytest.skip("skills/gen-metrics directory not found")
+    assert d.exists(), f"skills/gen-metrics directory not found at {d}"
     return d
 
 
