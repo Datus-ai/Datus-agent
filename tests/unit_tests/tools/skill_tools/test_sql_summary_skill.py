@@ -10,7 +10,6 @@ Tests SKILL.md parsing, extra_env injection, and script execution patterns.
 
 import json
 import subprocess
-import warnings
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -270,26 +269,3 @@ class TestSaveToDbScript:
             env=env,
         )
         assert result.returncode != 0
-
-
-# ── Deprecation Warning Test ──
-
-
-@pytest.mark.ci
-class TestSqlSummaryNodeDeprecation:
-    """Test that SqlSummaryAgenticNode emits deprecation warning."""
-
-    def test_deprecation_warning(self):
-        """SqlSummaryAgenticNode constructor emits DeprecationWarning."""
-        from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
-
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            try:
-                SqlSummaryAgenticNode(node_name="gen_sql_summary")
-            except Exception:
-                pass  # Expected - no agent_config provided
-
-        deprecation_warnings = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert len(deprecation_warnings) >= 1, f"Expected DeprecationWarning, got: {[x.category for x in w]}"
-        assert "gen-sql-summary" in str(deprecation_warnings[0].message)

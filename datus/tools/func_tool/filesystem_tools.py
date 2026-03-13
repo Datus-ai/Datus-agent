@@ -81,24 +81,27 @@ class FilesystemFuncTool(BaseTool):
             bound_tools.append(trans_to_function_tool(bound_method))
         return bound_tools
 
-    def _get_safe_path(self, path: str, allow_absolute: bool = False) -> Optional[Path]:
-        """Get a safe path within the root directory.
+    def _get_safe_path(self, path: str) -> Optional[Path]:
+        """Resolve a relative path within the root directory sandbox.
+
+        Only relative paths are accepted. The resolved path must remain within
+        ``self.config.root_path``; any traversal (e.g. ``../``) that escapes
+        the sandbox returns ``None``.
 
         Args:
-            path: File path (relative or absolute).
-            allow_absolute: If True, allow absolute paths outside the root directory (read-only use).
+            path: Relative file path within the workspace.
+
+        Returns:
+            Resolved ``Path`` inside the sandbox, or ``None`` if the path
+            is invalid or escapes the sandbox boundary.
         """
         try:
-            resolved = Path(path).resolve()
-            # If the path is absolute and allow_absolute is set, return it directly
-            if allow_absolute and os.path.isabs(path) and resolved.exists():
-                return resolved
-
             root = Path(self.config.root_path).resolve()
             target = (root / path).resolve()
-            if not str(target).startswith(str(root)):
+            try:
+                target.relative_to(root)
+            except ValueError:
                 return None
-
             return target
         except Exception:
             return None
@@ -124,7 +127,11 @@ class FilesystemFuncTool(BaseTool):
                   - 'result' (Optional[str]): File contents on success.
         """
         try:
-            target_path = self._get_safe_path(path, allow_absolute=True)
+            # Absolute paths are resolved directly; relative paths go through the sandbox
+            if os.path.isabs(path):
+                target_path = Path(path).resolve()
+            else:
+                target_path = self._get_safe_path(path)
 
             if not target_path or not target_path.exists():
                 return FuncToolResult(success=0, error=f"File not found: {path}")
@@ -167,7 +174,11 @@ class FilesystemFuncTool(BaseTool):
             results = {}
 
             for path in paths:
-                target_path = self._get_safe_path(path, allow_absolute=True)
+                # Absolute paths are resolved directly; relative paths go through the sandbox
+                if os.path.isabs(path):
+                    target_path = Path(path).resolve()
+                else:
+                    target_path = self._get_safe_path(path)
                 if not target_path or not target_path.exists():
                     results[path] = f"File not found: {path}"
                     continue
