@@ -10,6 +10,7 @@ Tests SKILL.md parsing, extra_env injection, and script execution patterns.
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -188,7 +189,7 @@ class TestGenerateIdScript:
     def test_generate_id_script_runs(self, sql_summary_skill_dir):
         """generate_id.py produces a non-empty ID for a SQL query."""
         result = subprocess.run(
-            ["python", "scripts/generate_id.py", "--sql-query", "SELECT 1"],
+            [sys.executable, "scripts/generate_id.py", "--sql-query", "SELECT 1"],
             cwd=str(sql_summary_skill_dir),
             capture_output=True,
             text=True,
@@ -203,7 +204,7 @@ class TestGenerateIdScript:
         results = []
         for _ in range(2):
             result = subprocess.run(
-                ["python", "scripts/generate_id.py", "--sql-query", sql],
+                [sys.executable, "scripts/generate_id.py", "--sql-query", sql],
                 cwd=str(sql_summary_skill_dir),
                 capture_output=True,
                 text=True,
@@ -215,7 +216,7 @@ class TestGenerateIdScript:
     def test_generate_id_empty_query_fails(self, sql_summary_skill_dir):
         """Empty SQL query produces an error."""
         result = subprocess.run(
-            ["python", "scripts/generate_id.py", "--sql-query", "   "],
+            [sys.executable, "scripts/generate_id.py", "--sql-query", "   "],
             cwd=str(sql_summary_skill_dir),
             capture_output=True,
             text=True,
@@ -235,7 +236,7 @@ class TestPrepareContextScript:
         """Script fails gracefully when DATUS_CONFIG_PATH is not set."""
         env = {"PATH": subprocess.os.environ.get("PATH", ""), "PYTHONPATH": subprocess.os.environ.get("PYTHONPATH", "")}
         result = subprocess.run(
-            ["python", "scripts/prepare_context.py", "--sql-query", "SELECT 1"],
+            [sys.executable, "scripts/prepare_context.py", "--sql-query", "SELECT 1"],
             cwd=str(sql_summary_skill_dir),
             capture_output=True,
             text=True,
@@ -261,7 +262,7 @@ class TestSaveToDbScript:
         """Script fails gracefully when DATUS_CONFIG_PATH is not set."""
         env = {"PATH": subprocess.os.environ.get("PATH", ""), "PYTHONPATH": subprocess.os.environ.get("PYTHONPATH", "")}
         result = subprocess.run(
-            ["python", "scripts/save_to_db.py", "--file-path", "test.yaml"],
+            [sys.executable, "scripts/save_to_db.py", "--file-path", "test.yaml"],
             cwd=str(sql_summary_skill_dir),
             capture_output=True,
             text=True,
