@@ -496,6 +496,7 @@ Do NOT give up. Continue iterating until verify_sql returns success=1.
 
         context["native_tools"] = ", ".join([tool.name for tool in self.tools]) if self.tools else "None"
         context["ext_knowledge_dir"] = self.ext_knowledge_dir
+        context["has_filesystem_tools"] = bool(self.filesystem_func_tool)
 
         # Priority 1: User-specified subject_path (highest priority)
         if user_input.subject_path:

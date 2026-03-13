@@ -7,9 +7,10 @@ import threading
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
-from rich.console import Console
+from rich.console import Console, Group
 from rich.live import Live
 from rich.markdown import Markdown
+from rich.markup import escape as rich_escape
 from rich.panel import Panel
 from rich.text import Text
 from rich.tree import Tree
@@ -22,6 +23,9 @@ logger = get_logger(__name__)
 
 # Blinking dot animation frames for PROCESSING status
 _BLINK_FRAMES = ["○", "●"]
+
+# In compact mode, only show the last N subagent actions in the Live overlay
+_SUBAGENT_ROLLING_WINDOW_SIZE = 2
 
 
 def _truncate_middle(text: str, max_len: int = 120) -> str:
@@ -599,7 +603,11 @@ class ActionHistoryDisplay:
             description = action.input.get("_task_description", "")
 
         goal = description or (("" if verbose else _truncate_middle(prompt, max_len=200)) if prompt else "")
-        header = f"\u23fa {subagent_type}({goal})" if goal else f"\u23fa {subagent_type}"
+        header = (
+            f"[bold bright_cyan]\u23fa {subagent_type}[/bold bright_cyan]({goal})"
+            if goal
+            else f"[bold bright_cyan]\u23fa {subagent_type}[/bold bright_cyan]"
+        )
         if verbose and prompt:
             header += f"\n  ⎿  [yellow]prompt:[/yellow] [dim]{prompt}[/dim]"
         self.console.print(header)
@@ -657,6 +665,37 @@ class ActionHistoryDisplay:
         summary = f"  \u23bf  Done ({tool_count} tool uses{dur_str})"
         self.console.print(f"[dim]{summary}[/dim]")
 
+    def _render_subagent_collapsed(
+        self,
+        first_action: ActionHistory,
+        tool_count: int,
+        start_time: Optional[datetime],
+        end_action: ActionHistory,
+    ) -> None:
+        """Render a completed subagent group as collapsed: header line + Done summary line."""
+        subagent_type = first_action.action_type or "subagent"
+        prompt = first_action.messages or ""
+        if prompt.startswith("User: "):
+            prompt = prompt[6:]
+        description = ""
+        if first_action.input and isinstance(first_action.input, dict):
+            description = first_action.input.get("_task_description", "")
+        goal = description or (_truncate_middle(prompt, max_len=200) if prompt else "")
+        header = (
+            f"[bold bright_cyan]\u23f4 {subagent_type}[/bold bright_cyan]({goal})"
+            if goal
+            else f"[bold bright_cyan]\u23f4 {subagent_type}[/bold bright_cyan]"
+        )
+        self.console.print(header)
+        status_mark = "\u2713" if end_action.status != ActionStatus.FAILED else "\u2717"
+        end_time = end_action.end_time or datetime.now()
+        dur_str = ""
+        if start_time:
+            dur_sec = (end_time - start_time).total_seconds()
+            dur_str = f" \u00b7 {dur_sec:.1f}s"
+        summary = f"  \u23bf  Done {status_mark} ({tool_count} tool uses{dur_str})"
+        self.console.print(f"[dim]{summary}[/dim]")
+
     @staticmethod
     def _extract_subagent_response(output: dict) -> str:
         """Extract the response string from a task tool action output.
@@ -696,6 +735,40 @@ class ActionHistoryDisplay:
                 else:
                     self.console.print(f"[dim]  ⎿  {line}[/dim]")
 
+    def _render_deferred_group(
+        self,
+        group: dict,
+        end_action: ActionHistory,
+        task_tool_action: ActionHistory,
+        verbose: bool,
+    ) -> None:
+        """Render a completed subagent group together with its task tool response.
+
+        This keeps each group's header, actions, Done line, and response together
+        so that parallel subagents don't interleave their responses.
+        """
+        for buffered in group.get("actions", []):
+            if buffered is group["first_action"]:
+                self._render_subagent_header(buffered, verbose)
+            self._render_subagent_action(buffered, verbose)
+        self._render_subagent_done(group["tool_count"], group["start_time"], end_action)
+        if verbose:
+            self._render_subagent_response(task_tool_action)
+
+    def _flush_deferred_groups(
+        self,
+        deferred_groups: List[Tuple[dict, ActionHistory]],
+        verbose: bool,
+    ) -> None:
+        """Render any deferred groups that never got a task tool response."""
+        while deferred_groups:
+            grp, end_act = deferred_groups.pop(0)
+            for buffered in grp.get("actions", []):
+                if buffered is grp["first_action"]:
+                    self._render_subagent_header(buffered, verbose)
+                self._render_subagent_action(buffered, verbose)
+            self._render_subagent_done(grp["tool_count"], grp["start_time"], end_act)
+
     def _render_task_tool_as_subagent(self, action: ActionHistory, verbose: bool) -> None:
         """Render a standalone 'task' tool action as a subagent summary.
 
@@ -709,7 +782,11 @@ class ActionHistoryDisplay:
 
         # Header
         goal = description or (("" if verbose else _truncate_middle(prompt, max_len=200)) if prompt else "")
-        header = f"\u23fa {subagent_type}({goal})" if goal else f"\u23fa {subagent_type}"
+        header = (
+            f"[bold bright_cyan]\u23fa {subagent_type}[/bold bright_cyan]({goal})"
+            if goal
+            else f"[bold bright_cyan]\u23fa {subagent_type}[/bold bright_cyan]"
+        )
         if verbose and prompt:
             header += f"\n  ⎿  [yellow]prompt:[/yellow] [dim]{prompt}[/dim]"
         self.console.print(header)
@@ -771,6 +848,7 @@ class ActionHistoryDisplay:
         actions: List[ActionHistory],
         verbose: bool = False,
         show_partial_done: bool = True,
+        collapse_completed: bool = False,
     ) -> None:
         """Render a list of completed actions using the unified inline format.
 
@@ -785,14 +863,23 @@ class ActionHistoryDisplay:
                 sub-agent group is still open (useful for completed histories).
                 Set to False when reprinting mid-execution (the streaming
                 context will handle the running group).
+            collapse_completed: If True and not verbose, completed subagent
+                groups are rendered as a single collapsed summary line instead
+                of showing all individual actions.
         """
         if not actions:
             self.console.print("[dim]No actions to display[/dim]")
             return
 
+        # Whether to actually collapse completed groups
+        do_collapse = collapse_completed and not verbose
+
         # Multi-group state: key = parent_action_id (None for legacy groups)
         subagent_groups: Dict[Optional[str], dict] = {}
-        skip_task_tools = False  # skip depth=0 TOOL(task) after subagent group
+        pending_task_tool_skips = 0  # number of depth=0 TOOL(task) actions to skip
+        # Completed groups waiting for their depth=0 TOOL(task) response
+        # before being rendered (verbose only). Each entry is (group, end_action).
+        deferred_groups: List[Tuple[dict, ActionHistory]] = []
 
         for action in actions:
             # Skip INTERACTION actions (handled elsewhere)
@@ -810,9 +897,15 @@ class ActionHistoryDisplay:
                 group_key = action.parent_action_id
                 group = subagent_groups.pop(group_key, None)
                 if group:
-                    self._render_subagent_done(group["tool_count"], group["start_time"], action)
-                # Skip the following depth=0 TOOL(task) result(s)
-                skip_task_tools = True
+                    if do_collapse:
+                        self._render_subagent_collapsed(
+                            group["first_action"], group["tool_count"], group["start_time"], action
+                        )
+                    else:
+                        # Defer rendering until we pair with the task tool response,
+                        # so that each group's response stays under its own header.
+                        deferred_groups.append((group, action))
+                pending_task_tool_skips += 1
                 continue
 
             # -- sub-agent group handling --
@@ -823,38 +916,62 @@ class ActionHistoryDisplay:
                         "start_time": action.start_time,
                         "tool_count": 0,
                         "subagent_type": action.action_type or "subagent",
+                        "first_action": action,
+                        "actions": [],
                     }
-                    self._render_subagent_header(action, verbose)
                 if action.role == ActionRole.TOOL:
                     subagent_groups[group_key]["tool_count"] += 1
-                self._render_subagent_action(action, verbose)
+                # Always buffer — render as a complete group on close
+                subagent_groups[group_key]["actions"].append(action)
                 continue
 
             # -- leaving legacy sub-agent group (no parent_action_id) via depth transition --
             if None in subagent_groups:
                 group = subagent_groups.pop(None)
-                self._render_subagent_done(group["tool_count"], group["start_time"], action)
-                skip_task_tools = True
+                if do_collapse:
+                    self._render_subagent_collapsed(
+                        group["first_action"], group["tool_count"], group["start_time"], action
+                    )
+                else:
+                    for buffered in group.get("actions", []):
+                        if buffered is group["first_action"]:
+                            self._render_subagent_header(buffered, verbose)
+                        self._render_subagent_action(buffered, verbose)
+                    self._render_subagent_done(group["tool_count"], group["start_time"], action)
+                pending_task_tool_skips += 1
                 continue
 
-            # Skip depth=0 TOOL(task) after a subagent group (Done line already covers it).
-            # Only reset the flag when a non-task TOOL action appears; ASSISTANT/USER
-            # actions between subagent_complete and TOOL(task) should not reset it.
-            if skip_task_tools:
+            # Skip depth=0 TOOL(task) after subagent groups (Done line already covers them).
+            # Use a counter so that multiple completed groups + interleaved non-task
+            # actions don't cause subsequent TOOL(task) actions to leak through.
+            if pending_task_tool_skips > 0:
                 if action.role == ActionRole.TOOL:
                     fn = action.input.get("function_name", "") if action.input else ""
                     if fn == "task":
-                        if verbose:
-                            self._render_subagent_response(action)
+                        # Pair with the oldest deferred group and render together
+                        if deferred_groups:
+                            grp, end_act = deferred_groups.pop(0)
+                            self._render_deferred_group(grp, end_act, action, verbose)
+                        pending_task_tool_skips -= 1
                         continue
-                    skip_task_tools = False
+                    # Non-task tool: flush any remaining deferred groups first
+                    self._flush_deferred_groups(deferred_groups, verbose)
 
             # -- normal main-agent action --
             self._render_main_action(action, verbose)
 
-        # If any sub-agent groups never closed
+        # Flush deferred groups that never got a task tool result
+        self._flush_deferred_groups(deferred_groups, verbose)
+
+        # If any sub-agent groups never closed (still active).
+        # When show_partial_done=False, skip rendering unclosed groups entirely —
+        # the streaming context (Live display) handles them to avoid duplication.
         if subagent_groups and show_partial_done:
             for group in subagent_groups.values():
+                if group.get("first_action"):
+                    self._render_subagent_header(group["first_action"], verbose)
+                for buffered in group.get("actions", []):
+                    self._render_subagent_action(buffered, verbose)
                 dur_str = ""
                 if group["start_time"]:
                     dur_sec = (datetime.now() - group["start_time"]).total_seconds()
@@ -867,6 +984,7 @@ class ActionHistoryDisplay:
         turns: List[Tuple[str, List[ActionHistory]]],
         verbose: bool = False,
         show_partial_done: bool = True,
+        collapse_completed: bool = False,
     ) -> None:
         """Render all historical turns, each preceded by a user-message header."""
         for user_message, actions in turns:
@@ -876,7 +994,12 @@ class ActionHistoryDisplay:
             # (user message is already rendered as the turn header above).
             # Keep depth>0 USER actions — they are needed for subagent group creation/headers.
             non_user_actions = [a for a in actions if not (a.role == ActionRole.USER and a.depth == 0)]
-            self.render_action_history(non_user_actions, verbose=verbose, show_partial_done=show_partial_done)
+            self.render_action_history(
+                non_user_actions,
+                verbose=verbose,
+                show_partial_done=show_partial_done,
+                collapse_completed=collapse_completed,
+            )
             self.console.print()
 
     def display_action_list(self, actions: List[ActionHistory]) -> None:
@@ -1003,7 +1126,9 @@ class InlineStreamingContext:
         self._paused = False
         self._subagent_groups: Dict[Optional[str], Dict] = {}
         self._completed_group_ids: set = set()
+        self._subagent_live: Optional[Live] = None
         self._verbose = False
+        self._verbose_frozen = False  # True = in frozen verbose mode, no real-time processing
         self._verbose_toggle_event = threading.Event()
 
     @property
@@ -1044,8 +1169,10 @@ class InlineStreamingContext:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):  # pylint: disable=unused-argument
+        self._verbose_frozen = False  # Ensure unfreeze before flush
         self._stop_event.set()
         self._stop_processing_live()
+        self._stop_subagent_live()
 
         if self._refresh_thread:
             self._refresh_thread.join(timeout=2.0)
@@ -1066,15 +1193,36 @@ class InlineStreamingContext:
             if self._verbose_toggle_event.is_set():
                 self._verbose_toggle_event.clear()
                 self._verbose = not self._verbose
-                mode_label = "verbose" if self._verbose else "compact"
-                self._stop_processing_live()
-                with self._print_lock:
-                    self.display.console.clear()
-                    sys.stdout.write("\033[3J")
-                    sys.stdout.flush()
-                    self.display.console.print(f"[bold bright_black]  ⎯ switched to {mode_label} mode ⎯[/]")
-                self._reprint_history()
-            if not self._paused:
+
+                if self._verbose:
+                    # Entering verbose mode: freeze — show snapshot, stop all Live displays
+                    self._verbose_frozen = True
+                    self._stop_processing_live()
+                    self._stop_subagent_live()
+                    with self._print_lock:
+                        self.display.console.clear()
+                        sys.stdout.write("\033[3J")
+                        sys.stdout.flush()
+                        self.display.console.print("[bold bright_black]  ⎯ switched to verbose mode (frozen) ⎯[/]")
+                    self._reprint_history_verbose_snapshot()
+                    # Do NOT restart any Live displays — screen is frozen
+                else:
+                    # Returning to compact mode: unfreeze — resume real-time processing
+                    self._verbose_frozen = False
+                    self._stop_processing_live()
+                    self._stop_subagent_live()
+                    with self._print_lock:
+                        self.display.console.clear()
+                        sys.stdout.write("\033[3J")
+                        sys.stdout.flush()
+                        self.display.console.print("[bold bright_black]  ⎯ switched to compact mode ⎯[/]")
+                    self._reprint_history()
+                    # Restart Live for any remaining active subagent groups
+                    if self._subagent_groups:
+                        with self._print_lock:
+                            self._update_subagent_groups_live()
+
+            if not self._paused and not self._verbose_frozen:
                 self._process_actions()
                 self._tick += 1
             self._stop_event.wait(timeout=0.25)
@@ -1094,6 +1242,7 @@ class InlineStreamingContext:
                     self._history_turns,
                     verbose=self._verbose,
                     show_partial_done=True,
+                    collapse_completed=not self._verbose,
                 )
             # Render current turn header + already-processed actions
             if self._current_user_message:
@@ -1108,8 +1257,54 @@ class InlineStreamingContext:
             self.display.render_action_history(
                 current_actions,
                 verbose=self._verbose,
+                collapse_completed=not self._verbose,
                 show_partial_done=False,
             )
+
+    def _reprint_history_verbose_snapshot(self) -> None:
+        """Reprint all processed actions + active subagent groups as a static verbose snapshot.
+
+        Called when user enters verbose/frozen mode (Ctrl+O). Renders everything
+        with verbose=True, collapse_completed=False, and appends active subagent
+        groups as static output (no Live display).
+        """
+        with self._print_lock:
+            # Render previous turns
+            if self._history_turns:
+                self.display.render_multi_turn_history(
+                    self._history_turns,
+                    verbose=True,
+                    show_partial_done=True,
+                    collapse_completed=False,
+                )
+            # Render current turn header + already-processed actions
+            if self._current_user_message:
+                self.display.console.print(f"[green bold]Datus> [/green bold]{self._current_user_message}")
+                self.display.console.print("[dim]" + "\u2500" * 40 + "[/dim]")
+            current_actions = [
+                a for a in self.actions[: self._processed_index] if not (a.role == ActionRole.USER and a.depth == 0)
+            ]
+            self.display.render_action_history(
+                current_actions,
+                verbose=True,
+                collapse_completed=False,
+                show_partial_done=False,
+            )
+            # Render active subagent groups as static verbose output
+            for _group_key, group in self._subagent_groups.items():
+                first_action = group.get("first_action")
+                if first_action:
+                    self.display._render_subagent_header(first_action, verbose=True)
+                for buffered in group.get("actions", []):
+                    self.display._render_subagent_action(buffered, verbose=True)
+                # Show "in progress" indicator
+                dur_str = ""
+                if group["start_time"]:
+                    dur_sec = (datetime.now() - group["start_time"]).total_seconds()
+                    dur_str = f" \u00b7 {dur_sec:.1f}s"
+                self.display.console.print(
+                    f"[dim]  \u23bf  \u23f3 in progress ({group['tool_count']} tool uses{dur_str})...[/dim]"
+                )
 
     # -- core processing ---------------------------------------------------
 
@@ -1126,8 +1321,10 @@ class InlineStreamingContext:
             # -- subagent_complete action closes a group --
             if action.action_type == SUBAGENT_COMPLETE_ACTION_TYPE:
                 group_key = action.parent_action_id
-                self._end_subagent_group_by_key(group_key, action)
+                # Advance index BEFORE ending the group so that _reprint_with_collapse
+                # includes this subagent_complete action in its slice.
                 self._processed_index += 1
+                self._end_subagent_group_by_key(group_key, action)
                 continue
 
             # -- Sub-agent action (depth > 0) --
@@ -1149,9 +1346,10 @@ class InlineStreamingContext:
 
             # -- Main agent action (depth == 0), but preceded by legacy sub-agent group --
             if None in self._subagent_groups:
-                self._end_subagent_group_by_key(None, action)
-                # Skip the task SUCCESS normal rendering (Done line already covers it)
+                # Advance index BEFORE ending the group so that _reprint_with_collapse
+                # includes this action in its slice.
                 self._processed_index += 1
+                self._end_subagent_group_by_key(None, action)
                 continue
 
             # TOOL with PROCESSING -> show blinking Live
@@ -1183,8 +1381,10 @@ class InlineStreamingContext:
             # subagent_complete closes the group
             if action.action_type == SUBAGENT_COMPLETE_ACTION_TYPE:
                 group_key = action.parent_action_id
-                self._end_subagent_group_by_key(group_key, action)
+                # Advance index BEFORE ending the group so that _reprint_with_collapse
+                # includes this subagent_complete action in its slice.
                 self._processed_index += 1
+                self._end_subagent_group_by_key(group_key, action)
                 continue
 
             # depth>0: render inside the sub-agent group
@@ -1203,8 +1403,14 @@ class InlineStreamingContext:
         # Now close any sub-agent groups that are still open (no subagent_complete arrived)
         if self._subagent_groups:
             self._stop_processing_live()
+            self._stop_subagent_live()
             for group_key in list(self._subagent_groups.keys()):
                 group = self._subagent_groups.pop(group_key)
+                first_action = group.get("first_action")
+                if first_action:
+                    self.display._render_subagent_header(first_action, self._verbose)
+                for buffered in group.get("actions", []):
+                    self.display._render_subagent_action(buffered, self._verbose)
                 duration_sec = (datetime.now() - group["start_time"]).total_seconds()
                 summary = f"  \u23bf  Done ({group['tool_count']} tool uses \u00b7 {duration_sec:.1f}s)"
                 self.display.console.print(f"[dim]{summary}[/dim]")
@@ -1217,114 +1423,215 @@ class InlineStreamingContext:
         return _truncate_middle(text, max_len)
 
     def _start_subagent_group(self, first_action: ActionHistory, group_key: Optional[str] = None) -> None:
-        """Print sub-agent group header with prompt/description and start tracking."""
+        """Create sub-agent group and update the Live display."""
         subagent_type = first_action.action_type or "subagent"
 
-        # Extract prompt from first action messages
-        prompt = first_action.messages or ""
-        # Strip "User: " prefix if present
-        if prompt.startswith("User: "):
-            prompt = prompt[6:]
-        # Extract description from action input if available
-        description = ""
-        if first_action.input and isinstance(first_action.input, dict):
-            description = first_action.input.get("_task_description", "")
-
-        goal = description or (("" if self._verbose else _truncate_middle(prompt, max_len=200)) if prompt else "")
-        header = f"\u23fa {subagent_type}({goal})" if goal else f"\u23fa {subagent_type}"
-        if self._verbose and prompt:
-            header += f"\n  ⎿  [yellow]prompt:[/yellow] [dim]{prompt}[/dim]"
-
         with self._print_lock:
-            self.display.console.print(header)
             self._subagent_groups[group_key] = {
                 "start_time": first_action.start_time,
                 "tool_count": 0,
                 "subagent_type": subagent_type,
+                "first_action": first_action,
+                "actions": [],
             }
+            self._update_subagent_groups_live()
 
     def _update_subagent_display(self, action: ActionHistory, group_key: Optional[str] = None) -> None:
-        """Print sub-agent action permanently (non-collapsing, appended)."""
+        """Buffer sub-agent action and update the grouped Live display."""
         group = self._subagent_groups.get(group_key)
-        if action.role == ActionRole.TOOL and group is not None:
+        if group is None:
+            return
+        if action.role == ActionRole.TOOL:
             group["tool_count"] += 1
-
-        # Build display label
         if action.role == ActionRole.USER:
             # Prompt already shown in header, skip
             return
-        elif action.role == ActionRole.TOOL:
-            function_name = action.input.get("function_name", "") if action.input else ""
-            label = action.messages or function_name
-            if not self._verbose:
-                label = self._truncate_middle(label, max_len=200)
-            # Show completion status
-            status_text = "✓" if action.status == ActionStatus.SUCCESS else "✗"
-            duration = ""
-            if action.end_time and action.start_time:
-                duration_sec = (action.end_time - action.start_time).total_seconds()
-                duration = f" ({duration_sec:.1f}s)"
-            line = f"  ⎿  🔧 {label} - {status_text}{duration}"
-
-            # In verbose mode, show full arguments and full output
-            extra_lines = []
-            if self._verbose:
-                if action.input and action.input.get("arguments"):
-                    args = action.input["arguments"]
-                    if isinstance(args, dict):
-                        for k, v in args.items():
-                            extra_lines.append(f"  ⎿      {k}: {v}")
-                    else:
-                        extra_lines.append(f"  ⎿      args: {args}")
-                if action.output:
-                    output_lines = self.display.content_generator._format_tool_output_verbose(
-                        action.output, indent="  ⎿      "
-                    )
-                    extra_lines.extend(output_lines)
-
-            with self._print_lock:
-                self.display.console.print(f"[dim]{line}[/dim]")
-                for el in extra_lines:
-                    self.display.console.print(f"[dim]{el}[/dim]")
-            return
-
-        elif action.role == ActionRole.ASSISTANT:
-            content = _get_assistant_content(action)
-            if content:
-                with self._print_lock:
-                    self.display.console.print(f"[dim]  ⎿  💬 {content}[/dim]")
-            return
-        else:
-            label = action.messages or action.action_type
-            if not self._verbose:
-                label = self._truncate_middle(label, max_len=200)
-            line = f"  ⎿  {label}"
-
+        group["actions"].append(action)
         with self._print_lock:
-            self.display.console.print(f"[dim]{line}[/dim]")
+            self._update_subagent_groups_live()
 
     def _end_subagent_group_by_key(self, group_key: Optional[str], end_action: ActionHistory) -> None:
-        """Print Done summary line and end sub-agent group identified by *group_key*."""
+        """End sub-agent group: stop Live, permanently print completed group, restart Live for remaining.
+
+        In compact mode, triggers a full reprint with completed groups collapsed.
+        In verbose mode, permanently prints the completed group (header + actions + Done).
+        """
         self._stop_processing_live()
+        self._stop_subagent_live()
 
         group = self._subagent_groups.pop(group_key, None)
         if group is None:
             return
 
-        duration = ""
-        end_time = end_action.end_time or datetime.now()
-        if group["start_time"]:
-            duration_sec = (end_time - group["start_time"]).total_seconds()
-            duration = f" \u00b7 {duration_sec:.1f}s"
-
-        tool_count = group["tool_count"]
-        summary = f"  \u23bf  Done ({tool_count} tool uses{duration})"
-
-        with self._print_lock:
-            self.display.console.print(f"[dim]{summary}[/dim]")
-
         if group_key is not None:
             self._completed_group_ids.add(group_key)
+
+        if not self._verbose:
+            # Compact mode: clear screen and reprint with completed groups collapsed
+            self._reprint_with_collapse()
+        else:
+            # Verbose mode: permanently print the completed group
+            duration = ""
+            end_time = end_action.end_time or datetime.now()
+            if group["start_time"]:
+                duration_sec = (end_time - group["start_time"]).total_seconds()
+                duration = f" \u00b7 {duration_sec:.1f}s"
+
+            tool_count = group["tool_count"]
+            summary = f"  \u23bf  Done ({tool_count} tool uses{duration})"
+
+            with self._print_lock:
+                first_action = group.get("first_action")
+                if first_action:
+                    self.display._render_subagent_header(first_action, self._verbose)
+                for buffered in group.get("actions", []):
+                    self.display._render_subagent_action(buffered, self._verbose)
+                self.display.console.print(f"[dim]{summary}[/dim]")
+
+        # Restart Live for remaining active groups
+        if self._subagent_groups:
+            with self._print_lock:
+                self._update_subagent_groups_live()
+
+    def _reprint_with_collapse(self) -> None:
+        """Clear screen and reprint all history with completed groups collapsed."""
+        with self._print_lock:
+            self.display.console.clear()
+            sys.stdout.write("\033[3J")
+            sys.stdout.flush()
+            # Reprint historical turns
+            if self._history_turns:
+                self.display.render_multi_turn_history(
+                    self._history_turns,
+                    verbose=self._verbose,
+                    show_partial_done=True,
+                    collapse_completed=True,
+                )
+            # Reprint current turn header
+            if self._current_user_message:
+                self.display.console.print(f"[green bold]Datus> [/green bold]{self._current_user_message}")
+                self.display.console.print("[dim]" + "\u2500" * 40 + "[/dim]")
+            # Reprint current actions with completed groups collapsed
+            current_actions = [
+                a for a in self.actions[: self._processed_index] if not (a.role == ActionRole.USER and a.depth == 0)
+            ]
+            self.display.render_action_history(
+                current_actions,
+                verbose=self._verbose,
+                collapse_completed=True,
+                show_partial_done=False,
+            )
+
+    # -- subagent Live display ------------------------------------------------
+
+    def _update_subagent_groups_live(self) -> None:
+        """Start or update the Live display showing all active subagent groups."""
+        renderable = self._build_subagent_groups_renderable()
+        if self._subagent_live is None:
+            self._subagent_live = Live(renderable, console=self.display.console, refresh_per_second=4, transient=True)
+            self._subagent_live.start()
+        else:
+            self._subagent_live.update(renderable)
+
+    def _stop_subagent_live(self) -> None:
+        """Stop the subagent Live display if running."""
+        if self._subagent_live is not None:
+            try:
+                self._subagent_live.stop()
+            except Exception:
+                pass
+            self._subagent_live = None
+
+    def _build_subagent_groups_renderable(self) -> Group:
+        """Build a Group renderable showing all active subagent groups with actions grouped.
+
+        Each line is a separate Text.from_markup element so that markup in
+        one line cannot break formatting in another (e.g. dynamic labels
+        containing ``[`` / ``]`` characters).
+        """
+        items: List[Text] = []
+        for _group_key, group in self._subagent_groups.items():
+            first_action = group.get("first_action")
+            if first_action:
+                subagent_type = first_action.action_type or "subagent"
+                prompt = first_action.messages or ""
+                if prompt.startswith("User: "):
+                    prompt = prompt[6:]
+                description = ""
+                if first_action.input and isinstance(first_action.input, dict):
+                    description = first_action.input.get("_task_description", "")
+                goal = description or (
+                    ("" if self._verbose else _truncate_middle(prompt, max_len=200)) if prompt else ""
+                )
+                goal_esc = rich_escape(goal)
+                header = (
+                    f"[bold bright_cyan]\u23fa {subagent_type}[/bold bright_cyan]({goal_esc})"
+                    if goal
+                    else f"[bold bright_cyan]\u23fa {subagent_type}[/bold bright_cyan]"
+                )
+                items.append(Text.from_markup(header))
+                if self._verbose and prompt:
+                    prompt_esc = rich_escape(prompt)
+                    items.append(Text.from_markup(f"  \u23bf  [yellow]prompt:[/yellow] [dim]{prompt_esc}[/dim]"))
+            actions_list = group.get("actions", [])
+            if self._verbose:
+                display_actions = actions_list
+            else:
+                display_actions = actions_list[-_SUBAGENT_ROLLING_WINDOW_SIZE:]
+                hidden = len(actions_list) - len(display_actions)
+                if hidden > 0:
+                    items.append(Text.from_markup(f"[dim]  \u23bf  ... {hidden} earlier action(s) ...[/dim]"))
+            for action in display_actions:
+                action_items = self._format_subagent_action_items(action)
+                items.extend(action_items)
+        return Group(*items) if items else Group(Text(""))
+
+    def _format_subagent_action_items(self, action: ActionHistory) -> List[Text]:
+        """Format a single subagent action as a list of Text renderables."""
+        if action.role == ActionRole.TOOL:
+            function_name = action.input.get("function_name", "") if action.input else ""
+            label = rich_escape(action.messages or function_name)
+            if not self._verbose:
+                label = rich_escape(self._truncate_middle(action.messages or function_name, max_len=200))
+            status_text = "\u2713" if action.status == ActionStatus.SUCCESS else "\u2717"
+            duration = ""
+            if action.end_time and action.start_time:
+                dur = (action.end_time - action.start_time).total_seconds()
+                duration = f" ({dur:.1f}s)"
+            result = [Text.from_markup(f"[dim]  \u23bf  \U0001f527 {label} - {status_text}{duration}[/dim]")]
+            if self._verbose:
+                if action.input and action.input.get("arguments"):
+                    args = action.input["arguments"]
+                    if isinstance(args, dict):
+                        for k, v in args.items():
+                            result.append(
+                                Text.from_markup(
+                                    f"[dim]  \u23bf      {rich_escape(str(k))}: {rich_escape(str(v))}[/dim]"
+                                )
+                            )
+                    else:
+                        result.append(Text.from_markup(f"[dim]  \u23bf      args: {rich_escape(str(args))}[/dim]"))
+                if action.output:
+                    output_lines = self.display.content_generator._format_tool_output_verbose(
+                        action.output, indent="  \u23bf      "
+                    )
+                    result.extend(Text.from_markup(f"[dim]{rich_escape(ol)}[/dim]") for ol in output_lines)
+            return result
+        elif action.role == ActionRole.ASSISTANT:
+            content = _get_assistant_content(action)
+            if content:
+                return [Text.from_markup(f"[dim]  \u23bf  \U0001f4ac {rich_escape(content)}[/dim]")]
+            return []
+        else:
+            label = action.messages or action.action_type
+            if not self._verbose:
+                label = self._truncate_middle(label, max_len=200)
+            return [Text.from_markup(f"[dim]  \u23bf  {rich_escape(label)}[/dim]")]
+
+    def _format_subagent_action_line(self, action: ActionHistory) -> str:
+        """Format a single subagent action as a plain string (for tests)."""
+        items = self._format_subagent_action_items(action)
+        return "\n".join(item.plain for item in items)
 
     # -- completed action printing -------------------------------------------
 

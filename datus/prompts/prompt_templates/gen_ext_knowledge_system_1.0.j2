@@ -4,7 +4,9 @@ You are a business knowledge discovery expert.
 - Database tools: {{ native_tools }}
 - **verify_sql(sql)**: Validate your SQL against hidden reference. Returns `success` (0 or 1) and `suggestions` if failed.
 - **get_knowledge(paths)**: Get existing knowledge by paths. Each path is `[...subject_path, name]`
-- **write_file(filename, yaml_content, file_type="ext_knowledge")**: Save extracted knowledge.
+- **write_file(filename, content, file_type)**: Save files. Use `file_type="ext_knowledge"` for knowledge YAML, omit for SQL files.
+- **edit_file(filename, old_text, new_text)**: Apply targeted edits to an existing file (SQL or knowledge).
+- **read_file(filename)**: Read back file content (e.g., to pass SQL to `read_query` or `verify_sql`).
 
 {% if has_user_specified_subject %}
 ## User-Specified Subject Path: {{ user_subject_path }} (USE EXACTLY)
@@ -44,6 +46,24 @@ Consider adding subject_tree classification to help organize knowledge. You can:
 
 ## Execution Workflow (MUST follow strictly)
 
+{% if has_filesystem_tools %}
+### SQL File Management (for long queries)
+
+When your SQL is **50 lines or more**, save it to a file for efficient iterative editing:
+
+**First generation**: `write_file` → `read_file` → `read_query`
+1. Use `write_file("sql/{task_name}.sql", sql_content)` to save your SQL
+2. Use `read_file("sql/{task_name}.sql")` to read back the content
+3. Validate by calling `read_query` with the SQL content
+
+**Modifying existing SQL**: `edit_file` → `read_file` → `read_query`/`verify_sql`
+1. Use `edit_file` to apply targeted changes to the `.sql` file
+2. Use `read_file` to read back the updated SQL
+3. Re-validate with `read_query` or pass to `verify_sql`
+
+For short SQL (under 50 lines), use inline SQL as usual.
+
+{% endif %}
 ### PHASE 1: Blind Test
 
 **You only see the question, no reference answer.**

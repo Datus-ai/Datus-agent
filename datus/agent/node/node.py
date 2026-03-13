@@ -16,6 +16,7 @@ from datus.models.base import LLMBaseModel
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
 from datus.schemas.date_parser_node_models import DateParserInput, DateParserResult
+from datus.schemas.explore_agentic_node_models import ExploreNodeInput, ExploreNodeResult
 from datus.schemas.fix_node_models import FixInput
 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput, GenSQLNodeResult
 from datus.schemas.node_models import (
@@ -118,6 +119,10 @@ class Node(ABC):
             from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
 
             return GenReportAgenticNode(node_id, description, node_type, input_data, agent_config, tools, node_name)
+        elif node_type == NodeType.TYPE_EXPLORE:
+            from datus.agent.node.explore_agentic_node import ExploreAgenticNode
+
+            return ExploreAgenticNode(node_id, description, node_type, input_data, agent_config, tools, node_name)
         else:
             raise ValueError(f"Invalid node type: {node_type}")
 
@@ -381,6 +386,8 @@ class Node(ABC):
                     from datus.schemas.gen_report_agentic_node_models import GenReportNodeInput
 
                     input_data = GenReportNodeInput(**input_data)
+                elif node_dict["type"] == NodeType.TYPE_EXPLORE:
+                    input_data = ExploreNodeInput(**input_data)
             except Exception as e:
                 logger.warning(f"Failed to convert input data for {node_dict['type']}: {e}")
                 input_data = None
@@ -421,6 +428,8 @@ class Node(ABC):
                     from datus.schemas.gen_report_agentic_node_models import GenReportNodeResult
 
                     result_data = GenReportNodeResult(**result_data)
+                elif node_dict["type"] == NodeType.TYPE_EXPLORE:
+                    result_data = ExploreNodeResult(**result_data)
                 elif "success" in result_data:
                     result_data = BaseResult(**result_data)
             except Exception as e:

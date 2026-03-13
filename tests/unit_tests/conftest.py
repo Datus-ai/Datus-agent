@@ -163,6 +163,10 @@ def real_agent_config(tmp_path, reset_global_singletons):
                 "tools": "db_tools.*,context_search_tools.*",
                 "max_turns": 5,
             },
+            "explore": {
+                "system_prompt": "explore",
+                "max_turns": 15,
+            },
         },
     }
 

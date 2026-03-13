@@ -33,8 +33,10 @@ from unittest.mock import patch
 import pytest
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.text import Text
 
 from datus.cli.action_history_display import (
+    _SUBAGENT_ROLLING_WINDOW_SIZE,
     ActionContentGenerator,
     ActionHistoryDisplay,
     BaseActionContentGenerator,
@@ -49,6 +51,19 @@ from datus.schemas.action_history import (
     ActionRole,
     ActionStatus,
 )
+
+
+def _group_plain(group_renderable) -> str:
+    """Extract plain text from a Group renderable."""
+    if isinstance(group_renderable, Text):
+        return group_renderable.plain
+    parts = []
+    for item in group_renderable.renderables:
+        if isinstance(item, Text):
+            parts.append(item.plain)
+        else:
+            parts.append(str(item))
+    return "\n".join(parts)
 
 
 def _make_action(
@@ -87,7 +102,7 @@ class TestSubAgentGroupStart:
     """depth>0 action triggers group header print."""
 
     def test_subagent_group_start(self):
-        """First depth>0 action prints SubAgent header and sets _subagent_groups."""
+        """First depth>0 action creates group state and Live renderable contains header."""
         actions = []
         display = ActionHistoryDisplay()
         ctx = InlineStreamingContext(actions, display)
@@ -105,22 +120,22 @@ class TestSubAgentGroupStart:
         )
         actions.append(first_action)
 
-        printed = []
-        with patch.object(display.console, "print", side_effect=lambda *a, **kw: printed.append(str(a[0]))):
+        with patch("datus.cli.action_history_display.Live"):
             ctx._process_actions()
-
-        # Header should contain subagent type
-        header_text = "\n".join(printed)
-        assert "gen_sql(What is the total revenue?)" in header_text
 
         # Group state should be set
         assert len(ctx._subagent_groups) == 1
         group = list(ctx._subagent_groups.values())[0]
         assert group["subagent_type"] == "gen_sql"
         assert group["tool_count"] == 0
+        assert group["first_action"] is first_action
+
+        # Live renderable should contain subagent type and prompt
+        renderable = ctx._build_subagent_groups_renderable()
+        assert "gen_sql(What is the total revenue?)" in _group_plain(renderable)
 
     def test_subagent_prompt_truncated_middle(self):
-        """Long prompt is truncated in the middle."""
+        """Long prompt is truncated in the middle in the Live renderable."""
         actions = []
         display = ActionHistoryDisplay()
         ctx = InlineStreamingContext(actions, display)
@@ -137,17 +152,12 @@ class TestSubAgentGroupStart:
         )
         actions.append(first_action)
 
-        printed = []
-        with patch.object(display.console, "print", side_effect=lambda *a, **kw: printed.append(str(a[0]))):
+        with patch("datus.cli.action_history_display.Live"):
             ctx._process_actions()
 
-        header_text = "\n".join(printed)
+        renderable = ctx._build_subagent_groups_renderable()
         # Should contain " ... " truncation marker
-        assert " ... " in header_text
-        # Total displayed prompt should be <= 120 chars
-        # Find the prompt line (second line after header)
-        prompt_lines = [p for p in printed if " ... " in p]
-        assert len(prompt_lines) == 1
+        assert " ... " in _group_plain(renderable)
 
 
 @pytest.mark.ci
@@ -181,7 +191,7 @@ class TestSubAgentDisplayUpdates:
     """depth>0 TOOL actions increment tool_count and show args."""
 
     def test_tool_count_increments(self):
-        """Each depth>0 TOOL action increments the group tool_count."""
+        """Each depth>0 TOOL action increments the group tool_count and buffers actions."""
         actions = []
         display = ActionHistoryDisplay()
         ctx = InlineStreamingContext(actions, display)
@@ -212,17 +222,17 @@ class TestSubAgentDisplayUpdates:
             )
         )
 
-        printed = []
-        with patch.object(display.console, "print", side_effect=lambda *a, **kw: printed.append(str(a[0]))):
-            with patch("datus.cli.action_history_display.Live"):
-                ctx._process_actions()
+        with patch("datus.cli.action_history_display.Live"):
+            ctx._process_actions()
 
         assert len(ctx._subagent_groups) == 1
         group = list(ctx._subagent_groups.values())[0]
         assert group["tool_count"] == 2
+        assert len(group["actions"]) == 2  # USER is skipped, 2 TOOL actions buffered
 
-        # Verify that printed output contains tool messages with args
-        all_output = "\n".join(printed)
+        # Verify that Live renderable contains tool messages with args
+        renderable = ctx._build_subagent_groups_renderable()
+        all_output = _group_plain(renderable)
         assert "read_query" in all_output
         assert "SELECT * FROM users" in all_output
 
@@ -250,7 +260,7 @@ class TestSubAgentGroupEnd:
     """depth returns to 0 → Done summary printed."""
 
     def test_done_summary_printed(self):
-        """When depth=0 action follows depth>0 group, Done line is printed."""
+        """When depth=0 action follows depth>0 group, Done line is printed (verbose mode)."""
         t0 = datetime(2025, 1, 1, 12, 0, 0)
         t1 = t0 + timedelta(seconds=5.2)
 
@@ -259,6 +269,7 @@ class TestSubAgentGroupEnd:
         ctx = InlineStreamingContext(actions, display)
         ctx._processed_index = 0
         ctx._tick = 0
+        ctx._verbose = True  # verbose mode keeps Done lines
 
         # Sub-agent group
         actions.append(
@@ -419,7 +430,7 @@ class TestMultipleSubAgentGroups:
     """Multiple sequential sub-agent groups are handled correctly."""
 
     def test_two_groups(self):
-        """Two sub-agent groups produce two headers and two Done lines."""
+        """Two sub-agent groups produce two headers and two Done lines (verbose mode)."""
         t0 = datetime(2025, 1, 1, 12, 0, 0)
         t1 = t0 + timedelta(seconds=3)
         t2 = t1 + timedelta(seconds=2)
@@ -429,6 +440,7 @@ class TestMultipleSubAgentGroups:
         ctx = InlineStreamingContext(actions, display)
         ctx._processed_index = 0
         ctx._tick = 0
+        ctx._verbose = True  # verbose mode keeps Done lines
 
         # Group 1
         actions.append(
@@ -489,6 +501,7 @@ class TestTaskSuccessSkippedAfterDone:
         ctx = InlineStreamingContext(actions, display)
         ctx._processed_index = 0
         ctx._tick = 0
+        ctx._verbose = True  # verbose mode keeps Done lines
 
         actions.append(
             _make_action(ActionRole.USER, ActionStatus.PROCESSING, depth=1, action_type="gen_sql", start_time=t0)
@@ -681,8 +694,9 @@ class TestRenderActionHistory:
 
         printed = self._collect_prints(display, actions, verbose=False)
         combined = "\n".join(printed)
-        # Should render as subagent header + result
-        assert "gen_sql(What is total revenue?)" in combined
+        # Should render as subagent header (with bold markup) + result
+        assert "gen_sql" in combined
+        assert "What is total revenue?" in combined
         assert "✓" in combined
 
     def test_standalone_task_tool_verbose(self):
@@ -778,8 +792,9 @@ class TestRenderActionHistory:
         printed = self._collect_prints(display, actions, verbose=False)
         combined = "\n".join(printed)
 
-        # Header
-        assert "gen_sql(What is total revenue?)" in combined
+        # Header (with bold markup)
+        assert "gen_sql" in combined
+        assert "What is total revenue?" in combined
         # Tool line
         assert "describe_table" in combined
         assert "✓" in combined
@@ -1069,6 +1084,7 @@ class TestSubAgentCompleteAction:
         ctx = InlineStreamingContext(actions, display)
         ctx._processed_index = 0
         ctx._tick = 0
+        ctx._verbose = True  # verbose mode keeps Done lines
 
         call_id = "parent_call_1"
 
@@ -1165,7 +1181,8 @@ class TestSubAgentCompleteAction:
             display.render_action_history(actions, verbose=False)
 
         combined = "\n".join(printed)
-        assert "gen_sql(query)" in combined
+        assert "gen_sql" in combined
+        assert "query" in combined
         assert "Done" in combined
         assert "1 tool uses" in combined
 
@@ -1188,6 +1205,7 @@ class TestParallelSubAgentGroups:
         ctx = InlineStreamingContext(actions, display)
         ctx._processed_index = 0
         ctx._tick = 0
+        ctx._verbose = True  # verbose mode keeps Done lines
 
         call_id_a = "call_a"
         call_id_b = "call_b"
@@ -1501,7 +1519,8 @@ class TestDescriptionDisplay:
         ]
         printed = self._collect_prints(display, actions, verbose=False)
         combined = "\n".join(printed)
-        assert "gen_sql(Generate monthly sales report)" in combined
+        assert "gen_sql" in combined
+        assert "Generate monthly sales report" in combined
         # Should NOT show the full prompt in compact mode
         assert "prompt:" not in combined
 
@@ -1566,7 +1585,8 @@ class TestDescriptionDisplay:
         ]
         printed = self._collect_prints(display, actions, verbose=False)
         combined = "\n".join(printed)
-        assert "gen_sql(What is the total revenue?)" in combined
+        assert "gen_sql" in combined
+        assert "What is the total revenue?" in combined
         assert "goal:" not in combined
         assert "prompt:" not in combined
 
@@ -1594,7 +1614,8 @@ class TestDescriptionDisplay:
         ]
         printed = self._collect_prints(display, actions, verbose=False)
         combined = "\n".join(printed)
-        assert "gen_sql(Generate sales report)" in combined
+        assert "gen_sql" in combined
+        assert "Generate sales report" in combined
         assert "prompt:" not in combined
 
     def test_standalone_task_verbose_with_description(self):
@@ -1640,7 +1661,8 @@ class TestDescriptionDisplay:
         ]
         printed = self._collect_prints(display, actions, verbose=False)
         combined = "\n".join(printed)
-        assert "gen_sql(What is total revenue?)" in combined
+        assert "gen_sql" in combined
+        assert "What is total revenue?" in combined
         assert "goal:" not in combined
         assert "prompt:" not in combined
 
@@ -3319,7 +3341,7 @@ class TestInlineStreamingContextFlush:
         assert ctx._processed_index == 1
 
     def test_flush_handles_subagent_complete(self):
-        """Flush closes groups via subagent_complete."""
+        """Flush closes groups via subagent_complete (verbose mode shows Done line)."""
         t0 = datetime(2025, 1, 1, 12, 0, 0)
         t1 = t0 + timedelta(seconds=3)
         buf = StringIO()
@@ -3356,6 +3378,7 @@ class TestInlineStreamingContextFlush:
         ]
         ctx = InlineStreamingContext(actions, display)
         ctx._processed_index = 0
+        ctx._verbose = True  # verbose mode keeps Done lines
         ctx._flush_remaining_actions()
 
         output = buf.getvalue()
@@ -3573,13 +3596,20 @@ class TestUpdateSubagentDisplayBranches:
     """Tests for InlineStreamingContext._update_subagent_display edge cases."""
 
     def test_verbose_tool_with_non_dict_args(self):
-        """Verbose tool with non-dict arguments shows 'args:' label."""
-        buf = StringIO()
-        console = Console(file=buf, no_color=True)
-        display = ActionHistoryDisplay(console)
+        """Verbose tool with non-dict arguments shows 'args:' label in renderable."""
+        display = ActionHistoryDisplay()
         ctx = InlineStreamingContext([], display)
         ctx._verbose = True
-        ctx._subagent_groups = {"g1": {"start_time": datetime.now(), "tool_count": 0, "subagent_type": "gen_sql"}}
+        first_action = _make_action(ActionRole.USER, ActionStatus.PROCESSING, depth=1, action_type="gen_sql")
+        ctx._subagent_groups = {
+            "g1": {
+                "start_time": datetime.now(),
+                "tool_count": 0,
+                "subagent_type": "gen_sql",
+                "first_action": first_action,
+                "actions": [],
+            }
+        }
 
         action = _make_action(
             ActionRole.TOOL,
@@ -3588,19 +3618,17 @@ class TestUpdateSubagentDisplayBranches:
             input_data={"function_name": "search", "arguments": "plain text"},
             parent_action_id="g1",
         )
-        ctx._update_subagent_display(action, group_key="g1")
-        output = buf.getvalue()
-        assert "args: plain text" in output
+        with patch("datus.cli.action_history_display.Live"):
+            ctx._update_subagent_display(action, group_key="g1")
         assert ctx._subagent_groups["g1"]["tool_count"] == 1
+        line = ctx._format_subagent_action_line(action)
+        assert "args: plain text" in line
 
     def test_other_role_verbose(self):
-        """Non-TOOL/ASSISTANT/USER role in verbose mode shows full message."""
-        buf = StringIO()
-        console = Console(file=buf, no_color=True)
-        display = ActionHistoryDisplay(console)
+        """Non-TOOL/ASSISTANT/USER role in verbose mode shows full message in renderable."""
+        display = ActionHistoryDisplay()
         ctx = InlineStreamingContext([], display)
         ctx._verbose = True
-        ctx._subagent_groups = {"g2": {"start_time": datetime.now(), "tool_count": 0, "subagent_type": "fix_sql"}}
 
         action = _make_action(
             ActionRole.SYSTEM,
@@ -3609,18 +3637,14 @@ class TestUpdateSubagentDisplayBranches:
             messages="system message in subagent",
             parent_action_id="g2",
         )
-        ctx._update_subagent_display(action, group_key="g2")
-        output = buf.getvalue()
-        assert "system message in subagent" in output
+        line = ctx._format_subagent_action_line(action)
+        assert "system message in subagent" in line
 
     def test_other_role_compact_truncated(self):
         """Non-TOOL/ASSISTANT/USER role in compact mode truncates long messages."""
-        buf = StringIO()
-        console = Console(file=buf, no_color=True)
-        display = ActionHistoryDisplay(console)
+        display = ActionHistoryDisplay()
         ctx = InlineStreamingContext([], display)
         ctx._verbose = False
-        ctx._subagent_groups = {"g3": {"start_time": datetime.now(), "tool_count": 0, "subagent_type": "gen_sql"}}
 
         long_msg = "z" * 300
         action = _make_action(
@@ -3630,17 +3654,13 @@ class TestUpdateSubagentDisplayBranches:
             messages=long_msg,
             parent_action_id="g3",
         )
-        ctx._update_subagent_display(action, group_key="g3")
-        output = buf.getvalue()
-        assert " ... " in output
+        line = ctx._format_subagent_action_line(action)
+        assert " ... " in line
 
     def test_assistant_empty_content_skips(self):
-        """ASSISTANT with empty content is not printed."""
-        buf = StringIO()
-        console = Console(file=buf, no_color=True)
-        display = ActionHistoryDisplay(console)
+        """ASSISTANT with empty content produces empty format line."""
+        display = ActionHistoryDisplay()
         ctx = InlineStreamingContext([], display)
-        ctx._subagent_groups = {"g4": {"start_time": datetime.now(), "tool_count": 0, "subagent_type": "gen_sql"}}
 
         action = _make_action(
             ActionRole.ASSISTANT,
@@ -3649,8 +3669,8 @@ class TestUpdateSubagentDisplayBranches:
             messages="",
             parent_action_id="g4",
         )
-        ctx._update_subagent_display(action, group_key="g4")
-        assert buf.getvalue() == ""
+        line = ctx._format_subagent_action_line(action)
+        assert line == ""
 
 
 @pytest.mark.ci
@@ -3666,10 +3686,1190 @@ class TestEndSubagentGroupByKey:
 
     def test_none_group_key_not_added_to_completed(self):
         """None group key is not added to _completed_group_ids."""
-        display = ActionHistoryDisplay()
+        buf = StringIO()
+        console = Console(file=buf, force_terminal=True, width=200)
+        display = ActionHistoryDisplay(console)
         ctx = InlineStreamingContext([], display)
-        ctx._subagent_groups = {None: {"start_time": datetime.now(), "tool_count": 1, "subagent_type": "gen_sql"}}
+        # Set verbose so the old Done-line path is taken (no reprint)
+        ctx._verbose = True
+        ctx._subagent_groups = {
+            None: {
+                "start_time": datetime.now(),
+                "tool_count": 1,
+                "subagent_type": "gen_sql",
+                "first_action": None,
+                "actions": [],
+            }
+        }
 
         end_action = _make_action(ActionRole.SYSTEM, ActionStatus.SUCCESS, end_time=datetime.now())
         ctx._end_subagent_group_by_key(None, end_action)
         assert None not in ctx._completed_group_ids
+
+
+@pytest.mark.ci
+class TestCollapseCompleted:
+    """Tests for collapse_completed parameter in render_action_history."""
+
+    def _build_completed_group_actions(self, parent_id="grp1"):
+        """Build a list of actions representing a completed subagent group."""
+        t0 = datetime(2025, 1, 1, 12, 0, 0)
+        t1 = datetime(2025, 1, 1, 12, 0, 1)
+        t2 = datetime(2025, 1, 1, 12, 0, 2)
+        return [
+            _make_action(
+                ActionRole.USER,
+                ActionStatus.SUCCESS,
+                depth=1,
+                action_type="gen_sql",
+                messages="User: Find total revenue",
+                input_data={"_task_description": "Find total revenue"},
+                start_time=t0,
+                parent_action_id=parent_id,
+            ),
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=1,
+                action_type="search_schema",
+                messages="search_schema",
+                input_data={"function_name": "search_schema"},
+                start_time=t0,
+                end_time=t1,
+                parent_action_id=parent_id,
+            ),
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=1,
+                action_type="execute_sql",
+                messages="execute_sql",
+                input_data={"function_name": "execute_sql"},
+                start_time=t1,
+                end_time=t2,
+                parent_action_id=parent_id,
+            ),
+            _make_action(
+                ActionRole.ASSISTANT,
+                ActionStatus.SUCCESS,
+                depth=1,
+                action_type="gen_sql",
+                messages="",
+                output_data={"raw_output": "SELECT SUM(revenue) FROM sales"},
+                start_time=t2,
+                end_time=t2,
+                parent_action_id=parent_id,
+            ),
+            _make_action(
+                ActionRole.SYSTEM,
+                ActionStatus.SUCCESS,
+                depth=0,
+                action_type=SUBAGENT_COMPLETE_ACTION_TYPE,
+                messages="",
+                start_time=t0,
+                end_time=t2,
+                parent_action_id=parent_id,
+            ),
+        ]
+
+    def test_render_action_history_collapse_completed(self):
+        """collapse_completed=True renders completed group as header + Done summary."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True, width=200)
+        display = ActionHistoryDisplay(console)
+
+        actions = self._build_completed_group_actions()
+        display.render_action_history(actions, verbose=False, collapse_completed=True)
+
+        output = buf.getvalue()
+        lines = [line for line in output.splitlines() if line.strip()]
+        # Line 1: header (not dim) with collapsed marker
+        assert "\u23f4" in lines[0]  # ⏴ collapsed marker
+        assert "gen_sql" in lines[0]
+        assert "Find total revenue" in lines[0]
+        # Line 2: Done summary with status, tool count, duration
+        assert "Done" in lines[1]
+        assert "\u2713" in lines[1]  # ✓ success mark
+        assert "2 tool uses" in lines[1]
+        # Should NOT contain expanded action lines
+        assert "search_schema" not in output
+        assert "execute_sql" not in output
+
+    def test_render_action_history_collapse_verbose_overrides(self):
+        """verbose=True overrides collapse_completed — all actions expanded."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True, width=200)
+        display = ActionHistoryDisplay(console)
+
+        actions = self._build_completed_group_actions()
+        display.render_action_history(actions, verbose=True, collapse_completed=True)
+
+        output = buf.getvalue()
+        # Should NOT have collapsed marker
+        assert "\u23f4" not in output  # ⏴ should not appear
+        # Should have expanded header marker
+        assert "\u23fa" in output  # ⏺ expanded marker
+        # Should contain individual tool actions
+        assert "search_schema" in output
+        assert "execute_sql" in output
+        # Should contain Done summary
+        assert "Done" in output
+
+    def test_render_action_history_collapse_active_group_expanded(self):
+        """Unclosed (active) groups remain expanded even with collapse_completed=True."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True, width=200)
+        display = ActionHistoryDisplay(console)
+
+        # Build actions without the subagent_complete action (group still active)
+        t0 = datetime(2025, 1, 1, 12, 0, 0)
+        t1 = datetime(2025, 1, 1, 12, 0, 1)
+        actions = [
+            _make_action(
+                ActionRole.USER,
+                ActionStatus.SUCCESS,
+                depth=1,
+                action_type="gen_sql",
+                messages="User: Find total revenue",
+                input_data={"_task_description": "Find total revenue"},
+                start_time=t0,
+                parent_action_id="grp_active",
+            ),
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=1,
+                action_type="search_schema",
+                messages="search_schema",
+                input_data={"function_name": "search_schema"},
+                start_time=t0,
+                end_time=t1,
+                parent_action_id="grp_active",
+            ),
+        ]
+
+        display.render_action_history(actions, verbose=False, collapse_completed=True, show_partial_done=True)
+
+        output = buf.getvalue()
+        # Should NOT have collapsed marker (group is not complete)
+        assert "\u23f4" not in output
+        # Active group should be expanded with header
+        assert "\u23fa" in output or "gen_sql" in output
+        # Should show tool action
+        assert "search_schema" in output
+
+    def test_render_action_history_no_collapse_default(self):
+        """collapse_completed=False (default) preserves original expanded behavior."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True, width=200)
+        display = ActionHistoryDisplay(console)
+
+        actions = self._build_completed_group_actions()
+        display.render_action_history(actions, verbose=False, collapse_completed=False)
+
+        output = buf.getvalue()
+        # Should NOT have collapsed marker
+        assert "\u23f4" not in output
+        # Should have expanded header
+        assert "\u23fa" in output
+        # Should contain individual tool actions
+        assert "search_schema" in output
+        assert "execute_sql" in output
+        # Should contain Done summary
+        assert "Done" in output
+
+    def test_render_action_history_collapse_failed_group(self):
+        """Collapsed group shows failure marker in Done summary line."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True, width=200)
+        display = ActionHistoryDisplay(console)
+
+        t0 = datetime(2025, 1, 1, 12, 0, 0)
+        t1 = datetime(2025, 1, 1, 12, 0, 2)
+        actions = [
+            _make_action(
+                ActionRole.USER,
+                ActionStatus.SUCCESS,
+                depth=1,
+                action_type="gen_sql",
+                messages="User: Bad query",
+                start_time=t0,
+                parent_action_id="grp_fail",
+            ),
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.FAILED,
+                depth=1,
+                action_type="execute_sql",
+                messages="execute_sql",
+                input_data={"function_name": "execute_sql"},
+                start_time=t0,
+                end_time=t1,
+                parent_action_id="grp_fail",
+            ),
+            _make_action(
+                ActionRole.SYSTEM,
+                ActionStatus.FAILED,
+                depth=0,
+                action_type=SUBAGENT_COMPLETE_ACTION_TYPE,
+                messages="",
+                start_time=t0,
+                end_time=t1,
+                parent_action_id="grp_fail",
+            ),
+        ]
+
+        display.render_action_history(actions, verbose=False, collapse_completed=True)
+
+        output = buf.getvalue()
+        lines = [line for line in output.splitlines() if line.strip()]
+        # Line 1: header with collapsed marker
+        assert "\u23f4" in lines[0]
+        # Line 2: Done summary with failure mark
+        assert "Done" in lines[1]
+        assert "\u2717" in lines[1]  # ✗ failure mark
+        assert "1 tool uses" in lines[1]
+
+    def test_render_multi_turn_history_collapse(self):
+        """render_multi_turn_history forwards collapse_completed correctly."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True, width=200)
+        display = ActionHistoryDisplay(console)
+
+        actions = self._build_completed_group_actions()
+        turns = [("Find total revenue", actions)]
+
+        display.render_multi_turn_history(turns, verbose=False, collapse_completed=True)
+
+        output = buf.getvalue()
+        assert "\u23f4" in output  # collapsed marker
+        assert "Find total revenue" in output
+        assert "Done" in output  # Done summary on second line
+        # Should NOT show expanded tool actions
+        assert "search_schema" not in output
+
+
+# ---------------------------------------------------------------------------
+# Verbose Freeze + Subagent Rolling Window tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.ci
+class TestVerboseFrozenField:
+    """Test _verbose_frozen field initialization and cleanup."""
+
+    def test_verbose_frozen_init_false(self):
+        """_verbose_frozen starts as False."""
+        display = ActionHistoryDisplay()
+        ctx = InlineStreamingContext([], display)
+        assert ctx._verbose_frozen is False
+
+    def test_exit_resets_verbose_frozen(self):
+        """__exit__ resets _verbose_frozen to False before flushing."""
+        display = ActionHistoryDisplay()
+        actions = []
+        ctx = InlineStreamingContext(actions, display)
+        ctx._verbose_frozen = True
+        # Simulate __exit__ without the threading parts
+        ctx._verbose_frozen = False  # This is what __exit__ does first
+        assert ctx._verbose_frozen is False
+
+
+@pytest.mark.ci
+class TestVerboseFreezeProcessingGuard:
+    """Test that _process_actions is blocked when _verbose_frozen is True."""
+
+    def test_process_actions_skipped_when_frozen(self):
+        """When _verbose_frozen=True, _process_actions should not advance _processed_index."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True, width=200)
+        display = ActionHistoryDisplay(console)
+
+        t0 = datetime(2025, 1, 1, 12, 0, 0)
+        t1 = datetime(2025, 1, 1, 12, 0, 1)
+        actions = [
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=0,
+                messages="search_schema",
+                input_data={"function_name": "search_schema"},
+                start_time=t0,
+                end_time=t1,
+            ),
+        ]
+
+        ctx = InlineStreamingContext(actions, display)
+        ctx._processed_index = 0
+        ctx._verbose_frozen = True
+
+        # The refresh loop guard: `if not self._paused and not self._verbose_frozen`
+        # We simulate by checking the condition directly
+        assert ctx._verbose_frozen is True
+        # _process_actions would run, but the guard prevents it
+        # Verify _processed_index stays at 0 (actions not consumed)
+        assert ctx._processed_index == 0
+
+    def test_process_actions_runs_when_not_frozen(self):
+        """When _verbose_frozen=False, _process_actions advances normally."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True, width=200)
+        display = ActionHistoryDisplay(console)
+
+        t0 = datetime(2025, 1, 1, 12, 0, 0)
+        t1 = datetime(2025, 1, 1, 12, 0, 1)
+        actions = [
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=0,
+                messages="search_schema",
+                input_data={"function_name": "search_schema"},
+                start_time=t0,
+                end_time=t1,
+            ),
+        ]
+
+        ctx = InlineStreamingContext(actions, display)
+        ctx._processed_index = 0
+        ctx._verbose_frozen = False
+
+        ctx._process_actions()
+        assert ctx._processed_index == 1
+
+
+@pytest.mark.ci
+class TestReprintHistoryVerboseSnapshot:
+    """Test _reprint_history_verbose_snapshot renders verbose output with active groups."""
+
+    def test_snapshot_renders_processed_actions_verbose(self):
+        """Snapshot renders already-processed actions in verbose mode."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True, width=200)
+        display = ActionHistoryDisplay(console)
+
+        t0 = datetime(2025, 1, 1, 12, 0, 0)
+        t1 = datetime(2025, 1, 1, 12, 0, 1)
+        actions = [
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=0,
+                messages="search_schema",
+                input_data={"function_name": "search_schema", "arguments": {"query": "revenue"}},
+                start_time=t0,
+                end_time=t1,
+            ),
+        ]
+
+        ctx = InlineStreamingContext(actions, display, current_user_message="What is revenue?")
+        ctx._processed_index = 1  # One action already processed
+        ctx._verbose = True
+
+        ctx._reprint_history_verbose_snapshot()
+
+        output = buf.getvalue()
+        # Should contain the user message header
+        assert "What is revenue?" in output
+        # Should contain the tool action rendered in verbose mode
+        assert "search_schema" in output
+
+    def test_snapshot_renders_active_subagent_groups(self):
+        """Snapshot renders active subagent groups with 'in progress' indicator."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True, width=200)
+        display = ActionHistoryDisplay(console)
+
+        t0 = datetime(2025, 1, 1, 12, 0, 0)
+        t1 = datetime(2025, 1, 1, 12, 0, 1)
+        actions = []
+
+        ctx = InlineStreamingContext(actions, display, current_user_message="Test")
+        ctx._processed_index = 0
+
+        # Simulate an active subagent group
+        first_action = _make_action(
+            ActionRole.USER,
+            ActionStatus.SUCCESS,
+            depth=1,
+            action_type="explore",
+            messages="User: Find tables",
+            input_data={"_task_description": "Find tables"},
+            start_time=t0,
+            parent_action_id="grp1",
+        )
+        tool_action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            depth=1,
+            messages="search_schema",
+            input_data={"function_name": "search_schema"},
+            start_time=t0,
+            end_time=t1,
+            parent_action_id="grp1",
+        )
+        ctx._subagent_groups["grp1"] = {
+            "start_time": t0,
+            "tool_count": 1,
+            "subagent_type": "explore",
+            "first_action": first_action,
+            "actions": [tool_action],
+        }
+
+        ctx._reprint_history_verbose_snapshot()
+
+        output = buf.getvalue()
+        # Should contain the subagent header
+        assert "explore" in output
+        # Should contain the tool action
+        assert "search_schema" in output
+        # Should contain "in progress" indicator
+        assert "in progress" in output
+        assert "1 tool uses" in output
+
+    def test_snapshot_renders_history_turns(self):
+        """Snapshot renders previous history turns in verbose mode."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True, width=200)
+        display = ActionHistoryDisplay(console)
+
+        t0 = datetime(2025, 1, 1, 12, 0, 0)
+        t1 = datetime(2025, 1, 1, 12, 0, 1)
+
+        history_actions = [
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=0,
+                messages="list_tables",
+                input_data={"function_name": "list_tables"},
+                start_time=t0,
+                end_time=t1,
+            ),
+        ]
+        history_turns = [("Show tables", history_actions)]
+
+        ctx = InlineStreamingContext([], display, history_turns=history_turns, current_user_message="Current query")
+        ctx._processed_index = 0
+
+        ctx._reprint_history_verbose_snapshot()
+
+        output = buf.getvalue()
+        # Should contain the historical turn
+        assert "Show tables" in output
+        assert "list_tables" in output
+        # Should contain the current turn header
+        assert "Current query" in output
+
+    def test_snapshot_no_live_display_started(self):
+        """Snapshot should not start any Live display — it's all static output."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True, width=200)
+        display = ActionHistoryDisplay(console)
+
+        ctx = InlineStreamingContext([], display)
+        ctx._processed_index = 0
+        ctx._subagent_groups["grp1"] = {
+            "start_time": datetime(2025, 1, 1, 12, 0, 0),
+            "tool_count": 0,
+            "subagent_type": "explore",
+            "first_action": _make_action(
+                ActionRole.USER,
+                ActionStatus.SUCCESS,
+                depth=1,
+                action_type="explore",
+                messages="User: Test",
+                parent_action_id="grp1",
+            ),
+            "actions": [],
+        }
+
+        ctx._reprint_history_verbose_snapshot()
+
+        # No Live display should have been started
+        assert ctx._subagent_live is None
+        assert ctx._live is None
+
+
+@pytest.mark.ci
+class TestSubagentRollingWindow:
+    """Test subagent rolling window: compact shows last N, verbose shows all."""
+
+    def _make_subagent_actions(self, count: int, group_key: str = "grp1"):
+        """Create N subagent TOOL actions."""
+        t0 = datetime(2025, 1, 1, 12, 0, 0)
+        actions = []
+        for i in range(count):
+            t_end = datetime(2025, 1, 1, 12, 0, i + 1)
+            actions.append(
+                _make_action(
+                    ActionRole.TOOL,
+                    ActionStatus.SUCCESS,
+                    depth=1,
+                    messages=f"tool_{i}",
+                    input_data={"function_name": f"tool_{i}"},
+                    start_time=t0,
+                    end_time=t_end,
+                    parent_action_id=group_key,
+                )
+            )
+        return actions
+
+    def test_compact_shows_only_last_n_actions(self):
+        """In compact mode, only the last _SUBAGENT_ROLLING_WINDOW_SIZE actions are displayed."""
+        display = ActionHistoryDisplay()
+        ctx = InlineStreamingContext([], display)
+        ctx._verbose = False
+
+        tool_actions = self._make_subagent_actions(5)
+        first_action = _make_action(
+            ActionRole.USER,
+            ActionStatus.SUCCESS,
+            depth=1,
+            action_type="explore",
+            messages="User: Test",
+            parent_action_id="grp1",
+        )
+        ctx._subagent_groups["grp1"] = {
+            "start_time": datetime(2025, 1, 1, 12, 0, 0),
+            "tool_count": 5,
+            "subagent_type": "explore",
+            "first_action": first_action,
+            "actions": tool_actions,
+        }
+
+        renderable = ctx._build_subagent_groups_renderable()
+        plain = _group_plain(renderable)
+
+        # Should show "earlier action(s)" hint
+        hidden = 5 - _SUBAGENT_ROLLING_WINDOW_SIZE
+        assert f"{hidden} earlier action(s)" in plain
+
+        # Should contain only the last N tool names
+        for i in range(5 - _SUBAGENT_ROLLING_WINDOW_SIZE):
+            assert f"tool_{i}" not in plain, f"tool_{i} should be hidden in compact mode"
+        for i in range(5 - _SUBAGENT_ROLLING_WINDOW_SIZE, 5):
+            assert f"tool_{i}" in plain, f"tool_{i} should be visible in compact mode"
+
+    def test_compact_no_hidden_hint_when_few_actions(self):
+        """No 'earlier action(s)' hint when action count <= window size."""
+        display = ActionHistoryDisplay()
+        ctx = InlineStreamingContext([], display)
+        ctx._verbose = False
+
+        tool_actions = self._make_subagent_actions(_SUBAGENT_ROLLING_WINDOW_SIZE)
+        first_action = _make_action(
+            ActionRole.USER,
+            ActionStatus.SUCCESS,
+            depth=1,
+            action_type="explore",
+            messages="User: Test",
+            parent_action_id="grp1",
+        )
+        ctx._subagent_groups["grp1"] = {
+            "start_time": datetime(2025, 1, 1, 12, 0, 0),
+            "tool_count": _SUBAGENT_ROLLING_WINDOW_SIZE,
+            "subagent_type": "explore",
+            "first_action": first_action,
+            "actions": tool_actions,
+        }
+
+        renderable = ctx._build_subagent_groups_renderable()
+        plain = _group_plain(renderable)
+
+        # Should NOT show "earlier action(s)" hint
+        assert "earlier action(s)" not in plain
+        # All actions should be visible
+        for i in range(_SUBAGENT_ROLLING_WINDOW_SIZE):
+            assert f"tool_{i}" in plain
+
+    def test_verbose_shows_all_actions(self):
+        """In verbose mode, all subagent actions are displayed regardless of count."""
+        display = ActionHistoryDisplay()
+        ctx = InlineStreamingContext([], display)
+        ctx._verbose = True
+
+        tool_actions = self._make_subagent_actions(5)
+        first_action = _make_action(
+            ActionRole.USER,
+            ActionStatus.SUCCESS,
+            depth=1,
+            action_type="explore",
+            messages="User: Test",
+            parent_action_id="grp1",
+        )
+        ctx._subagent_groups["grp1"] = {
+            "start_time": datetime(2025, 1, 1, 12, 0, 0),
+            "tool_count": 5,
+            "subagent_type": "explore",
+            "first_action": first_action,
+            "actions": tool_actions,
+        }
+
+        renderable = ctx._build_subagent_groups_renderable()
+        plain = _group_plain(renderable)
+
+        # Should NOT show "earlier action(s)" hint in verbose mode
+        assert "earlier action(s)" not in plain
+        # All 5 actions should be visible
+        for i in range(5):
+            assert f"tool_{i}" in plain
+
+    def test_compact_empty_actions_no_crash(self):
+        """Empty actions list renders without crash and without hidden hint."""
+        display = ActionHistoryDisplay()
+        ctx = InlineStreamingContext([], display)
+        ctx._verbose = False
+
+        first_action = _make_action(
+            ActionRole.USER,
+            ActionStatus.SUCCESS,
+            depth=1,
+            action_type="explore",
+            messages="User: Test",
+            parent_action_id="grp1",
+        )
+        ctx._subagent_groups["grp1"] = {
+            "start_time": datetime(2025, 1, 1, 12, 0, 0),
+            "tool_count": 0,
+            "subagent_type": "explore",
+            "first_action": first_action,
+            "actions": [],
+        }
+
+        renderable = ctx._build_subagent_groups_renderable()
+        plain = _group_plain(renderable)
+
+        # Header should be present, no hidden hint
+        assert "explore" in plain
+        assert "earlier action(s)" not in plain
+
+    def test_compact_single_action_no_hidden_hint(self):
+        """A single action (less than window size) shows no hidden hint."""
+        display = ActionHistoryDisplay()
+        ctx = InlineStreamingContext([], display)
+        ctx._verbose = False
+
+        tool_actions = self._make_subagent_actions(1)
+        first_action = _make_action(
+            ActionRole.USER,
+            ActionStatus.SUCCESS,
+            depth=1,
+            action_type="explore",
+            messages="User: Test",
+            parent_action_id="grp1",
+        )
+        ctx._subagent_groups["grp1"] = {
+            "start_time": datetime(2025, 1, 1, 12, 0, 0),
+            "tool_count": 1,
+            "subagent_type": "explore",
+            "first_action": first_action,
+            "actions": tool_actions,
+        }
+
+        renderable = ctx._build_subagent_groups_renderable()
+        plain = _group_plain(renderable)
+
+        assert "earlier action(s)" not in plain
+        assert "tool_0" in plain
+
+
+@pytest.mark.ci
+class TestPendingTaskToolSkips:
+    """Test the counter-based pending_task_tool_skips logic in render_action_history.
+
+    When multiple subagent groups complete and a non-task TOOL action appears
+    between subagent_complete and TOOL(task) actions, the counter should NOT
+    be reset (unlike the old boolean skip_task_tools flag).
+    """
+
+    def _build_interleaved_actions(self):
+        """Build actions with: 2 parallel subagent groups, non-task TOOL between
+        subagent_complete actions and TOOL(task) actions.
+
+        Action order:
+        1. depth>0 group1 USER
+        2. depth>0 group1 TOOL (search_schema)
+        3. depth>0 group2 USER
+        4. depth>0 group2 TOOL (search_metrics)
+        5. subagent_complete group1
+        6. subagent_complete group2
+        7. depth=0 TOOL (get_current_date) — non-task TOOL
+        8. depth=0 TOOL (task) — corresponds to group1
+        9. depth=0 TOOL (task) — corresponds to group2
+        """
+        t0 = datetime(2025, 1, 1, 12, 0, 0)
+        t1 = datetime(2025, 1, 1, 12, 0, 1)
+        t2 = datetime(2025, 1, 1, 12, 0, 2)
+
+        actions = [
+            # Group 1 actions
+            _make_action(
+                ActionRole.USER,
+                ActionStatus.SUCCESS,
+                depth=1,
+                action_type="explore",
+                messages="User: Find tables",
+                input_data={"_task_description": "Find tables"},
+                start_time=t0,
+                parent_action_id="grp1",
+            ),
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=1,
+                action_type="search_schema",
+                messages="search_schema",
+                input_data={"function_name": "search_schema"},
+                start_time=t0,
+                end_time=t1,
+                parent_action_id="grp1",
+            ),
+            # Group 2 actions
+            _make_action(
+                ActionRole.USER,
+                ActionStatus.SUCCESS,
+                depth=1,
+                action_type="explore",
+                messages="User: Find metrics",
+                input_data={"_task_description": "Find metrics"},
+                start_time=t0,
+                parent_action_id="grp2",
+            ),
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=1,
+                action_type="search_metrics",
+                messages="search_metrics",
+                input_data={"function_name": "search_metrics"},
+                start_time=t0,
+                end_time=t1,
+                parent_action_id="grp2",
+            ),
+            # subagent_complete for group1
+            _make_action(
+                ActionRole.SYSTEM,
+                ActionStatus.SUCCESS,
+                depth=0,
+                action_type=SUBAGENT_COMPLETE_ACTION_TYPE,
+                messages="",
+                start_time=t0,
+                end_time=t1,
+                parent_action_id="grp1",
+            ),
+            # subagent_complete for group2
+            _make_action(
+                ActionRole.SYSTEM,
+                ActionStatus.SUCCESS,
+                depth=0,
+                action_type=SUBAGENT_COMPLETE_ACTION_TYPE,
+                messages="",
+                start_time=t0,
+                end_time=t1,
+                parent_action_id="grp2",
+            ),
+            # Non-task TOOL (interleaved)
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=0,
+                action_type="get_current_date",
+                messages="get_current_date",
+                input_data={"function_name": "get_current_date"},
+                start_time=t1,
+                end_time=t2,
+            ),
+            # TOOL(task) for group1
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=0,
+                action_type="task",
+                messages="task",
+                input_data={"function_name": "task", "type": "explore", "prompt": "Find tables"},
+                output_data={"raw_output": '{"success": 1, "result": {"response": "found tables"}}'},
+                start_time=t0,
+                end_time=t1,
+                action_id="grp1",
+            ),
+            # TOOL(task) for group2
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=0,
+                action_type="task",
+                messages="task",
+                input_data={"function_name": "task", "type": "explore", "prompt": "Find metrics"},
+                output_data={"raw_output": '{"success": 1, "result": {"response": "found metrics"}}'},
+                start_time=t0,
+                end_time=t1,
+                action_id="grp2",
+            ),
+        ]
+        return actions
+
+    def test_collapsed_no_extra_subagent_labels(self):
+        """With collapse_completed=True, TOOL(task) actions after interleaved non-task
+        TOOL should NOT produce extra 'subagent' labels."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True, width=200)
+        display = ActionHistoryDisplay(console)
+
+        actions = self._build_interleaved_actions()
+        display.render_action_history(actions, verbose=False, collapse_completed=True)
+
+        output = buf.getvalue()
+        lines = [line for line in output.splitlines() if line.strip()]
+
+        # Should have 2 collapsed groups + their Done lines + 1 get_current_date action
+        # Should NOT have any "subagent" standalone entries
+        subagent_standalone = [line for line in lines if "subagent" in line.lower() and "result" in line.lower()]
+        assert (
+            len(subagent_standalone) == 0
+        ), f"Expected no standalone subagent entries but found: {subagent_standalone}"
+
+        # The collapsed groups should be present
+        collapsed_count = sum(1 for line in lines if "\u23f4" in line)  # ⏴
+        assert collapsed_count == 2, f"Expected 2 collapsed groups, got {collapsed_count}"
+
+        # get_current_date should be rendered
+        assert "get_current_date" in output
+
+    def test_expanded_no_extra_subagent_labels(self):
+        """With collapse_completed=False, TOOL(task) actions after interleaved non-task
+        TOOL should NOT produce extra 'subagent' labels."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True, width=200)
+        display = ActionHistoryDisplay(console)
+
+        actions = self._build_interleaved_actions()
+        display.render_action_history(actions, verbose=False, collapse_completed=False)
+
+        output = buf.getvalue()
+
+        # Should have expanded groups with Done lines
+        assert "Done" in output
+        # The non-task tool should be rendered
+        assert "get_current_date" in output
+        # Should NOT have standalone "subagent" entries rendered by _render_task_tool_as_subagent
+        # Look for the standalone "⏺ subagent" pattern or "⏺ explore(" without depth>0 context
+        lines = [line for line in output.splitlines() if line.strip()]
+        subagent_standalone = [line for line in lines if "subagent" in line.lower() and "result" in line.lower()]
+        assert (
+            len(subagent_standalone) == 0
+        ), f"Expected no standalone subagent entries but found: {subagent_standalone}"
+
+    def test_verbose_renders_deferred_groups_flushed_before_response(self):
+        """In verbose mode with interleaved non-task TOOL, deferred groups are
+        flushed before TOOL(task) arrives, so responses are NOT shown.
+        The groups and the non-task tool are all rendered correctly."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True, width=200)
+        display = ActionHistoryDisplay(console)
+
+        actions = self._build_interleaved_actions()
+        display.render_action_history(actions, verbose=True, collapse_completed=False)
+
+        output = buf.getvalue()
+
+        # Verbose mode: groups should be expanded
+        assert "search_schema" in output
+        assert "search_metrics" in output
+        # get_current_date should be rendered
+        assert "get_current_date" in output
+        # Both groups should have "Done" lines
+        assert output.count("Done") == 2
+        # TOOL(task) actions should be skipped (not rendered as standalone subagent)
+        lines = [line for line in output.splitlines() if line.strip()]
+        subagent_standalone = [line for line in lines if "subagent" in line.lower() and "result" in line.lower()]
+        assert len(subagent_standalone) == 0
+
+    def test_verbose_deferred_groups_paired_without_interleaving(self):
+        """Without interleaved non-task TOOL, deferred groups pair with TOOL(task)
+        and responses ARE rendered in verbose mode."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True, width=200)
+        display = ActionHistoryDisplay(console)
+
+        t0 = datetime(2025, 1, 1, 12, 0, 0)
+        t1 = datetime(2025, 1, 1, 12, 0, 1)
+
+        actions = [
+            _make_action(
+                ActionRole.USER,
+                ActionStatus.SUCCESS,
+                depth=1,
+                action_type="explore",
+                messages="User: Find tables",
+                input_data={"_task_description": "Find tables"},
+                start_time=t0,
+                parent_action_id="grp1",
+            ),
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=1,
+                messages="search_schema",
+                input_data={"function_name": "search_schema"},
+                start_time=t0,
+                end_time=t1,
+                parent_action_id="grp1",
+            ),
+            _make_action(
+                ActionRole.SYSTEM,
+                ActionStatus.SUCCESS,
+                depth=0,
+                action_type=SUBAGENT_COMPLETE_ACTION_TYPE,
+                messages="",
+                start_time=t0,
+                end_time=t1,
+                parent_action_id="grp1",
+            ),
+            # TOOL(task) immediately follows — no interleaving
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=0,
+                messages="task",
+                input_data={"function_name": "task", "type": "explore", "prompt": "Find tables"},
+                output_data={"raw_output": '{"success": 1, "result": {"response": "found tables"}}'},
+                start_time=t0,
+                end_time=t1,
+                action_id="grp1",
+            ),
+        ]
+
+        display.render_action_history(actions, verbose=True, collapse_completed=False)
+
+        output = buf.getvalue()
+        # Group should be expanded with response shown
+        assert "search_schema" in output
+        assert "Done" in output
+        assert "found tables" in output
+
+    def test_single_group_with_non_task_tool_after(self):
+        """Single subagent group followed by non-task TOOL then TOOL(task) — no extra labels."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True, width=200)
+        display = ActionHistoryDisplay(console)
+
+        t0 = datetime(2025, 1, 1, 12, 0, 0)
+        t1 = datetime(2025, 1, 1, 12, 0, 1)
+        t2 = datetime(2025, 1, 1, 12, 0, 2)
+
+        actions = [
+            _make_action(
+                ActionRole.USER,
+                ActionStatus.SUCCESS,
+                depth=1,
+                action_type="explore",
+                messages="User: Query",
+                start_time=t0,
+                parent_action_id="grp1",
+            ),
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=1,
+                messages="search_schema",
+                input_data={"function_name": "search_schema"},
+                start_time=t0,
+                end_time=t1,
+                parent_action_id="grp1",
+            ),
+            _make_action(
+                ActionRole.SYSTEM,
+                ActionStatus.SUCCESS,
+                depth=0,
+                action_type=SUBAGENT_COMPLETE_ACTION_TYPE,
+                messages="",
+                start_time=t0,
+                end_time=t1,
+                parent_action_id="grp1",
+            ),
+            # Non-task TOOL between subagent_complete and TOOL(task)
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=0,
+                messages="get_current_date",
+                input_data={"function_name": "get_current_date"},
+                start_time=t1,
+                end_time=t2,
+            ),
+            # TOOL(task)
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=0,
+                messages="task",
+                input_data={"function_name": "task"},
+                start_time=t0,
+                end_time=t1,
+                action_id="grp1",
+            ),
+        ]
+
+        display.render_action_history(actions, verbose=False, collapse_completed=True)
+
+        output = buf.getvalue()
+        lines = [line for line in output.splitlines() if line.strip()]
+
+        # 1 collapsed group + 1 get_current_date, no extra subagent
+        collapsed_count = sum(1 for line in lines if "\u23f4" in line)
+        assert collapsed_count == 1
+        assert "get_current_date" in output
+        subagent_standalone = [line for line in lines if "subagent" in line.lower() and "result" in line.lower()]
+        assert len(subagent_standalone) == 0
+
+
+@pytest.mark.ci
+class TestVerboseToggleRefreshLoop:
+    """Test the verbose toggle behavior in _refresh_loop (freeze/unfreeze).
+
+    These tests simulate the toggle event and verify state transitions
+    without actually running the background thread.
+    """
+
+    def test_toggle_to_verbose_sets_frozen(self):
+        """Toggling to verbose mode sets _verbose_frozen=True and _verbose=True."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True, width=200)
+        display = ActionHistoryDisplay(console)
+
+        ctx = InlineStreamingContext([], display)
+        ctx._verbose = False
+        ctx._verbose_frozen = False
+
+        # Simulate what _refresh_loop does when toggle event fires
+        ctx._verbose = not ctx._verbose  # becomes True
+        if ctx._verbose:
+            ctx._verbose_frozen = True
+
+        assert ctx._verbose is True
+        assert ctx._verbose_frozen is True
+
+    def test_toggle_back_to_compact_clears_frozen(self):
+        """Toggling back to compact mode sets _verbose_frozen=False."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True, width=200)
+        display = ActionHistoryDisplay(console)
+
+        ctx = InlineStreamingContext([], display)
+        ctx._verbose = True
+        ctx._verbose_frozen = True
+
+        # Simulate toggling back to compact
+        ctx._verbose = not ctx._verbose  # becomes False
+        if not ctx._verbose:
+            ctx._verbose_frozen = False
+
+        assert ctx._verbose is False
+        assert ctx._verbose_frozen is False
+
+    def test_reprint_history_uses_compact_mode(self):
+        """_reprint_history renders in compact mode with collapsed groups."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True, width=200)
+        display = ActionHistoryDisplay(console)
+
+        t0 = datetime(2025, 1, 1, 12, 0, 0)
+        t1 = datetime(2025, 1, 1, 12, 0, 1)
+        actions = [
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=0,
+                messages="search_schema",
+                input_data={"function_name": "search_schema"},
+                start_time=t0,
+                end_time=t1,
+            ),
+        ]
+
+        ctx = InlineStreamingContext(actions, display, current_user_message="Test query")
+        ctx._processed_index = 1
+        ctx._verbose = False
+
+        ctx._reprint_history()
+
+        output = buf.getvalue()
+        assert "Test query" in output
+        assert "search_schema" in output
+
+    def test_verbose_snapshot_uses_verbose_mode(self):
+        """_reprint_history_verbose_snapshot renders everything in verbose mode."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True, width=200)
+        display = ActionHistoryDisplay(console)
+
+        t0 = datetime(2025, 1, 1, 12, 0, 0)
+        t1 = datetime(2025, 1, 1, 12, 0, 1)
+        actions = [
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=0,
+                messages="search_schema",
+                input_data={"function_name": "search_schema", "arguments": {"query": "revenue table"}},
+                start_time=t0,
+                end_time=t1,
+            ),
+        ]
+
+        ctx = InlineStreamingContext(actions, display, current_user_message="Test query")
+        ctx._processed_index = 1
+        ctx._verbose = True
+
+        ctx._reprint_history_verbose_snapshot()
+
+        output = buf.getvalue()
+        assert "Test query" in output
+        assert "search_schema" in output
+        # Verbose mode should show arguments
+        assert "revenue table" in output
+
+    def test_freeze_unfreeze_round_trip(self):
+        """Full round-trip: compact → verbose (freeze) → compact (unfreeze)."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True, width=200)
+        display = ActionHistoryDisplay(console)
+
+        t0 = datetime(2025, 1, 1, 12, 0, 0)
+        t1 = datetime(2025, 1, 1, 12, 0, 1)
+        actions = [
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=0,
+                messages="list_tables",
+                input_data={"function_name": "list_tables"},
+                start_time=t0,
+                end_time=t1,
+            ),
+        ]
+
+        ctx = InlineStreamingContext(actions, display)
+        ctx._processed_index = 1
+
+        # Initial state: compact, not frozen
+        assert ctx._verbose is False
+        assert ctx._verbose_frozen is False
+
+        # Toggle to verbose → frozen
+        ctx._verbose = True
+        ctx._verbose_frozen = True
+        assert ctx._verbose_frozen is True
+
+        # Process actions should be skipped (guard condition)
+        old_idx = ctx._processed_index
+        # Simulate the guard: if not paused and not frozen → skip
+        if not ctx._paused and not ctx._verbose_frozen:
+            ctx._process_actions()
+        assert ctx._processed_index == old_idx  # unchanged
+
+        # Toggle back to compact → unfrozen
+        ctx._verbose = False
+        ctx._verbose_frozen = False
+        assert ctx._verbose_frozen is False

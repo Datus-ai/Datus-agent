@@ -218,6 +218,24 @@ class TestBuildTaskDescription:
         desc = task_tool._build_task_description()
         assert "Sales data specialist" in desc
 
+    def test_explore_description_contains_directions(self, task_tool):
+        """Explore description lists 3 exploration directions."""
+        desc = task_tool._build_task_description()
+        assert "Schema+Sample" in desc
+        assert "Knowledge" in desc
+        assert "File" in desc
+
+    def test_explore_description_contains_prompt_examples(self, task_tool):
+        """Explore description includes prompt examples for each direction."""
+        desc = task_tool._build_task_description()
+        assert "Prompt example:" in desc
+
+    def test_guidelines_contain_parallel_explore(self, task_tool):
+        """Guidelines recommend parallel exploration with direction-specific prompts."""
+        desc = task_tool._build_task_description()
+        assert "PARALLEL" in desc
+        assert "direction-specific prompt" in desc
+
 
 # ── node creation (fresh per invocation) ──────────────────────────
 

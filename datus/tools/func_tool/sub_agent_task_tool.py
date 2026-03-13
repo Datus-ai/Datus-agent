@@ -48,6 +48,7 @@ NODE_CLASS_MAP = {
     "ext_knowledge": NodeType.TYPE_EXT_KNOWLEDGE,
     "semantic": NodeType.TYPE_SEMANTIC,
     "sql_summary": NodeType.TYPE_SQL_SUMMARY,
+    "explore": NodeType.TYPE_EXPLORE,
 }
 
 # Descriptions for built-in system subagents (used in task tool description for LLM)
@@ -243,6 +244,10 @@ class SubAgentTaskTool:
                     return NodeType.TYPE_GENSQL, key
             return NodeType.TYPE_GENSQL, "gen_sql"
 
+        # Built-in explore type
+        if subagent_type == "explore":
+            return NodeType.TYPE_EXPLORE, "explore"
+
         # Built-in system subagents (SYS_SUB_AGENTS)
         builtin_type_map = {
             "gen_semantic_model": (NodeType.TYPE_SEMANTIC, "gen_semantic_model"),
@@ -412,8 +417,16 @@ class SubAgentTaskTool:
 
     def _build_node_input(self, node, prompt: str):
         """Build the appropriate input object for the given node."""
+        from datus.agent.node.explore_agentic_node import ExploreAgenticNode
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+        from datus.schemas.explore_agentic_node_models import ExploreNodeInput
         from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
+
+        if isinstance(node, ExploreAgenticNode):
+            return ExploreNodeInput(
+                user_message=prompt,
+                database=self.agent_config.current_database,
+            )
 
         if isinstance(node, GenSQLAgenticNode):
             return GenSQLNodeInput(
@@ -579,7 +592,25 @@ class SubAgentTaskTool:
         ]
 
         for t in available:
-            if t == "gen_sql":
+            if t == "explore":
+                lines.append(
+                    "- explore: Read-only data exploration. Supports 3 exploration directions:\n"
+                    "  * Schema+Sample: database schema structure, table columns, types, "
+                    "sample data, date context\n"
+                    "    Prompt example: 'Explore schema for tables related to sales: "
+                    "list tables, describe columns, sample 10 rows'\n"
+                    "  * Knowledge: business metrics, reference SQL patterns, "
+                    "domain knowledge, semantic objects\n"
+                    "    Prompt example: 'Search knowledge base for sales-related metrics, "
+                    "reference SQL, and business rules'\n"
+                    "  * File: workspace SQL files, documentation, configuration files\n"
+                    "    Prompt example: 'Browse workspace for SQL files and documentation "
+                    "related to sales'\n"
+                    '  For comprehensive exploration, call task(type="explore") MULTIPLE TIMES '
+                    "in PARALLEL with direction-specific prompts.\n"
+                    "  Returns JSON with {response, tokens_used}."
+                )
+            elif t == "gen_sql":
                 lines.append(
                     "- gen_sql: Generate optimized SQL queries. Returns JSON with {sql, response, tokens_used}. "
                     "For complex SQL (50+ lines), returns {sql_file_path, sql_preview, response} instead - "
@@ -602,8 +633,11 @@ class SubAgentTaskTool:
             [
                 "",
                 "Guidelines:",
+                '- For comprehensive exploration, call multiple task(type="explore") in PARALLEL, '
+                "each with a direction-specific prompt (schema+sample, knowledge, file)",
+                '- For quick single-direction lookups, call one task(type="explore") with a focused prompt',
                 '- Use task(type="gen_sql") for SQL generation requiring multi-step reasoning',
-                "- Use direct db tools (list_tables, describe_table) for quick schema exploration",
+                "- Use direct db tools (list_tables, describe_table) for quick one-off schema checks",
                 "- In plan mode, use task() for each SQL sub-step",
                 "- Always provide a short 'description' summarizing the task goal",
             ]
@@ -613,7 +647,7 @@ class SubAgentTaskTool:
 
     def _get_available_types(self) -> List[str]:
         """Discover available subagent types."""
-        types = ["gen_sql"]
+        types = ["gen_sql", "explore"]
 
         # Add built-in system subagents (always available)
         types.extend(sorted(SYS_SUB_AGENTS))
@@ -624,7 +658,7 @@ class SubAgentTaskTool:
         current_namespace = self.agent_config.current_namespace
 
         for name, config in self.agent_config.agentic_nodes.items():
-            if name in ("chat", "gen_sql") or name in SYS_SUB_AGENTS:
+            if name in ("chat", "gen_sql", "explore") or name in SYS_SUB_AGENTS:
                 continue
 
             # If scoped_context is configured, namespace must match current namespace

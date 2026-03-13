@@ -1045,9 +1045,17 @@ class ChatCommands:
         self.console.print(f"[bold bright_black]  ⎯ switched to {mode_label} mode ⎯[/]")
         action_display = ActionHistoryDisplay(self.console)
         if self.all_turn_actions:
-            action_display.render_multi_turn_history(self.all_turn_actions, verbose=self._trace_verbose)
+            action_display.render_multi_turn_history(
+                self.all_turn_actions,
+                verbose=self._trace_verbose,
+                collapse_completed=not self._trace_verbose,
+            )
         else:
-            action_display.render_action_history(actions, verbose=self._trace_verbose)
+            action_display.render_action_history(
+                actions,
+                verbose=self._trace_verbose,
+                collapse_completed=not self._trace_verbose,
+            )
 
         # Re-render final response output (SQL, markdown, etc.) after the trace
         last_turn_actions = self.all_turn_actions[-1][1] if self.all_turn_actions else actions

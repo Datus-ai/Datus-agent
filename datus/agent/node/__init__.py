@@ -26,6 +26,7 @@ __all__ = [
     "GenMetricsAgenticNode",
     "GenReportAgenticNode",
     "GenExtKnowledgeAgenticNode",
+    "ExploreAgenticNode",
     "Node",
 ]
 
@@ -38,6 +39,7 @@ from .compare_node import CompareNode
 from .date_parser_node import DateParserNode
 from .doc_search_node import DocSearchNode
 from .execute_sql_node import ExecuteSQLNode
+from .explore_agentic_node import ExploreAgenticNode
 from .fix_node import FixNode
 from .gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
 from .gen_metrics_agentic_node import GenMetricsAgenticNode

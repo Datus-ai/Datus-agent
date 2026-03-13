@@ -788,6 +788,7 @@ class AgenticNode(Node):
             "ChatAgenticNode": "ChatNodeResult",
             "GenSQLAgenticNode": "GenSQLNodeResult",
             "CompareAgenticNode": "CompareResult",
+            "ExploreAgenticNode": "ExploreNodeResult",
         }
 
         result_class_name = result_class_map.get(class_name)
@@ -808,6 +809,10 @@ class AgenticNode(Node):
                 from datus.schemas.compare_node_models import CompareResult
 
                 return CompareResult
+            elif class_name == "ExploreAgenticNode":
+                from datus.schemas.explore_agentic_node_models import ExploreNodeResult
+
+                return ExploreNodeResult
         except ImportError as e:
             logger.debug(f"Could not import result class {result_class_name}: {e}")
             return None
