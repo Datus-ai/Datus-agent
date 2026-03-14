@@ -378,3 +378,100 @@ class TestApplyAndRemoveSdkPatches:
         apply_sdk_patches()
         apply_sdk_patches()  # Should not raise
         remove_sdk_patches()
+
+
+class TestPatchedCompletionSync:
+    """Tests for the sync litellm.completion patch (Kimi reasoning_content)."""
+
+    def _make_fake_response(self, content="", reasoning_content=None):
+        """Create a fake litellm response object."""
+
+        class FakeMessage:
+            pass
+
+        msg = FakeMessage()
+        msg.content = content
+        if reasoning_content is not None:
+            msg.reasoning_content = reasoning_content
+
+        class FakeChoice:
+            pass
+
+        choice = FakeChoice()
+        choice.message = msg
+
+        class FakeResponse:
+            pass
+
+        resp = FakeResponse()
+        resp.choices = [choice]
+        return resp
+
+    def test_patched_completion_caches_kimi_reasoning_content(self):
+        """Patched litellm.completion caches reasoning_content for Kimi models."""
+        import litellm
+
+        # Ensure clean state
+        remove_sdk_patches()
+        _reasoning_content_cache.clear()
+
+        fake_response = self._make_fake_response(content="", reasoning_content="Thinking step by step...")
+        original_real = litellm.completion
+        litellm.completion = lambda *args, **kwargs: fake_response
+
+        try:
+            apply_sdk_patches()
+            litellm.completion(model="kimi-test-sync", messages=[{"role": "user", "content": "hi"}])
+
+            assert "kimi-test-sync" in _reasoning_content_cache
+            assert _reasoning_content_cache["kimi-test-sync"] == "Thinking step by step..."
+            # Empty content should be replaced with reasoning_content
+            assert fake_response.choices[0].message.content == "Thinking step by step..."
+        finally:
+            remove_sdk_patches()
+            litellm.completion = original_real
+            _reasoning_content_cache.clear()
+
+    def test_patched_completion_non_kimi_skips_caching(self):
+        """Patched litellm.completion skips reasoning_content caching for non-Kimi models."""
+        import litellm
+
+        remove_sdk_patches()
+        _reasoning_content_cache.clear()
+
+        fake_response = self._make_fake_response(content="Hello", reasoning_content="Some reasoning")
+        original_real = litellm.completion
+        litellm.completion = lambda *args, **kwargs: fake_response
+
+        try:
+            apply_sdk_patches()
+            litellm.completion(model="gpt-4", messages=[{"role": "user", "content": "hi"}])
+
+            assert "gpt-4" not in _reasoning_content_cache
+        finally:
+            remove_sdk_patches()
+            litellm.completion = original_real
+            _reasoning_content_cache.clear()
+
+    def test_patched_completion_preserves_non_empty_content(self):
+        """Patched litellm.completion does not overwrite non-empty content."""
+        import litellm
+
+        remove_sdk_patches()
+        _reasoning_content_cache.clear()
+
+        fake_response = self._make_fake_response(content="Real answer", reasoning_content="Thinking...")
+        original_real = litellm.completion
+        litellm.completion = lambda *args, **kwargs: fake_response
+
+        try:
+            apply_sdk_patches()
+            litellm.completion(model="kimi-keep-content", messages=[{"role": "user", "content": "hi"}])
+
+            assert _reasoning_content_cache["kimi-keep-content"] == "Thinking..."
+            # Non-empty content should NOT be overwritten
+            assert fake_response.choices[0].message.content == "Real answer"
+        finally:
+            remove_sdk_patches()
+            litellm.completion = original_real
+            _reasoning_content_cache.clear()
