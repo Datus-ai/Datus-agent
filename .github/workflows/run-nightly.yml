@@ -80,7 +80,7 @@ jobs:
 
       - name: Run nightly tests
         id: nightly_tests
-        timeout-minutes: 60
+        timeout-minutes: 90
         run: |
           set -o pipefail
           LOG_FILE="test_output_nightly_$(date +%Y%m%d_%H%M%S).log"

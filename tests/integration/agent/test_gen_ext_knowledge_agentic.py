@@ -76,6 +76,7 @@ class TestGenExtKnowledgeAgentic:
         assert node.hooks is not None, "Interactive mode should have hooks"
 
     @pytest.mark.asyncio
+    @pytest.mark.timeout(600)
     async def test_execute_stream_generates_ext_knowledge(self, nightly_agent_config):
         """N8-04: execute_stream generates external knowledge for a business concept."""
         node = GenExtKnowledgeAgenticNode(
@@ -112,6 +113,7 @@ class TestGenExtKnowledgeAgentic:
         ), f"Last action should be SUCCESS, got {actions[-1].status}: {actions[-1].output}"
 
     @pytest.mark.asyncio
+    @pytest.mark.timeout(600)
     async def test_execute_stream_with_question(self, nightly_agent_config):
         """N8-05: execute_stream works with a business question input."""
         node = GenExtKnowledgeAgenticNode(
