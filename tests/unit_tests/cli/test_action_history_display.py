@@ -1428,7 +1428,7 @@ class TestParallelSubAgentGroups:
                 messages="thinking",
                 output_data={"raw_output": "I'll analyze this."},
             ),
-            # depth=0 TOOL(task) — should be skipped
+            # depth=0 TOOL(task) — should be skipped (action_id matches parent_action_id of subagent children)
             _make_action(
                 ActionRole.TOOL,
                 ActionStatus.SUCCESS,
@@ -1436,6 +1436,7 @@ class TestParallelSubAgentGroups:
                 action_type="task",
                 input_data={"function_name": "task"},
                 end_time=t1,
+                action_id=call_id,
             ),
         ]
 

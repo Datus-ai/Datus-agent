@@ -200,7 +200,14 @@ class ExploreAgenticNode(AgenticNode):
             action_history_manager = ActionHistoryManager()
 
         if not self.input:
-            raise ValueError("Explore input not set. Call setup_input() first or set self.input directly.")
+            from datus.utils.exceptions import DatusException, ErrorCode
+
+            raise DatusException(
+                code=ErrorCode.COMMON_CONFIG_ERROR,
+                message_args={
+                    "config_error": "Explore input not set. Call setup_input() first or set self.input directly."
+                },
+            )
 
         user_input = self.input
 
@@ -282,7 +289,7 @@ class ExploreAgenticNode(AgenticNode):
                 execution_stats={
                     "total_actions": len(all_actions),
                     "tool_calls_count": len(tool_calls),
-                    "tools_used": list(set(a.action_type for a in tool_calls)),
+                    "tools_used": sorted({a.action_type for a in tool_calls}),
                     "total_tokens": int(tokens_used),
                 },
             )
@@ -305,11 +312,18 @@ class ExploreAgenticNode(AgenticNode):
             raise
 
         except Exception as e:
-            logger.error(f"{self.get_node_name()} execution error: {e}")
+            from datus.utils.exceptions import DatusException
+
+            if isinstance(e, DatusException):
+                error_msg = f"[{e.code}] {e}"
+                logger.error(f"{self.get_node_name()} execution error: {error_msg}")
+            else:
+                error_msg = str(e)
+                logger.error(f"{self.get_node_name()} execution error: {error_msg}")
 
             error_result = ExploreNodeResult(
                 success=False,
-                error=str(e),
+                error=error_msg,
                 response="Sorry, I encountered an error during exploration.",
                 tokens_used=0,
             )
@@ -317,13 +331,13 @@ class ExploreAgenticNode(AgenticNode):
             action_history_manager.update_current_action(
                 status=ActionStatus.FAILED,
                 output=error_result.model_dump(),
-                messages=f"Error: {str(e)}",
+                messages=f"Error: {error_msg}",
             )
 
             error_action = ActionHistory.create_action(
                 role=ActionRole.ASSISTANT,
                 action_type=f"{self.get_node_name()}_error",
-                messages=f"Error: {str(e)}",
+                messages=f"Error: {error_msg}",
                 input_data=user_input.model_dump(),
                 output_data=error_result.model_dump(),
                 status=ActionStatus.FAILED,

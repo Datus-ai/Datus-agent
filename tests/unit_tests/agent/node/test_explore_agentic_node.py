@@ -301,8 +301,9 @@ class TestExploreAgenticNodeExecution:
 
     @pytest.mark.asyncio
     async def test_explore_no_input_raises(self, real_agent_config, mock_llm_create):
-        """execute_stream should raise ValueError if no input is set."""
+        """execute_stream should raise DatusException if no input is set."""
         from datus.agent.node.explore_agentic_node import ExploreAgenticNode
+        from datus.utils.exceptions import DatusException
 
         node = ExploreAgenticNode(
             node_id="test_explore_exec_4",
@@ -313,7 +314,7 @@ class TestExploreAgenticNodeExecution:
         )
 
         ahm = ActionHistoryManager()
-        with pytest.raises(ValueError, match="Explore input not set"):
+        with pytest.raises(DatusException):
             async for _ in node.execute_stream(ahm):
                 pass
 
