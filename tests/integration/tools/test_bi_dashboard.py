@@ -319,10 +319,11 @@ class TestE2EIntegration:
     Validates the COMPLETE workflow: real Superset API, real LLM API,
     real file system, real database operations.
 
-    SLOW (2-5 min), EXPENSIVE ($0.05-0.20/run), requires full env setup.
+    SLOW (2-5 min per dashboard), EXPENSIVE ($0.05-0.20/run), requires full env setup.
     """
 
     @pytest.mark.nightly
+    @pytest.mark.timeout(600)
     def test_complete_workflow(
         self,
         bi_commands: BiDashboardCommands,
