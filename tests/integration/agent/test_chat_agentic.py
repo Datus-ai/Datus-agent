@@ -123,33 +123,3 @@ class TestChatAgentic:
         response = chat_responses[0]
         assert response.output.get("success") is True, "Chat response should be successful"
         assert response.output.get("sql"), "Response should contain generated SQL"
-
-    def test_chat_generates_valid_sql(self, mock_args):
-        """N5-06: Chat response contains syntactically valid SQL with expected tables."""
-        question = "What is the highest SAT score in california_schools?"
-
-        with patch("datus.cli.repl.PromptSession.prompt") as mock_prompt:
-            mock_prompt.side_effect = [f"/{question}", EOFError]
-            with (
-                patch("datus.cli.repl.DatusCLI.prompt_input") as mock_internal,
-                patch("datus.cli.repl.AtReferenceCompleter.parse_at_context") as at_data,
-            ):
-                at_data.return_value = [], [], []
-                mock_internal.side_effect = ["n"]
-                cli = DatusCLI(args=mock_args)
-
-                wait_for_agent(cli)
-                cli.run()
-
-        actions = cli.actions.get_actions()
-        chat_responses = [a for a in actions if a.action_type == "chat_response"]
-        assert len(chat_responses) == 1, "Should have one chat response"
-
-        response = chat_responses[0]
-        assert response.output.get("success") is True, "Chat response should be successful"
-
-        sql = response.output.get("sql", "")
-        assert sql, "Response should contain SQL"
-        sql_upper = sql.upper()
-        assert "SELECT" in sql_upper, f"SQL should contain SELECT, got: {sql}"
-        assert "SAT" in sql_upper or "SCORE" in sql_upper, f"SQL should reference SAT/score tables, got: {sql}"

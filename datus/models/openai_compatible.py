@@ -15,7 +15,7 @@ import httpx
 import litellm
 import yaml
 from agents import Agent, ModelSettings, Runner, Tool
-from agents.exceptions import MaxTurnsExceeded
+from agents.exceptions import MaxTurnsExceeded, ModelBehaviorError
 from agents.extensions.memory import AdvancedSQLiteSession
 from agents.mcp import MCPServerStdio
 from openai import APIConnectionError, APIError, APITimeoutError, RateLimitError
@@ -206,6 +206,20 @@ class OpenAICompatibleModel(LLMBaseModel):
         for attempt in range(max_retries + 1):
             try:
                 return await operation_func()
+            except ModelBehaviorError as e:
+                # LLM hallucinated a non-existent tool or produced malformed output.
+                # Retry since the LLM may behave correctly on the next attempt.
+                if attempt < max_retries:
+                    delay = base_delay * (2**attempt)
+                    logger.warning(
+                        f"Model behavior error in {operation_name} (attempt {attempt + 1}/{max_retries + 1}): "
+                        f"{str(e)}. Retrying in {delay:.1f}s..."
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                else:
+                    logger.error(f"Model behavior error in {operation_name} after {attempt + 1} attempts: {str(e)}")
+                    raise
             except (APIError, RateLimitError, APIConnectionError, APITimeoutError) as e:
                 error_code, is_retryable = classify_openai_compatible_error(e)
 
@@ -1105,6 +1119,34 @@ class OpenAICompatibleModel(LLMBaseModel):
             except ExecutionInterrupted:
                 # User-initiated interrupt: propagate immediately, do not retry
                 raise
+
+            except ModelBehaviorError as e:
+                # LLM hallucinated a non-existent tool or produced malformed output.
+                # Retry since the LLM may behave correctly on the next attempt.
+                if attempt < max_retries - 1:
+                    logger.warning(
+                        f"Model behavior error in stream (attempt {attempt + 1}/{max_retries}): {e}. "
+                        f"Retrying in {retry_delay}s..."
+                    )
+
+                    from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+
+                    retry_action = ActionHistory.create_action(
+                        role=ActionRole.ASSISTANT,
+                        action_type="retry_notification",
+                        messages=f"Model behavior error, retrying ({attempt + 2}/{max_retries})...",
+                        input_data={"error": str(e), "attempt": attempt + 1},
+                        status=ActionStatus.PROCESSING,
+                    )
+                    action_history_manager.add_action(retry_action)
+                    processed_action_ids.add(retry_action.action_id)
+                    yield retry_action
+
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2
+                else:
+                    logger.exception(f"Model behavior error after {max_retries} attempts: {type(e).__name__}: {e}")
+                    raise
 
             except (httpx.RemoteProtocolError, APIConnectionError, APITimeoutError) as e:
                 if attempt < max_retries - 1:

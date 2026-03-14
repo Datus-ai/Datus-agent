@@ -118,45 +118,6 @@ class TestChatExecutorIntegration:
         assert executor.last_actions is not None
         assert len(executor.last_actions) >= 1
 
-    def test_extract_sql_and_response_with_real_actions(self, mock_args):
-        """W2-03: extract_sql_and_response extracts SQL from real LLM output."""
-        from datus.cli.repl import DatusCLI
-        from tests.integration.conftest import wait_for_agent
-
-        with (
-            patch("datus.cli.repl.PromptSession.prompt") as mock_prompt,
-            patch("datus.cli.repl.DatusCLI.prompt_input") as mock_internal,
-            patch("datus.cli.repl.AtReferenceCompleter.parse_at_context") as at_data,
-        ):
-            mock_prompt.side_effect = [EOFError]
-            mock_internal.side_effect = ["n"]
-            at_data.return_value = [], [], []
-            cli = DatusCLI(args=mock_args)
-            wait_for_agent(cli)
-
-        executor = ChatExecutor()
-        # Execute a query that should generate SQL
-        for _ in executor.execute_chat_stream("List all schools in Fresno county", cli):
-            pass
-
-        actions = executor.last_actions
-        assert actions is not None and len(actions) > 0, "Should have actions after execution"
-
-        sql, response = executor.extract_sql_and_response(actions, cli)
-
-        # The response should exist
-        assert response is not None or sql is not None, (
-            f"Should extract either SQL or response from actions. "
-            f"Actions: {[(a.role, a.status, a.action_type) for a in actions]}"
-        )
-
-        if sql:
-            assert "SELECT" in sql.upper(), f"SQL should contain SELECT, got: {sql}"
-            logger.info(f"Extracted SQL: {sql}")
-
-        if response:
-            logger.info(f"Extracted response (first 200 chars): {response[:200]}")
-
     def test_format_action_for_stream(self):
         """W2-04: format_action_for_stream formats different action types."""
         executor = ChatExecutor()

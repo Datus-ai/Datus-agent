@@ -128,10 +128,32 @@ def skill_manager(skill_config) -> SkillManager:
 
 
 def pytest_collection_modifyitems(items):
-    """Automatically mark all tests under integration/ with the 'integration' marker."""
+    """Automatically mark all tests under integration/ with the 'integration' marker.
+
+    Also reorder gen_* agent tests to respect logical dependencies:
+    semantic_model → metrics → ext_knowledge
+    (metrics reference measures defined in semantic models)
+    """
     for item in items:
         if "integration" in str(item.fspath) and "unit_tests" not in str(item.fspath):
             item.add_marker(pytest.mark.integration)
+
+    # Reorder gen_* agent tests by dependency (lower = runs first)
+    gen_test_order = {
+        "test_gen_semantic_model_agentic": 0,
+        "test_gen_metrics_agentic": 1,
+        "test_gen_ext_knowledge_agentic": 2,
+    }
+
+    gen_items = [(i, item) for i, item in enumerate(items) if item.fspath.purebasename in gen_test_order]
+    if gen_items:
+        indices = [i for i, _ in gen_items]
+        sorted_gen = sorted(
+            [item for _, item in gen_items],
+            key=lambda x: (gen_test_order[x.fspath.purebasename], x.name),
+        )
+        for idx, item in zip(indices, sorted_gen):
+            items[idx] = item
 
 
 @pytest.fixture
