@@ -270,11 +270,11 @@ class TestDeepSeekModel:
     @pytest.mark.asyncio
     async def test_generate_with_mcp_stream(self):
         """Acceptance test for MCP streaming with complex SSB analytics."""
-        instructions = """You are a SQLite expert performing comprehensive analysis on the Star Schema Benchmark
-        database. Provide detailed business analytics with multiple queries and insights."""
+        instructions = """You are a SQLite expert working with the Star Schema Benchmark database.
+        Answer questions concisely. Execute the minimum necessary queries to get the answer."""
 
         complex_scenarios = [
-            "Calculate total revenue in 1993 from the SSB database",
+            "Calculate total revenue (sum of lo_revenue) from the lineorder table where lo_orderdate is in 1993",
         ]
 
         # Set up agent config for SQLite database

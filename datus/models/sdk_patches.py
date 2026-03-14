@@ -102,6 +102,7 @@ def _preprocess_items_for_reasoning(
 # Store the original methods (will be initialized in apply_sdk_patches)
 _original_items_to_messages = None
 _original_acompletion = None
+_original_completion = None
 
 # Cache reasoning_content from API responses, keyed by model name.
 # This provides a fallback when the SDK converter fails to extract
@@ -247,7 +248,7 @@ def apply_sdk_patches() -> None:
     This function should be called early in application initialization,
     before any SDK methods are used.
     """
-    global _original_items_to_messages, _original_acompletion
+    global _original_items_to_messages, _original_acompletion, _original_completion
 
     from functools import wraps
 
@@ -306,6 +307,48 @@ def apply_sdk_patches() -> None:
         litellm.acompletion = _patched_acompletion
         logger.info("Applied SDK patch: litellm.acompletion (Kimi/Moonshot reasoning_content)")
 
+    # Patch 3: litellm.completion wrapper (sync version)
+    # The generate() method uses litellm.completion (sync), which was not patched.
+    # Without this, kimi-k2.5 returns empty content because reasoning_content is not exposed.
+    if _original_completion is None:
+        _original_completion = litellm.completion
+
+        @wraps(_original_completion)
+        def _patched_completion(*args, **kwargs):
+            model = kwargs.get("model", "")
+            if "messages" in kwargs:
+                kwargs["messages"] = _postprocess_messages_for_reasoning(kwargs["messages"], model)
+            response = _original_completion(*args, **kwargs)
+
+            # Cache reasoning_content and inject it into message.content if empty
+            if model and _is_kimi_model(model):
+                try:
+                    for choice in getattr(response, "choices", []):
+                        msg = getattr(choice, "message", None)
+                        if msg:
+                            rc = getattr(msg, "reasoning_content", None)
+                            if rc and isinstance(rc, str) and rc.strip():
+                                _reasoning_content_cache[model] = rc
+                                logger.debug(
+                                    f"[SDK Patch] Cached reasoning_content from sync response, "
+                                    f"model={model}, length={len(rc)}"
+                                )
+                                # If main content is empty, inject reasoning_content
+                                content = getattr(msg, "content", None)
+                                if not content or not content.strip():
+                                    msg.content = rc
+                                    logger.debug(
+                                        "[SDK Patch] Injected reasoning_content into empty sync response content"
+                                    )
+                                break
+                except Exception:
+                    pass  # Never let caching break the main flow
+
+            return response
+
+        litellm.completion = _patched_completion
+        logger.info("Applied SDK patch: litellm.completion (Kimi/Moonshot reasoning_content sync)")
+
 
 def remove_sdk_patches() -> None:
     """
@@ -313,7 +356,7 @@ def remove_sdk_patches() -> None:
 
     Useful for testing or when patches are no longer needed.
     """
-    global _original_items_to_messages, _original_acompletion
+    global _original_items_to_messages, _original_acompletion, _original_completion
 
     import litellm
     from agents.models.chatcmpl_converter import Converter
@@ -327,5 +370,10 @@ def remove_sdk_patches() -> None:
         litellm.acompletion = _original_acompletion
         _original_acompletion = None
         logger.info("Removed SDK patch: litellm.acompletion")
+
+    if _original_completion is not None:
+        litellm.completion = _original_completion
+        _original_completion = None
+        logger.info("Removed SDK patch: litellm.completion")
 
     _reasoning_content_cache.clear()

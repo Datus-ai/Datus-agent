@@ -227,8 +227,8 @@ class TestKimiModel:
     def test_generate_basic(self):
         """Test basic text generation functionality."""
         # Kimi/Moonshot API requires temperature=1 for this model; use model config default
-        # kimi-k2.5 is a reasoning model: may return empty content for trivial prompts
-        # when reasoning_content is not exposed by litellm. Use a substantive prompt.
+        # kimi-k2.5 is a reasoning model: reasoning_content is injected into content
+        # by sdk_patches when litellm.completion returns empty content.
         result = self.model.generate(
             "Explain what SQL JOIN does in exactly two sentences.",
             max_tokens=200,
@@ -236,8 +236,7 @@ class TestKimiModel:
 
         assert result is not None, "Response should not be None"
         assert isinstance(result, str), "Response should be a string"
-        if len(result) == 0:
-            pytest.skip("Kimi returned empty response (reasoning model may keep response in thinking tokens)")
+        assert len(result) > 0, "Response should not be empty"
 
         logger.info(f"Kimi generated response: {result}")
 
