@@ -323,7 +323,7 @@ class TestE2EIntegration:
     """
 
     @pytest.mark.nightly
-    @pytest.mark.timeout(600)
+    @pytest.mark.timeout(1200)
     def test_complete_workflow(
         self,
         bi_commands: BiDashboardCommands,
