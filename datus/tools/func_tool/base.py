@@ -3,11 +3,16 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 # -*- coding: utf-8 -*-
+import inspect
 import json
 from typing import Any, Callable, Optional
 
 from agents import FunctionTool, function_tool
 from pydantic import BaseModel, Field
+
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
 
 
 class FuncToolResult(BaseModel):
@@ -51,12 +56,23 @@ def trans_to_function_tool(bound_method: Callable) -> FunctionTool:
                 return {"success": 0, "error": "Invalid JSON arguments", "result": None}
 
             # Call sync or async bound methods transparently
-            import inspect
-
             if inspect.ismethod(method_to_call):
                 tool = method_to_call.__self__
                 if hasattr(tool, "set_tool_context"):
                     tool.set_tool_context(tool_ctx)
+
+            # Filter out unexpected parameters that LLM may hallucinate
+            sig = inspect.signature(method_to_call)
+            valid_params = set(sig.parameters.keys()) - {"self"}
+            has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+            if not has_var_keyword:
+                extra_params = set(args_dict.keys()) - valid_params
+                if extra_params:
+                    logger.warning(
+                        f"Tool '{method_to_call.__name__}' received unexpected parameters "
+                        f"{extra_params}, filtering them out"
+                    )
+                    args_dict = {k: v for k, v in args_dict.items() if k in valid_params}
 
             if inspect.iscoroutinefunction(method_to_call):
                 result = await method_to_call(**args_dict)
