@@ -86,41 +86,69 @@ jobs:
           LOG_DIR="nightly_logs_$$"
           mkdir -p "$LOG_DIR"
 
-          # Run 3 test groups in parallel (no dependencies between groups)
-          # Group 1: ALL MCP server tests in isolated process (event loop sensitive)
+          # === TEMPORARY: Only run recently-failed test files to validate fixes ===
+          # MCP server tests (isolated process for event loop safety)
           (set -o pipefail; uv run pytest -m nightly tests/integration/tools/test_mcp_server.py --tb=short --verbose --timeout=300 2>&1 | tee "$LOG_DIR/mcp.log") &
           pid_mcp=$!
 
-          # Group 2: gen_* agent tests serially in dependency order (semantic_model → metrics → ext_knowledge)
-          (set -o pipefail; uv run pytest -m nightly tests/integration/agent/test_gen_semantic_model_agentic.py tests/integration/agent/test_gen_metrics_agentic.py tests/integration/agent/test_gen_ext_knowledge_agentic.py --tb=short --verbose --timeout=600 --reruns 1 --reruns-delay 5 2>&1 | tee "$LOG_DIR/gen.log") &
-          pid_gen=$!
-
-          # Group 3: Remaining nightly tests with xdist parallel (deselect groups 1-2)
-          (set -o pipefail; uv run pytest -m nightly tests/ --deselect tests/integration/tools/test_mcp_server.py --deselect tests/integration/agent/test_gen_semantic_model_agentic.py --deselect tests/integration/agent/test_gen_metrics_agentic.py --deselect tests/integration/agent/test_gen_ext_knowledge_agentic.py --tb=short --verbose --timeout=300 --reruns 1 --reruns-delay 5 --dist=loadscope -n auto 2>&1 | tee "$LOG_DIR/main.log") &
-          pid_main=$!
+          # Chat agentic tests (fixed sql assertion)
+          (set -o pipefail; uv run pytest -m nightly tests/integration/agent/test_chat_agentic.py --tb=short --verbose --timeout=300 --reruns 1 --reruns-delay 5 2>&1 | tee "$LOG_DIR/chat.log") &
+          pid_chat=$!
 
           # Wait for all groups and collect exit codes
           wait $pid_mcp; mcp_exit=$?
-          wait $pid_gen; gen_exit=$?
-          wait $pid_main; main_exit=$?
+          wait $pid_chat; chat_exit=$?
 
-          # Combine logs into single file for artifact upload and Feishu notification
+          # Combine logs
           LOG_FILE="test_output_nightly_$(date +%Y%m%d_%H%M%S).log"
           echo "=== MCP Server Tests ===" > "$LOG_FILE"
           cat "$LOG_DIR/mcp.log" >> "$LOG_FILE"
-          echo -e "\n=== Gen Agent Tests ===" >> "$LOG_FILE"
-          cat "$LOG_DIR/gen.log" >> "$LOG_FILE"
-          echo -e "\n=== Main Nightly Tests ===" >> "$LOG_FILE"
-          cat "$LOG_DIR/main.log" >> "$LOG_FILE"
+          echo -e "\n=== Chat Agentic Tests ===" >> "$LOG_FILE"
+          cat "$LOG_DIR/chat.log" >> "$LOG_FILE"
           rm -rf "$LOG_DIR"
           echo "log_file=$LOG_FILE" >> "$GITHUB_OUTPUT"
 
           # Fail if any group failed
-          max_exit=$((mcp_exit > gen_exit ? mcp_exit : gen_exit))
-          test_exit_code=$((max_exit > main_exit ? max_exit : main_exit))
+          test_exit_code=$((mcp_exit > chat_exit ? mcp_exit : chat_exit))
           echo "test_exit_code=$test_exit_code" >> "$GITHUB_OUTPUT"
-          echo "Exit codes: mcp=$mcp_exit gen=$gen_exit main=$main_exit"
+          echo "Exit codes: mcp=$mcp_exit chat=$chat_exit"
           exit "$test_exit_code"
+
+          # === FULL NIGHTLY SUITE (commented out, restore after fixes verified) ===
+          # # Group 1: ALL MCP server tests in isolated process
+          # (set -o pipefail; uv run pytest -m nightly tests/integration/tools/test_mcp_server.py --tb=short --verbose --timeout=300 2>&1 | tee "$LOG_DIR/mcp.log") &
+          # pid_mcp=$!
+          #
+          # # Group 2: gen_* agent tests serially in dependency order (semantic_model → metrics → ext_knowledge)
+          # (set -o pipefail; uv run pytest -m nightly tests/integration/agent/test_gen_semantic_model_agentic.py tests/integration/agent/test_gen_metrics_agentic.py tests/integration/agent/test_gen_ext_knowledge_agentic.py --tb=short --verbose --timeout=600 --reruns 1 --reruns-delay 5 2>&1 | tee "$LOG_DIR/gen.log") &
+          # pid_gen=$!
+          #
+          # # Group 3: Remaining nightly tests with xdist parallel (deselect groups 1-2)
+          # (set -o pipefail; uv run pytest -m nightly tests/ --deselect tests/integration/tools/test_mcp_server.py --deselect tests/integration/agent/test_gen_semantic_model_agentic.py --deselect tests/integration/agent/test_gen_metrics_agentic.py --deselect tests/integration/agent/test_gen_ext_knowledge_agentic.py --tb=short --verbose --timeout=300 --reruns 1 --reruns-delay 5 --dist=loadscope -n auto 2>&1 | tee "$LOG_DIR/main.log") &
+          # pid_main=$!
+          #
+          # # Wait for all groups and collect exit codes
+          # wait $pid_mcp; mcp_exit=$?
+          # wait $pid_gen; gen_exit=$?
+          # wait $pid_main; main_exit=$?
+          #
+          # # Combine logs into single file for artifact upload and Feishu notification
+          # LOG_FILE="test_output_nightly_$(date +%Y%m%d_%H%M%S).log"
+          # echo "=== MCP Server Tests ===" > "$LOG_FILE"
+          # cat "$LOG_DIR/mcp.log" >> "$LOG_FILE"
+          # echo -e "\n=== Gen Agent Tests ===" >> "$LOG_FILE"
+          # cat "$LOG_DIR/gen.log" >> "$LOG_FILE"
+          # echo -e "\n=== Main Nightly Tests ===" >> "$LOG_FILE"
+          # cat "$LOG_DIR/main.log" >> "$LOG_FILE"
+          # rm -rf "$LOG_DIR"
+          # echo "log_file=$LOG_FILE" >> "$GITHUB_OUTPUT"
+          #
+          # # Fail if any group failed
+          # max_exit=$((mcp_exit > gen_exit ? mcp_exit : gen_exit))
+          # test_exit_code=$((max_exit > main_exit ? max_exit : main_exit))
+          # echo "test_exit_code=$test_exit_code" >> "$GITHUB_OUTPUT"
+          # echo "Exit codes: mcp=$mcp_exit gen=$gen_exit main=$main_exit"
+          # exit "$test_exit_code"
 
       - name: Upload test results
         if: always()

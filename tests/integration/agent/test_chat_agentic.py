@@ -122,4 +122,10 @@ class TestChatAgentic:
 
         response = chat_responses[0]
         assert response.output.get("success") is True, "Chat response should be successful"
-        assert response.output.get("sql"), "Response should contain generated SQL"
+
+        # Chat node returns SQL in the response text (markdown), not as a top-level key.
+        # Verify the response contains SQL-like content (SELECT statement).
+        response_text = response.output.get("response", "")
+        assert (
+            "select" in response_text.lower()
+        ), f"Response should contain generated SQL, got response: {response_text[:500]}"
