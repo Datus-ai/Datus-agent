@@ -30,37 +30,3 @@
           FROM public.wb_health_population
           WHERE year >= TO_TIMESTAMP('2011-01-01 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND year < TO_TIMESTAMP('2011-01-02 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') GROUP BY region, country_name
            LIMIT 50000;
-
-- input:
-    platform: superset
-    dashboard_url: http://127.0.0.1:8088/superset/dashboard/births/
-    api_base_url: http://127.0.0.1:8088
-    dialect: postgresql
-    valid_charts:
-      - name: "Genders by State"
-        sql: >
-          SELECT ds AS __timestamp, state AS state, sum(num_boys) AS "Boys", sum(num_girls) AS "Girls" 
-          FROM public.birth_names JOIN (SELECT state AS state__, sum(num_boys) AS mme_inner__ 
-          FROM public.birth_names 
-          WHERE (state NOT IN ('other')) AND ds >= TO_TIMESTAMP('1926-01-25 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND ds < TO_TIMESTAMP('2026-01-25 09:51:52.000000', 'YYYY-MM-DD HH24:MI:SS.US') GROUP BY state ORDER BY mme_inner__ DESC 
-           LIMIT 25) AS series_limit ON state = state__ 
-          WHERE ds >= TO_TIMESTAMP('1926-01-25 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND ds < TO_TIMESTAMP('2026-01-25 09:51:52.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND (state NOT IN ('other')) GROUP BY state, ds ORDER BY "Boys" DESC 
-           LIMIT 50000;
-      - name: "Top 10 Boy Name Share"
-        sql: >
-          SELECT DATE_TRUNC('day', ds) AS __timestamp, name AS name, sum(num) AS "Births" 
-          FROM public.birth_names JOIN (SELECT name AS name__, sum(num) AS mme_inner__ 
-          FROM public.birth_names 
-          WHERE gender = 'boy' AND ds >= TO_TIMESTAMP('1926-01-25 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND ds < TO_TIMESTAMP('2026-01-25 09:50:19.000000', 'YYYY-MM-DD HH24:MI:SS.US') GROUP BY name ORDER BY mme_inner__ DESC 
-           LIMIT 10) AS series_limit ON name = name__ 
-          WHERE ds >= TO_TIMESTAMP('1926-01-25 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND ds < TO_TIMESTAMP('2026-01-25 09:50:19.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND gender = 'boy' GROUP BY name, DATE_TRUNC('day', ds) ORDER BY "Births" DESC 
-           LIMIT 50000;
-      - name: "Top 10 Girl Name Share"
-        sql: >
-          SELECT DATE_TRUNC('day', ds) AS __timestamp, name AS name, sum(num) AS "Births" 
-          FROM public.birth_names JOIN (SELECT name AS name__, sum(num) AS mme_inner__ 
-          FROM public.birth_names 
-          WHERE gender = 'girl' AND ds >= TO_TIMESTAMP('1926-01-25 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND ds < TO_TIMESTAMP('2026-01-25 09:50:53.000000', 'YYYY-MM-DD HH24:MI:SS.US') GROUP BY name ORDER BY mme_inner__ DESC 
-           LIMIT 10) AS series_limit ON name = name__ 
-          WHERE ds >= TO_TIMESTAMP('1926-01-25 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND ds < TO_TIMESTAMP('2026-01-25 09:50:53.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND gender = 'girl' GROUP BY name, DATE_TRUNC('day', ds) ORDER BY "Births" DESC 
-           LIMIT 50000;

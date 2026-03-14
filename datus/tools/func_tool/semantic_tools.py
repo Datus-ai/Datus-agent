@@ -436,6 +436,15 @@ class SemanticTools:
                 error="No semantic adapter configured. Cannot execute queries without adapter.",
             )
 
+        # Sanitize time parameters: LLM may pass string "null"/"None" instead of omitting
+        def _sanitize_time(val: Optional[str]) -> Optional[str]:
+            if val is None or (isinstance(val, str) and val.strip().lower() in ("null", "none", "")):
+                return None
+            return val
+
+        time_start = _sanitize_time(time_start)
+        time_end = _sanitize_time(time_end)
+
         try:
             # Execute query via adapter
             result = _run_async(

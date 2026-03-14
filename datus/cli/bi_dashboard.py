@@ -707,9 +707,10 @@ class BiDashboardCommands:
             global_config=self.agent_config,
             build_mode="incremental",
             sql_dir=str(sql_dir),
-            subject_tree=None,
+            subject_tree=subject_tree_hint,
             emit=stream_handler.handle_event,
             extra_instructions=extra_instructions,
+            pool_size=3,
         )
         output_mgr.stop()
 
