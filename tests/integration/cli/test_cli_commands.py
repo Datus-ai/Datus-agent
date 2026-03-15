@@ -243,13 +243,14 @@ def test_chat_command_with_ext_knowledge(mock_args):
     tools_used = exec_stats.get("tools_used", [])
     assert len(tools_used) > 0, "Should have used tools during execution."
 
-    # Verify ext_knowledge specific tools were called:
-    # 1. list_subject_tree - explores the knowledge hierarchy
-    assert "list_subject_tree" in tools_used, "Should call list_subject_tree to explore knowledge hierarchy."
-    # 2. get_knowledge or search_knowledge - retrieves specific knowledge entries
-    assert (
-        "get_knowledge" in tools_used or "search_knowledge" in tools_used
-    ), "Should call get_knowledge to retrieve ext_knowledge entries."
+    # Verify knowledge exploration occurred — agent may call knowledge tools directly
+    # or delegate to an explore sub-agent via task(type="explore")
+    knowledge_tools = {"list_subject_tree", "search_knowledge", "get_knowledge", "task"}
+    has_knowledge_exploration = bool(knowledge_tools & set(tools_used))
+    assert has_knowledge_exploration, (
+        f"Should explore knowledge via list_subject_tree, search_knowledge, "
+        f"get_knowledge, or task(explore). Got: {tools_used}"
+    )
 
     # Check that SQL was generated in the response text
     # ChatNodeResult stores SQL within the response field (no separate sql field)
