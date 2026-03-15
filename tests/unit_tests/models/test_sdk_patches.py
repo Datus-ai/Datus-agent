@@ -475,3 +475,38 @@ class TestPatchedCompletionSync:
             remove_sdk_patches()
             litellm.completion = original_real
             _reasoning_content_cache.clear()
+
+    def test_patched_completion_handles_exception_in_caching(self):
+        """Patched litellm.completion silently handles exceptions in reasoning_content caching."""
+        import litellm
+
+        remove_sdk_patches()
+        _reasoning_content_cache.clear()
+
+        class BrokenMessage:
+            content = "answer"
+
+            @property
+            def reasoning_content(self):
+                raise RuntimeError("Broken attribute access")
+
+        class BrokenChoice:
+            message = BrokenMessage()
+
+        class BrokenResponse:
+            choices = [BrokenChoice()]
+
+        original_real = litellm.completion
+        litellm.completion = lambda *args, **kwargs: BrokenResponse()
+
+        try:
+            apply_sdk_patches()
+            # Should not raise despite broken reasoning_content property
+            result = litellm.completion(model="kimi-broken", messages=[{"role": "user", "content": "hi"}])
+            assert result.choices[0].message.content == "answer"
+            # Cache should not contain the broken model
+            assert "kimi-broken" not in _reasoning_content_cache
+        finally:
+            remove_sdk_patches()
+            litellm.completion = original_real
+            _reasoning_content_cache.clear()
