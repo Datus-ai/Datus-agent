@@ -308,7 +308,7 @@ class TestStaticModeHTTPStreamable(StaticModeTestBase):
     async def static_server(self):
         """Start a static-mode MCP server for ssb_sqlite namespace."""
         port = find_free_port()
-        server = DatusMCPServer(namespace="ssb_sqlite", config_path=CONFIG_PATH)
+        server = DatusMCPServer(namespace="ssb_sqlite", config_path=CONFIG_PATH, stateless_http=True)
         app = server.get_streamable_http_app()
         uvi_server, task = await start_uvicorn(app, port)
         self.port = port
@@ -484,7 +484,7 @@ class TestMCPClient:
     async def mcp_server(self):
         """Start a static-mode MCP server for ssb_sqlite namespace."""
         port = find_free_port()
-        server = DatusMCPServer(namespace="ssb_sqlite", config_path=CONFIG_PATH)
+        server = DatusMCPServer(namespace="ssb_sqlite", config_path=CONFIG_PATH, stateless_http=True)
         app = server.get_streamable_http_app()
         uvi_server, task = await start_uvicorn(app, port)
         self.url = f"http://127.0.0.1:{port}/mcp"
