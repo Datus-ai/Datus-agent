@@ -85,7 +85,7 @@ jobs:
           path: |
             ${{ github.workspace }}/.datus_test_data/data/datus_db_bird_school
             ${{ github.workspace }}/.datus_test_data/data/datus_db_ssb_sqlite
-          key: ${{ runner.os }}-kb-${{ hashFiles('build_scripts/build_test_data.sh', 'tests/conf/agent.yml', 'sample_data/**', 'datus/storage/**/*.py') }}
+          key: ${{ runner.os }}-kb-${{ hashFiles('build_scripts/build_test_data.sh', 'sample_data/**', 'datus/storage/**/*.py') }}
           restore-keys: |
             ${{ runner.os }}-kb-
 
