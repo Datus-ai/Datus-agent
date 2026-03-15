@@ -88,7 +88,7 @@ jobs:
 
           # Run all 3 test groups in parallel (no dependencies between groups)
           # Group 1: ALL MCP server tests in isolated process (event loop sensitive)
-          (set -o pipefail; uv run pytest -m nightly tests/integration/tools/test_mcp_server.py --tb=short --verbose --timeout=300 2>&1 | tee "$LOG_DIR/mcp.log") &
+          (set -o pipefail; uv run pytest -m nightly tests/integration/tools/test_mcp_server.py --tb=short --verbose --timeout=60 2>&1 | tee "$LOG_DIR/mcp.log") &
           pid_mcp=$!
 
           # Group 2: gen_* agent tests serially in dependency order (semantic_model → metrics → ext_knowledge)
