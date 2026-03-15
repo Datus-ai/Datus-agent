@@ -56,11 +56,10 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Cache knowledge base data
+      - name: Restore knowledge base cache
         id: kb-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
-          save-always: true
           path: |
             ${{ github.workspace }}/.datus_test_data/data/datus_db_bird_school
             ${{ github.workspace }}/.datus_test_data/data/datus_db_ssb_sqlite
@@ -69,12 +68,22 @@ jobs:
             ${{ runner.os }}-kb-
 
       - name: Build test data
+        id: build-test-data
         if: steps.kb-cache.outputs.cache-hit != 'true'
         run: |
           echo "Building test data before running nightly tests..."
           chmod +x build_scripts/build_test_data.sh
           ./build_scripts/build_test_data.sh || exit 1
           echo "Test data build completed"
+
+      - name: Save knowledge base cache
+        if: steps.build-test-data.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.datus_test_data/data/datus_db_bird_school
+            ${{ github.workspace }}/.datus_test_data/data/datus_db_ssb_sqlite
+          key: ${{ runner.os }}-kb-${{ hashFiles('build_scripts/build_test_data.sh', 'sample_data/**', 'datus/storage/**/*.py') }}
 
       - name: Verify FEISHU_WEBHOOK_URL
         env:
