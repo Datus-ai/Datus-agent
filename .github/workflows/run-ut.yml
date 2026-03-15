@@ -25,6 +25,14 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
+      - name: Clean up stale temp files
+        run: |
+          echo "Cleaning stale pytest temp directories..."
+          find /tmp/pytest-of-* -maxdepth 1 -type d -mtime +1 -exec rm -rf {} + 2>/dev/null || true
+          echo "Cleaning stale .pyc caches..."
+          find "$GITHUB_WORKSPACE" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+          echo "Disk usage: $(df -h /tmp | tail -1 | awk '{print $5, $4}')"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
