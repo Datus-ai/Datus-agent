@@ -66,8 +66,7 @@ class DynamicLogManager:
 
     def _setup_handlers(self):
         """Set up file and console handlers"""
-        if not os.path.exists(self.log_dir):
-            os.makedirs(self.log_dir)
+        os.makedirs(self.log_dir, exist_ok=True)
 
         # Create file handler
         from datetime import datetime
