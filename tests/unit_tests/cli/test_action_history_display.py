@@ -4082,14 +4082,15 @@ class TestToolSpecificFormatters:
         assert "hello" not in combined
 
     def test_fmt_args_write_file(self):
-        """write_file args show line count instead of full content."""
+        """write_file args show path, line count, and diff-style green + lines."""
         gen = self._gen()
         args = {"path": "test.py", "content": "line1\nline2\nline3\n"}
         lines = gen._fmt_args_write_file(args, "    ")
         combined = "\n".join(lines)
         assert "test.py" in combined
         assert "3 lines" in combined
-        assert "line1" not in combined
+        assert "[green]+ line1[/green]" in combined
+        assert "[green]+ line2[/green]" in combined
 
     def test_fmt_args_edit_file_diff(self):
         """edit_file args show diff-style old/new text."""

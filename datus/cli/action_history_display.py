@@ -762,7 +762,7 @@ class ActionContentGenerator(BaseActionContentGenerator):
         lines = []
         query = args.get("query_text", "")
         if query:
-            lines.append(f"{indent}[italic]\"{query}\"[/italic]")
+            lines.append(f'{indent}[italic]"{query}"[/italic]')
         # Show non-empty, non-default args
         skip_keys = {"query_text"}
         for k, v in args.items():
@@ -1311,9 +1311,7 @@ class ActionHistoryDisplay:
                                 pass
                         if isinstance(args, dict):
                             for k, v in args.items():
-                                self.console.print(
-                                    f"[dim]  ⎿      {rich_escape(str(k))}: {rich_escape(str(v))}[/dim]"
-                                )
+                                self.console.print(f"[dim]  ⎿      {rich_escape(str(k))}: {rich_escape(str(v))}[/dim]")
                         else:
                             self.console.print(f"[dim]  ⎿      args: {rich_escape(str(args))}[/dim]")
                 # Blank line between args and output
