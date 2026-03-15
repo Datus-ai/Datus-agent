@@ -1,5 +1,5 @@
 """
-Test cases for SemanticTools.query_metrics compression.
+Test cases for SemanticTools utility functions and query_metrics compression.
 """
 
 from unittest.mock import Mock, patch
@@ -7,7 +7,44 @@ from unittest.mock import Mock, patch
 import pytest
 
 from datus.tools.func_tool.base import FuncToolResult
+from datus.tools.func_tool.semantic_tools import _normalize_null
 from datus.tools.semantic_tools.models import QueryResult
+
+
+class TestNormalizeNull:
+    """Tests for _normalize_null utility function."""
+
+    def test_none_returns_none(self):
+        assert _normalize_null(None) is None
+
+    def test_string_null_returns_none(self):
+        assert _normalize_null("null") is None
+
+    def test_string_none_returns_none(self):
+        assert _normalize_null("None") is None
+
+    def test_case_insensitive_null(self):
+        assert _normalize_null("NULL") is None
+        assert _normalize_null("Null") is None
+
+    def test_case_insensitive_none(self):
+        assert _normalize_null("NONE") is None
+        assert _normalize_null("none") is None
+
+    def test_empty_string_returns_none(self):
+        assert _normalize_null("") is None
+
+    def test_whitespace_only_returns_none(self):
+        assert _normalize_null("  ") is None
+        assert _normalize_null("\t") is None
+
+    def test_valid_value_passes_through(self):
+        assert _normalize_null("2024-01-01") == "2024-01-01"
+        assert _normalize_null("hello") == "hello"
+
+    def test_numeric_value_passes_through(self):
+        assert _normalize_null(42) == 42
+        assert _normalize_null(0) == 0
 
 
 @pytest.fixture

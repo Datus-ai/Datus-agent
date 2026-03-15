@@ -476,8 +476,8 @@ class TestPatchedCompletionSync:
             litellm.completion = original_real
             _reasoning_content_cache.clear()
 
-    def test_patched_completion_handles_exception_in_caching(self):
-        """Patched litellm.completion silently handles exceptions in reasoning_content caching."""
+    def test_patched_completion_handles_exception_in_caching_logs_debug(self):
+        """Patched litellm.completion logs debug message when caching fails."""
         import litellm
 
         remove_sdk_patches()
@@ -509,4 +509,47 @@ class TestPatchedCompletionSync:
         finally:
             remove_sdk_patches()
             litellm.completion = original_real
+            _reasoning_content_cache.clear()
+
+
+class TestPatchedAcompletionAsync:
+    """Tests for the async litellm.acompletion patch (Kimi reasoning_content)."""
+
+    @pytest.mark.asyncio
+    async def test_patched_acompletion_handles_exception_in_caching(self):
+        """Patched litellm.acompletion logs debug when caching fails."""
+        import litellm
+
+        remove_sdk_patches()
+        _reasoning_content_cache.clear()
+
+        class BrokenMessage:
+            content = "answer"
+
+            @property
+            def reasoning_content(self):
+                raise RuntimeError("Broken attribute access")
+
+        class BrokenChoice:
+            message = BrokenMessage()
+
+        class BrokenResponse:
+            choices = [BrokenChoice()]
+
+        original_real = litellm.acompletion
+
+        async def fake_acompletion(*args, **kwargs):
+            return BrokenResponse()
+
+        litellm.acompletion = fake_acompletion
+
+        try:
+            apply_sdk_patches()
+            # Should not raise despite broken reasoning_content property
+            result = await litellm.acompletion(model="kimi-broken-async", messages=[{"role": "user", "content": "hi"}])
+            assert result.choices[0].message.content == "answer"
+            assert "kimi-broken-async" not in _reasoning_content_cache
+        finally:
+            remove_sdk_patches()
+            litellm.acompletion = original_real
             _reasoning_content_cache.clear()
