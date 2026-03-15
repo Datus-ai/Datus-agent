@@ -35,7 +35,10 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 
 from datus.mcp_server import DatusMCPServer, create_dynamic_app, create_server
+from datus.utils.loggings import get_logger
 from mcp import ClientSession
+
+logger = get_logger(__name__)
 
 CONFIG_PATH = str(Path(__file__).resolve().parents[3] / "tests" / "conf" / "agent.yml")
 
@@ -68,8 +71,21 @@ async def start_uvicorn(app, port: int) -> tuple:
 
     Returns (server, task) tuple. The server is ready to accept connections
     when this function returns.
+
+    Uses timeout_graceful_shutdown=5 so that uvicorn's shutdown() does not
+    wait indefinitely for lingering HTTP connections/tasks before triggering
+    ASGI lifespan shutdown (which cancels StreamableHTTPSessionManager tasks).
+    Without this, shutdown() step 2 (_wait_tasks_to_complete) deadlocks with
+    step 3 (lifespan.shutdown) — connections can only close after the session
+    manager cancels them, but the session manager only runs during lifespan exit.
     """
-    config = uvicorn.Config(app=app, host="127.0.0.1", port=port, log_level="warning")
+    config = uvicorn.Config(
+        app=app,
+        host="127.0.0.1",
+        port=port,
+        log_level="warning",
+        timeout_graceful_shutdown=5,
+    )
     server = uvicorn.Server(config)
     task = asyncio.create_task(server.serve())
     # Wait for server to start accepting connections
@@ -80,6 +96,26 @@ async def start_uvicorn(app, port: int) -> tuple:
     if not server.started:
         raise RuntimeError(f"uvicorn server failed to start on port {port}")
     return server, task
+
+
+async def stop_uvicorn(uvi_server, task, timeout: float = 10.0):
+    """Gracefully stop a uvicorn server with timeout and forced cancellation.
+
+    Sets should_exit, then awaits the server task with a timeout.
+    Even with timeout_graceful_shutdown configured in uvicorn, we keep this
+    as a safety net — if lifespan shutdown itself hangs, we force-cancel the
+    entire task to prevent the fixture from blocking indefinitely.
+    """
+    uvi_server.should_exit = True
+    try:
+        await asyncio.wait_for(task, timeout=timeout)
+    except asyncio.TimeoutError:
+        logger.warning("uvicorn task did not finish within %.1fs, force-cancelling", timeout)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 @asynccontextmanager
@@ -314,8 +350,7 @@ class TestStaticModeHTTPStreamable(StaticModeTestBase):
         self.port = port
         self.url = f"http://127.0.0.1:{port}/mcp"
         yield
-        uvi_server.should_exit = True
-        await task
+        await stop_uvicorn(uvi_server, task)
         server.close()
 
     def _session(self):
@@ -342,8 +377,7 @@ class TestStaticModeSSE(StaticModeTestBase):
         self.port = port
         self.url = f"http://127.0.0.1:{port}/sse"
         yield
-        uvi_server.should_exit = True
-        await task
+        await stop_uvicorn(uvi_server, task)
         server.close()
 
     def _session(self):
@@ -430,8 +464,7 @@ class TestDynamicModeHTTPStreamable(DynamicModeTestBase):
         self.ssb_url = f"http://127.0.0.1:{port}/mcp/ssb_sqlite"
         self.duckdb_url = f"http://127.0.0.1:{port}/mcp/duckdb"
         yield
-        uvi_server.should_exit = True
-        await task
+        await stop_uvicorn(uvi_server, task)
 
     def _ssb_session(self):
         return mcp_http_session(self.ssb_url)
@@ -460,8 +493,7 @@ class TestDynamicModeSSE(DynamicModeTestBase):
         self.ssb_url = f"http://127.0.0.1:{port}/sse/ssb_sqlite"
         self.duckdb_url = f"http://127.0.0.1:{port}/sse/duckdb"
         yield
-        uvi_server.should_exit = True
-        await task
+        await stop_uvicorn(uvi_server, task)
 
     def _ssb_session(self):
         return mcp_sse_session(self.ssb_url)
@@ -489,8 +521,7 @@ class TestMCPClient:
         uvi_server, task = await start_uvicorn(app, port)
         self.url = f"http://127.0.0.1:{port}/mcp"
         yield
-        uvi_server.should_exit = True
-        await task
+        await stop_uvicorn(uvi_server, task)
         server.close()
 
     async def test_context_tool_list_subject_tree(self):
