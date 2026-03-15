@@ -60,6 +60,7 @@ jobs:
         id: kb-cache
         uses: actions/cache@v4
         with:
+          save-always: true
           path: |
             ${{ github.workspace }}/.datus_test_data/data/datus_db_bird_school
             ${{ github.workspace }}/.datus_test_data/data/datus_db_ssb_sqlite
