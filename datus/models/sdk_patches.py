@@ -299,8 +299,8 @@ def apply_sdk_patches() -> None:
                                         f"model={model}, length={len(rc)}"
                                     )
                                     break
-                    except Exception:
-                        pass  # Never let caching break the main flow
+                    except Exception as e:
+                        logger.debug(f"[SDK Patch] Failed to cache reasoning_content from async response: {e}")
 
             return response
 
@@ -341,8 +341,8 @@ def apply_sdk_patches() -> None:
                                         "[SDK Patch] Injected reasoning_content into empty sync response content"
                                     )
                                 break
-                except Exception:
-                    pass  # Never let caching break the main flow
+                except Exception as e:
+                    logger.debug(f"[SDK Patch] Failed to cache reasoning_content from sync response: {e}")
 
             return response
 
