@@ -2060,7 +2060,7 @@ class TestActionContentGeneratorFormatInlineExpanded:
         )
         lines = gen.format_inline_expanded(action)
         assert any("read_query" in line for line in lines)
-        assert any("sql: SELECT 1" in line for line in lines)
+        assert any("SELECT" in line for line in lines)
         assert any("limit: 10" in line for line in lines)
         assert any("✓" in line for line in lines)
         assert any("1.5s" in line for line in lines)
@@ -3266,7 +3266,7 @@ class TestRenderSubagentOtherRoles:
         )
         display._render_subagent_action(action, verbose=True)
         output = buf.getvalue()
-        assert "sql: SELECT 1" in output
+        assert "SELECT 1" in output
 
 
 # ── InlineStreamingContext ─────────────────────────────────────────
@@ -3521,7 +3521,7 @@ class TestInlineStreamingContextProcess:
         )
         ctx._print_completed_action(action)
         output = buf.getvalue()
-        assert "sql: SELECT 1" in output
+        assert "SELECT 1" in output
 
     def test_print_completed_empty_lines_skipped(self):
         """_print_completed_action does nothing for roles that return empty lines."""
@@ -3706,6 +3706,610 @@ class TestEndSubagentGroupByKey:
         end_action = _make_action(ActionRole.SYSTEM, ActionStatus.SUCCESS, end_time=datetime.now())
         ctx._end_subagent_group_by_key(None, end_action)
         assert None not in ctx._completed_group_ids
+
+
+@pytest.mark.ci
+class TestExtractResultData:
+    """Tests for ActionContentGenerator._extract_result_data."""
+
+    def test_none_returns_none(self):
+        assert ActionContentGenerator._extract_result_data(None) is None
+
+    def test_empty_string_returns_none(self):
+        assert ActionContentGenerator._extract_result_data("") is None
+
+    def test_invalid_json_string_returns_none(self):
+        assert ActionContentGenerator._extract_result_data("not json") is None
+
+    def test_valid_json_string_with_result(self):
+        import json
+
+        data = json.dumps({"success": 1, "result": [1, 2, 3]})
+        assert ActionContentGenerator._extract_result_data(data) == [1, 2, 3]
+
+    def test_dict_with_raw_output(self):
+        data = {"raw_output": {"success": 1, "result": {"columns": ["a"]}}}
+        assert ActionContentGenerator._extract_result_data(data) == {"columns": ["a"]}
+
+    def test_dict_without_result_returns_raw(self):
+        data = {"raw_output": {"key": "val"}}
+        assert ActionContentGenerator._extract_result_data(data) == {"key": "val"}
+
+    def test_non_dict_non_string_returns_none(self):
+        assert ActionContentGenerator._extract_result_data([1, 2]) is None
+
+
+@pytest.mark.ci
+class TestToolSpecificFormatters:
+    """Tests for tool-specific verbose formatters in ActionContentGenerator."""
+
+    def _gen(self):
+        return ActionContentGenerator()
+
+    def test_dispatcher_routes_to_read_query(self):
+        gen = self._gen()
+        output = {
+            "raw_output": {"success": 1, "result": {"columns": ["id", "name"], "data": [[1, "Alice"]], "row_count": 1}}
+        }
+        lines = gen._format_tool_output_verbose_by_type("read_query", output)
+        combined = "\n".join(lines)
+        assert "id" in combined
+        assert "name" in combined
+        assert "Alice" in combined
+        assert "1 rows returned" in combined
+
+    def test_dispatcher_unknown_tool_falls_back(self):
+        gen = self._gen()
+        output = {"raw_output": {"success": 1, "result": {"foo": "bar"}}}
+        lines = gen._format_tool_output_verbose_by_type("unknown_tool_xyz", output)
+        assert len(lines) > 0
+
+    def test_dispatcher_none_data_falls_back(self):
+        gen = self._gen()
+        lines = gen._format_tool_output_verbose_by_type("read_query", "not parseable")
+        assert len(lines) > 0
+
+    def test_fmt_read_query_basic(self):
+        gen = self._gen()
+        data = {"columns": ["x", "y"], "data": [[1, 2], [3, 4]], "row_count": 2}
+        lines = gen._fmt_read_query(data, "    ")
+        combined = "\n".join(lines)
+        assert "x" in combined
+        assert "y" in combined
+        assert "2 rows returned" in combined
+
+    def test_fmt_read_query_many_rows_truncated(self):
+        gen = self._gen()
+        data = {"columns": ["v"], "data": [[i] for i in range(30)], "row_count": 30}
+        lines = gen._fmt_read_query(data, "    ")
+        combined = "\n".join(lines)
+        assert "+10 more" in combined
+        assert "30 rows returned" in combined
+
+    def test_fmt_read_query_no_columns(self):
+        gen = self._gen()
+        assert gen._fmt_read_query({"data": [[1]]}, "    ") == []
+
+    def test_fmt_read_query_compressed_csv(self):
+        """read_query with compressed format (DataCompressor output) renders as table."""
+        gen = self._gen()
+        data = {
+            "original_rows": 64,
+            "original_columns": ["name", "type", "count", "total"],
+            "is_compressed": True,
+            "compressed_data": "index,name,type,count,total\n0,A,X,10,20\n1,B,Y,30,40",
+            "removed_columns": [],
+            "compression_type": "rows",
+        }
+        lines = gen._fmt_read_query(data, "    ")
+        combined = "\n".join(lines)
+        assert "64 rows" in combined
+        assert "4 columns" in combined
+        assert "compressed" in combined
+        assert "name" in combined
+        assert "A" in combined
+
+    def test_fmt_read_query_compressed_with_removed_columns(self):
+        """read_query with compressed format shows omitted columns."""
+        gen = self._gen()
+        data = {
+            "original_rows": 100,
+            "original_columns": ["a", "b", "c", "d"],
+            "is_compressed": True,
+            "compressed_data": "a,b\n1,2",
+            "removed_columns": ["c", "d"],
+            "compression_type": "columns",
+        }
+        lines = gen._fmt_read_query(data, "    ")
+        combined = "\n".join(lines)
+        assert "Omitted columns" in combined
+        assert "c" in combined
+        assert "d" in combined
+
+    def test_fmt_read_query_compressed_plain_text(self):
+        """read_query with non-CSV compressed_data renders as plain text."""
+        gen = self._gen()
+        data = {
+            "original_rows": 5,
+            "original_columns": ["x"],
+            "is_compressed": False,
+            "compressed_data": "some plain text result\nwith multiple lines",
+            "removed_columns": [],
+            "compression_type": "none",
+        }
+        lines = gen._fmt_read_query(data, "    ")
+        combined = "\n".join(lines)
+        assert "5 rows" in combined
+        assert "complete" in combined
+        assert "some plain text result" in combined
+
+    def test_fmt_read_query_compressed_via_dispatcher(self):
+        """End-to-end: dispatcher routes compressed read_query output correctly."""
+        gen = self._gen()
+        output = {
+            "raw_output": {
+                "success": 1,
+                "result": {
+                    "original_rows": 10,
+                    "original_columns": ["id", "val"],
+                    "is_compressed": False,
+                    "compressed_data": "id,val\n1,hello\n2,world",
+                    "removed_columns": [],
+                    "compression_type": "none",
+                },
+            }
+        }
+        lines = gen._format_tool_output_verbose_by_type("read_query", output)
+        combined = "\n".join(lines)
+        assert "10 rows" in combined
+        assert "id" in combined
+        assert "hello" in combined
+
+    def test_fmt_list_tables(self):
+        gen = self._gen()
+        data = [{"name": "users", "type": "table"}, {"name": "v_orders", "type": "view"}]
+        lines = gen._fmt_list_tables(data, "  ")
+        assert any("users" in ln for ln in lines)
+        assert any("view" in ln for ln in lines)
+
+    def test_fmt_list_tables_non_list(self):
+        gen = self._gen()
+        assert gen._fmt_list_tables("not a list", "  ") == []
+
+    def test_fmt_list_simple(self):
+        gen = self._gen()
+        data = ["db1", "db2", "db3"]
+        lines = gen._fmt_list_simple(data, "  ")
+        assert len(lines) == 3
+        assert any("db1" in ln for ln in lines)
+
+    def test_fmt_list_simple_many(self):
+        gen = self._gen()
+        data = [f"db{i}" for i in range(15)]
+        lines = gen._fmt_list_simple(data, "  ")
+        assert any("5 more" in ln for ln in lines)
+
+    def test_fmt_describe_table(self):
+        gen = self._gen()
+        data = {
+            "table": {"name": "orders", "description": "Order data"},
+            "columns": [
+                {"name": "id", "type": "INT", "comment": "Primary key"},
+                {"name": "amount", "type": "DECIMAL", "comment": ""},
+            ],
+        }
+        lines = gen._fmt_describe_table(data, "  ")
+        combined = "\n".join(lines)
+        assert "orders" in combined
+        assert "id" in combined
+        assert "DECIMAL" in combined
+
+    def test_fmt_describe_table_no_columns(self):
+        gen = self._gen()
+        data = {"table": {"name": "t"}}
+        lines = gen._fmt_describe_table(data, "  ")
+        assert any("t" in ln for ln in lines)
+
+    def test_fmt_get_table_ddl(self):
+        gen = self._gen()
+        data = {"identifier": "public.orders", "definition": "CREATE TABLE orders (id INT)"}
+        lines = gen._fmt_get_table_ddl(data, "  ")
+        combined = "\n".join(lines)
+        assert "public.orders" in combined
+        assert "CREATE TABLE" in combined
+
+    def test_fmt_search_table(self):
+        gen = self._gen()
+        data = {
+            "metadata": [
+                {"table_name": "orders", "table_type": "table", "description": "Orders", "schema_name": "public"}
+            ],
+            "sample_data": [{"identifier": "orders"}],
+        }
+        lines = gen._fmt_search_table(data, "  ")
+        combined = "\n".join(lines)
+        assert "orders" in combined
+        assert "1 tables with sample data" in combined
+
+    def test_fmt_search_metrics(self):
+        gen = self._gen()
+        data = [
+            {
+                "name": "revenue",
+                "description": "Total rev",
+                "sql_query": "SELECT SUM(amount) FROM orders",
+                "dimensions": ["region"],
+            }
+        ]
+        lines = gen._fmt_search_metrics(data, "  ")
+        combined = "\n".join(lines)
+        assert "revenue" in combined
+        assert "Total rev" in combined
+        assert "region" in combined
+
+    def test_fmt_search_reference_sql(self):
+        gen = self._gen()
+        data = [
+            {
+                "name": "rev_query",
+                "summary": "Revenue by region",
+                "sql": "SELECT region, SUM(amount) FROM orders GROUP BY region",
+                "tags": ["revenue"],
+            }
+        ]
+        lines = gen._fmt_search_reference_sql(data, "  ")
+        combined = "\n".join(lines)
+        assert "rev_query" in combined
+        assert "Revenue by region" in combined
+        assert "revenue" in combined
+
+    def test_fmt_search_knowledge(self):
+        gen = self._gen()
+        data = [{"search_text": "quarterly revenue", "explanation": "Revenue calculated quarterly"}]
+        lines = gen._fmt_search_knowledge(data, "  ")
+        combined = "\n".join(lines)
+        assert "quarterly revenue" in combined
+        assert "Revenue calculated quarterly" in combined
+
+    def test_fmt_search_documents(self):
+        gen = self._gen()
+        data = [{"title": "Doc 1"}, {"title": "Doc 2"}]
+        lines = gen._fmt_search_documents(data, "  ")
+        assert len(lines) == 2
+
+    def test_fmt_search_semantic(self):
+        gen = self._gen()
+        data = [{"kind": "metric", "name": "order_count", "description": "Number of orders"}]
+        lines = gen._fmt_search_semantic(data, "  ")
+        combined = "\n".join(lines)
+        assert "order_count" in combined
+        assert "metric" in combined
+
+    def test_fmt_todo_read(self):
+        gen = self._gen()
+        data = {
+            "message": "Retrieved",
+            "lists": [
+                {"items": [{"content": "Task 1", "status": "completed"}, {"content": "Task 2", "status": "pending"}]}
+            ],
+        }
+        lines = gen._fmt_todo(data, "  ")
+        combined = "\n".join(lines)
+        assert "✅" in combined
+        assert "⏳" in combined
+        assert "Task 1" in combined
+
+    def test_fmt_todo_update(self):
+        gen = self._gen()
+        data = {"message": "Updated", "updated_item": {"content": "Done task", "status": "completed"}}
+        lines = gen._fmt_todo(data, "  ")
+        combined = "\n".join(lines)
+        assert "✅" in combined
+        assert "Done task" in combined
+
+    def test_fmt_date_parse(self):
+        gen = self._gen()
+        data = {
+            "extracted_dates": [
+                {"text": "last month", "type": "relative_date", "start_date": "2026-02-01", "end_date": "2026-02-28"}
+            ],
+            "date_context": "Time range: Feb",
+        }
+        lines = gen._fmt_date_parse(data, "  ")
+        combined = "\n".join(lines)
+        assert "last month" in combined
+        assert "2026-02-01" in combined
+
+    def test_fmt_current_date(self):
+        gen = self._gen()
+        data = {"current_date": "2026-03-13", "is_reference_date": False}
+        lines = gen._fmt_current_date(data, "  ")
+        assert any("2026-03-13" in ln for ln in lines)
+        assert any("current date" in ln for ln in lines)
+
+    def test_fmt_current_date_reference(self):
+        gen = self._gen()
+        data = {"current_date": "2026-01-01", "is_reference_date": True}
+        lines = gen._fmt_current_date(data, "  ")
+        assert any("reference date" in ln for ln in lines)
+
+    def test_formatter_error_falls_back(self):
+        """If a formatter raises an exception, dispatcher falls back to generic."""
+        gen = self._gen()
+        # Provide data that would cause _fmt_read_query to fail (non-dict data)
+        # but wrap in valid FuncToolResult so dispatcher tries it
+        output = {"raw_output": {"success": 1, "result": "invalid_for_read_query"}}
+        lines = gen._format_tool_output_verbose_by_type("read_query", output)
+        # Should fall back gracefully (return something, not crash)
+        assert isinstance(lines, list)
+
+    def test_fmt_read_file_single(self):
+        """read_file shows line count only, not content."""
+        gen = self._gen()
+        content = "line1\nline2\nline3\n"
+        lines = gen._fmt_read_file(content, "    ")
+        assert len(lines) == 1
+        assert "3 lines read" in lines[0]
+        assert "line1" not in lines[0]
+
+    def test_fmt_read_file_no_trailing_newline(self):
+        gen = self._gen()
+        content = "line1\nline2"
+        lines = gen._fmt_read_file(content, "    ")
+        assert "2 lines read" in lines[0]
+
+    def test_fmt_read_file_empty(self):
+        gen = self._gen()
+        lines = gen._fmt_read_file("", "    ")
+        assert "0 lines read" in lines[0]
+
+    def test_fmt_read_file_multiple(self):
+        """read_multiple_files shows per-file line counts."""
+        gen = self._gen()
+        data = {"a.py": "x\ny\n", "b.py": "one\ntwo\nthree\n"}
+        lines = gen._fmt_read_file(data, "    ")
+        assert len(lines) == 2
+        assert any("a.py" in ln and "2 lines" in ln for ln in lines)
+        assert any("b.py" in ln and "3 lines" in ln for ln in lines)
+
+    def test_fmt_read_file_via_dispatcher(self):
+        """End-to-end: dispatcher routes read_file and hides content."""
+        gen = self._gen()
+        output = {"raw_output": {"success": 1, "result": "hello\nworld\n"}}
+        lines = gen._format_tool_output_verbose_by_type("read_file", output)
+        combined = "\n".join(lines)
+        assert "2 lines read" in combined
+        assert "hello" not in combined
+
+    def test_fmt_args_write_file(self):
+        """write_file args show line count instead of full content."""
+        gen = self._gen()
+        args = {"path": "test.py", "content": "line1\nline2\nline3\n"}
+        lines = gen._fmt_args_write_file(args, "    ")
+        combined = "\n".join(lines)
+        assert "test.py" in combined
+        assert "3 lines" in combined
+        assert "line1" not in combined
+
+    def test_fmt_args_edit_file_diff(self):
+        """edit_file args show diff-style old/new text."""
+        gen = self._gen()
+        args = {
+            "path": "main.py",
+            "edits": [{"oldText": "old code", "newText": "new code"}],
+        }
+        lines = gen._fmt_args_edit_file(args, "    ")
+        combined = "\n".join(lines)
+        assert "main.py" in combined
+        assert "old code" in combined
+        assert "new code" in combined
+        assert any("- " in ln for ln in lines)
+        assert any("+ " in ln for ln in lines)
+
+    def test_fmt_args_edit_file_multiple_edits(self):
+        """edit_file with multiple edits shows numbered diffs."""
+        gen = self._gen()
+        args = {
+            "path": "a.py",
+            "edits": [
+                {"oldText": "foo", "newText": "bar"},
+                {"oldText": "baz", "newText": "qux"},
+            ],
+        }
+        lines = gen._fmt_args_edit_file(args, "    ")
+        combined = "\n".join(lines)
+        assert "edit 1" in combined
+        assert "edit 2" in combined
+
+    def test_fmt_args_read_query_sql_highlight(self):
+        """read_query args show SQL with syntax highlighting."""
+        gen = self._gen()
+        args = {"sql": "SELECT id, name FROM users WHERE age > 18", "database": "main_db"}
+        lines = gen._fmt_args_read_query(args, "    ")
+        combined = "\n".join(lines)
+        assert "main_db" in combined
+        assert "SELECT" in combined
+        assert "users" in combined
+
+    def test_fmt_args_read_query_extra_args(self):
+        """read_query args preserve non-sql/database args."""
+        gen = self._gen()
+        args = {"sql": "SELECT 1", "database": "db", "timeout": "30"}
+        lines = gen._fmt_args_read_query(args, "    ")
+        combined = "\n".join(lines)
+        assert "timeout: 30" in combined
+
+    # --- describe_table / get_table_ddl arg formatter ---
+
+    def test_fmt_args_describe_table_qualified_name(self):
+        """describe_table args show qualified table name, hide empty fields."""
+        gen = self._gen()
+        args = {"table_name": "users", "database": "mydb", "catalog": "", "schema_name": ""}
+        lines = gen._fmt_args_describe_table(args, "    ")
+        combined = "\n".join(lines)
+        assert "mydb.users" in combined
+        # Empty catalog/schema_name should not appear
+        assert "catalog" not in combined
+
+    def test_fmt_args_describe_table_full_qualified(self):
+        """describe_table with all parts shows fully qualified name."""
+        gen = self._gen()
+        args = {"table_name": "t", "database": "db", "catalog": "cat", "schema_name": "sch"}
+        lines = gen._fmt_args_describe_table(args, "    ")
+        combined = "\n".join(lines)
+        assert "cat.sch.t" in combined
+
+    def test_fmt_args_describe_table_via_dispatcher(self):
+        """describe_table routes through dispatcher."""
+        gen = self._gen()
+        lines = gen._format_tool_args_verbose("describe_table", {"table_name": "t", "database": "db"})
+        assert len(lines) > 0
+        assert any("t" in line for line in lines)
+
+    # --- search_knowledge / search_table arg formatter ---
+
+    def test_fmt_args_search_query_highlights_text(self):
+        """search_knowledge args show query text prominently."""
+        gen = self._gen()
+        args = {"query_text": "user activity bitmap", "subject_path": None, "top_n": 5}
+        lines = gen._fmt_args_search_query(args, "    ")
+        combined = "\n".join(lines)
+        assert "user activity bitmap" in combined
+        assert "top_n: 5" in combined
+        # None values should be hidden
+        assert "subject_path" not in combined
+
+    def test_fmt_args_search_query_via_dispatcher(self):
+        """search_knowledge routes through dispatcher."""
+        gen = self._gen()
+        lines = gen._format_tool_args_verbose("search_knowledge", {"query_text": "test"})
+        assert len(lines) > 0
+
+    # --- get_knowledge arg formatter ---
+
+    def test_fmt_args_get_knowledge_paths(self):
+        """get_knowledge args show paths as readable tree paths."""
+        gen = self._gen()
+        args = {"paths": [["Game_Analytics", "User_Classification", "cbitmap"], ["Data_Model", "Account_System"]]}
+        lines = gen._fmt_args_get_knowledge(args, "    ")
+        combined = "\n".join(lines)
+        assert "Game_Analytics > User_Classification > cbitmap" in combined
+        assert "Data_Model > Account_System" in combined
+
+    def test_fmt_args_get_knowledge_via_dispatcher(self):
+        """get_knowledge routes through dispatcher."""
+        gen = self._gen()
+        lines = gen._format_tool_args_verbose("get_knowledge", {"paths": [["a", "b"]]})
+        assert len(lines) > 0
+
+    # --- list_tables arg formatter ---
+
+    def test_fmt_args_list_tables_shows_scope(self):
+        """list_tables args show database scope."""
+        gen = self._gen()
+        args = {"catalog": "", "database": "benchmark", "schema_name": "", "include_views": True}
+        lines = gen._fmt_args_list_tables(args, "    ")
+        combined = "\n".join(lines)
+        assert "benchmark" in combined
+        assert "include_views" in combined
+
+    def test_fmt_args_list_tables_default_scope(self):
+        """list_tables with empty args shows default scope."""
+        gen = self._gen()
+        lines = gen._fmt_args_list_tables({"database": "", "catalog": ""}, "    ")
+        combined = "\n".join(lines)
+        assert "(default)" in combined
+
+    # --- read_file / move_file arg formatter ---
+
+    def test_fmt_args_file_path_read(self):
+        """read_file args show path."""
+        gen = self._gen()
+        args = {"path": "/home/user/data.sql"}
+        lines = gen._fmt_args_file_path(args, "    ")
+        combined = "\n".join(lines)
+        assert "/home/user/data.sql" in combined
+
+    def test_fmt_args_file_path_move(self):
+        """move_file args show source and destination."""
+        gen = self._gen()
+        args = {"source": "a.sql", "destination": "b.sql"}
+        lines = gen._fmt_args_file_path(args, "    ")
+        combined = "\n".join(lines)
+        assert "a.sql" in combined
+        assert "b.sql" in combined
+
+    def test_fmt_args_file_path_via_dispatcher(self):
+        """read_file and move_file route through dispatcher."""
+        gen = self._gen()
+        lines1 = gen._format_tool_args_verbose("read_file", {"path": "/x"})
+        lines2 = gen._format_tool_args_verbose("move_file", {"source": "a", "destination": "b"})
+        assert len(lines1) > 0
+        assert len(lines2) > 0
+
+    # --- get_knowledge result formatter ---
+
+    def test_fmt_get_knowledge_result(self):
+        """get_knowledge result shows knowledge entries with name and explanation."""
+        gen = self._gen()
+        data = [
+            {
+                "name": "cbitmap_classification",
+                "explanation": "Use cbitmap field for classification.",
+                "subject_path": ["Game_Analytics", "User_Classification"],
+            },
+            {"name": "account_mapping", "explanation": "Map vplayerid to suserid.", "subject_path": []},
+        ]
+        lines = gen._fmt_get_knowledge(data, "    ")
+        combined = "\n".join(lines)
+        assert "cbitmap_classification" in combined
+        assert "Use cbitmap" in combined
+        assert "Game_Analytics" in combined
+        assert "account_mapping" in combined
+
+    def test_fmt_get_knowledge_not_list(self):
+        """get_knowledge with non-list data returns empty."""
+        gen = self._gen()
+        assert gen._fmt_get_knowledge("not a list", "    ") == []
+
+    # --- list_subject_tree result formatter ---
+
+    def test_fmt_list_subject_tree_result(self):
+        """list_subject_tree result renders as tree structure."""
+        gen = self._gen()
+        data = {
+            "Game_Analytics": {
+                "User_Classification": {"knowledge": ["cbitmap", "platform_vs_game"]},
+                "Launch_Analysis": {"knowledge": ["launch_date"]},
+            }
+        }
+        lines = gen._fmt_list_subject_tree(data, "    ")
+        combined = "\n".join(lines)
+        assert "Knowledge Tree" in combined
+        assert "Game_Analytics" in combined
+        assert "User_Classification" in combined
+        assert "cbitmap" in combined
+
+    def test_fmt_list_subject_tree_not_dict(self):
+        """list_subject_tree with non-dict data returns empty."""
+        gen = self._gen()
+        assert gen._fmt_list_subject_tree("not a dict", "    ") == []
+
+    def test_format_tool_args_verbose_unknown_tool(self):
+        """Unknown tool returns [] so default formatting is used."""
+        gen = self._gen()
+        result = gen._format_tool_args_verbose("unknown_tool", {"k": "v"})
+        assert result == []
+
+    def test_render_rich_to_lines(self):
+        """_render_rich_to_lines converts a Rich renderable to indented lines."""
+        gen = self._gen()
+        from rich.text import Text
+
+        renderable = Text("Hello World")
+        lines = gen._render_rich_to_lines(renderable, ">>")
+        assert any("Hello World" in ln for ln in lines)
+        assert all(ln.startswith(">>") for ln in lines)
 
 
 @pytest.mark.ci

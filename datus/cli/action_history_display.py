@@ -2,9 +2,11 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import json
 import sys
 import threading
 from datetime import datetime
+from io import StringIO
 from typing import Dict, List, Optional, Tuple
 
 from rich.console import Console, Group
@@ -12,6 +14,8 @@ from rich.live import Live
 from rich.markdown import Markdown
 from rich.markup import escape as rich_escape
 from rich.panel import Panel
+from rich.syntax import Syntax
+from rich.table import Table
 from rich.text import Text
 from rich.tree import Tree
 
@@ -163,18 +167,32 @@ class ActionContentGenerator(BaseActionContentGenerator):
                 duration_sec = (action.end_time - action.start_time).total_seconds()
                 duration = f" ({duration_sec:.1f}s)"
             lines.append(f"⏺ 🔧 {function_name or action.messages} - {status_text}{duration}")
-            # Show full arguments (no truncation)
+            # Show full arguments (no truncation), with tool-specific formatting
             if action.input and action.input.get("arguments"):
                 args = action.input["arguments"]
-                if isinstance(args, dict):
+                # Parse JSON string args into dict for display
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except Exception:
+                        pass
+                arg_lines = self._format_tool_args_verbose(function_name, args)
+                if arg_lines:
+                    lines.extend(arg_lines)
+                elif isinstance(args, dict):
                     for k, v in args.items():
                         lines.append(f"    {k}: {v}")
                 else:
                     lines.append(f"    args: {args}")
-            # Show full output
+            # Blank line between args and output
+            if action.input and action.input.get("arguments") and action.output:
+                lines.append("")
+            # Show full output with tool-specific formatting
             if action.output:
-                output_lines = self._format_tool_output_verbose(action.output, indent="    ")
+                output_lines = self._format_tool_output_verbose_by_type(function_name, action.output, indent="    ")
                 lines.extend(output_lines)
+            # Blank line after action for visual separation
+            lines.append("")
         elif action.role == ActionRole.ASSISTANT:
             lines.append(f"⏺ 💬 {_get_assistant_content(action)}")
         elif action.role == ActionRole.WORKFLOW:
@@ -213,7 +231,12 @@ class ActionContentGenerator(BaseActionContentGenerator):
                 return lines
 
         if isinstance(data, dict):
+            # Auto-unwrap FuncToolResult structure: skip success/error, show result only
+            if "success" in data and "result" in data:
+                data = {"result": data["result"]}
             for k, v in data.items():
+                if v is None:
+                    continue
                 v_str = str(v)
                 # Multi-line values: indent continuation lines
                 if "\n" in v_str:
@@ -226,6 +249,646 @@ class ActionContentGenerator(BaseActionContentGenerator):
             lines.append(f"{indent}output: {data}")
 
         return lines
+
+    # -- tool-specific verbose formatters ------------------------------------
+
+    @staticmethod
+    def _extract_result_data(output_data):
+        """Extract the inner result from a FuncToolResult-wrapped output dict.
+
+        Returns the ``result`` value when the output follows the standard
+        ``{"success": ..., "result": ...}`` shape, or *None* when parsing fails.
+        """
+        if not output_data:
+            return None
+        if isinstance(output_data, str):
+            try:
+                output_data = json.loads(output_data)
+            except Exception:
+                return None
+        if not isinstance(output_data, dict):
+            return None
+        raw = output_data.get("raw_output", output_data)
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except Exception:
+                return None
+        if isinstance(raw, dict):
+            if "result" in raw:
+                return raw["result"]
+            return raw
+        return None
+
+    def _render_rich_to_lines(self, renderable, indent: str) -> List[str]:
+        """Render a Rich renderable to indented string lines."""
+        buf = StringIO()
+        temp_console = Console(file=buf, width=100, no_color=True, highlight=False)
+        temp_console.print(renderable)
+        output = buf.getvalue()
+        return [f"{indent}{line}" for line in output.rstrip("\n").split("\n")]
+
+    def _format_tool_output_verbose_by_type(self, function_name: str, output_data, indent: str = "    ") -> List[str]:
+        """Format tool output for verbose mode using tool-specific formatters."""
+        data = self._extract_result_data(output_data)
+        if data is None:
+            return self._format_tool_output_verbose(output_data, indent)
+
+        formatter = self._TOOL_FORMATTERS.get(function_name)
+        if formatter:
+            try:
+                result = formatter(self, data, indent)
+                if result:
+                    return result
+            except Exception:
+                pass
+        return self._format_tool_output_verbose(output_data, indent)
+
+    # -- individual formatters ------------------------------------------------
+
+    def _fmt_read_query(self, data, indent: str) -> List[str]:
+        """Format SQL query results, handling both compressed and raw formats."""
+        if not isinstance(data, dict):
+            return []
+
+        # Handle compressed format from DataCompressor.compress()
+        compressed_data = data.get("compressed_data")
+        if compressed_data is not None:
+            lines = []
+            original_rows = data.get("original_rows", 0)
+            original_columns = data.get("original_columns", [])
+            col_count = len(original_columns) if isinstance(original_columns, list) else 0
+            is_compressed = data.get("is_compressed", False)
+
+            # Header with row/column counts
+            status = "compressed" if is_compressed else "complete"
+            lines.append(f"{indent}Query returned {original_rows} rows, {col_count} columns ({status})")
+
+            # Show removed columns if any
+            removed = data.get("removed_columns", [])
+            if removed:
+                lines.append(f"{indent}[dim]Omitted columns: {', '.join(str(c) for c in removed)}[/dim]")
+
+            # Render compressed_data as a table if it looks like CSV
+            if isinstance(compressed_data, str) and compressed_data.strip():
+                csv_lines = compressed_data.strip().split("\n")
+                if len(csv_lines) >= 2 and "," in csv_lines[0]:
+                    # Parse CSV into a Rich Table
+                    headers = csv_lines[0].split(",")
+                    table = Table(show_header=True, header_style="bold cyan", box=None, pad_edge=False)
+                    for h in headers:
+                        table.add_column(h.strip())
+                    for row_line in csv_lines[1:]:
+                        cells = row_line.split(",")
+                        table.add_row(*[c.strip() for c in cells])
+                    lines.extend(self._render_rich_to_lines(table, indent))
+                else:
+                    # Plain text format - just indent each line
+                    for text_line in csv_lines:
+                        lines.append(f"{indent}{text_line}")
+            return lines
+
+        # Handle raw format: {"columns": [...], "data": [[...], ...]}
+        columns = data.get("columns")
+        rows = data.get("data")
+        if not columns or not isinstance(columns, list):
+            return []
+
+        table = Table(show_header=True, header_style="bold cyan", box=None, pad_edge=False)
+        for col in columns:
+            table.add_column(str(col))
+
+        if rows and isinstance(rows, list):
+            max_rows = 20
+            for row in rows[:max_rows]:
+                if isinstance(row, (list, tuple)):
+                    table.add_row(*[str(v) for v in row])
+            if len(rows) > max_rows:
+                table.add_row(*([f"... +{len(rows) - max_rows} more"] + [""] * (len(columns) - 1)), style="dim")
+
+        lines = self._render_rich_to_lines(table, indent)
+        row_count = data.get("row_count") or (len(rows) if rows else 0)
+        lines.append(f"{indent}[dim]{row_count} rows returned[/dim]")
+        return lines
+
+    def _fmt_list_tables(self, data, indent: str) -> List[str]:
+        """Format table listings as a bullet list."""
+        if not isinstance(data, list):
+            return []
+        lines = []
+        for item in data:
+            if isinstance(item, dict):
+                name = item.get("name", "?")
+                ttype = item.get("type", "table")
+                lines.append(f"{indent}• {name}  [dim]({ttype})[/dim]")
+            else:
+                lines.append(f"{indent}• {item}")
+        return lines
+
+    def _fmt_list_simple(self, data, indent: str) -> List[str]:
+        """Format simple list results (databases, schemas) as bullet list."""
+        if isinstance(data, list):
+            if len(data) <= 10:
+                return [f"{indent}• {item}" for item in data]
+            lines = [f"{indent}• {item}" for item in data[:10]]
+            lines.append(f"{indent}[dim]... and {len(data) - 10} more[/dim]")
+            return lines
+        return []
+
+    def _fmt_describe_table(self, data, indent: str) -> List[str]:
+        """Format table column metadata as a Rich table."""
+        if not isinstance(data, dict):
+            return []
+        lines = []
+        # Table description
+        table_info = data.get("table")
+        if isinstance(table_info, dict):
+            desc = table_info.get("description", "")
+            name = table_info.get("name", "")
+            if name or desc:
+                lines.append(f"{indent}[bold]{name}[/bold]{': ' + desc if desc else ''}")
+
+        columns = data.get("columns")
+        if not columns or not isinstance(columns, list):
+            return lines
+
+        table = Table(show_header=True, header_style="bold cyan", box=None, pad_edge=False)
+        table.add_column("Column")
+        table.add_column("Type")
+        table.add_column("Comment")
+        for col in columns:
+            if isinstance(col, dict):
+                table.add_row(
+                    col.get("name", ""),
+                    col.get("type", ""),
+                    col.get("comment", "") or "",
+                )
+        lines.extend(self._render_rich_to_lines(table, indent))
+        return lines
+
+    def _fmt_get_table_ddl(self, data, indent: str) -> List[str]:
+        """Format DDL statement with SQL syntax highlighting."""
+        if not isinstance(data, dict):
+            return []
+        lines = []
+        identifier = data.get("identifier", "")
+        if identifier:
+            lines.append(f"{indent}[bold]table:[/bold] {identifier}")
+        definition = data.get("definition", "")
+        if definition:
+            syntax = Syntax(definition, "sql", theme="monokai", line_numbers=False, word_wrap=True)
+            lines.extend(self._render_rich_to_lines(syntax, indent))
+        return lines
+
+    def _fmt_search_table(self, data, indent: str) -> List[str]:
+        """Format table search results as a numbered list."""
+        if not isinstance(data, dict):
+            return []
+        lines = []
+        metadata = data.get("metadata", [])
+        if isinstance(metadata, list):
+            for i, item in enumerate(metadata, 1):
+                if isinstance(item, dict):
+                    name = item.get("table_name") or item.get("identifier", "?")
+                    ttype = item.get("table_type", "")
+                    desc = item.get("description", "")
+                    schema = item.get("schema_name", "")
+                    prefix = f"{schema}." if schema else ""
+                    line = f"{indent}{i}. [bold]{rich_escape(prefix)}{rich_escape(name)}[/bold]"
+                    if ttype:
+                        line += f" [dim]({rich_escape(ttype)})[/dim]"
+                    lines.append(line)
+                    if desc:
+                        lines.append(f"{indent}   {rich_escape(desc)}")
+        sample_data = data.get("sample_data", [])
+        if isinstance(sample_data, list) and sample_data:
+            lines.append(f"{indent}[dim]{len(sample_data)} tables with sample data[/dim]")
+        return lines
+
+    def _fmt_search_metrics(self, data, indent: str) -> List[str]:
+        """Format metric search results."""
+        if not isinstance(data, list):
+            return []
+        lines = []
+        for i, item in enumerate(data, 1):
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name", "?")
+            desc = item.get("description", "")
+            lines.append(f"{indent}{i}. [bold]{rich_escape(name)}[/bold]")
+            if desc:
+                lines.append(f"{indent}   {rich_escape(desc)}")
+            sql = item.get("sql_query", "")
+            if sql:
+                syntax = Syntax(sql.strip(), "sql", theme="monokai", line_numbers=False, word_wrap=True)
+                lines.extend(self._render_rich_to_lines(syntax, indent + "   "))
+            dims = item.get("dimensions")
+            if isinstance(dims, list) and dims:
+                lines.append(f"{indent}   [dim]dimensions: {rich_escape(', '.join(str(d) for d in dims))}[/dim]")
+        return lines
+
+    def _fmt_search_reference_sql(self, data, indent: str) -> List[str]:
+        """Format reference SQL search results."""
+        if not isinstance(data, list):
+            return []
+        lines = []
+        for i, item in enumerate(data, 1):
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name", "?")
+            summary = item.get("summary", "")
+            lines.append(f"{indent}{i}. [bold]{rich_escape(name)}[/bold]")
+            if summary:
+                lines.append(f"{indent}   {rich_escape(summary)}")
+            sql = item.get("sql", "")
+            if sql:
+                syntax = Syntax(sql.strip(), "sql", theme="monokai", line_numbers=False, word_wrap=True)
+                lines.extend(self._render_rich_to_lines(syntax, indent + "   "))
+            tags = item.get("tags")
+            if isinstance(tags, list) and tags:
+                lines.append(f"{indent}   [dim]tags: {rich_escape(', '.join(str(t) for t in tags))}[/dim]")
+        return lines
+
+    def _fmt_search_knowledge(self, data, indent: str) -> List[str]:
+        """Format knowledge search results."""
+        if not isinstance(data, list):
+            return []
+        lines = []
+        for i, item in enumerate(data, 1):
+            if not isinstance(item, dict):
+                continue
+            text = item.get("search_text", "")
+            explanation = item.get("explanation", "")
+            if text:
+                lines.append(f"{indent}{i}. [bold]{rich_escape(text)}[/bold]")
+            if explanation:
+                lines.append(f"{indent}   {rich_escape(explanation)}")
+        return lines
+
+    def _fmt_search_documents(self, data, indent: str) -> List[str]:
+        """Format document search results."""
+        if not isinstance(data, list):
+            return []
+        lines = []
+        for i, item in enumerate(data, 1):
+            if isinstance(item, dict):
+                title = item.get("title", item.get("name", "?"))
+                lines.append(f"{indent}{i}. {rich_escape(str(title))}")
+            else:
+                lines.append(f"{indent}{i}. {rich_escape(str(item))}")
+        return lines
+
+    def _fmt_search_semantic(self, data, indent: str) -> List[str]:
+        """Format semantic object search results."""
+        if not isinstance(data, list):
+            return []
+        lines = []
+        for i, item in enumerate(data, 1):
+            if not isinstance(item, dict):
+                continue
+            kind = item.get("kind", "")
+            name = item.get("name", "?")
+            desc = item.get("description", "")
+            tag = f" [dim]({rich_escape(kind)})[/dim]" if kind else ""
+            lines.append(f"{indent}{i}. [bold]{rich_escape(name)}[/bold]{tag}")
+            if desc:
+                lines.append(f"{indent}   {rich_escape(desc)}")
+        return lines
+
+    def _fmt_todo(self, data, indent: str) -> List[str]:
+        """Format todo/plan results."""
+        if isinstance(data, dict):
+            msg = data.get("message", "")
+            lines = []
+            if msg:
+                lines.append(f"{indent}{msg}")
+            lists = data.get("lists", [])
+            if isinstance(lists, list):
+                for lst in lists:
+                    items = lst.get("items", []) if isinstance(lst, dict) else []
+                    for item in items:
+                        if isinstance(item, dict):
+                            status = item.get("status", "pending")
+                            content = item.get("content", "")
+                            icon = {"completed": "✅", "in_progress": "🔄", "pending": "⏳"}.get(status, "•")
+                            lines.append(f"{indent}  {icon} {content}")
+            # Handle todo_write / todo_update that return updated_item or todo_list
+            updated = data.get("updated_item")
+            if isinstance(updated, dict):
+                status = updated.get("status", "")
+                content = updated.get("content", "")
+                icon = {"completed": "✅", "in_progress": "🔄", "pending": "⏳"}.get(status, "•")
+                lines.append(f"{indent}  {icon} {content}")
+            return lines
+        return []
+
+    def _fmt_date_parse(self, data, indent: str) -> List[str]:
+        """Format temporal expression parsing results."""
+        if not isinstance(data, dict):
+            return []
+        lines = []
+        dates = data.get("extracted_dates", [])
+        if isinstance(dates, list):
+            for d in dates:
+                if isinstance(d, dict):
+                    text = d.get("text", "")
+                    start = d.get("start_date", "")
+                    end = d.get("end_date", "")
+                    dtype = d.get("type", "")
+                    line = f'{indent}📅 "{text}"'
+                    if dtype:
+                        line += f" [dim]({dtype})[/dim]"
+                    lines.append(line)
+                    if start or end:
+                        lines.append(f"{indent}   {start} → {end}")
+        context = data.get("date_context", "")
+        if context:
+            lines.append(f"{indent}[dim]{context}[/dim]")
+        return lines
+
+    def _fmt_current_date(self, data, indent: str) -> List[str]:
+        """Format current date result."""
+        if not isinstance(data, dict):
+            return []
+        date = data.get("current_date", "")
+        is_ref = data.get("is_reference_date", False)
+        label = "reference date" if is_ref else "current date"
+        return [f"{indent}📅 {label}: {date}"]
+
+    def _fmt_get_knowledge(self, data, indent: str) -> List[str]:
+        """Format get_knowledge result: show knowledge entries with name and explanation."""
+        if not isinstance(data, list):
+            return []
+        lines = []
+        for i, item in enumerate(data, 1):
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name", "")
+            explanation = item.get("explanation", "")
+            subject_path = item.get("subject_path", [])
+            path_str = " > ".join(subject_path) if isinstance(subject_path, list) and subject_path else ""
+            header = f"{indent}{i}. [bold]{name}[/bold]"
+            if path_str:
+                header += f" [dim]({path_str})[/dim]"
+            lines.append(header)
+            if explanation:
+                lines.append(f"{indent}   {explanation}")
+        return lines
+
+    def _fmt_list_subject_tree(self, data, indent: str) -> List[str]:
+        """Format list_subject_tree result: render as a tree structure."""
+        if not isinstance(data, dict):
+            return []
+        tree = Tree("[bold]Knowledge Tree[/bold]")
+        self._build_tree(tree, data)
+        return self._render_rich_to_lines(tree, indent)
+
+    def _build_tree(self, parent, node: dict) -> None:
+        """Recursively build a Rich Tree from a nested dict."""
+        for key, value in node.items():
+            if isinstance(value, dict):
+                branch = parent.add(f"[bold]{key}[/bold]")
+                self._build_tree(branch, value)
+            elif isinstance(value, list):
+                branch = parent.add(f"[bold]{key}[/bold]")
+                for item in value:
+                    branch.add(str(item))
+            else:
+                parent.add(f"{key}: {value}")
+
+    def _format_tool_args_verbose(self, function_name: str, args) -> List[str]:
+        """Format tool arguments with tool-specific formatting. Returns [] to use default."""
+        # Parse JSON string args into dict if needed
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except Exception:
+                pass
+        formatter = self._TOOL_ARG_FORMATTERS.get(function_name)
+        if formatter and isinstance(args, dict):
+            try:
+                result = formatter(self, args, "    ")
+                if result:
+                    return result
+            except Exception:
+                pass
+        return []
+
+    def _fmt_args_write_file(self, args: dict, indent: str) -> List[str]:
+        """Format write_file args: show path and diff-style content (green + lines)."""
+        lines = []
+        path = args.get("path", "")
+        if path:
+            lines.append(f"{indent}path: {path}")
+        content = args.get("content", "")
+        if isinstance(content, str) and content:
+            content_lines = content.split("\n")
+            line_count = len(content_lines)
+            if not content.endswith("\n"):
+                pass
+            else:
+                line_count = max(line_count - 1, 1)
+            lines.append(f"{indent}content: ({line_count} lines)")
+            for cl in content_lines:
+                lines.append(f"{indent}  [green]+ {cl}[/green]")
+        file_type = args.get("file_type", "")
+        if file_type:
+            lines.append(f"{indent}file_type: {file_type}")
+        return lines
+
+    def _fmt_args_edit_file(self, args: dict, indent: str) -> List[str]:
+        """Format edit_file args: show path and diff-style edits."""
+        lines = []
+        path = args.get("path", "")
+        if path:
+            lines.append(f"{indent}path: {path}")
+        edits = args.get("edits", [])
+        if isinstance(edits, str):
+            try:
+                edits = json.loads(edits)
+            except Exception:
+                lines.append(f"{indent}edits: {edits}")
+                return lines
+        if isinstance(edits, list):
+            for i, edit in enumerate(edits):
+                if not isinstance(edit, dict):
+                    continue
+                old_text = edit.get("oldText", "")
+                new_text = edit.get("newText", "")
+                if len(edits) > 1:
+                    lines.append(f"{indent}edit {i + 1}:")
+                for ol in old_text.split("\n"):
+                    lines.append(f"{indent}  [red]- {ol}[/red]")
+                for nl in new_text.split("\n"):
+                    lines.append(f"{indent}  [green]+ {nl}[/green]")
+        return lines
+
+    def _fmt_args_read_query(self, args: dict, indent: str) -> List[str]:
+        """Format read_query args: syntax-highlight the SQL statement."""
+        lines = []
+        sql = args.get("sql", "")
+        database = args.get("database", "")
+        if database:
+            lines.append(f"{indent}database: {database}")
+        if sql:
+            syntax = Syntax(sql.strip(), "sql", theme="monokai", line_numbers=False, word_wrap=True)
+            lines.extend(self._render_rich_to_lines(syntax, indent))
+        # Show any other args besides sql/database
+        for k, v in args.items():
+            if k not in ("sql", "database"):
+                lines.append(f"{indent}{k}: {v}")
+        return lines
+
+    def _fmt_args_describe_table(self, args: dict, indent: str) -> List[str]:
+        """Format describe_table/get_table_ddl args: show table name prominently, hide empty fields."""
+        lines = []
+        table_name = args.get("table_name", "")
+        database = args.get("database", "")
+        schema_name = args.get("schema_name", "")
+        catalog = args.get("catalog", "")
+        # Build qualified name: catalog.database.table
+        parts = [p for p in [catalog, schema_name or database, table_name] if p]
+        if parts:
+            lines.append(f"{indent}[bold]{'.'.join(parts)}[/bold]")
+        # Show any other non-empty, non-standard args
+        skip_keys = {"table_name", "database", "schema_name", "catalog"}
+        for k, v in args.items():
+            if k not in skip_keys and v not in (None, "", 0, False):
+                lines.append(f"{indent}{k}: {v}")
+        return lines
+
+    def _fmt_args_search_query(self, args: dict, indent: str) -> List[str]:
+        """Format search_knowledge/search_table args: highlight the query text."""
+        lines = []
+        query = args.get("query_text", "")
+        if query:
+            lines.append(f"{indent}[italic]\"{query}\"[/italic]")
+        # Show non-empty, non-default args
+        skip_keys = {"query_text"}
+        for k, v in args.items():
+            if k not in skip_keys and v not in (None, "", 0, False):
+                lines.append(f"{indent}{k}: {v}")
+        return lines
+
+    def _fmt_args_get_knowledge(self, args: dict, indent: str) -> List[str]:
+        """Format get_knowledge args: show paths as readable tree paths."""
+        lines = []
+        paths = args.get("paths", [])
+        if isinstance(paths, list):
+            for path in paths:
+                if isinstance(path, list):
+                    lines.append(f"{indent}{' > '.join(path)}")
+                else:
+                    lines.append(f"{indent}{path}")
+        for k, v in args.items():
+            if k != "paths" and v not in (None, "", 0, False):
+                lines.append(f"{indent}{k}: {v}")
+        return lines
+
+    def _fmt_args_list_tables(self, args: dict, indent: str) -> List[str]:
+        """Format list_tables args: show database/schema, hide empty fields."""
+        lines = []
+        database = args.get("database", "")
+        schema_name = args.get("schema_name", "")
+        catalog = args.get("catalog", "")
+        target = ".".join(p for p in [catalog, schema_name or database] if p) or "(default)"
+        lines.append(f"{indent}scope: {target}")
+        skip_keys = {"database", "schema_name", "catalog"}
+        for k, v in args.items():
+            if k not in skip_keys and v not in (None, "", 0, False):
+                lines.append(f"{indent}{k}: {v}")
+        return lines
+
+    def _fmt_args_file_path(self, args: dict, indent: str) -> List[str]:
+        """Format read_file/move_file args: show path(s) prominently."""
+        lines = []
+        for key in ("path", "source", "destination", "file_path"):
+            val = args.get(key, "")
+            if val:
+                lines.append(f"{indent}{key}: {val}")
+        skip_keys = {"path", "source", "destination", "file_path"}
+        for k, v in args.items():
+            if k not in skip_keys and v not in (None, "", 0, False):
+                lines.append(f"{indent}{k}: {v}")
+        return lines
+
+    _TOOL_ARG_FORMATTERS = {
+        "write_file": _fmt_args_write_file,
+        "edit_file": _fmt_args_edit_file,
+        "read_query": _fmt_args_read_query,
+        "query": _fmt_args_read_query,
+        "describe_table": _fmt_args_describe_table,
+        "get_table_ddl": _fmt_args_describe_table,
+        "search_knowledge": _fmt_args_search_query,
+        "search_external_knowledge": _fmt_args_search_query,
+        "search_table": _fmt_args_search_query,
+        "search_metrics": _fmt_args_search_query,
+        "search_reference_sql": _fmt_args_search_query,
+        "search_documents": _fmt_args_search_query,
+        "search_semantic_objects": _fmt_args_search_query,
+        "get_knowledge": _fmt_args_get_knowledge,
+        "list_tables": _fmt_args_list_tables,
+        "list_databases": _fmt_args_list_tables,
+        "list_schemas": _fmt_args_list_tables,
+        "read_file": _fmt_args_file_path,
+        "move_file": _fmt_args_file_path,
+        "search_files": _fmt_args_file_path,
+    }
+
+    def _fmt_read_file(self, data, indent: str) -> List[str]:
+        """Format read_file result: show line count only, not file content."""
+        if isinstance(data, str):
+            line_count = data.count("\n") + (1 if data and not data.endswith("\n") else 0)
+            return [f"{indent}{line_count} lines read"]
+        if isinstance(data, dict):
+            # read_multiple_files returns a dict of {path: content}
+            lines = []
+            for path, content in data.items():
+                if isinstance(content, str):
+                    lc = content.count("\n") + (1 if content and not content.endswith("\n") else 0)
+                    lines.append(f"{indent}{path}: {lc} lines read")
+                else:
+                    lines.append(f"{indent}{path}: read")
+            return lines
+        return []
+
+    def _fmt_search_files(self, data, indent: str) -> List[str]:
+        """Format search_files result: show file list."""
+        if isinstance(data, list):
+            lines = [f"{indent}{len(data)} files found:"]
+            for f in data:
+                lines.append(f"{indent}  {rich_escape(str(f))}")
+            return lines
+        return []
+
+    # Mapping from function_name to formatter method
+    _TOOL_FORMATTERS = {
+        "read_query": _fmt_read_query,
+        "query": _fmt_read_query,
+        "list_tables": _fmt_list_tables,
+        "table_overview": _fmt_list_tables,
+        "list_databases": _fmt_list_simple,
+        "list_schemas": _fmt_list_simple,
+        "describe_table": _fmt_describe_table,
+        "get_table_ddl": _fmt_get_table_ddl,
+        "search_table": _fmt_search_table,
+        "search_metrics": _fmt_search_metrics,
+        "search_reference_sql": _fmt_search_reference_sql,
+        "search_knowledge": _fmt_search_knowledge,
+        "search_external_knowledge": _fmt_search_knowledge,
+        "search_documents": _fmt_search_documents,
+        "search_semantic_objects": _fmt_search_semantic,
+        "todo_read": _fmt_todo,
+        "todo_write": _fmt_todo,
+        "todo_update": _fmt_todo,
+        "parse_temporal_expressions": _fmt_date_parse,
+        "get_current_date": _fmt_current_date,
+        "read_file": _fmt_read_file,
+        "read_multiple_files": _fmt_read_file,
+        "get_knowledge": _fmt_get_knowledge,
+        "list_subject_tree": _fmt_list_subject_tree,
+        "search_files": _fmt_search_files,
+    }
 
     def format_inline_processing(self, action: ActionHistory, frame: str) -> str:
         """Format a PROCESSING tool for blinking display."""
@@ -620,8 +1283,9 @@ class ActionHistoryDisplay:
             return
         if action.role == ActionRole.TOOL:
             function_name = action.input.get("function_name", "") if action.input else ""
-            label = rich_escape(action.messages or function_name)
-            if not verbose:
+            if verbose:
+                label = rich_escape(function_name or action.messages)
+            else:
                 label = rich_escape(_truncate_middle(action.messages or function_name, max_len=200))
             status_text = "✓" if action.status == ActionStatus.SUCCESS else "✗"
             duration = ""
@@ -633,15 +1297,36 @@ class ActionHistoryDisplay:
             if verbose:
                 if action.input and action.input.get("arguments"):
                     args = action.input["arguments"]
-                    if isinstance(args, dict):
-                        for k, v in args.items():
-                            self.console.print(f"[dim]  ⎿      {rich_escape(str(k))}: {rich_escape(str(v))}[/dim]")
+                    # Try tool-specific formatter first
+                    arg_lines = self.content_generator._format_tool_args_verbose(function_name, args)
+                    if arg_lines:
+                        for al in arg_lines:
+                            self.console.print(f"[dim]  ⎿  {al}[/dim]")
                     else:
-                        self.console.print(f"[dim]  ⎿      args: {rich_escape(str(args))}[/dim]")
+                        # Fallback: parse JSON string and show key-value pairs
+                        if isinstance(args, str):
+                            try:
+                                args = json.loads(args)
+                            except Exception:
+                                pass
+                        if isinstance(args, dict):
+                            for k, v in args.items():
+                                self.console.print(
+                                    f"[dim]  ⎿      {rich_escape(str(k))}: {rich_escape(str(v))}[/dim]"
+                                )
+                        else:
+                            self.console.print(f"[dim]  ⎿      args: {rich_escape(str(args))}[/dim]")
+                # Blank line between args and output
+                if action.input and action.input.get("arguments") and action.output:
+                    self.console.print("")
                 if action.output:
-                    output_lines = self.content_generator._format_tool_output_verbose(action.output, indent="  ⎿      ")
+                    output_lines = self.content_generator._format_tool_output_verbose_by_type(
+                        function_name, action.output, indent="  ⎿      "
+                    )
                     for ol in output_lines:
-                        self.console.print(f"[dim]{rich_escape(ol)}[/dim]")
+                        self.console.print(f"[dim]{ol}[/dim]")
+                # Blank line after action for visual separation
+                self.console.print("")
             return
         if action.role == ActionRole.ASSISTANT:
             content = _get_assistant_content(action)
@@ -1616,8 +2301,8 @@ class InlineStreamingContext:
                     else:
                         result.append(Text.from_markup(f"[dim]  \u23bf      args: {rich_escape(str(args))}[/dim]"))
                 if action.output:
-                    output_lines = self.display.content_generator._format_tool_output_verbose(
-                        action.output, indent="  \u23bf      "
+                    output_lines = self.display.content_generator._format_tool_output_verbose_by_type(
+                        function_name, action.output, indent="  ⎿      "
                     )
                     result.extend(Text.from_markup(f"[dim]{rich_escape(ol)}[/dim]") for ol in output_lines)
             return result
@@ -1641,10 +2326,14 @@ class InlineStreamingContext:
 
     def _print_completed_action(self, action: ActionHistory) -> None:
         """Print a completed action permanently to the console."""
-        # Skip "task" tool calls — already represented by the subagent group display
+        # "task" tool calls — subagent group already displayed header/actions/Done,
+        # but response is only available now. Show it in verbose mode.
         if action.role == ActionRole.TOOL:
             fn = action.input.get("function_name", "") if action.input else ""
             if fn == "task":
+                if self._verbose and action.status == ActionStatus.SUCCESS and action.output:
+                    with self._print_lock:
+                        self.display._render_subagent_response(action)
                 return
         if action.role == ActionRole.ASSISTANT:
             content = _get_assistant_content(action)

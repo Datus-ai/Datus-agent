@@ -57,7 +57,9 @@ When your SQL is **50 lines or more**, save it to a file for efficient iterative
 3. Validate by calling `read_query` with the SQL content
 
 **Modifying existing SQL**: `edit_file` → `read_file` → `read_query`/`verify_sql`
-1. Use `edit_file` to apply targeted changes to the `.sql` file
+1. Use `edit_file` to apply **small, targeted** changes to the `.sql` file
+   - Only include the specific clause/expression/block that needs changing in `oldText`
+   - Do NOT put the entire file content in `oldText` — this wastes more tokens than `write_file`
 2. Use `read_file` to read back the updated SQL
 3. Re-validate with `read_query` or pass to `verify_sql`
 

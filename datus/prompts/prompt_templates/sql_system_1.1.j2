@@ -328,7 +328,9 @@ When your generated SQL is **50 lines or more**, you MUST save it to a file inst
 3. Set `"sql"` in output to the file path, not the full SQL text
 
 **Modifying existing SQL**: `edit_file` → `read_query(file_path)`
-1. Use `edit_file` to apply targeted changes to the existing `.sql` file
+1. Use `edit_file` to apply **small, targeted** changes to the existing `.sql` file
+   - Only include the specific clause/expression/block that needs changing in `oldText`
+   - Do NOT put the entire file content in `oldText` — this wastes more tokens than `write_file`
 2. Re-validate by calling `read_query` with the same file path
 3. Return the same file path in output
 
