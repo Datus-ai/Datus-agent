@@ -88,7 +88,6 @@ class TestGenSemanticModelAgentic:
                 "Use get_table_ddl to get the schema, then write the YAML file and call end_semantic_model_generation."
             ),
             database="california_schools",
-            max_turns=10,
         )
 
         action_manager = ActionHistoryManager()

@@ -49,6 +49,13 @@ jobs:
           cp /home/datus_ci/ci_template/agent.yml conf/agent.yml
           cp /home/datus_ci/ci_template/ci.env .env
 
+      - name: Isolate test data directory
+        run: |
+          DATUS_TEST_HOME="${GITHUB_WORKSPACE}/.datus_test_data"
+          echo "DATUS_TEST_HOME=$DATUS_TEST_HOME" >> $GITHUB_ENV
+          sed -i "s|home: ~/.datus/tests|home: $DATUS_TEST_HOME|g" tests/conf/agent.yml
+          sed -i "s|workspace_root: ~/.datus/tests/workspace|workspace_root: $DATUS_TEST_HOME/workspace|g" tests/conf/agent.yml
+
       - name: Load environment variables
         run: |
           echo "Loading environment variables from .env file..."
@@ -76,10 +83,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            tests/data/datus_db_bird_school
-            tests/data/datus_db_bird_sqlite
-            tests/data/datus_db_ssb_sqlite
-          key: ${{ runner.os }}-kb-${{ hashFiles('build_scripts/build_test_data.sh', 'tests/conf/agent.yml', 'sample_data/**', 'datus/storage/schema_metadata/**', 'datus/storage/reference_sql/**', 'datus/storage/ext_knowledge/**', 'datus/storage/metric/**', 'datus/storage/semantic_model/**', 'datus/storage/subject_tree/**', 'datus/storage/base.py', 'datus/storage/embedding_models.py', 'datus/storage/fastembed_embeddings.py', 'datus/agent/node/sql_summary_agentic_node.py', 'datus/agent/node/gen_ext_knowledge_agentic_node.py', 'datus/agent/node/gen_metrics_agentic_node.py', 'datus/agent/node/gen_semantic_model_agentic_node.py', 'datus/prompts/prompt_templates/*.j2') }}
+            ${{ github.workspace }}/.datus_test_data/data/datus_db_bird_school
+            ${{ github.workspace }}/.datus_test_data/data/datus_db_ssb_sqlite
+          key: ${{ runner.os }}-kb-${{ hashFiles('build_scripts/build_test_data.sh', 'tests/conf/agent.yml', 'sample_data/**', 'datus/storage/**/*.py') }}
           restore-keys: |
             ${{ runner.os }}-kb-
 

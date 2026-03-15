@@ -30,6 +30,13 @@ jobs:
           cp /home/datus_ci/ci_template/agent.yml conf/agent.yml
           cp /home/datus_ci/ci_template/ci.env .env
 
+      - name: Isolate test data directory
+        run: |
+          DATUS_TEST_HOME="${GITHUB_WORKSPACE}/.datus_test_data"
+          echo "DATUS_TEST_HOME=$DATUS_TEST_HOME" >> $GITHUB_ENV
+          sed -i "s|home: ~/.datus/tests|home: $DATUS_TEST_HOME|g" tests/conf/agent.yml
+          sed -i "s|workspace_root: ~/.datus/tests/workspace|workspace_root: $DATUS_TEST_HOME/workspace|g" tests/conf/agent.yml
+
       - name: Load environment variables
         run: |
           echo "Loading environment variables from .env file..."
@@ -54,9 +61,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            ~/.datus/tests/data/datus_db_bird_school
-            ~/.datus/tests/data/datus_db_ssb_sqlite
-          key: ${{ runner.os }}-kb-${{ hashFiles('build_scripts/build_test_data.sh', 'sample_data/**', 'datus/storage/**/*.py') }}
+            ${{ github.workspace }}/.datus_test_data/data/datus_db_bird_school
+            ${{ github.workspace }}/.datus_test_data/data/datus_db_ssb_sqlite
+          key: ${{ runner.os }}-kb-${{ hashFiles('build_scripts/build_test_data.sh', 'tests/conf/agent.yml', 'sample_data/**', 'datus/storage/**/*.py') }}
           restore-keys: |
             ${{ runner.os }}-kb-
 
