@@ -6,7 +6,7 @@
 Integration tests for Document SearchTool.
 
 Tests list_document_nav, get_document, search_document, and delete_docs
-against a real LanceDB-backed store with pre-populated benchmark data.
+against a real LanceDB-backed store with auto-constructed test data.
 """
 
 from typing import List
@@ -22,42 +22,160 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+TEST_PLATFORM = "test_search_tool"
+
+
+def _make_chunk(
+    doc_path: str = "docs/sql-reference/functions/date-functions.md",
+    chunk_index: int = 0,
+    version: str = "v1",
+    chunk_text: str = "The DATE_TRUNC function truncates a date or datetime value to a specified precision.",
+    title: str = "DATE_TRUNC",
+    titles: List[str] = None,
+    nav_path: List[str] = None,
+    group_name: str = "SQL Reference",
+    hierarchy: str = "SQL Reference > Functions > Date Functions > DATE_TRUNC",
+) -> PlatformDocChunk:
+    """Build a PlatformDocChunk for testing."""
+    return PlatformDocChunk(
+        chunk_id=PlatformDocChunk.generate_chunk_id(doc_path, chunk_index, version),
+        chunk_text=chunk_text,
+        chunk_index=chunk_index,
+        title=title,
+        titles=titles or [title],
+        nav_path=nav_path or ["SQL Reference", "Functions", "Date Functions"],
+        group_name=group_name,
+        hierarchy=hierarchy,
+        version=version,
+        source_type="local",
+        source_url="",
+        doc_path=doc_path,
+        keywords=["sql", "date"],
+        language="en",
+    )
+
+
+def _build_test_chunks() -> List[PlatformDocChunk]:
+    """Build a set of realistic test chunks covering multiple docs and hierarchy paths."""
+    chunks = []
+
+    # Doc 1: DATE_TRUNC (2 chunks)
+    chunks.append(
+        _make_chunk(
+            doc_path="docs/sql-reference/functions/date-functions.md",
+            chunk_index=0,
+            chunk_text="The DATE_TRUNC function truncates a date or datetime value to a specified precision.",
+            title="DATE_TRUNC",
+            hierarchy="SQL Reference > Functions > Date Functions > DATE_TRUNC",
+            nav_path=["SQL Reference", "Functions", "Date Functions"],
+        )
+    )
+    chunks.append(
+        _make_chunk(
+            doc_path="docs/sql-reference/functions/date-functions.md",
+            chunk_index=1,
+            chunk_text="Syntax: DATE_TRUNC('unit', datetime_expr). Supported units: year, month, day, hour, minute.",
+            title="DATE_TRUNC",
+            hierarchy="SQL Reference > Functions > Date Functions > DATE_TRUNC",
+            nav_path=["SQL Reference", "Functions", "Date Functions"],
+        )
+    )
+
+    # Doc 2: CURRENT_DATE (1 chunk)
+    chunks.append(
+        _make_chunk(
+            doc_path="docs/sql-reference/functions/current-date.md",
+            chunk_index=0,
+            chunk_text="CURRENT_DATE returns the current date as a DATE type value. It takes no arguments.",
+            title="CURRENT_DATE",
+            hierarchy="SQL Reference > Functions > Date Functions > CURRENT_DATE",
+            nav_path=["SQL Reference", "Functions", "Date Functions"],
+        )
+    )
+
+    # Doc 3: CREATE TABLE (2 chunks, different nav path)
+    chunks.append(
+        _make_chunk(
+            doc_path="docs/sql-reference/ddl/create-table.md",
+            chunk_index=0,
+            chunk_text="CREATE TABLE creates a new table in the database. Supports column definitions and constraints.",
+            title="CREATE TABLE",
+            hierarchy="SQL Reference > DDL > CREATE TABLE",
+            nav_path=["SQL Reference", "DDL"],
+        )
+    )
+    chunks.append(
+        _make_chunk(
+            doc_path="docs/sql-reference/ddl/create-table.md",
+            chunk_index=1,
+            chunk_text=(
+                "Example: CREATE TABLE users (id INT, name VARCHAR(100),"
+                " created_at DATETIME DEFAULT CURRENT_TIMESTAMP)."
+            ),
+            title="CREATE TABLE",
+            hierarchy="SQL Reference > DDL > CREATE TABLE",
+            nav_path=["SQL Reference", "DDL"],
+        )
+    )
+
+    # Doc 4: Loading data (different top-level nav)
+    chunks.append(
+        _make_chunk(
+            doc_path="docs/loading/stream-load.md",
+            chunk_index=0,
+            chunk_text="Stream Load allows you to load data from local files into tables via HTTP PUT requests.",
+            title="Stream Load",
+            hierarchy="Data Loading > Stream Load",
+            nav_path=["Data Loading"],
+            group_name="Data Loading",
+        )
+    )
+
+    return chunks
+
+
 @pytest.fixture
 def agent_config() -> AgentConfig:
     return load_agent_config()
 
 
-@pytest.mark.skip(reason="Known issue: document_store path mismatch, fix in separate PR")
-@pytest.mark.nightly
 class TestSearchTool:
     """Test SearchTool methods: list_document_nav, get_document, search_document.
 
-    Uses the benchmark documents to populate a real store, then exercises
+    Auto-constructs test data in a dedicated platform store, then exercises
     all three SearchTool methods against it.
     """
 
-    # Default platform for tests — must match the pre-populated store data.
-    TEST_PLATFORM = "starrocks"
-
     @pytest.fixture(autouse=True)
     def setup_store(self, agent_config: AgentConfig):
-        """Import documents into the store once for all tests in this class."""
+        """Populate a test store with constructed data and initialize SearchTool."""
         self.agent_config = agent_config
-        self.store = document_store(self.TEST_PLATFORM)
+        self.store = document_store(TEST_PLATFORM)
+
+        # Ensure clean state, then populate with test chunks
+        self.store.delete_docs(version=None)
+        self.store.store_chunks(_build_test_chunks())
 
         from datus.tools.search_tools.search_tool import SearchTool
 
         self.tool = SearchTool(agent_config=agent_config)
-        # Point the tool to the already-populated store
-        self.tool._document_store = self.store
+
+        yield
+
+        # Cleanup after each test
+        self.store.delete_docs(version=None)
 
     # ----- list_document_nav + get_document (dependent) -----
 
-    @pytest.mark.parametrize("platform,version", [("starrocks", "")])
-    def test_list_document_nav_returns_tree(self, platform: str, version: str):
-        result = self.tool.list_document_nav(platform=platform, version=version)
+    def test_list_document_nav_returns_tree(self):
+        """list_document_nav should return a hierarchical navigation tree."""
+        result = self.tool.list_document_nav(platform=TEST_PLATFORM, version="v1")
         assert result.success, f"list_document_nav failed: {result.error}"
-        assert result.platform == platform
+        assert result.platform == TEST_PLATFORM
         assert result.total_docs > 0, "Should have at least 1 unique doc"
         assert len(result.nav_tree) > 0, "Nav tree should not be empty"
 
@@ -79,11 +197,10 @@ class TestSearchTool:
         assert result.total_docs == 0
         assert result.nav_tree == []
 
-    @pytest.mark.parametrize("platform,version", [("starrocks", "")])
-    def test_get_document_by_title_from_nav(self, platform: str, version: str):
+    def test_get_document_by_title_from_nav(self):
         """get_document should retrieve chunks when given a title from the nav tree."""
         # First get the nav tree to find a real title
-        nav_result = self.tool.list_document_nav(platform=platform, version=version)
+        nav_result = self.tool.list_document_nav(platform=TEST_PLATFORM, version="v1")
         assert nav_result.success and len(nav_result.nav_tree) > 0
 
         # Find a leaf node (node with empty children) from the pure tree
@@ -105,10 +222,10 @@ class TestSearchTool:
         assert title, "Should find at least one document title in the nav tree"
 
         # Use the title to get document chunks
-        result = self.tool.get_document(platform=platform, titles=[title], version=version)
+        result = self.tool.get_document(platform=TEST_PLATFORM, titles=[title], version="v1")
 
         assert result.success, f"get_document failed: {result.error}"
-        assert result.platform == platform
+        assert result.platform == TEST_PLATFORM
         assert result.chunk_count > 0, f"Should find chunks for title '{title}'"
         assert len(result.chunks) == result.chunk_count
 
@@ -130,30 +247,52 @@ class TestSearchTool:
 
     # ----- search_document -----
 
-    @pytest.mark.parametrize("platform,version,keywords", [("starrocks", "", ["DATE_TRUNC"])])
-    def test_search_document_returns_results(self, platform: str, version: str, keywords: List[str]):
+    def test_search_document_returns_results(self):
         """search_document should find results for a relevant keyword."""
         result = self.tool.search_document(
-            platform=platform,
-            keywords=keywords,
-            version=version if version else None,
+            platform=TEST_PLATFORM,
+            keywords=["DATE_TRUNC"],
+            version="v1",
             top_n=3,
         )
 
         assert result.success, f"search_document failed: {result.error}"
-        assert result.doc_count > 0, f"Should find at least one result for keywords {keywords}"
+        assert result.doc_count > 0, "Should find at least one result for keyword DATE_TRUNC"
 
-        # Verify each keyword has results in the docs dict
-        for keyword in keywords:
-            assert keyword in result.docs, f"Keyword '{keyword}' missing from result.docs"
-            assert len(result.docs[keyword]) > 0, f"No results for keyword '{keyword}'"
+        assert "DATE_TRUNC" in result.docs, "Keyword 'DATE_TRUNC' missing from result.docs"
+        assert len(result.docs["DATE_TRUNC"]) > 0, "No results for keyword 'DATE_TRUNC'"
 
-        # Verify chunk fields from the first keyword's results
-        first_chunk = result.docs[keywords[0]][0]
+        # Verify chunk fields from the first result
+        first_chunk = result.docs["DATE_TRUNC"][0]
         assert "chunk_text" in first_chunk
         assert "title" in first_chunk
         assert "hierarchy" in first_chunk
         assert "doc_path" in first_chunk
+
+    def test_search_document_multiple_keywords(self):
+        """search_document with multiple keywords returns results for each."""
+        result = self.tool.search_document(
+            platform=TEST_PLATFORM,
+            keywords=["DATE_TRUNC", "CURRENT_DATE"],
+            version="v1",
+            top_n=3,
+        )
+
+        assert result.success, f"search_document failed: {result.error}"
+        # Each keyword should have its own entry in the docs dict
+        for keyword in ["DATE_TRUNC", "CURRENT_DATE"]:
+            assert keyword in result.docs, f"Keyword '{keyword}' missing from result.docs"
+
+    def test_search_document_wrong_platform(self):
+        """search_document on a non-existent platform returns empty results."""
+        result = self.tool.search_document(
+            platform="nonexistent_platform_xyz",
+            keywords=["anything"],
+            top_n=3,
+        )
+
+        assert result.success
+        assert result.doc_count == 0
 
     # ----- delete_docs -----
 
@@ -213,8 +352,6 @@ class TestSearchTool:
 
     def test_delete_docs_all(self):
         """delete_docs(version=None) should remove all chunks (drop + recreate)."""
-        from datus.storage.document.schemas import PlatformDocChunk
-
         tmp_store = document_store("test_get_stats")
         # Clear any leftover data from previous runs
         tmp_store.delete_docs(version=None)
@@ -251,29 +388,3 @@ class TestSearchTool:
         tmp_store.delete_docs(version=None)
         deleted = tmp_store.delete_docs(version="v1")
         assert deleted == 0
-
-    @pytest.mark.parametrize("platform,version,keywords", [("starrocks", "", ["DATE_TRUNC", "CURRENT_DATE"])])
-    def test_search_document_multiple_keywords(self, platform: str, version: str, keywords: List[str]):
-        """search_document with multiple keywords returns results for each."""
-        result = self.tool.search_document(
-            platform=platform,
-            keywords=keywords,
-            version=version if version else None,
-            top_n=3,
-        )
-
-        assert result.success, f"search_document failed: {result.error}"
-        # Each keyword should have its own entry in the docs dict
-        for keyword in keywords:
-            assert keyword in result.docs, f"Keyword '{keyword}' missing from result.docs"
-
-    def test_search_document_wrong_platform(self):
-        """search_document on a non-existent platform returns empty results."""
-        result = self.tool.search_document(
-            platform="nonexistent_platform_xyz",
-            keywords=["anything"],
-            top_n=3,
-        )
-
-        assert result.success
-        assert result.doc_count == 0
