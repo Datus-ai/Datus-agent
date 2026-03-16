@@ -27,11 +27,7 @@ import pytest
 from datus.configuration.node_type import NodeType
 from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
-from tests.unit_tests.mock_llm_model import (
-    MockToolCall,
-    build_simple_response,
-    build_tool_then_response,
-)
+from tests.unit_tests.mock_llm_model import MockToolCall, build_simple_response, build_tool_then_response
 
 # ===========================================================================
 # ChatAgenticNode Inheritance Tests
@@ -190,6 +186,21 @@ class TestChatAgenticNodeToolSetup:
         )
 
         assert node.date_parsing_tools is not None
+
+    def test_has_ask_user_tools(self, real_agent_config, mock_llm_create):
+        """Chat node has ask_user tool set up via _setup_ask_user_tool."""
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        node = ChatAgenticNode(
+            node_id="test_ask_user",
+            description="Test ask user tools",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
+
+        assert node.ask_user_tool is not None
+        tool_names = [t.name for t in node.ask_user_tool.available_tools()]
+        assert "ask_user" in tool_names
 
 
 # ===========================================================================
@@ -1016,7 +1027,7 @@ class TestChatAgenticNodeRebuildTools:
     """Verify _rebuild_tools correctly assembles tools from all sources."""
 
     def test_rebuild_tools_with_all_components(self, real_agent_config, mock_llm_create):
-        """_rebuild_tools includes tools from db, context, date, filesystem, skills, sub_agent."""
+        """_rebuild_tools includes tools from db, context, date, filesystem, skills, sub_agent, ask_user."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
 
         node = ChatAgenticNode(
@@ -1026,7 +1037,7 @@ class TestChatAgenticNodeRebuildTools:
             agent_config=real_agent_config,
         )
 
-        # _rebuild_tools assembles core tools (db, context, date, fs, skills, sub_agent)
+        # _rebuild_tools assembles core tools (db, context, date, fs, skills, sub_agent, ask_user)
         # but NOT platform_doc_tools (which are added separately in setup_tools)
         node._rebuild_tools()
         rebuilt_count = len(node.tools)
@@ -1036,6 +1047,24 @@ class TestChatAgenticNodeRebuildTools:
         tool_names = [t.name for t in node.tools]
         assert "list_tables" in tool_names
         assert "describe_table" in tool_names
+
+    def test_rebuild_tools_includes_ask_user(self, real_agent_config, mock_llm_create):
+        """_rebuild_tools includes ask_user tool when available."""
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        node = ChatAgenticNode(
+            node_id="test_rebuild_ask",
+            description="Test rebuild with ask_user",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
+
+        # ask_user_tool should be set up during __init__
+        assert node.ask_user_tool is not None
+
+        node._rebuild_tools()
+        tool_names = [t.name for t in node.tools]
+        assert "ask_user" in tool_names
 
     def test_rebuild_tools_with_no_optional_components(self, real_agent_config, mock_llm_create):
         """_rebuild_tools works when optional tool components are None."""
@@ -1053,6 +1082,7 @@ class TestChatAgenticNodeRebuildTools:
         node.date_parsing_tools = None
         node.filesystem_func_tool = None
         node.sub_agent_task_tool = None
+        node.ask_user_tool = None
 
         # Rebuild should still work with just db tools
         node._rebuild_tools()
@@ -1060,6 +1090,7 @@ class TestChatAgenticNodeRebuildTools:
         assert len(node.tools) > 0
         tool_names = [t.name for t in node.tools]
         assert "list_tables" in tool_names
+        assert "ask_user" not in tool_names
 
 
 # ===========================================================================

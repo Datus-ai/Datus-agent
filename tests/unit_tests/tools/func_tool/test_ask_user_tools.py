@@ -134,3 +134,27 @@ class TestAskUserTool:
 
         assert result.success == 0
         assert "cancel" in result.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_unexpected_exception_returns_error(self):
+        """When broker.request raises an unexpected exception, return error."""
+        broker = InteractionBroker()
+        tool = AskUserTool(broker=broker)
+        broker.reset_queue()
+
+        async def broken_request(*args, **kwargs):
+            raise RuntimeError("something broke")
+
+        tool._broker.request = broken_request
+
+        result = await tool.ask_user(question="Test?", options=["A", "B"])
+        assert result.success == 0
+        assert "something broke" in result.error
+
+    def test_set_tool_context(self):
+        """set_tool_context stores context on the tool."""
+        broker = InteractionBroker()
+        tool = AskUserTool(broker=broker)
+        assert tool._tool_context is None
+        tool.set_tool_context({"run_id": "abc"})
+        assert tool._tool_context == {"run_id": "abc"}
