@@ -553,7 +553,10 @@ class TestFormatCsvPreview:
         data_lines = [
             line
             for line in lines
-            if line.strip() and not line.strip().startswith("---") and "data:" not in line and "a" not in line.split()[0]
+            if line.strip()
+            and not line.strip().startswith("---")
+            and "data:" not in line
+            and "a" not in line.split()[0]
             if len(line.split()) > 0
         ]
         assert len(data_lines) >= 1
