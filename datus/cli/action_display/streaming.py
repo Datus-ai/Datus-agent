@@ -363,14 +363,17 @@ class InlineStreamingContext:
                         logger.warning("Interaction input aborted by collector")
                         self._processed_index += 1
                         return
-                    if self._broker and self._event_loop:
-                        try:
-                            future = asyncio.run_coroutine_threadsafe(
-                                self._broker.submit(action.action_id, user_input), self._event_loop
-                            )
-                            future.result(timeout=60)
-                        except Exception as e:
-                            logger.error(f"Error submitting interaction response: {e}")
+                    if not (self._broker and self._event_loop):
+                        logger.error("Cannot submit interaction response: broker or event_loop is missing")
+                        return
+                    try:
+                        future = asyncio.run_coroutine_threadsafe(
+                            self._broker.submit(action.action_id, user_input), self._event_loop
+                        )
+                        future.result(timeout=60)
+                    except Exception as e:
+                        logger.error(f"Error submitting interaction response: {e}")
+                        return
                     self._processed_index += 1
                     return  # Wait for SUCCESS action to arrive
                 else:
