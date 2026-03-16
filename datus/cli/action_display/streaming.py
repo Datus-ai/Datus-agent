@@ -71,7 +71,7 @@ class InlineStreamingContext:
         self._verbose_frozen = False  # True = in frozen verbose mode, no real-time processing
         self._verbose_toggle_event = threading.Event()
         self._broker = interaction_broker
-        self._input_collector: Optional[Callable[[ActionHistory, Console], str]] = None
+        self._input_collector: Optional[Callable[[ActionHistory, Console], Optional[str]]] = None
         self._event_loop: Optional[asyncio.AbstractEventLoop] = None
 
     @property
@@ -100,8 +100,11 @@ class InlineStreamingContext:
         """Set the asyncio event loop for broker.submit calls from daemon thread."""
         self._event_loop = loop
 
-    def set_input_collector(self, collector: Callable[[ActionHistory, Console], str]) -> None:
-        """Set the synchronous input collector callback for INTERACTION actions."""
+    def set_input_collector(self, collector: Callable[[ActionHistory, Console], Optional[str]]) -> None:
+        """Set the synchronous input collector callback for INTERACTION actions.
+
+        The collector returns the user's choice string, or None if the interaction was aborted.
+        """
         self._input_collector = collector
 
     # -- sync mode entry point ---------------------------------------------
@@ -356,6 +359,10 @@ class InlineStreamingContext:
                         renderables = self.display.renderer.render_interaction_request(action, self._verbose)
                         self.display.renderer.print_renderables(self.display.console, renderables)
                     user_input = self._input_collector(action, self.display.console)
+                    if user_input is None:
+                        logger.warning("Interaction input aborted by collector")
+                        self._processed_index += 1
+                        return
                     if self._broker and self._event_loop:
                         try:
                             future = asyncio.run_coroutine_threadsafe(

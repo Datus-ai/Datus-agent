@@ -780,7 +780,7 @@ class ChatCommands:
         when an INTERACTION PROCESSING action arrives.
         """
 
-        def collect(action: ActionHistory, console) -> str:
+        def collect(action: ActionHistory, console) -> Optional[str]:
             try:
                 input_data = action.input or {}
                 choices = input_data.get("choices", {})
@@ -800,13 +800,7 @@ class ChatCommands:
                     return result or default_key
             except Exception as e:
                 logger.error(f"Error collecting interaction input: {e}")
-                choices = (action.input or {}).get("choices", {})
-                default_choice = (action.input or {}).get("default_choice", "")
-                if choices and default_choice:
-                    return default_choice
-                elif choices:
-                    return list(choices.keys())[0]
-                return ""
+                return None
 
         return collect
 
