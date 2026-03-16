@@ -56,6 +56,7 @@ class PendingInteraction:
     action_id: str
     future: asyncio.Future
     choices: Dict[str, str]  # key=submit value, value=display text
+    allow_free_text: bool = False  # When True, accept values outside choices
     created_at: datetime = field(default_factory=datetime.now)
 
 
@@ -169,6 +170,7 @@ class InteractionBroker:
         choices: Dict[str, str],
         default_choice: str = "",
         content_type: str = "markdown",
+        allow_free_text: bool = False,
     ) -> Tuple[str, Callable[[str, str], Awaitable[None]]]:
         """
         Request user input with choices. Blocks until user responds.
@@ -178,6 +180,7 @@ class InteractionBroker:
             choices: Dict of {key: display_text}. Empty dict means free-text input.
             default_choice: Key of default choice (required when choices is non-empty)
             content_type: Type of content ("text", "yaml", "sql", "markdown")
+            allow_free_text: When True, accept values outside choices (e.g. "Other" input).
 
         Returns:
             Tuple of (choice, callback):
@@ -197,6 +200,7 @@ class InteractionBroker:
             action_id=action_id,
             future=future,
             choices=choices,
+            allow_free_text=allow_free_text,
         )
 
         with self._lock:
@@ -214,6 +218,7 @@ class InteractionBroker:
                 "content_type": content_type,
                 "choices": choices,
                 "default_choice": default_choice,
+                "allow_free_text": allow_free_text,
             },
             output=None,
         )
@@ -301,8 +306,9 @@ class InteractionBroker:
 
             pending = self._pending.get(action_id)
 
-            # Validate choice: if choices is non-empty, user_choice must be a valid key
-            if pending.choices and user_choice not in pending.choices:
+            # Validate choice: if choices is non-empty and free text is not allowed,
+            # user_choice must be a valid key
+            if pending.choices and not pending.allow_free_text and user_choice not in pending.choices:
                 logger.warning(
                     f"InteractionBroker: invalid choice '{user_choice}', not in {list(pending.choices.keys())}"
                 )

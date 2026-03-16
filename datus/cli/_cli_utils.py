@@ -8,24 +8,31 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
+_FREE_TEXT_SENTINEL = "__free_text__"
+
+
 def select_choice(
     console: Console,
     choices: Dict[str, str],
     default: str = "",
+    allow_free_text: bool = False,
 ) -> str:
     """Interactive choice selector with arrow-key navigation.
 
     Uses prompt_toolkit Application for proper terminal handling.
     Up/Down arrows to navigate, Enter to confirm, or press shortcut key directly.
+    When ``allow_free_text`` is True, a "Type custom answer..." entry is appended
+    and the user can also press ``/`` at any time to enter free-text mode.
 
     Args:
         console: Rich Console (used for fallback output on error)
         choices: Ordered dict of {key: display_text}
                  e.g. {"y": "Allow (once)", "a": "Always allow (session)", "n": "Deny"}
         default: Default choice key (pre-selected on start)
+        allow_free_text: When True, append a free-text option and allow ``/`` shortcut.
 
     Returns:
-        Selected choice key string
+        Selected choice key string, or the user's free-text input.
     """
     try:
         from prompt_toolkit import Application
@@ -34,41 +41,106 @@ def select_choice(
         from prompt_toolkit.layout.containers import Window
         from prompt_toolkit.layout.controls import FormattedTextControl
 
-        keys = list(choices.keys())
+        display_choices = dict(choices)
+        if allow_free_text:
+            display_choices[_FREE_TEXT_SENTINEL] = "Type custom answer..."
+
+        keys = list(display_choices.keys())
         selected = [keys.index(default) if default in keys else 0]
+
+        # State: inline editing for free-text option
+        editing = [False]
+        text_buf = [""]
 
         kb = KeyBindings()
 
         @kb.add("up")
         def _move_up(event):
+            if editing[0]:
+                return  # ignore arrow keys while editing
             selected[0] = (selected[0] - 1) % len(keys)
 
         @kb.add("down")
         def _move_down(event):
+            if editing[0]:
+                return
             selected[0] = (selected[0] + 1) % len(keys)
 
         @kb.add("enter")
         def _confirm(event):
-            event.app.exit(result=keys[selected[0]])
+            if editing[0]:
+                event.app.exit(result=text_buf[0])
+            else:
+                sel = keys[selected[0]]
+                if sel == _FREE_TEXT_SENTINEL:
+                    editing[0] = True  # enter inline editing mode
+                else:
+                    event.app.exit(result=sel)
 
         @kb.add("c-c")
         def _cancel(event):
-            event.app.exit(result=default)
+            if editing[0]:
+                editing[0] = False
+                text_buf[0] = ""
+            else:
+                event.app.exit(result=default)
+
+        @kb.add("backspace")
+        def _backspace(event):
+            if editing[0]:
+                text_buf[0] = text_buf[0][:-1]
 
         # Direct shortcut keys (press y/a/n to pick immediately)
         for _i, _key in enumerate(keys):
+            if _key == _FREE_TEXT_SENTINEL:
+                continue
 
             @kb.add(_key)
             def _select_direct(event, k=_key):
-                event.app.exit(result=k)
+                if editing[0]:
+                    text_buf[0] += k
+                else:
+                    event.app.exit(result=k)
+
+        if allow_free_text:
+
+            @kb.add("/")
+            def _free_text_shortcut(event):
+                if editing[0]:
+                    text_buf[0] += "/"
+                else:
+                    # Jump to free-text and start editing
+                    selected[0] = keys.index(_FREE_TEXT_SENTINEL)
+                    editing[0] = True
+
+            @kb.add("<any>")
+            def _any_key(event):
+                ch = event.data
+                if not ch.isprintable() or len(ch) != 1:
+                    return
+                if editing[0]:
+                    text_buf[0] += ch
+                elif keys[selected[0]] == _FREE_TEXT_SENTINEL:
+                    # Start inline editing with first character
+                    editing[0] = True
+                    text_buf[0] = ch
 
         def _get_formatted_text():
             lines = []
-            for i, (key, display) in enumerate(choices.items()):
-                if i == selected[0]:
-                    lines.append(("ansicyan bold", f"  \u2192 [{key}] {display}\n"))
+            for i, (key, display) in enumerate(display_choices.items()):
+                is_sel = i == selected[0]
+                if key == _FREE_TEXT_SENTINEL:
+                    if editing[0]:
+                        cursor = "\u2588"  # block cursor
+                        label = f"  [/] {text_buf[0]}{cursor}"
+                    else:
+                        label = f"  [/] {display}"
                 else:
-                    lines.append(("", f"    [{key}] {display}\n"))
+                    label = f"  [{key}] {display}"
+                if is_sel:
+                    lines.append(("ansicyan bold", f"  \u2192{label}\n"))
+                else:
+                    lines.append(("", f"    {label}\n"))
             return lines
 
         app = Application(

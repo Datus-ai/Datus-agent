@@ -93,6 +93,9 @@ class ChatAgenticNode(AgenticNode):
         # SubAgent task delegation tool
         self.sub_agent_task_tool = None
 
+        # Ask user tool
+        self.ask_user_tool = None
+
         # Plan mode attributes
         self.plan_mode_active = False
         self.plan_hooks = None
@@ -137,6 +140,7 @@ class ChatAgenticNode(AgenticNode):
         self._setup_filesystem_tools()
         self._setup_skill_tools()
         self._setup_sub_agent_task_tool()
+        self._setup_ask_user_tool()
         self._rebuild_tools()
         self._setup_platform_doc_tools()
 
@@ -223,6 +227,18 @@ class ChatAgenticNode(AgenticNode):
             logger.error(f"Failed to setup SubAgent task tool: {e}")
             self.sub_agent_task_tool = None
 
+    def _setup_ask_user_tool(self):
+        """Setup ask-user tool so the agent can ask clarifying questions."""
+        try:
+            from datus.tools.func_tool.ask_user_tools import AskUserTool
+
+            broker = self._get_or_create_broker()
+            self.ask_user_tool = AskUserTool(broker=broker)
+            logger.debug("Setup ask_user tool")
+        except Exception as e:
+            logger.error(f"Failed to setup ask_user tool: {e}")
+            self.ask_user_tool = None
+
     def _setup_permission_hooks(self):
         """Setup permission hooks and register all tool categories."""
         if not self.permission_manager:
@@ -273,6 +289,8 @@ class ChatAgenticNode(AgenticNode):
             self.tools.extend(self.skill_func_tool.available_tools())
         if self.sub_agent_task_tool:
             self.tools.extend(self.sub_agent_task_tool.available_tools())
+        if self.ask_user_tool:
+            self.tools.extend(self.ask_user_tool.available_tools())
 
     def _update_database_connection(self, database_name: str):
         """Update database connection to a different database."""

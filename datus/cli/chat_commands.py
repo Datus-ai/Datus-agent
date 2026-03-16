@@ -785,6 +785,7 @@ class ChatCommands:
                 input_data = action.input or {}
                 choices = input_data.get("choices", {})
                 default_choice = input_data.get("default_choice", "")
+                allow_free_text = input_data.get("allow_free_text", False)
 
                 with esc_guard.paused():
                     if not choices:
@@ -794,9 +795,17 @@ class ChatCommands:
 
                     keys = list(choices.keys())
                     default_key = default_choice if default_choice in keys else keys[0]
-                    result = select_choice(console, choices=choices, default=default_key)
+                    result = select_choice(
+                        console,
+                        choices=choices,
+                        default=default_key,
+                        allow_free_text=allow_free_text,
+                    )
                     if result in choices:
                         console.print(f"[dim]Selected: {choices[result]}[/]")
+                    if allow_free_text and result == "":
+                        console.print("[yellow]No input provided.[/]")
+                        return ""
                     return result or default_key
             except Exception as e:
                 logger.error(f"Error collecting interaction input: {e}")
