@@ -22,7 +22,7 @@ import streamlit as st
 import structlog
 from pandas.core.dtypes.common import is_numeric_dtype
 
-from datus.cli.action_history_display import ActionContentGenerator
+from datus.cli.action_display.renderers import ActionContentGenerator
 from datus.configuration.agent_config import AgentConfig
 from datus.models.base import LLMBaseModel
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus

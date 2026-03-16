@@ -23,7 +23,7 @@ from rich.table import Table
 
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
 from datus.cli._cli_utils import select_choice
-from datus.cli.action_history_display import ActionHistoryDisplay
+from datus.cli.action_display.display import ActionHistoryDisplay
 from datus.cli.execution_state import ExecutionInterrupted
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
@@ -412,62 +412,53 @@ class ChatCommands:
             if interactive:
                 self.console.print("[dim]Press ESC or Ctrl+C to interrupt[/dim]")
 
-                async def run_chat_stream_with_interactions():
-                    """Run chat stream handling INTERACTION actions inline."""
+                async def run_chat_stream():
+                    """Run chat stream — INTERACTION actions flow into incremental_actions."""
+                    streaming_ctx.set_event_loop(asyncio.get_running_loop())
                     async for action in current_node.execute_stream_with_interactions(
                         action_history_manager=self.cli.actions
                     ):
-                        if action.role == ActionRole.INTERACTION and action.action_type == "request_choice":
-                            if action.status == ActionStatus.PROCESSING:
-                                action_display.stop_live()
-                                with esc_guard.paused():
-                                    user_response = await self._handle_cli_interaction(action)
-                                if current_node.interaction_broker:
-                                    await current_node.interaction_broker.submit(action.action_id, user_response)
-                            elif action.status == ActionStatus.SUCCESS:
-                                self._display_success(action)
-                                incremental_actions.append(action)
-                                action_display.restart_live()
-                        else:
-                            # Skip TOOL PROCESSING entries — SUCCESS version follows
-                            if action.role == ActionRole.TOOL and action.status == ActionStatus.PROCESSING:
-                                continue
-                            # Skip non-thinking ASSISTANT actions (final output) —
-                            # rendered by the final response display below instead.
-                            if (
-                                action.role == ActionRole.ASSISTANT
-                                and isinstance(action.output, dict)
-                                and not action.output.get("is_thinking", True)
-                            ):
-                                continue
-                            # Node final actions (e.g. chat_response) — keep for
-                            # final response rendering but skip streaming trace.
-                            # Only capture depth-0 (main node) responses; sub-agent
-                            # responses (depth=1) should flow into incremental_actions
-                            # so they are not mistakenly rendered as the final answer
-                            # when the user interrupts execution via ESC.
-                            if (
-                                action.role == ActionRole.ASSISTANT
-                                and action.action_type
-                                and action.action_type.endswith("_response")
-                                and action.depth == 0
-                            ):
-                                nonlocal node_final_action
-                                node_final_action = action
-                                continue
-                            incremental_actions.append(action)
+                        # Skip TOOL PROCESSING entries — SUCCESS version follows
+                        if action.role == ActionRole.TOOL and action.status == ActionStatus.PROCESSING:
+                            continue
+                        # Skip non-thinking ASSISTANT actions (final output) —
+                        # rendered by the final response display below instead.
+                        if (
+                            action.role == ActionRole.ASSISTANT
+                            and isinstance(action.output, dict)
+                            and not action.output.get("is_thinking", True)
+                        ):
+                            continue
+                        # Node final actions (e.g. chat_response) — keep for
+                        # final response rendering but skip streaming trace.
+                        # Only capture depth-0 (main node) responses; sub-agent
+                        # responses (depth=1) should flow into incremental_actions
+                        # so they are not mistakenly rendered as the final answer
+                        # when the user interrupts execution via ESC.
+                        if (
+                            action.role == ActionRole.ASSISTANT
+                            and action.action_type
+                            and action.action_type.endswith("_response")
+                            and action.depth == 0
+                        ):
+                            nonlocal node_final_action
+                            node_final_action = action
+                            continue
+                        incremental_actions.append(action)
 
                 streaming_ctx = action_display.display_streaming_actions(
                     incremental_actions,
                     history_turns=self.all_turn_actions,
                     current_user_message=message,
+                    interaction_broker=current_node.interaction_broker,
                 )
                 with interrupt_on_escape(
                     current_node.interrupt_controller,
                     key_callbacks={b"\x0f": streaming_ctx.toggle_verbose},
                 ) as esc_guard, streaming_ctx:
+                    streaming_ctx.set_input_collector(self._make_input_collector(esc_guard))
                     try:
-                        asyncio.run(run_chat_stream_with_interactions())
+                        asyncio.run(run_chat_stream())
                     except KeyboardInterrupt:
                         current_node.interrupt_controller.interrupt()
                         logger.info("KeyboardInterrupt caught, execution interrupted gracefully")
@@ -782,122 +773,42 @@ class ChatCommands:
             # Fallback to simple display
             self.console.print(f"\n[bold green]External Knowledge File:[/] {ext_knowledge_file}")
 
-    async def _handle_cli_interaction(self, action: ActionHistory) -> str:
+    def _make_input_collector(self, esc_guard):
+        """Create a synchronous input collector callback for INTERACTION actions.
+
+        The returned callback is invoked from the daemon thread in InlineStreamingContext
+        when an INTERACTION PROCESSING action arrives.
         """
-        Handle an INTERACTION action by rendering choices and getting user input.
 
-        Args:
-            action: ActionHistory with role=INTERACTION containing input data
+        def collect(action: ActionHistory, console) -> str:
+            try:
+                input_data = action.input or {}
+                choices = input_data.get("choices", {})
+                default_choice = input_data.get("default_choice", "")
 
-        Returns:
-            The user's selected choice key, or free-text input if choices is empty
-        """
-        try:
-            input_data = action.input or {}
-            content = input_data.get("content", "")
-            choices = input_data.get("choices", {})  # dict: {key: display_text}
-            content_type = input_data.get("content_type", "text")
-            default_choice = input_data.get("default_choice", "")  # str key
+                with esc_guard.paused():
+                    if not choices:
+                        console.print()
+                        console.print("[dim](Escape+Enter or Alt+Enter to submit)[/]")
+                        return self.cli.prompt_input(message="Your input", multiline=True) or ""
 
-            # Display content based on content_type
-            if content_type == "yaml":
-                syntax = Syntax(content, "yaml", theme="monokai", line_numbers=True)
-                self.console.print(syntax)
-            elif content_type == "sql":
-                syntax = Syntax(content, "sql", theme="monokai", line_numbers=True)
-                self.console.print(syntax)
-            elif content_type == "markdown":
-                from rich.markdown import Markdown
+                    keys = list(choices.keys())
+                    default_key = default_choice if default_choice in keys else keys[0]
+                    result = select_choice(console, choices=choices, default=default_key)
+                    if result in choices:
+                        console.print(f"[dim]Selected: {choices[result]}[/]")
+                    return result or default_key
+            except Exception as e:
+                logger.error(f"Error collecting interaction input: {e}")
+                choices = (action.input or {}).get("choices", {})
+                default_choice = (action.input or {}).get("default_choice", "")
+                if choices and default_choice:
+                    return default_choice
+                elif choices:
+                    return list(choices.keys())[0]
+                return ""
 
-                self.console.print(Markdown(content))
-            else:
-                # text or other - use Rich markup directly
-                self.console.print(content)
-
-            # Empty choices dict means free-text input mode
-            if not choices:
-                self.console.print()
-                self.console.print("[dim](Escape+Enter or Alt+Enter to submit)[/]")
-
-                # Use run_in_executor to run prompt_input in a separate thread
-                # This avoids "asyncio.run() cannot be called from a running event loop" error
-                loop = asyncio.get_running_loop()
-                user_text = await loop.run_in_executor(
-                    None, lambda: self.cli.prompt_input(message="Your input", multiline=True)
-                )
-                if user_text:
-                    return user_text
-                else:
-                    self.console.print("[yellow]No input provided.[/]")
-                    return ""
-
-            # Handle choice selection mode (choices is non-empty dict)
-            keys = list(choices.keys())
-            default_key = default_choice if default_choice in keys else keys[0]
-
-            # Use run_in_executor to run interactive selector in a separate thread
-            # This avoids "asyncio.run() cannot be called from a running event loop" error
-            loop = asyncio.get_running_loop()
-            choice_str = await loop.run_in_executor(
-                None,
-                lambda: select_choice(
-                    self.console,
-                    choices=choices,
-                    default=default_key,
-                ),
-            )
-
-            if choice_str in choices:
-                self.console.print(f"[dim]Selected: {choices[choice_str]}[/]")
-            return choice_str or default_key
-
-        except Exception as e:
-            logger.error(f"Error handling CLI interaction: {e}")
-            self.console.print(f"[red]Error handling interaction: {e}[/]")
-            # Return default choice if available
-            choices = (action.input or {}).get("choices", {})
-            default_choice = (action.input or {}).get("default_choice", "")
-            if choices and default_choice:
-                return default_choice
-            elif choices:
-                return list(choices.keys())[0]
-            return ""
-
-    def _display_success(self, action: ActionHistory):
-        """
-        Display a success callback result action.
-
-        Args:
-            action: ActionHistory with role=INTERACTION, action_type="request_choice", status=SUCCESS
-        """
-        try:
-            # Read from output for display
-            output_data = action.output or {}
-            content = output_data.get("content", "") or action.messages or ""
-            content_type = output_data.get("content_type", "markdown")
-
-            if not content:
-                return
-
-            # Display based on content_type (default to markdown)
-            if content_type == "yaml":
-                syntax = Syntax(content, "yaml", theme="monokai", line_numbers=True)
-                self.console.print(syntax)
-            elif content_type == "sql":
-                syntax = Syntax(content, "sql", theme="monokai", line_numbers=True)
-                self.console.print(syntax)
-            else:
-                # markdown or text - render as markdown for proper formatting
-                from rich.markdown import Markdown
-
-                self.console.print(Markdown(content))
-
-        except Exception as e:
-            logger.exception(f"Error displaying success: {e}")
-            # Fallback to simple print
-            content = (action.output or {}).get("content", "")
-            if content:
-                self.console.print(content)
+        return collect
 
     def _extract_report_from_json(self, response: str) -> Optional[str]:
         """
@@ -1045,17 +956,9 @@ class ChatCommands:
         self.console.print(f"[bold bright_black]  ⎯ switched to {mode_label} mode ⎯[/]")
         action_display = ActionHistoryDisplay(self.console)
         if self.all_turn_actions:
-            action_display.render_multi_turn_history(
-                self.all_turn_actions,
-                verbose=self._trace_verbose,
-                collapse_completed=not self._trace_verbose,
-            )
+            action_display.render_multi_turn_history(self.all_turn_actions, verbose=self._trace_verbose)
         else:
-            action_display.render_action_history(
-                actions,
-                verbose=self._trace_verbose,
-                collapse_completed=not self._trace_verbose,
-            )
+            action_display.render_action_history(actions, verbose=self._trace_verbose)
 
         # Re-render final response output (SQL, markdown, etc.) after the trace
         last_turn_actions = self.all_turn_actions[-1][1] if self.all_turn_actions else actions
@@ -1281,7 +1184,7 @@ class ChatCommands:
                     else:
                         actions = msg.get("actions")
                         if actions:
-                            action_display.display_action_list(actions)
+                            action_display.render_action_history(actions)
                             last_assistant_actions = actions
                         sql = msg.get("sql")
                         if sql:
@@ -1425,7 +1328,7 @@ class ChatCommands:
                     else:
                         actions = msg.get("actions")
                         if actions:
-                            action_display.display_action_list(actions)
+                            action_display.render_action_history(actions)
                         sql = msg.get("sql")
                         if sql:
                             self._display_sql_with_copy(sql)

@@ -15,7 +15,7 @@ Tests cover:
 - _extract_sql_and_output_from_content
 - Display methods: _display_sql_with_copy, _display_markdown_response,
   _display_semantic_model, _display_sql_summary_file, _display_ext_knowledge_file,
-  _display_success
+  INTERACTION rendering (via ActionRenderer)
 - cmd_clear_chat
 - cmd_chat_info
 - add_in_sql_context
@@ -824,7 +824,11 @@ class TestDisplayExtKnowledgeFile:
 
 
 class TestDisplaySuccess:
-    """Tests for _display_success rendering different content types."""
+    """Tests for INTERACTION SUCCESS rendering via ActionRenderer.
+
+    Rendering was moved from ChatCommands._display_success to
+    ActionRenderer.render_interaction_success + render_main_action.
+    """
 
     def _make_action(self, content, content_type="markdown"):
         """Create an ActionHistory with output for display."""
@@ -838,59 +842,49 @@ class TestDisplaySuccess:
             status=ActionStatus.SUCCESS,
         )
 
+    def _render_and_get_output(self, action):
+        """Render via ActionRenderer.render_interaction_success and capture output.
+
+        Note: render_main_action returns [] for INTERACTION (not shown in history),
+        but render_interaction_success is still used during live interaction.
+        """
+        from datus.cli.action_display.renderers import ActionContentGenerator, ActionRenderer
+
+        console = Console(file=io.StringIO(), no_color=True)
+        renderer = ActionRenderer(ActionContentGenerator())
+        renderables = renderer.render_interaction_success(action, verbose=False)
+        renderer.print_renderables(console, renderables)
+        return _get_console_output(console)
+
     def test_yaml_content_type(self, real_agent_config, mock_llm_create):
         """YAML content type is rendered with syntax highlighting."""
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
-
         action = self._make_action("key: value\nlist:\n  - item1", "yaml")
-        cmds._display_success(action)
-
-        output = _get_console_output(console)
+        output = self._render_and_get_output(action)
         assert "key" in output
         assert "value" in output
 
     def test_sql_content_type(self, real_agent_config, mock_llm_create):
         """SQL content type is rendered with syntax highlighting."""
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
-
         action = self._make_action("SELECT * FROM users WHERE id = 1", "sql")
-        cmds._display_success(action)
-
-        output = _get_console_output(console)
+        output = self._render_and_get_output(action)
         assert "SELECT" in output
         assert "users" in output
 
     def test_markdown_content_type(self, real_agent_config, mock_llm_create):
         """Markdown content type is rendered as rich markdown."""
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
-
         action = self._make_action("# Title\nSome **bold** text", "markdown")
-        cmds._display_success(action)
-
-        output = _get_console_output(console)
+        output = self._render_and_get_output(action)
         assert "Title" in output
         assert "bold" in output
 
     def test_empty_content_skips_display(self, real_agent_config, mock_llm_create):
-        """Empty content does not display anything."""
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
-
+        """Empty content renders only completion indicator."""
         action = self._make_action("", "markdown")
-        cmds._display_success(action)
-
-        output = _get_console_output(console)
-        # Empty content should produce minimal or no output
+        output = self._render_and_get_output(action)
         assert "Title" not in output
 
     def test_fallback_to_messages_when_no_content(self, real_agent_config, mock_llm_create):
         """When output.content is empty, falls back to action.messages."""
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
-
         action = ActionHistory(
             action_id="test_success_fb",
             role=ActionRole.INTERACTION,
@@ -900,9 +894,7 @@ class TestDisplaySuccess:
             output={"content": "", "content_type": "markdown"},
             status=ActionStatus.SUCCESS,
         )
-        cmds._display_success(action)
-
-        output = _get_console_output(console)
+        output = self._render_and_get_output(action)
         assert "Fallback message content" in output
 
 
@@ -1293,9 +1285,11 @@ class TestEdgeCases:
         assert output is None
 
     def test_display_success_with_none_output(self, real_agent_config, mock_llm_create):
-        """_display_success handles action with None output gracefully."""
+        """render_interaction_success handles action with None output gracefully."""
+        from datus.cli.action_display.renderers import ActionContentGenerator, ActionRenderer
+
         console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
+        renderer = ActionRenderer(ActionContentGenerator())
 
         action = ActionHistory(
             action_id="test_none_output",
@@ -1307,7 +1301,8 @@ class TestEdgeCases:
             status=ActionStatus.SUCCESS,
         )
         # Should not raise
-        cmds._display_success(action)
+        renderables = renderer.render_interaction_success(action, verbose=False)
+        renderer.print_renderables(console, renderables)
         output = _get_console_output(console)
         assert isinstance(output, str)
 
@@ -1546,9 +1541,11 @@ class TestDisplayExceptionPaths:
         assert "test_knowledge.yaml" in output
 
     def test_display_success_text_content_type(self, real_agent_config, mock_llm_create):
-        """Text content type falls through to markdown rendering."""
+        """Text content type renders as plain text."""
+        from datus.cli.action_display.renderers import ActionContentGenerator, ActionRenderer
+
         console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
+        renderer = ActionRenderer(ActionContentGenerator())
 
         action = ActionHistory(
             action_id="test_text_ct",
@@ -1559,17 +1556,19 @@ class TestDisplayExceptionPaths:
             output={"content": "Plain text result", "content_type": "text"},
             status=ActionStatus.SUCCESS,
         )
-        cmds._display_success(action)
+        renderables = renderer.render_interaction_success(action, verbose=False)
+        renderer.print_renderables(console, renderables)
 
         output = _get_console_output(console)
         assert "Plain text result" in output
 
-    def test_display_success_exception_fallback(self, real_agent_config, mock_llm_create):
-        """_display_success exception path renders fallback content."""
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
+    def test_display_success_renders_content(self, real_agent_config, mock_llm_create):
+        """render_interaction_success renders content."""
+        from datus.cli.action_display.renderers import ActionContentGenerator, ActionRenderer
 
-        # Action with output that has content for fallback
+        console = Console(file=io.StringIO(), no_color=True)
+        renderer = ActionRenderer(ActionContentGenerator())
+
         action = ActionHistory(
             action_id="test_err_success",
             role=ActionRole.INTERACTION,
@@ -1579,10 +1578,10 @@ class TestDisplayExceptionPaths:
             output={"content": "Fallback content here"},
             status=ActionStatus.SUCCESS,
         )
-        cmds._display_success(action)
+        renderables = renderer.render_interaction_success(action, verbose=False)
+        renderer.print_renderables(console, renderables)
 
         output = _get_console_output(console)
-        # Should display something (normal or fallback)
         assert len(output) > 0
 
 

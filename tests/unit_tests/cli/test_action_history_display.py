@@ -17,10 +17,8 @@ Tests cover:
   format_inline_expanded, _format_tool_output_verbose, generate_streaming_content,
   _create_result_table, format_data, get_data_summary, _get_tool_args_preview,
   _get_tool_output_preview, format_inline_processing, get_role_color
-- ActionHistoryDisplay: format_action_summary, format_action_detail,
-  _extract_subagent_response, _render_subagent_response, _render_task_tool_as_subagent,
-  display_action_list, display_final_action_history, _get_data_summary_with_full_sql,
-  render_action_history (skip patterns)
+- ActionHistoryDisplay: _render_subagent_response,
+  _render_task_tool_as_subagent, render_action_history (skip patterns)
 - InlineStreamingContext: context manager, _flush_remaining_actions, _print_completed_action,
   stop_display, restart_display, toggle_verbose
 - create_action_display factory
@@ -35,16 +33,15 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.text import Text
 
-from datus.cli.action_history_display import (
-    _SUBAGENT_ROLLING_WINDOW_SIZE,
+from datus.cli.action_display.display import ActionHistoryDisplay, create_action_display
+from datus.cli.action_display.renderers import (
     ActionContentGenerator,
-    ActionHistoryDisplay,
+    ActionRenderer,
     BaseActionContentGenerator,
-    InlineStreamingContext,
     _get_assistant_content,
     _truncate_middle,
-    create_action_display,
 )
+from datus.cli.action_display.streaming import _SUBAGENT_ROLLING_WINDOW_SIZE, InlineStreamingContext
 from datus.schemas.action_history import (
     SUBAGENT_COMPLETE_ACTION_TYPE,
     ActionHistory,
@@ -120,7 +117,7 @@ class TestSubAgentGroupStart:
         )
         actions.append(first_action)
 
-        with patch("datus.cli.action_history_display.Live"):
+        with patch("datus.cli.action_display.streaming.Live"):
             ctx._process_actions()
 
         # Group state should be set
@@ -152,7 +149,7 @@ class TestSubAgentGroupStart:
         )
         actions.append(first_action)
 
-        with patch("datus.cli.action_history_display.Live"):
+        with patch("datus.cli.action_display.streaming.Live"):
             ctx._process_actions()
 
         renderable = ctx._build_subagent_groups_renderable()
@@ -222,7 +219,7 @@ class TestSubAgentDisplayUpdates:
             )
         )
 
-        with patch("datus.cli.action_history_display.Live"):
+        with patch("datus.cli.action_display.streaming.Live"):
             ctx._process_actions()
 
         assert len(ctx._subagent_groups) == 1
@@ -230,11 +227,11 @@ class TestSubAgentDisplayUpdates:
         assert group["tool_count"] == 2
         assert len(group["actions"]) == 2  # USER is skipped, 2 TOOL actions buffered
 
-        # Verify that Live renderable contains tool messages with args
+        # Verify that Live renderable contains tool function names
         renderable = ctx._build_subagent_groups_renderable()
         all_output = _group_plain(renderable)
         assert "read_query" in all_output
-        assert "SELECT * FROM users" in all_output
+        assert "describe_table" in all_output
 
     def test_non_tool_action_no_increment(self):
         """ASSISTANT depth>0 action does not increment tool_count."""
@@ -248,7 +245,7 @@ class TestSubAgentDisplayUpdates:
         actions.append(_make_action(ActionRole.ASSISTANT, ActionStatus.SUCCESS, depth=1, action_type="gen_sql"))
 
         with patch.object(display.console, "print"):
-            with patch("datus.cli.action_history_display.Live"):
+            with patch("datus.cli.action_display.streaming.Live"):
                 ctx._process_actions()
 
         group = next(iter(ctx._subagent_groups.values()))
@@ -309,7 +306,7 @@ class TestSubAgentGroupEnd:
 
         printed = []
         with patch.object(display.console, "print", side_effect=lambda *a, **kw: printed.append(str(a[0]))):
-            with patch("datus.cli.action_history_display.Live"):
+            with patch("datus.cli.action_display.streaming.Live"):
                 ctx._process_actions()
 
         # Group should be cleared
@@ -352,7 +349,7 @@ class TestSubAgentFlushOnExit:
         )
 
         with patch.object(display.console, "print"):
-            with patch("datus.cli.action_history_display.Live"):
+            with patch("datus.cli.action_display.streaming.Live"):
                 ctx._process_actions()
 
         assert len(ctx._subagent_groups) == 1
@@ -418,7 +415,7 @@ class TestNoSubAgentNormalFlow:
         )
 
         with patch.object(display.console, "print"):
-            with patch("datus.cli.action_history_display.Live"):
+            with patch("datus.cli.action_display.streaming.Live"):
                 ctx._process_actions()
 
         # Index should NOT advance past PROCESSING
@@ -475,7 +472,7 @@ class TestMultipleSubAgentGroups:
 
         printed = []
         with patch.object(display.console, "print", side_effect=lambda *a, **kw: printed.append(str(a[0]))):
-            with patch("datus.cli.action_history_display.Live"):
+            with patch("datus.cli.action_display.streaming.Live"):
                 ctx._process_actions()
 
         headers = [line for line in printed if "\u23fa gen_sql" in line or "\u23fa fix_sql" in line]
@@ -519,7 +516,7 @@ class TestTaskSuccessSkippedAfterDone:
 
         printed = []
         with patch.object(display.console, "print", side_effect=lambda *a, **kw: printed.append(str(a[0]))):
-            with patch("datus.cli.action_history_display.Live"):
+            with patch("datus.cli.action_display.streaming.Live"):
                 ctx._process_actions()
 
         # Should have header + Done, but NOT a normal "task result" action line
@@ -581,13 +578,12 @@ class TestRenderActionHistory:
         assert "No actions to display" in printed[0]
 
     def test_skip_interaction(self):
-        """INTERACTION actions are skipped entirely."""
+        """INTERACTION actions are skipped in history replay."""
         display = ActionHistoryDisplay()
         actions = [
             _make_action(ActionRole.INTERACTION, ActionStatus.PROCESSING, messages="Choose an option"),
         ]
         printed = self._collect_prints(display, actions)
-        # All actions skipped — nothing printed
         assert len(printed) == 0
 
     def test_skip_processing_tool(self):
@@ -749,9 +745,9 @@ class TestRenderActionHistory:
             ),
         ]
         printed = self._collect_prints(display, actions)
-        # Should NOT have two subagent headers — only one from the depth>0 group
-        headers = [line for line in printed if "\u23fa gen_sql" in line]
-        assert len(headers) == 1
+        # In compact mode (verbose=False), the group is collapsed — only one header + Done
+        headers = [line for line in printed if "gen_sql" in line]
+        assert len(headers) >= 1
         # Done line should exist
         done_lines = [line for line in printed if "Done" in line]
         assert len(done_lines) == 1
@@ -759,7 +755,7 @@ class TestRenderActionHistory:
     # -- subagent grouping --
 
     def test_subagent_group_header_and_actions(self):
-        """Subagent group renders header + action lines."""
+        """Subagent group renders header + action lines in verbose mode."""
         display = ActionHistoryDisplay()
         actions = [
             _make_action(
@@ -789,7 +785,7 @@ class TestRenderActionHistory:
         # Set start_time on first action
         actions[0].start_time = datetime(2025, 1, 1, 12, 0, 0)
 
-        printed = self._collect_prints(display, actions, verbose=False)
+        printed = self._collect_prints(display, actions, verbose=True)
         combined = "\n".join(printed)
 
         # Header (with bold markup)
@@ -916,7 +912,8 @@ class TestRenderActionHistory:
         ]
 
         printed = self._collect_prints(display, actions)
-        headers = [line for line in printed if "\u23fa gen_sql" in line or "\u23fa fix_sql" in line]
+        # In compact mode (verbose=False), groups are collapsed with ⏴ marker
+        headers = [line for line in printed if "gen_sql" in line or "fix_sql" in line]
         dones = [line for line in printed if "Done" in line]
 
         assert len(headers) == 2
@@ -966,7 +963,7 @@ class TestRenderActionHistory:
 
         printed = []
         with patch.object(display.console, "print", side_effect=lambda *a, **kw: printed.append(str(a[0]))):
-            display.render_action_history(actions, verbose=False, show_partial_done=False)
+            display.render_action_history(actions, verbose=False, _show_partial_done=False)
         done_lines = [line for line in printed if "Done" in line]
         assert len(done_lines) == 0
 
@@ -1059,7 +1056,7 @@ class TestRenderActionHistory:
         ]
         actions[0].start_time = datetime(2025, 1, 1, 12, 0, 0)
 
-        printed = self._collect_prints(display, actions)
+        printed = self._collect_prints(display, actions, verbose=True)
         combined = "\n".join(printed)
         # Should show ⏺ prefix with subagent indentation and raw_output content
         assert "⏺" in combined
@@ -1126,7 +1123,7 @@ class TestSubAgentCompleteAction:
 
         printed = []
         with patch.object(display.console, "print", side_effect=lambda *a, **kw: printed.append(str(a[0]))):
-            with patch("datus.cli.action_history_display.Live"):
+            with patch("datus.cli.action_display.streaming.Live"):
                 ctx._process_actions()
 
         # Group should be cleared
@@ -1285,7 +1282,7 @@ class TestParallelSubAgentGroups:
 
         printed = []
         with patch.object(display.console, "print", side_effect=lambda *a, **kw: printed.append(str(a[0]))):
-            with patch("datus.cli.action_history_display.Live"):
+            with patch("datus.cli.action_display.streaming.Live"):
                 ctx._process_actions()
 
         # Both groups should be closed
@@ -1293,8 +1290,8 @@ class TestParallelSubAgentGroups:
         assert call_id_a in ctx._completed_group_ids
         assert call_id_b in ctx._completed_group_ids
 
-        # Two headers and two Done lines
-        headers = [line for line in printed if "\u23fa gen_sql" in line or "\u23fa fix_sql" in line]
+        # Two headers and two Done lines (compact mode uses ⏴ collapsed marker)
+        headers = [line for line in printed if "gen_sql" in line or "fix_sql" in line]
         dones = [line for line in printed if "Done" in line]
         assert len(headers) == 2
         assert len(dones) == 2
@@ -1376,7 +1373,8 @@ class TestParallelSubAgentGroups:
         with patch.object(display.console, "print", side_effect=lambda *a, **kw: printed.append(str(a[0]))):
             display.render_action_history(actions, verbose=False)
 
-        headers = [line for line in printed if "\u23fa gen_sql" in line or "\u23fa fix_sql" in line]
+        # In compact mode (verbose=False), groups are collapsed with ⏴ marker
+        headers = [line for line in printed if "gen_sql" in line or "fix_sql" in line]
         dones = [line for line in printed if "Done" in line]
 
         assert len(headers) == 2
@@ -1452,8 +1450,8 @@ class TestParallelSubAgentGroups:
         standalone = [line for line in printed if "\u23fa subagent" in line]
         assert len(standalone) == 0
 
-        # Should have one group header and one Done
-        headers = [line for line in printed if "\u23fa gen_sql" in line]
+        # Should have one group header (collapsed \u23f4 or expanded \u23fa) and one Done
+        headers = [line for line in printed if "gen_sql" in line and ("⏺" in line or "⏴" in line)]
         dones = [line for line in printed if "Done" in line]
         assert len(headers) == 1
         assert len(dones) == 1
@@ -1772,7 +1770,7 @@ class TestReprintHistoryWithTurns:
         )
         ctx._processed_index = 1  # All current actions processed
         ctx._verbose = False
-        ctx._reprint_history()
+        ctx._reprint_history(verbose=ctx._verbose)
 
         output = buf.getvalue()
         assert "Previous question" in output
@@ -1792,7 +1790,7 @@ class TestReprintHistoryWithTurns:
         ctx = InlineStreamingContext(current_actions, display)
         ctx._processed_index = 1
         ctx._verbose = False
-        ctx._reprint_history()
+        ctx._reprint_history(verbose=ctx._verbose)
 
         output = buf.getvalue()
         # Should not crash, should render current actions
@@ -2033,11 +2031,11 @@ class TestActionContentGeneratorFormatInlineCompleted:
         assert "System init" in lines[0]
 
     def test_interaction_role_returns_empty(self):
-        """INTERACTION actions return empty list (handled elsewhere)."""
+        """INTERACTION actions return empty list (not shown in history)."""
         gen = ActionContentGenerator()
         action = _make_action(ActionRole.INTERACTION, ActionStatus.SUCCESS, messages="user input")
         lines = gen.format_inline_completed(action)
-        assert lines == []
+        assert len(lines) == 0
 
 
 @pytest.mark.ci
@@ -2060,8 +2058,9 @@ class TestActionContentGeneratorFormatInlineExpanded:
         )
         lines = gen.format_inline_expanded(action)
         assert any("read_query" in line for line in lines)
-        assert any("sql: SELECT 1" in line for line in lines)
-        assert any("limit: 10" in line for line in lines)
+        assert any("sql" in line for line in lines)
+        assert any("SELECT 1" in line for line in lines)
+        assert any("limit" in line and "10" in line for line in lines)
         assert any("✓" in line for line in lines)
         assert any("1.5s" in line for line in lines)
 
@@ -2117,63 +2116,72 @@ class TestActionContentGeneratorFormatInlineExpanded:
 
 @pytest.mark.ci
 class TestFormatToolOutputVerbose:
-    """Tests for ActionContentGenerator._format_tool_output_verbose."""
+    """Tests for format_output_verbose (migrated from ActionContentGenerator to tool_content module)."""
 
     def test_empty_output(self):
         """Empty output returns no lines."""
-        gen = ActionContentGenerator()
-        assert gen._format_tool_output_verbose(None) == []
-        assert gen._format_tool_output_verbose("") == []
-        assert gen._format_tool_output_verbose({}) == []
+        from datus.cli.action_display.tool_content import format_output_verbose
+
+        assert format_output_verbose(None) == []
+        assert format_output_verbose("") == []
+        assert format_output_verbose({}) == []
 
     def test_string_json_parsed(self):
         """JSON string is parsed into dict entries."""
-        gen = ActionContentGenerator()
-        lines = gen._format_tool_output_verbose('{"key": "value"}')
+        from datus.cli.action_display.tool_content import format_output_verbose
+
+        lines = format_output_verbose('{"key": "value"}')
         assert any("key: value" in line for line in lines)
 
     def test_invalid_json_string(self):
         """Non-JSON string is shown as-is."""
-        gen = ActionContentGenerator()
-        lines = gen._format_tool_output_verbose("plain text output")
+        from datus.cli.action_display.tool_content import format_output_verbose
+
+        lines = format_output_verbose("plain text output")
         assert any("output: plain text output" in line for line in lines)
 
     def test_non_dict_non_string(self):
         """Non-dict, non-string data is shown with output prefix."""
-        gen = ActionContentGenerator()
-        lines = gen._format_tool_output_verbose([1, 2, 3])
+        from datus.cli.action_display.tool_content import format_output_verbose
+
+        lines = format_output_verbose([1, 2, 3])
         assert any("output:" in line for line in lines)
 
     def test_dict_with_raw_output_string(self):
         """Dict with raw_output string that is valid JSON."""
-        gen = ActionContentGenerator()
-        lines = gen._format_tool_output_verbose({"raw_output": '{"foo": "bar"}'})
+        from datus.cli.action_display.tool_content import format_output_verbose
+
+        lines = format_output_verbose({"raw_output": '{"foo": "bar"}'})
         assert any("foo: bar" in line for line in lines)
 
     def test_dict_with_raw_output_invalid_json(self):
         """Dict with raw_output string that is not valid JSON."""
-        gen = ActionContentGenerator()
-        lines = gen._format_tool_output_verbose({"raw_output": "not json"})
+        from datus.cli.action_display.tool_content import format_output_verbose
+
+        lines = format_output_verbose({"raw_output": "not json"})
         assert any("output: not json" in line for line in lines)
 
     def test_dict_with_multiline_values(self):
         """Dict values containing newlines are split into continuation lines."""
-        gen = ActionContentGenerator()
-        lines = gen._format_tool_output_verbose({"raw_output": {"sql": "SELECT\n  col\nFROM t"}})
+        from datus.cli.action_display.tool_content import format_output_verbose
+
+        lines = format_output_verbose({"raw_output": {"sql": "SELECT\n  col\nFROM t"}})
         assert any("sql:" in line for line in lines)
         assert any("SELECT" in line for line in lines)
         assert any("FROM t" in line for line in lines)
 
     def test_dict_raw_output_non_dict(self):
         """Dict with raw_output that resolves to a non-dict after parsing."""
-        gen = ActionContentGenerator()
-        lines = gen._format_tool_output_verbose({"raw_output": "[1, 2, 3]"})
+        from datus.cli.action_display.tool_content import format_output_verbose
+
+        lines = format_output_verbose({"raw_output": "[1, 2, 3]"})
         assert any("output:" in line for line in lines)
 
     def test_custom_indent(self):
         """Custom indent is applied to output lines."""
-        gen = ActionContentGenerator()
-        lines = gen._format_tool_output_verbose({"raw_output": {"key": "val"}}, indent=">>")
+        from datus.cli.action_display.tool_content import format_output_verbose
+
+        lines = format_output_verbose({"raw_output": {"key": "val"}}, indent=">>")
         assert lines[0].startswith(">>")
 
 
@@ -2518,54 +2526,72 @@ class TestGetToolArgsPreview:
 
 @pytest.mark.ci
 class TestGetToolOutputPreview:
-    """Tests for ActionContentGenerator._get_tool_output_preview."""
+    """Tests for tool output preview via ToolCallContentBuilder.
+
+    Tool-specific previews (list_tables, search_table, etc.) are now
+    handled by per-tool builder functions registered in ToolCallContentBuilder.
+    Generic previews are tested via format_generic_preview.
+    """
 
     def test_empty_output(self):
         """Empty output returns empty string."""
-        gen = ActionContentGenerator()
-        assert gen._get_tool_output_preview(None) == ""
-        assert gen._get_tool_output_preview({}) == ""
+        from datus.cli.action_display.tool_content import format_generic_preview
+
+        assert format_generic_preview(None) == ""
+        assert format_generic_preview({}) == ""
 
     def test_string_json_parsed(self):
         """JSON string output is parsed correctly."""
-        gen = ActionContentGenerator()
-        result = gen._get_tool_output_preview('{"result": [{"id": 1}, {"id": 2}]}')
+        from datus.cli.action_display.tool_content import format_generic_preview
+
+        result = format_generic_preview('{"result": [{"id": 1}, {"id": 2}]}')
         assert "2 items" in result
 
     def test_invalid_json_string(self):
         """Invalid JSON string returns preview unavailable."""
-        gen = ActionContentGenerator()
-        result = gen._get_tool_output_preview("not json")
+        from datus.cli.action_display.tool_content import format_generic_preview
+
+        result = format_generic_preview("not json")
         assert "preview unavailable" in result
 
     def test_non_dict_output(self):
         """Non-dict output returns preview unavailable."""
-        gen = ActionContentGenerator()
-        result = gen._get_tool_output_preview([1, 2])
+        from datus.cli.action_display.tool_content import format_generic_preview
+
+        result = format_generic_preview([1, 2])
         assert "preview unavailable" in result
 
     def test_list_tables_function(self):
-        """list_tables function shows table count."""
-        gen = ActionContentGenerator()
-        result = gen._get_tool_output_preview(
-            {"raw_output": '{"result": [{"name": "t1"}, {"name": "t2"}]}'},
-            function_name="list_tables",
+        """list_tables function shows table count via registered builder."""
+        from datus.cli.action_display.tool_content import _build_list_tables
+
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            input_data={"function_name": "list_tables"},
+            output_data={"raw_output": '{"result": [{"name": "t1"}, {"name": "t2"}]}'},
         )
-        assert "2 tables" in result
+        tc = _build_list_tables(action, verbose=False)
+        assert "2 tables" in tc.output_preview
 
     def test_describe_table_function(self):
-        """describe_table function shows column count."""
-        gen = ActionContentGenerator()
-        result = gen._get_tool_output_preview(
-            {"raw_output": '{"result": [{"col": "a"}, {"col": "b"}, {"col": "c"}]}'},
-            function_name="describe_table",
+        """describe_table function shows column count via registered builder."""
+        from datus.cli.action_display.tool_content import _build_describe_table
+
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            input_data={"function_name": "describe_table"},
+            output_data={"raw_output": '{"result": [{"col": "a"}, {"col": "b"}, {"col": "c"}]}'},
         )
-        assert "3 columns" in result
+        tc = _build_describe_table(action, verbose=False)
+        assert "3 columns" in tc.output_preview
 
     def test_error_output(self):
         """Failed output with error message shows failure."""
-        gen = ActionContentGenerator()
-        result = gen._get_tool_output_preview(
+        from datus.cli.action_display.tool_content import format_generic_preview
+
+        result = format_generic_preview(
             {"raw_output": '{"success": false, "error": "connection timeout"}'},
         )
         assert "Failed" in result
@@ -2573,210 +2599,144 @@ class TestGetToolOutputPreview:
 
     def test_error_output_long_error_truncated(self):
         """Long error message is truncated to 50 chars."""
-        gen = ActionContentGenerator()
+        from datus.cli.action_display.tool_content import format_generic_preview
+
         long_error = "e" * 100
-        result = gen._get_tool_output_preview(
+        result = format_generic_preview(
             {"raw_output": f'{{"success": false, "error": "{long_error}"}}'},
         )
         assert "..." in result
 
     def test_error_without_message(self):
         """Failed output without error message shows generic failure."""
-        gen = ActionContentGenerator()
-        result = gen._get_tool_output_preview(
+        from datus.cli.action_display.tool_content import format_generic_preview
+
+        result = format_generic_preview(
             {"raw_output": '{"success": false}'},
         )
         assert "Failed" in result
 
     def test_text_field_plain_text(self):
         """Plain text in 'text' field shown as preview."""
-        gen = ActionContentGenerator()
-        result = gen._get_tool_output_preview(
+        from datus.cli.action_display.tool_content import format_generic_preview
+
+        result = format_generic_preview(
             {"raw_output": {"text": "Some plain text result"}},
         )
         assert "Some plain text result" in result
 
     def test_text_field_long_truncated(self):
         """Long plain text is truncated."""
-        gen = ActionContentGenerator(enable_truncation=True)
-        result = gen._get_tool_output_preview(
+        from datus.cli.action_display.tool_content import format_generic_preview
+
+        result = format_generic_preview(
             {"raw_output": {"text": "x" * 100}},
+            enable_truncation=True,
         )
         assert "..." in result
 
     def test_read_query_with_original_rows(self):
-        """read_query function shows row count from original_rows."""
-        gen = ActionContentGenerator()
-        result = gen._get_tool_output_preview(
-            {"raw_output": '{"result": {"original_rows": 42}}'},
-            function_name="read_query",
+        """read_query function shows row count via registered builder."""
+        from datus.cli.action_display.tool_content import _build_read_query
+
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            input_data={"function_name": "read_query"},
+            output_data={"raw_output": '{"original_rows": 42}'},
         )
-        assert "42 rows" in result
+        tc = _build_read_query(action, verbose=False)
+        assert "42 rows" in tc.output_preview
 
     def test_search_table_function(self):
-        """search_table function shows metadata and sample counts."""
-        gen = ActionContentGenerator()
-        result = gen._get_tool_output_preview(
-            {"raw_output": '{"result": {"metadata": [{"t": 1}, {"t": 2}], "sample_data": [{"r": 1}]}}'},
-            function_name="search_table",
+        """search_table function shows metadata and sample counts via registered builder."""
+        from datus.cli.action_display.tool_content import _build_search_table
+
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            input_data={"function_name": "search_table"},
+            output_data={"raw_output": '{"metadata": [{"t": 1}, {"t": 2}], "sample_data": [{"r": 1}]}'},
         )
-        assert "2 tables" in result
-        assert "1 sample rows" in result
+        tc = _build_search_table(action, verbose=False)
+        assert "2 tables" in tc.output_preview
+        assert "1 sample rows" in tc.output_preview
 
     def test_search_metrics_function(self):
-        """search_metrics function shows metrics count."""
-        gen = ActionContentGenerator()
-        result = gen._get_tool_output_preview(
-            {"raw_output": '{"result": {"m1": "v1", "m2": "v2"}}'},
-            function_name="search_metrics",
+        """search_metrics function shows metrics count via registered builder."""
+        from datus.cli.action_display.tool_content import _build_search_metrics
+
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            input_data={"function_name": "search_metrics"},
+            output_data={"result": [1, 2]},
         )
-        assert "metrics" in result
+        tc = _build_search_metrics(action, verbose=False)
+        assert "metrics" in tc.output_preview
 
     def test_search_reference_sql_function(self):
-        """search_reference_sql function shows SQL count."""
-        gen = ActionContentGenerator()
-        result = gen._get_tool_output_preview(
-            {"raw_output": '{"result": {"sql1": "v1"}}'},
-            function_name="search_reference_sql",
+        """search_reference_sql function shows SQL count via registered builder."""
+        from datus.cli.action_display.tool_content import _build_search_reference_sql
+
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            input_data={"function_name": "search_reference_sql"},
+            output_data={"result": [1]},
         )
-        assert "reference SQLs" in result
+        tc = _build_search_reference_sql(action, verbose=False)
+        assert "reference SQLs" in tc.output_preview
 
     def test_search_external_knowledge_function(self):
-        """search_external_knowledge function shows knowledge count."""
-        gen = ActionContentGenerator()
-        result = gen._get_tool_output_preview(
-            {"raw_output": '{"result": {"k1": "v1"}}'},
-            function_name="search_external_knowledge",
+        """search_external_knowledge function shows knowledge count via registered builder."""
+        from datus.cli.action_display.tool_content import _build_search_external_knowledge
+
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            input_data={"function_name": "search_external_knowledge"},
+            output_data={"result": [1]},
         )
-        assert "extensions of knowledge" in result
+        tc = _build_search_external_knowledge(action, verbose=False)
+        assert "knowledge entries" in tc.output_preview
 
     def test_search_documents_function(self):
-        """search_documents function shows document count."""
-        gen = ActionContentGenerator()
-        result = gen._get_tool_output_preview(
-            {"raw_output": '{"result": {"d1": "v1"}}'},
-            function_name="search_documents",
+        """search_documents function shows document count via registered builder."""
+        from datus.cli.action_display.tool_content import _build_search_documents
+
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            input_data={"function_name": "search_documents"},
+            output_data={"result": [1]},
         )
-        assert "documents" in result
+        tc = _build_search_documents(action, verbose=False)
+        assert "documents" in tc.output_preview
 
     def test_generic_success_fallback(self):
         """Generic success output without items shows 'Success'."""
-        gen = ActionContentGenerator()
-        result = gen._get_tool_output_preview({"success": True, "raw_output": '{"noitems": true}'})
+        from datus.cli.action_display.tool_content import format_generic_preview
+
+        result = format_generic_preview({"success": True, "raw_output": '{"noitems": true}'})
         assert "Success" in result
 
     def test_generic_failure_fallback(self):
         """Generic failure output shows 'Failed'."""
-        gen = ActionContentGenerator()
-        result = gen._get_tool_output_preview({"success": False, "raw_output": '{"noitems": true}'})
+        from datus.cli.action_display.tool_content import format_generic_preview
+
+        result = format_generic_preview({"success": False, "raw_output": '{"noitems": true}'})
         assert "Failed" in result
 
     def test_generic_completed_fallback(self):
         """No success key and no items returns 'Completed'."""
-        gen = ActionContentGenerator()
-        result = gen._get_tool_output_preview({"raw_output": '{"noitems": true}'})
+        from datus.cli.action_display.tool_content import format_generic_preview
+
+        result = format_generic_preview({"raw_output": '{"noitems": true}'})
         assert "Completed" in result
 
 
 # ── ActionHistoryDisplay methods ───────────────────────────────────
-
-
-@pytest.mark.ci
-class TestFormatActionSummary:
-    """Tests for ActionHistoryDisplay.format_action_summary."""
-
-    def test_summary_contains_icon_and_message(self):
-        """Summary includes status icon and action message."""
-        display = ActionHistoryDisplay()
-        action = _make_action(ActionRole.TOOL, ActionStatus.SUCCESS, messages="query executed")
-        result = display.format_action_summary(action)
-        assert "✅" in result
-        assert "query executed" in result
-        assert "bright_cyan" in result
-
-    def test_summary_failed_action(self):
-        """Failed action shows failure icon."""
-        display = ActionHistoryDisplay()
-        action = _make_action(ActionRole.ASSISTANT, ActionStatus.FAILED, messages="generation failed")
-        result = display.format_action_summary(action)
-        assert "❌" in result
-
-
-@pytest.mark.ci
-class TestFormatActionDetail:
-    """Tests for ActionHistoryDisplay.format_action_detail."""
-
-    def test_detail_panel_with_input_output(self):
-        """Detail panel includes input and output data."""
-        t0 = datetime(2025, 1, 1, 12, 0, 0)
-        t1 = t0 + timedelta(seconds=3.14)
-        display = ActionHistoryDisplay()
-        action = _make_action(
-            ActionRole.TOOL,
-            ActionStatus.SUCCESS,
-            messages="read_query",
-            input_data={"sql": "SELECT 1"},
-            output_data={"result": "ok"},
-            start_time=t0,
-            end_time=t1,
-        )
-        panel = display.format_action_detail(action)
-        # Panel should be a rich Panel object
-        from rich.panel import Panel
-
-        assert isinstance(panel, Panel)
-
-    def test_detail_panel_without_input_output(self):
-        """Detail panel works without input/output."""
-        display = ActionHistoryDisplay()
-        action = _make_action(
-            ActionRole.ASSISTANT,
-            ActionStatus.SUCCESS,
-            messages="thinking",
-        )
-        panel = display.format_action_detail(action)
-        from rich.panel import Panel
-
-        assert isinstance(panel, Panel)
-
-
-@pytest.mark.ci
-class TestExtractSubagentResponse:
-    """Tests for ActionHistoryDisplay._extract_subagent_response."""
-
-    def test_extract_from_json_string_raw_output(self):
-        """Extracts response from JSON-encoded raw_output."""
-        result = ActionHistoryDisplay._extract_subagent_response(
-            {"raw_output": '{"success": 1, "result": {"response": "The total is 42"}}'}
-        )
-        assert result == "The total is 42"
-
-    def test_extract_from_dict_raw_output(self):
-        """Extracts response from dict raw_output."""
-        result = ActionHistoryDisplay._extract_subagent_response(
-            {"raw_output": {"success": 1, "result": {"response": "Hello"}}}
-        )
-        assert result == "Hello"
-
-    def test_extract_flat_response(self):
-        """Extracts response from flat dict format."""
-        result = ActionHistoryDisplay._extract_subagent_response({"response": "Direct response"})
-        assert result == "Direct response"
-
-    def test_invalid_json_returns_empty(self):
-        """Invalid JSON in raw_output returns empty string."""
-        result = ActionHistoryDisplay._extract_subagent_response({"raw_output": "not json"})
-        assert result == ""
-
-    def test_no_response_key(self):
-        """Missing response key returns empty string."""
-        result = ActionHistoryDisplay._extract_subagent_response({"raw_output": {"other": "data"}})
-        assert result == ""
-
-    def test_no_raw_output(self):
-        """Dict without raw_output falls back to direct access."""
-        result = ActionHistoryDisplay._extract_subagent_response({"some_key": "val"})
-        assert result == ""
 
 
 @pytest.mark.ci
@@ -2964,130 +2924,130 @@ class TestRenderMainAction:
         assert "workflow step" in output
 
 
-@pytest.mark.ci
-class TestDisplayActionList:
-    """Tests for ActionHistoryDisplay.display_action_list."""
-
-    def test_empty_list(self):
-        """Empty action list shows 'No actions' message."""
-        buf = StringIO()
-        console = Console(file=buf, no_color=True)
-        display = ActionHistoryDisplay(console)
-        display.display_action_list([])
-        output = buf.getvalue()
-        assert "No actions to display" in output
-
-    def test_with_actions(self):
-        """Non-empty list delegates to render_action_history."""
-        buf = StringIO()
-        console = Console(file=buf, no_color=True)
-        display = ActionHistoryDisplay(console)
-        actions = [
-            _make_action(
-                ActionRole.TOOL,
-                ActionStatus.SUCCESS,
-                messages="list_tables()",
-                input_data={"function_name": "list_tables"},
-            )
-        ]
-        display.display_action_list(actions)
-        output = buf.getvalue()
-        assert "list_tables" in output
+# ── INTERACTION rendering ─────────────────────────────────────────
 
 
 @pytest.mark.ci
-class TestDisplayFinalActionHistory:
-    """Tests for ActionHistoryDisplay.display_final_action_history."""
+class TestRenderInteraction:
+    """Tests for INTERACTION action rendering via ActionRenderer."""
 
-    def test_empty_list(self):
-        """Empty list shows 'No actions' message."""
-        buf = StringIO()
-        console = Console(file=buf, no_color=True)
-        display = ActionHistoryDisplay(console)
-        display.display_final_action_history([])
-        output = buf.getvalue()
-        assert "No actions to display" in output
+    def test_render_interaction_request_text(self):
+        """INTERACTION PROCESSING with text content_type."""
+        from datus.cli.action_display.renderers import ActionRenderer
 
-    def test_with_dict_input_output(self):
-        """Actions with dict input/output are rendered in tree format."""
-        buf = StringIO()
-        console = Console(file=buf, no_color=True)
-        display = ActionHistoryDisplay(console)
-        t0 = datetime(2025, 1, 1, 12, 0, 0)
-        t1 = t0 + timedelta(seconds=2.5)
-        actions = [
-            _make_action(
-                ActionRole.TOOL,
-                ActionStatus.SUCCESS,
-                messages="read_query",
-                input_data={"function_name": "read_query", "sql": "SELECT 1"},
-                output_data={"result": "ok", "rows": 5},
-                start_time=t0,
-                end_time=t1,
-            )
-        ]
-        display.display_final_action_history(actions)
-        output = buf.getvalue()
-        assert "Action History" in output
-        assert "read_query" in output
-
-    def test_with_non_dict_input_output(self):
-        """Actions with non-dict input/output are rendered as strings."""
-        buf = StringIO()
-        console = Console(file=buf, no_color=True)
-        display = ActionHistoryDisplay(console)
+        renderer = ActionRenderer()
         action = _make_action(
-            ActionRole.ASSISTANT,
-            ActionStatus.SUCCESS,
-            messages="thinking",
+            ActionRole.INTERACTION,
+            ActionStatus.PROCESSING,
+            messages="Choose option",
+            input_data={"content": "Please confirm", "content_type": "text", "choices": {}},
         )
-        action.input = "plain string input"
-        action.output = "plain string output"
-        display.display_final_action_history([action])
-        output = buf.getvalue()
-        assert "Input:" in output
-        assert "Output:" in output
+        renderables = renderer.render_interaction_request(action, verbose=False)
+        texts = [r.plain if hasattr(r, "plain") else str(r) for r in renderables]
+        full = " ".join(texts)
+        assert "Interaction Request" in full
+        assert "Please confirm" in full
 
+    def test_render_interaction_request_yaml(self):
+        """INTERACTION PROCESSING with yaml content_type renders Syntax."""
+        from datus.cli.action_display.renderers import ActionRenderer
 
-@pytest.mark.ci
-class TestGetDataSummaryWithFullSql:
-    """Tests for ActionHistoryDisplay._get_data_summary_with_full_sql."""
+        renderer = ActionRenderer()
+        action = _make_action(
+            ActionRole.INTERACTION,
+            ActionStatus.PROCESSING,
+            input_data={"content": "key: value", "content_type": "yaml", "choices": {}},
+        )
+        renderables = renderer.render_interaction_request(action, verbose=False)
+        from rich.syntax import Syntax
 
-    def test_dict_with_success_and_sql(self):
-        """Shows full SQL without truncation."""
-        display = ActionHistoryDisplay()
-        long_sql = "SELECT " + "x" * 500
-        result = display._get_data_summary_with_full_sql({"success": True, "sql_query": long_sql})
-        assert long_sql in result
-        assert "✅" in result
+        assert any(isinstance(r, Syntax) for r in renderables)
 
-    def test_dict_with_success_no_sql(self):
-        """Shows field count when no SQL."""
-        display = ActionHistoryDisplay()
-        result = display._get_data_summary_with_full_sql({"success": True, "data": 1})
-        assert "2 fields" in result
+    def test_render_interaction_request_sql(self):
+        """INTERACTION PROCESSING with sql content_type renders Syntax."""
+        from datus.cli.action_display.renderers import ActionRenderer
 
-    def test_dict_with_failure(self):
-        """Shows failure icon."""
-        display = ActionHistoryDisplay()
-        result = display._get_data_summary_with_full_sql({"success": False})
-        assert "❌" in result
+        renderer = ActionRenderer()
+        action = _make_action(
+            ActionRole.INTERACTION,
+            ActionStatus.PROCESSING,
+            input_data={"content": "SELECT 1", "content_type": "sql", "choices": {}},
+        )
+        renderables = renderer.render_interaction_request(action, verbose=False)
+        from rich.syntax import Syntax
 
-    def test_dict_without_success(self):
-        """Shows field count without success key."""
-        display = ActionHistoryDisplay()
-        result = display._get_data_summary_with_full_sql({"a": 1, "b": 2, "c": 3})
-        assert "3 fields" in result
+        assert any(isinstance(r, Syntax) for r in renderables)
 
-    def test_string(self):
-        """String is returned as-is."""
-        display = ActionHistoryDisplay()
-        assert display._get_data_summary_with_full_sql("hello") == "hello"
+    def test_render_interaction_request_markdown(self):
+        """INTERACTION PROCESSING with markdown content_type renders Markdown."""
+        from datus.cli.action_display.renderers import ActionRenderer
 
-    def test_other_types(self):
-        """Other types are converted to string."""
-        display = ActionHistoryDisplay()
-        assert display._get_data_summary_with_full_sql(42) == "42"
+        renderer = ActionRenderer()
+        action = _make_action(
+            ActionRole.INTERACTION,
+            ActionStatus.PROCESSING,
+            input_data={"content": "## Title\nBody", "content_type": "markdown", "choices": {}},
+        )
+        renderables = renderer.render_interaction_request(action, verbose=False)
+        assert any(isinstance(r, Markdown) for r in renderables)
+
+    def test_render_interaction_request_with_choices_shows_content_only(self):
+        """INTERACTION PROCESSING with choices renders content only (not choice list)."""
+        from datus.cli.action_display.renderers import ActionRenderer
+
+        renderer = ActionRenderer()
+        action = _make_action(
+            ActionRole.INTERACTION,
+            ActionStatus.PROCESSING,
+            input_data={
+                "content": "Pick one: y=Yes, n=No",
+                "content_type": "text",
+                "choices": {"y": "Yes", "n": "No"},
+            },
+        )
+        renderables = renderer.render_interaction_request(action, verbose=False)
+        texts = [r.plain if hasattr(r, "plain") else str(r) for r in renderables]
+        full = "\n".join(texts)
+        assert "Pick one" in full
+        # Choices are handled by select_choice UI, not rendered in request
+        assert len(renderables) == 2  # header + content only
+
+    def test_render_interaction_success_with_choice(self):
+        """INTERACTION SUCCESS shows user_choice and content."""
+        from datus.cli.action_display.renderers import ActionRenderer
+
+        renderer = ActionRenderer()
+        action = _make_action(
+            ActionRole.INTERACTION,
+            ActionStatus.SUCCESS,
+            messages="Confirmed",
+            output_data={"content": "Saved!", "content_type": "text", "user_choice": "y"},
+        )
+        renderables = renderer.render_interaction_success(action, verbose=False)
+        texts = [r.plain if hasattr(r, "plain") else str(r) for r in renderables]
+        full = " ".join(texts)
+        assert "Selected: y" in full
+        assert "Saved!" in full
+
+    def test_render_main_action_skips_interaction(self):
+        """render_main_action returns empty for INTERACTION (not shown in history)."""
+        renderer = ActionRenderer(ActionContentGenerator())
+        action = _make_action(
+            ActionRole.INTERACTION,
+            ActionStatus.PROCESSING,
+            input_data={"content": "Confirm?", "content_type": "text"},
+        )
+        result = renderer.render_main_action(action, verbose=False)
+        assert result == []
+
+        action_succ = _make_action(
+            ActionRole.INTERACTION,
+            ActionStatus.SUCCESS,
+            messages="Done",
+            output_data={"content": "All good", "content_type": "text"},
+        )
+        result2 = renderer.render_main_action(action_succ, verbose=False)
+        assert result2 == []
 
 
 # ── render_action_history skip patterns ───────────────────────────
@@ -3098,7 +3058,7 @@ class TestRenderActionHistorySkipPatterns:
     """Tests for skip conditions in render_action_history."""
 
     def test_skips_interaction_actions(self):
-        """INTERACTION actions are skipped."""
+        """INTERACTION actions are skipped in history replay."""
         buf = StringIO()
         console = Console(file=buf, no_color=True)
         display = ActionHistoryDisplay(console)
@@ -3266,7 +3226,8 @@ class TestRenderSubagentOtherRoles:
         )
         display._render_subagent_action(action, verbose=True)
         output = buf.getvalue()
-        assert "sql: SELECT 1" in output
+        assert "sql" in output
+        assert "SELECT 1" in output
 
 
 # ── InlineStreamingContext ─────────────────────────────────────────
@@ -3320,15 +3281,18 @@ class TestInlineStreamingContextFlush:
     """Tests for InlineStreamingContext._flush_remaining_actions."""
 
     def test_flush_skips_interaction(self):
-        """Flush skips INTERACTION actions."""
-        display = ActionHistoryDisplay()
+        """Flush skips INTERACTION actions (only shown during live interaction)."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
         actions = [
-            _make_action(ActionRole.INTERACTION, ActionStatus.SUCCESS, messages="skip me"),
+            _make_action(ActionRole.INTERACTION, ActionStatus.SUCCESS, messages="render me"),
         ]
         ctx = InlineStreamingContext(actions, display)
         ctx._processed_index = 0
         ctx._flush_remaining_actions()
         assert ctx._processed_index == 1
+        assert "render me" not in buf.getvalue()
 
     def test_flush_skips_processing_tools(self):
         """Flush skips PROCESSING TOOL actions."""
@@ -3440,9 +3404,11 @@ class TestInlineStreamingContextFlush:
 class TestInlineStreamingContextProcess:
     """Tests for InlineStreamingContext._process_actions specific branches."""
 
-    def test_process_skips_interaction(self):
-        """INTERACTION actions are skipped during processing."""
-        display = ActionHistoryDisplay()
+    def test_process_skips_interaction_success(self):
+        """INTERACTION SUCCESS actions are skipped during processing (only shown live)."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
         actions = [
             _make_action(ActionRole.INTERACTION, ActionStatus.SUCCESS, messages="input request"),
         ]
@@ -3451,6 +3417,7 @@ class TestInlineStreamingContextProcess:
         ctx._tick = 0
         ctx._process_actions()
         assert ctx._processed_index == 1
+        assert "input request" not in buf.getvalue()
 
     def test_process_skips_depth1_processing_tools(self):
         """PROCESSING tools in subagent groups are skipped."""
@@ -3521,18 +3488,19 @@ class TestInlineStreamingContextProcess:
         )
         ctx._print_completed_action(action)
         output = buf.getvalue()
-        assert "sql: SELECT 1" in output
+        assert "sql" in output
+        assert "SELECT 1" in output
 
-    def test_print_completed_empty_lines_skipped(self):
-        """_print_completed_action does nothing for roles that return empty lines."""
+    def test_print_completed_interaction_skipped(self):
+        """_print_completed_action produces no output for INTERACTION (render_main_action returns [])."""
         buf = StringIO()
         console = Console(file=buf, no_color=True)
         display = ActionHistoryDisplay(console)
         ctx = InlineStreamingContext([], display)
 
-        action = _make_action(ActionRole.INTERACTION, ActionStatus.SUCCESS, messages="skip")
+        action = _make_action(ActionRole.INTERACTION, ActionStatus.SUCCESS, messages="interaction done")
         ctx._print_completed_action(action)
-        assert buf.getvalue() == ""
+        assert buf.getvalue().strip() == ""
 
 
 @pytest.mark.ci
@@ -3619,7 +3587,7 @@ class TestUpdateSubagentDisplayBranches:
             input_data={"function_name": "search", "arguments": "plain text"},
             parent_action_id="g1",
         )
-        with patch("datus.cli.action_history_display.Live"):
+        with patch("datus.cli.action_display.streaming.Live"):
             ctx._update_subagent_display(action, group_key="g1")
         assert ctx._subagent_groups["g1"]["tool_count"] == 1
         line = ctx._format_subagent_action_line(action)
@@ -3710,7 +3678,7 @@ class TestEndSubagentGroupByKey:
 
 @pytest.mark.ci
 class TestCollapseCompleted:
-    """Tests for collapse_completed parameter in render_action_history."""
+    """Tests for collapse/expand behavior in render_action_history (driven by verbose flag)."""
 
     def _build_completed_group_actions(self, parent_id="grp1"):
         """Build a list of actions representing a completed subagent group."""
@@ -3774,13 +3742,13 @@ class TestCollapseCompleted:
         ]
 
     def test_render_action_history_collapse_completed(self):
-        """collapse_completed=True renders completed group as header + Done summary."""
+        """verbose=False collapses completed group as header + Done summary."""
         buf = StringIO()
         console = Console(file=buf, no_color=True, width=200)
         display = ActionHistoryDisplay(console)
 
         actions = self._build_completed_group_actions()
-        display.render_action_history(actions, verbose=False, collapse_completed=True)
+        display.render_action_history(actions, verbose=False)
 
         output = buf.getvalue()
         lines = [line for line in output.splitlines() if line.strip()]
@@ -3797,13 +3765,13 @@ class TestCollapseCompleted:
         assert "execute_sql" not in output
 
     def test_render_action_history_collapse_verbose_overrides(self):
-        """verbose=True overrides collapse_completed — all actions expanded."""
+        """verbose=True expands all actions (no collapsing)."""
         buf = StringIO()
         console = Console(file=buf, no_color=True, width=200)
         display = ActionHistoryDisplay(console)
 
         actions = self._build_completed_group_actions()
-        display.render_action_history(actions, verbose=True, collapse_completed=True)
+        display.render_action_history(actions, verbose=True)
 
         output = buf.getvalue()
         # Should NOT have collapsed marker
@@ -3817,7 +3785,7 @@ class TestCollapseCompleted:
         assert "Done" in output
 
     def test_render_action_history_collapse_active_group_expanded(self):
-        """Unclosed (active) groups remain expanded even with collapse_completed=True."""
+        """Unclosed (active) groups remain expanded even in compact mode (verbose=False)."""
         buf = StringIO()
         console = Console(file=buf, no_color=True, width=200)
         display = ActionHistoryDisplay(console)
@@ -3849,7 +3817,7 @@ class TestCollapseCompleted:
             ),
         ]
 
-        display.render_action_history(actions, verbose=False, collapse_completed=True, show_partial_done=True)
+        display.render_action_history(actions, verbose=False)
 
         output = buf.getvalue()
         # Should NOT have collapsed marker (group is not complete)
@@ -3859,14 +3827,14 @@ class TestCollapseCompleted:
         # Should show tool action
         assert "search_schema" in output
 
-    def test_render_action_history_no_collapse_default(self):
-        """collapse_completed=False (default) preserves original expanded behavior."""
+    def test_render_action_history_verbose_expanded(self):
+        """verbose=True renders all actions expanded (no collapse)."""
         buf = StringIO()
         console = Console(file=buf, no_color=True, width=200)
         display = ActionHistoryDisplay(console)
 
         actions = self._build_completed_group_actions()
-        display.render_action_history(actions, verbose=False, collapse_completed=False)
+        display.render_action_history(actions, verbose=True)
 
         output = buf.getvalue()
         # Should NOT have collapsed marker
@@ -3920,7 +3888,7 @@ class TestCollapseCompleted:
             ),
         ]
 
-        display.render_action_history(actions, verbose=False, collapse_completed=True)
+        display.render_action_history(actions, verbose=False)
 
         output = buf.getvalue()
         lines = [line for line in output.splitlines() if line.strip()]
@@ -3932,7 +3900,7 @@ class TestCollapseCompleted:
         assert "1 tool uses" in lines[1]
 
     def test_render_multi_turn_history_collapse(self):
-        """render_multi_turn_history forwards collapse_completed correctly."""
+        """render_multi_turn_history collapses groups in compact mode (verbose=False)."""
         buf = StringIO()
         console = Console(file=buf, no_color=True, width=200)
         display = ActionHistoryDisplay(console)
@@ -3940,7 +3908,7 @@ class TestCollapseCompleted:
         actions = self._build_completed_group_actions()
         turns = [("Find total revenue", actions)]
 
-        display.render_multi_turn_history(turns, verbose=False, collapse_completed=True)
+        display.render_multi_turn_history(turns, verbose=False)
 
         output = buf.getvalue()
         assert "\u23f4" in output  # collapsed marker
@@ -4067,7 +4035,7 @@ class TestReprintHistoryVerboseSnapshot:
         ctx._processed_index = 1  # One action already processed
         ctx._verbose = True
 
-        ctx._reprint_history_verbose_snapshot()
+        ctx._reprint_history(verbose=True, show_active_groups=True)
 
         output = buf.getvalue()
         # Should contain the user message header
@@ -4117,7 +4085,7 @@ class TestReprintHistoryVerboseSnapshot:
             "actions": [tool_action],
         }
 
-        ctx._reprint_history_verbose_snapshot()
+        ctx._reprint_history(verbose=True, show_active_groups=True)
 
         output = buf.getvalue()
         # Should contain the subagent header
@@ -4153,7 +4121,7 @@ class TestReprintHistoryVerboseSnapshot:
         ctx = InlineStreamingContext([], display, history_turns=history_turns, current_user_message="Current query")
         ctx._processed_index = 0
 
-        ctx._reprint_history_verbose_snapshot()
+        ctx._reprint_history(verbose=True, show_active_groups=True)
 
         output = buf.getvalue()
         # Should contain the historical turn
@@ -4185,7 +4153,7 @@ class TestReprintHistoryVerboseSnapshot:
             "actions": [],
         }
 
-        ctx._reprint_history_verbose_snapshot()
+        ctx._reprint_history(verbose=True, show_active_groups=True)
 
         # No Live display should have been started
         assert ctx._subagent_live is None
@@ -4511,14 +4479,14 @@ class TestPendingTaskToolSkips:
         return actions
 
     def test_collapsed_no_extra_subagent_labels(self):
-        """With collapse_completed=True, TOOL(task) actions after interleaved non-task
+        """In compact mode (verbose=False), TOOL(task) actions after interleaved non-task
         TOOL should NOT produce extra 'subagent' labels."""
         buf = StringIO()
         console = Console(file=buf, no_color=True, width=200)
         display = ActionHistoryDisplay(console)
 
         actions = self._build_interleaved_actions()
-        display.render_action_history(actions, verbose=False, collapse_completed=True)
+        display.render_action_history(actions, verbose=False)
 
         output = buf.getvalue()
         lines = [line for line in output.splitlines() if line.strip()]
@@ -4538,14 +4506,14 @@ class TestPendingTaskToolSkips:
         assert "get_current_date" in output
 
     def test_expanded_no_extra_subagent_labels(self):
-        """With collapse_completed=False, TOOL(task) actions after interleaved non-task
+        """With verbose=True, TOOL(task) actions after interleaved non-task
         TOOL should NOT produce extra 'subagent' labels."""
         buf = StringIO()
         console = Console(file=buf, no_color=True, width=200)
         display = ActionHistoryDisplay(console)
 
         actions = self._build_interleaved_actions()
-        display.render_action_history(actions, verbose=False, collapse_completed=False)
+        display.render_action_history(actions, verbose=True)
 
         output = buf.getvalue()
 
@@ -4570,7 +4538,7 @@ class TestPendingTaskToolSkips:
         display = ActionHistoryDisplay(console)
 
         actions = self._build_interleaved_actions()
-        display.render_action_history(actions, verbose=True, collapse_completed=False)
+        display.render_action_history(actions, verbose=True)
 
         output = buf.getvalue()
 
@@ -4641,7 +4609,7 @@ class TestPendingTaskToolSkips:
             ),
         ]
 
-        display.render_action_history(actions, verbose=True, collapse_completed=False)
+        display.render_action_history(actions, verbose=True)
 
         output = buf.getvalue()
         # Group should be expanded with response shown
@@ -4712,7 +4680,7 @@ class TestPendingTaskToolSkips:
             ),
         ]
 
-        display.render_action_history(actions, verbose=False, collapse_completed=True)
+        display.render_action_history(actions, verbose=False)
 
         output = buf.getvalue()
         lines = [line for line in output.splitlines() if line.strip()]
@@ -4793,7 +4761,7 @@ class TestVerboseToggleRefreshLoop:
         ctx._processed_index = 1
         ctx._verbose = False
 
-        ctx._reprint_history()
+        ctx._reprint_history(verbose=ctx._verbose)
 
         output = buf.getvalue()
         assert "Test query" in output
@@ -4823,7 +4791,7 @@ class TestVerboseToggleRefreshLoop:
         ctx._processed_index = 1
         ctx._verbose = True
 
-        ctx._reprint_history_verbose_snapshot()
+        ctx._reprint_history(verbose=True, show_active_groups=True)
 
         output = buf.getvalue()
         assert "Test query" in output

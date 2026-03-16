@@ -188,7 +188,7 @@ class SessionLoader:
                                 role=ActionRole.TOOL,
                                 messages=f"Tool call: {tool_name}",
                                 action_type=tool_name,
-                                input={"function_name": tool_name, **args_dict},
+                                input={"function_name": tool_name, "arguments": arguments},
                                 output=None,  # Will be filled by next function_call_output
                                 status=ActionStatus.PROCESSING,
                                 start_time=datetime.fromisoformat(created_at) if created_at else datetime.now(),

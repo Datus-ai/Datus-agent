@@ -917,7 +917,7 @@ class StreamlitChatbot:
                     with status_placeholder.container():
                         with st.status("Processing your query... ", expanded=True) as status:
                             step_index = 0
-                            from datus.cli.action_history_display import ActionContentGenerator
+                            from datus.cli.action_display.renderers import ActionContentGenerator
 
                             content_generator = ActionContentGenerator(enable_truncation=False)
 

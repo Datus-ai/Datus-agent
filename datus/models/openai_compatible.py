@@ -927,7 +927,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                                     input={"function_name": tool_name, "arguments": tool_info["arguments"]},
                                     output={
                                         "success": True,
-                                        "raw_output": output_content,  # Add raw output for action_display_app
+                                        "raw_output": output_content,
                                         "summary": result_summary,
                                         "status_message": result_summary,
                                     },
