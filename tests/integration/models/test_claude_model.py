@@ -19,7 +19,6 @@ pytestmark = pytest.mark.nightly
 
 
 @auto_traceable
-@pytest.mark.skip(reason="Anthropic API credit balance too low - temporarily disabled")
 class TestClaudeModel:
     """Test suite for the ClaudeModel class."""
 
