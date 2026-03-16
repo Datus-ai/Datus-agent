@@ -192,7 +192,6 @@ class ActionHistoryDisplay:
                             self._render_subagent_header(buffered, verbose)
                         self._render_subagent_action(buffered, verbose)
                     self._render_subagent_done(group["tool_count"], group["start_time"], action)
-                pending_task_tool_skips += 1
                 continue
 
             if pending_task_tool_skips > 0:

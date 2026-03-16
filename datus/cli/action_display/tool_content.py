@@ -958,7 +958,10 @@ def _build_simple_action(action: ActionHistory, verbose: bool, success_label: st
     else:
         data = parse_output_data(action.output)
         if data:
-            tc.output_preview = f"\u2713 {success_label}"
+            if action.status == ActionStatus.FAILED:
+                tc.output_preview = f"\u2717 {action.output if isinstance(action.output, str) else 'Failed'}"
+            else:
+                tc.output_preview = f"\u2713 {success_label}"
     return tc
 
 
