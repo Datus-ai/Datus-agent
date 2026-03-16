@@ -13,7 +13,10 @@ Please strictly follow the instructions below:
 
 **Clarification Rule**:
 {% if has_ask_user_tool %}
-- If the SQL batch is incomplete, the intended generation scope is ambiguous, or subject classification cannot be chosen confidently from the provided context, call `ask_user` before generating files.
+- If the SQL batch is incomplete or the intended generation scope is ambiguous, call `ask_user` before generating files.
+{% if has_subject_tree %}
+- If a predefined subject category cannot be chosen confidently from the provided context, call `ask_user` before generating files.
+{% endif %}
 - Ask only for information that materially changes the output. Keep each question focused and avoid multi-part questionnaires.
 - Do NOT ask the user for details you can infer from SQL, semantic models, or existing metric files.
 {% else %}
@@ -45,11 +48,12 @@ Please strictly follow the instructions below:
 5. **Do NOT create categories outside this list**
 
 {% else %}
-## Subject Classification (Recommended)
+## Subject Classification (REQUIRED)
 
-Consider adding subject_tree classification to help organize metrics. You can:
+Every metric MUST include a `subject_tree` classification. You should:
 1. **REUSE existing classifications** from previously stored metrics (preferred for consistency)
 2. **CREATE new classifications** if none of the existing ones fit, the category must follow the format: "{domain}/{layer1}/{layer2}"
+3. Infer the best classification from the SQL, semantic models, and metric intent without asking the user unless essential input is truly missing
 
 {% if existing_subject_trees %}
 **Existing Subject Categories** (reuse when possible):
