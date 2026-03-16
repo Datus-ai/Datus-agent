@@ -108,43 +108,26 @@ jobs:
         timeout-minutes: 90
         run: |
           set -o pipefail
-          LOG_DIR="nightly_logs_$$"
-          mkdir -p "$LOG_DIR"
-
-          # Run all 3 test groups in parallel (no dependencies between groups)
-          # Group 1: ALL MCP server tests in isolated process (event loop sensitive)
-          (set -o pipefail; uv run pytest -m nightly tests/integration/tools/test_mcp_server.py --tb=short --verbose --timeout=60 2>&1 | tee "$LOG_DIR/mcp.log") &
-          pid_mcp=$!
-
-          # Group 2: gen_* agent tests serially in dependency order (semantic_model → metrics → ext_knowledge)
-          (set -o pipefail; uv run pytest -m nightly tests/integration/agent/test_gen_semantic_model_agentic.py tests/integration/agent/test_gen_metrics_agentic.py tests/integration/agent/test_gen_ext_knowledge_agentic.py --tb=short --verbose --timeout=600 --reruns 1 --reruns-delay 5 2>&1 | tee "$LOG_DIR/gen.log") &
-          pid_gen=$!
-
-          # Group 3: Remaining nightly tests with xdist parallel (deselect groups 1-2)
-          (set -o pipefail; uv run pytest -m nightly tests/ --deselect tests/integration/tools/test_mcp_server.py --deselect tests/integration/agent/test_gen_semantic_model_agentic.py --deselect tests/integration/agent/test_gen_metrics_agentic.py --deselect tests/integration/agent/test_gen_ext_knowledge_agentic.py --tb=short --verbose --timeout=300 --reruns 1 --reruns-delay 5 --dist=loadscope -n auto 2>&1 | tee "$LOG_DIR/main.log") &
-          pid_main=$!
-
-          # Wait for all groups and collect exit codes
-          wait $pid_mcp; mcp_exit=$?
-          wait $pid_gen; gen_exit=$?
-          wait $pid_main; main_exit=$?
-
-          # Combine logs into single file for artifact upload and Feishu notification
           LOG_FILE="test_output_nightly_$(date +%Y%m%d_%H%M%S).log"
-          echo "=== MCP Server Tests ===" > "$LOG_FILE"
-          cat "$LOG_DIR/mcp.log" >> "$LOG_FILE"
-          echo -e "\n=== Gen Agent Tests ===" >> "$LOG_FILE"
-          cat "$LOG_DIR/gen.log" >> "$LOG_FILE"
-          echo -e "\n=== Main Nightly Tests ===" >> "$LOG_FILE"
-          cat "$LOG_DIR/main.log" >> "$LOG_FILE"
-          rm -rf "$LOG_DIR"
-          echo "log_file=$LOG_FILE" >> "$GITHUB_OUTPUT"
+          test_exit_code=0
 
-          # Fail if any group failed
-          max_exit=$((mcp_exit > gen_exit ? mcp_exit : gen_exit))
-          test_exit_code=$((max_exit > main_exit ? max_exit : main_exit))
+          # Run 3 test groups sequentially to avoid resource contention that
+          # causes MCP server ASGI timeouts and event loop corruption.
+
+          # Group 1: MCP server tests (event loop sensitive, no xdist)
+          echo "=== MCP Server Tests ===" | tee "$LOG_FILE"
+          uv run pytest -m nightly tests/integration/tools/test_mcp_server.py --tb=short --verbose --timeout=60 2>&1 | tee -a "$LOG_FILE" || test_exit_code=$?
+
+          # Group 2: gen_* agent tests in dependency order
+          echo -e "\n=== Gen Agent Tests ===" | tee -a "$LOG_FILE"
+          uv run pytest -m nightly tests/integration/agent/test_gen_semantic_model_agentic.py tests/integration/agent/test_gen_metrics_agentic.py tests/integration/agent/test_gen_ext_knowledge_agentic.py --tb=short --verbose --timeout=600 --reruns 1 --reruns-delay 5 2>&1 | tee -a "$LOG_FILE" || test_exit_code=$?
+
+          # Group 3: Remaining nightly tests with xdist parallel
+          echo -e "\n=== Main Nightly Tests ===" | tee -a "$LOG_FILE"
+          uv run pytest -m nightly tests/ --deselect tests/integration/tools/test_mcp_server.py --deselect tests/integration/agent/test_gen_semantic_model_agentic.py --deselect tests/integration/agent/test_gen_metrics_agentic.py --deselect tests/integration/agent/test_gen_ext_knowledge_agentic.py --tb=short --verbose --timeout=300 --reruns 1 --reruns-delay 5 --dist=loadscope -n auto 2>&1 | tee -a "$LOG_FILE" || test_exit_code=$?
+
+          echo "log_file=$LOG_FILE" >> "$GITHUB_OUTPUT"
           echo "test_exit_code=$test_exit_code" >> "$GITHUB_OUTPUT"
-          echo "Exit codes: mcp=$mcp_exit gen=$gen_exit main=$main_exit"
           exit "$test_exit_code"
 
       - name: Upload test results
