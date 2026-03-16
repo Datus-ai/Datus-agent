@@ -551,10 +551,10 @@ class TestFormatCsvPreview:
         assert any("1" in line for line in lines)
         # Only one data row (placeholder at start skipped)
         data_lines = [
-            l
-            for l in lines
-            if l.strip() and not l.strip().startswith("---") and "data:" not in l and "a" not in l.split()[0]
-            if len(l.split()) > 0
+            line
+            for line in lines
+            if line.strip() and not line.strip().startswith("---") and "data:" not in line and "a" not in line.split()[0]
+            if len(line.split()) > 0
         ]
         assert len(data_lines) >= 1
 
