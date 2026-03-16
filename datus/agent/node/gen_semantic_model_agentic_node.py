@@ -90,6 +90,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
         self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
         self.generation_tools: Optional[GenerationTools] = None
         self.gen_semantic_model_tools: Optional[GenSemanticModelTools] = None
+        self.ask_user_tool = None
         self.hooks = None
         self.setup_tools()
 
@@ -117,6 +118,8 @@ class GenSemanticModelAgenticNode(AgenticNode):
         self._setup_semantic_tools()
         self._setup_generation_tools()
         self._setup_filesystem_tools()
+        if self.execution_mode == "interactive":
+            self._setup_ask_user_tool()
 
         logger.debug(f"Setup {len(self.tools)} tools for {self.NODE_NAME}: {[tool.name for tool in self.tools]}")
 
@@ -213,6 +216,19 @@ class GenSemanticModelAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup generation tools: {e}")
 
+    def _setup_ask_user_tool(self):
+        """Setup ask-user tool so the agent can ask clarifying questions."""
+        try:
+            from datus.tools.func_tool.ask_user_tools import AskUserTool
+
+            broker = self._get_or_create_broker()
+            self.ask_user_tool = AskUserTool(broker=broker)
+            self.tools.extend(self.ask_user_tool.available_tools())
+            logger.debug("Added ask_user tool")
+        except Exception as e:
+            logger.error(f"Failed to setup ask_user tool: {e}")
+            self.ask_user_tool = None
+
     def _setup_hooks(self):
         """Setup hooks for interactive mode."""
         try:
@@ -255,6 +271,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
         context["native_tools"] = ", ".join([tool.name for tool in self.tools]) if self.tools else "None"
         context["mcp_tools"] = ", ".join(list(self.mcp_servers.keys())) if self.mcp_servers else "None"
         context["semantic_model_dir"] = self.semantic_model_dir
+        context["has_ask_user_tool"] = self.ask_user_tool is not None
 
         logger.debug(f"Prepared template context: {context}")
         return context

@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+from datus.tools.func_tool.ask_user_tools import AskUserTool
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.tools.func_tool.context_search import ContextSearchTools
 from datus.tools.func_tool.database import DBFuncTool, db_function_tool_instance, db_function_tools
@@ -17,6 +18,7 @@ from datus.tools.func_tool.sub_agent_task_tool import SubAgentTaskTool
 __all__ = [
     "trans_to_function_tool",
     "FuncToolResult",
+    "AskUserTool",
     "DBFuncTool",
     "db_function_tools",
     "db_function_tool_instance",

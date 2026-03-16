@@ -21,8 +21,9 @@ def select_choice(
 
     Uses prompt_toolkit Application for proper terminal handling.
     Up/Down arrows to navigate, Enter to confirm, or press shortcut key directly.
-    When ``allow_free_text`` is True, a "Type custom answer..." entry is appended
-    and the user can also press ``/`` at any time to enter free-text mode.
+    When ``allow_free_text`` is True, a "Type custom answer..." entry is appended.
+    Choosing it, or pressing ``/``, opens the standard multiline input prompt so
+    paste works reliably.
 
     Args:
         console: Rich Console (used for fallback output on error)
@@ -48,47 +49,24 @@ def select_choice(
         keys = list(display_choices.keys())
         selected = [keys.index(default) if default in keys else 0]
 
-        # State: inline editing for free-text option
-        editing = [False]
-        text_buf = [""]
-
         kb = KeyBindings()
 
         @kb.add("up")
         def _move_up(event):
-            if editing[0]:
-                return  # ignore arrow keys while editing
             selected[0] = (selected[0] - 1) % len(keys)
 
         @kb.add("down")
         def _move_down(event):
-            if editing[0]:
-                return
             selected[0] = (selected[0] + 1) % len(keys)
 
         @kb.add("enter")
         def _confirm(event):
-            if editing[0]:
-                event.app.exit(result=text_buf[0])
-            else:
-                sel = keys[selected[0]]
-                if sel == _FREE_TEXT_SENTINEL:
-                    editing[0] = True  # enter inline editing mode
-                else:
-                    event.app.exit(result=sel)
+            sel = keys[selected[0]]
+            event.app.exit(result=sel)
 
         @kb.add("c-c")
         def _cancel(event):
-            if editing[0]:
-                editing[0] = False
-                text_buf[0] = ""
-            else:
-                event.app.exit(result=default)
-
-        @kb.add("backspace")
-        def _backspace(event):
-            if editing[0]:
-                text_buf[0] = text_buf[0][:-1]
+            event.app.exit(result=default)
 
         # Direct shortcut keys (press y/a/n to pick immediately)
         for _i, _key in enumerate(keys):
@@ -97,44 +75,20 @@ def select_choice(
 
             @kb.add(_key)
             def _select_direct(event, k=_key):
-                if editing[0]:
-                    text_buf[0] += k
-                else:
-                    event.app.exit(result=k)
+                event.app.exit(result=k)
 
         if allow_free_text:
 
             @kb.add("/")
             def _free_text_shortcut(event):
-                if editing[0]:
-                    text_buf[0] += "/"
-                else:
-                    # Jump to free-text and start editing
-                    selected[0] = keys.index(_FREE_TEXT_SENTINEL)
-                    editing[0] = True
-
-            @kb.add("<any>")
-            def _any_key(event):
-                ch = event.data
-                if not ch.isprintable() or len(ch) != 1:
-                    return
-                if editing[0]:
-                    text_buf[0] += ch
-                elif keys[selected[0]] == _FREE_TEXT_SENTINEL:
-                    # Start inline editing with first character
-                    editing[0] = True
-                    text_buf[0] = ch
+                event.app.exit(result=_FREE_TEXT_SENTINEL)
 
         def _get_formatted_text():
             lines = []
             for i, (key, display) in enumerate(display_choices.items()):
                 is_sel = i == selected[0]
                 if key == _FREE_TEXT_SENTINEL:
-                    if editing[0]:
-                        cursor = "\u2588"  # block cursor
-                        label = f"  [/] {text_buf[0]}{cursor}"
-                    else:
-                        label = f"  [/] {display}"
+                    label = f"  [/] {display}"
                 else:
                     label = f"  [{key}] {display}"
                 if is_sel:
@@ -149,7 +103,12 @@ def select_choice(
             full_screen=False,
         )
 
-        return app.run()
+        result = app.run()
+        if allow_free_text and result == _FREE_TEXT_SENTINEL:
+            console.print()
+            console.print("[dim](Paste supported. Escape+Enter or Alt+Enter to submit)[/]")
+            return prompt_input(console, message="Your input", multiline=True)
+        return result
 
     except (KeyboardInterrupt, EOFError):
         console.print("\n[yellow]Input cancelled[/]")

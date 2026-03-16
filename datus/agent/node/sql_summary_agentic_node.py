@@ -96,6 +96,7 @@ class SqlSummaryAgenticNode(AgenticNode):
         # Setup tools based on hardcoded configuration
         self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
         self.generation_tools: Optional[GenerationTools] = None
+        self.ask_user_tool = None
         self.hooks = None
         self.setup_tools()
 
@@ -123,6 +124,8 @@ class SqlSummaryAgenticNode(AgenticNode):
         # filesystem_tools.edit_file, filesystem_tools.list_directory
         self._setup_specific_generation_tools()
         self._setup_specific_filesystem_tool()
+        if self.execution_mode == "interactive":
+            self._setup_ask_user_tool()
 
         logger.info(
             f"Setup {len(self.tools)} tools for {self.configured_node_name}: {[tool.name for tool in self.tools]}"
@@ -156,6 +159,19 @@ class SqlSummaryAgenticNode(AgenticNode):
             self.tools.append(trans_to_function_tool(self.filesystem_func_tool.list_directory))
         except Exception as e:
             logger.error(f"Failed to setup specific filesystem tool: {e}")
+
+    def _setup_ask_user_tool(self):
+        """Setup ask-user tool so the agent can ask clarifying questions."""
+        try:
+            from datus.tools.func_tool.ask_user_tools import AskUserTool
+
+            broker = self._get_or_create_broker()
+            self.ask_user_tool = AskUserTool(broker=broker)
+            self.tools.extend(self.ask_user_tool.available_tools())
+            logger.debug("Added ask_user tool")
+        except Exception as e:
+            logger.error(f"Failed to setup ask_user tool: {e}")
+            self.ask_user_tool = None
 
     def _setup_hooks(self):
         """Setup hooks (hardcoded to generation_hooks)."""
@@ -239,6 +255,7 @@ class SqlSummaryAgenticNode(AgenticNode):
 
         context["native_tools"] = ", ".join([tool.name for tool in self.tools]) if self.tools else "None"
         context["sql_summary_dir"] = self.sql_summary_dir
+        context["has_ask_user_tool"] = self.ask_user_tool is not None
 
         # Handle subject_tree context based on whether predefined or query from storage
         if self.subject_tree:

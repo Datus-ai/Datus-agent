@@ -67,11 +67,20 @@ class TestSelectChoiceBasic:
         assert result == "y"
 
     @pytest.mark.ci
+    @patch("datus.cli._cli_utils.prompt_input", return_value="my custom answer")
     @patch("prompt_toolkit.Application")
-    def test_free_text_custom_answer(self, mock_app_cls):
-        mock_app_cls.return_value.run.return_value = "my custom answer"
+    def test_free_text_custom_answer(self, mock_app_cls, _mock_prompt_input):
+        mock_app_cls.return_value.run.return_value = _FREE_TEXT_SENTINEL
         result = select_choice(MagicMock(), {"1": "A", "2": "B"}, default="1", allow_free_text=True)
         assert result == "my custom answer"
+
+    @pytest.mark.ci
+    @patch("datus.cli._cli_utils.prompt_input", return_value="")
+    @patch("prompt_toolkit.Application")
+    def test_free_text_empty_answer(self, mock_app_cls, _mock_prompt_input):
+        mock_app_cls.return_value.run.return_value = _FREE_TEXT_SENTINEL
+        result = select_choice(MagicMock(), {"1": "A", "2": "B"}, default="1", allow_free_text=True)
+        assert result == ""
 
     @pytest.mark.ci
     @patch("prompt_toolkit.Application")
@@ -146,121 +155,58 @@ class TestSelectChoiceKeyBindings:
         event.app.exit.assert_not_called()
 
     @pytest.mark.ci
-    def test_slash_enters_editing(self):
-        """Pressing '/' enters free-text editing mode (no exit)."""
+    def test_slash_exits_with_free_text_sentinel(self):
+        """Pressing '/' exits the selector with the free-text sentinel."""
         kb = _capture_kb({"1": "A", "2": "B"}, default="1", allow_free_text=True)
         handler = _find_handler(kb, "/")
         event = _make_event()
         handler(event)
-        event.app.exit.assert_not_called()
+        event.app.exit.assert_called_once_with(result=_FREE_TEXT_SENTINEL)
 
     @pytest.mark.ci
-    def test_editing_enter_exits_with_text(self):
-        """After entering editing mode and typing, enter exits with typed text."""
+    def test_up_navigates_with_free_text_enabled(self):
+        """Up arrow still navigates normally when free text is enabled."""
         kb = _capture_kb({"1": "A", "2": "B"}, default="1", allow_free_text=True)
-
-        # Enter editing mode via "/"
-        _find_handler(kb, "/")(_make_event())
-
-        # Type characters via <any>
-        any_handler = _find_handler(kb, "<any>")
-        for ch in "hello":
-            ev = _make_event()
-            ev.data = ch
-            any_handler(ev)
-
-        # Press enter
-        event_enter = _make_event()
-        _find_handler(kb, "enter")(event_enter)
-        event_enter.app.exit.assert_called_once_with(result="hello")
-
-    @pytest.mark.ci
-    def test_editing_backspace(self):
-        """Backspace removes last character in editing mode."""
-        kb = _capture_kb({"1": "A", "2": "B"}, default="1", allow_free_text=True)
-
-        # Enter editing mode
-        _find_handler(kb, "/")(_make_event())
-
-        # Type "ab"
-        any_handler = _find_handler(kb, "<any>")
-        for ch in "ab":
-            ev = _make_event()
-            ev.data = ch
-            any_handler(ev)
-
-        # Backspace
-        _find_handler(kb, "backspace")(_make_event())
-
-        # Enter should exit with "a" (backspace removed "b")
-        event_enter = _make_event()
-        _find_handler(kb, "enter")(event_enter)
-        event_enter.app.exit.assert_called_once_with(result="a")
-
-    @pytest.mark.ci
-    def test_up_ignored_in_editing(self):
-        """Up arrow is ignored when in editing mode."""
-        kb = _capture_kb({"1": "A", "2": "B"}, default="1", allow_free_text=True)
-        _find_handler(kb, "/")(_make_event())
         event = _make_event()
         _find_handler(kb, "up")(event)
         event.app.exit.assert_not_called()
 
     @pytest.mark.ci
-    def test_down_ignored_in_editing(self):
-        """Down arrow is ignored when in editing mode."""
+    def test_down_navigates_with_free_text_enabled(self):
+        """Down arrow still navigates normally when free text is enabled."""
         kb = _capture_kb({"1": "A", "2": "B"}, default="1", allow_free_text=True)
-        _find_handler(kb, "/")(_make_event())
         event = _make_event()
         _find_handler(kb, "down")(event)
         event.app.exit.assert_not_called()
 
     @pytest.mark.ci
-    def test_ctrl_c_cancels_editing(self):
-        """Ctrl-C in editing mode cancels editing (no exit)."""
+    def test_ctrl_c_returns_default_with_free_text_enabled(self):
+        """Ctrl-C exits with default even when free text is enabled."""
         kb = _capture_kb({"1": "A", "2": "B"}, default="1", allow_free_text=True)
-        _find_handler(kb, "/")(_make_event())
         event = _make_event()
         _find_handler(kb, "c-c")(event)
-        # Should NOT exit — just cancel editing
-        event.app.exit.assert_not_called()
+        event.app.exit.assert_called_once_with(result="1")
 
     @pytest.mark.ci
-    def test_shortcut_appends_in_editing(self):
-        """Shortcut key appends to text buffer when in editing mode."""
+    def test_shortcut_key_still_selects_option_with_free_text_enabled(self):
+        """Existing shortcut keys still select the matching option immediately."""
         kb = _capture_kb({"1": "A", "2": "B"}, default="1", allow_free_text=True)
-        _find_handler(kb, "/")(_make_event())
-        # Press "1" — should append, not exit
         event = _make_event()
         _find_handler(kb, "1")(event)
-        event.app.exit.assert_not_called()
+        event.app.exit.assert_called_once_with(result="1")
 
     @pytest.mark.ci
-    def test_slash_appends_in_editing(self):
-        """Pressing '/' while already editing appends '/' to text."""
+    def test_any_key_handler_absent_with_prompt_based_free_text(self):
+        """Prompt-based free text mode no longer registers a raw <any> handler."""
         kb = _capture_kb({"1": "A", "2": "B"}, default="1", allow_free_text=True)
-        _find_handler(kb, "/")(_make_event())  # enter editing
-        event = _make_event()
-        _find_handler(kb, "/")(event)  # type "/" character
-        event.app.exit.assert_not_called()
+        assert _find_handler(kb, "<any>") is None
 
     @pytest.mark.ci
-    def test_any_key_non_printable_ignored(self):
-        """Non-printable characters are ignored by <any> handler."""
-        kb = _capture_kb({"1": "A", "2": "B"}, default="1", allow_free_text=True)
-        any_handler = _find_handler(kb, "<any>")
-        event = _make_event()
-        event.data = "\x01"  # non-printable
-        any_handler(event)
-        event.app.exit.assert_not_called()
-
-    @pytest.mark.ci
-    def test_enter_on_sentinel_enters_editing(self):
-        """Pressing enter when free-text sentinel is selected enters editing mode."""
+    def test_enter_on_sentinel_exits_with_sentinel(self):
+        """Pressing enter when free-text sentinel is selected exits with the sentinel."""
         kb = _capture_kb({"1": "A"}, default="1", allow_free_text=True)
         # Navigate down to the sentinel
         _find_handler(kb, "down")(_make_event())
-        # Press enter — should enter editing, not exit
         event = _make_event()
         _find_handler(kb, "enter")(event)
-        event.app.exit.assert_not_called()
+        event.app.exit.assert_called_once_with(result=_FREE_TEXT_SENTINEL)
