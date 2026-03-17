@@ -64,18 +64,19 @@ class TestApplyScopeFilterAdditional:
     def _make_store(self, tmp_path) -> SchemaStorage:
         return SchemaStorage(get_db_embedding_model())
 
-    def test_apply_scope_filter_string_where_with_complex_scope(self, tmp_path):
-        """Scope filter with multiple conditions combined with a string where."""
+    def test_apply_scope_filter_node_where_with_complex_scope(self, tmp_path):
+        """Scope filter with multiple conditions combined with a Node where."""
         store = self._make_store(tmp_path)
         scope = And([eq("schema_name", "public"), eq("database_name", "main")])
         store._scope_filter = scope
 
-        result = store._apply_scope_filter("table_name = 'orders'")
-        assert isinstance(result, str)
-        assert "table_name = 'orders'" in result
-        assert "AND" in result
-        assert "schema_name" in result
-        assert "database_name" in result
+        result = store._apply_scope_filter(eq("table_name", "orders"))
+        assert isinstance(result, Node)
+        compiled = build_where(result)
+        assert "table_name" in compiled
+        assert "orders" in compiled
+        assert "schema_name" in compiled
+        assert "database_name" in compiled
 
     def test_apply_scope_filter_node_where_preserves_both_conditions(self, tmp_path):
         """Both scope and where Node conditions must appear in the compiled output."""

@@ -35,17 +35,17 @@ class TestApplyScopeFilter:
         result = store._apply_scope_filter(None)
         assert result is scope
 
-    def test_scope_filter_with_string_where(self, tmp_path):
-        """When where is a string, combine via string AND."""
+    def test_scope_filter_with_node_where_combined(self, tmp_path):
+        """When both are Node objects, combine via and_()."""
         store = self._make_store(tmp_path)
         scope = eq("schema_name", "public")
         store._scope_filter = scope
 
-        result = store._apply_scope_filter("table_name = 'users'")
-        assert isinstance(result, str)
-        assert "table_name = 'users'" in result
-        assert "AND" in result
-        assert "schema_name" in result
+        result = store._apply_scope_filter(eq("table_name", "users"))
+        assert isinstance(result, Node)
+        compiled = build_where(result)
+        assert "table_name" in compiled
+        assert "schema_name" in compiled
 
     def test_scope_filter_with_node_where(self, tmp_path):
         """When both are Node objects, combine via and_()."""

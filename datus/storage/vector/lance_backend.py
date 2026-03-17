@@ -190,7 +190,7 @@ class LanceVectorTable(VectorTable):
         if select_fields:
             query_builder = query_builder.select(select_fields)
         if limit is None:
-            limit = self.count_rows(compiled)
+            limit = self._table.count_rows(compiled) if compiled else self._table.count_rows()
         return query_builder.limit(limit).to_arrow()
 
     def count_rows(self, where: WhereExpr = None) -> int:

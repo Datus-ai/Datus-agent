@@ -176,10 +176,10 @@ class TestExistingSemanticMetrics:
                     self.storage = storage
 
                 def search_all(self, database_name="", select_fields=None):
-                    from datus_storage_base.conditions import And, build_where, eq
+                    from datus_storage_base.conditions import And, eq
 
                     conditions = [eq("kind", "table")]
-                    where = build_where(And(conditions))
+                    where = And(conditions)
                     return self.storage._search_all(where=where, select_fields=select_fields).to_pylist()
 
             class FakeMetricRAG:
@@ -238,10 +238,10 @@ class TestExistingSemanticMetrics:
                     self.storage = storage
 
                 def search_all(self, database_name="", select_fields=None):
-                    from datus_storage_base.conditions import And, build_where, eq
+                    from datus_storage_base.conditions import And, eq
 
                     conditions = [eq("kind", "table")]
-                    where = build_where(And(conditions))
+                    where = And(conditions)
                     return self.storage._search_all(where=where, select_fields=select_fields).to_pylist()
 
             fake_semantic = FakeSemanticRAG(semantic_storage)

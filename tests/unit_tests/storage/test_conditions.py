@@ -44,9 +44,6 @@ def test_in_handles_null_values():
 
 def test_base_compile_where_accepts_node_and_string():
     assert build_where(None) is None
-    assert build_where("status = 'active'") == "status = 'active'"
 
     node = eq("status", "active")
     assert build_where(node) == "status = 'active'"
-
-    assert build_where("  ") is None

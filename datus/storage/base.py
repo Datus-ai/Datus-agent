@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import pandas as pd
 import pyarrow as pa
-from datus_storage_base.conditions import Node, WhereExpr, and_, build_where
+from datus_storage_base.conditions import Node, WhereExpr, and_
 from datus_storage_base.vector.base import VectorDatabase, VectorTable
 
 from datus.storage.embedding_models import EmbeddingModel
@@ -126,10 +126,6 @@ class BaseEmbeddingStore(StorageBase):
             return where
         if where is None:
             return self._scope_filter
-        # If where is already a string, convert scope_filter to string and combine
-        if isinstance(where, str):
-            scope_str = build_where(self._scope_filter)
-            return f"({where}) AND ({scope_str})" if scope_str else where
         # Both are Node objects – combine via and_()
         return and_(self._scope_filter, where)
 

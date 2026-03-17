@@ -28,11 +28,11 @@ class TestLanceVectorTableWriteOps:
         table.add(data)
         raw_table.add.assert_called_once_with(data)
 
-    def test_delete_with_str(self):
-        """delete() compiles str where and delegates."""
+    def test_delete_with_node_eq(self):
+        """delete() compiles eq() Node where and delegates."""
         raw_table = MagicMock()
         table = LanceVectorTable(raw_table)
-        table.delete("id = 1")
+        table.delete(eq("id", 1))
         raw_table.delete.assert_called_once_with("id = 1")
 
     def test_delete_with_node(self):
@@ -56,11 +56,11 @@ class TestLanceVectorTableWriteOps:
         table.delete(in_("chunk_id", ["a", "b", "c"]))
         raw_table.delete.assert_called_once_with("(chunk_id = 'a' OR chunk_id = 'b' OR chunk_id = 'c')")
 
-    def test_update_with_str(self):
-        """update() compiles str where and delegates."""
+    def test_update_with_node_eq(self):
+        """update() compiles eq() Node where and delegates."""
         raw_table = MagicMock()
         table = LanceVectorTable(raw_table)
-        table.update("id = 1", {"name": "new"})
+        table.update(eq("id", 1), {"name": "new"})
         raw_table.update.assert_called_once_with(where="id = 1", values={"name": "new"})
 
     def test_update_with_node(self):
@@ -90,12 +90,12 @@ class TestLanceVectorTableSearchOps:
         assert table.count_rows() == 42
         raw_table.count_rows.assert_called_once_with()
 
-    def test_count_rows_with_str_where(self):
-        """count_rows() with str where passes the compiled filter."""
+    def test_count_rows_with_eq_node_where(self):
+        """count_rows() with eq() Node where compiles and passes the filter."""
         raw_table = MagicMock()
         raw_table.count_rows.return_value = 5
         table = LanceVectorTable(raw_table)
-        assert table.count_rows(where="status = 'active'") == 5
+        assert table.count_rows(where=eq("status", "active")) == 5
         raw_table.count_rows.assert_called_once_with("status = 'active'")
 
     def test_count_rows_with_node_where(self):

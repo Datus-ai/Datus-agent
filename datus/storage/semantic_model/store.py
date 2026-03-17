@@ -5,7 +5,7 @@
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import pyarrow as pa
-from datus_storage_base.conditions import And, WhereExpr, build_where, eq, in_
+from datus_storage_base.conditions import And, WhereExpr, eq, in_
 
 from datus.storage.base import BaseEmbeddingStore, EmbeddingModel
 from datus.utils.loggings import get_logger
@@ -91,7 +91,7 @@ class SemanticModelStorage(BaseEmbeddingStore):
         if table_name:
             conditions.append(eq("table_name", table_name))
 
-        where_clause = build_where(And(conditions)) if conditions else None
+        where_clause = And(conditions) if conditions else None
 
         return self.search(
             query_txt=query_text,
@@ -158,14 +158,14 @@ class SemanticModelRAG:
         if schema_name:
             table_conds.append(eq("schema_name", schema_name))
 
-        table_objs = self.storage._search_all(where=build_where(And(table_conds))).to_pylist()
+        table_objs = self.storage._search_all(where=And(table_conds)).to_pylist()
 
         # Fallback 1: If not found with full filters, try matching just the table_name
         # This handles cases where stored database/schema names might differ slightly from the current coordinate
         if not table_objs and (catalog_name or database_name or schema_name):
             logger.debug(f"Semantic model not found for {table_name} with full filters, trying broad match.")
             broad_conds = [eq("kind", "table"), eq("table_name", table_name)]
-            table_objs = self.storage._search_all(where=build_where(And(broad_conds))).to_pylist()
+            table_objs = self.storage._search_all(where=And(broad_conds)).to_pylist()
 
         # Fallback 2: Case-insensitive match if still not found
         if not table_objs:
@@ -173,7 +173,7 @@ class SemanticModelRAG:
             # For now, let's just log and try one more common normalization
             if table_name.lower() != table_name:
                 lower_conds = [eq("kind", "table"), eq("table_name", table_name.lower())]
-                table_objs = self.storage._search_all(where=build_where(And(lower_conds))).to_pylist()
+                table_objs = self.storage._search_all(where=And(lower_conds)).to_pylist()
 
         if not table_objs:
             return None
@@ -193,7 +193,7 @@ class SemanticModelRAG:
         if semantic_model.get("schema_name"):
             children_conds.append(eq("schema_name", semantic_model["schema_name"]))
 
-        children = self.storage._search_all(where=build_where(And(children_conds))).to_pylist()
+        children = self.storage._search_all(where=And(children_conds)).to_pylist()
 
         # Aggregate children
         dimensions = []
@@ -269,7 +269,7 @@ class SemanticModelRAG:
         if database_name:
             conditions.append(eq("database_name", database_name))
 
-        where = build_where(And(conditions))
+        where = And(conditions)
         return self.storage._search_all(where=where, select_fields=select_fields).to_pylist()
 
     def get_size(self) -> int:
