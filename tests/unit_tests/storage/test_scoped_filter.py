@@ -10,7 +10,6 @@ from datus_storage_base.conditions import build_where
 from datus.storage.scoped_filter import (
     ScopedFilterBuilder,
     _build_id_condition,
-    _replace_wildcard,
     _split_csv,
     _subject_condition_for_parts,
     _table_condition_for_token,
@@ -37,21 +36,6 @@ def _register_test_capabilities():
 # TestReplaceWildcard
 # ---------------------------------------------------------------------------
 
-
-class TestReplaceWildcard:
-    """Tests for _replace_wildcard helper."""
-
-    def test_replace_single_wildcard(self):
-        """Asterisk is replaced with SQL LIKE percent."""
-        assert _replace_wildcard("orders*") == "orders%"
-
-    def test_replace_multiple_wildcards(self):
-        """Multiple asterisks are all replaced."""
-        assert _replace_wildcard("*orders*") == "%orders%"
-
-    def test_no_wildcard_unchanged(self):
-        """Strings without asterisk pass through."""
-        assert _replace_wildcard("orders") == "orders"
 
 
 # ---------------------------------------------------------------------------

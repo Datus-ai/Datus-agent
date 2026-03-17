@@ -22,9 +22,6 @@ from datus.utils.reference_paths import split_reference_path
 logger = get_logger(__name__)
 
 
-def _replace_wildcard(value: str) -> str:
-    return value.replace("*", "%")
-
 
 class ScopedFilterBuilder:
     """Build LanceDB WHERE filters from ScopedContext attributes."""
@@ -149,7 +146,7 @@ def _value_condition(field: str, value: str) -> Node:
     if not value:
         return eq(field, "")
     if "*" in value:
-        return like(field, _replace_wildcard(value))
+        return like(field, value)
     return eq(field, value)
 
 
