@@ -1,8 +1,15 @@
+import time
+from unittest.mock import MagicMock, patch
+
+import pytest
+
 from datus.agent.node import Node
 from datus.agent.plan import generate_workflow
 from datus.agent.workflow import Workflow
 from datus.configuration.node_type import NodeType
-from datus.schemas.node_models import SqlTask
+from datus.schemas.base import BaseResult
+from datus.schemas.node_models import SQLContext, SqlTask
+from datus.utils.exceptions import DatusException
 
 
 class TestNode:
@@ -246,3 +253,348 @@ class TestWorkflow:
         loaded_node2 = loaded_workflow.nodes["node2"]
         assert loaded_node2.description == "Second node"
         assert loaded_node2.type == NodeType.TYPE_EXECUTE_SQL
+
+
+# ---------------------------------------------------------------------------
+# Helper: create a Workflow with _init_tools patched out
+# ---------------------------------------------------------------------------
+
+
+def _make_workflow(name="wf", task_text="test task"):
+    task = SqlTask(task=task_text)
+    with patch.object(Workflow, "_init_tools", lambda self: setattr(self, "tools", [])):
+        wf = Workflow(name=name, task=task, agent_config=None)
+    return wf
+
+
+def _make_node(node_id, node_type=NodeType.TYPE_GENERATE_SQL, description="desc"):
+    return Node.new_instance(
+        node_id=node_id,
+        description=description,
+        node_type=node_type,
+        input_data=None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Workflow initialization
+# ---------------------------------------------------------------------------
+
+
+class TestWorkflowInit:
+    def test_defaults_on_creation(self):
+        wf = _make_workflow()
+        assert wf.name == "wf"
+        assert wf.status == "pending"
+        assert wf.current_node_index == 0
+        assert wf.nodes == {}
+        assert wf.node_order == []
+        assert wf.reflection_round == 0
+        assert wf.completion_time is None
+        assert wf.metadata == {}
+
+    def test_creation_time_set(self):
+        before = time.time()
+        wf = _make_workflow()
+        after = time.time()
+        assert before <= wf.creation_time <= after
+
+
+# ---------------------------------------------------------------------------
+# add_node / remove_node / move_node
+# ---------------------------------------------------------------------------
+
+
+class TestWorkflowNodeManagement:
+    def test_add_node_appends_by_default(self):
+        wf = _make_workflow()
+        n1 = _make_node("n1")
+        n2 = _make_node("n2")
+        wf.add_node(n1)
+        wf.add_node(n2)
+        assert wf.node_order == ["n1", "n2"]
+        assert "n1" in wf.nodes
+        assert "n2" in wf.nodes
+
+    def test_add_node_at_position(self):
+        wf = _make_workflow()
+        n1 = _make_node("n1")
+        n2 = _make_node("n2")
+        wf.add_node(n1)
+        wf.add_node(n2, position=0)
+        assert wf.node_order[0] == "n2"
+
+    def test_add_node_invalid_position_type_raises(self):
+        wf = _make_workflow()
+        n1 = _make_node("n1")
+        with pytest.raises(ValueError):
+            wf.add_node(n1, position="bad")
+
+    def test_add_node_sets_workflow_reference(self):
+        wf = _make_workflow()
+        n1 = _make_node("n1")
+        wf.add_node(n1)
+        assert n1.workflow is wf
+
+    def test_remove_node_success(self):
+        wf = _make_workflow()
+        n1 = _make_node("n1")
+        wf.add_node(n1)
+        result = wf.remove_node("n1")
+        assert result is True
+        assert "n1" not in wf.nodes
+        assert "n1" not in wf.node_order
+
+    def test_remove_node_missing_returns_false(self):
+        wf = _make_workflow()
+        result = wf.remove_node("nonexistent")
+        assert result is False
+
+    def test_remove_node_cleans_dependencies(self):
+        wf = _make_workflow()
+        n1 = _make_node("n1")
+        n2 = _make_node("n2")
+        wf.add_node(n1)
+        wf.add_node(n2)
+        n2.add_dependency("n1")
+        wf.remove_node("n1")
+        assert "n1" not in n2.dependencies
+
+    def test_move_node_success(self):
+        wf = _make_workflow()
+        for i in range(3):
+            wf.add_node(_make_node(f"n{i}"))
+        result = wf.move_node("n0", 2)
+        assert result is True
+        assert wf.node_order[2] == "n0"
+
+    def test_move_node_invalid_position_returns_false(self):
+        wf = _make_workflow()
+        wf.add_node(_make_node("n0"))
+        result = wf.move_node("n0", 99)
+        assert result is False
+
+    def test_move_node_not_found_returns_false(self):
+        wf = _make_workflow()
+        wf.add_node(_make_node("n0"))
+        result = wf.move_node("missing", 0)
+        assert result is False
+
+
+# ---------------------------------------------------------------------------
+# get_node / get_current_node / get_next_node / advance_to_next_node
+# ---------------------------------------------------------------------------
+
+
+class TestWorkflowNavigation:
+    def test_get_node_returns_correct_node(self):
+        wf = _make_workflow()
+        n1 = _make_node("n1")
+        wf.add_node(n1)
+        assert wf.get_node("n1") is n1
+
+    def test_get_node_missing_returns_none(self):
+        wf = _make_workflow()
+        assert wf.get_node("missing") is None
+
+    def test_get_current_node_first(self):
+        wf = _make_workflow()
+        n0 = _make_node("n0")
+        wf.add_node(n0)
+        assert wf.get_current_node() is n0
+
+    def test_get_current_node_empty_returns_none(self):
+        wf = _make_workflow()
+        assert wf.get_current_node() is None
+
+    def test_get_next_node(self):
+        wf = _make_workflow()
+        n0 = _make_node("n0")
+        n1 = _make_node("n1")
+        wf.add_node(n0)
+        wf.add_node(n1)
+        assert wf.get_next_node() is n1
+
+    def test_get_next_node_at_last_returns_none(self):
+        wf = _make_workflow()
+        n0 = _make_node("n0")
+        wf.add_node(n0)
+        assert wf.get_next_node() is None
+
+    def test_advance_to_next_node(self):
+        wf = _make_workflow()
+        n0 = _make_node("n0")
+        n1 = _make_node("n1")
+        wf.add_node(n0)
+        wf.add_node(n1)
+        result = wf.advance_to_next_node()
+        assert result is n1
+        assert wf.current_node_index == 1
+
+    def test_advance_to_next_node_at_end_completes(self):
+        wf = _make_workflow()
+        n0 = _make_node("n0")
+        wf.add_node(n0)
+        result = wf.advance_to_next_node()
+        assert result is None
+        assert wf.status == "completed"
+        assert wf.completion_time is not None
+
+    def test_get_last_node_by_type(self):
+        wf = _make_workflow()
+        n0 = _make_node("n0", NodeType.TYPE_GENERATE_SQL)
+        n1 = _make_node("n1", NodeType.TYPE_EXECUTE_SQL)
+        n2 = _make_node("n2", NodeType.TYPE_GENERATE_SQL)
+        wf.add_node(n0)
+        wf.add_node(n1)
+        wf.add_node(n2)
+        wf.current_node_index = 3  # past all nodes
+        result = wf.get_last_node_by_type(NodeType.TYPE_GENERATE_SQL)
+        assert result is n2
+
+    def test_get_last_node_by_type_not_found_returns_none(self):
+        wf = _make_workflow()
+        n0 = _make_node("n0", NodeType.TYPE_GENERATE_SQL)
+        wf.add_node(n0)
+        wf.current_node_index = 1
+        result = wf.get_last_node_by_type(NodeType.TYPE_EXECUTE_SQL)
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# is_complete
+# ---------------------------------------------------------------------------
+
+
+class TestWorkflowComplete:
+    def test_is_complete_when_status_completed(self):
+        wf = _make_workflow()
+        wf.status = "completed"
+        assert wf.is_complete() is True
+
+    def test_is_complete_when_index_past_end(self):
+        wf = _make_workflow()
+        n0 = _make_node("n0")
+        wf.add_node(n0)
+        wf.current_node_index = 5
+        assert wf.is_complete() is True
+
+    def test_not_complete_at_start(self):
+        wf = _make_workflow()
+        wf.add_node(_make_node("n0"))
+        assert wf.is_complete() is False
+
+
+# ---------------------------------------------------------------------------
+# pause / resume / reset
+# ---------------------------------------------------------------------------
+
+
+class TestWorkflowLifecycle:
+    def test_pause_sets_status(self):
+        wf = _make_workflow()
+        wf.pause()
+        assert wf.status == "paused"
+
+    def test_resume_sets_status(self):
+        wf = _make_workflow()
+        wf.status = "paused"
+        wf.resume()
+        assert wf.status == "running"
+
+    def test_reset_clears_state(self):
+        wf = _make_workflow()
+        n0 = _make_node("n0")
+        n0.status = "completed"
+        n0.result = BaseResult(success=True)
+        wf.add_node(n0)
+        wf.current_node_index = 1
+        wf.status = "completed"
+        wf.reset()
+        assert wf.current_node_index == 0
+        assert wf.status == "pending"
+        assert n0.status == "pending"
+        assert n0.result is None
+
+
+# ---------------------------------------------------------------------------
+# get_last_sqlcontext / get_task
+# ---------------------------------------------------------------------------
+
+
+class TestWorkflowContextAccess:
+    def test_get_last_sqlcontext_success(self):
+        wf = _make_workflow()
+        ctx = SQLContext(sql_query="SELECT 1", sql_return="1")
+        wf.context.sql_contexts.append(ctx)
+        result = wf.get_last_sqlcontext()
+        assert result is ctx
+
+    def test_get_last_sqlcontext_empty_raises(self):
+        wf = _make_workflow()
+        with pytest.raises(DatusException):
+            wf.get_last_sqlcontext()
+
+    def test_get_task_with_task(self):
+        wf = _make_workflow(task_text="hello world")
+        assert wf.get_task() == "hello world"
+
+    def test_get_task_none_when_no_task(self):
+        with patch.object(Workflow, "_init_tools", lambda self: setattr(self, "tools", [])):
+            wf = Workflow(name="no_task", task=None, agent_config=None)
+        assert wf.get_task() is None
+
+
+# ---------------------------------------------------------------------------
+# get_final_result / to_dict
+# ---------------------------------------------------------------------------
+
+
+class TestWorkflowSerialization:
+    def test_get_final_result_includes_completed_nodes(self):
+        wf = _make_workflow(task_text="query")
+        n0 = _make_node("n0")
+        n0.status = "completed"
+        n0.result = BaseResult(success=True)
+        wf.add_node(n0)
+        result = wf.get_final_result()
+        assert result["name"] == "wf"
+        assert result["status"] == "pending"
+        assert "n0" in result["nodes"]
+
+    def test_get_final_result_final_result_key_when_last_completed(self):
+        wf = _make_workflow(task_text="query")
+        n0 = _make_node("n0")
+        n0.status = "completed"
+        n0.result = BaseResult(success=True)
+        wf.add_node(n0)
+        result = wf.get_final_result()
+        assert "final_result" in result
+
+    def test_to_dict_contains_expected_keys(self):
+        wf = _make_workflow()
+        d = wf.to_dict()
+        for key in ("name", "status", "nodes", "node_order", "task", "current_node_index", "creation_time"):
+            assert key in d
+
+    def test_global_config_setter_propagates_to_nodes(self):
+        wf = _make_workflow()
+        n0 = _make_node("n0")
+        wf.add_node(n0)
+        new_config = MagicMock()
+        wf.global_config = new_config
+        assert n0.global_config is new_config
+
+
+# ---------------------------------------------------------------------------
+# display (smoke test - just must not raise)
+# ---------------------------------------------------------------------------
+
+
+class TestWorkflowDisplay:
+    def test_display_does_not_raise(self):
+        wf = _make_workflow()
+        n0 = _make_node("n0")
+        n0.status = "completed"
+        wf.add_node(n0)
+        wf.display()  # should not raise
