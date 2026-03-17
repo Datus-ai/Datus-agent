@@ -8,7 +8,7 @@ import yaml
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.schemas.reason_sql_node_models import ReasoningInput
-from datus.schemas.schema_linking_node_models import SchemaLinkingInput, SchemaLinkingResult
+from datus.schemas.schema_linking_node_models import SchemaLinkingInput
 from datus.storage.embedding_models import get_db_embedding_model
 from datus.storage.schema_metadata.store import SchemaStorage
 from datus.tools.lineage_graph_tools import SchemaLineageTool
@@ -94,43 +94,6 @@ class TestLineageTools:
         with open(yaml_path, "r") as f:
             return yaml.safe_load(f)
 
-    @pytest.mark.skip(reason="Not implemented")
-    def test_search(self, setup_lineage_tool: SchemaLineageTool, test_data):
-        """Test store and search functionality
-        Need to init spider snowflake dataset first and set the db_path to
-        "data/datus_db_{namespace}"
-        """
-        # Use test data from YAML
-        input_data = test_data[0]["input"]  # use first test data
-
-        # Convert input data to SchemaLinkingInput model
-        input_model = SchemaLinkingInput(**input_data)
-
-        # Store schema with input from YAML
-        result = setup_lineage_tool.execute(input_model)
-        assert isinstance(result, SchemaLinkingResult), f"Expected SchemaLinkingResult, got {type(result)}"
-        assert result.success is True, f"Schema storage failed: {result}"
-
-        # Search similar schemas using the same input text
-        search_params = SchemaLinkingInput(
-            input_text=input_data["input_text"],
-            matching_rate=input_data["matching_rate"],
-            database_type=input_data["database_type"],
-            database_name=input_data["database_name"],
-        )
-        search_result = setup_lineage_tool.execute(search_params)
-        # logger.debug(f"Search result: {search_result}")
-
-        # Verify result type and content
-        assert isinstance(
-            search_result, SchemaLinkingResult
-        ), f"Expected SchemaLinkingResult, got {type(search_result)}"
-        assert search_result.success is True, f"Schema search failed: {search_result}"
-        assert search_result.schema_count > 0, "Invalid schema count"
-        assert search_result.value_count > 0, "Invalid value count"
-        # assert len(search_result.table_schemas) == input_data["top_n"], \
-        #     f"Expected {input_data['top_n']} results, got {len(search_result.table_schemas)}"
-
     def test_invalid_schema_input(self, setup_lineage_tool):
         """Test invalid input handling"""
         # Test missing required parameter
@@ -158,24 +121,3 @@ class TestLineageTools:
                     database_name="test",
                 )
             )
-
-    @pytest.mark.skip(reason="Not implemented")
-    def test_get_table_and_values2(self, setup_lineage_tool):
-        """Test get table and values functionality"""
-        # Use test data from YAML
-        input_data = {
-            "database_type": "snowflake",
-            "database_name": "GLOBAL_WEATHER__CLIMATE_DATA_FOR_BI",
-            "table_names": ["GLOBAL_WEATHER__CLIMATE_DATA_FOR_BI.STANDARD_TILE.HISTORY_DAY"],
-        }
-        schemas, values = setup_lineage_tool.get_table_and_values(
-            input_data["database_name"], input_data["table_names"]
-        )
-
-        logger.debug(f"Result schemas: {schemas}")
-        assert len(schemas) == 1, "Invalid schema count"
-        assert len(values) == 1, "Invalid value count"
-
-    # def test_search_tables_with_llm(self, setup_lineage_tool, test_data, llm):
-    #    """Test table search functionality with llm"""
-    #    pass

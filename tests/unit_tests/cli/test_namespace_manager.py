@@ -95,63 +95,6 @@ class TestNamespaceManagerAdd:
         assert result == 1  # 1 means failure
         mock_console.print.assert_called_with("❌ Namespace 'bird_sqlite' already exists")
 
-    @pytest.mark.skip(reason="starrocks adapter not installed in test environment")
-    def test_add_starrocks_namespace_success(
-        self, config_path, mock_prompt, mock_detect_db_connectivity, mock_save_configuration, mock_console
-    ):
-        """Test successfully adding a StarRocks namespace."""
-        mock_ask, mock_getpass, _ = mock_prompt
-
-        # Mock the sequence of user inputs for StarRocks
-        # StarRocks fields: host, port, username, password, catalog, database, charset, autocommit, timeout_seconds
-        mock_ask.side_effect = [
-            "test_starrocks",  # namespace name
-            "starrocks",  # database type
-            "127.0.0.1",  # host
-            "9030",  # port
-            "test_user",  # username
-            # password is prompted via getpass, not mock_ask
-            "default_catalog",  # catalog
-            "test_db",  # database
-            "utf8mb4",  # charset
-            "True",  # autocommit
-            "30",  # timeout_seconds
-        ]
-
-        nm = NamespaceManager(config_path)
-        result = nm.add()
-
-        assert result == 0  # 0 means success
-        assert "test_starrocks" in nm.agent_config.namespaces
-        mock_console.print.assert_any_call("✔ Database connection test successful\n")
-        mock_console.print.assert_any_call("✔ Namespace 'test_starrocks' added successfully")
-
-    @pytest.mark.skip(reason="Snowflake adapter not installed in test environment")
-    def test_add_snowflake_namespace_success(
-        self, config_path, mock_prompt, mock_detect_db_connectivity, mock_save_configuration, mock_console
-    ):
-        """Test successfully adding a Snowflake namespace."""
-        mock_ask, mock_getpass, _ = mock_prompt
-
-        # Mock the sequence of user inputs for Snowflake
-        mock_ask.side_effect = [
-            "test_snowflake",  # namespace name
-            "snowflake",  # database type
-            "test_user",  # username
-            "test_account",  # account
-            "test_warehouse",  # warehouse
-            "test_db",  # database
-            "test_schema",  # schema
-        ]
-
-        nm = NamespaceManager(config_path)
-        result = nm.add()
-
-        assert result == 0  # 0 means success
-        assert "test_snowflake" in nm.agent_config.namespaces
-        mock_console.print.assert_any_call("✔ Database connection test successful\n")
-        mock_console.print.assert_any_call("✔ Namespace 'test_snowflake' added successfully")
-
     def test_add_duckdb_namespace_success(
         self, config_path, mock_prompt, mock_detect_db_connectivity, mock_save_configuration, mock_console
     ):
@@ -172,70 +115,6 @@ class TestNamespaceManagerAdd:
         assert "test_duckdb" in nm.agent_config.namespaces
         mock_console.print.assert_any_call("✔ Database connection test successful\n")
         mock_console.print.assert_any_call("✔ Namespace 'test_duckdb' added successfully")
-
-    @pytest.mark.skip(reason="starrocks adapter not installed in test environment")
-    def test_add_namespace_db_connection_failed(
-        self, config_path, mock_prompt, mock_detect_db_connectivity, mock_console
-    ):
-        """Test adding namespace when database connection test fails."""
-        mock_ask, mock_getpass, _ = mock_prompt
-
-        # Mock the sequence of user inputs for StarRocks
-        # StarRocks fields: host, port, username, password, catalog, database, charset, autocommit, timeout_seconds
-        mock_ask.side_effect = [
-            "test_failed",  # namespace name
-            "starrocks",  # database type
-            "127.0.0.1",  # host
-            "9030",  # port
-            "test_user",  # username
-            # password is prompted via getpass, not mock_ask
-            "default_catalog",  # catalog
-            "test_db",  # database
-            "utf8mb4",  # charset
-            "True",  # autocommit
-            "30",  # timeout_seconds
-        ]
-
-        # Mock connection test failure
-        mock_detect_db_connectivity.return_value = (False, "Connection refused")
-
-        nm = NamespaceManager(config_path)
-        result = nm.add()
-
-        assert result == 1  # 1 means failure
-        mock_console.print.assert_called_with("❌ Database connectivity test failed: Connection refused\n")
-
-    @pytest.mark.skip(reason="starrocks adapter not installed in test environment")
-    def test_add_namespace_save_config_failed(
-        self, config_path, mock_prompt, mock_detect_db_connectivity, mock_save_configuration, mock_console
-    ):
-        """Test adding namespace when configuration save fails."""
-        mock_ask, mock_getpass, _ = mock_prompt
-
-        # Mock the sequence of user inputs for StarRocks
-        # StarRocks fields: host, port, username, password, catalog, database, charset, autocommit, timeout_seconds
-        mock_ask.side_effect = [
-            "test_save_failed",  # namespace name
-            "starrocks",  # database type
-            "127.0.0.1",  # host
-            "9030",  # port
-            "test_user",  # username
-            # password is prompted via getpass, not mock_ask
-            "default_catalog",  # catalog
-            "test_db",  # database
-            "utf8mb4",  # charset
-            "True",  # autocommit
-            "30",  # timeout_seconds
-        ]
-
-        # Mock save configuration failure
-        mock_save_configuration.return_value = False
-
-        nm = NamespaceManager(config_path)
-        result = nm.add()
-
-        assert result == 1  # 1 means failure
-        mock_console.print.assert_called_with("❌ Failed to save configuration")
 
 
 class TestNamespaceManagerList:

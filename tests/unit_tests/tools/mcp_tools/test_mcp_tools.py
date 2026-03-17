@@ -7,23 +7,6 @@ from datus.tools.mcp_tools.mcp_tool import parse_command_string
 from datus.utils.exceptions import DatusException, ErrorCode
 
 
-@pytest.mark.skip(reason="No mcp server configured.")
-def test_tools():
-    """Test MCP tools functionality. Requires MCP servers to be configured."""
-    tool = MCPTool()
-    server_result = tool.list_servers()
-    assert server_result.success
-    servers = server_result.result["servers"]
-
-    assert len(servers) > 0
-    for server in servers:
-        print(server["name"], server["type"])
-        con_result = tool.check_connectivity(server["name"])
-        print(server["name"], "connect status:", con_result.success, "; error=", con_result.message)
-        if con_result.success:
-            print("tools:", tool.list_tools(server["name"]))
-
-
 def test_parse_cmd():
     cmd = '--transport sse my-sse https://example.com/stream --header {"Token":"abc"} --timeout 5'
     transport_type, name, params = parse_command_string(cmd)
