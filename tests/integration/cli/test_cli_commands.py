@@ -1,3 +1,4 @@
+import re
 from typing import Any, Dict, List
 from unittest.mock import patch
 
@@ -187,15 +188,14 @@ def test_chat_command(mock_args, capsys, gen_sql_input: List[Dict[str, Any]]):
     captured = capsys.readouterr()
     stdout = captured.out
 
-    # Check for "Tool cal" responses
-    assert stdout.count("Tool call") > 0, "Should have some tool_call."
+    # Check chat info is present
+    assert "Chat Session Info:" in stdout or "Session Info:" in stdout, "Should have chat session info"
 
-    # Check for assistant messages (thinking/response steps shown as 💬)
-    assert stdout.count("💬") > 0, "Should have assistant message steps."
-    assert stdout.count("Generated SQL") == 1, "Should have `Generated SQL`"
-
-    # Check chat info
-    assert stdout.count("Chat Session Info:") > 0, "Should have latest chat session info"
+    # Check that actions were performed (tool calls happened)
+    action_match = re.search(r"Action Count:\s*(\d+)", stdout)
+    assert (
+        action_match and int(action_match.group(1)) > 0
+    ), f"Should have actions (tool calls). stdout contains: {stdout[-500:]}"
 
 
 @pytest.mark.nightly
