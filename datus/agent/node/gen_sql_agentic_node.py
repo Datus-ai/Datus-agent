@@ -11,7 +11,7 @@ and flexible configuration through agent.yml.
 """
 
 
-from typing import Any, AsyncGenerator, Dict, Optional, Union
+from typing import Any, AsyncGenerator, Dict, Literal, Optional, Union
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.workflow import Workflow
@@ -60,6 +60,7 @@ class GenSQLAgenticNode(AgenticNode):
         agent_config: Optional[AgentConfig] = None,
         tools: Optional[list] = None,
         node_name: Optional[str] = None,
+        execution_mode: Literal["interactive", "workflow"] = "interactive",
     ):
         """
         Initialize the GenSQLAgenticNode as a workflow-compatible node.
@@ -72,7 +73,9 @@ class GenSQLAgenticNode(AgenticNode):
             agent_config: Agent configuration
             tools: List of tools (will be populated in setup_tools)
             node_name: Name of the node configuration in agent.yml (e.g., "gensql", "gen_sql")
+            execution_mode: Execution mode - "interactive" (default) or "workflow"
         """
+        self.execution_mode = execution_mode
         # Determine node name from node_type if not provided
         self.configured_node_name = node_name
 
@@ -116,6 +119,11 @@ class GenSQLAgenticNode(AgenticNode):
 
         # Setup tools based on configuration
         self.setup_tools()
+
+        # Setup ask_user tool for clarification questions (interactive mode only)
+        if self.execution_mode == "interactive":
+            self._setup_ask_user_tool()
+
         logger.debug(f"GenSQLAgenticNode tools: {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
 
     def get_node_name(self) -> str:
@@ -215,6 +223,8 @@ class GenSQLAgenticNode(AgenticNode):
             self.tools.extend(self.filesystem_func_tool.available_tools())
         if self._platform_doc_tool:
             self.tools.extend(self._platform_doc_tool.available_tools())
+        if self.ask_user_tool:
+            self.tools.extend(self.ask_user_tool.available_tools())
 
     # Default tools when not configured in agent.yml
     DEFAULT_TOOLS = "db_tools.*, filesystem_tools.*"
@@ -487,6 +497,7 @@ class GenSQLAgenticNode(AgenticNode):
             workspace_root=self._resolve_workspace_root(),
         )
         context["conversation_summary"] = conversation_summary
+        context["has_ask_user_tool"] = self.ask_user_tool is not None
         prompt_version = prompt_version or self.node_config.get("prompt_version")
         # Construct template name: {system_prompt}_system or fallback to {node_name}_system
         system_prompt_name = self.node_config.get("system_prompt") or self.get_node_name()

@@ -95,6 +95,78 @@ class TestGenSQLAgenticNodeInit:
         assert node.max_turns == 5
 
 
+class TestGenSQLAgenticNodeExecutionMode:
+    """Tests for GenSQLAgenticNode execution_mode gating of ask_user tool."""
+
+    def test_interactive_mode_has_ask_user_tool(self, real_agent_config, mock_llm_create):
+        """Interactive mode (default) enables ask_user tool."""
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+        node = GenSQLAgenticNode(
+            node_id="test_gensql_interactive",
+            description="Test interactive mode",
+            node_type=NodeType.TYPE_GENSQL,
+            agent_config=real_agent_config,
+            node_name="gensql",
+        )
+
+        assert node.execution_mode == "interactive"
+        assert node.ask_user_tool is not None
+        tool_names = [t.name for t in node.tools]
+        assert "ask_user" in tool_names
+
+    def test_workflow_mode_no_ask_user_tool(self, real_agent_config, mock_llm_create):
+        """Workflow mode disables ask_user tool."""
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+        node = GenSQLAgenticNode(
+            node_id="test_gensql_workflow",
+            description="Test workflow mode",
+            node_type=NodeType.TYPE_GENSQL,
+            agent_config=real_agent_config,
+            node_name="gensql",
+            execution_mode="workflow",
+        )
+
+        assert node.execution_mode == "workflow"
+        assert node.ask_user_tool is None
+        tool_names = [t.name for t in node.tools]
+        assert "ask_user" not in tool_names
+
+    def test_rebuild_tools_preserves_ask_user_in_interactive(self, real_agent_config, mock_llm_create):
+        """_rebuild_tools keeps ask_user tool in interactive mode."""
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+        node = GenSQLAgenticNode(
+            node_id="test_gensql_rebuild_ask",
+            description="Test rebuild with ask_user",
+            node_type=NodeType.TYPE_GENSQL,
+            agent_config=real_agent_config,
+            node_name="gensql",
+        )
+
+        node._rebuild_tools()
+        tool_names = [t.name for t in node.tools]
+        assert "ask_user" in tool_names
+
+    def test_rebuild_tools_no_ask_user_in_workflow(self, real_agent_config, mock_llm_create):
+        """_rebuild_tools does not include ask_user in workflow mode."""
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+        node = GenSQLAgenticNode(
+            node_id="test_gensql_rebuild_wf",
+            description="Test rebuild without ask_user",
+            node_type=NodeType.TYPE_GENSQL,
+            agent_config=real_agent_config,
+            node_name="gensql",
+            execution_mode="workflow",
+        )
+
+        node._rebuild_tools()
+        tool_names = [t.name for t in node.tools]
+        assert "ask_user" not in tool_names
+
+
 class TestGenSQLAgenticNodeExecution:
     """Tests for GenSQLAgenticNode execute_stream and related methods."""
 

@@ -10,7 +10,7 @@ report generation with semantic and database tools. It can be used directly
 or extended by specialized report nodes like AttributionAgenticNode.
 """
 
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.cli.execution_state import ExecutionInterrupted
@@ -50,6 +50,7 @@ class GenReportAgenticNode(AgenticNode):
         agent_config: Optional[AgentConfig] = None,
         tools: Optional[list] = None,
         node_name: Optional[str] = None,
+        execution_mode: Literal["interactive", "workflow"] = "interactive",
     ):
         """
         Initialize the GenReportAgenticNode.
@@ -62,7 +63,9 @@ class GenReportAgenticNode(AgenticNode):
             agent_config: Agent configuration
             tools: List of tools (will be populated in setup_tools)
             node_name: Name of the node configuration in agent.yml
+            execution_mode: Execution mode - "interactive" (default) or "workflow"
         """
+        self.execution_mode = execution_mode
         # Determine node name from node_type if not provided
         self.configured_node_name = node_name
 
@@ -92,6 +95,11 @@ class GenReportAgenticNode(AgenticNode):
 
         # Setup tools based on configuration
         self.setup_tools()
+
+        # Setup ask_user tool for clarification questions (interactive mode only)
+        if self.execution_mode == "interactive":
+            self._setup_ask_user_tool()
+
         logger.debug(f"GenReportAgenticNode tools: {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
 
     def get_node_name(self) -> str:
@@ -272,6 +280,7 @@ class GenReportAgenticNode(AgenticNode):
         context = {
             "has_semantic_tools": bool(self.semantic_tools),
             "has_db_tools": bool(self.db_func_tool),
+            "has_ask_user_tool": self.ask_user_tool is not None,
             "agent_config": self.agent_config,
             "conversation_summary": conversation_summary,
         }

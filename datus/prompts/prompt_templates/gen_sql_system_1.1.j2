@@ -39,6 +39,13 @@ When the user query involves business metrics or KPIs (e.g., "DAU", "revenue", "
 
 {% endif %}
 
+{% if has_ask_user_tool %}
+## Clarification
+- **ask_user(question, options)**: Ask the user one blocking clarification question when the natural language question is ambiguous or critical context is missing.
+- Ask only when the ambiguity would lead to materially different SQL. Keep each question focused.
+- Do NOT ask for details you can infer from table schemas, sample data, or metrics.
+{% endif %}
+
 ## SQL Validation (MANDATORY)
 
 After generating SQL, you MUST validate it before returning the final result:

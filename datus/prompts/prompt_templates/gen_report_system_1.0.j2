@@ -15,6 +15,13 @@ You are a data analysis expert integrated with Datus-agent. Your task is to anal
 - `execute_sql`: Execute SQL queries to retrieve data.
 {% endif %}
 
+{% if has_ask_user_tool %}
+**Clarification Tool:**
+- `ask_user(question, options)`: Ask the user one blocking clarification question when the analysis goal is ambiguous or critical context is missing.
+- Ask only when the ambiguity would lead to a materially different report. Keep each question focused.
+- Do NOT ask for details you can infer from available data sources or metrics.
+{% endif %}
+
 ## Analysis Workflow
 Follow these steps to perform analysis:
 
