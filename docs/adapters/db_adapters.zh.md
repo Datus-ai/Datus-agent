@@ -21,6 +21,10 @@ Datus 使用模块化适配器架构，允许连接不同的数据库：
 | StarRocks | datus-starrocks | `pip install datus-starrocks` | 可用 |
 | Snowflake | datus-snowflake | `pip install datus-snowflake` | 可用 |
 | ClickZetta | datus-clickzetta | `pip install datus-clickzetta` | 可用 |
+| Hive | datus-hive | `pip install datus-hive` | 可用 |
+| Spark | datus-spark | `pip install datus-spark` | 可用 |
+| ClickHouse | datus-clickhouse | `pip install datus-clickhouse` | 可用 |
+| Trino | datus-trino | `pip install datus-trino` | 可用 |
 
 ## 安装
 
@@ -44,6 +48,18 @@ pip install datus-starrocks
 
 # ClickZetta
 pip install datus-clickzetta
+
+# Hive
+pip install datus-hive
+
+# Spark
+pip install datus-spark
+
+# ClickHouse
+pip install datus-clickhouse
+
+# Trino
+pip install datus-trino
 ```
 
 安装后，Datus Agent 会自动检测并加载适配器。
@@ -126,6 +142,61 @@ namespace:
     vcluster: CLICKZETTA_VCLUSTER
 ```
 
+### Hive
+
+```yaml
+namespace:
+  hive_data:
+    type: hive
+    host: 127.0.0.1
+    port: 10000
+    username: hive
+    database: default
+    auth: NONE  # 可选：NONE、LDAP、CUSTOM、KERBEROS
+    configuration:  # 可选 Hive session 配置
+      hive.execution.engine: spark
+```
+
+### Spark
+
+```yaml
+namespace:
+  spark_data:
+    type: spark
+    host: localhost
+    port: 10000
+    username: spark
+    database: default
+    auth_mechanism: NONE  # 可选：NONE、PLAIN、KERBEROS
+```
+
+### ClickHouse
+
+```yaml
+namespace:
+  analytics:
+    type: clickhouse
+    host: localhost
+    port: 8123
+    username: default
+    password: your_password
+    database: your_database
+```
+
+### Trino
+
+```yaml
+namespace:
+  trino_data:
+    type: trino
+    host: localhost
+    port: 8080
+    username: trino
+    catalog: hive
+    schema_name: default
+    http_scheme: http  # 可选：http 或 https
+```
+
 ## 多数据库连接
 
 可以在同一命名空间下配置多个数据库：
@@ -183,6 +254,29 @@ namespace:
 - Volume/Stage 文件操作
 - 原生 SDK 集成
 
+#### Hive
+- HiveServer2/Thrift 协议连接
+- Hive session 配置支持
+- 多种认证机制（NONE、LDAP、CUSTOM、KERBEROS）
+- 数据库上下文切换（USE 语句）
+
+#### Spark
+- 通过 HiveServer2 协议连接 Spark Thrift Server
+- 多种认证机制（NONE、PLAIN、KERBEROS）
+- Spark SQL 方言支持
+
+#### ClickHouse
+- HTTP 协议连接
+- 无 schema 层（数据库即 schema）
+- ClickHouse 特有的 DML 语法（ALTER TABLE UPDATE）
+- 轻量级删除支持
+
+#### Trino
+- 三级层次结构：catalog → schema → table
+- 跨 catalog 查询支持
+- 内置 TPC-H 连接器用于基准测试
+- HTTP/HTTPS 连接及 SSL 支持
+
 ## 故障排除
 
 ### 适配器未找到
@@ -208,6 +302,10 @@ pip install datus-mysql
 
 - **MySQL**：需要 `pymysql`（自动安装）
 - **Snowflake**：需要 `snowflake-connector-python`（自动安装）
+- **Hive**：需要 `pyhive`、`thrift`、`thrift-sasl`、`pure-sasl`（自动安装）
+- **Spark**：需要 `pyhive`、`thrift`、`thrift-sasl`、`pure-sasl`（自动安装）
+- **ClickHouse**：需要 `clickhouse-sqlalchemy`（自动安装）
+- **Trino**：需要 `trino`（自动安装）
 
 ## 架构
 
@@ -220,7 +318,11 @@ datus-agent (核心)
 └── 插件系统 (Entry Points)
     ├── datus-sqlalchemy (基础层)
     │   ├── datus-mysql
-    │   └── datus-starrocks
+    │   ├── datus-starrocks
+    │   ├── datus-hive
+    │   ├── datus-spark
+    │   ├── datus-clickhouse
+    │   └── datus-trino
     │
     └── 原生 SDK 适配器
         ├── datus-snowflake

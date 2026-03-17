@@ -22,6 +22,10 @@ This design keeps the core package lightweight while allowing you to add support
 | StarRocks | datus-starrocks | `pip install datus-starrocks` | Ready |
 | Snowflake | datus-snowflake | `pip install datus-snowflake` | Ready |
 | ClickZetta | datus-clickzetta | `pip install datus-clickzetta` | Ready |
+| Hive | datus-hive | `pip install datus-hive` | Ready |
+| Spark | datus-spark | `pip install datus-spark` | Ready |
+| ClickHouse | datus-clickhouse | `pip install datus-clickhouse` | Ready |
+| Trino | datus-trino | `pip install datus-trino` | Ready |
 
 ## Installation
 
@@ -48,6 +52,18 @@ pip install datus-starrocks
 
 # ClickZetta
 pip install datus-clickzetta
+
+# Hive
+pip install datus-hive
+
+# Spark
+pip install datus-spark
+
+# ClickHouse
+pip install datus-clickhouse
+
+# Trino
+pip install datus-trino
 ```
 
 Once installed, Datus Agent will automatically detect and load the adapter.
@@ -152,6 +168,65 @@ agent:
       vcluster: CLICKZETTA_VCLUSTER
 ```
 
+### Hive
+
+```yaml
+agent:
+  namespace:
+    hive_data:
+      type: hive
+      host: 127.0.0.1
+      port: 10000
+      username: hive
+      database: default
+      auth: NONE  # optional: NONE, LDAP, CUSTOM, KERBEROS
+      configuration:  # optional Hive session config
+        hive.execution.engine: spark
+```
+
+### Spark
+
+```yaml
+agent:
+  namespace:
+    spark_data:
+      type: spark
+      host: localhost
+      port: 10000
+      username: spark
+      database: default
+      auth_mechanism: NONE  # optional: NONE, PLAIN, KERBEROS
+```
+
+### ClickHouse
+
+```yaml
+agent:
+  namespace:
+    analytics:
+      type: clickhouse
+      host: localhost
+      port: 8123
+      username: default
+      password: your_password
+      database: your_database
+```
+
+### Trino
+
+```yaml
+agent:
+  namespace:
+    trino_data:
+      type: trino
+      host: localhost
+      port: 8080
+      username: trino
+      catalog: hive
+      schema_name: default
+      http_scheme: http  # optional: http or https
+```
+
 ## Multiple Database Connections
 
 You can configure multiple databases under the same namespace:
@@ -217,6 +292,29 @@ All adapters support:
 - Volume/Stage file operations
 - Native SDK integration
 
+#### Hive
+- HiveServer2/Thrift protocol connection
+- Hive session configuration support
+- Multiple auth mechanisms (NONE, LDAP, CUSTOM, KERBEROS)
+- Database context switching (USE statement)
+
+#### Spark
+- Spark Thrift Server connection via HiveServer2 protocol
+- Multiple auth mechanisms (NONE, PLAIN, KERBEROS)
+- Spark SQL dialect support
+
+#### ClickHouse
+- HTTP protocol connection
+- No schema layer (databases serve as schemas)
+- ClickHouse-specific DML syntax (ALTER TABLE UPDATE)
+- Lightweight deletes support
+
+#### Trino
+- Three-level hierarchy: catalog → schema → table
+- Cross-catalog query support
+- Built-in TPC-H connector for benchmarking
+- HTTP/HTTPS connection with SSL support
+
 ## Troubleshooting
 
 ### Adapter Not Found
@@ -243,6 +341,10 @@ Some adapters require additional system dependencies:
 - **MySQL**: Requires `pymysql` (installed automatically)
 - **PostgreSQL**: Requires `psycopg2-binary` (installed automatically)
 - **Snowflake**: Requires `snowflake-connector-python` (installed automatically)
+- **Hive**: Requires `pyhive`, `thrift`, `thrift-sasl`, `pure-sasl` (installed automatically)
+- **Spark**: Requires `pyhive`, `thrift`, `thrift-sasl`, `pure-sasl` (installed automatically)
+- **ClickHouse**: Requires `clickhouse-sqlalchemy` (installed automatically)
+- **Trino**: Requires `trino` (installed automatically)
 
 ## Architecture
 
@@ -256,7 +358,11 @@ datus-agent (Core)
     ├── datus-sqlalchemy (Base layer)
     │   ├── datus-mysql
     │   ├── datus-postgresql
-    │   └── datus-starrocks
+    │   ├── datus-starrocks
+    │   ├── datus-hive
+    │   ├── datus-spark
+    │   ├── datus-clickhouse
+    │   └── datus-trino
     │
     └── Native SDK Adapters
         ├── datus-snowflake
