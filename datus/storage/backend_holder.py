@@ -7,9 +7,10 @@
 import threading
 from typing import Optional
 
-from datus_storage_base.backend_config import RdbBackendConfig, StorageBackendConfig, VectorBackendConfig
+from datus_storage_base.backend_config import StorageBackendConfig
 from datus_storage_base.rdb.base import BaseRdbBackend, RdbDatabase
 from datus_storage_base.vector.base import VectorDatabase
+
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -64,21 +65,7 @@ def _ensure_config() -> StorageBackendConfig:
     """Return the current config, defaulting to sqlite + lance if not initialized."""
     global _config
     if _config is None:
-        _config = StorageBackendConfig(
-            rdb=RdbBackendConfig(type="sqlite"),
-            vector=VectorBackendConfig(type="lance"),
-        )
-    else:
-        if not _config.rdb.type:
-            _config = StorageBackendConfig(
-                rdb=RdbBackendConfig(type="sqlite", params=_config.rdb.params),
-                vector=_config.vector,
-            )
-        if not _config.vector.type:
-            _config = StorageBackendConfig(
-                rdb=_config.rdb,
-                vector=VectorBackendConfig(type="lance", params=_config.vector.params),
-            )
+        _config = StorageBackendConfig()
     return _config
 
 

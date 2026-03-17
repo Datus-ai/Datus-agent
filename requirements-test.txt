@@ -5,3 +5,4 @@ pytest-cov>=6.0
 pytest-timeout>=2.3.1
 diff-cover>=9.0
 defusedxml>=0.7.1
+datus-storage-postgresql>=0.1.0
