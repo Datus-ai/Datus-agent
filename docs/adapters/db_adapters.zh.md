@@ -193,7 +193,7 @@ namespace:
     port: 8080
     username: trino
     catalog: hive
-    schema_name: default
+    schema: default
     http_scheme: http  # 可选：http 或 https
 ```
 
