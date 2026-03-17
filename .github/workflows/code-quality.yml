@@ -23,9 +23,4 @@ jobs:
   run-coverage:
     needs: format-check
     if: ${{ !startsWith(github.event.pull_request.title, '[Doc]') && !startsWith(github.event.pull_request.title, '[doc]') }}
-    uses: ./.github/workflows/run-coverage.yml
-
-  run-ut:
-    needs: format-check
-    if: ${{ !startsWith(github.event.pull_request.title, '[Doc]') && !startsWith(github.event.pull_request.title, '[doc]') }}
-    uses: ./.github/workflows/run-ut.yml
+    uses: ./.github/workflows/run-ut-and-coverage.yml
