@@ -121,9 +121,6 @@ exclude = ["benchmark*", "docs*"]
     "sample_data/superset/*.*",
 ]
 
-[tool.uv.sources]
-datus-storage-base = { path = "../workspace/datus-storage-adapters/datus-storage-base", editable = true }
-
 # uv tool run black
 [tool.black]
 line-length = 120
