@@ -33,7 +33,6 @@ class TestMCPToolDecorator:
         @mcp_tool()
         def my_tool(self, query: str) -> FuncToolResult:
             """Search something."""
-            pass
 
         assert hasattr(my_tool, "_mcp_config")
         assert isinstance(my_tool._mcp_config, MCPToolConfig)
@@ -43,7 +42,6 @@ class TestMCPToolDecorator:
         @mcp_tool(availability_check="has_feature")
         def my_tool(self, query: str) -> FuncToolResult:
             """Feature-gated tool."""
-            pass
 
         assert my_tool._mcp_config.availability_check == "has_feature"
 
@@ -51,7 +49,6 @@ class TestMCPToolDecorator:
         @mcp_tool()
         def list_tables(self, include_views: bool = True) -> FuncToolResult:
             """List all tables."""
-            pass
 
         assert list_tables.__name__ == "list_tables"
         assert "List all tables" in list_tables.__doc__
@@ -68,12 +65,10 @@ class TestGetMCPTools:
             @mcp_tool()
             def tool_a(self, x: str):
                 """Tool A."""
-                pass
 
             @mcp_tool(availability_check="has_x")
             def tool_b(self, y: int):
                 """Tool B."""
-                pass
 
             def not_a_tool(self):
                 pass
@@ -117,7 +112,6 @@ class TestMCPToolClassDecorator:
                 @mcp_tool()
                 def do_something(self, q: str):
                     """Do something."""
-                    pass
 
             registry = get_tool_registry()
             assert len(registry) > len(initial_registry)
@@ -236,7 +230,6 @@ class TestDynamicToolWrapper:
             @mcp_tool()
             def my_method(self, query: str) -> FuncToolResult:
                 """Tool."""
-                pass
 
         ctx = MagicMock()
         ctx.has_db_tools = False
@@ -263,7 +256,6 @@ class TestDynamicToolWrapper:
             @mcp_tool()
             def search(self, query_text: str, top_n: int = 5, include_views: bool = True) -> FuncToolResult:
                 """Search."""
-                pass
 
         wrapper = create_dynamic_tool_wrapper(
             method_name="search",
@@ -290,7 +282,6 @@ class TestDynamicToolWrapper:
             @mcp_tool(availability_check="has_schema")
             def search_table(self, query: str) -> FuncToolResult:
                 """Search."""
-                pass
 
         fake_instance = FakeTool()
         ctx = MagicMock()

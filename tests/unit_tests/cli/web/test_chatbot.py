@@ -51,8 +51,6 @@ class _SessionState(dict):
 class _QueryParams(dict):
     """Dict subclass used for st.query_params."""
 
-    pass
-
 
 def _fresh_session_state():
     """Return a SessionState with the defaults StreamlitChatbot.__init__ would set."""
