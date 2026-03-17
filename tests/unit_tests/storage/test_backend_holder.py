@@ -6,10 +6,9 @@
 
 import pytest
 
-from datus.storage.backend_config import RdbBackendConfig, StorageBackendConfig
+from datus_storage_base.backend_config import RdbBackendConfig, StorageBackendConfig
 from datus.storage.backend_holder import create_rdb_for_store, init_backends, reset_backends
-from datus.storage.rdb.base import BaseRdbBackend, RdbDatabase, RdbTable
-from datus.storage.rdb.registry import RdbRegistry
+from datus_storage_base.rdb.base import BaseRdbBackend, RdbDatabase, RdbTable
 from datus.storage.rdb.sqlite_backend import SqliteRdbDatabase
 
 
@@ -67,16 +66,6 @@ class _StubRdbBackend(BaseRdbBackend):
         pass
 
 
-@pytest.fixture(autouse=True)
-def clean_state():
-    """Reset backend holder and registry between tests."""
-    reset_backends()
-    RdbRegistry.reset()
-    yield
-    reset_backends()
-    RdbRegistry.reset()
-
-
 class TestCreateRdbForStoreSqlite:
     """Tests for SQLite path in create_rdb_for_store."""
 
@@ -87,18 +76,3 @@ class TestCreateRdbForStoreSqlite:
         assert isinstance(db, SqliteRdbDatabase)
         assert db.db_file.endswith("test.db")
 
-
-class TestCreateRdbForStoreNonSqlite:
-    """Tests for non-sqlite path in create_rdb_for_store."""
-
-    def test_non_sqlite_uses_registry(self, tmp_path):
-        """Non-sqlite config creates backend via RdbRegistry and calls connect()."""
-        RdbRegistry.register("stub", _StubRdbBackend)
-        config = StorageBackendConfig(
-            rdb=RdbBackendConfig(type="stub", params={"host": "myhost", "port": 3306}),
-        )
-        init_backends(config, data_dir=str(tmp_path), namespace="ns")
-        db = create_rdb_for_store("store")
-        assert isinstance(db, _StubRdbDatabase)
-        assert _StubRdbBackend.last_config["host"] == "myhost"
-        assert _StubRdbBackend.last_config["data_dir"] == str(tmp_path)

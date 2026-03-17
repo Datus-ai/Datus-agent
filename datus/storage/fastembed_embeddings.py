@@ -12,7 +12,7 @@ from huggingface_hub.errors import LocalEntryNotFoundError
 from pydantic import BaseModel, Field
 
 from datus.storage.embedding_models import get_embedding_device
-from datus.storage.vector.base import EmbeddingFunction
+from datus_storage_base.vector.base import EmbeddingFunction
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)

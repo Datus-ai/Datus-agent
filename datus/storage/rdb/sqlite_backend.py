@@ -12,7 +12,7 @@ import threading
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Optional, Type
 
-from datus.storage.rdb.base import (
+from datus_storage_base.rdb.base import (
     BaseRdbBackend,
     ColumnDef,
     IntegrityError,

@@ -7,7 +7,7 @@ available rdb+vector combination.
 
 import pytest
 
-from datus.storage.backend_config import RdbBackendConfig, StorageBackendConfig, VectorBackendConfig
+from datus_storage_base.backend_config import RdbBackendConfig, StorageBackendConfig, VectorBackendConfig
 from datus.storage.backend_holder import init_backends, reset_backends
 from datus.storage.cache import clear_cache
 from tests.unit_tests.storage._backend_discovery import discover_test_backends

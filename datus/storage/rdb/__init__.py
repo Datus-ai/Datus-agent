@@ -4,7 +4,7 @@
 
 """RDB abstraction layer with pluggable backends."""
 
-from datus.storage.rdb.base import (
+from datus_storage_base.rdb.base import (
     BaseRdbBackend,
     ColumnDef,
     IndexDef,
@@ -15,7 +15,8 @@ from datus.storage.rdb.base import (
     UniqueViolationError,
     WhereOp,
 )
-from datus.storage.rdb.registry import RdbRegistry
+from datus_storage_base.rdb.registry import RdbRegistry
+
 from datus.storage.rdb.sqlite_backend import SqliteRdbBackend
 
 # Register built-in SQLite backend

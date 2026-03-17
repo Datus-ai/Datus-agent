@@ -6,7 +6,7 @@
 
 import pytest
 
-from datus.storage.rdb.base import ColumnDef, IndexDef, TableDefinition
+from datus_storage_base.rdb.base import ColumnDef, IndexDef, TableDefinition
 from datus.storage.rdb.sqlite_backend import (
     SqliteRdbDatabase,
     _sqlite_col_ddl,

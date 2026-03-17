@@ -1,27 +1,12 @@
 """Unit tests for SubjectTreeStore."""
 
-import os
-import shutil
-import tempfile
-
 import pytest
 
-from datus.storage.backend_holder import init_backends, reset_backends
 from datus.storage.subject_tree.store import SubjectTreeStore
 
 
 class TestSubjectTreeStore:
     """Test cases for SubjectTreeStore."""
-
-    @pytest.fixture(autouse=True)
-    def _setup_backends(self):
-        """Initialize backend holder so stores can resolve paths."""
-        temp_path = tempfile.mkdtemp()
-        init_backends(data_dir=temp_path, namespace="test")
-        yield
-        reset_backends()
-        if os.path.exists(temp_path):
-            shutil.rmtree(temp_path)
 
     @pytest.fixture
     def store(self):

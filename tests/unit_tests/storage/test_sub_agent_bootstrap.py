@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from datus.schemas.agent_models import ScopedContext, ScopedContextLists, SubAgentConfig
-from datus.storage.conditions import build_where
+from datus_storage_base.conditions import build_where
 from datus.storage.sub_agent_kb_bootstrap import SUPPORTED_COMPONENTS, SubAgentBootstrapper
 from datus.tools.db_tools import connector_registry
 from datus.tools.db_tools.registry import ConnectorRegistry
@@ -264,7 +264,7 @@ def test_combine_conditions_empty(bootstrapper):
 
 def test_combine_conditions_single(bootstrapper):
     """_combine_conditions returns the single node directly."""
-    from datus.storage.conditions import eq
+    from datus_storage_base.conditions import eq
 
     node = eq("table_name", "users")
     result = bootstrapper._combine_conditions([("users", node)])
@@ -274,7 +274,7 @@ def test_combine_conditions_single(bootstrapper):
 
 def test_combine_conditions_multiple(bootstrapper):
     """_combine_conditions returns OR of multiple nodes."""
-    from datus.storage.conditions import eq
+    from datus_storage_base.conditions import eq
 
     node1 = eq("table_name", "users")
     node2 = eq("table_name", "orders")

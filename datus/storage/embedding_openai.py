@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, List, Optional, Union
 from openai import AzureOpenAI, BadRequestError, OpenAI
 from pydantic import BaseModel
 
-from datus.storage.vector.base import EmbeddingFunction
+from datus_storage_base.vector.base import EmbeddingFunction
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 

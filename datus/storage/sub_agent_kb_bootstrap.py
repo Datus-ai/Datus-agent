@@ -9,7 +9,7 @@ from typing import Any, Dict, Iterable, List, Literal, Optional
 
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.agent_models import ScopedContextLists, SubAgentConfig
-from datus.storage.conditions import Node, or_
+from datus_storage_base.conditions import Node, or_
 from datus.storage.ext_knowledge.store import ExtKnowledgeRAG
 from datus.storage.metric.store import MetricRAG
 from datus.storage.reference_sql.store import ReferenceSqlRAG

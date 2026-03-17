@@ -10,7 +10,7 @@ from datetime import datetime
 import pytest
 
 from datus.storage.base import BaseEmbeddingStore, StorageBase
-from datus.storage.conditions import And, Node, build_where, eq
+from datus_storage_base.conditions import And, Node, build_where, eq
 from datus.storage.embedding_models import EmbeddingModel, get_db_embedding_model
 from datus.storage.schema_metadata import SchemaStorage
 from datus.utils.exceptions import DatusException

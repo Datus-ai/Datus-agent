@@ -6,7 +6,7 @@
 
 import pytest
 
-from datus.storage.testing import RdbTestEnv, TestEnvConfig, VectorTestEnv
+from datus_storage_base.testing import RdbTestEnv, TestEnvConfig, VectorTestEnv
 
 
 class TestTestEnvConfig:

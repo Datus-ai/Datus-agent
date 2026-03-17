@@ -11,7 +11,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.base import TABLE_TYPE
 from datus.schemas.node_models import TableSchema, TableValue
 from datus.storage.base import BaseEmbeddingStore, WhereExpr
-from datus.storage.conditions import Node, and_, build_where, eq, or_
+from datus_storage_base.conditions import Node, and_, build_where, eq, or_
 from datus.storage.embedding_models import EmbeddingModel
 from datus.tools.db_tools.registry import connector_registry
 from datus.utils.constants import DBType

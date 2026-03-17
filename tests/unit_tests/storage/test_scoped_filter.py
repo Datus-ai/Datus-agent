@@ -6,7 +6,7 @@
 
 import pytest
 
-from datus.storage.conditions import build_where
+from datus_storage_base.conditions import build_where
 from datus.storage.scoped_filter import (
     ScopedFilterBuilder,
     _build_id_condition,

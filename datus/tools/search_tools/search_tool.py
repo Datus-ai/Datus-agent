@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.doc_search_node_models import DocNavResult, DocSearchInput, DocSearchResult, GetDocResult
-from datus.storage.conditions import And, Condition, WhereExpr, eq, like
+from datus_storage_base.conditions import And, Condition, WhereExpr, eq, like
 from datus.storage.document.store import DocumentStore, document_store
 from datus.tools.base import BaseTool
 from datus.utils.loggings import get_logger

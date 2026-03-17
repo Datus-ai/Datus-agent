@@ -2,7 +2,7 @@ from pathlib import Path
 
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.cache import StorageCache, clear_cache
-from datus.storage.conditions import build_where
+from datus_storage_base.conditions import build_where
 from datus.utils.exceptions import DatusException
 
 

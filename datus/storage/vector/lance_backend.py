@@ -20,8 +20,8 @@ from lancedb.query import LanceQueryBuilder
 from lancedb.rerankers import LinearCombinationReranker
 from lancedb.table import Table as LanceTable
 
-from datus.storage.conditions import WhereExpr, build_where
-from datus.storage.vector.base import BaseVectorBackend, EmbeddingFunction, VectorDatabase, VectorTable
+from datus_storage_base.conditions import WhereExpr, build_where
+from datus_storage_base.vector.base import BaseVectorBackend, EmbeddingFunction, VectorDatabase, VectorTable
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 

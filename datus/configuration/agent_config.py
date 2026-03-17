@@ -319,10 +319,14 @@ class AgentConfig:
             self.workspace_root = storage_config.get("workspace_root")
 
         # Initialize storage backend configuration (rdb + vector)
-        from datus.storage.backend_config import StorageBackendConfig
+        from datus_storage_base.backend_config import StorageBackendConfig
         from datus.storage.backend_holder import init_backends
 
         backend_config = StorageBackendConfig.from_dict(storage_config)
+        if not backend_config.rdb.type:
+            backend_config.rdb.type = "sqlite"
+        if not backend_config.vector.type:
+            backend_config.vector.type = "lance"
         self._backend_config = backend_config
         init_backends(backend_config, data_dir=self.rag_base_path, namespace=self._current_namespace)
 

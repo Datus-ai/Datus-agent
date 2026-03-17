@@ -7,9 +7,9 @@
 import threading
 from typing import Optional
 
-from datus.storage.backend_config import StorageBackendConfig
-from datus.storage.rdb.base import BaseRdbBackend, RdbDatabase
-from datus.storage.vector.base import VectorDatabase
+from datus_storage_base.backend_config import RdbBackendConfig, StorageBackendConfig, VectorBackendConfig
+from datus_storage_base.rdb.base import BaseRdbBackend, RdbDatabase
+from datus_storage_base.vector.base import VectorDatabase
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -64,7 +64,21 @@ def _ensure_config() -> StorageBackendConfig:
     """Return the current config, defaulting to sqlite + lance if not initialized."""
     global _config
     if _config is None:
-        _config = StorageBackendConfig()
+        _config = StorageBackendConfig(
+            rdb=RdbBackendConfig(type="sqlite"),
+            vector=VectorBackendConfig(type="lance"),
+        )
+    else:
+        if not _config.rdb.type:
+            _config = StorageBackendConfig(
+                rdb=RdbBackendConfig(type="sqlite", params=_config.rdb.params),
+                vector=_config.vector,
+            )
+        if not _config.vector.type:
+            _config = StorageBackendConfig(
+                rdb=_config.rdb,
+                vector=VectorBackendConfig(type="lance", params=_config.vector.params),
+            )
     return _config
 
 
@@ -75,7 +89,7 @@ def _get_rdb_backend() -> BaseRdbBackend:
     if not _rdb_initialized:
         with _rdb_lock:
             if not _rdb_initialized:
-                from datus.storage.rdb.registry import RdbRegistry
+                from datus.storage.rdb import RdbRegistry
 
                 cfg = _ensure_config()
                 rdb_config = dict(cfg.rdb.params)
@@ -94,7 +108,7 @@ def get_vector_backend():
     if not _vector_initialized:
         with _vector_lock:
             if not _vector_initialized:
-                from datus.storage.vector.registry import VectorRegistry
+                from datus.storage.vector import VectorRegistry
 
                 cfg = _ensure_config()
                 logger.debug(f"Initializing vector backend: type={cfg.vector.type}")

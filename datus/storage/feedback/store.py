@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from datus.storage.rdb.base import ColumnDef, IndexDef, TableDefinition
+from datus_storage_base.rdb.base import ColumnDef, IndexDef, TableDefinition
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 

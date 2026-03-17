@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-from datus.storage.conditions import Node, and_, eq, like, or_
+from datus_storage_base.conditions import Node, and_, eq, like, or_
 from datus.tools.db_tools.registry import connector_registry
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger

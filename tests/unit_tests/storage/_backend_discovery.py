@@ -18,7 +18,7 @@ import atexit
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from datus.storage.testing import RdbTestEnv, TestEnvConfig, VectorTestEnv
+from datus_storage_base.testing import RdbTestEnv, TestEnvConfig, VectorTestEnv
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)

@@ -176,7 +176,7 @@ class TestExistingSemanticMetrics:
                     self.storage = storage
 
                 def search_all(self, database_name="", select_fields=None):
-                    from datus.storage.conditions import And, build_where, eq
+                    from datus_storage_base.conditions import And, build_where, eq
 
                     conditions = [eq("kind", "table")]
                     where = build_where(And(conditions))
@@ -238,7 +238,7 @@ class TestExistingSemanticMetrics:
                     self.storage = storage
 
                 def search_all(self, database_name="", select_fields=None):
-                    from datus.storage.conditions import And, build_where, eq
+                    from datus_storage_base.conditions import And, build_where, eq
 
                     conditions = [eq("kind", "table")]
                     where = build_where(And(conditions))

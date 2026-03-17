@@ -19,10 +19,10 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 import pyarrow as pa
 
 if TYPE_CHECKING:
-    from datus.storage.vector.base import VectorDatabase
+    from datus_storage_base.vector.base import VectorDatabase
 
 from datus.storage.base import BaseEmbeddingStore
-from datus.storage.conditions import And, Condition, WhereExpr, eq, in_
+from datus_storage_base.conditions import And, Condition, WhereExpr, eq, in_
 from datus.storage.document.schemas import PlatformDocChunk
 from datus.storage.embedding_models import EmbeddingModel, get_document_embedding_model
 from datus.utils.exceptions import DatusException, ErrorCode

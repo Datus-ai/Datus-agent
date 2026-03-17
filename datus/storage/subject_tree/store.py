@@ -12,9 +12,9 @@ from typing import Any, Dict, List, Optional
 import pyarrow as pa
 
 from datus.storage import BaseEmbeddingStore
-from datus.storage.conditions import and_, in_, like
+from datus_storage_base.conditions import and_, in_, like
 from datus.storage.embedding_models import EmbeddingModel
-from datus.storage.rdb.base import ColumnDef, IndexDef, TableDefinition, UniqueViolationError, WhereOp
+from datus_storage_base.rdb.base import ColumnDef, IndexDef, TableDefinition, UniqueViolationError, WhereOp
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -982,7 +982,7 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
 
         # Build where clause to find the storage entry
         self._ensure_table_ready()
-        from datus.storage.conditions import and_, eq
+        from datus_storage_base.conditions import and_, eq
 
         where_condition = and_(eq(SUBJECT_ID_COLUMN_NAME, old_subject_node_id), eq("name", old_name))
 
@@ -1074,7 +1074,7 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
 
         # Build where clause to locate the entry
         self._ensure_table_ready()
-        from datus.storage.conditions import and_, eq
+        from datus_storage_base.conditions import and_, eq
 
         where_condition = and_(eq(SUBJECT_ID_COLUMN_NAME, subject_node_id), eq(NAME_COLUMN_NAME, name.strip()))
 
@@ -1124,7 +1124,7 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
             )
         """
         try:
-            from datus.storage.conditions import eq
+            from datus_storage_base.conditions import eq
 
             # Ensure table is ready
             self._ensure_table_ready()
@@ -1194,7 +1194,7 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
 
         # Build where clause to locate the entry
         self._ensure_table_ready()
-        from datus.storage.conditions import and_, eq
+        from datus_storage_base.conditions import and_, eq
 
         where_condition = and_(eq(SUBJECT_ID_COLUMN_NAME, subject_node_id), eq(NAME_COLUMN_NAME, name))
 

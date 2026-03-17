@@ -8,7 +8,7 @@ import pyarrow as pa
 
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.base import EmbeddingModel
-from datus.storage.conditions import WhereExpr, in_
+from datus_storage_base.conditions import WhereExpr, in_
 from datus.storage.subject_tree.store import BaseSubjectEmbeddingStore, base_schema_columns
 from datus.utils.loggings import get_logger
 

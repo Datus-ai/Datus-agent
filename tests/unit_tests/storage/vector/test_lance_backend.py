@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 
 import pyarrow as pa
 
-from datus.storage.conditions import and_, eq, in_
+from datus_storage_base.conditions import and_, eq, in_
 from datus.storage.vector.lance_backend import LanceVectorBackend, LanceVectorDatabase, LanceVectorTable
 
 # ---------------------------------------------------------------------------

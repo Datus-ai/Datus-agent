@@ -1,4 +1,4 @@
-from datus.storage.conditions import And, Or, build_where, eq, ge, gte, in_, lt, ne
+from datus_storage_base.conditions import And, Or, build_where, eq, ge, gte, in_, lt, ne
 
 
 def test_conditions_basic():

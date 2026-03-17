@@ -23,6 +23,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
+    "datus-storage-base>=0.1.0",
     "python-dotenv==1.0.0",
     "pandas==2.1.4",
     "sqlalchemy==2.0.23",
@@ -120,6 +121,9 @@ exclude = ["benchmark*", "docs*"]
     "sample_data/superset/*.*",
 ]
 
+[tool.uv.sources]
+datus-storage-base = { path = "../workspace/datus-storage-adapters/datus-storage-base", editable = true }
+
 # uv tool run black
 [tool.black]
 line-length = 120
@@ -129,7 +133,7 @@ target-version = ["py312"]
 profile = "black"
 line_length = 120
 known_first_party = ["datus"]
-known_third_party = ["mcp"]
+known_third_party = ["mcp", "datus_storage_base"]
 
 [tool.flake8]
 max-line-length = 120
