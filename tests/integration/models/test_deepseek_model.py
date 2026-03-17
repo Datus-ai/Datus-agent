@@ -255,16 +255,16 @@ class TestDeepSeekModel:
                 max_turns=20,
             )
 
-            assert result is not None, f"MCP response should not be None for scenario {i+1}"
-            assert "content" in result, f"Response should contain content for scenario {i+1}"
+            assert result is not None, f"MCP response should not be None for scenario {i + 1}"
+            assert "content" in result, f"Response should contain content for scenario {i + 1}"
 
             content = str(result.get("content", "")).lower()
             keyword_found = any(keyword.lower() in content for keyword in scenario["expected_keywords"])
-            assert (
-                keyword_found
-            ), f"Response should contain relevant SQL keywords for scenario {i+1}: {scenario['expected_keywords']}"
+            assert keyword_found, (
+                f"Response should contain relevant SQL keywords for scenario {i + 1}: {scenario['expected_keywords']}"
+            )
 
-            logger.debug(f"Acceptance scenario {i+1} completed: {scenario['task']}")
+            logger.debug(f"Acceptance scenario {i + 1} completed: {scenario['task']}")
             logger.info(f"Final result: {result}")
 
     @pytest.mark.asyncio
@@ -296,20 +296,20 @@ class TestDeepSeekModel:
                     max_turns=20,
                 ):
                     action_count += 1
-                    assert action is not None, f"Stream action should not be None for scenario {i+1}"
+                    assert action is not None, f"Stream action should not be None for scenario {i + 1}"
 
                     # Track content if available
                     if hasattr(action, "content") and action.content:
                         total_content_length += len(str(action.content))
 
-                    logger.debug(f"Acceptance stream scenario {i+1}, action {action_count}: {type(action)}")
+                    logger.debug(f"Acceptance stream scenario {i + 1}, action {action_count}: {type(action)}")
             except (MaxTurnsExceeded, DatusException) as e:
                 if action_count > 0:
                     logger.info(f"Max turns exceeded after {action_count} actions, test still valid")
                 else:
                     pytest.skip(f"MCP stream test skipped: {e}")
 
-            assert action_count > 0, f"Should receive at least one streaming action for scenario {i+1}"
+            assert action_count > 0, f"Should receive at least one streaming action for scenario {i + 1}"
             logger.info(f"Stream scenario completed: {action_count} actions, {total_content_length} content length")
 
     @pytest.mark.asyncio
@@ -618,10 +618,10 @@ class TestDeepSeekModel:
                 action_count += 1
                 total_actions += 1
                 assert action is not None
-                logger.debug(f"Acceptance scenario {i+1}, action {action_count}: {type(action)}")
+                logger.debug(f"Acceptance scenario {i + 1}, action {action_count}: {type(action)}")
 
-            assert action_count > 0, f"Should receive at least one action for scenario {i+1}"
-            logger.debug(f"Acceptance scenario {i+1} completed with {action_count} actions")
+            assert action_count > 0, f"Should receive at least one action for scenario {i + 1}"
+            logger.debug(f"Acceptance scenario {i + 1} completed with {action_count} actions")
 
         # Verify session management
         session_info = self.model.session_manager.get_session_info(session_id)

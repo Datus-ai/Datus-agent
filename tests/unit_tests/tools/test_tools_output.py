@@ -81,7 +81,7 @@ class TestBirdDevOutput:
                 output_result = tool.execute(
                     input_data=OutputInput(
                         finished=True,
-                        task_id=f'bird_dev_{task["question_id"]}',
+                        task_id=f"bird_dev_{task['question_id']}",
                         task=task["question"],
                         database_name=db_name,
                         table_schemas=table_schemas,

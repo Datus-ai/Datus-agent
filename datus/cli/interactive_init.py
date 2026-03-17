@@ -652,7 +652,7 @@ def init_metadata_and_log_result(namespace_name: str, config_path: str, console:
     kb_update_strategy = "overwrite"
     storage_path = agent_config.rag_storage_path()
 
-    with console.status("→ Initializing metadata for " f"{namespace_name} with path `{storage_path}`..."):
+    with console.status(f"→ Initializing metadata for {namespace_name} with path `{storage_path}`..."):
         try:
             if kb_update_strategy == "overwrite":
                 agent_config.save_storage_config("database")

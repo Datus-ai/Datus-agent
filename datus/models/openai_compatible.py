@@ -905,8 +905,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                                     status=ActionStatus.PROCESSING,
                                 )
                                 logger.debug(
-                                    f"Stored tool call: {tool_name} "
-                                    f"(call_id={call_id[:20] if call_id else 'None'}...)"
+                                    f"Stored tool call: {tool_name} (call_id={call_id[:20] if call_id else 'None'}...)"
                                 )
                                 pending_start_actions.append(start_action)
 
@@ -988,8 +987,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                             else:
                                 # No matching tool call found
                                 logger.warning(
-                                    f"Orphan tool result: call_id={call_id}, "
-                                    f"stored={list(temp_tool_calls.keys())[:3]}"
+                                    f"Orphan tool result: call_id={call_id}, stored={list(temp_tool_calls.keys())[:3]}"
                                 )
 
                                 # Yield result anyway

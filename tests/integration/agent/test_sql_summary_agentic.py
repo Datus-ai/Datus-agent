@@ -107,9 +107,9 @@ class TestSqlSummaryAgentic:
         assert actions[0].role == ActionRole.USER
         assert actions[0].status == ActionStatus.PROCESSING
 
-        assert (
-            actions[-1].status == ActionStatus.SUCCESS
-        ), f"Last action should be SUCCESS, got {actions[-1].status}: {actions[-1].output}"
+        assert actions[-1].status == ActionStatus.SUCCESS, (
+            f"Last action should be SUCCESS, got {actions[-1].status}: {actions[-1].output}"
+        )
 
     @pytest.mark.asyncio
     async def test_execute_stream_with_complex_sql(self, nightly_agent_config):

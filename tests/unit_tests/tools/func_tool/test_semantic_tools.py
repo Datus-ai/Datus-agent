@@ -50,8 +50,9 @@ class TestNormalizeNull:
 @pytest.fixture
 def semantic_tools():
     """Create a SemanticTools instance with mocked dependencies."""
-    with patch("datus.tools.func_tool.semantic_tools.SemanticModelRAG"), patch(
-        "datus.tools.func_tool.semantic_tools.MetricRAG"
+    with (
+        patch("datus.tools.func_tool.semantic_tools.SemanticModelRAG"),
+        patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
     ):
         from datus.tools.func_tool.semantic_tools import SemanticTools
 

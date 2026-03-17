@@ -114,7 +114,7 @@ class HTMLParser:
         """
         if not BS4_AVAILABLE:
             raise ImportError(
-                "BeautifulSoup4 is required for HTML parsing. " "Install with: pip install beautifulsoup4 lxml"
+                "BeautifulSoup4 is required for HTML parsing. Install with: pip install beautifulsoup4 lxml"
             )
 
         self._parser = parser

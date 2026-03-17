@@ -130,17 +130,17 @@ class TestClaudeModel:
                     max_turns=30,
                 ):
                     action_count += 1
-                    assert action is not None, f"Stream action should not be None for scenario {i+1}"
+                    assert action is not None, f"Stream action should not be None for scenario {i + 1}"
 
                     # Track content if available
                     if hasattr(action, "content") and action.content:
                         total_content_length += len(str(action.content))
 
-                    logger.debug(f"Acceptance stream scenario {i+1}, action {action_count}: {type(action)}")
+                    logger.debug(f"Acceptance stream scenario {i + 1}, action {action_count}: {type(action)}")
 
-                assert action_count > 0, f"Should receive at least one streaming action for scenario {i+1}"
+                assert action_count > 0, f"Should receive at least one streaming action for scenario {i + 1}"
                 logger.debug(
-                    f"Acceptance stream scenario {i+1} completed: {action_count} actions, "
+                    f"Acceptance stream scenario {i + 1} completed: {action_count} actions, "
                     f"{total_content_length} total content length"
                 )
                 logger.info(f"Final Action: {action}")

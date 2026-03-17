@@ -587,7 +587,7 @@ Rules:
                     # Verify start uniqueness
                     if user_message.count(sql_start_string) > 1:
                         logger.warning(
-                            f"SQL start string '{sql_start_string[:30]}...' " "is not unique, appears multiple times"
+                            f"SQL start string '{sql_start_string[:30]}...' is not unique, appears multiple times"
                         )
                         return user_message, None
 
@@ -597,8 +597,7 @@ Rules:
                         if sql_end_pos >= sql_start_index:
                             if user_message.count(sql_end_string) > 1:
                                 logger.warning(
-                                    f"SQL end string '{sql_end_string[:30]}...' "
-                                    "is not unique, appears multiple times"
+                                    f"SQL end string '{sql_end_string[:30]}...' is not unique, appears multiple times"
                                 )
                                 return user_message, None
                             sql_end_index = sql_end_pos + len(sql_end_string)

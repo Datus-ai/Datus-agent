@@ -169,8 +169,7 @@ def check_snapshot(model_name: str, cache_dir: str) -> None:
         repo_id = description.get("sources", {}).get("hf")  # type: ignore[assignment]
     if not repo_id:
         logger.warning(
-            f"FastEmbed does not support models `{model_name}`."
-            f"Support models: {TextEmbedding.list_supported_models()}"
+            f"FastEmbed does not support models `{model_name}`.Support models: {TextEmbedding.list_supported_models()}"
         )
         # Some fastembed models only ship via the GCS mirror; defer to fastembed.
         return

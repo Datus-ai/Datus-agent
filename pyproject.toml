@@ -122,23 +122,44 @@ exclude = ["benchmark*", "docs*"]
     "sample_data/superset/*.*",
 ]
 
-# uv tool run black
-[tool.black]
+# Ruff: replaces black + isort + flake8
+[tool.ruff]
 line-length = 120
-target-version = ["py312"]
+target-version = "py312"
+exclude = ["mcp/"]
 
-[tool.isort]
-profile = "black"
-line_length = 120
-known_first_party = ["datus"]
-known_third_party = ["mcp", "datus_storage_base"]
+[tool.ruff.format]
+# Compatible with black defaults
 
-[tool.flake8]
-max-line-length = 120
-ignore = "E203, E266, E501, W503"
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "B",    # flake8-bugbear
+    "I",    # isort
+    "C90",  # mccabe complexity
+]
+ignore = [
+    "E203",  # whitespace before ':'
+    "E266",  # too many leading '#' for block comment
+    "E501",  # line too long (handled by formatter)
+    # TODO: enable these rules incrementally in follow-up PRs
+    "C901",  # function too complex (218 existing violations)
+    "B904",  # raise without from inside except (22 existing violations)
+    "B905",  # zip without explicit strict (21 existing violations)
+    "B027",  # empty method without abstract decorator
+    "B007",  # unused loop control variable
+    "B019",  # cached instance method
+    "B024",  # abstract base class without abstract method
+]
+
+[tool.ruff.lint.mccabe]
 max-complexity = 10
-select = "B,C,E,F,W,T4,B9"
-exclude = "mcp/"
+
+[tool.ruff.lint.isort]
+known-first-party = ["datus"]
+known-third-party = ["mcp"]
 
 [tool.pytest.ini_options]
 pythonpath = "."
@@ -150,7 +171,7 @@ testpaths = ["tests"]
 dev = [
     "pytest==8.0.2",
     "pytest-asyncio>=0.23.8",
-    "black==23.12.1",
+    "ruff>=0.15.0",
     "mypy==1.8.0",
     "tqdm>=4.27.0",
     "pytest-timeout>=2.3.1",
@@ -161,8 +182,6 @@ dev = [
     "pip>=25.1.1",
     "build>=1.2.0",
     "twine>=6.1.0",
-    "flake8>=7.3.0",
-    "isort>=6.0.1",
     "langsmith>=0.0.77",
     "langsmith-fetch>=0.1.0",
 ]

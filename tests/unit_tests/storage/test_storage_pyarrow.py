@@ -509,7 +509,7 @@ class TestPyArrowPerformance:
         # Verify first and last results
         result_list = result.to_pylist()
         assert result_list[0] == "Domain_0_Layer1_0_Layer2_0"
-        assert result_list[-1] == f"Domain_{(size-1) % 100}_Layer1_{(size-1) % 50}_Layer2_{(size-1) % 25}"
+        assert result_list[-1] == f"Domain_{(size - 1) % 100}_Layer1_{(size - 1) % 50}_Layer2_{(size - 1) % 25}"
 
     def test_memory_efficient_operations(self, temp_db_path):
         """Test memory-efficient PyArrow operations."""

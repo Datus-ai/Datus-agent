@@ -120,8 +120,7 @@ class LiteLLMAdapter:
             if model_lower.startswith(prefix):
                 if provider.lower() != detected:
                     logger.info(
-                        f"Auto-detected provider '{detected}' from model name '{model}' "
-                        f"(configured as '{provider}')"
+                        f"Auto-detected provider '{detected}' from model name '{model}' (configured as '{provider}')"
                     )
                 return detected
 

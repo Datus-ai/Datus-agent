@@ -686,7 +686,7 @@ class CatalogScreen(ContextScreen):
         sections: List[Table] = []
 
         table = Table(
-            title=(f"[bold cyan]📋 Semantic Model: " f"{semantic_record.get('semantic_model_name', 'Unnamed')}[/]"),
+            title=(f"[bold cyan]📋 Semantic Model: {semantic_record.get('semantic_model_name', 'Unnamed')}[/]"),
             show_header=False,
             box=box.SIMPLE,
             border_style="blue",

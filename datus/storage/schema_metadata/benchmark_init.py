@@ -110,7 +110,7 @@ def do_process_by_database(
             for _, row in df.iterrows():
                 if row.empty or "DDL" not in row or pd.isna(row["DDL"]) or not row["DDL"]:
                     continue
-                data_file = f'{row["table_name"].split(".")[-1]}.json'
+                data_file = f"{row['table_name'].split('.')[-1]}.json"
                 json_data = {}
                 if os.path.exists(f"{dir_path}/{data_file}"):
                     with open(f"{dir_path}/{data_file}", "r") as f:

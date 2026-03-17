@@ -50,7 +50,7 @@ class WebFetcher(BaseFetcher):
     """
 
     DEFAULT_HEADERS = {
-        "User-Agent": ("Mozilla/5.0 (compatible; DatusDocBot/1.0; " "+https://github.com/Datus-ai/Datus-agent)"),
+        "User-Agent": ("Mozilla/5.0 (compatible; DatusDocBot/1.0; +https://github.com/Datus-ai/Datus-agent)"),
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.5",
     }
@@ -76,7 +76,7 @@ class WebFetcher(BaseFetcher):
 
         if not BS4_AVAILABLE:
             raise ImportError(
-                "BeautifulSoup4 is required for web fetching. " "Install it with: pip install beautifulsoup4 lxml"
+                "BeautifulSoup4 is required for web fetching. Install it with: pip install beautifulsoup4 lxml"
             )
 
         self.rate_limiter = rate_limiter or get_rate_limiter()

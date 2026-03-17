@@ -26,9 +26,9 @@ logger = get_logger(__name__)
 
 
 @lru_cache(maxsize=12)
-def _cached_storage[
-    T: BaseEmbeddingStore
-](factory: Callable[[EmbeddingModel], T], storage_path: str, model_name: str) -> T:
+def _cached_storage[T: BaseEmbeddingStore](
+    factory: Callable[[EmbeddingModel], T], storage_path: str, model_name: str
+) -> T:
     return factory(get_embedding_model(model_name))
 
 

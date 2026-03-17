@@ -57,7 +57,7 @@ class MarkdownParser:
         else:
             self._md = None
             logger.warning(
-                "markdown-it-py not available. Using fallback regex parser. " "Install with: pip install markdown-it-py"
+                "markdown-it-py not available. Using fallback regex parser. Install with: pip install markdown-it-py"
             )
 
     def parse(self, doc: FetchedDocument) -> ParsedDocument:

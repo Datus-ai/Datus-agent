@@ -189,9 +189,9 @@ class TestAPI:
             500,
         ), f"Expected 400 or 500 for async without SSE header, got {resp.status_code}"
         data = resp.json()
-        assert (
-            "event-stream" in data.get("detail", "").lower() or resp.status_code == 500
-        ), "Error should mention event-stream requirement"
+        assert "event-stream" in data.get("detail", "").lower() or resp.status_code == 500, (
+            "Error should mention event-stream requirement"
+        )
 
     @pytest.mark.asyncio
     async def test_stream_workflow(self, authenticated_client):
@@ -222,9 +222,9 @@ class TestAPI:
                 headers={"Accept": "text/event-stream"},
             )
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-        assert "text/event-stream" in resp.headers.get(
-            "content-type", ""
-        ), "Response should have text/event-stream content type"
+        assert "text/event-stream" in resp.headers.get("content-type", ""), (
+            "Response should have text/event-stream content type"
+        )
 
     @pytest.mark.asyncio
     async def test_feedback(self, authenticated_client):

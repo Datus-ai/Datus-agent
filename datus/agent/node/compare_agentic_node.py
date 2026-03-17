@@ -213,8 +213,7 @@ class CompareAgenticNode(AgenticNode):
             system_instruction, user_prompt, _ = self._prepare_prompt_components(user_input)
             if conversation_summary:
                 user_prompt = (
-                    f"Previous conversation summary:\n{conversation_summary}\n\n"
-                    f"New comparison request:\n{user_prompt}"
+                    f"Previous conversation summary:\n{conversation_summary}\n\nNew comparison request:\n{user_prompt}"
                 )
 
             response_content: Any = ""

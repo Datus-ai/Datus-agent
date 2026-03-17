@@ -1038,12 +1038,12 @@ def _format_subject_tree_markup(tree: dict, indent: str = "") -> List[str]:
 
         if key in _LEAF_KEYS and isinstance(value, list):
             count = len(value)
-            lines.append(f"{indent}{connector} [dim]{_escape_markup(key)}[/dim]: " f"[cyan]{count}[/cyan]")
+            lines.append(f"{indent}{connector} [dim]{_escape_markup(key)}[/dim]: [cyan]{count}[/cyan]")
         elif isinstance(value, dict):
             lines.append(f"{indent}{connector} [bold]{_escape_markup(key)}[/bold]")
             lines.extend(_format_subject_tree_markup(value, child_indent))
         else:
-            lines.append(f"{indent}{connector} [bold]{_escape_markup(key)}[/bold]: " f"{_escape_markup(str(value))}")
+            lines.append(f"{indent}{connector} [bold]{_escape_markup(key)}[/bold]: {_escape_markup(str(value))}")
     return lines
 
 

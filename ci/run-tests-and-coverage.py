@@ -31,6 +31,7 @@ import json
 import os
 import subprocess
 import sys
+
 import defusedxml.ElementTree as ET
 
 OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)))
@@ -41,9 +42,9 @@ def log(msg):
 
 
 # Timeout configuration (seconds), configurable via environment variables
-TEST_CMD_TIMEOUT = int(os.environ.get("TEST_CMD_TIMEOUT", "1800"))    # 30 min
-GIT_CMD_TIMEOUT = int(os.environ.get("GIT_CMD_TIMEOUT", "60"))        # 60 sec
-DIFF_COVER_TIMEOUT = int(os.environ.get("DIFF_COVER_TIMEOUT", "300")) # 5 min
+TEST_CMD_TIMEOUT = int(os.environ.get("TEST_CMD_TIMEOUT", "1800"))  # 30 min
+GIT_CMD_TIMEOUT = int(os.environ.get("GIT_CMD_TIMEOUT", "60"))  # 60 sec
+DIFF_COVER_TIMEOUT = int(os.environ.get("DIFF_COVER_TIMEOUT", "300"))  # 5 min
 
 
 def _run_cmd(cmd, timeout, **kwargs):

@@ -49,7 +49,7 @@ description: {desc}
 tags: {tags}
 ---
 
-# {skill_name.replace('-', ' ').title()}
+# {skill_name.replace("-", " ").title()}
 
 {desc}
 

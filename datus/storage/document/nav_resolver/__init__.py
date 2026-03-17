@@ -103,7 +103,7 @@ class NavResolverPipeline:
             fallback_map = fallback.resolve("", unmapped, info.content_root)
             nav_map.update(fallback_map)
 
-        logger.info(f"Nav resolution complete: framework={info.framework}, " f"mapped={len(nav_map)}/{len(file_paths)}")
+        logger.info(f"Nav resolution complete: framework={info.framework}, mapped={len(nav_map)}/{len(file_paths)}")
         return nav_map
 
     @staticmethod

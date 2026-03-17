@@ -94,9 +94,9 @@ class TestSubAgentManager:
         # Verify result structure
         assert isinstance(result, dict), f"save_agent should return dict, got {type(result)}"
         assert "config_path" in result, f"Result should have config_path, got keys: {list(result.keys())}"
-        assert result["config_path"] == str(
-            config_mgr.config_path
-        ), f"config_path should match, got: {result['config_path']}"
+        assert result["config_path"] == str(config_mgr.config_path), (
+            f"config_path should match, got: {result['config_path']}"
+        )
 
         # Verify agent appears in list
         agents = manager.list_agents()
@@ -105,12 +105,12 @@ class TestSubAgentManager:
         # Verify get_agent returns correct data
         retrieved = manager.get_agent("test_agent")
         assert retrieved is not None, "get_agent should return the created agent"
-        assert (
-            retrieved["system_prompt"] == "test_agent"
-        ), f"system_prompt should match, got: {retrieved['system_prompt']}"
-        assert (
-            retrieved["agent_description"] == "Test agent for nightly tests"
-        ), f"agent_description should match, got: {retrieved['agent_description']}"
+        assert retrieved["system_prompt"] == "test_agent", (
+            f"system_prompt should match, got: {retrieved['system_prompt']}"
+        )
+        assert retrieved["agent_description"] == "Test agent for nightly tests", (
+            f"agent_description should match, got: {retrieved['agent_description']}"
+        )
 
     def test_list_and_get_agents(self, tmp_path):
         """N7-02: List and get multiple agents."""
@@ -136,9 +136,9 @@ class TestSubAgentManager:
         for name in agent_names:
             retrieved = manager.get_agent(name)
             assert retrieved is not None, f"get_agent('{name}') should not be None"
-            assert (
-                retrieved["system_prompt"] == name
-            ), f"system_prompt should be '{name}', got: {retrieved['system_prompt']}"
+            assert retrieved["system_prompt"] == name, (
+                f"system_prompt should be '{name}', got: {retrieved['system_prompt']}"
+            )
             assert f"Description for {name}" in retrieved["agent_description"], f"Description mismatch for {name}"
 
         # Test get_agent for nonexistent
@@ -234,9 +234,9 @@ class TestSubAgentManager:
             # Verify at least some components produced a plan (SubAgentBootstrapper.run()
             # is a plan-only API that validates scoped context against global storage)
             plan_count = sum(1 for r in result.results if r.status == "plan")
-            assert (
-                plan_count > 0
-            ), f"At least one component should produce a plan, got statuses: {[r.status for r in result.results]}"
+            assert plan_count > 0, (
+                f"At least one component should produce a plan, got statuses: {[r.status for r in result.results]}"
+            )
 
             # Create ContextSearchTools with sub-agent name
             ctx_tools = ContextSearchTools(agent_config, sub_agent_name=sub_agent_name)

@@ -85,9 +85,9 @@ class TestGenMetricsAgentic:
         assert actions[0].status == ActionStatus.PROCESSING
 
         # Last action should be SUCCESS
-        assert (
-            actions[-1].status == ActionStatus.SUCCESS
-        ), f"Last action should be SUCCESS, got {actions[-1].status}: {actions[-1].output}"
+        assert actions[-1].status == ActionStatus.SUCCESS, (
+            f"Last action should be SUCCESS, got {actions[-1].status}: {actions[-1].output}"
+        )
 
     @pytest.mark.asyncio
     async def test_execute_stream_uses_tools(self, nightly_agent_config):

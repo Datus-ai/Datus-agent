@@ -1,4 +1,5 @@
 """Tests for --subagent CLI parameter support in web chatbot."""
+
 from argparse import Namespace
 from unittest.mock import patch
 

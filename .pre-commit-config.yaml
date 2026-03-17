@@ -1,20 +1,10 @@
 repos:
-  - repo: https://github.com/psf/black
-    rev: 23.12.1
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.6
     hooks:
-      - id: black
-        args: ["--line-length=120", "--extend-exclude=mcp/"]
-
-  - repo: https://github.com/PyCQA/flake8
-    rev: 6.1.0
-    hooks:
-      - id: flake8
-        args: ["--max-line-length=120", "--extend-ignore=E203,W503,B036"]
-        additional_dependencies: [flake8-bugbear]
+      - id: ruff-format
+        args: ["--line-length=120"]
         exclude: ^mcp/
-
-  - repo: https://github.com/PyCQA/isort
-    rev: 5.12.0
-    hooks:
-      - id: isort
-        args: ["--profile=black", "--line-length=120"]
+      - id: ruff
+        args: ["--fix", "--exit-non-zero-on-fix"]
+        exclude: ^mcp/

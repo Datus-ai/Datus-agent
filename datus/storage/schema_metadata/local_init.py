@@ -177,8 +177,7 @@ def init_duckdb_schema(
     )
 
     logger.info(
-        f"Exists data from vector store {database_name}, tables={len(all_schema_tables)},"
-        f"values={len(all_value_tables)}"
+        f"Exists data from vector store {database_name}, tables={len(all_schema_tables)},values={len(all_value_tables)}"
     )
     sql_connector = db_manager.get_conn(agent_config.current_namespace, database_name)
     if table_type == "table" or table_type == "full":

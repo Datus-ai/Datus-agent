@@ -128,7 +128,7 @@ def generate_report(data, num_agents, verbose=False):
         col_name = f"agent{i}_gold_match"
         if col_name in df.columns:
             matches = df[col_name].sum()
-            print(f"Agent{i} matches: {matches} ({matches/total_tasks*100:.1f}%)")
+            print(f"Agent{i} matches: {matches} ({matches / total_tasks * 100:.1f}%)")
 
     # Answer found rate
     answer_found_count = df["answer_found"].sum()
@@ -148,7 +148,7 @@ def generate_report(data, num_agents, verbose=False):
     best_agent_counts = df["best_agent"].value_counts()
     print("\nBest Agent Distribution:")
     for agent, count in best_agent_counts.items():
-        print(f"{agent}: {count} ({count/total_tasks*100:.1f}%)")
+        print(f"{agent}: {count} ({count / total_tasks * 100:.1f}%)")
 
     # Comprehensive analysis
     print("\n" + "=" * 50)
@@ -186,7 +186,7 @@ def generate_report(data, num_agents, verbose=False):
         wrong_selection_by_agent = answer_found_wrong_selection["best_agent"].value_counts()
         print("\nWrong selections by agent:")
         for agent, count in wrong_selection_by_agent.items():
-            print(f"  {agent}: {count} times ({count/wrong_selection_count*100:.1f}%)")
+            print(f"  {agent}: {count} times ({count / wrong_selection_count * 100:.1f}%)")
 
         if verbose:
             # Analyze error types
@@ -205,11 +205,11 @@ def generate_report(data, num_agents, verbose=False):
             print("\nError analysis:")
             print(
                 f"  Selected agent has gold match but not optimal: {selected_agent_has_gold_match}"
-                f" ({selected_agent_has_gold_match/wrong_selection_count*100:.1f}%)"
+                f" ({selected_agent_has_gold_match / wrong_selection_count * 100:.1f}%)"
             )
             print(
                 f"  Selected agent has no gold match: {selected_agent_no_gold_match}"
-                f" ({selected_agent_no_gold_match/wrong_selection_count*100:.1f}%)"
+                f" ({selected_agent_no_gold_match / wrong_selection_count * 100:.1f}%)"
             )
 
     if wrong_selection_count > 0 and verbose:

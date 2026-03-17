@@ -392,16 +392,16 @@ class TestE2EIntegration:
                 bi_commands._save_sub_agent(platform, dashboard, result)
 
                 # Verify 2 sub-agents created
-                assert (
-                    sub_agent_name in agent_config.agentic_nodes
-                ), f"Main sub-agent '{sub_agent_name}' not found in agentic_nodes"
-                assert (
-                    attr_name in agent_config.agentic_nodes
-                ), f"Attribution sub-agent '{attr_name}' not found in agentic_nodes"
+                assert sub_agent_name in agent_config.agentic_nodes, (
+                    f"Main sub-agent '{sub_agent_name}' not found in agentic_nodes"
+                )
+                assert attr_name in agent_config.agentic_nodes, (
+                    f"Attribution sub-agent '{attr_name}' not found in agentic_nodes"
+                )
                 attr_node = agent_config.agentic_nodes[attr_name]
-                assert (
-                    attr_node.get("node_class") == "gen_report"
-                ), f"Attribution sub-agent should have node_class='gen_report', got '{attr_node.get('node_class')}'"
+                assert attr_node.get("node_class") == "gen_report", (
+                    f"Attribution sub-agent should have node_class='gen_report', got '{attr_node.get('node_class')}'"
+                )
 
                 # Verify bootstrap data via store managers
                 from datus.storage.metric.store import MetricRAG
@@ -419,9 +419,7 @@ class TestE2EIntegration:
                     total_semantic_model_rows += sm_size
                     total_metrics_rows += m_size
                     total_reference_sql_rows += rs_size
-                    print(
-                        f"  Sub-agent '{name}': " f"semantic_model={sm_size}, metrics={m_size}, reference_sql={rs_size}"
-                    )
+                    print(f"  Sub-agent '{name}': semantic_model={sm_size}, metrics={m_size}, reference_sql={rs_size}")
 
                 test_result["semantic_model_rows"] = total_semantic_model_rows
                 test_result["metrics_rows"] = total_metrics_rows
@@ -452,8 +450,7 @@ class TestE2EIntegration:
 
                 if bootstrap_failures:
                     error_msg = (
-                        f"Bootstrap data missing: {', '.join(bootstrap_failures)} "
-                        f"have 0 total rows across sub-agents"
+                        f"Bootstrap data missing: {', '.join(bootstrap_failures)} have 0 total rows across sub-agents"
                     )
                     test_result["status"] = "failed"
                     test_result["error"] = error_msg

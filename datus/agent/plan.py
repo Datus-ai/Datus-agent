@@ -93,7 +93,8 @@ def _process_workflow_config(
                     from datus.schemas.parallel_node_models import ParallelInput
 
                     parallel_input = ParallelInput(
-                        child_nodes=parallel_children, shared_input=None  # Will be set up during execution
+                        child_nodes=parallel_children,
+                        shared_input=None,  # Will be set up during execution
                     )
 
                     parallel_node = Node.new_instance(
@@ -139,7 +140,8 @@ def _process_workflow_config(
             from datus.schemas.parallel_node_models import SelectionInput
 
             selection_input = SelectionInput(
-                candidate_results={}, selection_criteria="best_quality"  # Will be populated during execution
+                candidate_results={},
+                selection_criteria="best_quality",  # Will be populated during execution
             )
 
             selection_node = Node.new_instance(
@@ -263,8 +265,7 @@ def generate_workflow(
             if len(schemas) != len(task.tables):
                 schema_table_names = [item.table_name for item in schemas]
                 logger.warning(
-                    f"The obtained table schema is: {schema_table_names}; "
-                    f"The table required for the task is: {schemas}"
+                    f"The obtained table schema is: {schema_table_names}; The table required for the task is: {schemas}"
                 )
             logger.debug(f"Use task tables: {schemas}")
             workflow.context.update_schema_and_values(schemas, values)

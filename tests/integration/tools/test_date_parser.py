@@ -59,7 +59,7 @@ def _assert_date_results(results, test_case):
         f"expected {test_case['expected_start']}, got {actual_start}"
     )
     assert actual_end == test_case["expected_end"], (
-        f"End date mismatch for {test_case['description']}: " f"expected {test_case['expected_end']}, got {actual_end}"
+        f"End date mismatch for {test_case['description']}: expected {test_case['expected_end']}, got {actual_end}"
     )
 
 

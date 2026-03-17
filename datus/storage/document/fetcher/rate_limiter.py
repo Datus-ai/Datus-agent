@@ -209,7 +209,7 @@ class RateLimiter:
                 reset_in = ""
                 if state.reset_time:
                     reset_in = f", resets in {int(state.reset_time - time.time())}s"
-                logger.warning(f"Rate limit running low for {domain}: " f"{state.remaining} remaining{reset_in}")
+                logger.warning(f"Rate limit running low for {domain}: {state.remaining} remaining{reset_in}")
 
     def get_remaining(self, domain: str) -> Optional[int]:
         """Get remaining requests for a domain.

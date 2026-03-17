@@ -208,11 +208,10 @@ class TestLanceVectorDatabase:
         mock_embed.ndims.return_value = 128
         mock_embed.generate_embeddings.return_value = [[0.1] * 128]
 
-        with unittest.mock.patch(
-            "datus.storage.vector.lance_backend._wrap_embedding"
-        ) as mock_wrap, unittest.mock.patch(
-            "datus.storage.vector.lance_backend.EmbeddingFunctionConfig"
-        ) as mock_config_cls:
+        with (
+            unittest.mock.patch("datus.storage.vector.lance_backend._wrap_embedding") as mock_wrap,
+            unittest.mock.patch("datus.storage.vector.lance_backend.EmbeddingFunctionConfig") as mock_config_cls,
+        ):
             mock_lance_fn = MagicMock()
             mock_wrap.return_value = mock_lance_fn
             mock_config = MagicMock()

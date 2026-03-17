@@ -433,8 +433,7 @@ class TestStaticModeStdio(StaticModeTestBase):
             stderr = proc.stderr.read().decode(errors="replace")
             stdout = proc.stdout.read().decode(errors="replace")
             pytest.fail(
-                f"MCP stdio subprocess exited with code {exit_code}.\n"
-                f"stderr: {stderr[:1000]}\nstdout: {stdout[:500]}"
+                f"MCP stdio subprocess exited with code {exit_code}.\nstderr: {stderr[:1000]}\nstdout: {stdout[:500]}"
             )
         proc.stdin.close()
         proc.terminate()
@@ -550,9 +549,9 @@ class TestMCPClient:
             data = parse_tool_result(result)
 
             # SQLite returns success with 0 columns for nonexistent tables
-            assert (
-                data["success"] == 1
-            ), f"describe_table should return a valid response, got error: {data.get('error')}"
+            assert data["success"] == 1, (
+                f"describe_table should return a valid response, got error: {data.get('error')}"
+            )
             assert isinstance(data["result"], dict), f"Result should be a dict, got {type(data['result'])}"
             columns = data["result"].get("columns", [])
             assert len(columns) == 0, f"Nonexistent table should have 0 columns, got {len(columns)}"

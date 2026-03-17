@@ -231,7 +231,7 @@ class BenchmarkTutorial:
             agent_config = load_agent_config(reload=True, config=self.config_path)
             agent_config.current_namespace = self.namespace_name
             subject_tree = parse_subject_tree(
-                "california_schools/Continuation_School/Free_Rate," "california_schools/Charter/Education_Location"
+                "california_schools/Continuation_School/Free_Rate,california_schools/Charter/Education_Location"
             )
 
             successful, _ = init_metrics(

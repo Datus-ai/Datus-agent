@@ -110,7 +110,7 @@ class TestCleanText:
     def test_del_character_removed(self):
         """DEL character (0x7F) is removed."""
         cleaner = DocumentCleaner()
-        text = "Hello\x7FWorld"
+        text = "Hello\x7fWorld"
         result = cleaner.clean_text(text)
 
         assert "\x7f" not in result

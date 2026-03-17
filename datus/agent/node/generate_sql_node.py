@@ -86,9 +86,7 @@ class GenerateSQLNode(Node):
                 workflow.context.table_values = table_values
                 return {"success": True, "message": "Updated SQL generation context"}
             else:
-                error_msg = (
-                    f"Failed to get schemas and values for tables {result.tables} " f"{workflow.task.database_name}"
-                )
+                error_msg = f"Failed to get schemas and values for tables {result.tables} {workflow.task.database_name}"
                 logger.warning(f"{error_msg}, table_schemas: {table_schemas}, table_values: {table_values}")
                 return {"success": True, "message": error_msg}
         except Exception as e:

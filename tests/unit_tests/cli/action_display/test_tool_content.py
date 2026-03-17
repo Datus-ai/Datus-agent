@@ -665,7 +665,7 @@ class TestFormatDescribeTableOutputVerbose:
     def test_column_without_comment(self):
         """Verify columns without comment are displayed without trailing spaces issue."""
         output = {
-            "raw_output": '{"success": 1, "result": {"columns": [' '{"name": "col1", "type": "int", "comment": ""}]}}'
+            "raw_output": '{"success": 1, "result": {"columns": [{"name": "col1", "type": "int", "comment": ""}]}}'
         }
         lines = _format_describe_table_output_verbose(output)
         assert "columns (1):" in lines[1]
@@ -944,9 +944,7 @@ class TestBuildReadQueryNestedRows:
         a = _make(
             input_data={"function_name": "describe_table", "arguments": {"table_name": "t1"}},
             output_data={
-                "raw_output": '{"success": 1, "result": {"columns": ['
-                '{"name": "id", "type": "int", "comment": "pk"}'
-                "]}}"
+                "raw_output": '{"success": 1, "result": {"columns": [{"name": "id", "type": "int", "comment": "pk"}]}}'
             },
         )
         tc = _build_describe_table(a, verbose=True)
@@ -1646,7 +1644,7 @@ class TestBuildGetMultipleDdl:
     def test_verbose_shows_error(self):
         a = _make(
             input_data={"function_name": "get_multiple_tables_ddl", "arguments": {"tables": ["t1"]}},
-            output_data={"raw_output": '{"success": 1, "result": [' '{"table_name": "t1", "error": "not found"}]}'},
+            output_data={"raw_output": '{"success": 1, "result": [{"table_name": "t1", "error": "not found"}]}'},
         )
         tc = _build_get_multiple_ddl(a, verbose=True)
         assert any("not found" in line for line in tc.output_lines)

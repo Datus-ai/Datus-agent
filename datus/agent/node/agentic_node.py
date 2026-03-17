@@ -327,8 +327,7 @@ class AgenticNode(Node):
             self._session = None
 
             logger.info(
-                f"Manual compacting completed. Cleared session: {old_session_id}, "
-                f"Summary stored: {len(summary)} chars"
+                f"Manual compacting completed. Cleared session: {old_session_id}, Summary stored: {len(summary)} chars"
             )
             return {"success": True, "summary": summary, "summary_token": summary_token}
 
@@ -547,7 +546,7 @@ class AgenticNode(Node):
                 node_name=self.get_node_name(),
             )
             logger.info(
-                f"Skill func tools activated for node '{self.get_node_name()}' " f"with pattern '{skill_patterns_str}'"
+                f"Skill func tools activated for node '{self.get_node_name()}' with pattern '{skill_patterns_str}'"
             )
         except Exception as e:
             logger.error(f"Failed to setup skill func tools: {e}")

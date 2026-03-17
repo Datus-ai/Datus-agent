@@ -48,9 +48,9 @@ class TestBootstrapKB:
 
         metadata_results = [r for r in result.results if r.component == "metadata"]
         assert len(metadata_results) == 1, "Should have exactly one metadata component result"
-        assert (
-            metadata_results[0].status == "plan"
-        ), f"Metadata should return plan status, got: {metadata_results[0].status} - {metadata_results[0].message}"
+        assert metadata_results[0].status == "plan", (
+            f"Metadata should return plan status, got: {metadata_results[0].status} - {metadata_results[0].message}"
+        )
         assert metadata_results[0].details.get("match_count", 0) > 0, "Should have matched table metadata"
 
     def test_metrics_plan(self, agent_config: AgentConfig):
@@ -89,9 +89,9 @@ class TestBootstrapKB:
         result = bootstrapper.run(strategy="plan")
         assert result is not None, "Plan result should not be None"
         assert result.should_bootstrap is True, "Should indicate bootstrap is needed"
-        assert len(result.results) == len(
-            SUPPORTED_COMPONENTS
-        ), f"Should have {len(SUPPORTED_COMPONENTS)} components, got {len(result.results)}"
+        assert len(result.results) == len(SUPPORTED_COMPONENTS), (
+            f"Should have {len(SUPPORTED_COMPONENTS)} components, got {len(result.results)}"
+        )
 
         for comp_result in result.results:
             assert comp_result.status in (
@@ -105,9 +105,9 @@ class TestBootstrapKB:
 
         metadata_results = [r for r in result.results if r.component == "metadata"]
         assert len(metadata_results) == 1, "Should have metadata result"
-        assert (
-            metadata_results[0].details.get("match_count", 0) >= 3
-        ), "Metadata wildcard should match at least 3 tables"
+        assert metadata_results[0].details.get("match_count", 0) >= 3, (
+            "Metadata wildcard should match at least 3 tables"
+        )
 
     def test_overwrite_strategy_behaves_as_plan(self, agent_config: AgentConfig):
         """N1-08: overwrite strategy now behaves like plan (validation only)."""
@@ -136,15 +136,15 @@ class TestBootstrapKB:
         _, result = self._register_and_bootstrap(agent_config, sub_agent_config, strategy="overwrite")
 
         assert result is not None, "Bootstrap result should not be None"
-        assert (
-            result.storage_path.endswith("nightly_test") or result.storage_path
-        ), f"Storage path should be valid, got: {result.storage_path}"
+        assert result.storage_path.endswith("nightly_test") or result.storage_path, (
+            f"Storage path should be valid, got: {result.storage_path}"
+        )
 
         metadata_results = [r for r in result.results if r.component == "metadata"]
         assert len(metadata_results) == 1, "Should have metadata result"
-        assert (
-            metadata_results[0].status == "plan"
-        ), f"Metadata should return plan status, got: {metadata_results[0].status}"
+        assert metadata_results[0].status == "plan", (
+            f"Metadata should return plan status, got: {metadata_results[0].status}"
+        )
         assert "match_count" in metadata_results[0].details, "Details should contain match_count"
 
         metrics_results = [r for r in result.results if r.component == "metrics"]
@@ -174,21 +174,21 @@ class TestBootstrapKB:
 
         result = bootstrapper.run(strategy="plan")
         assert result is not None, "Plan result should not be None"
-        assert len(result.results) == len(
-            SUPPORTED_COMPONENTS
-        ), f"Should have {len(SUPPORTED_COMPONENTS)} component results"
+        assert len(result.results) == len(SUPPORTED_COMPONENTS), (
+            f"Should have {len(SUPPORTED_COMPONENTS)} component results"
+        )
 
         metadata_result = [r for r in result.results if r.component == "metadata"][0]
-        assert (
-            metadata_result.details.get("match_count", 0) >= 3
-        ), f"Wildcard metadata should match >= 3 tables, got {metadata_result.details.get('match_count', 0)}"
+        assert metadata_result.details.get("match_count", 0) >= 3, (
+            f"Wildcard metadata should match >= 3 tables, got {metadata_result.details.get('match_count', 0)}"
+        )
 
         sql_result = [r for r in result.results if r.component == "reference_sql"][0]
         assert sql_result.details is not None, "Reference SQL plan should have details"
         assert sql_result.status == "plan", f"Reference SQL should have plan status, got {sql_result.status}"
-        assert (
-            sql_result.details.get("match_count", 0) > 0
-        ), f"Reference SQL wildcard should match entries, got {sql_result.details.get('match_count', 0)}"
+        assert sql_result.details.get("match_count", 0) > 0, (
+            f"Reference SQL wildcard should match entries, got {sql_result.details.get('match_count', 0)}"
+        )
 
     def test_invalid_scoped_context(self, agent_config: AgentConfig):
         """N1-10: Invalid scoped context (nonexistent tables/metrics) handles gracefully."""
@@ -204,11 +204,11 @@ class TestBootstrapKB:
         assert result is not None, "Plan result should not be None even with invalid context"
 
         metadata_result = [r for r in result.results if r.component == "metadata"][0]
-        assert (
-            metadata_result.details.get("match_count", 0) == 0
-        ), f"Invalid table pattern should match 0 tables, got {metadata_result.details.get('match_count', 0)}"
+        assert metadata_result.details.get("match_count", 0) == 0, (
+            f"Invalid table pattern should match 0 tables, got {metadata_result.details.get('match_count', 0)}"
+        )
 
         metrics_result = [r for r in result.results if r.component == "metrics"][0]
-        assert (
-            metrics_result.details.get("match_count", 0) == 0
-        ), f"Invalid metrics pattern should match 0, got {metrics_result.details.get('match_count', 0)}"
+        assert metrics_result.details.get("match_count", 0) == 0, (
+            f"Invalid metrics pattern should match 0, got {metrics_result.details.get('match_count', 0)}"
+        )

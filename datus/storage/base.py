@@ -150,7 +150,7 @@ class BaseEmbeddingStore(StorageBase):
             raise DatusException(
                 ErrorCode.MODEL_EMBEDDING_ERROR,
                 message=(
-                    f"Embedding model '{self.model.model_name}' is not available:" f" {self.model.model_error_message}"
+                    f"Embedding model '{self.model.model_name}' is not available: {self.model.model_error_message}"
                 ),
             )
 

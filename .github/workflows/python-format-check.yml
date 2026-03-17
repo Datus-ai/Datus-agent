@@ -13,35 +13,23 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }} 
-          
+          ref: ${{ github.event.pull_request.head.sha }}
+
       - name: Debug - Show current commit
         run: |
           echo "Current HEAD: $(git rev-parse HEAD)"
           echo "Expected PR head: ${{ github.event.pull_request.head.sha }}"
-          
+
       - name: Set up python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      - name: Install formatters and linters
-        run: |
-          pip install black==23.12.1
-          pip install flake8>=7.3.0
-          pip install isort>=6.0.1
+      - name: Install ruff
+        run: pip install ruff>=0.15.0
 
-      - name: Check formatting with Black
-        run: |
-          black --line-length=120 --extend-exclude="/(mcp)/" --check datus/
-          black --line-length=120 --extend-exclude="/(mcp)/" --check tests/
+      - name: Check formatting with ruff
+        run: ruff format --check datus/ tests/
 
-      - name: Lint with flake8
-        run: |
-          flake8 --max-line-length=120 --extend-ignore=E203,W503 datus/
-          flake8 --max-line-length=120 --extend-ignore=E203,W503 tests/
-
-      - name: Check imports with isort
-        run: |
-          isort --check --diff  --profile=black --line-length=120 datus/
-          isort --check --diff  --profile=black --line-length=120 tests/
+      - name: Lint with ruff
+        run: ruff check datus/ tests/

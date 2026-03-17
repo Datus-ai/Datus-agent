@@ -135,7 +135,7 @@ class MCPServerListScreen(Screen):
                     status_class = "status-checking"
 
                     # Create rich server item
-                    item_label = Label(f"{'> ' if i == 0 else '  '}{i+1}. {server_name}", classes="server-name")
+                    item_label = Label(f"{'> ' if i == 0 else '  '}{i + 1}. {server_name}", classes="server-name")
                     status_label = Label(
                         f"{status_symbol} {status_text} · Enter to view details",
                         classes=f"server-status {status_class}",
@@ -565,11 +565,11 @@ class MCPToolsScreen(Screen):
         """Called when the screen is mounted."""
         tools_list = self.query_one("#tools-list", ListView)
         for i, tool in enumerate(self.tools):
-            tool_name = tool.get("name", f"tool_{i+1}")
+            tool_name = tool.get("name", f"tool_{i + 1}")
             tool_description = tool.get("description", "No description available")
 
             # Create tool item with name and description
-            tool_label = Label(f"{i+1}. {tool_name}", classes="tool-name")
+            tool_label = Label(f"{i + 1}. {tool_name}", classes="tool-name")
             description_label = Label(f"{tool_description}", classes="tool-description")
 
             # Create horizontal layout for tool item

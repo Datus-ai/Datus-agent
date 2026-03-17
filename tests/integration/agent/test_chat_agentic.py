@@ -38,7 +38,7 @@ class TestChatAgentic:
 
         # Both should be successful
         for i, resp in enumerate(chat_responses):
-            assert resp.output.get("success") is True, f"Chat response {i+1} should be successful"
+            assert resp.output.get("success") is True, f"Chat response {i + 1} should be successful"
 
     def test_tool_call_combination(self, mock_args):
         """N5-03: Tool call combination -- multiple tools used during execution."""
@@ -126,6 +126,6 @@ class TestChatAgentic:
         # Chat node returns SQL in the response text (markdown), not as a top-level key.
         # Verify the response contains SQL-like content (SELECT statement).
         response_text = response.output.get("response", "")
-        assert (
-            "select" in response_text.lower()
-        ), f"Response should contain generated SQL, got response: {response_text[:500]}"
+        assert "select" in response_text.lower(), (
+            f"Response should contain generated SQL, got response: {response_text[:500]}"
+        )

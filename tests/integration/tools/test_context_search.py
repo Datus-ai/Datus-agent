@@ -58,18 +58,18 @@ class TestContextSearchTools:
 
         # Verify structure
         first = result.result[0]
-        assert (
-            "name" in first or "sql" in first
-        ), f"Each result should have 'name' or 'sql', got keys: {list(first.keys())}"
+        assert "name" in first or "sql" in first, (
+            f"Each result should have 'name' or 'sql', got keys: {list(first.keys())}"
+        )
 
     def test_get_reference_sql(self, ctx_tools):
         """N11-15: get_reference_sql retrieves specific SQL details."""
         assert ctx_tools.has_reference_sql is True, "bird_school should have reference SQL data"
 
         search_result = ctx_tools.search_reference_sql("school")
-        assert (
-            search_result.success == 1 and len(search_result.result) > 0
-        ), "Need search results to test get_reference_sql"
+        assert search_result.success == 1 and len(search_result.result) > 0, (
+            "Need search results to test get_reference_sql"
+        )
 
         first = search_result.result[0]
         subject_path = first.get("subject_path", [])
@@ -94,6 +94,6 @@ class TestContextSearchTools:
         else:
             # Verify it's correctly not in available tools
             tool_names = {t.name for t in ctx_tools.available_tools()}
-            assert (
-                "search_semantic_objects" not in tool_names
-            ), "search_semantic_objects should not be available without data"
+            assert "search_semantic_objects" not in tool_names, (
+                "search_semantic_objects should not be available without data"
+            )

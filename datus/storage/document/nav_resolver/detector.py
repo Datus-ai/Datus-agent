@@ -137,9 +137,7 @@ class DocFrameworkDetector:
                 # Detect content root
                 content_root = self._detect_content_root(repo, branch, rate_limiter, spec, root_names)
 
-                logger.info(
-                    f"Detected framework: {spec.framework}, " f"config: {candidate}, content_root: {content_root}"
-                )
+                logger.info(f"Detected framework: {spec.framework}, config: {candidate}, content_root: {content_root}")
                 return FrameworkInfo(
                     framework=spec.framework,
                     config_path=candidate,

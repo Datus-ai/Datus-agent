@@ -280,7 +280,7 @@ class TestRealLLMSkillIntegration:
         has_load_skill = "load_skill" in action_types or "load_skill" in action_messages
         has_skill_exec = "skill_execute_command" in action_types or "skill_execute_command" in action_messages
 
-        assert has_load_skill, f"Expected load_skill in action history. " f"Action types found: {action_types}"
+        assert has_load_skill, f"Expected load_skill in action history. Action types found: {action_types}"
         if not has_skill_exec:
             import warnings
 

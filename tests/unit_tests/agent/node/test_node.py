@@ -438,7 +438,7 @@ class TestNode:
                                     "AND lo_discount BETWEEN 4 AND 6 AND lo_quantity BETWEEN 26 AND 35"
                                 ),
                                 "explanation": (
-                                    "Calculate total revenue for January 1994 " "with specified discount and quantity"
+                                    "Calculate total revenue for January 1994 with specified discount and quantity"
                                 ),
                             }
                         ),
@@ -670,8 +670,7 @@ class TestNode:
             # Create test SQL task
             sql_task = SqlTask(
                 task=(
-                    "Please list the phone numbers of the direct charter-funded schools "
-                    "that are opened after 2000/1/1."
+                    "Please list the phone numbers of the direct charter-funded schools that are opened after 2000/1/1."
                 ),
                 database_type="sqlite",
                 database_name="california_schools",
@@ -735,14 +734,14 @@ class TestNode:
             assert len(result.suggest) > 0, "Empty suggestions"
 
             # Test that explanation contains meaningful content
-            assert (
-                "Charter" in result.explanation or "charter" in result.explanation
-            ), "Explanation should mention charter schools"
+            assert "Charter" in result.explanation or "charter" in result.explanation, (
+                "Explanation should mention charter schools"
+            )
 
             # Test that suggestions contain actionable advice
-            assert (
-                "JOIN" in result.suggest or "join" in result.suggest or "table" in result.suggest
-            ), "Suggestions should mention JOIN or table differences"
+            assert "JOIN" in result.suggest or "join" in result.suggest or "table" in result.suggest, (
+                "Suggestions should mention JOIN or table differences"
+            )
 
             # Print results for manual inspection
             print("\n=== Compare Node Test Results ===")
@@ -787,8 +786,7 @@ class TestNode:
             # Create test SQL task
             sql_task = SqlTask(
                 task=(
-                    "Please list the phone numbers of the direct charter-funded schools"
-                    " that are opened after 2000/1/1."
+                    "Please list the phone numbers of the direct charter-funded schools that are opened after 2000/1/1."
                 ),
                 database_type="sqlite",
                 database_name="california_schools",
@@ -852,16 +850,16 @@ class TestNode:
 
             # Should identify key differences between single table vs JOIN approach
             explanation_lower = result.explanation.lower()
-            assert (
-                "join" in explanation_lower or "table" in explanation_lower or "frpm" in explanation_lower
-            ), "Should identify table structure differences"
+            assert "join" in explanation_lower or "table" in explanation_lower or "frpm" in explanation_lower, (
+                "Should identify table structure differences"
+            )
 
             # Suggestions should be actionable and database-informed
             if result.suggest:
                 suggest_lower = result.suggest.lower()
-                assert (
-                    "join" in suggest_lower or "table" in suggest_lower or "modify" in suggest_lower
-                ), "Should provide actionable database-informed suggestions"
+                assert "join" in suggest_lower or "table" in suggest_lower or "modify" in suggest_lower, (
+                    "Should provide actionable database-informed suggestions"
+                )
 
             # Print results for manual inspection
             print("\n=== Compare MCP Node Test Results ===")

@@ -193,9 +193,7 @@ class Agent:
         logger.info("Testing LLM model connectivity")
         try:
             llm_model = LLMBaseModel.create_model(model_name="default", agent_config=self.global_config)
-            logger.info(
-                f"Using model type: {llm_model.model_config.type}, " f"model name: {llm_model.model_config.model}"
-            )
+            logger.info(f"Using model type: {llm_model.model_config.type}, model name: {llm_model.model_config.model}")
 
             response = llm_model.generate("Hello, can you hear me?")
             logger.info("LLM model test successful")
@@ -502,8 +500,7 @@ class Agent:
                 if successful:
                     result = {
                         "status": "success",
-                        "message": f"semantic_model bootstrap completed, "
-                        f"semantic_object_count={temp_rag.get_size()}",
+                        "message": f"semantic_model bootstrap completed, semantic_object_count={temp_rag.get_size()}",
                         "error": error_message,
                     }
                     self._refresh_scoped_agents("semantic_model", kb_update_strategy)
@@ -648,7 +645,7 @@ class Agent:
             os.makedirs(success_story_path)
         results["success_story"] = True
 
-        logger.info("Knowledge base components initialized successfully: " f"{', '.join(selected_components)}")
+        logger.info(f"Knowledge base components initialized successfully: {', '.join(selected_components)}")
         return {
             "status": "success",
             "message": "Knowledge base initialized",
@@ -735,7 +732,7 @@ class Agent:
                 check_db=False,
                 run_id=run_id,
             )
-            logger.info(f"Finish benchmark with {task_id}, " f"file saved in {output_dir}/{task_id}.csv.")
+            logger.info(f"Finish benchmark with {task_id}, file saved in {output_dir}/{task_id}.csv.")
             return task_id, result
 
         max_workers = getattr(self.args, "max_workers", 1) or 1
@@ -821,7 +818,7 @@ class Agent:
                 run_id=run_id,
             )
 
-            logger.info(f"Finish benchmark with {task_id}, " f"file saved in {output_dir}/{task_id}.csv.")
+            logger.info(f"Finish benchmark with {task_id}, file saved in {output_dir}/{task_id}.csv.")
 
         return {"status": "success", "message": "Benchmark tasks executed successfully"}
 

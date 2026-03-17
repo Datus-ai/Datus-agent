@@ -881,11 +881,11 @@ class AgentCommands:
 
             if not setup_result.get("success", False):
                 self.console.print(
-                    "[bold red]Error:[/] Failed to setup node input: " f"{setup_result.get('message', 'Unknown error')}"
+                    f"[bold red]Error:[/] Failed to setup node input: {setup_result.get('message', 'Unknown error')}"
                 )
                 return {
                     "success": False,
-                    "error": "Failed to setup node input: " f"{setup_result.get('message', 'Unknown error')}",
+                    "error": f"Failed to setup node input: {setup_result.get('message', 'Unknown error')}",
                 }
 
             # Display node input for confirmation

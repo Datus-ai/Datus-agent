@@ -43,9 +43,9 @@ class TestGenSemanticModelAgentic:
 
         # Generation tools
         assert "check_semantic_object_exists" in tool_names, f"Missing check_semantic_object_exists, got: {tool_names}"
-        assert (
-            "end_semantic_model_generation" in tool_names
-        ), f"Missing end_semantic_model_generation, got: {tool_names}"
+        assert "end_semantic_model_generation" in tool_names, (
+            f"Missing end_semantic_model_generation, got: {tool_names}"
+        )
 
         logger.info(f"Node initialized with {len(node.tools)} tools: {tool_names}")
 
@@ -101,6 +101,6 @@ class TestGenSemanticModelAgentic:
         assert actions[0].role == ActionRole.USER
         assert actions[0].status == ActionStatus.PROCESSING
 
-        assert (
-            actions[-1].status == ActionStatus.SUCCESS
-        ), f"Last action should be SUCCESS, got {actions[-1].status}: {actions[-1].output}"
+        assert actions[-1].status == ActionStatus.SUCCESS, (
+            f"Last action should be SUCCESS, got {actions[-1].status}: {actions[-1].output}"
+        )

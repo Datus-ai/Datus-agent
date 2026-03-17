@@ -243,7 +243,7 @@ class TestPermissionEnforcement:
         skill_dir = tmp_path / "hidden-skill"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text(
-            "---\nname: hidden-skill\ndescription: Hidden\n" "disable_model_invocation: true\n---\n# Hidden"
+            "---\nname: hidden-skill\ndescription: Hidden\ndisable_model_invocation: true\n---\n# Hidden"
         )
 
         config = SkillConfig(directories=[str(tmp_path)])

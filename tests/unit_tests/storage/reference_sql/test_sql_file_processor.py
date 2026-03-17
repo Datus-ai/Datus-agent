@@ -258,7 +258,7 @@ class TestParseCommentSqlPairs:
 
     def test_multiblock_with_comments(self, tmp_path):
         """Multiple blocks each preceded by comments."""
-        content = "-- first query\n" "SELECT a FROM t1;\n" "-- second query\n" "SELECT b FROM t2;\n"
+        content = "-- first query\nSELECT a FROM t1;\n-- second query\nSELECT b FROM t2;\n"
         sql_file = tmp_path / "multi_comments.sql"
         sql_file.write_text(content, encoding="utf-8")
         pairs = parse_comment_sql_pairs(str(sql_file))

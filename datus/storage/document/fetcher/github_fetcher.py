@@ -98,7 +98,7 @@ class GitHubFetcher(BaseFetcher):
         self.github_ref = github_ref
 
         if not GITHUB_AVAILABLE:
-            raise ImportError("PyGithub is required for GitHub fetching. " "Install it with: pip install PyGithub")
+            raise ImportError("PyGithub is required for GitHub fetching. Install it with: pip install PyGithub")
 
         self.token = token or os.getenv("GITHUB_TOKEN")
         self.rate_limiter = rate_limiter or get_rate_limiter()

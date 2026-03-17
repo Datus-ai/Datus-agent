@@ -23,7 +23,7 @@ import pytest
 requests = pytest.importorskip("requests", reason="requests not installed")
 pytest.importorskip(
     "pytest_playwright",
-    reason=("pytest-playwright not installed. " "Run: pip install pytest-playwright && playwright install chromium"),
+    reason=("pytest-playwright not installed. Run: pip install pytest-playwright && playwright install chromium"),
 )
 
 from playwright.sync_api import expect  # noqa: E402
@@ -134,6 +134,6 @@ class TestWebE2E:
 
         # Then check for SQL code block or dataframe within chat messages
         sql_or_table = page.locator(
-            '[data-testid="stChatMessage"] code, ' '[data-testid="stCodeBlock"], ' '[data-testid="stDataFrame"]'
+            '[data-testid="stChatMessage"] code, [data-testid="stCodeBlock"], [data-testid="stDataFrame"]'
         )
         expect(sql_or_table.first).to_be_visible(timeout=30_000)

@@ -352,9 +352,9 @@ class TestScopedTables:
 
         # Allowed table should work
         allowed_result = scoped_tool.describe_table("customer")
-        assert (
-            allowed_result.success == 1
-        ), f"describe_table for scoped table should succeed, got: {allowed_result.error}"
+        assert allowed_result.success == 1, (
+            f"describe_table for scoped table should succeed, got: {allowed_result.error}"
+        )
         assert "columns" in allowed_result.result, "Should have columns in result"
 
         # Blocked table should fail

@@ -151,7 +151,7 @@ class BiDashboardCommands:
 
             # Select charts for metrics initialization
             self.console.print(
-                "[dim]Tip: For metrics, select charts with aggregation SQL " "(e.g. SUM, COUNT, AVG, MAX, MIN)[/]"
+                "[dim]Tip: For metrics, select charts with aggregation SQL (e.g. SUM, COUNT, AVG, MAX, MIN)[/]"
             )
 
             metrics_selection_input = self._prompt_input(
@@ -998,7 +998,7 @@ class BiDashboardCommands:
             # Check if adapter is available
             if not semantic_tools.adapter:
                 self.console.log(
-                    "[red]Semantic adapter not available. " "Install with: pip install datus-semantic-metricflow[/]"
+                    "[red]Semantic adapter not available. Install with: pip install datus-semantic-metricflow[/]"
                 )
                 return False
 

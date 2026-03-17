@@ -236,9 +236,9 @@ class TestWorkflowEndpoint:
             headers=auth_headers,
         )
         # Valid request should reach the handler and return a success response
-        assert (
-            response.status_code == 200
-        ), f"Expected 200 for valid sync request, got {response.status_code}: {response.text}"
+        assert response.status_code == 200, (
+            f"Expected 200 for valid sync request, got {response.status_code}: {response.text}"
+        )
         data = response.json()
         assert data["status"] != "error", f"Workflow should not return error status: {data.get('error')}"
 
@@ -254,9 +254,9 @@ class TestWorkflowEndpoint:
             headers=auth_headers,
         )
         # Should fail because Accept header doesn't include text/event-stream
-        assert (
-            response.status_code == 400
-        ), f"Expected 400 for missing SSE Accept header, got {response.status_code}: {response.text}"
+        assert response.status_code == 400, (
+            f"Expected 400 for missing SSE Accept header, got {response.status_code}: {response.text}"
+        )
 
 
 # ---------------------------------------------------------------------------

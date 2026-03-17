@@ -231,7 +231,7 @@ def init_reference_sql(
             if item_id not in existing_ids:
                 new_items.append(item_dict)
 
-        logger.info(f"Incremental mode: found {len(valid_items)} items, " f"{len(new_items)} new items to process")
+        logger.info(f"Incremental mode: found {len(valid_items)} items, {len(new_items)} new items to process")
         items_to_process = new_items
     else:
         items_to_process = valid_items

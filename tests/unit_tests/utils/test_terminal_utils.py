@@ -296,12 +296,12 @@ class TestInterruptOnEscapeWithPty:
                         # During pause, ICANON and ECHO should be restored
                         # (kernel may add PENDIN flag during mode switch, so check specific bits)
                         paused_settings = termios.tcgetattr(slave_fd)
-                        assert (paused_settings[3] & termios.ICANON) == (
-                            old_settings[3] & termios.ICANON
-                        ), "ICANON should be restored during pause"
-                        assert (paused_settings[3] & termios.ECHO) == (
-                            old_settings[3] & termios.ECHO
-                        ), "ECHO should be restored during pause"
+                        assert (paused_settings[3] & termios.ICANON) == (old_settings[3] & termios.ICANON), (
+                            "ICANON should be restored during pause"
+                        )
+                        assert (paused_settings[3] & termios.ECHO) == (old_settings[3] & termios.ECHO), (
+                            "ECHO should be restored during pause"
+                        )
                     # After resume, terminal should be back in raw mode
                     time.sleep(0.15)  # Let listener re-enter raw mode
                     raw_settings = termios.tcgetattr(slave_fd)

@@ -638,7 +638,7 @@ class ActionRenderer:
         tc = self.cg.tool_content_builder.build(action, verbose)
         if verbose:
             result: List[Union[Text, Markdown, Syntax]] = [
-                Text.from_markup(f"\u23fa \U0001f527 {rich_escape(tc.label)} " f"- {tc.status_mark}{tc.duration_str}")
+                Text.from_markup(f"\u23fa \U0001f527 {rich_escape(tc.label)} - {tc.status_mark}{tc.duration_str}")
             ]
             for line in tc.args_lines:
                 result.append(Text.from_markup(f"    {line}"))

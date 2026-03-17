@@ -4489,9 +4489,9 @@ class TestPendingTaskToolSkips:
         # Should have 2 collapsed groups + their Done lines + 1 parse_temporal_expressions action
         # Should NOT have any "subagent" standalone entries
         subagent_standalone = [line for line in lines if "subagent" in line.lower() and "result" in line.lower()]
-        assert (
-            len(subagent_standalone) == 0
-        ), f"Expected no standalone subagent entries but found: {subagent_standalone}"
+        assert len(subagent_standalone) == 0, (
+            f"Expected no standalone subagent entries but found: {subagent_standalone}"
+        )
 
         # The collapsed groups should be present
         collapsed_count = sum(1 for line in lines if "\u23f4" in line)  # ⏴
@@ -4520,9 +4520,9 @@ class TestPendingTaskToolSkips:
         # Look for the standalone "⏺ subagent" pattern or "⏺ explore(" without depth>0 context
         lines = [line for line in output.splitlines() if line.strip()]
         subagent_standalone = [line for line in lines if "subagent" in line.lower() and "result" in line.lower()]
-        assert (
-            len(subagent_standalone) == 0
-        ), f"Expected no standalone subagent entries but found: {subagent_standalone}"
+        assert len(subagent_standalone) == 0, (
+            f"Expected no standalone subagent entries but found: {subagent_standalone}"
+        )
 
     def test_verbose_renders_deferred_groups_flushed_before_response(self):
         """In verbose mode with interleaved non-task TOOL, deferred groups are

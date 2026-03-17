@@ -193,9 +193,9 @@ def test_chat_command(mock_args, capsys, gen_sql_input: List[Dict[str, Any]]):
 
     # Check that actions were performed (tool calls happened)
     action_match = re.search(r"Action Count:\s*(\d+)", stdout)
-    assert (
-        action_match and int(action_match.group(1)) > 0
-    ), f"Should have actions (tool calls). stdout contains: {stdout[-500:]}"
+    assert action_match and int(action_match.group(1)) > 0, (
+        f"Should have actions (tool calls). stdout contains: {stdout[-500:]}"
+    )
 
 
 @pytest.mark.nightly
@@ -219,7 +219,9 @@ def test_chat_command_with_ext_knowledge(mock_args):
             ".chat_info",
             EOFError,
         ]
-        with (patch("datus.cli.repl.DatusCLI.prompt_input") as mock_internal_prompt,):
+        with (
+            patch("datus.cli.repl.DatusCLI.prompt_input") as mock_internal_prompt,
+        ):
             mock_internal_prompt.side_effect = ["n"]
             cli = DatusCLI(args=mock_args)
 
@@ -402,9 +404,9 @@ class TestCLISearch:
         # Command should execute
         assert "Search Reference SQL" in stdout, f"Should show search header, got: {stdout[:200]}"
         # Should have results or no-results message
-        assert (
-            "Reference SQL Search Results" in stdout or "No reference SQL" in stdout
-        ), f"Should show results or no-results message, got: {stdout[:300]}"
+        assert "Reference SQL Search Results" in stdout or "No reference SQL" in stdout, (
+            f"Should show results or no-results message, got: {stdout[:300]}"
+        )
         # Should not have errors
         assert "Error searching reference sql:" not in stdout, "Should not have error message"
         assert "Traceback" not in stdout
@@ -433,6 +435,6 @@ class TestCLISearch:
         # Should handle gracefully
         assert "Traceback" not in stdout, "Should not have Python traceback"
         # Should show results or appropriate message
-        assert (
-            "Metrics Search Results" in stdout or "No metrics found" in stdout or "Found" in stdout
-        ), f"Should show results or no-results message, got: {stdout[:300]}"
+        assert "Metrics Search Results" in stdout or "No metrics found" in stdout or "Found" in stdout, (
+            f"Should show results or no-results message, got: {stdout[:300]}"
+        )

@@ -290,8 +290,7 @@ class ToolContextManager:
                 tool_instance = tool_config.tool_class.create_dynamic(agent_config, subagent)
                 tools[tool_config.name] = tool_instance
                 logger.info(
-                    f"{tool_config.tool_class.__name__} initialized for namespace: {namespace} "
-                    f"(multi-connector mode)"
+                    f"{tool_config.tool_class.__name__} initialized for namespace: {namespace} (multi-connector mode)"
                 )
             except Exception as e:
                 logger.warning(f"Failed to initialize {tool_config.name} for {namespace}: {e}")
@@ -636,8 +635,7 @@ class LightweightDynamicMCPServer:
                     await self._send_error(
                         send,
                         404,
-                        f"Not Found: Namespace '{namespace}' not available. "
-                        f"Available: {server.available_namespaces}",
+                        f"Not Found: Namespace '{namespace}' not available. Available: {server.available_namespaces}",
                     )
                     return
 
@@ -645,7 +643,7 @@ class LightweightDynamicMCPServer:
                     await self._send_error(
                         send,
                         404,
-                        f"Not Found: Subagent '{subagent}' not available. " f"Available: {server.available_subagents}",
+                        f"Not Found: Subagent '{subagent}' not available. Available: {server.available_subagents}",
                     )
                     return
 
@@ -982,11 +980,11 @@ class DatusMCPServer:
         import uvicorn
 
         logger.info(f"HTTP server starting on http://{host}:{port}{path}")
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print("  Datus MCP Server (HTTP Mode)")
         print(f"  Namespace: {self.namespace}")
         print(f"  Endpoint:  http://{host}:{port}{path}")
-        print(f"{'='*60}\n")
+        print(f"{'=' * 60}\n")
 
         uvicorn.run(app, host=host, port=port, log_level="info")
 
@@ -1119,13 +1117,13 @@ def run_dynamic_server(
     # Determine endpoint path based on transport
     endpoint_path = "/sse" if transport == "sse" else "/mcp"
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  Datus MCP Server (Dynamic Mode, transport={transport})")
     print(f"  Cache size: {max_cache_size or 64}")
     print(f"  Endpoint: http://{host}:{port}{endpoint_path}/{{namespace}}")
     print(f"  With subagent: http://{host}:{port}{endpoint_path}/{{namespace}}?subagent={{name}}")
     print(f"  Info: http://{host}:{port}/")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     uvicorn.run(
         app,

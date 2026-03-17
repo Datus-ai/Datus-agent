@@ -1234,7 +1234,7 @@ class GenerationHooks(AgentHooks):
 
             for i, doc in enumerate(docs):
                 if not doc:
-                    logger.warning(f"Document {i+1} in {file_path} is empty, skipping")
+                    logger.warning(f"Document {i + 1} in {file_path} is empty, skipping")
                     invalid_count += 1
                     continue
 
@@ -1252,7 +1252,7 @@ class GenerationHooks(AgentHooks):
                 # Validate required fields
                 if not subject_path or not search_text or not explanation:
                     logger.warning(
-                        f"Document {i+1} missing required fields (subject_path, search_text, or explanation), skipping"
+                        f"Document {i + 1} missing required fields (subject_path, search_text, or explanation), skipping"
                     )
                     invalid_count += 1
                     continue

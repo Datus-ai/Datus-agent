@@ -341,7 +341,7 @@ class DatusPathManager:
             for dir_name in dirs:
                 if dir_name not in self._VALID_DIR_NAMES:
                     valid_names = ", ".join(sorted(self._VALID_DIR_NAMES.keys()))
-                    raise ValueError(f"Invalid directory name '{dir_name}'. " f"Valid names are: {valid_names}")
+                    raise ValueError(f"Invalid directory name '{dir_name}'. Valid names are: {valid_names}")
                 attr_name = self._VALID_DIR_NAMES[dir_name]
                 directory = getattr(self, attr_name)
                 directory.mkdir(parents=True, exist_ok=True)

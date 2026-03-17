@@ -238,8 +238,7 @@ class SqliteRdbDatabase(RdbDatabase):
             logger.error(f"Auto-create table '{table_def.table_name}' failed: {e}")
             raise DatusException(
                 ErrorCode.STORAGE_TABLE_OPERATION_FAILED,
-                message=f"Failed to create table '{table_def.table_name}'. "
-                f"Please create it manually:\n\n{ddl_text}",
+                message=f"Failed to create table '{table_def.table_name}'. Please create it manually:\n\n{ddl_text}",
             ) from e
         return SqliteRdbTable(self, table_def.table_name)
 

@@ -126,19 +126,19 @@ class TestInit:
                 saved_config = yaml.safe_load(f)
 
             assert saved_config["agent"]["target"] == "deepseek", "Saved config should have correct target"
-            assert (
-                "deepseek" in saved_config["agent"]["models"]
-            ), "Saved config should have deepseek model configuration"
-            assert (
-                saved_config["agent"]["models"]["deepseek"]["model"] == "deepseek-chat"
-            ), "Saved config should have correct model name"
+            assert "deepseek" in saved_config["agent"]["models"], (
+                "Saved config should have deepseek model configuration"
+            )
+            assert saved_config["agent"]["models"]["deepseek"]["model"] == "deepseek-chat", (
+                "Saved config should have correct model name"
+            )
             assert "test_ns" in saved_config["agent"]["namespace"], "Saved config should have namespace configuration"
-            assert (
-                saved_config["agent"]["namespace"]["test_ns"]["type"] == "duckdb"
-            ), "Saved namespace should have correct db type"
-            assert (
-                "workspace_root" in saved_config["agent"]["storage"]
-            ), "Saved config should have workspace_root in storage"
+            assert saved_config["agent"]["namespace"]["test_ns"]["type"] == "duckdb", (
+                "Saved namespace should have correct db type"
+            )
+            assert "workspace_root" in saved_config["agent"]["storage"], (
+                "Saved config should have workspace_root in storage"
+            )
 
     def test_optional_component_init(self):
         """N4-04: Optional component initialization (metadata and reference SQL)."""

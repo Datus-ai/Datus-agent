@@ -612,7 +612,7 @@ class ReflectionInput(BaseInput):
     prompt_version: Optional[str] = Field(default=None, description="Version for prompt")
     sql_return_sample_line: int = Field(
         default=10,
-        description="In SQL, the number of rows in the sample data returned" ", where -1 means return all rows.",
+        description="In SQL, the number of rows in the sample data returned, where -1 means return all rows.",
     )
     # sql_return: str = Field(..., description="The SQL execution result to analyze")
     # row_count: int = Field(..., description="Number of rows returned")

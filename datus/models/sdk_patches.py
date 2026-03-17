@@ -154,7 +154,7 @@ class _ReasoningContentStreamWrapper:
             if full_rc.strip():
                 _reasoning_content_cache[self._model] = full_rc
                 logger.debug(
-                    f"[SDK Patch] Cached reasoning_content from stream, " f"model={self._model}, length={len(full_rc)}"
+                    f"[SDK Patch] Cached reasoning_content from stream, model={self._model}, length={len(full_rc)}"
                 )
 
     def __getattr__(self, name: str):

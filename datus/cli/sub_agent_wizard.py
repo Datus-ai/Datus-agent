@@ -1429,7 +1429,7 @@ class SubAgentWizard:
             # Prevent using reserved built-in sub-agent names
             if name in SYS_SUB_AGENTS and (self._original_name is None or name != self._original_name):
                 self._show_error_dialog(
-                    (f"Agent name '{name}' is reserved for built-in functionality. " "Please choose a different name.")
+                    (f"Agent name '{name}' is reserved for built-in functionality. Please choose a different name.")
                 )
                 return False
 

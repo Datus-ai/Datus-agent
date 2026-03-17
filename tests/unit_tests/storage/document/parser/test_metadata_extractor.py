@@ -112,7 +112,7 @@ class TestExtractKeywords:
     def test_extract_keywords_no_platform(self):
         """Without platform, only SQL keywords are extracted."""
         extractor = MetadataExtractor()
-        text = "The warehouse is ready. The warehouse is large. " "Use SELECT to query. SELECT from multiple tables."
+        text = "The warehouse is ready. The warehouse is large. Use SELECT to query. SELECT from multiple tables."
         keywords = extractor.extract_keywords(text, platform=None)
 
         assert "select" in keywords

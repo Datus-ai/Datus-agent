@@ -107,9 +107,7 @@ class TestExtractBreadcrumb:
 
     def test_breadcrumb_by_class(self):
         """Breadcrumb detected via class='breadcrumb'."""
-        html = (
-            "<html><body>" '<div class="breadcrumb">' "<ul><li>Guides</li><li>SQL</li></ul>" "</div>" "</body></html>"
-        )
+        html = '<html><body><div class="breadcrumb"><ul><li>Guides</li><li>SQL</li></ul></div></body></html>'
         from bs4 import BeautifulSoup
 
         soup = BeautifulSoup(html, "html.parser")
@@ -221,7 +219,7 @@ class TestExtractMetadata:
 
     def test_meta_description(self):
         """Description meta tag is extracted."""
-        html = "<html><head>" '<meta name="description" content="A test page about SQL.">' "</head><body></body></html>"
+        html = '<html><head><meta name="description" content="A test page about SQL."></head><body></body></html>'
         from bs4 import BeautifulSoup
 
         soup = BeautifulSoup(html, "html.parser")
@@ -813,16 +811,7 @@ class TestComplexBreadcrumbs:
 
     def test_breadcrumb_with_separator_cleaning(self):
         """Breadcrumb items with separator characters are cleaned."""
-        html = (
-            "<html><body>"
-            '<nav aria-label="breadcrumb">'
-            "<ul>"
-            "<li>/Guide/</li>"
-            "<li>>>SQL>>></li>"
-            "</ul>"
-            "</nav>"
-            "</body></html>"
-        )
+        html = '<html><body><nav aria-label="breadcrumb"><ul><li>/Guide/</li><li>>>SQL>>></li></ul></nav></body></html>'
         from bs4 import BeautifulSoup
 
         soup = BeautifulSoup(html, "html.parser")
@@ -855,9 +844,7 @@ class TestComplexBreadcrumbs:
 
     def test_breadcrumb_by_id(self):
         """Breadcrumb detected via id='breadcrumb'."""
-        html = (
-            "<html><body>" '<div id="breadcrumb">' "<ul><li>API</li><li>Endpoints</li></ul>" "</div>" "</body></html>"
-        )
+        html = '<html><body><div id="breadcrumb"><ul><li>API</li><li>Endpoints</li></ul></div></body></html>'
         from bs4 import BeautifulSoup
 
         soup = BeautifulSoup(html, "html.parser")
@@ -988,13 +975,7 @@ class TestExtractSectionsAdvanced:
 
     def test_list_extraction_in_section(self):
         """Unordered and ordered lists are extracted within sections."""
-        html = (
-            "<div>"
-            "<h1>Lists</h1>"
-            "<ul><li>Item 1</li><li>Item 2</li></ul>"
-            "<ol><li>First</li><li>Second</li></ol>"
-            "</div>"
-        )
+        html = "<div><h1>Lists</h1><ul><li>Item 1</li><li>Item 2</li></ul><ol><li>First</li><li>Second</li></ol></div>"
         from bs4 import BeautifulSoup
 
         soup = BeautifulSoup(html, "html.parser")
@@ -1191,13 +1172,7 @@ class TestCleanSoup:
 
     def test_removes_footer_header_tags(self):
         """Footer and header elements are decomposed."""
-        html = (
-            "<html><body>"
-            "<header>Header stuff</header>"
-            "<footer>Footer stuff</footer>"
-            "<p>Body content</p>"
-            "</body></html>"
-        )
+        html = "<html><body><header>Header stuff</header><footer>Footer stuff</footer><p>Body content</p></body></html>"
         from bs4 import BeautifulSoup
 
         soup = BeautifulSoup(html, "html.parser")

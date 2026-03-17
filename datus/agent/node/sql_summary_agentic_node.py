@@ -395,7 +395,7 @@ class SqlSummaryAgenticNode(AgenticNode):
                     context_parts.append(f"database: {user_input.database}")
                 if user_input.db_schema:
                     context_parts.append(f"schema: {user_input.db_schema}")
-                context_part_str = f'Context: {", ".join(context_parts)}'
+                context_part_str = f"Context: {', '.join(context_parts)}"
                 enhanced_parts.append(context_part_str)
 
             if enhanced_parts:

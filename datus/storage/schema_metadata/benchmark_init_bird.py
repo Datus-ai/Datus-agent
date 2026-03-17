@@ -169,7 +169,7 @@ def init_dev_schema_by_db(
         all_value_tables,
     )
     rag.store_batch(schema_result, value_result)
-    logger.info(f"finish init {database_name}, tables size: {len(schema_result)}, " f"value size: {len(value_result)}")
+    logger.info(f"finish init {database_name}, tables size: {len(schema_result)}, value size: {len(value_result)}")
 
 
 def init_db(
@@ -342,7 +342,7 @@ def generate_sql_by_desc_file(database_name, table_infos, csv_path) -> Dict[str,
     # Add foreign key constraints if exist
     if has_foreign:
         for i, fk in enumerate(table_info["foreign_keys"]):
-            line = f"    FOREIGN KEY ({fk['column']}) REFERENCES " f"{fk['target_table']}({fk['target_column']})"
+            line = f"    FOREIGN KEY ({fk['column']}) REFERENCES {fk['target_table']}({fk['target_column']})"
             if i < len(table_info["foreign_keys"]) - 1:
                 line += ","
             sql_lines.append(line)

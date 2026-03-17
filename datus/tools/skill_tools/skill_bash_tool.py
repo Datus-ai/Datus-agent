@@ -79,7 +79,7 @@ class SkillBashTool:
         self.timeout = timeout
         self._tool_context: Any = None
 
-        logger.debug(f"SkillBashTool created for '{skill_metadata.name}' " f"with patterns: {self.allowed_patterns}")
+        logger.debug(f"SkillBashTool created for '{skill_metadata.name}' with patterns: {self.allowed_patterns}")
 
     def set_tool_context(self, ctx: Any) -> None:
         """Set tool context (called by framework before tool invocation).
@@ -119,8 +119,7 @@ class SkillBashTool:
             logger.warning(f"Command not allowed for skill '{self.skill.name}': {command}")
             return FuncToolResult(
                 success=0,
-                error=f"Command not allowed by skill permissions. "
-                f"Allowed patterns: {', '.join(self.allowed_patterns)}",
+                error=f"Command not allowed by skill permissions. Allowed patterns: {', '.join(self.allowed_patterns)}",
             )
 
         # Parse command into argv list to prevent shell injection

@@ -934,8 +934,7 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
         # Case 2: old_path is a storage entry (subject_path + '/' + name)
         if len(old_path) < 2:
             raise ValueError(
-                f"Storage entry path must have at least 2 components (subject_path + name), "
-                f"got: {'/'.join(old_path)}"
+                f"Storage entry path must have at least 2 components (subject_path + name), got: {'/'.join(old_path)}"
             )
 
         # Extract components
