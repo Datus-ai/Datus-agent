@@ -289,3 +289,85 @@ storage:
     model_name: all-MiniLM-L6-v2       # Model for embedding metrics
     dim_size: 384
 ```
+
+## Storage Backends
+
+Datus Agent uses a dual-track storage architecture — **Vector DB** for embeddings and **RDB** for structured metadata. Both support pluggable backends via a registry + entry-point mechanism.
+
+> For an architectural overview, see [Knowledge Base Introduction](../knowledge_base/introduction.md#storage-backends).
+
+### Default Backend
+
+By default (no `rdb` / `vector` section in YAML), Datus Agent uses:
+
+- **Vector**: LanceDB (file-based, zero-config)
+- **RDB**: SQLite (file-based, zero-config)
+
+Data is stored under `data/datus_db_<namespace>/`.
+
+### PostgreSQL Backend
+
+#### Prerequisites
+- PostgreSQL 15+ with the `pgvector` extension enabled
+- Install the adapter package:
+  ```bash
+  pip install datus-storage-postgresql
+  # or
+  uv add datus-storage-postgresql
+  ```
+  The entry-point registers automatically — no code changes needed.
+
+#### Configuration
+```yaml
+storage:
+  rdb:
+    type: postgresql
+    host: ${PG_HOST:-localhost}
+    port: 5432
+    user: ${PG_USER:-postgres}
+    password: ${PG_PASSWORD}
+    dbname: datus
+    pool_min_size: 1
+    pool_max_size: 10
+
+  vector:
+    type: postgresql
+    host: ${PG_HOST:-localhost}
+    port: 5432
+    user: ${PG_USER:-postgres}
+    password: ${PG_PASSWORD}
+    dbname: datus
+    pool_min_size: 1
+    pool_max_size: 10
+```
+
+**Parameters:**
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `type` | Yes | — | `postgresql` |
+| `host` | Yes | — | PostgreSQL server hostname |
+| `port` | Yes | — | PostgreSQL server port |
+| `user` | Yes | — | Database user |
+| `password` | Yes | — | User password |
+| `dbname` | Yes | — | Database name |
+| `pool_min_size` | No | 1 | Minimum connection pool size |
+| `pool_max_size` | No | 10 | Maximum connection pool size |
+
+#### Mixed Backend
+
+You can mix backends — for example, use PostgreSQL for RDB and LanceDB for vectors:
+
+```yaml
+storage:
+  rdb:
+    type: postgresql
+    host: localhost
+    port: 5432
+    user: postgres
+    password: ${PG_PASSWORD}
+    dbname: datus
+
+  vector:
+    type: lance    # default, no extra install needed
+```

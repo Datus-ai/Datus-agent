@@ -60,6 +60,33 @@ The Datus Agent Knowledge Base is a multi-modal intelligence system that transfo
 - **Use**: Verify platform-specific syntax and features before writing SQL
 
 
+## Storage Backends
+
+All knowledge base components rely on a dual-track storage architecture:
+
+- **Vector Database**: Stores embedding vectors, powering semantic search (schema linking, document search, etc.)
+- **Relational Database (RDB)**: Stores structured metadata (task, feedback, success story, etc.)
+
+Datus Agent supports pluggable storage backends via a Registry + entry-point mechanism — switch backends without modifying business code.
+
+### Default: LanceDB + SQLite
+- Zero configuration, works out of the box
+- Data stored under `data/datus_db_<namespace>/`
+- Ideal for development and single-machine deployment
+
+### PostgreSQL (pgvector)
+- Production-grade backend, automatically registered after installing `datus-storage-postgresql`
+- Vector: pgvector extension provides vector search
+- RDB: Native PostgreSQL relational storage
+- Namespace isolation via PostgreSQL schemas
+
+### Namespace Isolation
+- Each namespace is stored independently with no cross-contamination
+  - LanceDB: One directory per namespace
+  - PostgreSQL: One schema per namespace
+
+> For detailed configuration, see [Storage Configuration](../configuration/storage.md#storage-backends).
+
 ## Key Features
 
 - **Unified Search**: Single interface across all knowledge domains
