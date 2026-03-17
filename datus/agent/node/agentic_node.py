@@ -82,6 +82,7 @@ class AgenticNode(Node):
         self.permission_manager: Optional["PermissionManager"] = None
         self.skill_manager: Optional["SkillManager"] = None
         self.skill_func_tool = None
+        self.ask_user_tool = None
         self._permission_callback: Optional[Callable[[str, str, Dict[str, Any]], Awaitable[bool]]] = None
 
         # ActionBus - merges tool sub-actions into the main action stream
@@ -550,6 +551,25 @@ class AgenticNode(Node):
             )
         except Exception as e:
             logger.error(f"Failed to setup skill func tools: {e}")
+
+    def _setup_ask_user_tool(self):
+        """Setup ask-user tool so the agent can ask clarifying questions.
+
+        Creates an AskUserTool backed by this node's InteractionBroker.
+        Subclasses call this from their ``setup_tools()``; tools are
+        automatically appended to ``self.tools``.
+        """
+        try:
+            from datus.tools.func_tool.ask_user_tools import AskUserTool
+
+            broker = self._get_or_create_broker()
+            self.ask_user_tool = AskUserTool(broker=broker)
+            if self.tools is not None:
+                self.tools.extend(self.ask_user_tool.available_tools())
+            logger.debug("Setup ask_user tool")
+        except Exception as e:
+            logger.error(f"Failed to setup ask_user tool: {e}")
+            self.ask_user_tool = None
 
     def _ensure_skill_tools_in_tools(self) -> None:
         """

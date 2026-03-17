@@ -93,9 +93,6 @@ class ChatAgenticNode(AgenticNode):
         # SubAgent task delegation tool
         self.sub_agent_task_tool = None
 
-        # Ask user tool
-        self.ask_user_tool = None
-
         # Plan mode attributes
         self.plan_mode_active = False
         self.plan_hooks = None
@@ -226,18 +223,6 @@ class ChatAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup SubAgent task tool: {e}")
             self.sub_agent_task_tool = None
-
-    def _setup_ask_user_tool(self):
-        """Setup ask-user tool so the agent can ask clarifying questions."""
-        try:
-            from datus.tools.func_tool.ask_user_tools import AskUserTool
-
-            broker = self._get_or_create_broker()
-            self.ask_user_tool = AskUserTool(broker=broker)
-            logger.debug("Setup ask_user tool")
-        except Exception as e:
-            logger.error(f"Failed to setup ask_user tool: {e}")
-            self.ask_user_tool = None
 
     def _setup_permission_hooks(self):
         """Setup permission hooks and register all tool categories."""

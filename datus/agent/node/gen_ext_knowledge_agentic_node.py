@@ -193,19 +193,6 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup specific generation tools: {e}")
 
-    def _setup_ask_user_tool(self):
-        """Setup ask-user tool so the agent can ask clarifying questions."""
-        try:
-            from datus.tools.func_tool.ask_user_tools import AskUserTool
-
-            broker = self._get_or_create_broker()
-            self.ask_user_tool = AskUserTool(broker=broker)
-            self.tools.extend(self.ask_user_tool.available_tools())
-            logger.debug("Added ask_user tool")
-        except Exception as e:
-            logger.error(f"Failed to setup ask_user tool: {e}")
-            self.ask_user_tool = None
-
     def _reset_verification_state(self):
         """Reset verification state for a new agentic loop attempt."""
         self._verification_passed = False

@@ -190,19 +190,6 @@ class GenMetricsAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup semantic tools: {e}")
 
-    def _setup_ask_user_tool(self):
-        """Setup ask-user tool so the agent can ask clarifying questions."""
-        try:
-            from datus.tools.func_tool.ask_user_tools import AskUserTool
-
-            broker = self._get_or_create_broker()
-            self.ask_user_tool = AskUserTool(broker=broker)
-            self.tools.extend(self.ask_user_tool.available_tools())
-            logger.debug("Added ask_user tool")
-        except Exception as e:
-            logger.error(f"Failed to setup ask_user tool: {e}")
-            self.ask_user_tool = None
-
     def _setup_hooks(self):
         """Setup hooks for interactive mode."""
         try:
