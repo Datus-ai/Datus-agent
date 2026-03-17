@@ -10,11 +10,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
       - name: Fetch base branch
-        run: git fetch origin ${{ github.event.pull_request.base.ref }}
+        run: git fetch origin ${{ github.event.pull_request.base.ref || github.ref_name }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -67,7 +67,7 @@ jobs:
 
       - name: Run tests and extract coverage
         id: metrics
-        run: python3 ci/run-tests-and-coverage.py "${{ github.event.pull_request.base.ref }}"
+        run: python3 ci/run-tests-and-coverage.py "${{ github.event.pull_request.base.ref || github.ref_name }}"
 
       - name: Post coverage comment
         if: always() && steps.metrics.outcome != 'cancelled'
