@@ -1,8 +1,9 @@
 from pathlib import Path
 
+from datus_storage_base.conditions import build_where
+
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.cache import StorageCache, clear_cache
-from datus_storage_base.conditions import build_where
 from datus.utils.exceptions import DatusException
 
 

@@ -11,6 +11,8 @@ from typing import Any, Dict, List, Optional, Union
 import lancedb
 import pandas as pd
 import pyarrow as pa
+from datus_storage_base.conditions import WhereExpr, build_where
+from datus_storage_base.vector.base import BaseVectorBackend, EmbeddingFunction, VectorDatabase, VectorTable
 from lancedb.db import DBConnection
 from lancedb.embeddings import EmbeddingFunctionConfig
 from lancedb.embeddings.base import EmbeddingFunction as LanceDBEmbeddingFunction
@@ -20,8 +22,6 @@ from lancedb.query import LanceQueryBuilder
 from lancedb.rerankers import LinearCombinationReranker
 from lancedb.table import Table as LanceTable
 
-from datus_storage_base.conditions import WhereExpr, build_where
-from datus_storage_base.vector.base import BaseVectorBackend, EmbeddingFunction, VectorDatabase, VectorTable
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 

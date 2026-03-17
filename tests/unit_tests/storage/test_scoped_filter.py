@@ -5,8 +5,8 @@
 """Tests for datus.storage.scoped_filter — LanceDB WHERE filter builder."""
 
 import pytest
-
 from datus_storage_base.conditions import build_where
+
 from datus.storage.scoped_filter import (
     ScopedFilterBuilder,
     _build_id_condition,
@@ -35,7 +35,6 @@ def _register_test_capabilities():
 # ---------------------------------------------------------------------------
 # TestReplaceWildcard
 # ---------------------------------------------------------------------------
-
 
 
 # ---------------------------------------------------------------------------

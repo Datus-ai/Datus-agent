@@ -5,8 +5,8 @@
 """Tests for SQLite DDL generation covering all branches."""
 
 import pytest
-
 from datus_storage_base.rdb.base import ColumnDef, IndexDef, TableDefinition
+
 from datus.storage.rdb.sqlite_backend import (
     SqliteRdbDatabase,
     _sqlite_col_ddl,

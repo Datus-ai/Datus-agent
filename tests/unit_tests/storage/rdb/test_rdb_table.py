@@ -8,8 +8,8 @@ import os
 from dataclasses import dataclass
 
 import pytest
-
 from datus_storage_base.rdb.base import ColumnDef, IndexDef, TableDefinition, WhereOp
+
 from datus.storage.rdb.sqlite_backend import SqliteRdbDatabase, SqliteRdbTable
 
 

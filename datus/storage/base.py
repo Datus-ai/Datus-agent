@@ -11,10 +11,10 @@ from typing import Any, Dict, List, Optional, Union
 
 import pandas as pd
 import pyarrow as pa
-
 from datus_storage_base.conditions import Node, WhereExpr, and_, build_where
-from datus.storage.embedding_models import EmbeddingModel
 from datus_storage_base.vector.base import VectorDatabase, VectorTable
+
+from datus.storage.embedding_models import EmbeddingModel
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 

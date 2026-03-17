@@ -5,7 +5,6 @@
 """CI-level tests for datus.storage.testing module."""
 
 import pytest
-
 from datus_storage_base.testing import RdbTestEnv, TestEnvConfig, VectorTestEnv
 
 

@@ -6,13 +6,13 @@ from functools import lru_cache
 from typing import Any, List, Optional, Union
 
 import numpy as np
+from datus_storage_base.vector.base import EmbeddingFunction
 from fastembed import TextEmbedding
 from fastembed.text.text_embedding_base import TextEmbeddingBase
 from huggingface_hub.errors import LocalEntryNotFoundError
 from pydantic import BaseModel, Field
 
 from datus.storage.embedding_models import get_embedding_device
-from datus_storage_base.vector.base import EmbeddingFunction
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)

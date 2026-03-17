@@ -5,6 +5,7 @@
 """Tests for BaseEmbeddingStore._apply_scope_filter method."""
 
 from datus_storage_base.conditions import Node, build_where, eq
+
 from datus.storage.schema_metadata import SchemaStorage
 
 

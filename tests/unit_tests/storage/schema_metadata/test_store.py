@@ -5,8 +5,8 @@
 """Tests for datus/storage/schema_metadata/store.py — SchemaStorage and _build_where_clause."""
 
 import pytest
-
 from datus_storage_base.conditions import And, Condition, build_where
+
 from datus.storage.embedding_models import get_db_embedding_model
 from datus.storage.schema_metadata import SchemaStorage
 from datus.storage.schema_metadata.store import _build_where_clause

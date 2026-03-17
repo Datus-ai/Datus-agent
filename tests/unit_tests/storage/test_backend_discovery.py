@@ -7,8 +7,8 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from datus_storage_base.testing import RdbTestEnv, TestEnvConfig, VectorTestEnv
+
 from tests.unit_tests.storage._backend_discovery import (
     BackendTestConfig,
     _active_rdb_envs,

@@ -5,9 +5,9 @@
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import pyarrow as pa
+from datus_storage_base.conditions import And, WhereExpr, build_where, eq, in_
 
 from datus.storage.base import BaseEmbeddingStore, EmbeddingModel
-from datus_storage_base.conditions import And, WhereExpr, build_where, eq, in_
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:

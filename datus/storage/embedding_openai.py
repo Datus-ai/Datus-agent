@@ -5,10 +5,10 @@
 from functools import cached_property
 from typing import TYPE_CHECKING, List, Optional, Union
 
+from datus_storage_base.vector.base import EmbeddingFunction
 from openai import AzureOpenAI, BadRequestError, OpenAI
 from pydantic import BaseModel
 
-from datus_storage_base.vector.base import EmbeddingFunction
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 

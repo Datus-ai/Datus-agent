@@ -4,11 +4,10 @@
 
 """Tests for backend_holder module covering RDB singleton and non-sqlite path."""
 
-import pytest
-
-from datus_storage_base.backend_config import RdbBackendConfig, StorageBackendConfig
-from datus.storage.backend_holder import create_rdb_for_store, init_backends, reset_backends
+from datus_storage_base.backend_config import StorageBackendConfig
 from datus_storage_base.rdb.base import BaseRdbBackend, RdbDatabase, RdbTable
+
+from datus.storage.backend_holder import create_rdb_for_store, init_backends
 from datus.storage.rdb.sqlite_backend import SqliteRdbDatabase
 
 
@@ -75,4 +74,3 @@ class TestCreateRdbForStoreSqlite:
         db = create_rdb_for_store("test")
         assert isinstance(db, SqliteRdbDatabase)
         assert db.db_file.endswith("test.db")
-

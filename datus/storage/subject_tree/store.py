@@ -10,11 +10,11 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import pyarrow as pa
+from datus_storage_base.conditions import and_, in_, like
+from datus_storage_base.rdb.base import ColumnDef, IndexDef, TableDefinition, UniqueViolationError, WhereOp
 
 from datus.storage import BaseEmbeddingStore
-from datus_storage_base.conditions import and_, in_, like
 from datus.storage.embedding_models import EmbeddingModel
-from datus_storage_base.rdb.base import ColumnDef, IndexDef, TableDefinition, UniqueViolationError, WhereOp
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
