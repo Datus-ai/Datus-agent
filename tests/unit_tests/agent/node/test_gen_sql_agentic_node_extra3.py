@@ -267,8 +267,15 @@ class TestGenSQLExecuteStream:
                     actions.append(action)
                     if len(actions) >= 5:
                         break
-            except Exception:
-                pass
+            except (
+                StopAsyncIteration,
+                RuntimeError,
+                AttributeError,
+                KeyError,
+                TypeError,
+                ValueError,
+            ):
+                pass  # Expected failures when mocked dependencies are incomplete
             return actions
 
         actions = asyncio.run(_collect())

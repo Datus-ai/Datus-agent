@@ -64,15 +64,8 @@ class TestExecuteSQLNodeExecute:
         assert "db error" in node.result.error
 
     def test_execute_validation_error(self):
-        from pydantic import ValidationError
-
         node = make_node(ExecuteSQLInput(sql_query="SELECT 1", database_name="db"))
         mock_connector = MagicMock()
-        mock_connector.execute.side_effect = ValidationError.from_exception_data(
-            title="test",
-            line_errors=[],
-        )
-        # Fallback: just use a generic exception to trigger the except path
         mock_connector.execute.side_effect = Exception("validation-like error")
         with patch.object(node, "_sql_connector", return_value=mock_connector):
             node.execute()

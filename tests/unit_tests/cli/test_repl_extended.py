@@ -240,8 +240,6 @@ class TestCmdBash:
         assert "Security" in output or "whitelist" in output.lower()
 
     def test_whitelisted_command_executes(self, cli):
-        pass
-
         mock_run_result = MagicMock()
         mock_run_result.returncode = 0
         mock_run_result.stdout = "/home/user\n"

@@ -173,6 +173,9 @@ class TestParseCommand:
             mock_parse.return_value = SQLType.SELECT
             cmd_type, cmd, args = cli._parse_command("SELECT 1;")
         assert cmd_type == CommandType.SQL
+        # Verify the semicolon was stripped before passing to parse_sql_type
+        call_args = mock_parse.call_args
+        assert call_args[0][0] == "SELECT 1", f"Expected stripped SQL 'SELECT 1', got '{call_args[0][0]}'"
 
     def test_natural_language_treated_as_chat(self, cli):
         """Natural language without prefix is treated as CHAT."""

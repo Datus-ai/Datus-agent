@@ -444,8 +444,8 @@ class TestSetupInput:
         workflow.context.metrics = []
 
         node.setup_input(workflow)
-        # BaseInput may or may not have these attributes; just check no error
-        assert True
+        # Verify setup_input populated the node's input
+        assert node.input is not None
 
 
 # ---------------------------------------------------------------------------

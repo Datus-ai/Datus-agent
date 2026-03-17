@@ -13,7 +13,6 @@ CI-level: zero external deps, zero network.
 """
 
 import argparse
-import os
 
 import pytest
 
@@ -46,9 +45,9 @@ class TestResolveEnv:
         result = resolve_env("${MY_TEST_KEY}")
         assert result == "secret123"
 
-    def test_missing_env_var_returns_placeholder(self):
+    def test_missing_env_var_returns_placeholder(self, monkeypatch):
         # Make sure this env var is not set
-        os.environ.pop("DATUS_NONEXISTENT_VAR_XYZ", None)
+        monkeypatch.delenv("DATUS_NONEXISTENT_VAR_XYZ", raising=False)
         result = resolve_env("${DATUS_NONEXISTENT_VAR_XYZ}")
         assert result == "<MISSING:DATUS_NONEXISTENT_VAR_XYZ>"
 

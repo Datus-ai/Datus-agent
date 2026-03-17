@@ -83,7 +83,7 @@ class TestParseConfigPath:
 
 
 class TestConfigurationManager:
-    def _make_config(self, tmp_path, data: dict = None) -> Path:
+    def _make_config(self, tmp_path, data: dict | None = None) -> Path:
         cfg = tmp_path / "agent.yml"
         content = {"agent": data or {"target": "test"}}
         cfg.write_text(yaml.safe_dump(content))

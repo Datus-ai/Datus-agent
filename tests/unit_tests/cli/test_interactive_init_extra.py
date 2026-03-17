@@ -335,7 +335,7 @@ class TestOverwriteSqlAndLogResult:
 
         with patch(
             "datus.configuration.agent_config_loader.load_agent_config", side_effect=RuntimeError("config error")
-        ):
+        ), patch("datus.cli.interactive_init.print_rich_exception") as mock_print_exc:
             overwrite_sql_and_log_result(
                 namespace_name="test_ns",
                 sql_dir="/some/dir",
@@ -343,5 +343,5 @@ class TestOverwriteSqlAndLogResult:
                 console=console,
             )
 
-        # Exception should be handled, not propagated (print_rich_exception is called)
-        # The test just ensures no unhandled exception
+        # Exception should be caught and reported via print_rich_exception
+        mock_print_exc.assert_called_once()

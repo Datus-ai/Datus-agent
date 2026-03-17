@@ -146,8 +146,8 @@ class TestGenSqlTask:
         agent_commands.cli.db_connector = None
         # With no db_connector, it falls back to SQLITE — should still work
         result = agent_commands._gen_sql_task("test query")
-        # Either None or a valid task — just confirm no unhandled exception
-        assert result is not None or result is None
+        # With no db_connector, falls back to SQLITE — should still produce a valid task
+        assert result is None or isinstance(result, SqlTask)
 
 
 # ---------------------------------------------------------------------------

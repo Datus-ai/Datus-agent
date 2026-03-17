@@ -154,13 +154,14 @@ class TestUpdateContextDocSearch:
             MagicMock(side_effect=RuntimeError("context error")),
         )
 
-        # Only check that it doesn't crash the test – the exception path is in the source
-        # If it raises an AttributeError due to the property trick, skip this assertion
+        # The property trick should trigger an exception during context update
         try:
             node.update_context(wf)
-            # If it got here (mock doesn't raise), just verify success
-        except Exception:
-            pass  # The exception handling path is tested indirectly
+        except (RuntimeError, AttributeError):
+            pass  # Expected: the property setter raises RuntimeError or AttributeError
+        else:
+            # If no exception, verify context was still set correctly
+            assert wf.context is not None
 
 
 # ---------------------------------------------------------------------------

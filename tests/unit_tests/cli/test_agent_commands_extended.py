@@ -23,6 +23,7 @@ import io
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 from rich.console import Console
 
 from datus.cli.agent_commands import AgentCommands
@@ -606,11 +607,10 @@ class TestCreateNodeInputExtended:
         agent_commands.cli_context = cli_context
         agent_commands.cli.prompt_input = lambda msg, default="", **kw: default or ""
 
-        # The production create_node_input may raise ValidationError (Pydantic) for TYPE_REASONING
-        # due to a schema mismatch; wrap in try/except to confirm no crash in the test itself.
+        # create_node_input may raise ValidationError for TYPE_REASONING due to schema mismatch;
+        # verify it either succeeds or raises a known exception type.
         try:
             result = agent_commands.create_node_input(NodeType.TYPE_REASONING, "explain query")
-        except Exception:
-            result = None
-        # Whether None or a valid object, no unhandled exception should escape the test
-        assert result is None or result is not None
+            assert result is not None, "Expected a valid node input object"
+        except (ValidationError, ValueError, TypeError, KeyError):
+            pass  # Known failure modes for unsupported/mismatched node types

@@ -136,8 +136,7 @@ class TestCmdClearChat:
         chat_cmd.cmd_clear_chat("")
 
         # After clear, state should be reset
-        assert chat_cmd.chat_history == [] or chat_cmd.current_node is None or True
-        # At minimum, the method should not raise
+        assert chat_cmd.chat_history == [] or chat_cmd.current_node is None
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +164,7 @@ class TestTriggerCompact:
         chat_cmd._trigger_compact_for_current_node()
         output = chat_cmd.console.file.getvalue()
         # Should print success message
-        assert "compact" in output.lower() or len(output) >= 0
+        assert len(output) > 0, "Should have printed compact result"
 
     def test_compact_failure_logged(self, chat_cmd):
         mock_node = MagicMock()
@@ -179,7 +178,7 @@ class TestTriggerCompact:
 
         chat_cmd._trigger_compact_for_current_node()
         output = chat_cmd.console.file.getvalue()
-        assert "Failed" in output or "compact" in output.lower() or len(output) >= 0
+        assert "Failed" in output or "compact" in output.lower(), f"Expected failure message, got: {output[:200]}"
 
     def test_exception_during_compact_handled(self, chat_cmd):
         mock_node = MagicMock()
@@ -207,14 +206,17 @@ class TestCreateNewNode:
         mock_cls.assert_called_once()
 
     def test_create_gen_semantic_model(self, chat_cmd):
+        mock_node = MagicMock()
         with patch("datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode") as mock_cls:
-            mock_cls.return_value = MagicMock()
+            mock_cls.return_value = mock_node
             with patch.dict(
                 "sys.modules",
                 {"datus.agent.node.gen_semantic_model_agentic_node": MagicMock(GenSemanticModelAgenticNode=mock_cls)},
             ):
-                chat_cmd._create_new_node("gen_semantic_model")
-            # Should return something without raising
+                result = chat_cmd._create_new_node("gen_semantic_model")
+        # _create_new_node returns the node; verify the correct class was instantiated
+        mock_cls.assert_called_once()
+        assert result is mock_node
 
     def test_create_gen_metrics(self, chat_cmd):
         mock_node = MagicMock()
@@ -227,15 +229,19 @@ class TestCreateNewNode:
                     )
                 },
             ):
-                chat_cmd._create_new_node("gen_metrics")
+                result = chat_cmd._create_new_node("gen_metrics")
+        assert result is mock_node
 
     def test_create_gensql_default(self, chat_cmd):
+        mock_node = MagicMock()
         with patch("datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode") as mock_cls:
-            mock_cls.return_value = MagicMock()
+            mock_cls.return_value = mock_node
             with patch.dict(
                 "sys.modules", {"datus.agent.node.gen_sql_agentic_node": MagicMock(GenSQLAgenticNode=mock_cls)}
             ):
-                chat_cmd._create_new_node("gensql")
+                result = chat_cmd._create_new_node("gensql")
+        mock_cls.assert_called_once()
+        assert result is mock_node
 
 
 # ---------------------------------------------------------------------------
@@ -246,12 +252,11 @@ class TestCreateNewNode:
 class TestAddInSqlContext:
     def test_add_in_sql_context_no_sql_action_skips_gracefully(self, chat_cmd):
         """add_in_sql_context with empty actions does not raise (warns and returns)."""
-        if hasattr(chat_cmd, "add_in_sql_context"):
-            # Empty actions -> logs warning, returns without storing
-            chat_cmd.add_in_sql_context("SELECT 1", "select one", [])
-            # No SQL context should be stored (no SQL action found)
-            stored = chat_cmd.cli.cli_context.get_last_sql_context()
-            assert stored is None  # graceful skip
+        # Empty actions -> logs warning, returns without storing
+        chat_cmd.add_in_sql_context("SELECT 1", "select one", [])
+        # No SQL context should be stored (no SQL action found)
+        stored = chat_cmd.cli.cli_context.get_last_sql_context()
+        assert stored is None  # graceful skip
 
 
 # ---------------------------------------------------------------------------
@@ -264,8 +269,8 @@ class TestCmdChatInfo:
         chat_cmd.current_node = None
         chat_cmd.cmd_chat_info("")
         output = chat_cmd.console.file.getvalue()
-        # Should print something (not crash)
-        assert len(output) >= 0
+        # Should print "No active session" or similar message
+        assert len(output) > 0, "Should have printed a message about no active session"
 
     def test_with_current_node_calls_get_info(self, chat_cmd):
         async def mock_get_info():
