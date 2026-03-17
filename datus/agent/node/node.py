@@ -114,11 +114,15 @@ class Node(ABC):
         elif node_type == NodeType.TYPE_CHAT:
             return ChatAgenticNode(node_id, description, node_type, input_data, agent_config, tools)
         elif node_type == NodeType.TYPE_GENSQL:
-            return GenSQLAgenticNode(node_id, description, node_type, input_data, agent_config, tools, node_name)
+            return GenSQLAgenticNode(
+                node_id, description, node_type, input_data, agent_config, tools, node_name, execution_mode="workflow"
+            )
         elif node_type == NodeType.TYPE_GEN_REPORT:
             from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
 
-            return GenReportAgenticNode(node_id, description, node_type, input_data, agent_config, tools, node_name)
+            return GenReportAgenticNode(
+                node_id, description, node_type, input_data, agent_config, tools, node_name, execution_mode="workflow"
+            )
         elif node_type == NodeType.TYPE_EXPLORE:
             from datus.agent.node.explore_agentic_node import ExploreAgenticNode
 
