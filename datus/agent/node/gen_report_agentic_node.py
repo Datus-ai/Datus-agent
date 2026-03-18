@@ -10,6 +10,7 @@ report generation with semantic and database tools. It can be used directly
 or extended by specialized report nodes like AttributionAgenticNode.
 """
 
+from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
@@ -295,6 +296,8 @@ class GenReportAgenticNode(AgenticNode):
         if self.agent_config:
             context["namespace"] = getattr(self.agent_config, "current_namespace", None)
             context["db_name"] = getattr(self.agent_config, "current_database", None)
+
+        context["current_date"] = datetime.now().strftime("%Y-%m-%d")
 
         version = None if prompt_version in (None, "") else str(prompt_version)
 

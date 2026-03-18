@@ -11,6 +11,7 @@ SQL generation. It exposes only read-only tools and runs with a low max_turns
 budget for fast, focused exploration.
 """
 
+from datetime import datetime
 from typing import AsyncGenerator, Dict, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
@@ -160,6 +161,7 @@ class ExploreAgenticNode(AgenticNode):
             "namespace": getattr(self.agent_config, "current_namespace", None) if self.agent_config else None,
             "workspace_root": self._resolve_workspace_root(),
             "conversation_summary": conversation_summary,
+            "current_date": datetime.now().strftime("%Y-%m-%d"),
         }
 
         try:

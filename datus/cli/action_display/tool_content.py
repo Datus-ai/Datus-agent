@@ -1429,23 +1429,6 @@ def _build_parse_dates(action: ActionHistory, verbose: bool) -> ToolCallContent:
     return tc
 
 
-def _build_get_current_date(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """get_current_date: show current date."""
-    tc = make_base_content(action)
-    if verbose:
-        tc.args_lines = extract_args_markup(action)
-        if action.output:
-            tc.output_lines = _format_result_only_markup(action.output)
-    else:
-        data = parse_output_data(action.output)
-        if data:
-            result = data.get("result")
-            if isinstance(result, dict):
-                current_date = result.get("current_date", "")
-                tc.output_preview = f"\u2713 {current_date}" if current_date else "\u2713 Date retrieved"
-    return tc
-
-
 def _build_analyze_relationships(action: ActionHistory, verbose: bool) -> ToolCallContent:
     """analyze_table_relationships: show relationship count."""
     tc = make_base_content(action)
@@ -1633,7 +1616,6 @@ class ToolCallContentBuilder:
 
         # Date parsing tools
         self._registry["parse_temporal_expressions"] = _build_parse_dates
-        self._registry["get_current_date"] = _build_get_current_date
 
         # Semantic model generation tools
         self._registry["analyze_table_relationships"] = _build_analyze_relationships

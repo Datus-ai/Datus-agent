@@ -2073,6 +2073,7 @@ class TestRebuildTools:
         node.date_parsing_tools = mock_date
         node.filesystem_func_tool = None
         node._platform_doc_tool = None
+        node.ask_user_tool = None
 
         node._rebuild_tools()
 
@@ -2085,6 +2086,7 @@ class TestRebuildTools:
         node.date_parsing_tools = None
         node.filesystem_func_tool = None
         node._platform_doc_tool = None
+        node.ask_user_tool = None
 
         node._rebuild_tools()
 

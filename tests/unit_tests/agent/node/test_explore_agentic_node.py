@@ -17,12 +17,7 @@ from datus.agent.node.agentic_node import AgenticNode
 from datus.configuration.node_type import NodeType
 from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.explore_agentic_node_models import ExploreNodeInput
-from tests.unit_tests.mock_llm_model import (
-    MockLLMModel,
-    MockToolCall,
-    build_simple_response,
-    build_tool_then_response,
-)
+from tests.unit_tests.mock_llm_model import MockLLMModel, MockToolCall, build_simple_response, build_tool_then_response
 
 
 class TestExploreAgenticNodeInit:
@@ -164,7 +159,6 @@ class TestExploreAgenticNodeTools:
             node_name="explore",
         )
         tool_names = [t.name for t in node.tools]
-        assert "get_current_date" in tool_names
         assert "parse_temporal_expressions" in tool_names
 
     def test_explore_has_no_mcp_servers(self, real_agent_config, mock_llm_create):

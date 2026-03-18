@@ -10,6 +10,7 @@ chat interactions with markdown output, database/filesystem tool support,
 skills, and permissions. This node is fully independent from GenSQLAgenticNode.
 """
 
+from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
@@ -423,6 +424,7 @@ class ChatAgenticNode(AgenticNode):
         )
         context["conversation_summary"] = conversation_summary
         context["has_task_tool"] = bool(self.sub_agent_task_tool)
+        context["current_date"] = datetime.now().strftime("%Y-%m-%d")
         prompt_version = prompt_version or self.node_config.get("prompt_version")
 
         system_prompt_name = self.node_config.get("system_prompt") or self.get_node_name()

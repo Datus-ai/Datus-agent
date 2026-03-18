@@ -24,7 +24,6 @@ from datus.cli.action_display.tool_content import (
     _build_end_metric_generation,
     _build_execute_command,
     _build_generate_sql_summary_id,
-    _build_get_current_date,
     _build_get_detail,
     _build_get_dimensions,
     _build_get_document,
@@ -1601,19 +1600,6 @@ class TestBuildParseDates:
         assert "1 date expressions" in tc.output_preview
 
 
-@pytest.mark.ci
-class TestBuildGetCurrentDate:
-    def test_compact(self):
-        a = _make(
-            input_data={"function_name": "get_current_date"},
-            output_data={
-                "raw_output": '{"success": 1, "result": {"current_date": "2026-03-16", "is_reference_date": false}}'
-            },
-        )
-        tc = _build_get_current_date(a, verbose=False)
-        assert "2026-03-16" in tc.output_preview
-
-
 # ── Semantic model generation tools ───────────────────────────────
 
 
@@ -1767,7 +1753,6 @@ class TestAllToolsRegistered:
         "generate_sql_summary_id",
         # Date
         "parse_temporal_expressions",
-        "get_current_date",
         # Semantic model gen
         "analyze_table_relationships",
         "get_multiple_tables_ddl",

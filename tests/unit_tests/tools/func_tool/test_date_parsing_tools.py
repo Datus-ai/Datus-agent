@@ -80,11 +80,11 @@ class TestSetReferenceDate:
 
 
 class TestAvailableTools:
-    def test_available_tools_returns_two_tools(self, date_parsing_tools):
+    def test_available_tools_returns_one_tool(self, date_parsing_tools):
         with patch("datus.tools.func_tool.date_parsing_tools.trans_to_function_tool") as mock_trans:
             mock_trans.side_effect = lambda f: Mock(name=f.__name__)
             tools = date_parsing_tools.available_tools()
-        assert len(tools) == 2
+        assert len(tools) == 1
 
 
 class TestParseTemporalExpressions:
@@ -110,6 +110,18 @@ class TestParseTemporalExpressions:
         with patch("datus.utils.time_utils.get_default_current_date", return_value="2024-02-15"):
             result = date_parsing_tools.parse_temporal_expressions("today")
 
+        assert result.success == 1
+
+    def test_uses_reference_date_as_fallback(self, date_parsing_tools):
+        """When current_date is None, parse_temporal_expressions should use reference_date."""
+        date_parsing_tools.set_reference_date("2023-06-15")
+        date_parsing_tools.date_parser_tool.execute.return_value = []
+        date_parsing_tools.date_parser_tool.generate_date_context.return_value = ""
+
+        with patch("datus.utils.time_utils.get_default_current_date", return_value="2023-06-15") as mock_get_date:
+            result = date_parsing_tools.parse_temporal_expressions("last month", current_date=None)
+
+        mock_get_date.assert_called_once_with("2023-06-15")
         assert result.success == 1
 
     def test_exception_returns_failure(self, date_parsing_tools):
