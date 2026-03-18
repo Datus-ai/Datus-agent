@@ -39,15 +39,10 @@ def reset_global_singletons():
     """
     yield
 
-    # Clean up db_manager_instance
-    import datus.tools.db_tools.db_manager as db_mgr_mod
+    # Reset db_manager factory (if set)
+    from datus.tools.db_tools.db_manager import set_db_manager_factory
 
-    if db_mgr_mod._INSTANCE is not None:
-        try:
-            db_mgr_mod._INSTANCE.close()
-        except Exception:
-            pass
-        db_mgr_mod._INSTANCE = None
+    set_db_manager_factory(None)
 
     # Clean up StorageCache
     from datus.storage.cache import clear_cache

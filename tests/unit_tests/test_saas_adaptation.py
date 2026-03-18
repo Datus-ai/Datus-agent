@@ -611,14 +611,16 @@ class TestDBManagerFactory:
         finally:
             set_db_manager_factory(None)
 
-    def test_no_factory_uses_singleton(self):
-        """Without a factory, db_manager_instance uses the singleton pattern."""
-        from datus.tools.db_tools.db_manager import db_manager_instance, set_db_manager_factory
+    def test_no_factory_creates_new_each_call(self):
+        """Without a factory, db_manager_instance creates a new DBManager each call (no singleton)."""
+        from datus.tools.db_tools.db_manager import DBManager, db_manager_instance, set_db_manager_factory
 
         set_db_manager_factory(None)
         instance1 = db_manager_instance()
         instance2 = db_manager_instance()
-        assert instance1 is instance2
+        assert isinstance(instance1, DBManager)
+        assert isinstance(instance2, DBManager)
+        assert instance1 is not instance2
 
 
 # ===========================================================================

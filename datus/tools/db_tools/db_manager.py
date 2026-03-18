@@ -334,8 +334,6 @@ def db_config_name(namespace: str, db_type: str, name: str = "") -> str:
     return f"{namespace}::{namespace}"
 
 
-_INSTANCE = None
-
 # External factory for DBManager creation (used by SaaS backend for connection pooling)
 _factory: Optional[Callable[[Dict[str, Dict[str, DbConfig]]], DBManager]] = None
 
@@ -353,28 +351,21 @@ def set_db_manager_factory(factory: Optional[Callable[[Dict[str, Dict[str, DbCon
     Args:
         factory: Callable that accepts ``db_configs`` and returns a ``DBManager``.
     """
-    global _factory, _INSTANCE
+    global _factory
     _factory = factory
-    # Clear any cached singleton so the next call creates a fresh instance
-    # through the new factory (or default path if factory is None).
-    _INSTANCE = None
 
 
 def db_manager_instance(
     db_configs: Optional[Dict[str, Dict[str, DbConfig]]] = None,
 ) -> DBManager:
-    global _INSTANCE
+    """Create or obtain a DBManager instance.
+
+    - With a factory set (SaaS mode): delegates to the factory every call,
+      which typically returns a pooled/ref-counted instance.
+    - Without a factory (CLI mode): creates a new DBManager each call.
+      Callers that need to reuse one should keep a reference themselves
+      (e.g., ``self.db_manager = db_manager_instance(...)``).
+    """
     if _factory is not None:
         return _factory(db_configs or {})
-    if _INSTANCE is None or db_configs is not None:
-        _INSTANCE = _db_manager(db_configs)
-    return _INSTANCE
-
-
-def _db_manager(
-    db_configs: Optional[Dict[str, Dict[str, DbConfig]]] = None,
-) -> DBManager:
-    if db_configs is None:
-        return DBManager({})
-    manager = DBManager(db_configs)
-    return manager
+    return DBManager(db_configs or {})
