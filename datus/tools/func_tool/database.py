@@ -630,8 +630,7 @@ class DBFuncTool:
 
         Returns:
             FuncToolResult where:
-                - success=1 with result={"metadata": [...], "sample_data": [...]} when matches found.
-                - success=0 with error="No metadata rows found." when no candidates survive the filters.
+                - success=1 with result={"metadata": [...], "sample_data": [...]} (empty lists when no matches).
                 - success=0 with error text if schema storage is unavailable or lookup fails.
         """
         if not self.has_schema:
@@ -662,7 +661,7 @@ class DBFuncTool:
                     ]
                 ).to_pylist()
             if not metadata_rows:
-                return FuncToolResult(success=0, error="No metadata rows found.")
+                return FuncToolResult(success=1, result=result_dict)
 
             current_has_semantic = False
             if self.has_semantic_models:
