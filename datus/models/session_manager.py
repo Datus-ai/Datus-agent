@@ -37,7 +37,7 @@ class SessionManager:
                 per-project session isolation). When None, falls back to the
                 default {agent.home}/sessions path.
         """
-        if session_dir:
+        if session_dir and session_dir.strip():
             self.session_dir = session_dir
         else:
             from datus.utils.path_manager import get_path_manager
@@ -326,14 +326,20 @@ class SessionManager:
                 cursor = conn.cursor()
 
                 # Check if session has any messages
-                cursor.execute("SELECT COUNT(*) FROM agent_messages WHERE session_id = ?", (session_id,))
+                cursor.execute(
+                    "SELECT COUNT(*) FROM agent_messages WHERE session_id = ?",
+                    (session_id,),
+                )
                 message_count = cursor.fetchone()[0]
 
                 if message_count > 0:
                     return True
 
                 # Check if session has a record in agent_sessions
-                cursor.execute("SELECT COUNT(*) FROM agent_sessions WHERE session_id = ?", (session_id,))
+                cursor.execute(
+                    "SELECT COUNT(*) FROM agent_sessions WHERE session_id = ?",
+                    (session_id,),
+                )
                 session_count = cursor.fetchone()[0]
 
                 return session_count > 0

@@ -353,8 +353,11 @@ def set_db_manager_factory(factory: Optional[Callable[[Dict[str, Dict[str, DbCon
     Args:
         factory: Callable that accepts ``db_configs`` and returns a ``DBManager``.
     """
-    global _factory
+    global _factory, _INSTANCE
     _factory = factory
+    # Clear any cached singleton so the next call creates a fresh instance
+    # through the new factory (or default path if factory is None).
+    _INSTANCE = None
 
 
 def db_manager_instance(

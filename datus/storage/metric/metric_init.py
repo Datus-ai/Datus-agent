@@ -125,6 +125,11 @@ async def init_success_story_metrics_async(
             if action.status == ActionStatus.SUCCESS and action.output:
                 final_result = action.output
                 logger.debug(f"Metrics generation action: {action.messages}")
+        if final_result is None:
+            error_msg = "Metrics extraction completed but produced no output"
+            logger.warning(error_msg)
+            event_helper.task_failed(error=error_msg)
+            return False, error_msg, None
         logger.info("Batch metrics extraction completed successfully")
         event_helper.task_completed(
             total_items=1,

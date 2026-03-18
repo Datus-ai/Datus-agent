@@ -175,7 +175,12 @@ async def init_success_story_knowledge_async(
         logger.error(error_msg)
         return False, error_msg
 
-    df = pd.read_csv(success_story)
+    try:
+        df = pd.read_csv(success_story)
+    except Exception as e:
+        error_msg = f"Failed to read success story CSV file '{success_story}': {e}"
+        logger.error(error_msg)
+        return False, error_msg
 
     errors: List[str] = []
     for idx, row in df.iterrows():

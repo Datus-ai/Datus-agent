@@ -297,7 +297,7 @@ async def init_reference_sql_async(
                 await emit_group_started_if_needed(file_key, filepath)
                 event_helper.item_started(
                     item_id=sql_id,
-                    group_id=filepath,
+                    group_id=file_key,
                     sql=item.get("sql"),
                 )
                 error = None
@@ -317,20 +317,20 @@ async def init_reference_sql_async(
                     event_helper.item_failed(
                         item_id=sql_id,
                         error=str(exc),
-                        group_id=filepath,
+                        group_id=file_key,
                         exception_type=type(exc).__name__,
                     )
                 if result:
                     event_helper.item_completed(
                         item_id=sql_id,
-                        group_id=filepath,
+                        group_id=file_key,
                         sql_summary_file=result,
                     )
                 elif error is None:
                     event_helper.item_failed(
                         item_id=sql_id,
                         error="Failed to generate SQL summary",
-                        group_id=filepath,
+                        group_id=file_key,
                     )
                 await emit_group_completed_if_done(file_key, filepath)
                 return item, sql_id, result, error
@@ -350,6 +350,9 @@ async def init_reference_sql_async(
             elif result:
                 success_items.append(item)
                 success_count += 1
+            else:
+                logger.error(f"SQL processing returned no result. SQL: {sql};")
+                _errors.append(f"SQL processing returned no result. SQL: {sql};")
 
         logger.info(f"Completed processing: {success_count}/{len(items_to_process)} successful")
         processed_count = success_count

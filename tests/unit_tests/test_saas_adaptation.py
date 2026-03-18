@@ -323,11 +323,11 @@ class TestInitExtKnowledgeStringParam:
         param = sig.parameters.get("ext_knowledge_csv")
         assert param is not None
         annotation = param.annotation
-        if annotation is not inspect.Parameter.empty:
-            # Should be Optional[str] (i.e. Union[str, None])
-            origin = typing.get_origin(annotation)
-            args = typing.get_args(annotation)
-            assert origin is Union and str in args and type(None) in args
+        assert annotation is not inspect.Parameter.empty, "ext_knowledge_csv must have a type annotation"
+        # Should be Optional[str] (i.e. Union[str, None])
+        origin = typing.get_origin(annotation)
+        args = typing.get_args(annotation)
+        assert origin is Union and str in args and type(None) in args
 
 
 # ===========================================================================
