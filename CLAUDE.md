@@ -23,7 +23,7 @@ bash build_scripts/build_test_data.sh       # Build test knowledge base
 
 ### Style
 
-- **Formatter**: ruff format, line-length = 120, exclude = `mcp/`
+- **Formatter**: ruff format, line-length = 120, extend-exclude = `mcp/`
 - **Linter**: ruff check (E/W/F/B/I/C90 rules), line-length = 120
 - **Imports**: ruff isort rules, group order: stdlib → third-party → `datus.*`
 - **Type hints**: use throughout; Pydantic models for data structures

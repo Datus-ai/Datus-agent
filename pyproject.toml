@@ -126,7 +126,7 @@ exclude = ["benchmark*", "docs*"]
 [tool.ruff]
 line-length = 120
 target-version = "py312"
-exclude = ["mcp/"]
+extend-exclude = ["mcp/"]
 
 [tool.ruff.format]
 # Compatible with black defaults

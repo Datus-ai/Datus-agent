@@ -3,7 +3,6 @@ repos:
     rev: v0.15.6
     hooks:
       - id: ruff-format
-        args: ["--line-length=120"]
         exclude: ^mcp/
       - id: ruff
         args: ["--fix", "--exit-non-zero-on-fix"]
