@@ -958,6 +958,16 @@ class DBFuncTool:
             if sql_stripped.endswith(".sql") and "\n" not in sql_stripped and " " not in sql_stripped:
                 sql = self._read_sql_from_file(sql_stripped)
 
+            # Reject multi-statement SQL to prevent read-only bypass (e.g. "SELECT 1; DELETE ...")
+            from datus.utils.sql_utils import strip_sql_comments
+
+            cleaned = strip_sql_comments(sql).strip().rstrip(";").strip()
+            if ";" in cleaned:
+                return FuncToolResult(
+                    success=0,
+                    error="Multi-statement SQL is not allowed. Please submit one query at a time.",
+                )
+
             # Enforce read-only: only SELECT, SHOW/DESCRIBE, and EXPLAIN are allowed
             connector = self._get_connector(database)
             sql_type = parse_sql_type(sql, connector.dialect)
@@ -969,7 +979,16 @@ class DBFuncTool:
                     f"Detected SQL type: {sql_type.value}",
                 )
 
-            logger.info(f"read_query sql: {sql}")
+            # Reject writable PRAGMAs (e.g. "PRAGMA journal_mode=WAL")
+            if sql_type == SQLType.METADATA_SHOW:
+                first_word = cleaned.split()[0].upper() if cleaned else ""
+                if first_word == "PRAGMA" and "=" in cleaned:
+                    return FuncToolResult(
+                        success=0,
+                        error="Writable PRAGMA statements are not allowed in read-only mode.",
+                    )
+
+            logger.info("read_query", sql_type=sql_type.value, database=database or "default")
             result = connector.execute_query(sql, result_format="arrow" if connector.dialect == "snowflake" else "list")
             if result.success:
                 data = result.sql_return

@@ -554,6 +554,32 @@ class TestDBFuncTool:
         assert result.result is None
         mock_connector.execute_query.assert_called_once_with("SELECT * FROM users", result_format="list")
 
+    def test_read_query_rejects_multi_statement(self, db_func_tool, mock_connector):
+        """Multi-statement SQL must be rejected to prevent read-only bypass."""
+        result = db_func_tool.read_query("SELECT 1; DELETE FROM users")
+        assert result.success == 0
+        assert "Multi-statement" in result.error
+        mock_connector.execute_query.assert_not_called()
+
+    def test_read_query_rejects_writable_pragma(self, db_func_tool, mock_connector):
+        """Writable PRAGMA statements must be rejected in read-only mode."""
+        result = db_func_tool.read_query("PRAGMA journal_mode=WAL")
+        assert result.success == 0
+        assert "PRAGMA" in result.error
+        mock_connector.execute_query.assert_not_called()
+
+    def test_read_query_allows_readonly_pragma(self, db_func_tool, mock_connector):
+        """Read-only PRAGMAs (no assignment) should be allowed."""
+        mock_connector.execute_query.return_value = Mock(success=True, sql_return=[{"journal_mode": "wal"}])
+        result = db_func_tool.read_query("PRAGMA journal_mode")
+        assert result.success == 1
+
+    def test_read_query_allows_trailing_semicolon(self, db_func_tool, mock_connector):
+        """A single statement with trailing semicolon should be allowed."""
+        mock_connector.execute_query.return_value = Mock(success=True, sql_return=[{"id": 1}])
+        result = db_func_tool.read_query("SELECT * FROM users;")
+        assert result.success == 1
+
     def test_get_table_ddl_success(self, db_func_tool, mock_connector):
         """get_table_ddl should return connector DDL info."""
         mock_connector.get_tables_with_ddl.return_value = [
