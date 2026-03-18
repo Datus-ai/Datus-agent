@@ -1,4 +1,3 @@
-# ruff: noqa: I001
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
@@ -30,13 +29,13 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 import uvicorn
+from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 
 from datus.mcp_server import DatusMCPServer, create_dynamic_app, create_server
 from datus.utils.loggings import get_logger
-from mcp import ClientSession
 
 logger = get_logger(__name__)
 

@@ -265,7 +265,7 @@ def generate_workflow(
             if len(schemas) != len(task.tables):
                 schema_table_names = [item.table_name for item in schemas]
                 logger.warning(
-                    f"The obtained table schema is: {schema_table_names}; The table required for the task is: {schemas}"
+                    f"The obtained table schema is: {schema_table_names}; The table required for the task is: {task.tables}"
                 )
             logger.debug(f"Use task tables: {schemas}")
             workflow.context.update_schema_and_values(schemas, values)

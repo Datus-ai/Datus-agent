@@ -1,4 +1,3 @@
-# ruff: noqa
 """
 Agent Answer Selection Tool
 
