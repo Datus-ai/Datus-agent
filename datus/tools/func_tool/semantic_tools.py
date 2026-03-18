@@ -27,9 +27,6 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
-_normalize_null = normalize_null
-
-
 def _run_async(coro):
     """
     Run async coroutine safely, handling both sync and async contexts.
@@ -205,7 +202,7 @@ class SemanticTools:
             FuncToolResult with list of metrics
         """
         # Normalize null values from LLM
-        path = _normalize_null(path)
+        path = normalize_null(path)
         try:
             # Try storage first
             all_metrics = self.metric_rag.search_all_metrics()
@@ -288,7 +285,7 @@ class SemanticTools:
             FuncToolResult with list of dimension names
         """
         # Normalize null values from LLM
-        path = _normalize_null(path)
+        path = normalize_null(path)
         try:
             # Get dimensions from adapter (MetricFlow) to ensure consistency with query execution
             if self.adapter:
@@ -372,8 +369,8 @@ class SemanticTools:
             )
 
         # Sanitize time parameters: LLM may pass string "null"/"None" instead of omitting
-        time_start = _normalize_null(time_start)
-        time_end = _normalize_null(time_end)
+        time_start = normalize_null(time_start)
+        time_end = normalize_null(time_end)
 
         try:
             # Execute query via adapter

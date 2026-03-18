@@ -6,45 +6,45 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from datus.tools.func_tool.base import FuncToolResult
-from datus.tools.func_tool.semantic_tools import _normalize_null, _run_async
+from datus.tools.func_tool.base import FuncToolResult, normalize_null
+from datus.tools.func_tool.semantic_tools import _run_async
 from datus.tools.semantic_tools.models import QueryResult
 
 
 class TestNormalizeNull:
-    """Tests for _normalize_null utility function."""
+    """Tests for normalize_null utility function."""
 
     def test_none_returns_none(self):
-        assert _normalize_null(None) is None
+        assert normalize_null(None) is None
 
     def test_string_null_returns_none(self):
-        assert _normalize_null("null") is None
+        assert normalize_null("null") is None
 
     def test_string_none_returns_none(self):
-        assert _normalize_null("None") is None
+        assert normalize_null("None") is None
 
     def test_case_insensitive_null(self):
-        assert _normalize_null("NULL") is None
-        assert _normalize_null("Null") is None
+        assert normalize_null("NULL") is None
+        assert normalize_null("Null") is None
 
     def test_case_insensitive_none(self):
-        assert _normalize_null("NONE") is None
-        assert _normalize_null("none") is None
+        assert normalize_null("NONE") is None
+        assert normalize_null("none") is None
 
     def test_empty_string_returns_none(self):
-        assert _normalize_null("") is None
+        assert normalize_null("") is None
 
     def test_whitespace_only_returns_none(self):
-        assert _normalize_null("  ") is None
-        assert _normalize_null("\t") is None
+        assert normalize_null("  ") is None
+        assert normalize_null("\t") is None
 
     def test_valid_value_passes_through(self):
-        assert _normalize_null("2024-01-01") == "2024-01-01"
-        assert _normalize_null("hello") == "hello"
+        assert normalize_null("2024-01-01") == "2024-01-01"
+        assert normalize_null("hello") == "hello"
 
     def test_numeric_value_passes_through(self):
-        assert _normalize_null(42) == 42
-        assert _normalize_null(0) == 0
+        assert normalize_null(42) == 42
+        assert normalize_null(0) == 0
 
 
 @pytest.fixture
@@ -311,7 +311,6 @@ class TestAllToolsName:
         from datus.tools.func_tool.semantic_tools import SemanticTools
 
         names = SemanticTools.all_tools_name()
-        assert "search_metrics" in names
         assert "list_metrics" in names
         assert "get_dimensions" in names
         assert "query_metrics" in names
@@ -320,11 +319,11 @@ class TestAllToolsName:
 
 
 class TestAvailableTools:
-    def test_no_adapter_returns_four_tools(self, semantic_tools_ext):
+    def test_no_adapter_returns_three_tools(self, semantic_tools_ext):
         with patch("datus.tools.func_tool.semantic_tools.trans_to_function_tool") as mock_trans:
             mock_trans.side_effect = lambda f: Mock(name=f.__name__)
             tools = semantic_tools_ext.available_tools()
-        assert len(tools) == 4
+        assert len(tools) == 3
 
     def test_with_adapter_adds_validate_and_attribution_tools(self):
         with (
@@ -340,56 +339,8 @@ class TestAvailableTools:
             with patch("datus.tools.func_tool.semantic_tools.trans_to_function_tool") as mock_trans:
                 mock_trans.side_effect = lambda f: Mock(name=f.__name__)
                 tools = tool.available_tools()
-        # 4 base + validate_semantic + attribution_analyze (both enabled when adapter is set)
-        assert len(tools) == 6
-
-
-class TestSearchMetrics:
-    def test_success_returns_formatted_metrics(self, semantic_tools_ext):
-        semantic_tools_ext.metric_rag.search_metrics.return_value = [
-            {
-                "name": "revenue",
-                "description": "Total revenue",
-                "metric_type": "simple",
-                "dimensions": ["date", "region"],
-                "base_measures": ["amount"],
-                "subject_path": ["Finance"],
-            }
-        ]
-
-        result = semantic_tools_ext.search_metrics("revenue metrics")
-
-        assert result.success == 1
-        assert len(result.result) == 1
-        assert result.result[0]["name"] == "revenue"
-        assert result.result[0]["type"] == "simple"
-
-    def test_no_results_returns_error(self, semantic_tools_ext):
-        semantic_tools_ext.metric_rag.search_metrics.return_value = []
-
-        result = semantic_tools_ext.search_metrics("nonexistent")
-
-        assert result.success == 0
-        assert "No metrics found" in result.error
-
-    def test_exception_returns_failure(self, semantic_tools_ext):
-        semantic_tools_ext.metric_rag.search_metrics.side_effect = Exception("storage down")
-
-        result = semantic_tools_ext.search_metrics("revenue")
-
-        assert result.success == 0
-        assert "storage down" in result.error
-
-    def test_null_subject_path_normalized(self, semantic_tools_ext):
-        semantic_tools_ext.metric_rag.search_metrics.return_value = []
-
-        semantic_tools_ext.search_metrics("revenue", subject_path="null")
-
-        semantic_tools_ext.metric_rag.search_metrics.assert_called_once_with(
-            query_text="revenue",
-            subject_path=None,
-            top_n=5,
-        )
+        # 3 base + validate_semantic + attribution_analyze (both enabled when adapter is set)
+        assert len(tools) == 5
 
 
 class TestListMetrics:

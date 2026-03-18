@@ -2076,7 +2076,8 @@ class TestRebuildTools:
 
         node._rebuild_tools()
 
-        assert len(node.tools) == 3
+        # 3 mock tools + ask_user (injected by AgenticNode base class)
+        assert len(node.tools) == 4
 
     def test_rebuild_tools_empty_when_no_tools(self, real_agent_config, mock_llm_create):
         node = _make_node(real_agent_config, mock_llm_create)
@@ -2088,7 +2089,9 @@ class TestRebuildTools:
 
         node._rebuild_tools()
 
-        assert node.tools == []
+        # ask_user tool is always injected by AgenticNode base class
+        assert len(node.tools) == 1
+        assert node.tools[0].name == "ask_user"
 
 
 # ---------------------------------------------------------------------------

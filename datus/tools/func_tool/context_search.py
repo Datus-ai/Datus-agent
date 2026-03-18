@@ -20,9 +20,6 @@ from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
 logger = get_logger(__name__)
 
 
-_normalize_null = normalize_null
-
-
 _NAME = "context_search_tools"
 _NAME_LIST_SUBJECT_TREE = "context_search_tools.list_subject_tree"
 _NAME_METRICS = "context_search_tools.search_metrics"
@@ -258,7 +255,7 @@ class ContextSearchTools:
             FuncToolResult with list of matching metrics containing name, description, constraint, and sql_query
         """
         # Normalize null values from LLM
-        subject_path = _normalize_null(subject_path)
+        subject_path = normalize_null(subject_path)
         try:
             metrics = self.metric_rag.search_metrics(
                 query_text=query_text,
@@ -286,7 +283,7 @@ class ContextSearchTools:
             FuncToolResult with metric detail containing name, description, constraint, and sql_query
         """
         # Normalize null values from LLM
-        name = _normalize_null(name) or ""
+        name = normalize_null(name) or ""
         try:
             metrics = self.metric_rag.get_metrics_detail(
                 subject_path=subject_path,
@@ -325,7 +322,7 @@ class ContextSearchTools:
                     - 'file_path'
         """
         # Normalize null values from LLM
-        subject_path = _normalize_null(subject_path)
+        subject_path = normalize_null(subject_path)
         try:
             result = self.reference_sql_store.search_reference_sql(
                 query_text=query_text,
@@ -358,7 +355,7 @@ class ContextSearchTools:
                     - 'file_path'
         """
         # Normalize null values from LLM
-        name = _normalize_null(name) or ""
+        name = normalize_null(name) or ""
         try:
             result = self.reference_sql_store.get_reference_sql_detail(
                 subject_path=subject_path, name=name, selected_fields=["name", "sql", "summary", "tags"]
@@ -395,7 +392,7 @@ class ContextSearchTools:
                 - Additional fields specific to object kind (e.g., available_dimensions for metrics)
         """
         # Normalize null values from LLM
-        kinds = _normalize_null(kinds)
+        kinds = normalize_null(kinds)
         try:
             results = self.semantic_rag.storage.search_objects(
                 query_text=query_text,
@@ -430,7 +427,7 @@ class ContextSearchTools:
                     - 'explanation': Detailed explanation of the search_text
         """
         # Normalize null values from LLM
-        subject_path = _normalize_null(subject_path)
+        subject_path = normalize_null(subject_path)
         try:
             result = self.ext_knowledge_rag.query_knowledge(
                 query_text=query_text,

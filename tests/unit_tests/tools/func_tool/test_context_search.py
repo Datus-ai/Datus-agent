@@ -6,28 +6,29 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from datus.tools.func_tool.context_search import _fill_subject_tree, _normalize_null, _normalize_subject_tree
+from datus.tools.func_tool.base import normalize_null
+from datus.tools.func_tool.context_search import _fill_subject_tree, _normalize_subject_tree
 
 
 class TestNormalizeNull:
     def test_none_returns_none(self):
-        assert _normalize_null(None) is None
+        assert normalize_null(None) is None
 
     def test_string_null_returns_none(self):
-        assert _normalize_null("null") is None
+        assert normalize_null("null") is None
 
     def test_string_none_returns_none(self):
-        assert _normalize_null("None") is None
+        assert normalize_null("None") is None
 
     def test_valid_string_passes_through(self):
-        assert _normalize_null("value") == "value"
+        assert normalize_null("value") == "value"
 
     def test_list_passes_through(self):
         lst = ["a", "b"]
-        assert _normalize_null(lst) is lst
+        assert normalize_null(lst) is lst
 
     def test_zero_passes_through(self):
-        assert _normalize_null(0) == 0
+        assert normalize_null(0) == 0
 
 
 class TestFillSubjectTree:
