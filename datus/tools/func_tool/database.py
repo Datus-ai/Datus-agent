@@ -624,16 +624,14 @@ class DBFuncTool:
             simple_sample_data: If True, sample rows omit catalog/database/schema fields for brevity.
 
         Database-specific parameter usage:
-            - PostgreSQL: database + schema_name (e.g., database="mydb", schema_name="public")
-            - MySQL: database only (schema = database)
-            - Snowflake: database + schema_name
-            - StarRocks: catalog + database
-            - SQLite/DuckDB: database only or leave all empty
+            PostgreSQL/Snowflake: database + schema_name |
+            MySQL/StarRocks: database (or catalog + database) |
+            SQLite/DuckDB: database or leave empty
 
         Returns:
             FuncToolResult where:
-                - success=1 with result={"metadata": [...], "sample_data": [...]} when matches remain after filtering.
-                - success=1 with result=[] and error message when no candidates survive the filters.
+                - success=1 with result={"metadata": [...], "sample_data": [...]} when matches found.
+                - success=0 with error="No metadata rows found." when no candidates survive the filters.
                 - success=0 with error text if schema storage is unavailable or lookup fails.
         """
         if not self.has_schema:
@@ -714,6 +712,8 @@ class DBFuncTool:
     def list_databases(self, catalog: Optional[str] = "", include_sys: Optional[bool] = False) -> FuncToolResult:
         """
         Enumerate databases accessible through the current connection.
+        Use this when you need to discover what databases are available before querying.
+        For finding specific tables by description, use search_table instead.
 
         Args:
             catalog: Optional catalog to scope the lookup (dialect dependent).
@@ -739,6 +739,8 @@ class DBFuncTool:
     ) -> FuncToolResult:
         """
         List schema names under the supplied catalog/database coordinate.
+        Use this to explore schema structure when working with databases that have multiple schemas
+        (e.g., PostgreSQL, Snowflake).
 
         Args:
             catalog: Optional catalog filter. Leave blank to rely on connector defaults.
@@ -997,7 +999,8 @@ class DBFuncTool:
             schema_name: Optional schema override.
 
         Returns:
-            FuncToolResult with result containing identifier/catalog/database/schema/table_name/table_type/definition.
+            FuncToolResult with result dict containing keys:
+                identifier, catalog_name, database_name, schema_name, table_name, table_type, definition.
             Scoped-context mismatches or connector failures surface as success=0 with an explanatory message.
         """
         try:

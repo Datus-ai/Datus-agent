@@ -166,6 +166,8 @@ class ContextSearchTools:
     def list_subject_tree(self) -> FuncToolResult:
         """
         Get the domain-layer taxonomy from subject_tree store with metrics and SQL counts.
+        Use this as the first step to discover available metrics, reference SQL, and knowledge
+        before calling get_metrics, get_reference_sql, or get_knowledge.
 
         The response has the structure:
         {
@@ -312,14 +314,11 @@ class ContextSearchTools:
             top_n: The number of top results to return (default 5).
 
         Returns:
-            dict: A dictionary with keys:
-                - 'success' (int): 1 if the search succeeded, 0 otherwise.
-                - 'error' (str or None): Error message if any.
-                - 'result' (list): On success, a list of matching entries, each containing:
-                    - 'sql'
-                    - 'tags'
-                    - 'summary'
-                    - 'file_path'
+            FuncToolResult with list of matching entries, each containing:
+                - 'name': Reference SQL name
+                - 'sql': The SQL query text
+                - 'summary': Brief description of what the SQL does
+                - 'tags': Associated tags
         """
         # Normalize null values from LLM
         subject_path = normalize_null(subject_path)
@@ -345,14 +344,12 @@ class ContextSearchTools:
             name: The exact name of the reference SQL intent.
 
         Returns:
-            FuncToolResult with keys:
-                - 'success' (int): 1 if the search succeeded, 0 otherwise.
-                - 'error' (str or None): Error message if any.
-                - 'result' (dict): On success, a single matching entry containing:
-                    - 'sql'
-                    - 'tags'
-                    - 'summary'
-                    - 'file_path'
+            FuncToolResult with a single matching entry containing:
+                - 'name': Reference SQL name
+                - 'sql': The SQL query text
+                - 'summary': Brief description of what the SQL does
+                - 'tags': Associated tags
+            Returns success=0 with error="No matched result" if not found.
         """
         # Normalize null values from LLM
         name = normalize_null(name) or ""

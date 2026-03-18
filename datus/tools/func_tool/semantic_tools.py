@@ -199,7 +199,8 @@ class SemanticTools:
             offset: Number of metrics to skip
 
         Returns:
-            FuncToolResult with list of metrics
+            FuncToolResult with list of metric dicts, each containing:
+                - name, description, type, dimensions, measures, unit, format, path
         """
         # Normalize null values from LLM
         path = normalize_null(path)
@@ -276,13 +277,15 @@ class SemanticTools:
     ) -> FuncToolResult:
         """
         Get available dimensions for a specific metric.
+        When an adapter is configured, returns dimension objects from the adapter.
+        Otherwise falls back to dimension data from storage.
 
         Args:
             metric_name: Name of the metric
             path: Optional subject tree path (e.g., ["Finance", "Revenue"])
 
         Returns:
-            FuncToolResult with list of dimension names
+            FuncToolResult with list of dimensions (names or objects depending on source)
         """
         # Normalize null values from LLM
         path = normalize_null(path)

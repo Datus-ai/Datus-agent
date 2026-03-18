@@ -599,8 +599,14 @@ class TestDBFuncTool:
         assert result.success == 0
         assert "DDL fetch failed" in (result.error or "")
 
-    def test_catalog_scoped_tables_filter_results(self):
+    def test_catalog_scoped_tables_filter_results(self, monkeypatch):
         """Catalog-qualified scopes should restrict databases, schemas, and tables."""
+        from datus.tools.db_tools.registry import connector_registry
+
+        # Register snowflake capabilities so _determine_field_order includes catalog/database/schema.
+        # In production this is done by the external datus_snowflake adapter package.
+        monkeypatch.setitem(connector_registry._capabilities, "snowflake", {"catalog", "database", "schema"})
+
         connector = Mock()
         connector.dialect = "snowflake"
         connector.catalog_name = "cat1"
