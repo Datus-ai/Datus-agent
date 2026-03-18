@@ -201,8 +201,9 @@ class TestMatchSchemaTool:
         mock_model.token_count.return_value = 100
         mock_model.max_tokens.return_value = 1000
 
-        with patch("datus.tools.llms_tools.match_schema.gen_prompt", return_value="prompt"), patch(
-            "datus.tools.llms_tools.match_schema.llm_result2json", return_value=[]
+        with (
+            patch("datus.tools.llms_tools.match_schema.gen_prompt", return_value="prompt"),
+            patch("datus.tools.llms_tools.match_schema.llm_result2json", return_value=[]),
         ):
             mock_model.generate.return_value = "[]"
             input_data = _make_schema_linking_input()

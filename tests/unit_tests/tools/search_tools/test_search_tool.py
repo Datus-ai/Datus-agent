@@ -163,8 +163,9 @@ class TestListDocumentNav:
     def test_returns_empty_when_no_rows(self):
         tool = _make_tool()
         store = _make_store_with_data(rows=[])
-        with patch.object(tool, "_get_document_store", return_value=store), patch.object(
-            tool, "_resolve_latest_version", return_value="v1.0"
+        with (
+            patch.object(tool, "_get_document_store", return_value=store),
+            patch.object(tool, "_resolve_latest_version", return_value="v1.0"),
         ):
             result = tool.list_document_nav("test_platform", version="v1.0")
         assert result.success is True
@@ -191,9 +192,10 @@ class TestListDocumentNav:
     def test_defaults_to_latest_version_when_not_specified(self):
         tool = _make_tool()
         store = _make_store_with_data(rows=[], versions=[{"version": "v2.0"}])
-        with patch.object(tool, "_get_document_store", return_value=store), patch.object(
-            tool, "_resolve_latest_version", return_value="v2.0"
-        ) as mock_latest:
+        with (
+            patch.object(tool, "_get_document_store", return_value=store),
+            patch.object(tool, "_resolve_latest_version", return_value="v2.0") as mock_latest,
+        ):
             tool.list_document_nav("platform")
         mock_latest.assert_called_once()
 
@@ -221,8 +223,9 @@ class TestGetDocument:
     def test_returns_empty_when_no_rows(self):
         tool = _make_tool()
         store = _make_store_with_data(rows=[])
-        with patch.object(tool, "_get_document_store", return_value=store), patch.object(
-            tool, "_resolve_latest_version", return_value="v1.0"
+        with (
+            patch.object(tool, "_get_document_store", return_value=store),
+            patch.object(tool, "_resolve_latest_version", return_value="v1.0"),
         ):
             result = tool.get_document("snowflake", ["DDL"], version="v1.0")
         assert result.success is True
@@ -245,8 +248,9 @@ class TestGetDocument:
             }
         ]
         store = _make_store_with_data(rows=rows)
-        with patch.object(tool, "_get_document_store", return_value=store), patch.object(
-            tool, "_resolve_latest_version", return_value="v1.0"
+        with (
+            patch.object(tool, "_get_document_store", return_value=store),
+            patch.object(tool, "_resolve_latest_version", return_value="v1.0"),
         ):
             result = tool.get_document("snowflake", ["DDL", "CREATE TABLE"], version="v1.0")
         assert result.success is True
@@ -285,8 +289,9 @@ class TestSearchDocument:
         mock_doc = {"chunk_id": "c1", "chunk_text": "SELECT ..."}
         store = _make_store_with_data()
         store.search_docs.return_value = [mock_doc]
-        with patch.object(tool, "_get_document_store", return_value=store), patch.object(
-            tool, "_resolve_latest_version", return_value="v1.0"
+        with (
+            patch.object(tool, "_get_document_store", return_value=store),
+            patch.object(tool, "_resolve_latest_version", return_value="v1.0"),
         ):
             result = tool.search_document("snowflake", ["select", "insert"], top_n=3)
         assert result.success is True
@@ -298,8 +303,9 @@ class TestSearchDocument:
         tool = _make_tool()
         store = _make_store_with_data()
         store.search_docs.side_effect = Exception("search failed")
-        with patch.object(tool, "_get_document_store", return_value=store), patch.object(
-            tool, "_resolve_latest_version", return_value="v1.0"
+        with (
+            patch.object(tool, "_get_document_store", return_value=store),
+            patch.object(tool, "_resolve_latest_version", return_value="v1.0"),
         ):
             result = tool.search_document("snowflake", ["badkeyword"])
         assert result.success is True
@@ -390,8 +396,9 @@ class TestSearchByTavily:
         mock_response.json.return_value = {"results": [], "answer": None}
         mock_response.raise_for_status = MagicMock()
 
-        with patch("requests.post", return_value=mock_response), patch.dict(
-            "os.environ", {"TAVILY_API_KEY": "env_key"}
+        with (
+            patch("requests.post", return_value=mock_response),
+            patch.dict("os.environ", {"TAVILY_API_KEY": "env_key"}),
         ):
             result = search_by_tavily(["q"])
         assert result.success is True

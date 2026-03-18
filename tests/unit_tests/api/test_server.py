@@ -208,8 +208,9 @@ class TestStop:
             # After SIGTERM, pretend process stopped quickly
             raise ProcessLookupError("fake stopped")
 
-        with patch("datus.api.server.os.kill", side_effect=fake_kill), patch(
-            "datus.api.server._is_process_running", side_effect=[True, True, False]
+        with (
+            patch("datus.api.server.os.kill", side_effect=fake_kill),
+            patch("datus.api.server._is_process_running", side_effect=[True, True, False]),
         ):
             result = _stop(pid_file, timeout_seconds=2.0)
 
@@ -285,9 +286,11 @@ class TestMainArgParsing:
         pid_file = tmp_path / "test.pid"
         log_file = tmp_path / "test.log"
 
-        with patch("datus.api.server._default_paths", return_value=(pid_file, log_file)), patch(
-            "datus.api.server.configure_logging"
-        ), patch("sys.argv", ["server.py", "--action", "status"]):
+        with (
+            patch("datus.api.server._default_paths", return_value=(pid_file, log_file)),
+            patch("datus.api.server.configure_logging"),
+            patch("sys.argv", ["server.py", "--action", "status"]),
+        ):
             from datus.api.server import main
 
             with pytest.raises(SystemExit) as exc_info:
@@ -300,9 +303,11 @@ class TestMainArgParsing:
         pid_file = tmp_path / "test.pid"
         log_file = tmp_path / "test.log"
 
-        with patch("datus.api.server._default_paths", return_value=(pid_file, log_file)), patch(
-            "datus.api.server.configure_logging"
-        ), patch("sys.argv", ["server.py", "--action", "stop"]):
+        with (
+            patch("datus.api.server._default_paths", return_value=(pid_file, log_file)),
+            patch("datus.api.server.configure_logging"),
+            patch("sys.argv", ["server.py", "--action", "stop"]),
+        ):
             from datus.api.server import main
 
             with pytest.raises(SystemExit) as exc_info:

@@ -65,15 +65,17 @@ class TestGetDevice:
         assert result == "rocm"
 
     def test_linux_both_not_found_returns_cpu(self):
-        with patch("platform.system", return_value="Linux"), patch(
-            "subprocess.run", side_effect=FileNotFoundError("not found")
+        with (
+            patch("platform.system", return_value="Linux"),
+            patch("subprocess.run", side_effect=FileNotFoundError("not found")),
         ):
             result = get_device()
         assert result == "cpu"
 
     def test_linux_nvidia_exception_falls_through_to_cpu(self):
-        with patch("platform.system", return_value="Linux"), patch(
-            "subprocess.run", side_effect=Exception("unexpected error")
+        with (
+            patch("platform.system", return_value="Linux"),
+            patch("subprocess.run", side_effect=Exception("unexpected error")),
         ):
             result = get_device()
         assert result == "cpu"

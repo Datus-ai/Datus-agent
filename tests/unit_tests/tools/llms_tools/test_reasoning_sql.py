@@ -75,8 +75,9 @@ class TestReasoningSqlWithMcpStream:
         async def fake_base_stream(**kwargs):
             yield action
 
-        with patch("datus.tools.llms_tools.reasoning_sql.get_reasoning_prompt", return_value="prompt"), patch(
-            "datus.tools.llms_tools.reasoning_sql.base_mcp_stream", return_value=fake_base_stream()
+        with (
+            patch("datus.tools.llms_tools.reasoning_sql.get_reasoning_prompt", return_value="prompt"),
+            patch("datus.tools.llms_tools.reasoning_sql.base_mcp_stream", return_value=fake_base_stream()),
         ):
             results = asyncio.run(
                 _collect_stream(
@@ -100,8 +101,9 @@ class TestReasoningSqlWithMcpStream:
             return
             yield
 
-        with patch("datus.tools.llms_tools.reasoning_sql.get_reasoning_prompt", return_value="p"), patch(
-            "datus.tools.llms_tools.reasoning_sql.base_mcp_stream", return_value=fake_base_stream()
+        with (
+            patch("datus.tools.llms_tools.reasoning_sql.get_reasoning_prompt", return_value="p"),
+            patch("datus.tools.llms_tools.reasoning_sql.base_mcp_stream", return_value=fake_base_stream()),
         ):
             asyncio.run(
                 _collect_stream(
@@ -125,8 +127,12 @@ class TestReasoningSqlWithMcpStream:
             return
             yield
 
-        with patch("datus.tools.llms_tools.reasoning_sql.get_reasoning_prompt", return_value="p"), patch(
-            "datus.tools.llms_tools.reasoning_sql.base_mcp_stream", side_effect=lambda **kw: fake_base_stream_fn(**kw)
+        with (
+            patch("datus.tools.llms_tools.reasoning_sql.get_reasoning_prompt", return_value="p"),
+            patch(
+                "datus.tools.llms_tools.reasoning_sql.base_mcp_stream",
+                side_effect=lambda **kw: fake_base_stream_fn(**kw),
+            ),
         ):
             asyncio.run(
                 _collect_stream(
@@ -165,8 +171,12 @@ class TestReasoningSqlWithMcpStream:
             return
             yield
 
-        with patch("datus.tools.llms_tools.reasoning_sql.get_reasoning_prompt", return_value="p"), patch(
-            "datus.tools.llms_tools.reasoning_sql.base_mcp_stream", side_effect=lambda **kw: fake_base_stream_fn(**kw)
+        with (
+            patch("datus.tools.llms_tools.reasoning_sql.get_reasoning_prompt", return_value="p"),
+            patch(
+                "datus.tools.llms_tools.reasoning_sql.base_mcp_stream",
+                side_effect=lambda **kw: fake_base_stream_fn(**kw),
+            ),
         ):
             asyncio.run(
                 _collect_stream(
@@ -204,11 +214,14 @@ class TestReasoningSqlWithMcp:
             "sql_contexts": [],
         }
 
-        with patch("datus.tools.llms_tools.reasoning_sql.get_reasoning_prompt", return_value="p"), patch(
-            "datus.tools.llms_tools.reasoning_sql.prompt_manager"
-        ) as mock_pm, patch("datus.tools.llms_tools.reasoning_sql.asyncio") as mock_asyncio, patch(
-            "datus.tools.llms_tools.reasoning_sql.llm_result2json",
-            return_value={"sql": "SELECT * FROM users", "explanation": "all users"},
+        with (
+            patch("datus.tools.llms_tools.reasoning_sql.get_reasoning_prompt", return_value="p"),
+            patch("datus.tools.llms_tools.reasoning_sql.prompt_manager") as mock_pm,
+            patch("datus.tools.llms_tools.reasoning_sql.asyncio") as mock_asyncio,
+            patch(
+                "datus.tools.llms_tools.reasoning_sql.llm_result2json",
+                return_value={"sql": "SELECT * FROM users", "explanation": "all users"},
+            ),
         ):
             mock_pm.get_raw_template.return_value = "instruction"
             mock_asyncio.run.return_value = exec_result
@@ -233,12 +246,12 @@ class TestReasoningSqlWithMcp:
             "sql_contexts": [],
         }
 
-        with patch("datus.tools.llms_tools.reasoning_sql.get_reasoning_prompt", return_value="p"), patch(
-            "datus.tools.llms_tools.reasoning_sql.prompt_manager"
-        ) as mock_pm, patch("datus.tools.llms_tools.reasoning_sql.asyncio") as mock_asyncio, patch(
-            "datus.tools.llms_tools.reasoning_sql.llm_result2json", return_value=None
-        ), patch(
-            "datus.tools.llms_tools.reasoning_sql.llm_result2sql", return_value="SELECT id FROM users"
+        with (
+            patch("datus.tools.llms_tools.reasoning_sql.get_reasoning_prompt", return_value="p"),
+            patch("datus.tools.llms_tools.reasoning_sql.prompt_manager") as mock_pm,
+            patch("datus.tools.llms_tools.reasoning_sql.asyncio") as mock_asyncio,
+            patch("datus.tools.llms_tools.reasoning_sql.llm_result2json", return_value=None),
+            patch("datus.tools.llms_tools.reasoning_sql.llm_result2sql", return_value="SELECT id FROM users"),
         ):
             mock_pm.get_raw_template.return_value = "instruction"
             mock_asyncio.run.return_value = exec_result
@@ -262,12 +275,12 @@ class TestReasoningSqlWithMcp:
             "sql_contexts": [],
         }
 
-        with patch("datus.tools.llms_tools.reasoning_sql.get_reasoning_prompt", return_value="p"), patch(
-            "datus.tools.llms_tools.reasoning_sql.prompt_manager"
-        ) as mock_pm, patch("datus.tools.llms_tools.reasoning_sql.asyncio") as mock_asyncio, patch(
-            "datus.tools.llms_tools.reasoning_sql.llm_result2json", return_value=None
-        ), patch(
-            "datus.tools.llms_tools.reasoning_sql.llm_result2sql", return_value=None
+        with (
+            patch("datus.tools.llms_tools.reasoning_sql.get_reasoning_prompt", return_value="p"),
+            patch("datus.tools.llms_tools.reasoning_sql.prompt_manager") as mock_pm,
+            patch("datus.tools.llms_tools.reasoning_sql.asyncio") as mock_asyncio,
+            patch("datus.tools.llms_tools.reasoning_sql.llm_result2json", return_value=None),
+            patch("datus.tools.llms_tools.reasoning_sql.llm_result2sql", return_value=None),
         ):
             mock_pm.get_raw_template.return_value = "instruction"
             mock_asyncio.run.return_value = exec_result
@@ -284,9 +297,11 @@ class TestReasoningSqlWithMcp:
         mock_model = MagicMock()
         input_data = _make_reasoning_input()
 
-        with patch("datus.tools.llms_tools.reasoning_sql.get_reasoning_prompt", return_value="p"), patch(
-            "datus.tools.llms_tools.reasoning_sql.prompt_manager"
-        ) as mock_pm, patch("datus.tools.llms_tools.reasoning_sql.asyncio") as mock_asyncio:
+        with (
+            patch("datus.tools.llms_tools.reasoning_sql.get_reasoning_prompt", return_value="p"),
+            patch("datus.tools.llms_tools.reasoning_sql.prompt_manager") as mock_pm,
+            patch("datus.tools.llms_tools.reasoning_sql.asyncio") as mock_asyncio,
+        ):
             mock_pm.get_raw_template.return_value = "instruction"
             mock_asyncio.run.side_effect = RuntimeError("403 Forbidden access not allowed")
 
@@ -302,9 +317,11 @@ class TestReasoningSqlWithMcp:
         mock_model = MagicMock()
         input_data = _make_reasoning_input()
 
-        with patch("datus.tools.llms_tools.reasoning_sql.get_reasoning_prompt", return_value="p"), patch(
-            "datus.tools.llms_tools.reasoning_sql.prompt_manager"
-        ) as mock_pm, patch("datus.tools.llms_tools.reasoning_sql.asyncio") as mock_asyncio:
+        with (
+            patch("datus.tools.llms_tools.reasoning_sql.get_reasoning_prompt", return_value="p"),
+            patch("datus.tools.llms_tools.reasoning_sql.prompt_manager") as mock_pm,
+            patch("datus.tools.llms_tools.reasoning_sql.asyncio") as mock_asyncio,
+        ):
             mock_pm.get_raw_template.return_value = "instruction"
             mock_asyncio.run.side_effect = RuntimeError("connection reset")
 
@@ -331,10 +348,11 @@ class TestReasoningSqlWithMcp:
             captured["coro"] = coro
             return exec_result
 
-        with patch("datus.tools.llms_tools.reasoning_sql.get_reasoning_prompt", return_value="p"), patch(
-            "datus.tools.llms_tools.reasoning_sql.prompt_manager"
-        ) as mock_pm, patch("datus.tools.llms_tools.reasoning_sql.asyncio") as mock_asyncio, patch(
-            "datus.tools.llms_tools.reasoning_sql.llm_result2json", return_value={"sql": "SELECT 1"}
+        with (
+            patch("datus.tools.llms_tools.reasoning_sql.get_reasoning_prompt", return_value="p"),
+            patch("datus.tools.llms_tools.reasoning_sql.prompt_manager") as mock_pm,
+            patch("datus.tools.llms_tools.reasoning_sql.asyncio") as mock_asyncio,
+            patch("datus.tools.llms_tools.reasoning_sql.llm_result2json", return_value={"sql": "SELECT 1"}),
         ):
             mock_pm.get_raw_template.return_value = "instruction"
             mock_asyncio.run.side_effect = capture_run

@@ -989,7 +989,9 @@ class TestBootstrapKbMetadata:
         agent = _make_agent_ext(args=args)
 
         mock_store = MagicMock()
-        with (patch("datus.agent.agent.SchemaWithValueRAG", return_value=mock_store),):
+        with (
+            patch("datus.agent.agent.SchemaWithValueRAG", return_value=mock_store),
+        ):
             from datus.utils.exceptions import DatusException
 
             with pytest.raises(DatusException):
@@ -1263,7 +1265,9 @@ class TestBootstrapKbReferenceSql:
             # Patch at the agent module level where it's imported
             import datus.agent.agent as agent_module
 
-            with (patch.object(agent_module, "__builtins__", agent_module.__builtins__),):
+            with (
+                patch.object(agent_module, "__builtins__", agent_module.__builtins__),
+            ):
                 # Use broader patch approach
                 pass
 

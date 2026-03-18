@@ -19,7 +19,6 @@ legacy chart builders, deck.gl builders,
 ChartBuildQueryRegistry, build_query_context.
 """
 
-
 from datus.tools.bi_tools.superset.superset_util import (
     ChartBuildQueryRegistry,
     QueryObject,

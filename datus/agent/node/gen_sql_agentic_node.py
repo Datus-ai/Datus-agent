@@ -10,8 +10,7 @@ SQL generation with support for limited context, enhanced template variables,
 and flexible configuration through agent.yml.
 """
 
-
-from typing import Any, AsyncGenerator, Dict, Optional, Union
+from typing import Any, AsyncGenerator, Dict, Literal, Optional, Union
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.workflow import Workflow

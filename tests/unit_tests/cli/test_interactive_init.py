@@ -488,9 +488,12 @@ class TestOverwriteSqlAndLogResult:
     def test_exception_is_caught_and_printed(self):
         console = _make_console()
 
-        with patch(
-            "datus.configuration.agent_config_loader.load_agent_config", side_effect=RuntimeError("config error")
-        ), patch("datus.cli.interactive_init.print_rich_exception") as mock_print_exc:
+        with (
+            patch(
+                "datus.configuration.agent_config_loader.load_agent_config", side_effect=RuntimeError("config error")
+            ),
+            patch("datus.cli.interactive_init.print_rich_exception") as mock_print_exc,
+        ):
             overwrite_sql_and_log_result(
                 namespace_name="test_ns",
                 sql_dir="/some/dir",

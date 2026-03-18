@@ -34,8 +34,10 @@ class TestPackageDataPath:
         non_existent = tmp_path / "nonexistent"
         mock_package_path = MagicMock()
         mock_package_path.__truediv__ = lambda self, other: tmp_path / other
-        with patch("sys.prefix", str(non_existent)), patch("sys.exec_prefix", str(non_existent)), patch(
-            "importlib.resources.files", return_value=mock_package_path
+        with (
+            patch("sys.prefix", str(non_existent)),
+            patch("sys.exec_prefix", str(non_existent)),
+            patch("importlib.resources.files", return_value=mock_package_path),
         ):
             result = package_data_path(resource)
         assert result is not None

@@ -285,9 +285,7 @@ class TestCreateServerInstance:
     def test_create_server_instance_unsupported_type(self, tmp_path):
         manager = _make_manager(tmp_path)
         cfg = STDIOServerConfig(name="s", command="echo")
-        # Patch model_dump to return an unrecognized type so expand_config_env_vars sees it,
-        # then patch cfg.type to return an unexpected string via object attribute
-        cfg.type
+        # Patch cfg.type to return an unexpected string via object attribute
         try:
             object.__setattr__(cfg, "type", "unsupported_type")
         except Exception:

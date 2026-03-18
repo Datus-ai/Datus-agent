@@ -637,10 +637,13 @@ class TestInitOtherThreeLevelSchema:
         db_manager, conn = _make_db_manager()
         conn.get_tables_with_ddl.return_value = []
 
-        with patch(
-            "datus.storage.schema_metadata.local_init.exists_table_value",
-            return_value=({}, set()),
-        ), patch("datus.storage.schema_metadata.local_init.connector_registry") as mock_registry:
+        with (
+            patch(
+                "datus.storage.schema_metadata.local_init.exists_table_value",
+                return_value=({}, set()),
+            ),
+            patch("datus.storage.schema_metadata.local_init.connector_registry") as mock_registry,
+        ):
             mock_registry.support_schema.return_value = False
             init_other_three_level_schema(
                 mock_store,
@@ -670,10 +673,13 @@ class TestInitOtherThreeLevelSchema:
         conn.get_tables.return_value = ["users", "orders"]
         conn.identifier.return_value = "mydb.users"
 
-        with patch(
-            "datus.storage.schema_metadata.local_init.exists_table_value",
-            return_value=({}, set()),
-        ), patch("datus.storage.schema_metadata.local_init.connector_registry") as mock_registry:
+        with (
+            patch(
+                "datus.storage.schema_metadata.local_init.exists_table_value",
+                return_value=({}, set()),
+            ),
+            patch("datus.storage.schema_metadata.local_init.connector_registry") as mock_registry,
+        ):
             mock_registry.support_schema.return_value = False
             init_other_three_level_schema(
                 mock_store,
@@ -700,10 +706,13 @@ class TestInitOtherThreeLevelSchema:
         conn.get_tables_with_ddl.return_value = []
         conn.get_views_with_ddl.return_value = []
 
-        with patch(
-            "datus.storage.schema_metadata.local_init.exists_table_value",
-            return_value=({}, set()),
-        ), patch("datus.storage.schema_metadata.local_init.connector_registry") as mock_registry:
+        with (
+            patch(
+                "datus.storage.schema_metadata.local_init.exists_table_value",
+                return_value=({}, set()),
+            ),
+            patch("datus.storage.schema_metadata.local_init.connector_registry") as mock_registry,
+        ):
             mock_registry.support_schema.return_value = False
             init_other_three_level_schema(
                 mock_store,
@@ -731,10 +740,13 @@ class TestInitOtherThreeLevelSchema:
         conn.get_views_with_ddl.return_value = []
         conn.get_materialized_views_with_ddl.return_value = []
 
-        with patch(
-            "datus.storage.schema_metadata.local_init.exists_table_value",
-            return_value=({}, set()),
-        ), patch("datus.storage.schema_metadata.local_init.connector_registry") as mock_registry:
+        with (
+            patch(
+                "datus.storage.schema_metadata.local_init.exists_table_value",
+                return_value=({}, set()),
+            ),
+            patch("datus.storage.schema_metadata.local_init.connector_registry") as mock_registry,
+        ):
             mock_registry.support_schema.return_value = False
             init_other_three_level_schema(
                 mock_store,
@@ -819,9 +831,12 @@ class TestInitLocalSchema:
         agent_config.namespaces = {"test_ns": {"db_a": db_config_a, "db_b": db_config_b}}
         db_manager, conn = _make_db_manager()
 
-        with patch("datus.storage.schema_metadata.local_init.init_sqlite_schema") as mock_init_sqlite, patch(
-            "datus.storage.schema_metadata.local_init.exists_table_value",
-            return_value=({}, set()),
+        with (
+            patch("datus.storage.schema_metadata.local_init.init_sqlite_schema") as mock_init_sqlite,
+            patch(
+                "datus.storage.schema_metadata.local_init.exists_table_value",
+                return_value=({}, set()),
+            ),
         ):
             init_local_schema(mock_store, agent_config, db_manager)
 
@@ -842,9 +857,12 @@ class TestInitLocalSchema:
         agent_config.namespaces = {"test_ns": {"db_a": db_config_a, "db_b": db_config_b}}
         db_manager, conn = _make_db_manager()
 
-        with patch("datus.storage.schema_metadata.local_init.init_sqlite_schema") as mock_init_sqlite, patch(
-            "datus.storage.schema_metadata.local_init.exists_table_value",
-            return_value=({}, set()),
+        with (
+            patch("datus.storage.schema_metadata.local_init.init_sqlite_schema") as mock_init_sqlite,
+            patch(
+                "datus.storage.schema_metadata.local_init.exists_table_value",
+                return_value=({}, set()),
+            ),
         ):
             init_local_schema(mock_store, agent_config, db_manager, init_database_name="db_a")  # only process db_a
 
