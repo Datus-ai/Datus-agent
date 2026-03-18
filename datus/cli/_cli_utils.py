@@ -1,4 +1,6 @@
-from typing import Dict
+import shutil
+import unicodedata
+from typing import Dict, List, Optional
 
 from prompt_toolkit.styles import Style
 from rich.console import Console
@@ -117,6 +119,156 @@ def select_choice(
         logger.error(f"Interactive select error: {e}")
         console.print(f"[bold red]Selection error:[/] {str(e)}")
         return default
+
+
+def select_list(
+    console: Console,
+    items: List[List[str]],
+    headers: Optional[List[str]] = None,
+    column_widths: Optional[List[int]] = None,
+    max_visible: int = 15,
+) -> Optional[int]:
+    """Interactive list selector with arrow-key navigation.
+
+    Each item occupies two lines:
+      - Line 1 (primary): items[i][0] — the main content (highlighted when selected)
+      - Line 2 (secondary): remaining columns joined with ``  `` (dim / bright when selected)
+
+    Up/Down arrows to navigate (with wrap-around), PageUp/PageDown for jumping,
+    Enter to confirm, q/Ctrl+C to cancel.
+
+    Args:
+        console: Rich Console (used for fallback output on error)
+        items: List of rows, each row is a list of column strings.
+               First element is the primary line; remaining elements form the secondary line.
+        headers: Ignored (kept for API compatibility).
+        column_widths: Ignored (kept for API compatibility).
+        max_visible: Maximum items visible at once before scrolling.
+
+    Returns:
+        Selected row index (0-based), or None if cancelled or empty.
+    """
+    if not items:
+        return None
+
+    try:
+        from prompt_toolkit import Application
+        from prompt_toolkit.key_binding import KeyBindings
+        from prompt_toolkit.layout import Layout
+        from prompt_toolkit.layout.containers import Window
+        from prompt_toolkit.layout.controls import FormattedTextControl
+
+        term_size = shutil.get_terminal_size((120, 40))
+        term_width = term_size.columns
+        term_height = term_size.lines
+        content_width = term_width - 6  # leave room for "  → " prefix
+
+        total = len(items)
+        selected = [0]
+        offset = [0]  # scroll offset
+
+        # Each item takes 3 lines (primary + secondary + blank); reserve 2 for scroll info + hint
+        max_items_by_height = max(1, (term_height - 2) // 3)
+        max_visible = min(max_visible, max_items_by_height)
+
+        def _display_width(text: str) -> int:
+            """Calculate terminal display width accounting for wide chars."""
+            w = 0
+            for ch in text:
+                w += 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+            return w
+
+        def _clip(text: str, width: int) -> str:
+            """Hard-clip text to terminal display width (CJK-aware)."""
+            w = 0
+            for i, ch in enumerate(text):
+                cw = 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+                if w + cw > width:
+                    return text[:i]
+                w += cw
+            return text
+
+        kb = KeyBindings()
+
+        @kb.add("up")
+        def _move_up(event):
+            selected[0] = (selected[0] - 1) % total
+            if selected[0] < offset[0]:
+                offset[0] = selected[0]
+            elif selected[0] == total - 1:
+                offset[0] = max(0, total - max_visible)
+
+        @kb.add("down")
+        def _move_down(event):
+            selected[0] = (selected[0] + 1) % total
+            if selected[0] >= offset[0] + max_visible:
+                offset[0] = selected[0] - max_visible + 1
+            elif selected[0] == 0:
+                offset[0] = 0
+
+        @kb.add("pageup")
+        def _page_up(event):
+            selected[0] = max(0, selected[0] - max_visible)
+            offset[0] = max(0, offset[0] - max_visible)
+
+        @kb.add("pagedown")
+        def _page_down(event):
+            selected[0] = min(total - 1, selected[0] + max_visible)
+            offset[0] = min(max(0, total - max_visible), offset[0] + max_visible)
+
+        @kb.add("enter")
+        def _confirm(event):
+            event.app.exit(result=selected[0])
+
+        @kb.add("escape")
+        def _escape(event):
+            event.app.exit(result=None)
+
+        @kb.add("c-c")
+        def _cancel(event):
+            event.app.exit(result=None)
+
+        def _get_formatted_text():
+            lines = []
+
+            # Scroll info
+            visible_end = min(offset[0] + max_visible, total)
+            if total > max_visible:
+                lines.append(("ansiyellow", f"  ({offset[0] + 1}-{visible_end} of {total})\n"))
+
+            for i in range(offset[0], visible_end):
+                row = items[i]
+                primary = _clip(row[0], content_width) if row else ""
+                secondary = "  ".join(row[1:]) if len(row) > 1 else ""
+                secondary = _clip(secondary, content_width)
+
+                is_sel = i == selected[0]
+                if is_sel:
+                    lines.append(("ansicyan bold", f"  \u2192 {primary}\n"))
+                    lines.append(("ansicyan", f"      {secondary}\n"))
+                else:
+                    lines.append(("", f"    {primary}\n"))
+                    lines.append(("ansibrightblack", f"      {secondary}\n"))
+                lines.append(("", "\n"))
+
+            lines.append(("ansibrightblack", "  [\u2191\u2193] navigate  [Enter] select  [Esc] cancel\n"))
+            return lines
+
+        app = Application(
+            layout=Layout(Window(FormattedTextControl(_get_formatted_text))),
+            key_bindings=kb,
+            full_screen=False,
+        )
+
+        return app.run()
+
+    except (KeyboardInterrupt, EOFError):
+        console.print("\n[yellow]Selection cancelled.[/]")
+        return None
+    except Exception as e:
+        logger.error(f"Interactive list error: {e}")
+        console.print(f"[bold red]List selection error:[/] {str(e)}")
+        return None
 
 
 def prompt_input(

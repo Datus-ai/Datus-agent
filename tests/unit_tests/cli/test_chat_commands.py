@@ -2792,11 +2792,10 @@ class TestRewindEdgeCases:
         )
 
         console.file = io.StringIO()
-        cmds.cmd_rewind("q")  # Just display table and cancel
+        cmds.cmd_rewind("q")  # Cancel via args
 
         output = _get_console_output(console)
-        # Table should show the user turn with truncated message
-        assert "..." in output or "turn" in output.lower()
+        assert "cancelled" in output.lower()
 
     def test_rewind_negative_turn_number(self, real_agent_config, mock_llm_create):
         """cmd_rewind with negative turn number shows error."""
@@ -2878,20 +2877,19 @@ class TestResumeInteractiveWithSessions:
         # Create sessions with messages
         _create_session_on_disk("chat_session_pick01", [("user", "First Q"), ("assistant", "First A")])
 
-        # Monkeypatch prompt_input to return "1" (select first session)
+        # Monkeypatch select_list to return index 0 (select first session)
         import datus.cli._cli_utils as cli_utils_mod
 
-        monkeypatch.setattr(cli_utils_mod, "prompt_input", lambda *args, **kwargs: "1")
+        monkeypatch.setattr(cli_utils_mod, "select_list", lambda *args, **kwargs: 0)
 
         cmds.cmd_resume("")
 
         output = _get_console_output(console)
         assert cmds.current_node is not None
-        # Table should have been rendered
-        assert "available sessions" in output.lower() or "session" in output.lower()
+        assert "session" in output.lower()
 
-    def test_resume_interactive_cancel_with_q(self, real_agent_config, mock_llm_create, monkeypatch):
-        """cmd_resume interactive: user cancels with 'q'."""
+    def test_resume_interactive_cancel(self, real_agent_config, mock_llm_create, monkeypatch):
+        """cmd_resume interactive: user cancels selection."""
         console = Console(file=io.StringIO(), no_color=True)
         cmds = _make_chat_commands(real_agent_config, console=console)
 
@@ -2899,60 +2897,12 @@ class TestResumeInteractiveWithSessions:
 
         import datus.cli._cli_utils as cli_utils_mod
 
-        monkeypatch.setattr(cli_utils_mod, "prompt_input", lambda *args, **kwargs: "q")
+        monkeypatch.setattr(cli_utils_mod, "select_list", lambda *args, **kwargs: None)
 
         cmds.cmd_resume("")
 
         output = _get_console_output(console)
         assert "cancelled" in output.lower() or "session" in output.lower()
-
-    def test_resume_interactive_invalid_number(self, real_agent_config, mock_llm_create, monkeypatch):
-        """cmd_resume interactive: user enters an out-of-range number."""
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
-
-        _create_session_on_disk("chat_session_pick03", [("user", "Q"), ("assistant", "A")])
-
-        import datus.cli._cli_utils as cli_utils_mod
-
-        monkeypatch.setattr(cli_utils_mod, "prompt_input", lambda *args, **kwargs: "99")
-
-        cmds.cmd_resume("")
-
-        output = _get_console_output(console)
-        assert "invalid" in output.lower() or "session" in output.lower()
-
-    def test_resume_interactive_non_numeric_input(self, real_agent_config, mock_llm_create, monkeypatch):
-        """cmd_resume interactive: user enters non-numeric text."""
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
-
-        _create_session_on_disk("chat_session_pick04", [("user", "Q"), ("assistant", "A")])
-
-        import datus.cli._cli_utils as cli_utils_mod
-
-        monkeypatch.setattr(cli_utils_mod, "prompt_input", lambda *args, **kwargs: "abc")
-
-        cmds.cmd_resume("")
-
-        output = _get_console_output(console)
-        assert "invalid" in output.lower() or "number" in output.lower() or "session" in output.lower()
-
-    def test_resume_interactive_empty_input(self, real_agent_config, mock_llm_create, monkeypatch):
-        """cmd_resume interactive: user enters empty string."""
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
-
-        _create_session_on_disk("chat_session_pick05", [("user", "Q"), ("assistant", "A")])
-
-        import datus.cli._cli_utils as cli_utils_mod
-
-        monkeypatch.setattr(cli_utils_mod, "prompt_input", lambda *args, **kwargs: "")
-
-        cmds.cmd_resume("")
-
-        output = _get_console_output(console)
-        assert "cancelled" in output.lower() or len(output) > 0
 
 
 class TestRewindDisplayMessages:
@@ -3069,13 +3019,13 @@ class TestResumeListingLongMessage:
 
         import datus.cli._cli_utils as cli_utils_mod
 
-        monkeypatch.setattr(cli_utils_mod, "prompt_input", lambda *args, **kwargs: "q")
+        # select_list returns None to cancel — we just need the list to be built
+        monkeypatch.setattr(cli_utils_mod, "select_list", lambda *args, **kwargs: None)
 
         console.file = io.StringIO()
         cmds.cmd_resume("")
         output = _get_console_output(console)
-        # The long message should be truncated with "..."
-        assert "..." in output
+        assert "cancelled" in output.lower()
 
 
 # ===========================================================================
