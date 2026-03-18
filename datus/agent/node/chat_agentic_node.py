@@ -199,7 +199,9 @@ class ChatAgenticNode(AgenticNode):
             )
             self.permission_manager.set_permission_callback(self._handle_permission_ask)
 
+            skills_config = getattr(self.agent_config, "skills_config", None) if self.agent_config else None
             self.skill_manager = SkillManager(
+                config=skills_config,
                 permission_manager=self.permission_manager,
             )
             self.skill_func_tool = SkillFuncTool(

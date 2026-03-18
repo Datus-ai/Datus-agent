@@ -2076,7 +2076,9 @@ class TestRebuildTools:
 
         node._rebuild_tools()
 
-        assert len(node.tools) == 3
+        # 3 mocked tools + ask_user tool (added in interactive mode)
+        expected = 4 if node.ask_user_tool else 3
+        assert len(node.tools) == expected
 
     def test_rebuild_tools_empty_when_no_tools(self, real_agent_config, mock_llm_create):
         node = _make_node(real_agent_config, mock_llm_create)
@@ -2085,6 +2087,7 @@ class TestRebuildTools:
         node.date_parsing_tools = None
         node.filesystem_func_tool = None
         node._platform_doc_tool = None
+        node.ask_user_tool = None
 
         node._rebuild_tools()
 

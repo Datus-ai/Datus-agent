@@ -26,7 +26,6 @@ class SkillConfig(BaseModel):
           directories:
             - ~/.datus/skills
             - ./skills
-            - ~/.claude/skills
           warn_duplicates: true
           whitelist_from_compaction: true
 
@@ -37,7 +36,7 @@ class SkillConfig(BaseModel):
     """
 
     directories: List[str] = Field(
-        default_factory=lambda: ["~/.datus/skills", "./skills", "~/.claude/skills"],
+        default_factory=lambda: ["~/.datus/skills", "./skills"],
         description="Directories to scan for SKILL.md files",
     )
     warn_duplicates: bool = Field(default=True, description="Warn on duplicate skill names")
