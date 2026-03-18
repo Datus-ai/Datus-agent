@@ -337,6 +337,7 @@ class TestAvailableTools:
             from datus.tools.func_tool.semantic_tools import SemanticTools
 
             config = Mock()
+            config.active_model.return_value.model = "gpt-4o"
             tool = SemanticTools(agent_config=config)
             tool._adapter = Mock()  # Set adapter (also enables attribution_tool)
 

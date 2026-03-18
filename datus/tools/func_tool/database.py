@@ -706,7 +706,7 @@ class DBFuncTool:
                         "_distance",
                     ]
                 sample_rows = sample_values.select(selected_fields).to_pylist()
-            result_dict["sample_data"] = self.compressor.compress(sample_rows) if sample_rows else sample_rows
+            result_dict["sample_data"] = self.compressor.compress(sample_rows)
             return FuncToolResult(result=result_dict)
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))

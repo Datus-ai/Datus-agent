@@ -545,6 +545,16 @@ class TestDataCompressorCompress:
         count = dc.count_tokens("hello world test token")
         assert count == len("hello world test token") // 4
 
+    def test_custom_model_name_stored(self):
+        """DataCompressor stores the provided model_name for token counting."""
+        dc = DataCompressor(model_name="gpt-4o")
+        assert dc.model_name == "gpt-4o"
+
+    def test_default_model_name(self):
+        """DataCompressor defaults to gpt-3.5-turbo when no model_name is given."""
+        dc = DataCompressor()
+        assert dc.model_name == "gpt-3.5-turbo"
+
 
 # ---------------------------------------------------------------------------
 # DataCompressor._compress_columns (lines 269-327)
@@ -561,18 +571,6 @@ class TestCompressColumns:
         compressed_df, removed = dc._compress_columns(df)
         assert removed == []
         assert list(compressed_df.columns) == list(df.columns)
-
-    @patch("datus.utils.compress_utils.litellm.token_counter", side_effect=_mock_token_counter)
-    def test_custom_model_name_stored(self, _mock):
-        """DataCompressor stores the provided model_name for token counting."""
-        dc = DataCompressor(model_name="gpt-4o")
-        assert dc.model_name == "gpt-4o"
-
-    @patch("datus.utils.compress_utils.litellm.token_counter", side_effect=_mock_token_counter)
-    def test_default_model_name(self, _mock):
-        """DataCompressor defaults to gpt-3.5-turbo when no model_name is given."""
-        dc = DataCompressor()
-        assert dc.model_name == "gpt-3.5-turbo"
 
     @patch("datus.utils.compress_utils.litellm.token_counter")
     def test_removes_middle_columns(self, mock_tc):

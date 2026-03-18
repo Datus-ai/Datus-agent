@@ -34,6 +34,9 @@ class TestDBFuncToolCompressorModelName:
         mock_connector.dialect = "sqlite"
         mock_connector.get_databases.return_value = []
 
-        tool = DBFuncTool(mock_connector)
+        with patch("datus.tools.func_tool.database.SchemaWithValueRAG"), patch(
+            "datus.tools.func_tool.database.SemanticModelRAG"
+        ):
+            tool = DBFuncTool(mock_connector)
 
         assert tool.compressor.model_name == "gpt-3.5-turbo"
