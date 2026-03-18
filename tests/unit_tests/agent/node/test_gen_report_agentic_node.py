@@ -652,3 +652,27 @@ class TestExecuteStreamGenReportError:
         last = actions[-1]
         assert last.status == ActionStatus.FAILED
         assert last.action_type == "error"
+
+
+class TestGenReportSystemPromptCurrentDate:
+    """Verify current_date is injected into the system prompt."""
+
+    def test_system_prompt_contains_current_date(self, real_agent_config, mock_llm_create):
+        from unittest.mock import patch
+
+        from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
+
+        node = GenReportAgenticNode(
+            node_id="test_report_date",
+            description="Test current_date",
+            node_type=NodeType.TYPE_GEN_REPORT,
+            agent_config=real_agent_config,
+            node_name="gen_report",
+        )
+
+        with patch(
+            "datus.utils.time_utils.get_default_current_date",
+            return_value="2025-06-15",
+        ):
+            prompt = node._get_system_prompt()
+        assert "2025-06-15" in prompt

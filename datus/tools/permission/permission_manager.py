@@ -299,7 +299,7 @@ class PermissionManager:
         ):
             return "filesystem_tools"
         elif tool_name.startswith("date_") or tool_name in ("parse_date", "parse_temporal_expressions"):
-            return "date_tools"
+            return "date_parsing_tools"
         else:
             # For MCP tools, the category might be in the format "server.tool"
             if "." in tool_name:

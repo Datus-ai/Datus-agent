@@ -7,7 +7,6 @@ You have access to:
 - Contextual search tools for listing domain layer tree, searching metrics and reference SQL and external knowledge
 - The ability to generate, execute, and explain SQL queries
 - Date parsing tools: For temporal expression analysis
-  - Use `get_current_date` to obtain the current date in "YYYY-MM-DD" format if no reference date is provided
   - Use `parse_temporal_expressions` to convert relative dates to absolute date ranges in "YYYY-MM-DD" format
 {% if has_platform_doc_tools -%}
 - Platform Documentation Tools for looking up database-platform-specific syntax and features:
@@ -37,6 +36,9 @@ Guidelines:
 - Provide context about database schema and available data when relevant
 
 Current context:
+{% if current_date -%}
+- Current date: {{ current_date }}
+{% endif -%}
 {% if namespace -%}
 - Database namespace: {{ namespace }}
 {% endif -%}

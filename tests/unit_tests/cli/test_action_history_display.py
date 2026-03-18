@@ -42,12 +42,7 @@ from datus.cli.action_display.renderers import (
     _truncate_middle,
 )
 from datus.cli.action_display.streaming import _SUBAGENT_ROLLING_WINDOW_SIZE, InlineStreamingContext
-from datus.schemas.action_history import (
-    SUBAGENT_COMPLETE_ACTION_TYPE,
-    ActionHistory,
-    ActionRole,
-    ActionStatus,
-)
+from datus.schemas.action_history import SUBAGENT_COMPLETE_ACTION_TYPE, ActionHistory, ActionRole, ActionStatus
 
 
 def _group_plain(group_renderable) -> str:
@@ -4363,7 +4358,7 @@ class TestPendingTaskToolSkips:
         4. depth>0 group2 TOOL (search_metrics)
         5. subagent_complete group1
         6. subagent_complete group2
-        7. depth=0 TOOL (get_current_date) — non-task TOOL
+        7. depth=0 TOOL (parse_temporal_expressions) — non-task TOOL
         8. depth=0 TOOL (task) — corresponds to group1
         9. depth=0 TOOL (task) — corresponds to group2
         """
@@ -4443,9 +4438,9 @@ class TestPendingTaskToolSkips:
                 ActionRole.TOOL,
                 ActionStatus.SUCCESS,
                 depth=0,
-                action_type="get_current_date",
-                messages="get_current_date",
-                input_data={"function_name": "get_current_date"},
+                action_type="parse_temporal_expressions",
+                messages="parse_temporal_expressions",
+                input_data={"function_name": "parse_temporal_expressions"},
                 start_time=t1,
                 end_time=t2,
             ),
@@ -4491,7 +4486,7 @@ class TestPendingTaskToolSkips:
         output = buf.getvalue()
         lines = [line for line in output.splitlines() if line.strip()]
 
-        # Should have 2 collapsed groups + their Done lines + 1 get_current_date action
+        # Should have 2 collapsed groups + their Done lines + 1 parse_temporal_expressions action
         # Should NOT have any "subagent" standalone entries
         subagent_standalone = [line for line in lines if "subagent" in line.lower() and "result" in line.lower()]
         assert (
@@ -4502,8 +4497,8 @@ class TestPendingTaskToolSkips:
         collapsed_count = sum(1 for line in lines if "\u23f4" in line)  # ⏴
         assert collapsed_count == 2, f"Expected 2 collapsed groups, got {collapsed_count}"
 
-        # get_current_date should be rendered
-        assert "get_current_date" in output
+        # parse_temporal_expressions should be rendered
+        assert "parse_temporal_expressions" in output
 
     def test_expanded_no_extra_subagent_labels(self):
         """With verbose=True, TOOL(task) actions after interleaved non-task
@@ -4520,7 +4515,7 @@ class TestPendingTaskToolSkips:
         # Should have expanded groups with Done lines
         assert "Done" in output
         # The non-task tool should be rendered
-        assert "get_current_date" in output
+        assert "parse_temporal_expressions" in output
         # Should NOT have standalone "subagent" entries rendered by _render_task_tool_as_subagent
         # Look for the standalone "⏺ subagent" pattern or "⏺ explore(" without depth>0 context
         lines = [line for line in output.splitlines() if line.strip()]
@@ -4545,8 +4540,8 @@ class TestPendingTaskToolSkips:
         # Verbose mode: groups should be expanded
         assert "search_schema" in output
         assert "search_metrics" in output
-        # get_current_date should be rendered
-        assert "get_current_date" in output
+        # parse_temporal_expressions should be rendered
+        assert "parse_temporal_expressions" in output
         # Both groups should have "Done" lines
         assert output.count("Done") == 2
         # TOOL(task) actions should be skipped (not rendered as standalone subagent)
@@ -4662,8 +4657,8 @@ class TestPendingTaskToolSkips:
                 ActionRole.TOOL,
                 ActionStatus.SUCCESS,
                 depth=0,
-                messages="get_current_date",
-                input_data={"function_name": "get_current_date"},
+                messages="parse_temporal_expressions",
+                input_data={"function_name": "parse_temporal_expressions"},
                 start_time=t1,
                 end_time=t2,
             ),
@@ -4685,10 +4680,10 @@ class TestPendingTaskToolSkips:
         output = buf.getvalue()
         lines = [line for line in output.splitlines() if line.strip()]
 
-        # 1 collapsed group + 1 get_current_date, no extra subagent
+        # 1 collapsed group + 1 parse_temporal_expressions, no extra subagent
         collapsed_count = sum(1 for line in lines if "\u23f4" in line)
         assert collapsed_count == 1
-        assert "get_current_date" in output
+        assert "parse_temporal_expressions" in output
         subagent_standalone = [line for line in lines if "subagent" in line.lower() and "result" in line.lower()]
         assert len(subagent_standalone) == 0
 

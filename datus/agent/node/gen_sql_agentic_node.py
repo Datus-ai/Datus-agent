@@ -11,7 +11,6 @@ and flexible configuration through agent.yml.
 """
 
 
-from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, Literal, Optional, Union
 
 from datus.agent.node.agentic_node import AgenticNode
@@ -499,8 +498,10 @@ class GenSQLAgenticNode(AgenticNode):
         )
         context["conversation_summary"] = conversation_summary
         context["has_ask_user_tool"] = self.ask_user_tool is not None
+        from datus.utils.time_utils import get_default_current_date
+
         ref = self.date_parsing_tools.reference_date if self.date_parsing_tools else None
-        context["current_date"] = ref or datetime.now().strftime("%Y-%m-%d")
+        context["current_date"] = get_default_current_date(ref)
         prompt_version = prompt_version or self.node_config.get("prompt_version")
         # Construct template name: {system_prompt}_system or fallback to {node_name}_system
         system_prompt_name = self.node_config.get("system_prompt") or self.get_node_name()

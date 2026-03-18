@@ -2759,3 +2759,36 @@ class TestGenSQLUpdateContext:
 
         result = node.update_context(workflow)
         assert result["success"] is False
+
+
+class TestGenSQLSystemPromptCurrentDate:
+    """Verify current_date injection uses reference_date when available."""
+
+    def test_system_prompt_uses_reference_date(self, real_agent_config, mock_llm_create):
+        from unittest.mock import patch
+
+        node = _make_node(real_agent_config, mock_llm_create)
+        node.date_parsing_tools = MagicMock()
+        node.date_parsing_tools.reference_date = "2023-01-10"
+
+        with patch(
+            "datus.utils.time_utils.get_default_current_date",
+            return_value="2023-01-10",
+        ) as mock_date:
+            prompt = node._get_system_prompt()
+        mock_date.assert_called_once_with("2023-01-10")
+        assert "2023-01-10" in prompt
+
+    def test_system_prompt_falls_back_to_today(self, real_agent_config, mock_llm_create):
+        from unittest.mock import patch
+
+        node = _make_node(real_agent_config, mock_llm_create)
+        node.date_parsing_tools = None
+
+        with patch(
+            "datus.utils.time_utils.get_default_current_date",
+            return_value="2025-06-15",
+        ) as mock_date:
+            prompt = node._get_system_prompt()
+        mock_date.assert_called_once_with(None)
+        assert "2025-06-15" in prompt

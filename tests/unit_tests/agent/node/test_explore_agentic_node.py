@@ -375,3 +375,27 @@ class TestExploreUpdateContext:
         result = node.update_context(mock_workflow)
         assert result["success"] is True
         assert "read-only" in result["message"]
+
+
+class TestExploreSystemPromptCurrentDate:
+    """Verify current_date is injected into the system prompt."""
+
+    def test_system_prompt_contains_current_date(self, real_agent_config, mock_llm_create):
+        from unittest.mock import patch
+
+        from datus.agent.node.explore_agentic_node import ExploreAgenticNode
+
+        node = ExploreAgenticNode(
+            node_id="test_explore_date",
+            description="Test current_date",
+            node_type=NodeType.TYPE_EXPLORE,
+            agent_config=real_agent_config,
+            node_name="explore",
+        )
+
+        with patch(
+            "datus.utils.time_utils.get_default_current_date",
+            return_value="2025-06-15",
+        ):
+            prompt = node._get_system_prompt()
+        assert "2025-06-15" in prompt

@@ -1133,3 +1133,26 @@ class TestChatAgenticNodePermissionOverrides:
         assert result == {}
 
         node.agent_config = original
+
+
+class TestChatSystemPromptCurrentDate:
+    """Verify current_date is injected into the system prompt."""
+
+    def test_get_system_prompt_contains_current_date(self, real_agent_config, mock_llm_create):
+        from unittest.mock import patch
+
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        node = ChatAgenticNode(
+            node_id="test_prompt_date",
+            description="Test current_date in prompt",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
+
+        with patch(
+            "datus.utils.time_utils.get_default_current_date",
+            return_value="2025-06-15",
+        ):
+            prompt = node._get_system_prompt()
+        assert "2025-06-15" in prompt
