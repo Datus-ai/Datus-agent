@@ -226,12 +226,10 @@ class SchemaWithValueRAG:
         agent_config: AgentConfig,
         sub_agent_name: Optional[str] = None,
     ):
-        from datus.storage.cache import create_storage_with_scope
+        from datus.storage.cache import get_storage_cache_instance
 
-        self.schema_store = create_storage_with_scope(SchemaStorage, agent_config, "database", "tables", sub_agent_name)
-        self.value_store = create_storage_with_scope(
-            SchemaValueStorage, agent_config, "database", "tables", sub_agent_name
-        )
+        self.schema_store = get_storage_cache_instance(agent_config).schema_storage(sub_agent_name)
+        self.value_store = get_storage_cache_instance(agent_config).schema_value_storage(sub_agent_name)
 
     def truncate(self) -> None:
         """Drop both schema and value tables and reset state."""

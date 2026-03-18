@@ -49,7 +49,7 @@ def reset_global_singletons():
             pass
         db_mgr_mod._INSTANCE = None
 
-    # Clean up storage caches
+    # Clean up StorageCache
     from datus.storage.cache import clear_cache
 
     clear_cache()

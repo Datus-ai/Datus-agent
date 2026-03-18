@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.agent_models import SubAgentConfig
-from datus.storage.cache import create_storage_with_scope
+from datus.storage.cache import get_storage_cache_instance
 from datus.storage.conditions import And, eq
 from datus.storage.semantic_model.store import SemanticModelStorage
 from datus.utils.loggings import get_logger
@@ -26,13 +26,11 @@ class CatalogUpdater:
 
     def __init__(self, agent_config: AgentConfig):
         self._agent_config = agent_config
-        self.semantic_model_storage = create_storage_with_scope(
-            SemanticModelStorage, agent_config, "semantic_model", "tables"
-        )
+        self.semantic_model_storage = get_storage_cache_instance(agent_config).semantic_storage()
 
     def _sub_agent_storage(self, sub_agent_config: SubAgentConfig) -> SemanticModelStorage | None:
         name = sub_agent_config.system_prompt
-        return create_storage_with_scope(SemanticModelStorage, self._agent_config, "semantic_model", "tables", name)
+        return get_storage_cache_instance(self._agent_config).semantic_storage(name)
 
     def _get_all_storages(self) -> List[SemanticModelStorage]:
         """Get main storage and all sub-agent storages."""

@@ -13,7 +13,7 @@ to all sub-agents.  No per-sub-agent propagation is needed.
 from typing import Any, Dict, List
 
 from datus.configuration.agent_config import AgentConfig
-from datus.storage.cache import create_storage_with_scope
+from datus.storage.cache import get_storage_cache_instance
 from datus.storage.ext_knowledge import ExtKnowledgeStore
 from datus.storage.metric import MetricStorage
 from datus.storage.reference_sql import ReferenceSqlStorage
@@ -32,15 +32,10 @@ class SubjectUpdater:
 
     def __init__(self, agent_config: AgentConfig):
         self._agent_config = agent_config
-        self.metrics_storage: MetricStorage = create_storage_with_scope(
-            MetricStorage, agent_config, "metric", "metrics"
-        )
-        self.reference_sql_storage: ReferenceSqlStorage = create_storage_with_scope(
-            ReferenceSqlStorage, agent_config, "reference_sql", "sqls"
-        )
-        self.ext_knowledge_storage: ExtKnowledgeStore = create_storage_with_scope(
-            ExtKnowledgeStore, agent_config, "ext_knowledge", "ext_knowledge"
-        )
+        self.storage_cache = get_storage_cache_instance(self._agent_config)
+        self.metrics_storage: MetricStorage = self.storage_cache.metric_storage()
+        self.reference_sql_storage: ReferenceSqlStorage = self.storage_cache.reference_sql_storage()
+        self.ext_knowledge_storage: ExtKnowledgeStore = self.storage_cache.ext_knowledge_storage()
 
     def update_metrics_detail(self, subject_path: List[str], name: str, update_values: Dict[str, Any]):
         """Update metrics detail fields using subject_path and name.
