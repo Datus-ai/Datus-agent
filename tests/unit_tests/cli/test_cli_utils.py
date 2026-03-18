@@ -445,3 +445,100 @@ class TestSelectList:
 
         lines = captured_text.get("lines", [])
         assert any("1-3 of 10" in line[1] for line in lines)
+
+
+class TestPromptInputMultilineKeyBindings:
+    """Tests for prompt_input multiline Enter-to-submit (newlines only via paste)."""
+
+    @pytest.mark.ci
+    def test_multiline_passes_key_bindings(self):
+        """When multiline=True, key_bindings argument is passed to prompt()."""
+        captured = {}
+
+        def fake_prompt(*args, **kwargs):
+            captured.update(kwargs)
+            return "test"
+
+        with patch("prompt_toolkit.prompt", fake_prompt):
+            from datus.cli._cli_utils import prompt_input
+
+            prompt_input(MagicMock(), message="test", multiline=True)
+
+        assert captured.get("key_bindings") is not None
+        assert captured.get("multiline") is True
+
+    @pytest.mark.ci
+    def test_singleline_no_key_bindings(self):
+        """When multiline=False, key_bindings should be None."""
+        captured = {}
+
+        def fake_prompt(*args, **kwargs):
+            captured.update(kwargs)
+            return "test"
+
+        with patch("prompt_toolkit.prompt", fake_prompt):
+            from datus.cli._cli_utils import prompt_input
+
+            prompt_input(MagicMock(), message="test", multiline=False)
+
+        assert captured.get("key_bindings") is None
+
+    @pytest.mark.ci
+    def test_multiline_enter_handler_submits(self):
+        """Enter key in multiline mode calls validate_and_handle."""
+        from prompt_toolkit.key_binding import KeyBindings
+
+        kb = KeyBindings()
+
+        @kb.add("enter")
+        def _submit(event):
+            event.current_buffer.validate_and_handle()
+
+        event = MagicMock()
+        for binding in kb.bindings:
+            for key in binding.keys:
+                key_str = key.value if hasattr(key, "value") else str(key)
+                if key_str in ("enter", "c-m"):
+                    binding.handler(event)
+                    event.current_buffer.validate_and_handle.assert_called_once()
+                    return
+        pytest.fail("No enter handler found")
+
+    @pytest.mark.ci
+    def test_multiline_no_newline_binding(self):
+        """Multiline mode should NOT have an escape+enter (Alt+Enter) binding."""
+        captured = {}
+
+        def fake_prompt(*args, **kwargs):
+            captured.update(kwargs)
+            return "test"
+
+        with patch("prompt_toolkit.prompt", fake_prompt):
+            from datus.cli._cli_utils import prompt_input
+
+            prompt_input(MagicMock(), message="test", multiline=True)
+
+        kb = captured.get("key_bindings")
+        assert kb is not None
+        for binding in kb.bindings:
+            assert len(binding.keys) == 1, "Should only have single-key bindings (enter), no multi-key sequences"
+
+    @pytest.mark.ci
+    def test_multiline_does_not_strip(self):
+        """Multiline mode should preserve leading/trailing whitespace."""
+        with patch("prompt_toolkit.prompt", return_value="  hello\n  world\n"):
+            from datus.cli._cli_utils import prompt_input
+
+            result = prompt_input(MagicMock(), message="test", multiline=True)
+
+        assert result == "  hello\n  world\n"
+
+    @pytest.mark.ci
+    def test_singleline_strips(self):
+        """Single-line mode should strip whitespace."""
+        with patch("prompt_toolkit.prompt", return_value="  hello  "):
+            from datus.cli._cli_utils import prompt_input
+
+            result = prompt_input(MagicMock(), message="test", multiline=False)
+
+        assert result == "hello"

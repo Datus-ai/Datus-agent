@@ -126,7 +126,10 @@ def _create_session_on_disk(session_id, messages=None):
             "message_data TEXT NOT NULL, "
             "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
         )
-        conn.execute("INSERT OR IGNORE INTO agent_sessions (session_id) VALUES (?)", (session_id,))
+        conn.execute(
+            "INSERT OR IGNORE INTO agent_sessions (session_id) VALUES (?)",
+            (session_id,),
+        )
 
         base_time = datetime(2025, 6, 1, 10, 0, 0)
         for i, (role, content) in enumerate(messages):
@@ -525,8 +528,16 @@ class TestCreateNodeInput:
         node = cmds._create_new_node(subagent_name="gensql")
 
         at_tables = [
-            TableSchema(table_name="table1", database_name="db", definition="CREATE TABLE table1 (id INT)"),
-            TableSchema(table_name="table2", database_name="db", definition="CREATE TABLE table2 (id INT)"),
+            TableSchema(
+                table_name="table1",
+                database_name="db",
+                definition="CREATE TABLE table1 (id INT)",
+            ),
+            TableSchema(
+                table_name="table2",
+                database_name="db",
+                definition="CREATE TABLE table2 (id INT)",
+            ),
         ]
         at_metrics = [Metric(name="metric1", description="Test metric")]
         at_sqls = [ReferenceSql(name="ref1", sql="SELECT 1")]
@@ -1619,7 +1630,12 @@ class TestExecuteChatCommandResponseProcessing:
         console = Console(file=io.StringIO(), no_color=True)
         cmds = _make_chat_commands(real_agent_config, console=console)
 
-        sql_response = json.dumps({"sql": "SELECT count(*) FROM schools", "response": "Here is the count query"})
+        sql_response = json.dumps(
+            {
+                "sql": "SELECT count(*) FROM schools",
+                "response": "Here is the count query",
+            }
+        )
         mock_llm_create.reset(responses=[build_simple_response(sql_response)])
 
         cmds.execute_chat_command("Count all schools")
@@ -1682,7 +1698,12 @@ class TestExecuteChatCommandResponseProcessing:
         console = Console(file=io.StringIO(), no_color=True)
         cmds = _make_chat_commands(real_agent_config, console=console)
 
-        mock_llm_create.reset(responses=[build_simple_response("Chat reply"), build_simple_response("SQL reply")])
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response("Chat reply"),
+                build_simple_response("SQL reply"),
+            ]
+        )
 
         cmds.execute_chat_command("Hello", subagent_name=None)
         first_node = cmds.current_node
@@ -1712,7 +1733,11 @@ class TestExtractReportEdgeCases:
         """Report field is extracted even from larger JSON."""
         cmds = _make_chat_commands(real_agent_config)
         json_str = json.dumps(
-            {"report": "Deep report content", "metadata": {"nested": {"deep": True}}, "extra": [1, 2, 3]}
+            {
+                "report": "Deep report content",
+                "metadata": {"nested": {"deep": True}},
+                "extra": [1, 2, 3],
+            }
         )
         result = cmds._extract_report_from_json(json_str)
         assert result == "Deep report content"
@@ -1930,7 +1955,12 @@ class TestExecuteResponseProcessing:
         responses = [
             MockLLMResponse(
                 tool_calls=[MockToolCall(name="read_query", arguments='{"query": "SELECT 1"}')],
-                content=json.dumps({"sql": "SELECT count(*) FROM schools", "explanation": "Count schools"}),
+                content=json.dumps(
+                    {
+                        "sql": "SELECT count(*) FROM schools",
+                        "explanation": "Count schools",
+                    }
+                ),
             )
         ]
 
@@ -2046,7 +2076,12 @@ class TestCmdChatInfoWithSession:
         console = Console(file=io.StringIO(), no_color=True)
         cmds = _make_chat_commands(real_agent_config, console=console)
 
-        mock_llm_create.reset(responses=[build_simple_response("Reply 1"), build_simple_response("Reply 2")])
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response("Reply 1"),
+                build_simple_response("Reply 2"),
+            ]
+        )
         cmds.execute_chat_command("Question 1")
         cmds.execute_chat_command("Question 2")
 
@@ -2721,12 +2756,18 @@ class TestResumeWithSqlMessages:
                 "message_data TEXT NOT NULL, "
                 "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
             )
-            conn.execute("INSERT OR IGNORE INTO agent_sessions (session_id) VALUES (?)", (session_id,))
+            conn.execute(
+                "INSERT OR IGNORE INTO agent_sessions (session_id) VALUES (?)",
+                (session_id,),
+            )
 
             base = datetime(2025, 6, 1, 10, 0, 0)
             msgs = [
                 # User message
-                (json.dumps({"role": "user", "content": "Find all students"}), (base).isoformat()),
+                (
+                    json.dumps({"role": "user", "content": "Find all students"}),
+                    (base).isoformat(),
+                ),
                 # Function call (tool invocation)
                 (
                     json.dumps(
@@ -2755,7 +2796,12 @@ class TestResumeWithSqlMessages:
                     json.dumps(
                         {
                             "role": "assistant",
-                            "content": json.dumps({"sql": "SELECT * FROM students", "output": "Found 3 students"}),
+                            "content": json.dumps(
+                                {
+                                    "sql": "SELECT * FROM students",
+                                    "output": "Found 3 students",
+                                }
+                            ),
                         }
                     ),
                     (base + timedelta(seconds=3)).isoformat(),
@@ -2999,7 +3045,10 @@ class TestRewindDisplayMessages:
             session_id,
             [
                 ("user", "Show me students"),
-                ("assistant", json.dumps({"sql": "SELECT * FROM students", "output": "3 rows"})),
+                (
+                    "assistant",
+                    json.dumps({"sql": "SELECT * FROM students", "output": "3 rows"}),
+                ),
                 ("user", "More details"),
                 ("assistant", "Here are the details"),
             ],
@@ -3074,17 +3123,19 @@ class TestSelectChoiceExceptionHandler:
         assert "Selection error" in output or "error" in output.lower()
 
 
-class TestResumeListingLongMessage:
-    """Tests for cmd_resume long message truncation (line 1026)."""
+class TestResumeListingTruncation:
+    """Tests for cmd_resume listing truncation of session_id and first_user_message."""
 
     def test_long_first_message_is_truncated(self, real_agent_config, mock_llm_create, monkeypatch):
-        """Session with first_user_message > 37 chars is truncated with '...' in listing."""
-        console = Console(file=io.StringIO(), no_color=True)
+        """Session with session_id > 24 chars is truncated with '...' in listing."""
+        # Use a wide console so Rich Table does not re-truncate our "..." with its own ellipsis
+        console = Console(file=io.StringIO(), no_color=True, width=160)
         cmds = _make_chat_commands(real_agent_config, console=console)
 
-        # Create a session with a message longer than 37 characters
+        # Use a session ID longer than 24 characters so sid truncation adds "..."
+        long_sid = "chat_truncate_test_01_abcdefghijklmnop"
         long_msg = "This is a very long message that should definitely be truncated in the display listing table"
-        _create_session_on_disk("chat_truncate_test_01", [("user", long_msg), ("assistant", "OK")])
+        _create_session_on_disk(long_sid, [("user", long_msg), ("assistant", "OK")])
 
         import datus.cli._cli_utils as cli_utils_mod
 
@@ -3106,6 +3157,32 @@ class TestResumeListingLongMessage:
         first_item_text = captured["items"][0][0]  # primary line text
         # The full message is passed to select_list (clipping is done internally by the renderer)
         assert long_msg.replace("\n", " ") in first_item_text or first_item_text in long_msg
+
+    def test_short_session_id_not_truncated(self, real_agent_config, mock_llm_create, monkeypatch):
+        """Session with session_id <= 24 chars should appear in select_list items without truncation."""
+        console = Console(file=io.StringIO(), no_color=True, width=160)
+        cmds = _make_chat_commands(real_agent_config, console=console)
+
+        short_sid = "chat_short_sid_01"
+        _create_session_on_disk(short_sid, [("user", "Hi"), ("assistant", "Hello")])
+
+        import datus.cli._cli_utils as cli_utils_mod
+
+        captured = {}
+
+        def fake_select(*args, **kwargs):
+            captured["items"] = args[1] if len(args) > 1 else kwargs.get("items")
+            return None
+
+        monkeypatch.setattr(cli_utils_mod, "select_list", fake_select)
+
+        console.file = io.StringIO()
+        cmds.cmd_resume("")
+        # Verify items were passed to select_list with the short sid
+        assert "items" in captured and len(captured["items"]) > 0
+        # The session ID appears in secondary info columns (not truncated)
+        all_text = " ".join(str(col) for item in captured["items"] for col in item)
+        assert short_sid in all_text
 
 
 # ===========================================================================
@@ -3184,7 +3261,10 @@ class TestAllTurnActions:
         actions1 = [_make_action_for_chat(messages="r1", input_data={"function_name": "read_query"})]
         actions2 = [_make_action_for_chat(messages="r2", input_data={"function_name": "list_tables"})]
 
-        cmds.all_turn_actions = [("Turn 1 question", actions1), ("Turn 2 question", actions2)]
+        cmds.all_turn_actions = [
+            ("Turn 1 question", actions1),
+            ("Turn 2 question", actions2),
+        ]
         cmds.last_actions = actions2
 
         # Reset console buffer
@@ -3364,7 +3444,12 @@ class TestTriggerCompactExtended:
     def test_compact_success(self, chat_cmd):
         mock_node = MagicMock()
         mock_node._manual_compact = AsyncMock(
-            return_value={"success": True, "new_token_count": 100, "tokens_saved": 50, "compression_ratio": 0.5}
+            return_value={
+                "success": True,
+                "new_token_count": 100,
+                "tokens_saved": 50,
+                "compression_ratio": 0.5,
+            }
         )
 
         async def mock_get_info():
@@ -3432,7 +3517,10 @@ class TestCreateNewNodeExtended:
 
     def test_create_gen_metrics(self, chat_cmd):
         mock_node = MagicMock()
-        with patch("datus.agent.node.gen_metrics_agentic_node.GenMetricsAgenticNode", return_value=mock_node):
+        with patch(
+            "datus.agent.node.gen_metrics_agentic_node.GenMetricsAgenticNode",
+            return_value=mock_node,
+        ):
             with patch.dict(
                 "sys.modules",
                 {
@@ -3449,7 +3537,8 @@ class TestCreateNewNodeExtended:
         with patch("datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode") as mock_cls:
             mock_cls.return_value = mock_node
             with patch.dict(
-                "sys.modules", {"datus.agent.node.gen_sql_agentic_node": MagicMock(GenSQLAgenticNode=mock_cls)}
+                "sys.modules",
+                {"datus.agent.node.gen_sql_agentic_node": MagicMock(GenSQLAgenticNode=mock_cls)},
             ):
                 result = chat_cmd._create_new_node("gensql")
         mock_cls.assert_called_once()

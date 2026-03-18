@@ -108,7 +108,7 @@ def select_choice(
         result = app.run()
         if allow_free_text and result == _FREE_TEXT_SENTINEL:
             console.print()
-            console.print("[dim](Paste supported. Escape+Enter or Alt+Enter to submit)[/]")
+            console.print("[dim](Paste supported. Enter to submit)[/]")
             return prompt_input(console, message="Your input", multiline=True)
         return result
 
@@ -330,16 +330,28 @@ def prompt_input(
                 }
             )
 
+        # When multiline, override Enter to submit (newlines only via paste).
+        key_bindings = None
+        if multiline:
+            from prompt_toolkit.key_binding import KeyBindings
+
+            key_bindings = KeyBindings()
+
+            @key_bindings.add("enter")
+            def _submit(event):
+                event.current_buffer.validate_and_handle()
+
         result = prompt(
             HTML(f"<ansigreen><b>{prompt_text}</b></ansigreen>"),
             default=default,
             validator=validator,
             multiline=multiline,
+            key_bindings=key_bindings,
             history=InMemoryHistory(),  # Separate history for sub-prompts
             style=style,  # Use same style as main session
         )
 
-        return result.strip()
+        return result if multiline else result.strip()
 
     except (KeyboardInterrupt, EOFError):
         if allow_interrupt:

@@ -108,9 +108,13 @@ class WorkloadContextScreen(ContextScreen):
         # Add SQL contexts
         if "sql_contexts" in self.context_data and self.context_data["sql_contexts"]:
             for i, item in enumerate(self.context_data["sql_contexts"]):
-                node = sql_node.add(f"SQL Context {i + 1}", data={"type": "sql", "index": i, "content": item})
+                node = sql_node.add(
+                    f"SQL Context {i + 1}",
+                    data={"type": "sql", "index": i, "content": item},
+                )
                 if "sql_query" in item:
-                    node.add_leaf(f"Query: {item['sql_query'][:50]}...")
+                    sql_display = item["sql_query"][:50] + "..." if len(item["sql_query"]) > 50 else item["sql_query"]
+                    node.add_leaf(f"Query: {sql_display}")
 
         # Add table schemas
         if "table_schemas" in self.context_data and self.context_data["table_schemas"]:
@@ -129,7 +133,10 @@ class WorkloadContextScreen(ContextScreen):
         if "table_values" in self.context_data and self.context_data["table_values"]:
             for i, item in enumerate(self.context_data["table_values"]):
                 table_name = item.get("table_name", f"Values {i + 1}")
-                schema_values_node.add(table_name, data={"type": "schema_values", "index": i, "content": item})
+                schema_values_node.add(
+                    table_name,
+                    data={"type": "schema_values", "index": i, "content": item},
+                )
 
         # Add metrics
         if "metrics" in self.context_data and self.context_data["metrics"]:

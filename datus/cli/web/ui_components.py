@@ -95,14 +95,18 @@ class UIComponents:
             st.caption(f"**Messages:** {info.get('message_count', 0)}")
             latest_msg = info.get("latest_user_message", "")
             if latest_msg:
-                st.caption(f"**Latest:** {latest_msg[:50]}...")
+                st.caption(f"**Latest:** {latest_msg[:50] + '...' if len(latest_msg) > 50 else latest_msg}")
             col_view, col_resume = st.columns(2)
             with col_view:
                 if st.button("👁 View", key=f"view_{info['session_id']}", use_container_width=True):
                     self.safe_update_query_params({"session": info["session_id"], "mode": "readonly"})
                     st.rerun()
             with col_resume:
-                if st.button("▶ Resume", key=f"resume_{info['session_id']}", use_container_width=True):
+                if st.button(
+                    "▶ Resume",
+                    key=f"resume_{info['session_id']}",
+                    use_container_width=True,
+                ):
                     self.safe_update_query_params({"session": info["session_id"], "mode": "resume"})
                     st.rerun()
 
@@ -484,7 +488,12 @@ class UIComponents:
         all_cols = df.columns.tolist()
         numeric_cols = [col for col in all_cols if is_numeric_dtype(df[col])]
 
-        chart_options = {"Bar Chart": "bar", "Line Chart": "line", "Scatter Plot": "scatter", "Pie Chart": "pie"}
+        chart_options = {
+            "Bar Chart": "bar",
+            "Line Chart": "line",
+            "Scatter Plot": "scatter",
+            "Pie Chart": "pie",
+        }
         chart_key = f"chart_type_{state_id}"
         if chart_key not in st.session_state or st.session_state[chart_key] not in chart_options:
             default_chart = chart_type if chart_type in chart_options else list(chart_options.keys())[0]
@@ -532,7 +541,11 @@ class UIComponents:
                 id_vars = [x_col]
 
                 df_long = pd.melt(
-                    df, id_vars=id_vars, value_vars=y_cols, var_name="IndicatorType", value_name="NumericalValue"
+                    df,
+                    id_vars=id_vars,
+                    value_vars=y_cols,
+                    var_name="IndicatorType",
+                    value_name="NumericalValue",
                 )
 
                 # Plotly unified call (long table after using Melt)
@@ -548,13 +561,24 @@ class UIComponents:
             else:
                 # Single Y-axis, no Melt required
                 fig_func = getattr(px, chart_func_name)
-                fig = fig_func(df, x=x_col, y=y_cols[0], title=f"{selected_chart_name}: {y_cols[0]} vs {x_col}")
+                fig = fig_func(
+                    df,
+                    x=x_col,
+                    y=y_cols[0],
+                    title=f"{selected_chart_name}: {y_cols[0]} vs {x_col}",
+                )
 
         # unified rendering
         st.plotly_chart(fig, config={"width": "content"})
 
     def display_download(
-        self, sql: str, output_md: str, execute_result: ExecuteSQLResult, display_column, sql_id, download_callback
+        self,
+        sql: str,
+        output_md: str,
+        execute_result: ExecuteSQLResult,
+        display_column,
+        sql_id,
+        download_callback,
     ):
         if not sql:
             return
@@ -575,7 +599,11 @@ class UIComponents:
         st.markdown(response)
 
     def render_action_item(
-        self, chat_id: str, index: int, action: ActionHistory, content_generator: ActionContentGenerator
+        self,
+        chat_id: str,
+        index: int,
+        action: ActionHistory,
+        content_generator: ActionContentGenerator,
     ):
         # Handle INTERACTION SUCCESS actions with special rendering
         if action.role == ActionRole.INTERACTION and action.status == ActionStatus.SUCCESS:

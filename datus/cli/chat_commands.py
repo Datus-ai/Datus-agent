@@ -202,7 +202,13 @@ class ChatCommands:
             )
 
     def create_node_input(
-        self, user_message: str, current_node, at_tables, at_metrics, at_sqls, plan_mode: bool = False
+        self,
+        user_message: str,
+        current_node,
+        at_tables,
+        at_metrics,
+        at_sqls,
+        plan_mode: bool = False,
     ):
         """Create node input based on node type - shared logic for CLI and web"""
         from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
@@ -452,10 +458,13 @@ class ChatCommands:
                     current_user_message=message,
                     interaction_broker=current_node.interaction_broker,
                 )
-                with interrupt_on_escape(
-                    current_node.interrupt_controller,
-                    key_callbacks={b"\x0f": streaming_ctx.toggle_verbose},
-                ) as esc_guard, streaming_ctx:
+                with (
+                    interrupt_on_escape(
+                        current_node.interrupt_controller,
+                        key_callbacks={b"\x0f": streaming_ctx.toggle_verbose},
+                    ) as esc_guard,
+                    streaming_ctx,
+                ):
                     streaming_ctx.set_input_collector(self._make_input_collector(esc_guard))
                     try:
                         asyncio.run(run_chat_stream())
@@ -790,7 +799,7 @@ class ChatCommands:
                 with esc_guard.paused():
                     if not choices:
                         console.print()
-                        console.print("[dim](Escape+Enter or Alt+Enter to submit)[/]")
+                        console.print("[dim](Paste supported. Enter to submit)[/]")
                         return self.cli.prompt_input(message="Your input", multiline=True) or ""
 
                     keys = list(choices.keys())
@@ -939,7 +948,8 @@ class ChatCommands:
                 if self.chat_history:
                     self.console.print("\n[bold blue]Recent Conversations:[/]")
                     for i, chat in enumerate(self.chat_history[-3:]):  # Show last 3
-                        self.console.print(f"  {i+1}. User: {chat['user'][:50]}...")
+                        user_msg = chat["user"][:50] + "..." if len(chat["user"]) > 50 else chat["user"]
+                        self.console.print(f"  {i + 1}. User: {user_msg}")
                         self.console.print(f"     Actions: {chat['actions']}")
             else:
                 self.console.print("[yellow]No active session.[/]")
@@ -1044,7 +1054,10 @@ class ChatCommands:
                     sessions_with_info.append(session_data)
 
             # Sort by last_updated (most recent first)
-            sessions_with_info.sort(key=lambda x: x.get("last_updated", x.get("created_at", "")), reverse=True)
+            sessions_with_info.sort(
+                key=lambda x: x.get("last_updated", x.get("created_at", "")),
+                reverse=True,
+            )
 
             # Create a table to display sessions
             table = Table(title="Chat Sessions", show_header=True, header_style="bold blue")
@@ -1418,6 +1431,10 @@ class ChatCommands:
                 row_count = 0
 
         sql_context = SQLContext(
-            sql_query=sql, sql_error=error, sql_return=sql_return, row_count=row_count, explanation=explanation
+            sql_query=sql,
+            sql_error=error,
+            sql_return=sql_return,
+            row_count=row_count,
+            explanation=explanation,
         )
         self.cli.cli_context.add_sql_context(sql_context)
