@@ -2394,13 +2394,58 @@ class TestCmdRewindWithSession:
 
         console.file = io.StringIO()
         mock_llm_create.reset(responses=[])
-        cmds.cmd_rewind("1")
+        result = cmds.cmd_rewind("1")
 
         output = _get_console_output(console)
         assert cmds.current_node is not None
-        # New session should be different from original
+        # Turn 1 creates a fresh session (no prior messages)
         assert cmds.current_node.session_id != session_id
-        assert "rewound" in output.lower() or "turn" in output.lower() or "continue" in output.lower()
+        # Should return the selected user message for input prefill
+        assert result == "Question 1"
+        assert "rewound" in output.lower() or "input buffer" in output.lower()
+
+    def test_rewind_turn2_returns_message_and_keeps_turn1(self, real_agent_config, mock_llm_create):
+        """cmd_rewind with turn 2 keeps turn 1 and returns turn 2 message."""
+        console = Console(file=io.StringIO(), no_color=True)
+        cmds = _make_chat_commands(real_agent_config, console=console)
+
+        session_id = "chat_session_rewind_ret2"
+        self._setup_node_with_disk_session(
+            cmds,
+            mock_llm_create,
+            session_id,
+            [
+                ("user", "Question 1"),
+                ("assistant", "Reply 1"),
+                ("user", "Question 2"),
+                ("assistant", "Reply 2"),
+            ],
+        )
+
+        console.file = io.StringIO()
+        mock_llm_create.reset(responses=[])
+        result = cmds.cmd_rewind("2")
+
+        assert result == "Question 2"
+        assert cmds.current_node is not None
+        assert cmds.current_node.session_id != session_id
+
+    def test_rewind_cancel_returns_none(self, real_agent_config, mock_llm_create):
+        """cmd_rewind with 'q' returns None."""
+        console = Console(file=io.StringIO(), no_color=True)
+        cmds = _make_chat_commands(real_agent_config, console=console)
+
+        session_id = "chat_session_rewind_cancel_ret"
+        self._setup_node_with_disk_session(
+            cmds,
+            mock_llm_create,
+            session_id,
+            [("user", "Question"), ("assistant", "Reply")],
+        )
+
+        console.file = io.StringIO()
+        result = cmds.cmd_rewind("q")
+        assert result is None
 
     def test_rewind_invalid_turn_number_too_high(self, real_agent_config, mock_llm_create):
         """cmd_rewind with turn number exceeding total turns shows error."""

@@ -364,3 +364,84 @@ class TestSelectList:
         enter_event = _make_event()
         _find_handler(kb, "enter")(enter_event)
         enter_event.app.exit.assert_called_once_with(result=5)
+
+    @pytest.mark.ci
+    def test_clip_truncates_long_text(self):
+        """Long text is clipped to terminal display width."""
+        long_text = "A" * 200
+        items = [[long_text]]
+        captured_text = {}
+
+        def fake_app(**app_kwargs):
+            layout = app_kwargs.get("layout")
+            if layout:
+                window = layout.container
+                control = window.content
+                captured_text["lines"] = control.text()
+            app = MagicMock()
+            app.run.return_value = 0
+            return app
+
+        with (
+            patch("prompt_toolkit.Application", side_effect=fake_app),
+            patch("shutil.get_terminal_size", return_value=(20, 40)),
+        ):
+            select_list(MagicMock(), items)
+
+        lines = captured_text.get("lines", [])
+        primary_line = lines[0][1] if lines else ""
+        # content_width = 20 - 6 = 14. Prefix "  -> " = 4 chars. Total visible = 14 of A's
+        assert len(primary_line.strip()) <= 14 + 4  # clipped content + prefix
+
+    @pytest.mark.ci
+    def test_keyboard_interrupt_returns_none(self):
+        """KeyboardInterrupt during Application.run returns None."""
+        with patch("prompt_toolkit.Application") as mock_app_cls:
+            mock_app_cls.return_value.run.side_effect = KeyboardInterrupt
+            result = select_list(MagicMock(), [["a"], ["b"]])
+        assert result is None
+
+    @pytest.mark.ci
+    def test_single_column_no_secondary(self):
+        """Items with only primary line (no secondary) render without error."""
+        items = [["only primary"]]
+        captured_text = {}
+
+        def fake_app(**app_kwargs):
+            layout = app_kwargs.get("layout")
+            if layout:
+                window = layout.container
+                control = window.content
+                captured_text["lines"] = control.text()
+            app = MagicMock()
+            app.run.return_value = 0
+            return app
+
+        with patch("prompt_toolkit.Application", side_effect=fake_app):
+            select_list(MagicMock(), items)
+
+        lines = captured_text.get("lines", [])
+        # Should have: primary, secondary (empty), blank, hint = 4 lines
+        assert len(lines) >= 3
+
+    @pytest.mark.ci
+    def test_scroll_info_shown(self):
+        """Scroll info is displayed when items exceed max_visible."""
+        items = [[str(i)] for i in range(10)]
+        captured_text = {}
+
+        def fake_app(**app_kwargs):
+            layout = app_kwargs.get("layout")
+            if layout:
+                window = layout.container
+                control = window.content
+                captured_text["lines"] = control.text()
+            app = MagicMock()
+            app.run.return_value = 0
+            return app
+
+        with patch("prompt_toolkit.Application", side_effect=fake_app):
+            select_list(MagicMock(), items, max_visible=3)
+
+        lines = captured_text.get("lines", [])
+        assert any("1-3 of 10" in line[1] for line in lines)
