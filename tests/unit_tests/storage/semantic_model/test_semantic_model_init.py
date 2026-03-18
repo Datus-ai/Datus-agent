@@ -184,3 +184,131 @@ class TestProcessSemanticYamlFile:
 
         assert success is False
         assert "Unknown error" in error
+
+
+# ---------------------------------------------------------------------------
+# init_success_story_semantic_model_async - importability and coroutine check
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.ci
+class TestInitSuccessStorySemanticModelAsync:
+    """Tests for init_success_story_semantic_model_async importability and interface."""
+
+    def test_async_function_is_importable(self):
+        """init_success_story_semantic_model_async can be imported from the module."""
+        from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model_async
+
+        assert init_success_story_semantic_model_async is not None
+
+    def test_async_function_is_coroutine(self):
+        """init_success_story_semantic_model_async is a coroutine function (async def)."""
+        import inspect
+
+        from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model_async
+
+        assert inspect.iscoroutinefunction(init_success_story_semantic_model_async)
+
+    @pytest.mark.asyncio
+    async def test_async_returns_false_for_missing_csv(self, tmp_path):
+        """Awaiting init_success_story_semantic_model_async with a missing CSV returns (False, error)."""
+        from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model_async
+
+        missing = str(tmp_path / "no_such_file.csv")
+        mock_config = MagicMock()
+
+        success, error = await init_success_story_semantic_model_async(mock_config, missing)
+
+        assert success is False
+        assert "not found" in error.lower() or missing in error
+
+    @pytest.mark.asyncio
+    async def test_async_returns_false_for_empty_csv(self, tmp_path):
+        """Awaiting with an empty CSV (no rows) returns (False, error)."""
+        from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model_async
+
+        csv_path = tmp_path / "empty.csv"
+        csv_path.write_text("sql,question\n")
+        mock_config = MagicMock()
+
+        success, error = await init_success_story_semantic_model_async(mock_config, str(csv_path))
+
+        assert success is False
+        assert error != ""
+
+    @pytest.mark.asyncio
+    async def test_async_returns_false_for_missing_columns(self, tmp_path):
+        """Awaiting with a CSV missing required columns returns (False, error)."""
+        from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model_async
+
+        csv_path = tmp_path / "bad_cols.csv"
+        csv_path.write_text("question\nWhat is revenue?\n")
+        mock_config = MagicMock()
+
+        success, error = await init_success_story_semantic_model_async(mock_config, str(csv_path))
+
+        assert success is False
+        assert "missing" in error.lower() or "sql" in error.lower()
+
+
+# ---------------------------------------------------------------------------
+# init_success_story_semantic_model sync wrapper - new signature
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.ci
+class TestInitSuccessStorySemanticModelSync:
+    """Tests for init_success_story_semantic_model sync wrapper with decoupled signature."""
+
+    def test_sync_function_is_importable(self):
+        """init_success_story_semantic_model can be imported."""
+        from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model
+
+        assert init_success_story_semantic_model is not None
+
+    def test_sync_function_is_not_coroutine(self):
+        """init_success_story_semantic_model is a plain sync function, not a coroutine."""
+        import inspect
+
+        from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model
+
+        assert not inspect.iscoroutinefunction(init_success_story_semantic_model)
+
+    def test_sync_returns_tuple_for_missing_csv(self, tmp_path):
+        """Sync wrapper returns (bool, str) tuple for a missing CSV path."""
+        from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model
+
+        missing = str(tmp_path / "no_file.csv")
+        mock_config = MagicMock()
+
+        result = init_success_story_semantic_model(mock_config, missing)
+
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        success, error = result
+        assert success is False
+        assert isinstance(error, str)
+
+    def test_sync_accepts_agent_config_and_success_story_args(self, tmp_path):
+        """Sync wrapper accepts (agent_config, success_story) without argparse.Namespace."""
+        from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model
+
+        csv_path = tmp_path / "story.csv"
+        csv_path.write_text("sql,question\n")
+        mock_config = MagicMock()
+
+        # Should call without raising TypeError about unexpected args
+        result = init_success_story_semantic_model(mock_config, str(csv_path))
+        assert isinstance(result, tuple)
+
+    def test_sync_accepts_optional_emit_kwarg(self, tmp_path):
+        """Sync wrapper accepts optional emit keyword argument."""
+        from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model
+
+        csv_path = tmp_path / "story.csv"
+        csv_path.write_text("sql,question\n")
+        mock_config = MagicMock()
+        emit_calls = []
+
+        result = init_success_story_semantic_model(mock_config, str(csv_path), emit=emit_calls.append)
+        assert isinstance(result, tuple)

@@ -108,3 +108,131 @@ class TestInitSemanticYamlMetrics:
         assert success is True
         assert error == ""
         mock_process.assert_called_once_with(str(yaml_file), mock_config, include_semantic_objects=False)
+
+
+# ---------------------------------------------------------------------------
+# init_success_story_metrics_async - importability and coroutine check
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.ci
+class TestInitSuccessStoryMetricsAsync:
+    """Tests for init_success_story_metrics_async importability and interface."""
+
+    def test_async_function_is_importable(self):
+        """init_success_story_metrics_async can be imported from the module."""
+        from datus.storage.metric.metric_init import init_success_story_metrics_async
+
+        assert init_success_story_metrics_async is not None
+
+    def test_async_function_is_coroutine(self):
+        """init_success_story_metrics_async is a coroutine function (async def)."""
+        import inspect
+
+        from datus.storage.metric.metric_init import init_success_story_metrics_async
+
+        assert inspect.iscoroutinefunction(init_success_story_metrics_async)
+
+    def test_async_function_signature_has_no_args_param(self):
+        """init_success_story_metrics_async signature does not include argparse.Namespace args."""
+        import inspect
+
+        from datus.storage.metric.metric_init import init_success_story_metrics_async
+
+        sig = inspect.signature(init_success_story_metrics_async)
+        param_names = list(sig.parameters.keys())
+        assert "args" not in param_names
+        assert "agent_config" in param_names
+        assert "success_story" in param_names
+
+    def test_async_optional_params_present(self):
+        """init_success_story_metrics_async exposes subject_tree, emit, extra_instructions."""
+        import inspect
+
+        from datus.storage.metric.metric_init import init_success_story_metrics_async
+
+        sig = inspect.signature(init_success_story_metrics_async)
+        param_names = list(sig.parameters.keys())
+        assert "subject_tree" in param_names
+        assert "emit" in param_names
+        assert "extra_instructions" in param_names
+
+
+# ---------------------------------------------------------------------------
+# init_success_story_metrics sync wrapper - new signature
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.ci
+class TestInitSuccessStoryMetricsSync:
+    """Tests for init_success_story_metrics sync wrapper with decoupled signature."""
+
+    def test_sync_function_is_importable(self):
+        """init_success_story_metrics can be imported."""
+        from datus.storage.metric.metric_init import init_success_story_metrics
+
+        assert init_success_story_metrics is not None
+
+    def test_sync_function_is_not_coroutine(self):
+        """init_success_story_metrics is a plain sync function."""
+        import inspect
+
+        from datus.storage.metric.metric_init import init_success_story_metrics
+
+        assert not inspect.iscoroutinefunction(init_success_story_metrics)
+
+    def test_sync_function_signature_has_no_args_param(self):
+        """init_success_story_metrics signature does not include argparse.Namespace args."""
+        import inspect
+
+        from datus.storage.metric.metric_init import init_success_story_metrics
+
+        sig = inspect.signature(init_success_story_metrics)
+        param_names = list(sig.parameters.keys())
+        assert "args" not in param_names
+        assert "agent_config" in param_names
+        assert "success_story" in param_names
+
+    def test_sync_returns_three_tuple(self, tmp_path):
+        """Sync wrapper returns a 3-tuple (bool, str, Optional[dict]) for a missing CSV."""
+        from unittest.mock import patch
+
+        from datus.storage.metric.metric_init import init_success_story_metrics
+
+        missing = str(tmp_path / "no_file.csv")
+        mock_config = MagicMock()
+
+        # Patch the async function to avoid creating an unawaited coroutine
+        with patch(
+            "datus.storage.metric.metric_init.init_success_story_metrics_async",
+            return_value=(False, "file error", None),
+        ):
+            result = init_success_story_metrics(mock_config, missing)
+
+        assert isinstance(result, tuple)
+        assert len(result) == 3
+
+    def test_sync_accepts_all_kwargs(self, tmp_path):
+        """Sync wrapper accepts subject_tree, emit, extra_instructions kwargs."""
+        from unittest.mock import patch
+
+        from datus.storage.metric.metric_init import init_success_story_metrics
+
+        mock_config = MagicMock()
+        emit_events = []
+
+        # Patch the async function to avoid creating an unawaited coroutine
+        with patch(
+            "datus.storage.metric.metric_init.init_success_story_metrics_async",
+            return_value=(True, "", {"metrics": []}),
+        ):
+            result = init_success_story_metrics(
+                mock_config,
+                "dummy.csv",
+                subject_tree=["Finance"],
+                emit=emit_events.append,
+                extra_instructions="Focus on revenue metrics.",
+            )
+
+        assert isinstance(result, tuple)
+        assert len(result) == 3

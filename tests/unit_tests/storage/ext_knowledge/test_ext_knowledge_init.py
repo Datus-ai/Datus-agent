@@ -4,14 +4,13 @@
 
 """Tests for datus.storage.ext_knowledge.ext_knowledge_init module."""
 
-import argparse
-
 import pytest
 
 from datus.storage.embedding_models import get_db_embedding_model
 from datus.storage.ext_knowledge.ext_knowledge_init import (
     init_ext_knowledge,
     init_success_story_knowledge,
+    init_success_story_knowledge_async,
     process_knowledge_line,
     process_row,
 )
@@ -158,61 +157,47 @@ class TestInitExtKnowledge:
 
     def test_init_ext_knowledge_overwrite_mode(self, ext_store, csv_file):
         """Test init_ext_knowledge loads all entries in overwrite mode."""
-        args = argparse.Namespace(ext_knowledge=csv_file)
-        init_ext_knowledge(ext_store, args, build_mode="overwrite", pool_size=1)
+        init_ext_knowledge(ext_store, csv_file, build_mode="overwrite", pool_size=1)
         results = ext_store.search_all_knowledge()
         assert len(results) == 3
 
     def test_init_ext_knowledge_incremental_mode(self, ext_store, csv_file):
         """Test init_ext_knowledge in incremental mode skips existing entries."""
-        args = argparse.Namespace(ext_knowledge=csv_file)
         # First load
-        init_ext_knowledge(ext_store, args, build_mode="overwrite", pool_size=1)
+        init_ext_knowledge(ext_store, csv_file, build_mode="overwrite", pool_size=1)
         first_count = len(ext_store.search_all_knowledge())
         assert first_count == 3
         # Second load in incremental mode should skip duplicates
-        init_ext_knowledge(ext_store, args, build_mode="incremental", pool_size=1)
+        init_ext_knowledge(ext_store, csv_file, build_mode="incremental", pool_size=1)
         second_count = len(ext_store.search_all_knowledge())
         assert second_count == first_count
 
-    def test_init_ext_knowledge_no_ext_knowledge_attr(self, ext_store):
-        """Test init_ext_knowledge returns early when args has no ext_knowledge attribute."""
-        args = argparse.Namespace()
-        init_ext_knowledge(ext_store, args)
-        results = ext_store.search_all_knowledge()
-        assert results == []
-
     def test_init_ext_knowledge_empty_ext_knowledge(self, ext_store):
-        """Test init_ext_knowledge returns early when ext_knowledge is empty string."""
-        args = argparse.Namespace(ext_knowledge="")
-        init_ext_knowledge(ext_store, args)
+        """Test init_ext_knowledge returns early when ext_knowledge_csv is empty string."""
+        init_ext_knowledge(ext_store, "")
         results = ext_store.search_all_knowledge()
         assert results == []
 
     def test_init_ext_knowledge_file_not_found(self, ext_store):
         """Test init_ext_knowledge returns early when CSV file does not exist."""
-        args = argparse.Namespace(ext_knowledge="/nonexistent/path/knowledge.csv")
-        init_ext_knowledge(ext_store, args)
+        init_ext_knowledge(ext_store, "/nonexistent/path/knowledge.csv")
         results = ext_store.search_all_knowledge()
         assert results == []
 
     def test_init_ext_knowledge_missing_columns(self, ext_store, csv_file_missing_columns):
         """Test init_ext_knowledge raises ValueError when CSV is missing required columns."""
-        args = argparse.Namespace(ext_knowledge=csv_file_missing_columns)
         with pytest.raises(ValueError, match="Missing required columns"):
-            init_ext_knowledge(ext_store, args, build_mode="overwrite", pool_size=1)
+            init_ext_knowledge(ext_store, csv_file_missing_columns, build_mode="overwrite", pool_size=1)
 
     def test_init_ext_knowledge_skips_invalid_rows(self, ext_store, csv_file_with_missing_fields):
         """Test init_ext_knowledge skips rows with missing fields but processes valid ones."""
-        args = argparse.Namespace(ext_knowledge=csv_file_with_missing_fields)
-        init_ext_knowledge(ext_store, args, build_mode="overwrite", pool_size=1)
+        init_ext_knowledge(ext_store, csv_file_with_missing_fields, build_mode="overwrite", pool_size=1)
         results = ext_store.search_all_knowledge()
         assert len(results) == 2
 
     def test_init_ext_knowledge_parallel(self, ext_store, csv_file):
         """Test init_ext_knowledge works with parallel processing (pool_size > 1)."""
-        args = argparse.Namespace(ext_knowledge=csv_file)
-        init_ext_knowledge(ext_store, args, build_mode="overwrite", pool_size=2)
+        init_ext_knowledge(ext_store, csv_file, build_mode="overwrite", pool_size=2)
         results = ext_store.search_all_knowledge()
         assert len(results) == 3
 
@@ -331,8 +316,7 @@ class TestInitSuccessStoryKnowledge:
 
     def test_init_success_story_file_not_found(self, real_agent_config, mock_llm_create):
         """Test returns failure when CSV file does not exist."""
-        args = argparse.Namespace(success_story="/nonexistent/path/stories.csv")
-        success, error_msg = init_success_story_knowledge(args, real_agent_config)
+        success, error_msg = init_success_story_knowledge(real_agent_config, "/nonexistent/path/stories.csv")
         assert success is False
         assert "not found" in error_msg
 
@@ -349,8 +333,7 @@ class TestInitSuccessStoryKnowledge:
             ]
         )
 
-        args = argparse.Namespace(success_story=csv_path)
-        success, error_msg = init_success_story_knowledge(args, real_agent_config, subject_tree=["Education"])
+        success, error_msg = init_success_story_knowledge(real_agent_config, csv_path, subject_tree=["Education"])
         assert success is True
         assert error_msg == ""
 
@@ -369,8 +352,7 @@ class TestInitSuccessStoryKnowledge:
             ]
         )
 
-        args = argparse.Namespace(success_story=csv_path)
-        success, error_msg = init_success_story_knowledge(args, real_agent_config)
+        success, error_msg = init_success_story_knowledge(real_agent_config, csv_path)
         assert success is True
         assert error_msg == ""
 
@@ -381,8 +363,7 @@ class TestInitSuccessStoryKnowledge:
             f.write("question,sql,subject_path\n")
             f.write(",SELECT 1,Test\n")
 
-        args = argparse.Namespace(success_story=csv_path)
-        success, error_msg = init_success_story_knowledge(args, real_agent_config)
+        success, error_msg = init_success_story_knowledge(real_agent_config, csv_path)
         # With one failing row and no successful rows, success should be False
         assert success is False
         # pandas reads empty CSV value as NaN, which causes Pydantic validation error
@@ -402,8 +383,103 @@ class TestInitSuccessStoryKnowledge:
             ]
         )
 
-        args = argparse.Namespace(success_story=csv_path)
-        success, error_msg = init_success_story_knowledge(args, real_agent_config)
+        success, error_msg = init_success_story_knowledge(real_agent_config, csv_path)
         # One row succeeds, one fails - overall should be True (at least one success)
         assert success is True
         assert "Error processing row 2" in error_msg
+
+
+# ============================================================
+# init_success_story_knowledge_async - importability and coroutine
+# ============================================================
+
+
+@pytest.mark.ci
+class TestInitSuccessStoryKnowledgeAsync:
+    """Tests for init_success_story_knowledge_async importability and interface."""
+
+    def test_async_function_is_importable(self):
+        """init_success_story_knowledge_async can be imported from the module."""
+        assert init_success_story_knowledge_async is not None
+
+    def test_async_function_is_coroutine(self):
+        """init_success_story_knowledge_async is a coroutine function (async def)."""
+        import inspect
+
+        assert inspect.iscoroutinefunction(init_success_story_knowledge_async)
+
+    def test_async_function_signature_has_no_args_param(self):
+        """init_success_story_knowledge_async signature does not include argparse.Namespace args."""
+        import inspect
+
+        sig = inspect.signature(init_success_story_knowledge_async)
+        param_names = list(sig.parameters.keys())
+        assert "args" not in param_names
+        assert "agent_config" in param_names
+        assert "success_story" in param_names
+        assert "subject_tree" in param_names
+
+    @pytest.mark.asyncio
+    async def test_async_returns_false_for_missing_csv(self, tmp_path):
+        """Awaiting init_success_story_knowledge_async with a missing CSV returns (False, error)."""
+        from unittest.mock import MagicMock
+
+        missing = str(tmp_path / "nonexistent.csv")
+        mock_config = MagicMock()
+
+        success, error = await init_success_story_knowledge_async(mock_config, missing)
+
+        assert success is False
+        assert "not found" in error.lower() or missing in error
+
+    @pytest.mark.asyncio
+    async def test_async_returns_two_tuple(self, tmp_path):
+        """Awaiting the function returns exactly a 2-tuple (bool, str)."""
+        from unittest.mock import MagicMock
+
+        missing = str(tmp_path / "nonexistent.csv")
+        mock_config = MagicMock()
+
+        result = await init_success_story_knowledge_async(mock_config, missing)
+
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+
+
+# ============================================================
+# init_ext_knowledge - None / empty CSV edge cases (new string param)
+# ============================================================
+
+
+@pytest.mark.ci
+class TestInitExtKnowledgeEdgeCases:
+    """Additional edge-case tests for init_ext_knowledge with the new string parameter."""
+
+    def test_none_csv_returns_early_without_error(self, ext_store):
+        """init_ext_knowledge with None csv returns early (no exception, empty store)."""
+        # None triggers the early-return guard
+        init_ext_knowledge(ext_store, None)
+        results = ext_store.search_all_knowledge()
+        assert results == []
+
+    def test_empty_string_csv_returns_early_without_error(self, ext_store):
+        """init_ext_knowledge with '' csv returns early (no exception, empty store)."""
+        init_ext_knowledge(ext_store, "")
+        results = ext_store.search_all_knowledge()
+        assert results == []
+
+    def test_accepts_string_not_namespace(self, ext_store, csv_file):
+        """init_ext_knowledge ext_knowledge_csv parameter is a plain string, not a Namespace."""
+        # Pass the CSV path directly as a string — no SimpleNamespace needed
+        init_ext_knowledge(ext_store, csv_file, build_mode="overwrite", pool_size=1)
+        results = ext_store.search_all_knowledge()
+        assert len(results) == 3
+
+    def test_function_signature_uses_string_param(self):
+        """init_ext_knowledge has ext_knowledge_csv as a plain string parameter."""
+        import inspect
+
+        sig = inspect.signature(init_ext_knowledge)
+        param_names = list(sig.parameters.keys())
+        assert "ext_knowledge_csv" in param_names
+        assert "args" not in param_names

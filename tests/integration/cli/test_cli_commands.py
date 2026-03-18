@@ -117,7 +117,10 @@ def test_search_metrics(mock_args, capsys, schema_linking_input: List[Dict[str, 
 
 @pytest.mark.acceptance
 def test_bash_command_allowed(mock_args, capsys):
-    with patch("datus.cli.repl.PromptSession.prompt") as mock_prompt, patch("subprocess.run") as mock_run:
+    with (
+        patch("datus.cli.repl.PromptSession.prompt") as mock_prompt,
+        patch("subprocess.run") as mock_run,
+    ):
         mock_prompt.side_effect = ["!bash ls -l", EOFError]
         cli = DatusCLI(args=mock_args)
         cli.run()
@@ -126,7 +129,10 @@ def test_bash_command_allowed(mock_args, capsys):
 
 @pytest.mark.acceptance
 def test_bash_command_denied(mock_args, capsys):
-    with patch("datus.cli.repl.PromptSession.prompt") as mock_prompt, patch("subprocess.run") as mock_run:
+    with (
+        patch("datus.cli.repl.PromptSession.prompt") as mock_prompt,
+        patch("subprocess.run") as mock_run,
+    ):
         mock_prompt.side_effect = ["!bash rm -rf ./temp.temp", EOFError]
         cli = DatusCLI(args=mock_args)
         cli.run()
@@ -295,7 +301,9 @@ def test_save_command(mock_args, capsys):
 
     # Create mock SQL context
     mock_sql_context = SQLContext(
-        sql_query="SELECT * FROM schools", sql_return="[{'id': 1, 'name': 'School A'}]", row_count=1
+        sql_query="SELECT * FROM schools",
+        sql_return="[{'id': 1, 'name': 'School A'}]",
+        row_count=1,
     )
 
     with patch("datus.cli.repl.PromptSession.prompt") as mock_prompt:

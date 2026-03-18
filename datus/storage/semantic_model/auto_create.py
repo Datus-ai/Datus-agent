@@ -198,22 +198,3 @@ async def ensure_semantic_models_exist(
         logger.error(f"Failed to create semantic models: {error}")
 
     return success, error, missing_tables
-
-
-def ensure_semantic_models_exist_sync(
-    tables: Set[str],
-    agent_config: AgentConfig,
-    emit: Optional[Callable] = None,
-) -> tuple[bool, str, List[str]]:
-    """
-    Synchronous wrapper for ensure_semantic_models_exist.
-
-    Args:
-        tables: Set of table names to check
-        agent_config: Agent configuration
-        emit: Optional progress callback
-
-    Returns:
-        (success, error_message, created_tables)
-    """
-    return asyncio.run(ensure_semantic_models_exist(tables, agent_config, emit))

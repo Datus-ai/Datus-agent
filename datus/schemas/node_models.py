@@ -12,7 +12,7 @@ from io import StringIO
 from typing import Any, Dict, List, Literal, Optional, Union
 
 import pyarrow as pa
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from datus.schemas.base import TABLE_TYPE, BaseInput, BaseResult
 from datus.schemas.doc_search_node_models import DocSearchResult
@@ -398,15 +398,14 @@ class ExecuteSQLResult(BaseResult):
     Contains the execution results.
     """
 
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     sql_query: Optional[str] = Field("", description="The SQL query to execute")
     row_count: Optional[int] = Field(None, description="The number of rows returned")
     sql_return: Any = Field(  # TODO: change to Union[str, ArrowTable, List[Reuslt]]
         default=None, description="The result of SQL execution (string or Arrow data)"
     )
     result_format: str = Field(default="", description="Format of the result: 'csv' or 'arrow' or 'pandas' or 'list'")
-
-    class Config:
-        arbitrary_types_allowed = True
 
     def compact_result(self) -> str:
         """
@@ -638,11 +637,10 @@ class ReflectionResult(BaseResult):
     Contains analysis results and optimization strategy.
     """
 
+    model_config = ConfigDict(use_enum_values=True)
+
     strategy: Optional[StrategyType] = Field(None, description="Suggested strategy for workflow changes")
     details: Dict[str, Union[str, List[str], Dict[str, Any]]] = Field(
         default_factory=dict,
         description="Detailed analysis information, can contain strings, lists or nested dictionaries",
     )
-
-    class Config:
-        use_enum_values = True

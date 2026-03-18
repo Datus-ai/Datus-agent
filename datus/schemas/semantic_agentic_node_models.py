@@ -11,7 +11,7 @@ providing structured validation for semantic model generation interactions.
 
 from typing import List, Optional
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from datus.schemas.base import BaseInput, BaseResult
 
@@ -38,8 +38,7 @@ class SemanticNodeInput(BaseInput):
     mcp: Optional[str] = Field(default=None, description="MCP server configuration pattern")
     rules: Optional[list[str]] = Field(default=None, description="Configuration rules for the node")
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class SemanticNodeResult(BaseResult):

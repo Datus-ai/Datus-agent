@@ -4,7 +4,6 @@
 
 """Tests for datus.cli.tutorial module and related metric/reference_sql init functions."""
 
-from argparse import Namespace
 from io import StringIO
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -557,8 +556,7 @@ def test_init_success_story_metrics_returns_error_on_exception(monkeypatch):
 
     monkeypatch.setattr(metric_init, "GenMetricsAgenticNode", FailingNode)
 
-    args = Namespace(success_story="anything.csv")
-    success, error_message, _ = metric_init.init_success_story_metrics(args, DummyAgentConfig())
+    success, error_message, _ = metric_init.init_success_story_metrics(DummyAgentConfig(), "anything.csv")
 
     assert success is False
     assert "metrics generation failed" in error_message
@@ -591,8 +589,7 @@ def test_init_success_story_metrics_success(monkeypatch):
 
     monkeypatch.setattr(metric_init, "GenMetricsAgenticNode", SuccessNode)
 
-    args = Namespace(success_story="anything.csv")
-    success, error_message, _ = metric_init.init_success_story_metrics(args, DummyAgentConfig())
+    success, error_message, _ = metric_init.init_success_story_metrics(DummyAgentConfig(), "anything.csv")
 
     assert success is True
     assert error_message == ""

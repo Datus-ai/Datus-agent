@@ -2,7 +2,6 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-import argparse
 import os
 from pathlib import Path
 from typing import Any, List, Literal, Optional
@@ -139,12 +138,10 @@ def init_metrics(
             if stage == BatchStage.TASK_FAILED:
                 output_mgr.error(f"Failed to initialize metrics: {event.error}")
 
-        args = argparse.Namespace(success_story=str(success_path))
-
         try:
             successful, error_message, metrics_result = init_success_story_metrics(
-                args,
                 agent_config,
+                str(success_path),
                 subject_tree,
                 emit=emit,
                 extra_instructions=extra_instructions,
@@ -251,10 +248,8 @@ def init_semantic_model(
             if stage == BatchStage.TASK_FAILED:
                 output_mgr.error(f"Failed to initialize semantic model: {event.error}")
 
-        args = argparse.Namespace(success_story=str(success_path))
-
         try:
-            successful, error_message = init_success_story_semantic_model(args, agent_config, emit=emit)
+            successful, error_message = init_success_story_semantic_model(agent_config, str(success_path), emit=emit)
         finally:
             output_mgr.stop()
 

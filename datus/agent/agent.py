@@ -495,7 +495,9 @@ class Agent:
                         self.args.semantic_yaml, self.global_config
                     )
                 else:
-                    successful, error_message = init_success_story_semantic_model(self.args, self.global_config)
+                    successful, error_message = init_success_story_semantic_model(
+                        self.global_config, self.args.success_story
+                    )
 
                 if successful:
                     result = {
@@ -543,8 +545,8 @@ class Agent:
                     successful, error_message = init_semantic_yaml_metrics(self.args.semantic_yaml, self.global_config)
                 else:
                     successful, error_message, _ = init_success_story_metrics(
-                        self.args,
                         self.global_config,
+                        self.args.success_story,
                         subject_tree,
                         emit=self._emit_metrics_event,
                     )
@@ -584,12 +586,15 @@ class Agent:
                 if hasattr(self.args, "ext_knowledge") and self.args.ext_knowledge:
                     # Use CSV file directly
                     init_ext_knowledge(
-                        self.ext_knowledge_rag.store, self.args, build_mode=kb_update_strategy, pool_size=pool_size
+                        self.ext_knowledge_rag.store,
+                        self.args.ext_knowledge,
+                        build_mode=kb_update_strategy,
+                        pool_size=pool_size,
                     )
                 elif hasattr(self.args, "success_story") and self.args.success_story:
                     # Use GenExtKnowledgeAgenticNode to generate from success story
                     successful, error_message = init_success_story_knowledge(
-                        self.args, self.global_config, subject_tree
+                        self.global_config, self.args.success_story, subject_tree
                     )
                     if not successful:
                         return {

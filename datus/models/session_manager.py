@@ -9,7 +9,7 @@ import os
 import re
 import sqlite3
 import uuid
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from agents.extensions.memory import AdvancedSQLiteSession
 
@@ -27,17 +27,22 @@ class SessionManager:
     but exposes a simple external interface that hides the complexity.
     """
 
-    def __init__(self):
+    def __init__(self, session_dir: Optional[str] = None):
         """
         Initialize the session manager.
 
-        Sessions are stored in {agent.home}/sessions directory.
-        This path is fixed and cannot be configured.
-        Configure agent.home in agent.yml to change the root directory.
+        Args:
+            session_dir: Optional custom session directory path. When provided,
+                sessions are stored in this directory (used by SaaS backend for
+                per-project session isolation). When None, falls back to the
+                default {agent.home}/sessions path.
         """
-        from datus.utils.path_manager import get_path_manager
+        if session_dir:
+            self.session_dir = session_dir
+        else:
+            from datus.utils.path_manager import get_path_manager
 
-        self.session_dir = str(get_path_manager().sessions_dir)
+            self.session_dir = str(get_path_manager().sessions_dir)
         os.makedirs(self.session_dir, exist_ok=True)
         self._sessions: Dict[str, AdvancedSQLiteSession] = {}
 

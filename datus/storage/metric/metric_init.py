@@ -2,7 +2,6 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-import argparse
 import asyncio
 import os
 from typing import Any, Optional
@@ -14,7 +13,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistoryManager, ActionStatus
 from datus.schemas.batch_events import BatchEventEmitter, BatchEventHelper
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
-from datus.storage.semantic_model.auto_create import ensure_semantic_models_exist_sync, extract_tables_from_sql_list
+from datus.storage.semantic_model.auto_create import ensure_semantic_models_exist, extract_tables_from_sql_list
 from datus.utils.loggings import get_logger
 from datus.utils.terminal_utils import suppress_keyboard_input
 
@@ -30,30 +29,31 @@ def _action_status_value(action: Any) -> Optional[str]:
     return status.value if hasattr(status, "value") else str(status)
 
 
-def init_success_story_metrics(
-    args: argparse.Namespace,
+async def init_success_story_metrics_async(
     agent_config: AgentConfig,
+    success_story: str,
     subject_tree: Optional[list] = None,
     emit: Optional[BatchEventEmitter] = None,
     extra_instructions: Optional[str] = None,
 ) -> tuple[bool, str, Optional[dict[str, Any]]]:
     """
-    Initialize metrics from success story CSV by batch processing.
+    Async version: Initialize metrics from success story CSV by batch processing.
 
     This reads all SQL queries from the CSV and processes them as a batch
     to extract core unique metrics (deduplicating aggregation patterns).
 
     Args:
-        args: Command line arguments
         agent_config: Agent configuration
+        success_story: Path to success story CSV file
         subject_tree: Optional predefined subject tree categories
         emit: Optional callback to stream BatchEvent progress events
+        extra_instructions: Optional extra instructions for the LLM
     """
     event_helper = BatchEventHelper(BIZ_NAME, emit)
-    df = pd.read_csv(args.success_story)
+    df = pd.read_csv(success_story)
 
     # Emit task started
-    event_helper.task_started(total_items=len(df), success_story=args.success_story)
+    event_helper.task_started(total_items=len(df), success_story=success_story)
 
     # Step 0: Check and create missing semantic models
     sql_list = [row["sql"] for _, row in df.iterrows() if row.get("sql")]
@@ -63,7 +63,7 @@ def init_success_story_metrics(
         logger.info(f"Found {len(all_tables)} tables in success story SQL: {all_tables}")
 
         # Check and create missing semantic models
-        success, error, created_tables = ensure_semantic_models_exist_sync(all_tables, agent_config, emit=None)
+        success, error, created_tables = await ensure_semantic_models_exist(all_tables, agent_config, emit=None)
 
         if not success:
             error_msg = f"Failed to create semantic models: {error}"
@@ -111,44 +111,55 @@ def init_success_story_metrics(
     # Emit task processing
     event_helper.task_processing(total_items=1)
 
-    async def process_batch() -> dict:
-        try:
-            final_result = None
-            async for action in metrics_node.execute_stream(action_history_manager):
-                if event_helper:
-                    event_helper.item_processing(
-                        item_id="batch",
-                        action_name="gen_metrics",
-                        status=_action_status_value(action),
-                        messages=action.messages,
-                        output=action.output,
-                    )
-                if action.status == ActionStatus.SUCCESS and action.output:
-                    final_result = action.output
-                    logger.debug(f"Metrics generation action: {action.messages}")
-            logger.info("Batch metrics extraction completed successfully")
-            return {"successful": True, "error": "", "result": final_result}
-        except Exception as e:
-            logger.error(f"Error in batch metrics extraction: {e}")
-            return {"successful": False, "error": str(e)}
-
-    with suppress_keyboard_input():
-        result = asyncio.run(process_batch())
-
-    # Emit task completed (single batch)
-    if result.get("successful"):
+    try:
+        final_result = None
+        async for action in metrics_node.execute_stream(action_history_manager):
+            if event_helper:
+                event_helper.item_processing(
+                    item_id="batch",
+                    action_name="gen_metrics",
+                    status=_action_status_value(action),
+                    messages=action.messages,
+                    output=action.output,
+                )
+            if action.status == ActionStatus.SUCCESS and action.output:
+                final_result = action.output
+                logger.debug(f"Metrics generation action: {action.messages}")
+        logger.info("Batch metrics extraction completed successfully")
         event_helper.task_completed(
             total_items=1,
             completed_items=1,
             failed_items=0,
         )
-        return True, "", result.get("result")
-    else:
-        error = result.get("error", "Unknown error")
-        event_helper.task_failed(
-            error=error,
-        )
+        return True, "", final_result
+    except Exception as e:
+        logger.error(f"Error in batch metrics extraction: {e}")
+        error = str(e)
+        event_helper.task_failed(error=error)
         return False, error, None
+
+
+def init_success_story_metrics(
+    agent_config: AgentConfig,
+    success_story: str,
+    subject_tree: Optional[list] = None,
+    emit: Optional[BatchEventEmitter] = None,
+    extra_instructions: Optional[str] = None,
+) -> tuple[bool, str, Optional[dict[str, Any]]]:
+    """
+    Sync wrapper: Initialize metrics from success story CSV by batch processing.
+
+    Args:
+        agent_config: Agent configuration
+        success_story: Path to success story CSV file
+        subject_tree: Optional predefined subject tree categories
+        emit: Optional callback to stream BatchEvent progress events
+        extra_instructions: Optional extra instructions for the LLM
+    """
+    with suppress_keyboard_input():
+        return asyncio.run(
+            init_success_story_metrics_async(agent_config, success_story, subject_tree, emit, extra_instructions)
+        )
 
 
 def init_semantic_yaml_metrics(

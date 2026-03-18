@@ -12,7 +12,7 @@ context support and streaming capabilities.
 
 from typing import Optional
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from datus.schemas.base import BaseInput, BaseResult
 from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
@@ -38,8 +38,7 @@ class GenSQLNodeInput(BaseInput):
     plan_mode: bool = Field(default=False, description="Enable plan mode for multi-step task planning")
     auto_execute_plan: bool = Field(default=False, description="Auto-execute plan without confirmation")
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class GenSQLNodeResult(BaseResult):

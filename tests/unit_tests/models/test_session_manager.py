@@ -88,6 +88,15 @@ def sm(real_agent_config):
     manager.close_all_sessions()
 
 
+@pytest.fixture
+def sm_custom(tmp_path):
+    """Create a SessionManager with a custom session_dir (SaaS-style per-project isolation)."""
+    custom_dir = str(tmp_path / "project_sessions")
+    manager = SessionManager(session_dir=custom_dir)
+    yield manager
+    manager.close_all_sessions()
+
+
 # ===========================================================================
 # TestSessionManagerInit
 # ===========================================================================
@@ -959,3 +968,131 @@ class TestSessionManagerEdgeCases:
         assert info["message_count"] == 2
         # The valid user message should be found despite the malformed one
         assert info["latest_user_message"] == "Valid question"
+
+
+# ===========================================================================
+# TestSessionManagerCustomDir  (SaaS session_dir parameter)
+# ===========================================================================
+
+
+class TestSessionManagerCustomDir:
+    """Tests for SessionManager(session_dir=custom_path) - SaaS per-project isolation."""
+
+    def test_custom_dir_is_used_instead_of_default(self, tmp_path):
+        """When session_dir is provided, it is used as the session directory."""
+        custom_dir = str(tmp_path / "my_project" / "sessions")
+        manager = SessionManager(session_dir=custom_dir)
+        try:
+            assert manager.session_dir == custom_dir
+        finally:
+            manager.close_all_sessions()
+
+    def test_custom_dir_is_created_on_init(self, tmp_path):
+        """SessionManager creates the custom directory if it does not yet exist."""
+        custom_dir = str(tmp_path / "saas" / "project_abc" / "sessions")
+        assert not os.path.exists(custom_dir)
+
+        manager = SessionManager(session_dir=custom_dir)
+        try:
+            assert os.path.isdir(custom_dir)
+        finally:
+            manager.close_all_sessions()
+
+    def test_custom_dir_does_not_use_path_manager(self, tmp_path):
+        """When session_dir is provided, path_manager is never imported/called."""
+        custom_dir = str(tmp_path / "isolated_sessions")
+        manager = SessionManager(session_dir=custom_dir)
+        try:
+            # The session_dir should be exactly the custom path, not the global default
+            assert "isolated_sessions" in manager.session_dir
+        finally:
+            manager.close_all_sessions()
+
+    def test_custom_dir_stores_sessions(self, sm_custom, tmp_path):
+        """Sessions created in a custom-dir manager are stored in the custom directory."""
+        session_id = "proj-session-1"
+        sm_custom.get_session(session_id)
+        db_path = os.path.join(sm_custom.session_dir, f"{session_id}.db")
+        assert os.path.isfile(db_path)
+
+    def test_custom_dir_session_is_isolated_from_default(self, tmp_path, real_agent_config):
+        """Sessions in a custom dir are isolated from the default session dir."""
+        custom_dir = str(tmp_path / "project_x" / "sessions")
+        custom_manager = SessionManager(session_dir=custom_dir)
+        default_manager = SessionManager()
+
+        try:
+            custom_manager.get_session("unique-project-session")
+
+            # The default manager should not see sessions from the custom dir
+            default_sessions = default_manager.list_sessions()
+            assert "unique-project-session" not in default_sessions
+
+            # The custom manager should see its session
+            custom_sessions = custom_manager.list_sessions()
+            assert "unique-project-session" in custom_sessions
+        finally:
+            custom_manager.close_all_sessions()
+            default_manager.close_all_sessions()
+
+    def test_custom_dir_list_sessions_returns_correct_ids(self, sm_custom):
+        """list_sessions on a custom-dir manager returns only its own sessions."""
+        sm_custom.get_session("session-a")
+        sm_custom.get_session("session-b")
+
+        result = sm_custom.list_sessions()
+        assert set(result) == {"session-a", "session-b"}
+
+    def test_custom_dir_session_exists_check(self, sm_custom):
+        """session_exists works correctly for sessions in the custom directory."""
+        session_id = "custom-exists-check"
+        assert sm_custom.session_exists(session_id) is False
+
+        sm_custom.get_session(session_id)
+        # DB file exists but is empty — session_exists returns False (no messages/record)
+        assert sm_custom.session_exists(session_id) is False
+
+        # Insert a session record to make it exist
+        db_path = os.path.join(sm_custom.session_dir, f"{session_id}.db")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("INSERT OR IGNORE INTO agent_sessions (session_id) VALUES (?)", (session_id,))
+            conn.commit()
+        assert sm_custom.session_exists(session_id) is True
+
+    def test_saas_style_project_path(self, tmp_path):
+        """Simulates SaaS use: {home}/{project_id}/sessions as session_dir."""
+        home = str(tmp_path)
+        project_id = "proj-42"
+        saas_session_dir = os.path.join(home, project_id, "sessions")
+
+        manager = SessionManager(session_dir=saas_session_dir)
+        try:
+            assert os.path.isdir(saas_session_dir)
+            assert manager.session_dir == saas_session_dir
+
+            # Create and verify a session
+            manager.get_session("user-abc")
+            assert "user-abc" in manager.list_sessions()
+        finally:
+            manager.close_all_sessions()
+
+    def test_none_session_dir_falls_back_to_default(self, real_agent_config):
+        """SessionManager(session_dir=None) uses the default path_manager sessions dir."""
+        manager = SessionManager(session_dir=None)
+        try:
+            # Default should end with 'sessions'
+            assert manager.session_dir.endswith("sessions")
+            assert os.path.isdir(manager.session_dir)
+        finally:
+            manager.close_all_sessions()
+
+    def test_custom_dir_delete_session_removes_db_file(self, sm_custom):
+        """delete_session removes the .db file from the custom directory."""
+        session_id = "custom-delete-me"
+        sm_custom.get_session(session_id)
+        db_path = os.path.join(sm_custom.session_dir, f"{session_id}.db")
+        assert os.path.isfile(db_path)
+
+        sm_custom.delete_session(session_id)
+        assert not os.path.isfile(db_path)
+        assert session_id not in sm_custom._sessions

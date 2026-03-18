@@ -2,7 +2,6 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-import argparse
 import asyncio
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -24,7 +23,7 @@ logger = get_logger(__name__)
 
 def init_ext_knowledge(
     storage: ExtKnowledgeStore,
-    args: argparse.Namespace,
+    ext_knowledge_csv: Optional[str],
     build_mode: str = "overwrite",
     pool_size: int = 1,
 ):
@@ -32,16 +31,16 @@ def init_ext_knowledge(
 
     Args:
         storage: ExtKnowledgeStore instance
-        args: Command line arguments containing ext_knowledge CSV file path
+        ext_knowledge_csv: Path to the external knowledge CSV file (None or empty to skip)
         build_mode: "overwrite" to replace all data, "incremental" to add new entries
         pool_size: Number of threads for parallel processing
     """
-    if not hasattr(args, "ext_knowledge") or not args.ext_knowledge:
-        logger.warning("No ext_knowledge CSV file specified in args.ext_knowledge")
+    if not ext_knowledge_csv:
+        logger.warning("No ext_knowledge CSV file specified")
         return
 
-    if not os.path.exists(args.ext_knowledge):
-        logger.error(f"External knowledge CSV file not found: {args.ext_knowledge}")
+    if not os.path.exists(ext_knowledge_csv):
+        logger.error(f"External knowledge CSV file not found: {ext_knowledge_csv}")
         return
 
     existing_knowledge = exists_ext_knowledge(storage, build_mode)
@@ -49,8 +48,8 @@ def init_ext_knowledge(
     logger.info(f"Found {len(existing_knowledge)} existing knowledge entries (build_mode: {build_mode})")
 
     try:
-        df = pd.read_csv(args.ext_knowledge)
-        logger.info(f"Loaded CSV file with {len(df)} rows: {args.ext_knowledge}")
+        df = pd.read_csv(ext_knowledge_csv)
+        logger.info(f"Loaded CSV file with {len(df)} rows: {ext_knowledge_csv}")
 
         # Validate required columns
         required_columns = ["subject_path", "name", "search_text", "explanation"]
@@ -154,46 +153,64 @@ def process_row(
         return "error"
 
 
-def init_success_story_knowledge(
-    args: argparse.Namespace,
+async def init_success_story_knowledge_async(
     agent_config: AgentConfig,
+    success_story: str,
     subject_tree: Optional[list] = None,
 ) -> tuple[bool, str]:
     """
-    Initialize external knowledge from success story CSV file using GenExtKnowledgeAgenticNode in workflow mode.
+    Async version: Initialize external knowledge from success story CSV file using
+    GenExtKnowledgeAgenticNode in workflow mode.
 
     Args:
-        args: Command line arguments containing success_story CSV file path
         agent_config: Agent configuration
+        success_story: Path to success story CSV file
         subject_tree: Optional predefined subject tree categories
 
     Returns:
         tuple[bool, str]: (whether successful, error message)
     """
-    if not os.path.exists(args.success_story):
-        error_msg = f"Success story CSV file not found: {args.success_story}"
+    if not os.path.exists(success_story):
+        error_msg = f"Success story CSV file not found: {success_story}"
         logger.error(error_msg)
         return False, error_msg
 
-    df = pd.read_csv(args.success_story)
+    df = pd.read_csv(success_story)
 
-    async def process_all() -> tuple[bool, List[str]]:
-        errors: List[str] = []
-        for idx, row in df.iterrows():
-            row_idx = idx + 1
-            logger.info(f"Processing row {row_idx}/{len(df)}")
-            try:
-                result = await process_knowledge_line(row.to_dict(), agent_config, subject_tree)
-                if not result.get("successful"):
-                    errors.append(f"Error processing row {row_idx}: {result.get('error')}")
-            except Exception as e:
-                errors.append(f"Error processing row {row_idx}: {e}")
-                logger.error(f"Error processing row {row_idx}: {e}")
-        return (len(df) - len(errors)) > 0, errors
+    errors: List[str] = []
+    for idx, row in df.iterrows():
+        row_idx = idx + 1
+        logger.info(f"Processing row {row_idx}/{len(df)}")
+        try:
+            result = await process_knowledge_line(row.to_dict(), agent_config, subject_tree)
+            if not result.get("successful"):
+                errors.append(f"Error processing row {row_idx}: {result.get('error')}")
+        except Exception as e:
+            errors.append(f"Error processing row {row_idx}: {e}")
+            logger.error(f"Error processing row {row_idx}: {e}")
 
-    successful, errors = asyncio.run(process_all())
+    successful = (len(df) - len(errors)) > 0
     error_message = "\n    ".join(errors) if errors else ""
     return successful, error_message
+
+
+def init_success_story_knowledge(
+    agent_config: AgentConfig,
+    success_story: str,
+    subject_tree: Optional[list] = None,
+) -> tuple[bool, str]:
+    """
+    Sync wrapper: Initialize external knowledge from success story CSV file.
+
+    Args:
+        agent_config: Agent configuration
+        success_story: Path to success story CSV file
+        subject_tree: Optional predefined subject tree categories
+
+    Returns:
+        tuple[bool, str]: (whether successful, error message)
+    """
+    return asyncio.run(init_success_story_knowledge_async(agent_config, success_story, subject_tree))
 
 
 async def process_knowledge_line(

@@ -4,7 +4,7 @@
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 TABLE_TYPE = Literal["table", "view", "mv", "full"]
 
@@ -24,7 +24,7 @@ class BaseInput(BaseModel):
     Provides common validation functionality for node inputs.
     """
 
-    # context: Optional[List[str]] = Field(default=[], description="Optional context information for the input")
+    model_config = ConfigDict(extra="forbid")
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get a value by key with an optional default value."""
@@ -50,15 +50,14 @@ class BaseInput(BaseModel):
         """Create SqlTask instance from dictionary."""
         return cls.model_validate(data)
 
-    class Config:
-        extra = "forbid"  # Prevent extra fields not defined in the model
-
 
 class BaseResult(BaseModel):
     """
     Base class for all node result data validation.
     Provides common validation functionality for node results.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     success: bool = Field(..., description="Indicates whether the operation was successful")
     error: Optional[str] = Field(None, description="Error message if operation failed")
@@ -96,15 +95,14 @@ class BaseResult(BaseModel):
         """Create SqlTask instance from dictionary."""
         return cls.model_validate(data)
 
-    class Config:
-        extra = "forbid"  # Prevent extra fields not defined in the model
-
 
 class CommonData(BaseModel):
     """
     Base class for all common data validation.
     Provides common validation functionality for common data.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get a value by key with an optional default value."""
@@ -130,6 +128,3 @@ class CommonData(BaseModel):
     def from_dict(cls, data: Dict[str, Any]) -> "BaseInput":
         """Create SqlTask instance from dictionary."""
         return cls.model_validate(data)
-
-    class Config:
-        extra = "forbid"  # Prevent extra fields not defined in the model

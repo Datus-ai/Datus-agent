@@ -128,7 +128,7 @@ async def process_sql_item(
         return None
 
 
-def init_reference_sql(
+async def init_reference_sql_async(
     storage: ReferenceSqlRAG,
     global_config: AgentConfig,
     sql_dir: str,
@@ -139,7 +139,7 @@ def init_reference_sql(
     emit: Optional[BatchEventEmitter] = None,
     extra_instructions: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Initialize reference SQL from SQL files directory.
+    """Async version: Initialize reference SQL from SQL files directory.
 
     Args:
         storage: ReferenceSqlRAG instance
@@ -150,6 +150,7 @@ def init_reference_sql(
         pool_size: Number of threads for parallel processing
         subject_tree: Optional predefined subject tree categories
         emit: Optional callback to stream BatchEvent progress events
+        extra_instructions: Optional extra instructions for the LLM
 
     Returns:
         Dict containing initialization results and statistics
@@ -252,114 +253,109 @@ def init_reference_sql(
         # Emit task processing
         event_helper.task_processing(total_items=len(items_to_process))
 
-        # Use SqlSummaryAgenticNode with parallel processing (unified approach)
-        async def process_all():
-            semaphore = asyncio.Semaphore(effective_pool_size)
-            logger.info(f"Processing {len(items_to_process)} SQL items with concurrency={effective_pool_size}")
-            file_counts: Dict[str, int] = {}
-            for item in items_to_process:
-                file_key = str(item.get("filepath") or "unknown_file")
-                file_counts[file_key] = file_counts.get(file_key, 0) + 1
-            file_remaining = dict(file_counts)
-            file_started: set[str] = set()
-            file_lock = asyncio.Lock()
+        semaphore = asyncio.Semaphore(effective_pool_size)
+        logger.info(f"Processing {len(items_to_process)} SQL items with concurrency={effective_pool_size}")
+        file_counts: Dict[str, int] = {}
+        for item in items_to_process:
+            file_key = str(item.get("filepath") or "unknown_file")
+            file_counts[file_key] = file_counts.get(file_key, 0) + 1
+        file_remaining = dict(file_counts)
+        file_started: set[str] = set()
+        file_lock = asyncio.Lock()
 
-            async def emit_group_started_if_needed(file_key: str, filepath: Optional[str]) -> None:
-                async with file_lock:
-                    if file_key in file_started:
-                        return
-                    file_started.add(file_key)
-                event_helper.group_started(
-                    group_id=file_key,
-                    total_items=file_counts.get(file_key),
-                    filepath=filepath,
+        async def emit_group_started_if_needed(file_key: str, filepath: Optional[str]) -> None:
+            async with file_lock:
+                if file_key in file_started:
+                    return
+                file_started.add(file_key)
+            event_helper.group_started(
+                group_id=file_key,
+                total_items=file_counts.get(file_key),
+                filepath=filepath,
+            )
+
+        async def emit_group_completed_if_done(file_key: str, filepath: Optional[str]) -> None:
+            async with file_lock:
+                remaining = file_remaining.get(file_key)
+                if remaining is None:
+                    return
+                remaining -= 1
+                file_remaining[file_key] = remaining
+                if remaining != 0:
+                    return
+            event_helper.group_completed(
+                group_id=file_key,
+                total_items=file_counts.get(file_key),
+                filepath=filepath,
+            )
+
+        async def process_with_semaphore(item):
+            sql_id = gen_reference_sql_id(item.get("sql", ""))
+            filepath = item.get("filepath")
+            file_key = str(filepath or "unknown_file")
+            async with semaphore:
+                await emit_group_started_if_needed(file_key, filepath)
+                event_helper.item_started(
+                    item_id=sql_id,
+                    group_id=filepath,
+                    sql=item.get("sql"),
                 )
-
-            async def emit_group_completed_if_done(file_key: str, filepath: Optional[str]) -> None:
-                async with file_lock:
-                    remaining = file_remaining.get(file_key)
-                    if remaining is None:
-                        return
-                    remaining -= 1
-                    file_remaining[file_key] = remaining
-                    if remaining != 0:
-                        return
-                event_helper.group_completed(
-                    group_id=file_key,
-                    total_items=file_counts.get(file_key),
-                    filepath=filepath,
-                )
-
-            async def process_with_semaphore(item):
-                sql_id = gen_reference_sql_id(item.get("sql", ""))
-                filepath = item.get("filepath")
-                file_key = str(filepath or "unknown_file")
-                async with semaphore:
-                    await emit_group_started_if_needed(file_key, filepath)
-                    event_helper.item_started(
+                error = None
+                result = None
+                try:
+                    result = await process_sql_item(
+                        item,
+                        global_config,
+                        build_mode,
+                        subject_tree,
+                        event_helper=event_helper,
+                        sql_id=sql_id,
+                        extra_instructions=extra_instructions,
+                    )
+                except Exception as exc:
+                    error = exc
+                    event_helper.item_failed(
+                        item_id=sql_id,
+                        error=str(exc),
+                        group_id=filepath,
+                        exception_type=type(exc).__name__,
+                    )
+                if result:
+                    event_helper.item_completed(
                         item_id=sql_id,
                         group_id=filepath,
-                        sql=item.get("sql"),
+                        sql_summary_file=result,
                     )
-                    error = None
-                    result = None
-                    try:
-                        result = await process_sql_item(
-                            item,
-                            global_config,
-                            build_mode,
-                            subject_tree,
-                            event_helper=event_helper,
-                            sql_id=sql_id,
-                            extra_instructions=extra_instructions,
-                        )
-                    except Exception as exc:
-                        error = exc
-                        event_helper.item_failed(
-                            item_id=sql_id,
-                            error=str(exc),
-                            group_id=filepath,
-                            exception_type=type(exc).__name__,
-                        )
-                    if result:
-                        event_helper.item_completed(
-                            item_id=sql_id,
-                            group_id=filepath,
-                            sql_summary_file=result,
-                        )
-                    elif error is None:
-                        event_helper.item_failed(
-                            item_id=sql_id,
-                            error="Failed to generate SQL summary",
-                            group_id=filepath,
-                        )
-                    await emit_group_completed_if_done(file_key, filepath)
-                    return item, sql_id, result, error
+                elif error is None:
+                    event_helper.item_failed(
+                        item_id=sql_id,
+                        error="Failed to generate SQL summary",
+                        group_id=filepath,
+                    )
+                await emit_group_completed_if_done(file_key, filepath)
+                return item, sql_id, result, error
 
-            # Process all items in parallel
-            tasks = [asyncio.create_task(process_with_semaphore(item)) for item in items_to_process]
-            _errors = []
-            # Count successful results
-            success_count = 0
-            success_items = []
-            for task in asyncio.as_completed(tasks):
-                item, _sql_id, result, error = await task
-                sql = normalize_sql(item["sql"])
-                if error:
-                    logger.error(f"SQL processing failed with exception `{error}`. SQL: {sql};")
-                    _errors.append(f"SQL processing failed with exception `{str(error)}`. SQL: {sql};")
-                elif result:
-                    success_items.append(item)
-                    success_count += 1
+        # Process all items in parallel
+        tasks = [asyncio.create_task(process_with_semaphore(item)) for item in items_to_process]
+        _errors = []
+        # Count successful results
+        success_count = 0
+        success_items = []
+        for task in asyncio.as_completed(tasks):
+            item, _sql_id, result, error = await task
+            sql = normalize_sql(item["sql"])
+            if error:
+                logger.error(f"SQL processing failed with exception `{error}`. SQL: {sql};")
+                _errors.append(f"SQL processing failed with exception `{str(error)}`. SQL: {sql};")
+            elif result:
+                success_items.append(item)
+                success_count += 1
 
-            logger.info(f"Completed processing: {success_count}/{len(items_to_process)} successful")
-            return success_count, success_items, _errors
-
-        # Run the async function
-        with suppress_keyboard_input():
-            processed_count, process_items, errors = asyncio.run(process_all())
-        if errors:
-            process_errors.extend(errors)
+        logger.info(f"Completed processing: {success_count}/{len(items_to_process)} successful")
+        processed_count = success_count
+        process_items = success_items
+        if _errors:
+            process_errors.extend(_errors)
         logger.info(f"Processed {processed_count} reference SQL entries")
     else:
         logger.info("No new items to process in incremental mode")
@@ -386,3 +382,46 @@ def init_reference_sql(
         "validation_errors": "\n".join(validate_errors) if validate_errors else None,
         "process_errors": "\n".join(process_errors) if process_errors else None,
     }
+
+
+def init_reference_sql(
+    storage: ReferenceSqlRAG,
+    global_config: AgentConfig,
+    sql_dir: str,
+    validate_only: bool = False,
+    build_mode: str = "overwrite",
+    pool_size: int = 1,
+    subject_tree: Optional[list] = None,
+    emit: Optional[BatchEventEmitter] = None,
+    extra_instructions: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Sync wrapper: Initialize reference SQL from SQL files directory.
+
+    Args:
+        storage: ReferenceSqlRAG instance
+        sql_dir: The path to the SQL files directory
+        validate_only: If true, only validate SQL queries.
+        global_config: Global agent configuration for LLM model creation
+        build_mode: "overwrite" to replace all data, "incremental" to add new entries
+        pool_size: Number of threads for parallel processing
+        subject_tree: Optional predefined subject tree categories
+        emit: Optional callback to stream BatchEvent progress events
+        extra_instructions: Optional extra instructions for the LLM
+
+    Returns:
+        Dict containing initialization results and statistics
+    """
+    with suppress_keyboard_input():
+        return asyncio.run(
+            init_reference_sql_async(
+                storage,
+                global_config,
+                sql_dir,
+                validate_only,
+                build_mode,
+                pool_size,
+                subject_tree,
+                emit,
+                extra_instructions,
+            )
+        )

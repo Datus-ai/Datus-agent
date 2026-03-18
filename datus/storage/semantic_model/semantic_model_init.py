@@ -2,7 +2,6 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-import argparse
 import asyncio
 import os
 from typing import Callable, Optional
@@ -21,13 +20,13 @@ from datus.utils.terminal_utils import suppress_keyboard_input
 logger = get_logger(__name__)
 
 
-def init_success_story_semantic_model(
-    args: argparse.Namespace,
+async def init_success_story_semantic_model_async(
     agent_config: AgentConfig,
+    success_story: str,
     emit: Optional[Callable[[BatchEvent], None]] = None,
 ) -> tuple[bool, str]:
     """
-    Initialize ONLY semantic model from success story CSV using ALL SQL queries.
+    Async version: Initialize ONLY semantic model from success story CSV using ALL SQL queries.
 
     IMPORTANT: This function processes the ENTIRE success_story CSV in one go,
     NOT line-by-line. It uses execution_mode="workflow" (not plan mode).
@@ -36,11 +35,12 @@ def init_success_story_semantic_model(
     and generate semantic models for all tables found in those queries.
 
     Args:
-        args: Command line arguments
         agent_config: Agent configuration
+        success_story: Path to success story CSV file
+        emit: Optional callback to stream BatchEvent progress events
     """
     # Load and validate CSV file
-    csv_path = args.success_story
+    csv_path = success_story
     try:
         df = pd.read_csv(csv_path)
     except FileNotFoundError:
@@ -92,75 +92,86 @@ def init_success_story_semantic_model(
         context_message += f"Question: {question}\n"
         context_message += f"SQL:\n{sql}\n\n"
 
-    async def generate_semantic_models() -> tuple[bool, str]:
-        """Execute gen_semantic_model node with all SQL context."""
-        current_db_config = agent_config.current_db_config()
+    current_db_config = agent_config.current_db_config()
 
-        # Emit task started event
-        if emit:
-            emit(BatchEvent(biz_name="semantic_model_init", stage=BatchStage.TASK_STARTED))
+    # Emit task started event
+    if emit:
+        emit(BatchEvent(biz_name="semantic_model_init", stage=BatchStage.TASK_STARTED))
 
-        # Create semantic model generation node (workflow mode, NOT plan mode)
-        semantic_node = GenSemanticModelAgenticNode(
-            agent_config=agent_config,
-            execution_mode="workflow",  # CRITICAL: workflow mode only
-        )
+    # Create semantic model generation node (workflow mode, NOT plan mode)
+    semantic_node = GenSemanticModelAgenticNode(
+        agent_config=agent_config,
+        execution_mode="workflow",  # CRITICAL: workflow mode only
+    )
 
-        semantic_input = SemanticNodeInput(
-            user_message=context_message,
-            catalog=current_db_config.catalog,
-            database=current_db_config.database,
-            db_schema=current_db_config.schema,
-        )
+    semantic_input = SemanticNodeInput(
+        user_message=context_message,
+        catalog=current_db_config.catalog,
+        database=current_db_config.database,
+        db_schema=current_db_config.schema,
+    )
 
-        action_history_manager = ActionHistoryManager()
-        semantic_node.input = semantic_input
+    action_history_manager = ActionHistoryManager()
+    semantic_node.input = semantic_input
 
-        try:
-            generated_files = []
-            async for action in semantic_node.execute_stream(action_history_manager):
-                # Emit streaming messages
-                if emit and action.messages:
-                    emit(
-                        BatchEvent(
-                            biz_name="semantic_model_init",
-                            stage=BatchStage.ITEM_PROCESSING,
-                            payload={"messages": action.messages, "output": action.output},
-                        )
+    try:
+        generated_files = []
+        async for action in semantic_node.execute_stream(action_history_manager):
+            # Emit streaming messages
+            if emit and action.messages:
+                emit(
+                    BatchEvent(
+                        biz_name="semantic_model_init",
+                        stage=BatchStage.ITEM_PROCESSING,
+                        payload={"messages": action.messages, "output": action.output},
                     )
+                )
 
-                if action.status == ActionStatus.SUCCESS and action.output:
-                    if isinstance(action.output, dict):
-                        # Check for semantic_models field (from SemanticNodeResult)
-                        if "semantic_models" in action.output:
-                            models = action.output["semantic_models"]
-                            if isinstance(models, list):
-                                generated_files.extend(models)
-                            elif models:  # Single file as string
-                                generated_files.append(models)
+            if action.status == ActionStatus.SUCCESS and action.output:
+                if isinstance(action.output, dict):
+                    # Check for semantic_models field (from SemanticNodeResult)
+                    if "semantic_models" in action.output:
+                        models = action.output["semantic_models"]
+                        if isinstance(models, list):
+                            generated_files.extend(models)
+                        elif models:  # Single file as string
+                            generated_files.append(models)
 
-            if not generated_files:
-                error_msg = f"Failed to generate any semantic models from {len(all_sqls)} SQL queries in '{csv_path}'"
-                logger.error(error_msg)
-                if emit:
-                    emit(BatchEvent(biz_name="semantic_model_init", stage=BatchStage.TASK_FAILED, error=error_msg))
-                return False, error_msg
-
-            logger.info(f"Generated {len(generated_files)} semantic model files: {generated_files}")
-            if emit:
-                emit(BatchEvent(biz_name="semantic_model_init", stage=BatchStage.TASK_COMPLETED))
-            return True, ""
-
-        except Exception as e:
-            error_msg = f"Error generating semantic models from '{csv_path}': {e}"
-            logger.exception(error_msg)
+        if not generated_files:
+            error_msg = f"Failed to generate any semantic models from {len(all_sqls)} SQL queries in '{csv_path}'"
+            logger.error(error_msg)
             if emit:
                 emit(BatchEvent(biz_name="semantic_model_init", stage=BatchStage.TASK_FAILED, error=error_msg))
             return False, error_msg
 
+        logger.info(f"Generated {len(generated_files)} semantic model files: {generated_files}")
+        if emit:
+            emit(BatchEvent(biz_name="semantic_model_init", stage=BatchStage.TASK_COMPLETED))
+        return True, ""
+
+    except Exception as e:
+        error_msg = f"Error generating semantic models from '{csv_path}': {e}"
+        logger.exception(error_msg)
+        if emit:
+            emit(BatchEvent(biz_name="semantic_model_init", stage=BatchStage.TASK_FAILED, error=error_msg))
+        return False, error_msg
+
+
+def init_success_story_semantic_model(
+    agent_config: AgentConfig,
+    success_story: str,
+    emit: Optional[Callable[[BatchEvent], None]] = None,
+) -> tuple[bool, str]:
+    """
+    Sync wrapper: Initialize ONLY semantic model from success story CSV using ALL SQL queries.
+
+    Args:
+        agent_config: Agent configuration
+        success_story: Path to success story CSV file
+        emit: Optional callback to stream BatchEvent progress events
+    """
     with suppress_keyboard_input():
-        successful, error_message = asyncio.run(generate_semantic_models())
-    return successful, error_message
+        return asyncio.run(init_success_story_semantic_model_async(agent_config, success_story, emit))
 
 
 def init_semantic_yaml_semantic_model(

@@ -7,12 +7,16 @@ from typing import Optional
 from datus_db_core import ConnectionConfig
 from pydantic import Field
 
+from pydantic import ConfigDict, Field
+
+
 
 class FileConnectionConfig(ConnectionConfig):
     """Configuration for file-based databases (SQLite, DuckDB)."""
 
     db_path: str = Field(..., description="Path to the database file")
     read_only: bool = Field(default=False, description="Whether to open database in read-only mode")
+    model_config = ConfigDict(extra="forbid")
 
 
 class SQLiteConfig(FileConnectionConfig):

@@ -3,7 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 from collections import defaultdict
-from typing import Dict, Optional, Tuple, Union
+from typing import Callable, Dict, Optional, Tuple, Union
 
 from datus_db_core import BaseSqlConnector, ConnectionConfig, DatusDbException, connector_registry
 from sqlalchemy.engine.url import URL, make_url
@@ -336,11 +336,33 @@ def db_config_name(namespace: str, db_type: str, name: str = "") -> str:
 
 _INSTANCE = None
 
+# External factory for DBManager creation (used by SaaS backend for connection pooling)
+_factory: Optional[Callable[[Dict[str, Dict[str, DbConfig]]], DBManager]] = None
+
+
+def set_db_manager_factory(factory: Optional[Callable[[Dict[str, Dict[str, DbConfig]]], "DBManager"]] = None) -> None:
+    """Set an external factory for DBManager creation.
+
+    When set, ``db_manager_instance()`` delegates to this factory instead of
+    creating a new ``DBManager`` directly.  This allows a SaaS backend to inject
+    a pooled factory that manages connection lifecycle (reference counting,
+    eviction, close_all).
+
+    Pass ``None`` to reset to the default behaviour.
+
+    Args:
+        factory: Callable that accepts ``db_configs`` and returns a ``DBManager``.
+    """
+    global _factory
+    _factory = factory
+
 
 def db_manager_instance(
     db_configs: Optional[Dict[str, Dict[str, DbConfig]]] = None,
 ) -> DBManager:
     global _INSTANCE
+    if _factory is not None:
+        return _factory(db_configs or {})
     if _INSTANCE is None or db_configs is not None:
         _INSTANCE = _db_manager(db_configs)
     return _INSTANCE

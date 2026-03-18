@@ -266,3 +266,93 @@ class TestInitReferenceSqlIncrementalFiltering:
         )
 
         assert result["status"] == "success"
+
+
+# ---------------------------------------------------------------------------
+# init_reference_sql_async - importability and coroutine check
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.ci
+class TestInitReferenceSqlAsync:
+    """Tests for init_reference_sql_async importability and interface."""
+
+    def test_async_function_is_importable(self):
+        """init_reference_sql_async can be imported from the module."""
+        from datus.storage.reference_sql.reference_sql_init import init_reference_sql_async
+
+        assert init_reference_sql_async is not None
+
+    def test_async_function_is_coroutine(self):
+        """init_reference_sql_async is a coroutine function (async def)."""
+        import inspect
+
+        from datus.storage.reference_sql.reference_sql_init import init_reference_sql_async
+
+        assert inspect.iscoroutinefunction(init_reference_sql_async)
+
+    def test_async_function_signature(self):
+        """init_reference_sql_async has the expected parameter names."""
+        import inspect
+
+        from datus.storage.reference_sql.reference_sql_init import init_reference_sql_async
+
+        sig = inspect.signature(init_reference_sql_async)
+        param_names = list(sig.parameters.keys())
+        assert "storage" in param_names
+        assert "global_config" in param_names
+        assert "sql_dir" in param_names
+        assert "args" not in param_names
+
+    def test_async_optional_params_present(self):
+        """init_reference_sql_async exposes all optional params."""
+        import inspect
+
+        from datus.storage.reference_sql.reference_sql_init import init_reference_sql_async
+
+        sig = inspect.signature(init_reference_sql_async)
+        param_names = list(sig.parameters.keys())
+        for expected in ["validate_only", "build_mode", "pool_size", "subject_tree", "emit", "extra_instructions"]:
+            assert expected in param_names, f"Expected param '{expected}' missing from init_reference_sql_async"
+
+    @pytest.mark.asyncio
+    async def test_async_returns_dict_for_empty_sql_dir(self):
+        """Awaiting init_reference_sql_async with empty sql_dir returns a success dict."""
+        from datus.storage.reference_sql.reference_sql_init import init_reference_sql_async
+
+        mock_storage = MagicMock()
+        mock_storage.get_reference_sql_size.return_value = 0
+        mock_config = MagicMock()
+
+        result = await init_reference_sql_async(
+            storage=mock_storage,
+            global_config=mock_config,
+            sql_dir="",
+        )
+
+        assert isinstance(result, dict)
+        assert result["status"] == "success"
+        assert result["valid_entries"] == 0
+        assert result["processed_entries"] == 0
+
+    @pytest.mark.asyncio
+    async def test_async_validate_only_returns_dict(self, tmp_path):
+        """Awaiting init_reference_sql_async in validate_only mode returns a dict."""
+        from datus.storage.reference_sql.reference_sql_init import init_reference_sql_async
+
+        sql_file = tmp_path / "query.sql"
+        sql_file.write_text("SELECT id FROM orders;")
+
+        mock_storage = MagicMock()
+        mock_config = MagicMock()
+
+        result = await init_reference_sql_async(
+            storage=mock_storage,
+            global_config=mock_config,
+            sql_dir=str(sql_file),
+            validate_only=True,
+        )
+
+        assert isinstance(result, dict)
+        assert result["status"] == "success"
+        assert result["processed_entries"] == 0

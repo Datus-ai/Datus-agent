@@ -11,7 +11,7 @@ providing structured validation for chat interactions with streaming support.
 
 from typing import Optional
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, ConfigDict, Field
 
 from datus.schemas.base import BaseInput, BaseResult
 from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
@@ -42,8 +42,7 @@ class ChatNodeInput(BaseInput):
         default=False, description="Whether to auto-execute plan without user confirmation (for workflow/benchmark)"
     )
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class ChatNodeResult(BaseResult):
