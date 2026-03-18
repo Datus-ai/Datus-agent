@@ -1802,20 +1802,23 @@ class TestSqlFileStorageHelpers:
         assert "SELECT col_2" in preview
         assert "17 more lines" in preview
 
-    def test_read_existing_sql_file_not_found(self, real_agent_config, mock_llm_create):
+    def test_read_existing_sql_file_not_found(self, tmp_path, real_agent_config, mock_llm_create):
         from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 
         node = self._make_node(real_agent_config, mock_llm_create)
-        workspace_root = node._resolve_workspace_root()
+        workspace_root = str(tmp_path / "workspace")
         node.filesystem_func_tool = FilesystemFuncTool(root_path=workspace_root)
         result = node._read_existing_sql_file("nonexistent/file.sql")
         assert result is None
 
     def test_read_existing_sql_file_success(self, real_agent_config, mock_llm_create, tmp_path):
+    def test_read_existing_sql_file_success(self, tmp_path, real_agent_config, mock_llm_create):
         from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 
         node = self._make_node(real_agent_config, mock_llm_create)
         node.filesystem_func_tool = FilesystemFuncTool(root_path=str(tmp_path))
+        workspace_root = str(tmp_path / "workspace")
+        node.filesystem_func_tool = FilesystemFuncTool(root_path=workspace_root)
 
         # Write a file first using tmp_path to avoid polluting the project root
         node.filesystem_func_tool.write_file("sql/test/existing.sql", "SELECT old")
