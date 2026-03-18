@@ -294,9 +294,11 @@ class ExtKnowledgeRAG:
     """
 
     def __init__(self, agent_config: AgentConfig, sub_agent_name: Optional[str] = None):
-        from datus.storage.cache import get_storage_cache_instance
+        from datus.storage.cache import create_storage_with_scope
 
-        self.store = get_storage_cache_instance(agent_config).ext_knowledge_storage(sub_agent_name)
+        self.store = create_storage_with_scope(
+            ExtKnowledgeStore, agent_config, "ext_knowledge", "ext_knowledge", sub_agent_name
+        )
 
     def truncate(self) -> None:
         """Drop the ext_knowledge table and reset state."""

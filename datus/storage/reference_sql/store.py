@@ -176,9 +176,11 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
 
 class ReferenceSqlRAG:
     def __init__(self, agent_config: AgentConfig, sub_agent_name: Optional[str] = None):
-        from datus.storage.cache import get_storage_cache_instance
+        from datus.storage.cache import create_storage_with_scope
 
-        self.reference_sql_storage = get_storage_cache_instance(agent_config).reference_sql_storage(sub_agent_name)
+        self.reference_sql_storage = create_storage_with_scope(
+            ReferenceSqlStorage, agent_config, "reference_sql", "sqls", sub_agent_name
+        )
 
     def truncate(self) -> None:
         """Drop the reference_sql table and reset state."""

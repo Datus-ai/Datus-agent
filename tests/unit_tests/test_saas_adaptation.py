@@ -714,45 +714,39 @@ class TestAgentConfigSkipInitDirs:
 
 
 # ===========================================================================
-# Section 10.2: StorageCache — no global singleton
+# Section 10.2: StorageCache/StorageCacheHolder removed
 # ===========================================================================
 
 
-class TestStorageCacheNoSingleton:
-    """Tests verifying get_storage_cache_instance() no longer uses a global singleton."""
+class TestStorageCacheRemoved:
+    """Tests verifying StorageCache and StorageCacheHolder classes have been removed."""
 
-    def test_returns_new_instance_each_call(self):
-        """get_storage_cache_instance returns a distinct object on each call."""
-        from datus.storage.cache import StorageCache, get_storage_cache_instance
+    def test_no_storage_cache_class(self):
+        """The module no longer has a StorageCache class."""
+        import datus.storage.cache as cache_module
 
-        mock_config = MagicMock()
-        mock_config.rag_storage_path.return_value = "/tmp/test"
+        assert not hasattr(cache_module, "StorageCache")
 
-        cache1 = get_storage_cache_instance(mock_config)
-        cache2 = get_storage_cache_instance(mock_config)
+    def test_no_storage_cache_holder_class(self):
+        """The module no longer has a StorageCacheHolder class."""
+        import datus.storage.cache as cache_module
 
-        assert isinstance(cache1, StorageCache)
-        assert isinstance(cache2, StorageCache)
-        assert cache1 is not cache2
+        assert not hasattr(cache_module, "StorageCacheHolder")
 
-    def test_different_configs_get_different_caches(self):
-        """Different agent configs produce different StorageCache instances."""
-        from datus.storage.cache import get_storage_cache_instance
+    def test_no_get_storage_cache_instance_function(self):
+        """The module no longer has a get_storage_cache_instance function."""
+        import datus.storage.cache as cache_module
 
-        config_a = MagicMock()
-        config_a.rag_storage_path.return_value = "/tenant_a/data"
-        config_b = MagicMock()
-        config_b.rag_storage_path.return_value = "/tenant_b/data"
+        assert not hasattr(cache_module, "get_storage_cache_instance")
 
-        cache_a = get_storage_cache_instance(config_a)
-        cache_b = get_storage_cache_instance(config_b)
+    def test_create_storage_with_scope_exists(self):
+        """The module exposes the new create_storage_with_scope helper."""
+        from datus.storage.cache import create_storage_with_scope
 
-        assert cache_a is not cache_b
-        assert cache_a._agent_config is config_a
-        assert cache_b._agent_config is config_b
+        assert callable(create_storage_with_scope)
 
-    def test_clear_cache_works_without_singleton(self):
-        """clear_cache() works correctly after singleton removal."""
+    def test_clear_cache_works(self):
+        """clear_cache() works correctly."""
         from datus.storage.cache import clear_cache
 
         # Should not raise

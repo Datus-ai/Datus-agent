@@ -115,10 +115,11 @@ class SemanticModelRAG:
     """RAG interface for semantic model operations."""
 
     def __init__(self, agent_config: "AgentConfig", sub_agent_name: Optional[str] = None):
-        from datus.storage.cache import get_storage_cache_instance
+        from datus.storage.cache import create_storage_with_scope
 
-        cache = get_storage_cache_instance(agent_config)
-        self.storage: SemanticModelStorage = cache.semantic_storage(sub_agent_name)
+        self.storage: SemanticModelStorage = create_storage_with_scope(
+            SemanticModelStorage, agent_config, "semantic_model", "tables", sub_agent_name
+        )
 
     def truncate(self) -> None:
         """Drop the semantic model table and reset state."""

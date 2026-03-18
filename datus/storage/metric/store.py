@@ -269,10 +269,11 @@ class MetricRAG:
     """RAG interface for metric operations."""
 
     def __init__(self, agent_config: AgentConfig, sub_agent_name: Optional[str] = None):
-        from datus.storage.cache import get_storage_cache_instance
+        from datus.storage.cache import create_storage_with_scope
 
-        cache = get_storage_cache_instance(agent_config)
-        self.storage: MetricStorage = cache.metric_storage(sub_agent_name)
+        self.storage: MetricStorage = create_storage_with_scope(
+            MetricStorage, agent_config, "metric", "metrics", sub_agent_name
+        )
 
     def truncate(self) -> None:
         """Drop the metrics table and reset state."""
