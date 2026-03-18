@@ -308,7 +308,7 @@ class SemanticTools:
             if not self.adapter:
                 return FuncToolResult(
                     success=1,
-                    result=[],
+                    result=self.compressor.compress([]),
                 )
 
             logger.info("Storage empty, falling back to adapter")

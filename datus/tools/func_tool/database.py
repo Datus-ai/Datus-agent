@@ -688,6 +688,7 @@ class DBFuncTool:
 
             result_dict["metadata"] = metadata_rows
             if current_has_semantic:
+                result_dict["sample_data"] = self.compressor.compress([])
                 return FuncToolResult(success=1, result=result_dict)
 
             sample_rows: List[Dict[str, Any]] = []

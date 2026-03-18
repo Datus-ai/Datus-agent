@@ -664,6 +664,9 @@ class TestDBFuncTool:
         monkeypatch.setattr("datus.tools.func_tool.database.SchemaWithValueRAG", StubSchemaRAG)
         monkeypatch.setattr("datus.tools.func_tool.database.SemanticModelRAG", StubSemanticRAG)
 
+        class DummyModelConfig:
+            model = "gpt-4o"
+
         class DummyAgentConfig:
             def __init__(self):
                 self.agentic_nodes = {
@@ -675,6 +678,9 @@ class TestDBFuncTool:
 
             def sub_agent_config(self, name: str):
                 return self.agentic_nodes.get(name, {})
+
+            def active_model(self):
+                return DummyModelConfig()
 
         tool = DBFuncTool(mock_connector, agent_config=DummyAgentConfig(), sub_agent_name="sales")
 
@@ -815,7 +821,9 @@ class TestDBFuncToolIntegration:
         metadata = result.result["metadata"]
         samples = result.result["sample_data"]
         assert metadata[0]["table_name"] == "orders"
-        assert samples[0]["sample_rows"] == [{"id": 1, "total": 10}]
+        assert isinstance(samples, dict)
+        assert samples["original_rows"] == 1
+        assert "sample_rows" in samples["compressed_data"]
 
     def test_search_table_enriches_semantic_model(self, db_func_tool):
         """When semantic models exist, metadata rows should include enriched context."""
@@ -840,7 +848,9 @@ class TestDBFuncToolIntegration:
         assert metadata[0]["description"] == "Orders summary"
         assert metadata[0]["dimensions"] == ["order_id"]
         assert metadata[0]["measures"] == ["total_amount"]
-        assert result.result["sample_data"] == []
+        # sample_data is a compressed empty dict (semantic early-return fires before sample population)
+        assert isinstance(result.result["sample_data"], dict)
+        assert result.result["sample_data"]["original_rows"] == 0
         db_func_tool._get_semantic_model.assert_called_once()
 
     def test_tool_transformation_integration(self, db_func_tool):

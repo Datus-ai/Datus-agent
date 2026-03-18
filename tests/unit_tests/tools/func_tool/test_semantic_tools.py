@@ -421,13 +421,15 @@ class TestListMetrics:
         assert result.result["original_rows"] == 1
         assert "orders" in result.result["compressed_data"]
 
-    def test_empty_storage_no_adapter_returns_empty(self, semantic_tools_ext):
+    def test_empty_storage_no_adapter_returns_compressed_empty(self, semantic_tools_ext):
         semantic_tools_ext.metric_rag.search_all_metrics.return_value = []
 
         result = semantic_tools_ext.list_metrics()
 
         assert result.success == 1
-        assert result.result == []
+        assert isinstance(result.result, dict)
+        assert result.result["original_rows"] == 0
+        assert result.result["is_compressed"] is False
 
     def test_path_filter_applied(self, semantic_tools_ext):
         semantic_tools_ext.metric_rag.search_all_metrics.return_value = [
