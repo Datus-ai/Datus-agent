@@ -63,7 +63,12 @@ def reset_global_singletons():
 # ---------------------------------------------------------------------------
 
 CALIFORNIA_SCHOOLS_DB = os.path.join(
-    os.path.dirname(__file__), "..", "..", "sample_data", "california_schools", "california_schools.sqlite"
+    os.path.dirname(__file__),
+    "..",
+    "..",
+    "sample_data",
+    "california_schools",
+    "california_schools.sqlite",
 )
 
 
@@ -116,6 +121,9 @@ def real_agent_config(tmp_path, reset_global_singletons):
                     }
                 ],
             },
+        },
+        "storage": {
+            "workspace_root": str(tmp_path / "workspace"),
         },
         "agentic_nodes": {
             "chat": {
