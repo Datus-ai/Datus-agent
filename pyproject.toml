@@ -139,6 +139,7 @@ select = [
     "B",    # flake8-bugbear
     "I",    # isort
     "C90",  # mccabe complexity
+    "T20",  # flake8-print (enforce "no print()" guardrail)
 ]
 ignore = [
     "E203",  # whitespace before ':'
@@ -152,6 +153,7 @@ ignore = [
     "B007",  # unused loop control variable
     "B019",  # cached instance method
     "B024",  # abstract base class without abstract method
+    "T201",  # print found (63 existing violations, clean up incrementally)
 ]
 
 [tool.ruff.lint.mccabe]

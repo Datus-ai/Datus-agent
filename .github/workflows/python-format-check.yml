@@ -1,10 +1,6 @@
 name: "Python Format Check"
 on:
   workflow_call:
-    outputs:
-      build-artifact:
-        description: "Built artifact path"
-        value: ${{ jobs.build.outputs.build-artifact }}
 
 jobs:
   format-check:
@@ -26,7 +22,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install ruff
-        run: pip install ruff>=0.15.0
+        run: pip install "ruff==0.15.6"
 
       - name: Check formatting with ruff
         run: ruff format --check datus/ tests/
