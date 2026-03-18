@@ -4,12 +4,14 @@
 
 **内置 Subagent**  是集成在 Datus Agent 系统中的专用 AI 助手。每个subagent专注于数据工程自动化的特定方面——分析 SQL、生成语义模型、将查询转换为可复用指标——共同构成从原始 SQL 到具备知识感知的数据产品的闭环工作流。
 
-本文档涵盖四个核心subagent：
+本文档涵盖六个核心subagent：
 
 1. **[gen_sql_summary](#gen_sql_summary)** — 总结和分类 SQL 查询
 2. **[gen_semantic_model](#gen_semantic_model)** — 生成 MetricFlow 语义模型
 3. **[gen_metrics](#gen_metrics)** — 生成 MetricFlow 指标定义
 4. **[gen_ext_knowledge](#gen_ext_knowledge)** — 生成业务概念定义
+5. **[explore](#explore)** — 只读数据探索和上下文收集
+6. **[gen_sql](#gen_sql)** — 具备深度专业知识的专用 SQL 生成
 
 ## 配置
 
@@ -31,6 +33,14 @@ agent:
       max_turns: 30     # 可选：默认为 30
 
     gen_ext_knowledge:
+      model: claude     # 可选：默认使用已配置的模型
+      max_turns: 30     # 可选：默认为 30
+
+    explore:
+      model: haiku      # 推荐：较小模型适合工具调用任务
+      max_turns: 15     # 可选：默认为 15
+
+    gen_sql:
       model: claude     # 可选：默认使用已配置的模型
       max_turns: 30     # 可选：默认为 30
 ```
@@ -688,6 +698,130 @@ subject_path: education/schools/data_integration
 
 ---
 
+## explore
+
+### 概览
+
+explore subagent 是一个轻量级只读助手，专为快速上下文收集设计。它帮助收集 schema 信息、数据采样和知识库上下文，为下游 SQL 生成提供支持——无论是聊天助手还是 gen_sql subagent。
+
+### 关键特性
+
+- **严格只读**：不会修改数据、文件或数据库记录。仅允许 SELECT 查询，且始终带 LIMIT。
+- **快速探索**：限制 15 轮对话，快速完成上下文收集。
+- **三方向探索**：
+  - **Schema+Sample**：发现表、列、类型、约束和采样数据
+  - **Knowledge**：搜索指标、参考 SQL、业务规则和领域知识
+  - **File**：浏览工作空间 SQL 文件和文档
+
+### 配置
+
+```yaml
+agent:
+  agentic_nodes:
+    explore:
+      model: haiku           # 推荐：使用较小模型（haiku、gpt-4o-mini）
+      max_turns: 15           # 可选：默认为 15
+```
+
+> **提示**：explore subagent 以工具调用为主，而非复杂推理。推荐使用较小、更快的模型（如 `haiku`、`gpt-4o-mini`），可降低成本并提升速度，同时不影响质量。
+
+### 可用工具
+
+| 工具类别 | 工具 | 用途 |
+|---------|------|------|
+| 数据库 | `list_databases`、`list_schemas`、`list_tables`、`search_table`、`describe_table`、`get_table_ddl`、`read_query` | Schema 发现和数据采样（只读） |
+| 上下文搜索 | `search_metrics`、`search_reference_sql`、`search_knowledge`、`search_semantic_objects`、`list_subject_tree`、`get_metrics`、`get_reference_sql`、`get_knowledge` | 知识库检索 |
+| 文件系统 | `read_file`、`read_multiple_files`、`list_directory`、`directory_tree`、`search_files` | 只读文件浏览 |
+| 日期解析 | `get_current_date`、`parse_temporal_expressions` | 日期上下文 |
+
+### 输出格式
+
+explore subagent 返回简洁的结构化摘要，为其他 agent 消费而优化：
+
+- **Tables**：相关表及关键列、类型和备注
+- **Joins**：表之间的联接路径（每个关系一行）
+- **Data patterns**：非显而易见的数据模式（分隔符、编码、NULL 占比）
+- **Context**：找到的相关指标、参考 SQL 和业务规则
+- **Recommendation**：使用哪些表、如何联接及关键注意事项
+
+### 使用方式
+
+explore subagent 通常由聊天助手通过 `task(type="explore")` 自动调用，也可手动启动：
+
+```bash
+/explore Discover tables related to customer revenue and find relevant metrics
+```
+
+---
+
+## gen_sql
+
+### 概览
+
+gen_sql subagent 是一个专用 SQL 专家，生成经过优化和验证的 SQL 查询。它处理需要多步推理、复杂联接或领域特定逻辑的复杂 SQL 生成任务。
+
+### 关键特性
+
+- **深度 SQL 专业知识**：专注于编写复杂的生产级 SQL
+- **自动验证**：返回结果前验证 SQL 可执行性
+- **基于文件的输出**：对于复杂查询（50+ 行），将 SQL 输出到文件并提供预览
+- **修改支持**：修改现有查询时返回 unified diff 格式
+
+### 配置
+
+```yaml
+agent:
+  agentic_nodes:
+    gen_sql:
+      model: claude           # 可选：默认使用已配置的模型
+      max_turns: 30           # 可选：默认为 30
+```
+
+### 工作原理
+
+```mermaid
+graph LR
+    A[用户问题 + 上下文] --> B[分析需求]
+    B --> C[发现 Schema]
+    C --> D[搜索知识库]
+    D --> E[生成 SQL]
+    E --> F[验证可执行性]
+    F --> G[返回结果]
+```
+
+### 输出格式
+
+gen_sql subagent 以两种格式之一返回结果：
+
+**内联 SQL**（适用于较短查询）：
+```json
+{
+  "sql": "SELECT region, SUM(revenue) FROM sales GROUP BY region",
+  "response": "查询解释...",
+  "tokens_used": 1234
+}
+```
+
+**基于文件的 SQL**（适用于 50+ 行的复杂查询）：
+```json
+{
+  "sql_file_path": "/path/to/generated_query.sql",
+  "sql_preview": "查询的前几行...",
+  "response": "查询解释...",
+  "tokens_used": 5678
+}
+```
+
+### 使用方式
+
+gen_sql subagent 通常由聊天助手通过 `task(type="gen_sql")` 自动调用来处理复杂查询，也可手动启动：
+
+```bash
+/gen_sql Generate a query to calculate customer lifetime value with cohort analysis
+```
+
+---
+
 ## 总结
 
 | subagent | 用途 | 输出 | 存储位置 | 关键特性                      |
@@ -696,6 +830,8 @@ subject_path: education/schools/data_integration
 | `gen_semantic_model` | 从表生成语义模型 | YAML（语义模型） | `/data/semantic_models` | DDL → MetricFlow 模型、内置验证  |
 | `gen_metrics` | 从 SQL 生成指标 | YAML（指标） | `/data/semantic_models` | SQL → MetricFlow 指标、主题树支持 |
 | `gen_ext_knowledge` | 生成业务概念 | YAML（外部知识） | `/data/ext_knowledge` | 问题&SQL → 知识、主题树支持        |
+| `explore` | 只读数据探索 | 结构化上下文 | N/A | 严格只读、快速（15 轮）、三方向探索 |
+| `gen_sql` | 生成优化 SQL | SQL 查询 / SQL 文件 | N/A | 深度 SQL 专业知识、自动验证、基于文件的输出 |
 
 **所有 subagent 的内置特性：**
 - 最小化配置（仅 `model` 和 `max_turns` 可选）
@@ -705,5 +841,5 @@ subject_path: education/schools/data_integration
 - 知识库集成用于语义搜索
 - 自动工作空间管理
 
-这些subagent共同自动化了 **数据工程知识管道** ——从 **查询理解 → 模型定义 → 指标生成 → 业务知识捕获 → 可搜索的知识库**。
+这些subagent共同自动化了 **数据工程知识管道** ——从 **数据探索 → 查询生成 → 模型定义 → 指标生成 → 业务知识捕获 → 可搜索的知识库**。
 

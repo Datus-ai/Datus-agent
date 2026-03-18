@@ -133,7 +133,7 @@ class SubAgentTaskTool:
                     "description": "A short one-line summary of the task goal (shown in compact display)",
                 },
             },
-            "required": ["type", "prompt"],
+            "required": ["type", "prompt", "description"],
         }
 
         async def _invoke(_tool_ctx, args_str) -> dict:
@@ -586,7 +586,9 @@ class SubAgentTaskTool:
         available = self._get_available_types()
 
         lines = [
-            "Delegate a specialized task to a subagent for better quality results.",
+            "Delegate a complex task to a specialized subagent. "
+            "Only use this for questions that require deep exploration or multi-step SQL reasoning. "
+            "For simple/direct questions, use your own tools (list_tables, describe_table, read_query, etc.) instead.",
             "",
             "Available types:",
         ]
@@ -633,11 +635,12 @@ class SubAgentTaskTool:
             [
                 "",
                 "Guidelines:",
-                '- For comprehensive exploration, call multiple task(type="explore") in PARALLEL, '
-                "each with a direction-specific prompt (schema+sample, knowledge, file)",
+                "- For simple questions, handle directly with your own tools — no need to launch subagents",
+                '- For complex questions requiring deep exploration, call multiple task(type="explore") '
+                "in PARALLEL, each with a direction-specific prompt (schema+sample, knowledge, file)",
                 '- For quick single-direction lookups, call one task(type="explore") with a focused prompt',
-                '- Use task(type="gen_sql") for SQL generation requiring multi-step reasoning',
-                "- Use direct db tools (list_tables, describe_table) for quick one-off schema checks",
+                '- Use task(type="gen_sql") for SQL generation requiring multi-step reasoning, '
+                "complex joins, or domain-specific logic",
                 "- In plan mode, use task() for each SQL sub-step",
                 "- Always provide a short 'description' summarizing the task goal",
             ]

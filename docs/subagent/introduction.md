@@ -111,7 +111,41 @@ SQL: SELECT `Free Meal Count (K-12)` / `Enrollment (K-12)` FROM frpm WHERE `Coun
 
 ---
 
-### 5. Custom Subagents
+### 5. `explore`
+
+**Purpose**: Read-only data exploration subagent for gathering context before SQL generation.
+
+**Use Case**: Quickly collect schema information, data samples, and knowledge base context to support downstream SQL generation tasks.
+
+**Key Features**:
+
+- Strictly read-only — never modifies data or files
+- Fast exploration with a 15-turn limit
+- Three exploration directions: Schema+Sample, Knowledge, and File
+- Optimized for tool-calling with smaller, cost-effective models
+
+**See Also**: [Explore Subagent Details](./builtin_subagents.md#explore)
+
+---
+
+### 6. `gen_sql`
+
+**Purpose**: Generate optimized SQL queries through a specialized SQL expert subagent.
+
+**Use Case**: Delegate complex SQL generation tasks that require multi-step reasoning, complex joins, or domain-specific logic.
+
+**Key Features**:
+
+- Deep SQL expertise with query validation before returning results
+- Supports inline SQL and file-based SQL for complex queries (50+ lines)
+- Modification support with unified diff format
+- Automatic executability validation
+
+**See Also**: [Gen SQL Subagent Details](./builtin_subagents.md#gen_sql)
+
+---
+
+### 7. Custom Subagents
 
 You can define custom subagents in `agent.yml` for organization-specific workflows.
 
@@ -169,6 +203,58 @@ http://localhost:8501/?subagent=gen_semantic_model
 http://localhost:8501/?subagent=gen_sql_summary
 ```
 
+### Method 3: Subagent as Tool (Automatic Delegation)
+
+In addition to manually launching subagents, the default chat assistant can **automatically delegate** complex tasks to specialized subagents via the `task()` tool. This happens transparently — users simply ask questions normally, and the chat agent decides whether to handle them directly or delegate.
+
+```mermaid
+graph LR
+    A[User Question] --> B[Chat Agent]
+    B --> C{Complex?}
+    C -->|No| D[Direct Response]
+    C -->|Yes| E[Delegate to Subagent]
+    E --> F[explore / gen_sql / ...]
+    F --> G[Result returned to Chat Agent]
+    G --> D
+```
+
+**Key Characteristics**:
+
+- **Transparent to users**: No special commands needed — the chat agent routes automatically
+- **Intelligent routing**: Chooses the right subagent based on task complexity
+- **All subagent types supported**: Any registered subagent can be delegated to
+
+**Available Task Types**:
+
+| Type | Purpose |
+|------|---------|
+| `explore` | Gather context (schema, data samples, knowledge) before SQL generation |
+| `gen_sql` | Generate optimized SQL queries with multi-step reasoning |
+| `gen_semantic_model` | Generate MetricFlow semantic model YAML files |
+| `gen_metrics` | Convert SQL queries into MetricFlow metric definitions |
+| `gen_sql_summary` | Analyze and summarize SQL queries for knowledge reuse |
+| `gen_ext_knowledge` | Extract business knowledge from question-SQL pairs |
+| Custom types | Any custom subagent defined in `agent.yml` |
+
+**When does the chat agent delegate?**
+
+| Scenario | Behavior |
+|----------|----------|
+| Simple questions (SELECT, COUNT, GROUP BY on known tables) | Handles directly |
+| Need to discover tables/columns or understand domain terms | Delegates to `explore` |
+| Complex SQL with multi-table joins or domain-specific logic | Delegates to `gen_sql` |
+
+**Example Interaction**:
+
+```
+User: What's the average revenue per customer by region last quarter?
+
+# Chat agent internally:
+# 1. Calls task(type="explore") to discover relevant tables and metrics
+# 2. Calls task(type="gen_sql") to generate the complex SQL
+# 3. Returns the final SQL with explanation to the user
+```
+
 ## Subagent vs Default Chat
 
 | Aspect | Default Chat | Subagent |
@@ -179,6 +265,8 @@ http://localhost:8501/?subagent=gen_sql_summary
 | **Prompts** | General SQL assistance | Task-optimized instructions |
 | **Output** | SQL queries + explanations | Structured artifacts (YAML, files) |
 | **Validation** | Optional | Built-in (e.g., MetricFlow validation) |
+
+> **Note**: With Method 3 (Automatic Delegation), the boundary between "default chat" and "subagent" becomes fluid. The chat agent acts as an orchestration layer that transparently uses subagents when needed, so users get the benefits of specialized subagents without manually switching modes.
 
 **When to Use Default Chat**:
 
@@ -276,3 +364,4 @@ Subagents provide **specialized, workflow-optimized AI assistants** for specific
 - **Built-in Validation**: Automatic checks and validation (e.g., MetricFlow)
 - **Knowledge Base Integration**: Sync generated artifacts for reuse
 - **Flexible Configuration**: Customize tools, prompts, and behavior
+- **Automatic Delegation**: Chat agent can transparently delegate to subagents via the `task()` tool

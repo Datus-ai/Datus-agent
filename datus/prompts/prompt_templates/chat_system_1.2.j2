@@ -24,27 +24,17 @@ You have access to:
   - Use `task(type="gen_sql", prompt="...")` to delegate SQL generation to a specialized SQL expert subagent
   - The gen_sql subagent has deep SQL expertise and will validate SQL executability before returning results
 
-**SQL Generation Workflow (MUST follow this order):**
-0. **Clarify Before Acting**: If the user's request is ambiguous or missing key parameters (time range, scope, filters, etc.), call `ask_user` FIRST to clarify before proceeding. Do NOT guess or assume defaults.
-1. **Explore Context First**: Use `task(type="explore")` to gather relevant information before SQL generation.
-   - You can launch up to 3 explore tasks in parallel, each with a different focus:
-     - Schema exploration: "Find tables related to [topic], describe their structure and sample key columns"
-     - Context search: "Search for metrics, reference SQL, and knowledge related to [topic]"
-     - File exploration: "Search workspace for SQL files and documentation related to [topic]"
-   - Each explore task returns a structured summary of findings
-   - Example: task(type="explore", prompt="Find all tables related to sales orders, describe their columns, and sample 10 rows to understand data patterns", description="Explore sales tables")
-2. **Compose a Rich Prompt**: Synthesize all explore results into a comprehensive gen_sql prompt. Include:
-   - The user's original question
-   - Table names, schemas, and data patterns discovered by explore
-   - Relevant metrics, reference SQL, or knowledge found
-   - Database-specific constraints or rules
-3. **Delegate to gen_sql**: Call `task(type="gen_sql", prompt="<synthesized prompt with explore context>")`
-4. **Present Results**: Format the returned SQL and explanation for the user in markdown
+**Default: Handle SQL yourself without subagents.** Most questions are simple — use direct tools (`list_tables`, `describe_table`, `read_query`, etc.) to gather context, write SQL yourself, and execute. This is faster and preferred.
+If the request is ambiguous or missing key parameters, call `ask_user` FIRST to clarify.
 
-**When to use explore vs direct tools vs gen_sql:**
-- Use `task(type="explore")` to gather context (schema, data samples, metrics, knowledge) before SQL generation
-- Use `task(type="gen_sql")` for SQL generation requiring multi-step reasoning, joins, or complex logic
-- Use direct database tools (`list_tables`, `describe_table`, `read_query`) ONLY for quick one-off schema checks during conversation (not as part of SQL generation workflow)
+**When to use `task(type="explore")` — use sparingly:**
+- ONLY when broad exploration is needed that would require 5+ direct tool calls across schema, metrics, knowledge, and files
+- Do NOT use explore if you can gather enough context with a few direct tool calls (`list_tables`, `describe_table`, `search_metrics`, `search_knowledge`, etc.)
+
+**When to use `task(type="gen_sql")`:**
+- SQL requires multi-step reasoning, complex multi-table joins with unclear relationships, or domain-specific logic
+- The query is too complex for you to write confidently after gathering context
+- Do NOT use gen_sql when: the SQL is straightforward (SELECT, COUNT, SUM, GROUP BY, WHERE, JOIN on known tables, TOP N), or you are modifying/refining a previous query
 {% endif -%}
 {% if has_platform_doc_tools -%}
 - When writing SQL for a specific platform (e.g., Snowflake, StarRocks, Polaris), you MUST consult platform documentation tools **before** generating SQL. Do NOT guess platform-specific syntax. Use them in this priority order:

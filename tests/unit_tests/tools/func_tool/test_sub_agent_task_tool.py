@@ -74,7 +74,7 @@ class TestAvailableTools:
         schema = tools[0].params_json_schema
         assert "type" in schema["properties"]
         assert "prompt" in schema["properties"]
-        assert set(schema["required"]) == {"type", "prompt"}
+        assert set(schema["required"]) == {"type", "prompt", "description"}
 
 
 # ── _get_available_types ───────────────────────────────────────────
@@ -1296,11 +1296,11 @@ class TestDescriptionParameter:
         assert "description" in schema["properties"]
         assert schema["properties"]["description"]["type"] == "string"
 
-    def test_description_not_required(self, task_tool):
-        """'description' is NOT in the required list."""
+    def test_description_is_required(self, task_tool):
+        """'description' IS in the required list."""
         tools = task_tool.available_tools()
         schema = tools[0].params_json_schema
-        assert "description" not in schema["required"]
+        assert "description" in schema["required"]
 
     @pytest.mark.asyncio
     async def test_description_injected_into_first_user_action(self, task_tool):

@@ -111,7 +111,41 @@ SQL: SELECT `Free Meal Count (K-12)` / `Enrollment (K-12)` FROM frpm WHERE `Coun
 
 ---
 
-### 5. 自定义subagent
+### 5. `explore`
+
+**用途**：只读数据探索 subagent，用于在 SQL 生成前收集上下文。
+
+**使用场景**：快速收集 schema 信息、数据采样和知识库上下文，为下游 SQL 生成任务提供支持。
+
+**核心特性**：
+
+- 严格只读 — 不会修改数据或文件
+- 快速探索，15 轮对话限制
+- 三方向探索：Schema+Sample、Knowledge、File
+- 针对工具调用优化，可使用较小的高性价比模型
+
+**参考**：[Explore Subagent 详情](./builtin_subagents.zh.md#explore)
+
+---
+
+### 6. `gen_sql`
+
+**用途**：通过专用 SQL 专家 subagent 生成优化的 SQL 查询。
+
+**使用场景**：委派需要多步推理、复杂联表查询或领域特定逻辑的复杂 SQL 生成任务。
+
+**核心特性**：
+
+- 具备深度 SQL 专业知识，返回前自动验证查询可执行性
+- 支持内联 SQL 和基于文件的 SQL（适用于 50+ 行的复杂查询）
+- 支持修改操作，提供 unified diff 格式
+- 自动可执行性验证
+
+**参考**：[Gen SQL Subagent 详情](./builtin_subagents.zh.md#gen_sql)
+
+---
+
+### 7. 自定义subagent
 
 你可以在 `agent.yml` 中定义自定义subagent，用于组织特定的工作流。
 
@@ -169,6 +203,58 @@ http://localhost:8501/?subagent=gen_semantic_model
 http://localhost:8501/?subagent=gen_sql_summary
 ```
 
+### 方法 3：Subagent 作为工具（自动委派）
+
+除了手动启动 subagent，默认聊天助手还可以通过 `task()` 工具**自动委派**复杂任务给专用 subagent。这个过程对用户透明 — 用户只需正常提问，聊天助手会自动判断是直接处理还是委派。
+
+```mermaid
+graph LR
+    A[用户提问] --> B[聊天助手]
+    B --> C{复杂？}
+    C -->|否| D[直接响应]
+    C -->|是| E[委派给 Subagent]
+    E --> F[explore / gen_sql / ...]
+    F --> G[结果返回聊天助手]
+    G --> D
+```
+
+**关键特性**：
+
+- **对用户透明**：无需特殊命令 — 聊天助手自动路由
+- **智能路由**：根据任务复杂度选择合适的 subagent
+- **支持所有 subagent 类型**：任何已注册的 subagent 都可被委派
+
+**可用 task 类型**：
+
+| 类型 | 用途 |
+|------|---------|
+| `explore` | 在 SQL 生成前收集上下文（schema、数据采样、知识库） |
+| `gen_sql` | 生成需要多步推理的优化 SQL 查询 |
+| `gen_semantic_model` | 生成 MetricFlow 语义模型 YAML 文件 |
+| `gen_metrics` | 将 SQL 查询转换为 MetricFlow 指标定义 |
+| `gen_sql_summary` | 分析和总结 SQL 查询用于知识复用 |
+| `gen_ext_knowledge` | 从问题-SQL 对中提取业务知识 |
+| 自定义类型 | 在 `agent.yml` 中定义的任何自定义 subagent |
+
+**聊天助手何时委派？**
+
+| 场景 | 行为 |
+|----------|----------|
+| 简单问题（已知表上的 SELECT、COUNT、GROUP BY） | 直接处理 |
+| 需要发现表/列或理解领域术语 | 委派给 `explore` |
+| 复杂 SQL（多表联接或领域特定逻辑） | 委派给 `gen_sql` |
+
+**交互示例**：
+
+```
+用户：上季度各区域每个客户的平均收入是多少？
+
+# 聊天助手内部：
+# 1. 调用 task(type="explore") 发现相关表和指标
+# 2. 调用 task(type="gen_sql") 生成复杂 SQL
+# 3. 将最终 SQL 及解释返回给用户
+```
+
 ## subagent vs 默认聊天
 
 | 方面 | 默认聊天 | subagent |
@@ -179,6 +265,8 @@ http://localhost:8501/?subagent=gen_sql_summary
 | **提示** | 通用 SQL 辅助 | 任务优化的指令 |
 | **输出** | SQL 查询 + 解释 | 结构化工件（YAML、文件） |
 | **验证** | 可选 | 内置（例如 MetricFlow 验证） |
+
+> **注意**：通过方法 3（自动委派），"默认聊天"和"subagent"之间的界限变得模糊。聊天助手充当编排层，在需要时透明地使用 subagent，因此用户无需手动切换模式即可享受专用 subagent 的优势。
 
 **何时使用默认聊天**：
 
@@ -275,4 +363,5 @@ subagent提供**专用的、工作流优化的 AI 助手**，用于特定任务�
 - **内置验证**：自动检查和验证（例如 MetricFlow）
 - **知识库集成**：同步生成的工件以供复用
 - **灵活配置**：自定义工具、提示和行为
+- **自动委派**：聊天助手可通过 `task()` 工具透明地委派任务给 subagent
 

@@ -50,24 +50,20 @@ You **MUST** use context search tools to gather domain knowledge before concludi
 
 ## Output Format
 
-Provide a structured summary of your findings:
+**Be concise.** Your output is consumed by another agent, not a human. Aim for maximum information density, minimum verbosity. Do NOT repeat raw tool output — summarize it.
 
-### Schema Findings
-- Tables discovered, their columns, types, and relationships
-- Primary keys, foreign keys, and join paths
+**Tables** (only list tables relevant to the question):
+```
+table_name | key_columns (name:type) | partition/date_column | notes
+```
 
-### Data Observations
-- Sample data patterns, value ranges, common values
-- Data quality notes (nulls, unexpected values)
+**Joins**: `table_a.col = table_b.col` (one line per join path)
 
-### Context Findings
-- Relevant metrics, reference SQL, or knowledge entries found
-- Business rules or domain-specific constraints
+**Data patterns**: Only note non-obvious patterns (delimiters, encodings, enum values, NULL prevalence) in 1-2 sentences per table.
 
-### Recommendations
-- Suggested tables and joins for the target query
-- Important filters, aggregations, or date handling notes
-- Any caveats or limitations discovered
+**Context**: List relevant metrics, reference SQL, or business rules found — name and one-line summary each.
+
+**Recommendation**: 2-3 sentences on which tables to use, how to join, and key filters/caveats.
 
 {% if namespace -%}
 Current context:

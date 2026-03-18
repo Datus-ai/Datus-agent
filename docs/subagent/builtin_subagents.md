@@ -4,12 +4,14 @@
 
 The **Builtin Subagent** are specialized AI assistants integrated within the Datus Agent system. Each subagent focuses on a specific aspect of data engineering automation — analyzing SQL, generating semantic models, and converting queries into reusable metrics — together forming a closed-loop workflow from raw SQL to knowledge-aware data products.
 
-This document covers four core subagents:
+This document covers six core subagents:
 
 1. **[gen_sql_summary](#gen_sql_summary)** — Summarizes and classifies SQL queries
 2. **[gen_semantic_model](#gen_semantic_model)** — Generates MetricFlow semantic models
 3. **[gen_metrics](#gen_metrics)** — Generates MetricFlow metric definitions
 4. **[gen_ext_knowledge](#gen_ext_knowledge)** — Generates business concept definitions
+5. **[explore](#explore)** — Read-only data exploration and context gathering
+6. **[gen_sql](#gen_sql)** — Specialized SQL generation with deep expertise
 
 ## Configuration
 
@@ -31,6 +33,14 @@ agent:
       max_turns: 30     # Optional: defaults to 30
 
     gen_ext_knowledge:
+      model: claude     # Optional: defaults to configured model
+      max_turns: 30     # Optional: defaults to 30
+
+    explore:
+      model: haiku      # Recommended: smaller model for tool-calling tasks
+      max_turns: 15     # Optional: defaults to 15
+
+    gen_sql:
       model: claude     # Optional: defaults to configured model
       max_turns: 30     # Optional: defaults to 30
 ```
@@ -690,6 +700,130 @@ subject_path: education/schools/data_integration
 
 ---
 
+## explore
+
+### Overview
+
+The explore subagent is a lightweight, read-only assistant designed for fast context gathering. It helps collect schema information, data samples, and knowledge base context to support downstream SQL generation — either by the chat agent or the gen_sql subagent.
+
+### Key Features
+
+- **Strictly read-only**: Never modifies data, files, or database records. Only SELECT queries are allowed, always with LIMIT.
+- **Fast exploration**: Limited to 15 conversation turns for quick context gathering.
+- **Three exploration directions**:
+  - **Schema+Sample**: Discover tables, columns, types, constraints, and sample data
+  - **Knowledge**: Search metrics, reference SQL, business rules, and domain knowledge
+  - **File**: Browse workspace SQL files and documentation
+
+### Configuration
+
+```yaml
+agent:
+  agentic_nodes:
+    explore:
+      model: haiku           # Recommended: use a smaller model (haiku, gpt-4o-mini)
+      max_turns: 15           # Optional: defaults to 15
+```
+
+> **Tip**: The explore subagent is optimized for tool-calling rather than reasoning. Using a smaller, faster model (e.g., `haiku`, `gpt-4o-mini`) is recommended to reduce cost and improve speed without sacrificing quality.
+
+### Available Tools
+
+| Tool Category | Tools | Purpose |
+|---------------|-------|---------|
+| Database | `list_databases`, `list_schemas`, `list_tables`, `search_table`, `describe_table`, `get_table_ddl`, `read_query` | Schema discovery and data sampling (read-only) |
+| Context Search | `search_metrics`, `search_reference_sql`, `search_knowledge`, `search_semantic_objects`, `list_subject_tree`, `get_metrics`, `get_reference_sql`, `get_knowledge` | Knowledge base retrieval |
+| Filesystem | `read_file`, `read_multiple_files`, `list_directory`, `directory_tree`, `search_files` | Read-only file browsing |
+| Date Parsing | `get_current_date`, `parse_temporal_expressions` | Date context |
+
+### Output Format
+
+The explore subagent returns a concise, structured summary optimized for consumption by other agents:
+
+- **Tables**: Relevant tables with key columns, types, and notes
+- **Joins**: Join paths between tables (one line per relationship)
+- **Data patterns**: Non-obvious data patterns (delimiters, encodings, NULL prevalence)
+- **Context**: Relevant metrics, reference SQL, and business rules found
+- **Recommendation**: Which tables to use, how to join, and key caveats
+
+### Usage
+
+The explore subagent is typically invoked automatically by the chat agent via `task(type="explore")`, but can also be launched manually:
+
+```bash
+/explore Discover tables related to customer revenue and find relevant metrics
+```
+
+---
+
+## gen_sql
+
+### Overview
+
+The gen_sql subagent is a specialized SQL expert that generates optimized, validated SQL queries. It handles complex SQL generation tasks that require multi-step reasoning, intricate joins, or domain-specific logic.
+
+### Key Features
+
+- **Deep SQL expertise**: Specialized in writing complex, production-quality SQL
+- **Automatic validation**: Validates SQL executability before returning results
+- **File-based output**: For complex queries (50+ lines), outputs SQL to a file with a preview
+- **Modification support**: Returns unified diff format when modifying existing queries
+
+### Configuration
+
+```yaml
+agent:
+  agentic_nodes:
+    gen_sql:
+      model: claude           # Optional: defaults to configured model
+      max_turns: 30           # Optional: defaults to 30
+```
+
+### How It Works
+
+```mermaid
+graph LR
+    A[User question + context] --> B[Analyze requirements]
+    B --> C[Discover schema]
+    C --> D[Search knowledge base]
+    D --> E[Generate SQL]
+    E --> F[Validate executability]
+    F --> G[Return result]
+```
+
+### Output Format
+
+The gen_sql subagent returns results in one of two formats:
+
+**Inline SQL** (for shorter queries):
+```json
+{
+  "sql": "SELECT region, SUM(revenue) FROM sales GROUP BY region",
+  "response": "Explanation of the query...",
+  "tokens_used": 1234
+}
+```
+
+**File-based SQL** (for complex queries 50+ lines):
+```json
+{
+  "sql_file_path": "/path/to/generated_query.sql",
+  "sql_preview": "First few lines of the query...",
+  "response": "Explanation of the query...",
+  "tokens_used": 5678
+}
+```
+
+### Usage
+
+The gen_sql subagent is typically invoked automatically by the chat agent via `task(type="gen_sql")` for complex queries, but can also be launched manually:
+
+```bash
+/gen_sql Generate a query to calculate customer lifetime value with cohort analysis
+```
+
+---
+
 ## Summary
 
 | Subagent | Purpose | Output | Stored In | Key Features                                        |
@@ -698,6 +832,8 @@ subject_path: education/schools/data_integration
 | `gen_semantic_model` | Generate semantic model from tables | YAML (semantic model) | `/data/semantic_models` | DDL → MetricFlow model, built-in validation         |
 | `gen_metrics` | Generate metrics from SQL | YAML (metric) | `/data/semantic_models` | SQL → MetricFlow metric, subject tree support       |
 | `gen_ext_knowledge` | Generate business concepts | YAML (external knowledge) | `/data/ext_knowledge` | Question&SQL → knowledge, subject tree support      |
+| `explore` | Read-only data exploration | Structured context | N/A | Strictly read-only, fast (15 turns), three-direction exploration |
+| `gen_sql` | Generate optimized SQL | SQL query / SQL file | N/A | Deep SQL expertise, auto-validation, file-based output |
 
 **Built-in Features Across All Subagents:**
 - Minimal configuration required (only `model` and `max_turns` optional)
@@ -707,4 +843,4 @@ subject_path: education/schools/data_integration
 - Knowledge Base integration for semantic search
 - Automatic workspace management
 
-Together, these subagents automate the **data engineering knowledge pipeline** — from **query understanding → model definition → metric generation → business knowledge capture → searchable Knowledge Base**.
+Together, these subagents automate the **data engineering knowledge pipeline** — from **data exploration → query generation → model definition → metric generation → business knowledge capture → searchable Knowledge Base**.
