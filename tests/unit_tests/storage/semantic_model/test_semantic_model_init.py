@@ -312,3 +312,340 @@ class TestInitSuccessStorySemanticModelSync:
 
         result = init_success_story_semantic_model(mock_config, str(csv_path), emit=emit_calls.append)
         assert isinstance(result, tuple)
+
+
+# ---------------------------------------------------------------------------
+# init_success_story_semantic_model_async - LLM execution path (lines 95-157)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.ci
+class TestInitSuccessStorySemanticModelAsyncLLMPath:
+    """Tests for the async LLM execution path inside init_success_story_semantic_model_async."""
+
+    @pytest.mark.asyncio
+    async def test_success_path_with_semantic_models_list(self, tmp_path, monkeypatch):
+        """Success path: agentic node yields action with semantic_models list → returns (True, '')."""
+        from types import SimpleNamespace
+
+        from datus.schemas.action_history import ActionStatus
+        from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model_async
+
+        csv_path = tmp_path / "story.csv"
+        csv_path.write_text("sql,question\nSELECT 1,What is one?\n")
+
+        mock_config = MagicMock()
+        mock_db_config = MagicMock()
+        mock_db_config.catalog = "cat"
+        mock_db_config.database = "db"
+        mock_db_config.schema = "public"
+        mock_config.current_db_config.return_value = mock_db_config
+
+        class MockSemanticNode:
+            def __init__(self, *args, **kwargs):
+                self.input = None
+
+            async def execute_stream(self, action_history_manager):
+                action = SimpleNamespace(
+                    status=ActionStatus.SUCCESS,
+                    output={"semantic_models": ["model1.yaml", "model2.yaml"]},
+                    messages="Generated models",
+                )
+                yield action
+
+        monkeypatch.setattr(
+            "datus.storage.semantic_model.semantic_model_init.GenSemanticModelAgenticNode",
+            MockSemanticNode,
+        )
+
+        success, error = await init_success_story_semantic_model_async(mock_config, str(csv_path))
+
+        assert success is True
+        assert error == ""
+
+    @pytest.mark.asyncio
+    async def test_success_path_emits_events(self, tmp_path, monkeypatch):
+        """Success path: emit callback is called for ITEM_PROCESSING and TASK_COMPLETED stages."""
+        from types import SimpleNamespace
+
+        from datus.schemas.action_history import ActionStatus
+        from datus.schemas.batch_events import BatchStage
+        from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model_async
+
+        csv_path = tmp_path / "story.csv"
+        csv_path.write_text("sql,question\nSELECT 1,What is one?\n")
+
+        mock_config = MagicMock()
+        mock_db_config = MagicMock()
+        mock_db_config.catalog = ""
+        mock_db_config.database = "db"
+        mock_db_config.schema = ""
+        mock_config.current_db_config.return_value = mock_db_config
+
+        class MockSemanticNode:
+            def __init__(self, *args, **kwargs):
+                self.input = None
+
+            async def execute_stream(self, action_history_manager):
+                action = SimpleNamespace(
+                    status=ActionStatus.SUCCESS,
+                    output={"semantic_models": ["model.yaml"]},
+                    messages="Generated model",
+                )
+                yield action
+
+        monkeypatch.setattr(
+            "datus.storage.semantic_model.semantic_model_init.GenSemanticModelAgenticNode",
+            MockSemanticNode,
+        )
+
+        emitted_stages = []
+
+        def capture_emit(event):
+            emitted_stages.append(event.stage)
+
+        success, error = await init_success_story_semantic_model_async(mock_config, str(csv_path), emit=capture_emit)
+
+        assert success is True
+        assert BatchStage.TASK_STARTED in emitted_stages
+        assert BatchStage.TASK_COMPLETED in emitted_stages
+
+    @pytest.mark.asyncio
+    async def test_success_path_single_model_string(self, tmp_path, monkeypatch):
+        """Success path: semantic_models as a single string (not list) is also collected."""
+        from types import SimpleNamespace
+
+        from datus.schemas.action_history import ActionStatus
+        from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model_async
+
+        csv_path = tmp_path / "story.csv"
+        csv_path.write_text("sql,question\nSELECT 1,Q?\n")
+
+        mock_config = MagicMock()
+        mock_db_config = MagicMock()
+        mock_db_config.catalog = ""
+        mock_db_config.database = "db"
+        mock_db_config.schema = ""
+        mock_config.current_db_config.return_value = mock_db_config
+
+        class MockSemanticNode:
+            def __init__(self, *args, **kwargs):
+                self.input = None
+
+            async def execute_stream(self, action_history_manager):
+                # single string instead of list
+                action = SimpleNamespace(
+                    status=ActionStatus.SUCCESS,
+                    output={"semantic_models": "single_model.yaml"},
+                    messages="Generated",
+                )
+                yield action
+
+        monkeypatch.setattr(
+            "datus.storage.semantic_model.semantic_model_init.GenSemanticModelAgenticNode",
+            MockSemanticNode,
+        )
+
+        success, error = await init_success_story_semantic_model_async(mock_config, str(csv_path))
+
+        assert success is True
+        assert error == ""
+
+    @pytest.mark.asyncio
+    async def test_empty_result_path_returns_false(self, tmp_path, monkeypatch):
+        """Empty result path: no generated files → returns (False, error)."""
+        from types import SimpleNamespace
+
+        from datus.schemas.action_history import ActionStatus
+        from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model_async
+
+        csv_path = tmp_path / "story.csv"
+        csv_path.write_text("sql,question\nSELECT 1,Q?\n")
+
+        mock_config = MagicMock()
+        mock_db_config = MagicMock()
+        mock_db_config.catalog = ""
+        mock_db_config.database = "db"
+        mock_db_config.schema = ""
+        mock_config.current_db_config.return_value = mock_db_config
+
+        class MockSemanticNode:
+            def __init__(self, *args, **kwargs):
+                self.input = None
+
+            async def execute_stream(self, action_history_manager):
+                # Yields an action with SUCCESS but no semantic_models key
+                action = SimpleNamespace(
+                    status=ActionStatus.SUCCESS,
+                    output={"other_key": "value"},
+                    messages="Nothing useful",
+                )
+                yield action
+
+        monkeypatch.setattr(
+            "datus.storage.semantic_model.semantic_model_init.GenSemanticModelAgenticNode",
+            MockSemanticNode,
+        )
+
+        success, error = await init_success_story_semantic_model_async(mock_config, str(csv_path))
+
+        assert success is False
+        assert error != ""
+
+    @pytest.mark.asyncio
+    async def test_empty_result_emits_task_failed(self, tmp_path, monkeypatch):
+        """Empty result path: emit callback receives TASK_FAILED event."""
+        from types import SimpleNamespace
+
+        from datus.schemas.action_history import ActionStatus
+        from datus.schemas.batch_events import BatchStage
+        from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model_async
+
+        csv_path = tmp_path / "story.csv"
+        csv_path.write_text("sql,question\nSELECT 1,Q?\n")
+
+        mock_config = MagicMock()
+        mock_db_config = MagicMock()
+        mock_db_config.catalog = ""
+        mock_db_config.database = "db"
+        mock_db_config.schema = ""
+        mock_config.current_db_config.return_value = mock_db_config
+
+        class MockSemanticNode:
+            def __init__(self, *args, **kwargs):
+                self.input = None
+
+            async def execute_stream(self, action_history_manager):
+                action = SimpleNamespace(
+                    status=ActionStatus.SUCCESS,
+                    output={},
+                    messages="",
+                )
+                yield action
+
+        monkeypatch.setattr(
+            "datus.storage.semantic_model.semantic_model_init.GenSemanticModelAgenticNode",
+            MockSemanticNode,
+        )
+
+        emitted_stages = []
+
+        def capture_emit(event):
+            emitted_stages.append(event.stage)
+
+        success, error = await init_success_story_semantic_model_async(mock_config, str(csv_path), emit=capture_emit)
+
+        assert success is False
+        assert BatchStage.TASK_FAILED in emitted_stages
+
+    @pytest.mark.asyncio
+    async def test_exception_path_returns_false(self, tmp_path, monkeypatch):
+        """Exception path: execute_stream raises → returns (False, error)."""
+        from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model_async
+
+        csv_path = tmp_path / "story.csv"
+        csv_path.write_text("sql,question\nSELECT 1,Q?\n")
+
+        mock_config = MagicMock()
+        mock_db_config = MagicMock()
+        mock_db_config.catalog = ""
+        mock_db_config.database = "db"
+        mock_db_config.schema = ""
+        mock_config.current_db_config.return_value = mock_db_config
+
+        class MockSemanticNode:
+            def __init__(self, *args, **kwargs):
+                self.input = None
+
+            async def execute_stream(self, action_history_manager):
+                raise RuntimeError("LLM backend error")
+                yield  # make it an async generator
+
+        monkeypatch.setattr(
+            "datus.storage.semantic_model.semantic_model_init.GenSemanticModelAgenticNode",
+            MockSemanticNode,
+        )
+
+        success, error = await init_success_story_semantic_model_async(mock_config, str(csv_path))
+
+        assert success is False
+        assert "LLM backend error" in error
+
+    @pytest.mark.asyncio
+    async def test_exception_emits_task_failed(self, tmp_path, monkeypatch):
+        """Exception path: emit receives TASK_FAILED when execute_stream raises."""
+        from datus.schemas.batch_events import BatchStage
+        from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model_async
+
+        csv_path = tmp_path / "story.csv"
+        csv_path.write_text("sql,question\nSELECT 1,Q?\n")
+
+        mock_config = MagicMock()
+        mock_db_config = MagicMock()
+        mock_db_config.catalog = ""
+        mock_db_config.database = "db"
+        mock_db_config.schema = ""
+        mock_config.current_db_config.return_value = mock_db_config
+
+        class MockSemanticNode:
+            def __init__(self, *args, **kwargs):
+                self.input = None
+
+            async def execute_stream(self, action_history_manager):
+                raise ValueError("unexpected error")
+                yield  # async generator marker
+
+        monkeypatch.setattr(
+            "datus.storage.semantic_model.semantic_model_init.GenSemanticModelAgenticNode",
+            MockSemanticNode,
+        )
+
+        emitted_stages = []
+
+        def capture_emit(event):
+            emitted_stages.append(event.stage)
+
+        success, error = await init_success_story_semantic_model_async(mock_config, str(csv_path), emit=capture_emit)
+
+        assert success is False
+        assert BatchStage.TASK_FAILED in emitted_stages
+
+    @pytest.mark.asyncio
+    async def test_action_with_none_output_skipped(self, tmp_path, monkeypatch):
+        """Action with output=None should not cause error and counts as empty result."""
+        from types import SimpleNamespace
+
+        from datus.schemas.action_history import ActionStatus
+        from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model_async
+
+        csv_path = tmp_path / "story.csv"
+        csv_path.write_text("sql,question\nSELECT 1,Q?\n")
+
+        mock_config = MagicMock()
+        mock_db_config = MagicMock()
+        mock_db_config.catalog = ""
+        mock_db_config.database = "db"
+        mock_db_config.schema = ""
+        mock_config.current_db_config.return_value = mock_db_config
+
+        class MockSemanticNode:
+            def __init__(self, *args, **kwargs):
+                self.input = None
+
+            async def execute_stream(self, action_history_manager):
+                action = SimpleNamespace(
+                    status=ActionStatus.SUCCESS,
+                    output=None,
+                    messages="",
+                )
+                yield action
+
+        monkeypatch.setattr(
+            "datus.storage.semantic_model.semantic_model_init.GenSemanticModelAgenticNode",
+            MockSemanticNode,
+        )
+
+        success, error = await init_success_story_semantic_model_async(mock_config, str(csv_path))
+
+        # No files generated → failure
+        assert success is False

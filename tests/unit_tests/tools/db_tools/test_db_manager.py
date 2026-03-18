@@ -310,3 +310,111 @@ class TestDBManager:
         mgr = DBManager(configs)
         uris = mgr.get_db_uris("ns")
         assert uris["db1"] == "sqlite:///test.db"
+
+
+# ---------------------------------------------------------------------------
+# DBManager._db_config_to_connection_config — adapter branch (lines 269-309)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.ci
+class TestDbConfigToConnectionConfigAdapterBranch:
+    """Tests for the adapter (non-SQLite, non-DuckDB) branch of _db_config_to_connection_config."""
+
+    def _make_manager(self):
+        return DBManager({})
+
+    def test_adapter_returns_dict_not_connection_config(self):
+        """Non-SQLite/DuckDB type returns a plain dict, not a ConnectionConfig subclass."""
+        mgr = self._make_manager()
+        cfg = _cfg(type="postgresql", host="localhost", port="5432", username="user", password="pass", database="mydb")
+        result = mgr._db_config_to_connection_config(cfg)
+        assert isinstance(result, dict)
+
+    def test_adapter_excluded_fields_removed(self):
+        """Excluded fields (type, path_pattern, logic_name, extra) are not in the result dict."""
+        mgr = self._make_manager()
+        cfg = _cfg(
+            type="postgresql",
+            host="localhost",
+            database="mydb",
+            logic_name="pg_main",
+            path_pattern="/some/pattern",
+            extra=None,
+        )
+        result = mgr._db_config_to_connection_config(cfg)
+        assert "type" not in result
+        assert "logic_name" not in result
+        assert "path_pattern" not in result
+        assert "extra" not in result
+
+    def test_adapter_port_converted_to_int(self):
+        """Port value provided as string is converted to int in the result."""
+        mgr = self._make_manager()
+        cfg = _cfg(type="postgresql", host="localhost", port="5432", database="mydb")
+        result = mgr._db_config_to_connection_config(cfg)
+        assert result.get("port") == 5432
+        assert isinstance(result.get("port"), int)
+
+    def test_adapter_port_already_int_stays_int(self):
+        """Port value provided as int remains an int."""
+        mgr = self._make_manager()
+        cfg = _cfg(type="mysql", host="localhost", port=3306, database="mydb")
+        result = mgr._db_config_to_connection_config(cfg)
+        assert result.get("port") == 3306
+        assert isinstance(result.get("port"), int)
+
+    def test_adapter_extra_fields_expanded(self):
+        """Extra dict fields are merged into the result config."""
+        mgr = self._make_manager()
+        cfg = _cfg(
+            type="snowflake",
+            host="acct.snowflakecomputing.com",
+            database="mydb",
+            extra={"warehouse": "COMPUTE_WH", "role": "ANALYST"},
+        )
+        result = mgr._db_config_to_connection_config(cfg)
+        assert result.get("warehouse") == "COMPUTE_WH"
+        assert result.get("role") == "ANALYST"
+
+    def test_adapter_none_values_removed(self):
+        """None-valued fields are excluded from the result dict."""
+        mgr = self._make_manager()
+        cfg = _cfg(type="mysql", host="localhost", database="mydb", username=None, password=None)
+        result = mgr._db_config_to_connection_config(cfg)
+        assert "username" not in result
+        assert "password" not in result
+
+    def test_adapter_empty_string_values_removed(self):
+        """Empty-string-valued fields (after strip) are excluded from the result dict."""
+        mgr = self._make_manager()
+        cfg = _cfg(type="mysql", host="localhost", database="mydb", schema="", catalog="  ")
+        result = mgr._db_config_to_connection_config(cfg)
+        assert "schema" not in result
+        assert "catalog" not in result
+
+    def test_adapter_timeout_seconds_added(self):
+        """timeout_seconds is always added to the result dict for adapter configs."""
+        mgr = self._make_manager()
+        cfg = _cfg(type="postgresql", host="localhost", database="mydb")
+        result = mgr._db_config_to_connection_config(cfg)
+        assert "timeout_seconds" in result
+        assert isinstance(result["timeout_seconds"], int)
+
+    def test_adapter_extra_none_does_not_expand(self):
+        """When extra is None, no extra fields are added and no error is raised."""
+        mgr = self._make_manager()
+        cfg = _cfg(type="mysql", host="localhost", database="mydb", extra=None)
+        result = mgr._db_config_to_connection_config(cfg)
+        assert isinstance(result, dict)
+        # extra key itself should not be present
+        assert "extra" not in result
+
+    def test_adapter_invalid_port_string_not_converted(self):
+        """Invalid port string that cannot be int-cast is left unchanged (no error)."""
+        mgr = self._make_manager()
+        cfg = _cfg(type="postgresql", host="localhost", database="mydb", port="not_a_port")
+        # Should not raise
+        result = mgr._db_config_to_connection_config(cfg)
+        # Port stays as original value since conversion fails silently
+        assert "port" in result
