@@ -486,13 +486,18 @@ class TestPromptInputMultilineKeyBindings:
     @pytest.mark.ci
     def test_multiline_enter_handler_submits(self):
         """Enter key in multiline mode calls validate_and_handle."""
-        from prompt_toolkit.key_binding import KeyBindings
+        captured = {}
 
-        kb = KeyBindings()
+        def fake_prompt(*args, **kwargs):
+            captured.update(kwargs)
+            return "test"
 
-        @kb.add("enter")
-        def _submit(event):
-            event.current_buffer.validate_and_handle()
+        with patch("prompt_toolkit.prompt", fake_prompt):
+            from datus.cli._cli_utils import prompt_input
+
+            prompt_input(MagicMock(), message="test", multiline=True)
+
+        kb = captured["key_bindings"]
 
         event = MagicMock()
         for binding in kb.bindings:
