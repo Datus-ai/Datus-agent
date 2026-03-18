@@ -308,24 +308,43 @@ class AgentConfig:
         self.namespaces: Dict[str, Dict[str, DbConfig]] = {}
         self._init_namespace_config(kwargs.get("namespace", {}))
 
-        self._init_dirs()
+        # SaaS mode: skip _init_dirs() to avoid mutating the global path_manager singleton,
+        # which causes cross-tenant contamination under concurrent requests.
+        self._skip_init_dirs = kwargs.get("skip_init_dirs", False)
+        if self._skip_init_dirs:
+            home_path = Path(self.home).expanduser().resolve()
+            self.rag_base_path = str(home_path / "data")
+            self._save_dir = ""
+            self._trajectory_dir = ""
+            self.benchmark_configs = {}
+        else:
+            self._init_dirs()
 
         self.workspace_root = None
+        storage_config = kwargs.get("storage", {})
         # use default embedding model if not provided
-        if storage_config := kwargs.get("storage", {}):
-            self.storage_configs = init_embedding_models(
-                storage_config, openai_configs=self.models, default_openai_config=self.active_model()
-            )
+        if storage_config:
+            if self._skip_init_dirs:
+                # SaaS mode: skip init_embedding_models() to avoid mutating global EMBEDDING_MODELS
+                self.storage_configs = {}
+            else:
+                self.storage_configs = init_embedding_models(
+                    storage_config, openai_configs=self.models, default_openai_config=self.active_model()
+                )
             self.workspace_root = storage_config.get("workspace_root")
 
-        # Initialize storage backend configuration (rdb + vector)
         from datus_storage_base.backend_config import StorageBackendConfig
 
         from datus.storage.backend_holder import init_backends
 
-        backend_config = StorageBackendConfig.from_dict(storage_config)
-        self._backend_config = backend_config
-        init_backends(backend_config, data_dir=self.rag_base_path, namespace=self._current_namespace)
+        if not self._skip_init_dirs:
+            # Initialize storage backend configuration (rdb + vector)
+            from datus.storage.backend_config import StorageBackendConfig
+            from datus.storage.backend_holder import init_backends
+
+            backend_config = StorageBackendConfig.from_dict(storage_config)
+            self._backend_config = backend_config
+            init_backends(backend_config, data_dir=self.rag_base_path, namespace=self._current_namespace)
 
         # Initialize unified permission system
         self.permissions_config = self._init_permissions_config(kwargs.get("permissions", {}))

@@ -159,21 +159,22 @@ class StorageCache:
         return self._ext_knowledge_holder.storage_instance(sub_agent_name)
 
 
-_CACHE_INSTANCE = None
-
-
 def get_storage_cache_instance(agent_config: AgentConfig) -> StorageCache:
-    global _CACHE_INSTANCE
-    if _CACHE_INSTANCE is None:
-        _CACHE_INSTANCE = StorageCache(agent_config)
-    return _CACHE_INSTANCE
+    """Create a StorageCache for the given config.
+
+    Always returns a new ``StorageCache`` wrapper.  The underlying storage
+    instances are still deduplicated by the module-level ``_cached_storage``
+    LRU cache and ``_scoped_storage_cache`` dict, so this is cheap.
+
+    Previous implementation used a global ``_CACHE_INSTANCE`` singleton which
+    caused cross-tenant data leaks in multi-tenant SaaS deployments.
+    """
+    return StorageCache(agent_config)
 
 
 def clear_cache():
     _cached_storage.cache_clear()
     _scoped_storage_cache.clear()
-    global _CACHE_INSTANCE
-    _CACHE_INSTANCE = None
 
     from datus.storage.backend_holder import reset_backends
 

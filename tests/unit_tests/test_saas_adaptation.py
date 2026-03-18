@@ -619,3 +619,147 @@ class TestDBManagerFactory:
         instance1 = db_manager_instance()
         instance2 = db_manager_instance()
         assert instance1 is instance2
+
+
+# ===========================================================================
+# Section 10.1: AgentConfig skip_init_dirs
+# ===========================================================================
+
+
+class TestAgentConfigSkipInitDirs:
+    """Tests for AgentConfig(skip_init_dirs=True) — SaaS mode that avoids global singleton mutation."""
+
+    def _make_config(self, tmp_path, skip_init_dirs=False):
+        """Helper to create a minimal AgentConfig."""
+        from datus.configuration.agent_config import AgentConfig, NodeConfig
+
+        return AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "saas_home"),
+            target="mock",
+            models={
+                "mock": {
+                    "type": "openai",
+                    "api_key": "mock-key",
+                    "model": "mock-model",
+                    "base_url": "http://localhost:0",
+                },
+            },
+            skip_init_dirs=skip_init_dirs,
+        )
+
+    def test_skip_init_dirs_sets_rag_base_path(self, tmp_path):
+        """With skip_init_dirs=True, rag_base_path is computed directly without path_manager."""
+        config = self._make_config(tmp_path, skip_init_dirs=True)
+        expected = str((tmp_path / "saas_home").resolve() / "data")
+        assert config.rag_base_path == expected
+
+    def test_skip_init_dirs_empty_save_dir(self, tmp_path):
+        """With skip_init_dirs=True, _save_dir and _trajectory_dir are empty strings."""
+        config = self._make_config(tmp_path, skip_init_dirs=True)
+        assert config._save_dir == ""
+        assert config._trajectory_dir == ""
+
+    def test_skip_init_dirs_empty_benchmark_configs(self, tmp_path):
+        """With skip_init_dirs=True, benchmark_configs is empty."""
+        config = self._make_config(tmp_path, skip_init_dirs=True)
+        assert config.benchmark_configs == {}
+
+    def test_skip_init_dirs_does_not_call_path_manager(self, tmp_path):
+        """With skip_init_dirs=True, path_manager.update_home() is never called."""
+        with patch("datus.utils.path_manager.get_path_manager") as mock_pm:
+            self._make_config(tmp_path, skip_init_dirs=True)
+            mock_pm.return_value.update_home.assert_not_called()
+
+    def test_skip_init_dirs_does_not_call_init_embedding_models(self, tmp_path):
+        """With skip_init_dirs=True, init_embedding_models() is not called."""
+        with patch("datus.configuration.agent_config.init_embedding_models") as mock_init:
+            self._make_config(tmp_path, skip_init_dirs=True)
+            mock_init.assert_not_called()
+
+    def test_skip_init_dirs_does_not_call_init_backends(self, tmp_path):
+        """With skip_init_dirs=True, init_backends() is not called."""
+        with patch("datus.storage.backend_holder.init_backends") as mock_init:
+            self._make_config(tmp_path, skip_init_dirs=True)
+            mock_init.assert_not_called()
+
+    def test_default_skip_init_dirs_is_false(self, tmp_path):
+        """By default, skip_init_dirs is False (CLI backward compatible)."""
+        config = self._make_config(tmp_path, skip_init_dirs=False)
+        assert config._skip_init_dirs is False
+        # rag_base_path should still be set (by _init_dirs)
+        assert config.rag_base_path != ""
+
+    def test_skip_init_dirs_storage_configs_empty(self, tmp_path):
+        """With skip_init_dirs=True and storage config, storage_configs is empty dict."""
+        from datus.configuration.agent_config import AgentConfig, NodeConfig
+
+        config = AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "saas_home"),
+            target="mock",
+            models={
+                "mock": {
+                    "type": "openai",
+                    "api_key": "mock-key",
+                    "model": "mock-model",
+                    "base_url": "http://localhost:0",
+                },
+            },
+            storage={"workspace_root": str(tmp_path / "workspace")},
+            skip_init_dirs=True,
+        )
+        assert config.storage_configs == {}
+        assert config.workspace_root == str(tmp_path / "workspace")
+
+
+# ===========================================================================
+# Section 10.2: StorageCache — no global singleton
+# ===========================================================================
+
+
+class TestStorageCacheNoSingleton:
+    """Tests verifying get_storage_cache_instance() no longer uses a global singleton."""
+
+    def test_returns_new_instance_each_call(self):
+        """get_storage_cache_instance returns a distinct object on each call."""
+        from datus.storage.cache import StorageCache, get_storage_cache_instance
+
+        mock_config = MagicMock()
+        mock_config.rag_storage_path.return_value = "/tmp/test"
+
+        cache1 = get_storage_cache_instance(mock_config)
+        cache2 = get_storage_cache_instance(mock_config)
+
+        assert isinstance(cache1, StorageCache)
+        assert isinstance(cache2, StorageCache)
+        assert cache1 is not cache2
+
+    def test_different_configs_get_different_caches(self):
+        """Different agent configs produce different StorageCache instances."""
+        from datus.storage.cache import get_storage_cache_instance
+
+        config_a = MagicMock()
+        config_a.rag_storage_path.return_value = "/tenant_a/data"
+        config_b = MagicMock()
+        config_b.rag_storage_path.return_value = "/tenant_b/data"
+
+        cache_a = get_storage_cache_instance(config_a)
+        cache_b = get_storage_cache_instance(config_b)
+
+        assert cache_a is not cache_b
+        assert cache_a._agent_config is config_a
+        assert cache_b._agent_config is config_b
+
+    def test_clear_cache_works_without_singleton(self):
+        """clear_cache() works correctly after singleton removal."""
+        from datus.storage.cache import clear_cache
+
+        # Should not raise
+        clear_cache()
+
+    def test_no_cache_instance_global_variable(self):
+        """The module no longer has a _CACHE_INSTANCE variable."""
+        import datus.storage.cache as cache_module
+
+        assert not hasattr(cache_module, "_CACHE_INSTANCE")
