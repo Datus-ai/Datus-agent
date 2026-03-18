@@ -54,6 +54,16 @@ This is the fastest way to ground your prompts with precise context.
 
 ![Context injection fuzzy search](../assets/context_fuzzy.png)
 
+### Interrupt Execution
+
+Press **ESC** or **Ctrl+C** while the agent is running to gracefully interrupt the current execution. The agent will finish its current step, then stop and return control to you.
+
+After an interrupt, the session remains intact — you can continue typing new instructions, refine your question, or provide additional context. Nothing is lost.
+
+### Toggle Trace Display
+
+Press **Ctrl+O** while the agent is running to toggle the trace display mode between **compact** (progress only) and **verbose** (full step details). This lets you control how much detail you see during execution without interrupting the agent.
+
 ### Session Commands
 
 - `.clear`: Clear the current session context and start fresh
