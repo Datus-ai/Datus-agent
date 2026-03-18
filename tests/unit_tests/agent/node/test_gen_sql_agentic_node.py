@@ -2073,10 +2073,31 @@ class TestRebuildTools:
         node.date_parsing_tools = mock_date
         node.filesystem_func_tool = None
         node._platform_doc_tool = None
+        node.ask_user_tool = None
 
         node._rebuild_tools()
 
         assert len(node.tools) == 3
+
+    def test_rebuild_tools_with_ask_user(self, real_agent_config, mock_llm_create):
+        node = _make_node(real_agent_config, mock_llm_create)
+
+        mock_db = MagicMock()
+        mock_db.available_tools.return_value = [MagicMock(name="list_tables")]
+
+        node.db_func_tool = mock_db
+        node.context_search_tools = None
+        node.date_parsing_tools = None
+        node.filesystem_func_tool = None
+        node._platform_doc_tool = None
+        # ask_user_tool is set up by _make_node via setup_tools; keep it
+
+        node._rebuild_tools()
+
+        # 1 db tool + 1 ask_user tool
+        assert len(node.tools) == 2
+        tool_names = [getattr(t, "name", "") for t in node.tools]
+        assert "ask_user" in tool_names
 
     def test_rebuild_tools_empty_when_no_tools(self, real_agent_config, mock_llm_create):
         node = _make_node(real_agent_config, mock_llm_create)
@@ -2085,6 +2106,7 @@ class TestRebuildTools:
         node.date_parsing_tools = None
         node.filesystem_func_tool = None
         node._platform_doc_tool = None
+        node.ask_user_tool = None
 
         node._rebuild_tools()
 
