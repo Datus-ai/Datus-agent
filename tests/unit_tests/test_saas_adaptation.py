@@ -39,15 +39,25 @@ logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Fixtures
 # ---------------------------------------------------------------------------
 
 
-def _make_success_story_csv(tmp_path, filename="story.csv"):
-    """Write a minimal success_story CSV with sql and question columns."""
-    csv_path = tmp_path / filename
-    csv_path.write_text("sql,question\nSELECT COUNT(*) FROM orders,How many orders?\n")
-    return str(csv_path)
+@pytest.fixture
+def _init_vector_backend(tmp_path):
+    """Initialize storage backends with tmp_path so data goes to a temp directory, not project root."""
+    from datus.storage.backend_holder import init_backends, reset_backends
+    from datus.storage.cache import clear_cache
+
+    init_backends(data_dir=str(tmp_path))
+    yield
+    clear_cache()
+    reset_backends()
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 
 def _make_ext_knowledge_csv(tmp_path, filename="knowledge.csv"):
@@ -252,6 +262,7 @@ class TestSyncWrapperBackwardCompatibility:
 
 
 @pytest.mark.ci
+@pytest.mark.usefixtures("_init_vector_backend")
 class TestInitExtKnowledgeStringParam:
     """Verify init_ext_knowledge works with a plain string parameter (no SimpleNamespace needed)."""
 
@@ -388,7 +399,10 @@ class TestSessionManagerProjectIsolation:
 
             # Write a session record so session_exists returns True
             with sqlite3.connect(db_path) as conn:
-                conn.execute("INSERT OR IGNORE INTO agent_sessions (session_id) VALUES (?)", (session_id,))
+                conn.execute(
+                    "INSERT OR IGNORE INTO agent_sessions (session_id) VALUES (?)",
+                    (session_id,),
+                )
                 conn.commit()
 
             assert mgr.session_exists(session_id) is True
