@@ -688,7 +688,7 @@ class SubAgentTaskTool:
 
     def _get_available_types(self) -> List[str]:
         """Discover available subagent types."""
-        types = ["gen_sql", "explore", "gen_report"]
+        types = ["explore"]
 
         # Add built-in system subagents (always available)
         types.extend(sorted(SYS_SUB_AGENTS))
