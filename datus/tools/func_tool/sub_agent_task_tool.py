@@ -53,6 +53,37 @@ NODE_CLASS_MAP = {
 
 # Descriptions for built-in system subagents (used in task tool description for LLM)
 BUILTIN_SUBAGENT_DESCRIPTIONS = {
+    "gen_sql": (
+        "Generate optimized SQL queries. Returns JSON with {sql, response, tokens_used}. "
+        "For complex SQL (50+ lines), returns {sql_file_path, sql_preview, response} instead - "
+        "pass sql_file_path directly to read_query() to execute (no need to read_file() first). "
+        "Modifications return sql_diff in unified diff format. "
+        "Use for data queries, analysis, and report SQL. Prompt: provide the question directly."
+    ),
+    "explore": (
+        "Read-only data exploration. Supports 3 exploration directions:\n"
+        "  * Schema+Sample: database schema structure, table columns, types, "
+        "sample data, date context\n"
+        "    Prompt example: 'Explore schema for tables related to sales: "
+        "list tables, describe columns, sample 10 rows'\n"
+        "  * Knowledge: business metrics, reference SQL patterns, "
+        "domain knowledge, semantic objects\n"
+        "    Prompt example: 'Search knowledge base for sales-related metrics, "
+        "reference SQL, and business rules'\n"
+        "  * File: workspace SQL files, documentation, configuration files\n"
+        "    Prompt example: 'Browse workspace for SQL files and documentation "
+        "related to sales'\n"
+        '  For comprehensive exploration, call task(type="explore") MULTIPLE TIMES '
+        "in PARALLEL with direction-specific prompts.\n"
+        "  Returns JSON with {response, tokens_used}."
+    ),
+    "gen_report": (
+        "Analyze and attribute metrics using reference SQL and semantic layer. "
+        "Use when the question involves metric attribution, root cause analysis, metric trend explanation, "
+        "or analyzing why a metric changed. "
+        "Prompt: provide the metric question, include reference SQL or metric name if available. "
+        "Returns JSON with {response, report_result, tokens_used}."
+    ),
     "gen_semantic_model": (
         "Generate MetricFlow semantic model YAML files from database table structures. "
         "Use when asked to create or update semantic models, define entities, relationships, or dimensions. "
@@ -622,41 +653,7 @@ class SubAgentTaskTool:
         ]
 
         for t in available:
-            if t == "explore":
-                lines.append(
-                    "- explore: Read-only data exploration. Supports 3 exploration directions:\n"
-                    "  * Schema+Sample: database schema structure, table columns, types, "
-                    "sample data, date context\n"
-                    "    Prompt example: 'Explore schema for tables related to sales: "
-                    "list tables, describe columns, sample 10 rows'\n"
-                    "  * Knowledge: business metrics, reference SQL patterns, "
-                    "domain knowledge, semantic objects\n"
-                    "    Prompt example: 'Search knowledge base for sales-related metrics, "
-                    "reference SQL, and business rules'\n"
-                    "  * File: workspace SQL files, documentation, configuration files\n"
-                    "    Prompt example: 'Browse workspace for SQL files and documentation "
-                    "related to sales'\n"
-                    '  For comprehensive exploration, call task(type="explore") MULTIPLE TIMES '
-                    "in PARALLEL with direction-specific prompts.\n"
-                    "  Returns JSON with {response, tokens_used}."
-                )
-            elif t == "gen_sql":
-                lines.append(
-                    "- gen_sql: Generate optimized SQL queries. Returns JSON with {sql, response, tokens_used}. "
-                    "For complex SQL (50+ lines), returns {sql_file_path, sql_preview, response} instead - "
-                    "pass sql_file_path directly to read_query() to execute (no need to read_file() first). "
-                    "Modifications return sql_diff in unified diff format. "
-                    "Use for data queries, analysis, and report SQL. Prompt: provide the question directly."
-                )
-            elif t == "gen_report":
-                lines.append(
-                    "- gen_report: Analyze and attribute metrics using reference SQL and semantic layer. "
-                    "Use when the question involves metric attribution, root cause analysis, metric trend explanation, "
-                    "or analyzing why a metric changed. "
-                    "Prompt: provide the metric question, include reference SQL or metric name if available. "
-                    "Returns JSON with {response, report_result, tokens_used}."
-                )
-            elif t in BUILTIN_SUBAGENT_DESCRIPTIONS:
+            if t in BUILTIN_SUBAGENT_DESCRIPTIONS:
                 lines.append(f"- {t}: {BUILTIN_SUBAGENT_DESCRIPTIONS[t]}")
             else:
                 sub_raw = self.agent_config.sub_agent_config(t)
@@ -699,7 +696,7 @@ class SubAgentTaskTool:
         current_namespace = self.agent_config.current_namespace
 
         for name, config in self.agent_config.agentic_nodes.items():
-            if name in ("chat", "gen_sql", "explore", "gen_report") or name in SYS_SUB_AGENTS:
+            if name in ("chat", "explore") or name in SYS_SUB_AGENTS:
                 continue
 
             # If scoped_context is configured, namespace must match current namespace
