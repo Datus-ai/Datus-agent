@@ -5,7 +5,6 @@
 import sys
 import traceback
 from enum import Enum
-from typing import Any, Optional
 
 from datus.utils.loggings import get_log_manager, get_logger
 
@@ -132,40 +131,7 @@ class ErrorCode(Enum):
         self.desc = desc
 
 
-class DatusException(Exception):
-    """Datus custom exceptions for standardized printing
-
-    Args:
-        code: ErrorCode - The error code enum that defines the type and category of the exception
-        message: Optional[str] - Custom error message. If not provided, uses the default message from ErrorCode
-        message_args: Optional[dict[str, Any]] - Arguments to format the error message template from ErrorCode
-        *args: object - Additional arguments passed to the base Exception class
-        Exception (_type_): _description_
-    """
-
-    def __init__(
-        self,
-        code: ErrorCode,
-        message: Optional[str] = None,
-        message_args: Optional[dict[str, Any]] = None,
-        *args: object,
-    ):
-        self.code = code
-        self.message_args = message_args or {}
-        self.message = self.build_msg(message, message_args)
-        super().__init__(self.message, *args)
-
-    def __str__(self):
-        return self.message
-
-    def build_msg(self, message: Optional[str] = None, message_args: Optional[dict[str, Any]] = None) -> str:
-        if message:
-            final_message = message
-        elif message_args:
-            final_message = self.code.desc.format(**message_args)
-        else:
-            final_message = self.code.desc
-        return f"error_code={self.code.code}, error_message={final_message}"
+from datus_db_core.exceptions import DatusException  # noqa: E402 - unified exception class
 
 
 def setup_exception_handler(console_logger=None, prefix_wrap_func=None):

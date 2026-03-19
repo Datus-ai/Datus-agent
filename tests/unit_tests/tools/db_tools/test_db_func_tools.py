@@ -580,6 +580,12 @@ class TestDBFuncTool:
         result = db_func_tool.read_query("SELECT * FROM users;")
         assert result.success == 1
 
+    def test_read_query_allows_semicolon_inside_string_literal(self, db_func_tool, mock_connector):
+        """Semicolons inside string literals should not be treated as statement separators."""
+        mock_connector.execute_query.return_value = Mock(success=True, sql_return=[{"x": ";"}])
+        result = db_func_tool.read_query("SELECT ';' AS x")
+        assert result.success == 1
+
     def test_get_table_ddl_success(self, db_func_tool, mock_connector):
         """get_table_ddl should return connector DDL info."""
         mock_connector.get_tables_with_ddl.return_value = [

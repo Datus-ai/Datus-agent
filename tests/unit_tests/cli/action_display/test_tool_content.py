@@ -358,6 +358,25 @@ class TestBuildSearchTable:
         assert "2 tables" in tc.output_preview
         assert "1 sample rows" in tc.output_preview
 
+    def test_compact_with_compressed_sample_data(self):
+        a = _make(
+            input_data={"function_name": "search_table"},
+            output_data={
+                "metadata": [1, 2],
+                "sample_data": {
+                    "original_rows": 1,
+                    "original_columns": ["sample_rows"],
+                    "is_compressed": False,
+                    "compressed_data": "index,sample_rows\n0,[{'id': 1}]",
+                    "removed_columns": [],
+                    "compression_type": "none",
+                },
+            },
+        )
+        tc = _build_search_table(a, verbose=False)
+        assert "2 tables" in tc.output_preview
+        assert "1 sample rows" in tc.output_preview
+
     def test_compact_no_data(self):
         a = _make(input_data={"function_name": "search_table"})
         tc = _build_search_table(a, verbose=False)

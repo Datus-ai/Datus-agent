@@ -950,7 +950,7 @@ class DBFuncTool:
             FuncToolResult with result=self.compressor.compress(rows) when successful. On failure success=0 with the
             underlying error message from the connector.
         """
-        from datus.utils.sql_utils import parse_sql_type
+        from datus.utils.sql_utils import _first_statement, parse_sql_type
 
         try:
             # Support SQL file path: if sql is a simple path ending with .sql, read from file
@@ -961,8 +961,9 @@ class DBFuncTool:
             # Reject multi-statement SQL to prevent read-only bypass (e.g. "SELECT 1; DELETE ...")
             from datus.utils.sql_utils import strip_sql_comments
 
-            cleaned = strip_sql_comments(sql).strip().rstrip(";").strip()
-            if ";" in cleaned:
+            cleaned = strip_sql_comments(sql).strip()
+            normalized_sql = cleaned.rstrip(";").strip()
+            if normalized_sql and _first_statement(normalized_sql) != normalized_sql:
                 return FuncToolResult(
                     success=0,
                     error="Multi-statement SQL is not allowed. Please submit one query at a time.",

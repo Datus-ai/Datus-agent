@@ -763,7 +763,13 @@ def _build_search_table(action: ActionHistory, verbose: bool) -> ToolCallContent
         data = parse_output_data(action.output)
         if data:
             metadata_count = len(data.get("metadata") or [])
-            sample_count = len(data.get("sample_data") or [])
+            sample_data = data.get("sample_data")
+            if isinstance(sample_data, dict):
+                sample_count = sample_data.get("original_rows", 0) or 0
+            elif isinstance(sample_data, list):
+                sample_count = len(sample_data)
+            else:
+                sample_count = 0
             tc.output_preview = f"\u2713 {metadata_count} tables and {sample_count} sample rows"
     return tc
 
