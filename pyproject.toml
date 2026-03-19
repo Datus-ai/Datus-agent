@@ -23,7 +23,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    "datus-storage-base>=0.1.0",
+    "datus-storage-base>=0.1.1",
     "python-dotenv==1.0.0",
     "pandas==2.1.4",
     "sqlalchemy==2.0.23",

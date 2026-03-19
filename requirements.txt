@@ -34,4 +34,4 @@ anyio>=4.9.0
 pygments>=2.18.0
 plotly>=6.5.0
 charset-normalizer>=3.4.2
-datus-storage-base>=0.1.0
+datus-storage-base>=0.1.1
