@@ -971,7 +971,7 @@ class ChatCommands:
         def _render_turn_response(turn_actions: List[ActionHistory]) -> None:
             """Callback to render the final response for each turn."""
             final_action = self._find_node_final_action(turn_actions)
-            if final_action:
+            if final_action and final_action.depth == 0 and final_action.status == ActionStatus.SUCCESS:
                 self._render_final_response(final_action)
 
         if self.all_turn_actions:

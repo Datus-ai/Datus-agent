@@ -308,7 +308,13 @@ class InlineStreamingContext:
 
                 def _render_turn_response(turn_actions: List[ActionHistory]) -> None:
                     for a in reversed(turn_actions):
-                        if a.role == ActionRole.ASSISTANT and a.action_type and a.action_type.endswith("_response"):
+                        if (
+                            a.role == ActionRole.ASSISTANT
+                            and a.action_type
+                            and a.action_type.endswith("_response")
+                            and a.depth == 0
+                            and a.status == ActionStatus.SUCCESS
+                        ):
                             self.display.renderer.print_renderables(
                                 self.display.console,
                                 self.display.renderer.render_main_action(a, verbose=verbose),
