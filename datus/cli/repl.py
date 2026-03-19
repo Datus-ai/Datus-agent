@@ -343,7 +343,6 @@ class DatusCLI:
 
                 # Get user input (with optional prefill from rewind)
                 prefill = self._prefill_input or ""
-                self._prefill_input = None
                 user_input_raw = self.session.prompt(
                     message=prompt_text,
                     default=prefill,
@@ -354,6 +353,7 @@ class DatusCLI:
                     if not self.streamlit_mode and self.chat_commands and self.chat_commands.last_actions:
                         self.chat_commands.display_inline_trace_details(self.chat_commands.last_actions)
                     continue
+                self._prefill_input = None
                 user_input = user_input_raw.strip()
 
                 if not user_input:
@@ -858,7 +858,7 @@ class DatusCLI:
         if cmd in self.commands:
             result = self.commands[cmd](args)
             # cmd_rewind returns a user message to prefill in input buffer
-            if cmd == ".rewind" and result:
+            if cmd == ".rewind" and result is not None:
                 self._prefill_input = result
         else:
             self.console.print(f"[bold red]Unknown command:[/] {cmd}")

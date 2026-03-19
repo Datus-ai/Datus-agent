@@ -1304,6 +1304,9 @@ class ChatCommands:
                 self.current_node = new_node
                 self.current_subagent_name = node_name if node_name != "chat" else None
                 self.chat_node = new_node if not self.current_subagent_name else self.chat_node
+                self.chat_history = []
+                self.all_turn_actions = []
+                self.last_actions = []
                 self.console.print(
                     f"\n[bold green]Rewound to before turn 1.[/] " f"New session: [cyan]{new_node.session_id}[/]\n"
                 )

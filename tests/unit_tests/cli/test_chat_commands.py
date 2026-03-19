@@ -2430,8 +2430,18 @@ class TestCmdRewindWithSession:
         assert cmds.current_node is not None
         assert cmds.current_node.session_id != session_id
 
-    def test_rewind_cancel_returns_none(self, real_agent_config, mock_llm_create):
-        """cmd_rewind with 'q' returns None."""
+        # Verify the branched session only contains turns before the rewound turn
+        from datus.cli.web.session_loader import SessionLoader
+
+        loader = SessionLoader()
+        new_messages = loader.get_session_messages(cmds.current_node.session_id)
+        user_messages = [m["content"] for m in new_messages if m.get("role") == "user"]
+        # Should contain only turn 1 user message, not turn 2
+        assert "Question 1" in user_messages
+        assert "Question 2" not in user_messages
+
+    def test_rewind_cancel_returns_none(self, real_agent_config, mock_llm_create, monkeypatch):
+        """cmd_rewind with picker cancellation returns None."""
         console = Console(file=io.StringIO(), no_color=True)
         cmds = _make_chat_commands(real_agent_config, console=console)
 
@@ -2443,8 +2453,13 @@ class TestCmdRewindWithSession:
             [("user", "Question"), ("assistant", "Reply")],
         )
 
+        # Patch select_list to return None (simulating Esc/cancel in picker)
+        import datus.cli._cli_utils as cli_utils_mod
+
+        monkeypatch.setattr(cli_utils_mod, "select_list", lambda *args, **kwargs: None)
+
         console.file = io.StringIO()
-        result = cmds.cmd_rewind("q")
+        result = cmds.cmd_rewind("")
         assert result is None
 
     def test_rewind_invalid_turn_number_too_high(self, real_agent_config, mock_llm_create):
@@ -2919,19 +2934,28 @@ class TestResumeInteractiveWithSessions:
         console = Console(file=io.StringIO(), no_color=True)
         cmds = _make_chat_commands(real_agent_config, console=console)
 
-        # Create sessions with messages
+        # Create two sessions so we can verify index→session mapping
         _create_session_on_disk("chat_session_pick01", [("user", "First Q"), ("assistant", "First A")])
+        _create_session_on_disk("chat_session_pick01b", [("user", "Second Q"), ("assistant", "Second A")])
 
-        # Monkeypatch select_list to return index 0 (select first session)
+        # Monkeypatch select_list to return index 0 (select first/newest session)
         import datus.cli._cli_utils as cli_utils_mod
 
-        monkeypatch.setattr(cli_utils_mod, "select_list", lambda *args, **kwargs: 0)
+        captured = {}
+
+        def fake_select(*args, **kwargs):
+            captured["items"] = args[1] if len(args) > 1 else kwargs.get("items")
+            return 0
+
+        monkeypatch.setattr(cli_utils_mod, "select_list", fake_select)
 
         cmds.cmd_resume("")
 
         output = _get_console_output(console)
         assert cmds.current_node is not None
         assert "session" in output.lower()
+        # Verify items were passed to select_list
+        assert "items" in captured and len(captured["items"]) >= 2
 
     def test_resume_interactive_cancel(self, real_agent_config, mock_llm_create, monkeypatch):
         """cmd_resume interactive: user cancels selection."""
@@ -3064,13 +3088,24 @@ class TestResumeListingLongMessage:
 
         import datus.cli._cli_utils as cli_utils_mod
 
-        # select_list returns None to cancel — we just need the list to be built
-        monkeypatch.setattr(cli_utils_mod, "select_list", lambda *args, **kwargs: None)
+        # Capture items passed to select_list, then cancel
+        captured = {}
+
+        def fake_select(*args, **kwargs):
+            captured["items"] = args[1] if len(args) > 1 else kwargs.get("items")
+            return None
+
+        monkeypatch.setattr(cli_utils_mod, "select_list", fake_select)
 
         console.file = io.StringIO()
         cmds.cmd_resume("")
         output = _get_console_output(console)
         assert "cancelled" in output.lower()
+        # Verify items were passed to select_list with the long message
+        assert "items" in captured and len(captured["items"]) > 0
+        first_item_text = captured["items"][0][0]  # primary line text
+        # The full message is passed to select_list (clipping is done internally by the renderer)
+        assert long_msg.replace("\n", " ") in first_item_text or first_item_text in long_msg
 
 
 # ===========================================================================
