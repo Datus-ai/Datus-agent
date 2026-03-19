@@ -56,6 +56,7 @@ def semantic_tools():
         from datus.tools.func_tool.semantic_tools import SemanticTools
 
         mock_config = Mock()
+        mock_config.active_model.return_value.model = "gpt-4o"
         tool = SemanticTools(agent_config=mock_config, adapter_type="mock_adapter")
         return tool
 
@@ -273,6 +274,7 @@ def semantic_tools_ext():
         from datus.tools.func_tool.semantic_tools import SemanticTools
 
         config = Mock()
+        config.active_model.return_value.model = "gpt-4o"
         tool = SemanticTools(agent_config=config)
         return tool
 
@@ -286,6 +288,7 @@ def semantic_tools_with_adapter():
         from datus.tools.func_tool.semantic_tools import SemanticTools
 
         config = Mock()
+        config.active_model.return_value.model = "gpt-4o"
         tool = SemanticTools(agent_config=config, adapter_type="metricflow")
         mock_adapter = Mock()
         tool._adapter = mock_adapter
@@ -333,6 +336,7 @@ class TestAvailableTools:
             from datus.tools.func_tool.semantic_tools import SemanticTools
 
             config = Mock()
+            config.active_model.return_value.model = "gpt-4o"
             tool = SemanticTools(agent_config=config)
             tool._adapter = Mock()  # Set adapter (also enables attribution_tool)
 
@@ -361,16 +365,20 @@ class TestListMetrics:
         result = semantic_tools_ext.list_metrics()
 
         assert result.success == 1
-        assert len(result.result) == 1
-        assert result.result[0]["name"] == "orders"
+        # Result is now a compressed dict
+        assert isinstance(result.result, dict)
+        assert result.result["original_rows"] == 1
+        assert "orders" in result.result["compressed_data"]
 
-    def test_empty_storage_no_adapter_returns_empty(self, semantic_tools_ext):
+    def test_empty_storage_no_adapter_returns_compressed_empty(self, semantic_tools_ext):
         semantic_tools_ext.metric_rag.search_all_metrics.return_value = []
 
         result = semantic_tools_ext.list_metrics()
 
         assert result.success == 1
-        assert result.result == []
+        assert isinstance(result.result, dict)
+        assert result.result["original_rows"] == 0
+        assert result.result["is_compressed"] is False
 
     def test_path_filter_applied(self, semantic_tools_ext):
         semantic_tools_ext.metric_rag.search_all_metrics.return_value = [
@@ -399,8 +407,9 @@ class TestListMetrics:
         result = semantic_tools_ext.list_metrics(path=["Finance"])
 
         assert result.success == 1
-        assert len(result.result) == 1
-        assert result.result[0]["name"] == "m1"
+        assert isinstance(result.result, dict)
+        assert result.result["original_rows"] == 1
+        assert "m1" in result.result["compressed_data"]
 
     def test_pagination(self, semantic_tools_ext):
         metrics = [
@@ -421,8 +430,9 @@ class TestListMetrics:
         result = semantic_tools_ext.list_metrics(limit=3, offset=2)
 
         assert result.success == 1
-        assert len(result.result) == 3
-        assert result.result[0]["name"] == "m2"
+        assert isinstance(result.result, dict)
+        assert result.result["original_rows"] == 3
+        assert "m2" in result.result["compressed_data"]
 
     def test_falls_back_to_adapter(self, semantic_tools_with_adapter):
         tool, mock_adapter = semantic_tools_with_adapter
@@ -435,8 +445,9 @@ class TestListMetrics:
             result = tool.list_metrics()
 
         assert result.success == 1
-        assert len(result.result) == 1
-        assert result.result[0]["name"] == "revenue"
+        assert isinstance(result.result, dict)
+        assert result.result["original_rows"] == 1
+        assert "revenue" in result.result["compressed_data"]
 
     def test_exception_returns_failure(self, semantic_tools_ext):
         semantic_tools_ext.metric_rag.search_all_metrics.side_effect = Exception("db error")
@@ -645,3 +656,38 @@ class TestReloadAdapter:
 
         # It either returns False or raises - we just check it doesn't crash
         assert isinstance(result, bool)
+
+
+class TestCompressorModelName:
+    """Verify that SemanticTools uses agent_config's model name for DataCompressor."""
+
+    def test_compressor_uses_agent_config_model(self):
+        with (
+            patch("datus.tools.func_tool.semantic_tools.SemanticModelRAG"),
+            patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
+        ):
+            from datus.tools.func_tool.semantic_tools import SemanticTools
+
+            config = Mock()
+            config.active_model.return_value.model = "deepseek/deepseek-chat"
+            tool = SemanticTools(agent_config=config)
+            assert tool.compressor.model_name == "deepseek/deepseek-chat"
+
+    def test_list_metrics_returns_compressed_dict(self, semantic_tools_ext):
+        """list_metrics result should be a compressed dict, not a raw list."""
+        semantic_tools_ext.metric_rag.search_all_metrics.return_value = [
+            {
+                "name": "orders",
+                "description": "",
+                "metric_type": "count",
+                "dimensions": [],
+                "base_measures": [],
+                "unit": None,
+                "format": None,
+                "subject_path": [],
+            }
+        ]
+        result = semantic_tools_ext.list_metrics()
+        assert result.success == 1
+        assert "original_rows" in result.result
+        assert "compression_type" in result.result

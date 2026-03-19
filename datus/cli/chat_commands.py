@@ -1085,7 +1085,7 @@ class ChatCommands:
 
     def cmd_resume(self, args: str):
         """Resume a previous chat session."""
-        from datus.cli._cli_utils import prompt_input
+        from datus.cli._cli_utils import select_list
         from datus.models.session_manager import SessionManager
 
         try:
@@ -1112,42 +1112,31 @@ class ChatCommands:
                     self.console.print("[yellow]No sessions with messages found.[/]")
                     return
 
-                # Display sessions in a Rich Table
-                table = Table(title="Available Sessions", show_header=True, header_style="bold blue")
-                table.add_column("#", style="dim", width=4)
-                table.add_column("Session ID", style="cyan", no_wrap=True)
-                table.add_column("Type", style="green", width=12)
-                table.add_column("First User Message", style="white", max_width=40)
-                table.add_column("Updated", style="yellow", width=19)
-                table.add_column("Msgs", justify="right", style="magenta", width=5)
+                # Sort by updated_at descending (newest first)
+                session_infos.sort(
+                    key=lambda x: x.get("updated_at") or x.get("latest_message_at") or "",
+                    reverse=True,
+                )
 
-                for idx, info in enumerate(session_infos, 1):
+                # Build items for interactive list selector (two-line per item)
+                # Line 1: first user message (no newlines, clip to screen width)
+                # Line 2: session_id, updated time, message count
+                list_items = []
+                for info in session_infos:
                     sid = info["session_id"]
-                    node_type = self._extract_node_type_from_session_id(sid)
-                    first_msg = info.get("first_user_message", "") or ""
-                    if len(first_msg) > 37:
-                        first_msg = first_msg[:37] + "..."
+                    first_msg = (info.get("first_user_message", "") or "").replace("\n", " ").replace("\r", " ")
+                    if not first_msg:
+                        first_msg = "(empty)"
                     updated = (info.get("updated_at") or info.get("latest_message_at") or "N/A")[:19]
                     msg_count = str(info.get("message_count", 0))
-                    table.add_row(str(idx), sid[:24] + "...", node_type, first_msg, updated, msg_count)
+                    list_items.append([first_msg, sid, f"Updated: {updated}", f"Msgs: {msg_count}"])
 
-                self.console.print(table)
-
-                # Let user pick
-                choice = prompt_input(self.console, "Enter session number to resume (or 'q' to cancel)")
-                if not choice or choice.lower() == "q":
+                idx = select_list(self.console, list_items)
+                if idx is None:
                     self.console.print("[dim]Cancelled.[/]")
                     return
 
-                try:
-                    idx = int(choice) - 1
-                    if idx < 0 or idx >= len(session_infos):
-                        self.console.print("[bold red]Invalid selection.[/]")
-                        return
-                    target_session_id = session_infos[idx]["session_id"]
-                except ValueError:
-                    self.console.print("[bold red]Invalid input. Please enter a number.[/]")
-                    return
+                target_session_id = session_infos[idx]["session_id"]
 
             # Validate the session exists
             if not session_manager.session_exists(target_session_id):
@@ -1231,9 +1220,17 @@ class ChatCommands:
             logger.error(f"Error resuming session: {e}")
             self.console.print(f"[bold red]Error:[/] {str(e)}")
 
-    def cmd_rewind(self, args: str):
-        """Rewind the current session to a specific user turn, creating a new branched session."""
-        from datus.cli._cli_utils import prompt_input
+    def cmd_rewind(self, args: str) -> Optional[str]:
+        """Rewind the current session to before a specific user turn.
+
+        Creates a new branched session containing all messages before the selected
+        user turn, and returns the selected user message so the caller can prefill
+        the input buffer.
+
+        Returns:
+            The selected user message text, or None if cancelled/error.
+        """
+        from datus.cli._cli_utils import select_list
         from datus.cli.web.session_loader import SessionLoader
         from datus.models.session_manager import SessionManager
 
@@ -1262,44 +1259,62 @@ class ChatCommands:
                 self.console.print("[yellow]No user turns found in current session.[/]")
                 return
 
-            # Display the turns
-            table = Table(title="Conversation Turns", show_header=True, header_style="bold blue")
-            table.add_column("Turn", style="cyan", width=6, justify="right")
-            table.add_column("User Message", style="white", max_width=80)
-
-            for idx, turn_msg in enumerate(user_turns, 1):
-                content = turn_msg.get("content", "")
-                if len(content) > 77:
-                    content = content[:77] + "..."
-                table.add_row(str(idx), content)
-
-            self.console.print(table)
-
-            # Get user choice (from args or prompt)
+            # Get user choice (from args or interactive list)
             turn_str = args.strip() if args else None
-            if not turn_str:
-                turn_str = prompt_input(
-                    self.console,
-                    "Enter turn number to rewind to (or 'q' to cancel)",
-                )
-            if not turn_str or turn_str.lower() == "q":
-                self.console.print("[dim]Cancelled.[/]")
-                return
+            if turn_str:
+                # Direct turn number from args
+                if turn_str.lower() == "q":
+                    self.console.print("[dim]Cancelled.[/]")
+                    return
+                try:
+                    turn_num = int(turn_str)
+                except ValueError:
+                    self.console.print("[bold red]Invalid input. Please enter a number.[/]")
+                    return
+                if turn_num < 1 or turn_num > len(user_turns):
+                    self.console.print(f"[bold red]Invalid turn number. Must be between 1 and {len(user_turns)}.[/]")
+                    return
+            else:
+                # Interactive list selector (two-line per item)
+                # Line 1: user message (no newlines, clip to screen width)
+                # Line 2: turn number, timestamp
+                list_items = []
+                for idx, turn_msg in enumerate(user_turns, 1):
+                    content = (turn_msg.get("content", "") or "").replace("\n", " ").replace("\r", " ")
+                    if not content:
+                        content = "(empty)"
+                    timestamp = (turn_msg.get("created_at") or "")[:19]
+                    list_items.append([content, f"Turn: {idx}", timestamp])
 
-            try:
-                turn_num = int(turn_str)
-            except ValueError:
-                self.console.print("[bold red]Invalid input. Please enter a number.[/]")
-                return
+                selected = select_list(self.console, list_items)
+                if selected is None:
+                    self.console.print("[dim]Cancelled.[/]")
+                    return
+                turn_num = selected + 1
 
-            if turn_num < 1 or turn_num > len(user_turns):
-                self.console.print(f"[bold red]Invalid turn number. Must be between 1 and {len(user_turns)}.[/]")
-                return
+            # Get the selected user message to return for input prefill
+            rewind_user_message = user_turns[turn_num - 1].get("content", "")
 
-            # Create the rewound session
+            # Create the rewound session (keep everything BEFORE the selected turn)
             session_manager = SessionManager()
+            if turn_num == 1:
+                # First turn selected — no prior messages, create a fresh session
+                node_name = self._extract_node_type_from_session_id(source_session_id)
+                new_node = self._create_new_node(node_name if node_name != "chat" else None)
+                self.current_node = new_node
+                self.current_subagent_name = node_name if node_name != "chat" else None
+                self.chat_node = new_node if not self.current_subagent_name else self.chat_node
+                self.chat_history = []
+                self.all_turn_actions = []
+                self.last_actions = []
+                self.console.print(
+                    f"\n[bold green]Rewound to before turn 1.[/] " f"New session: [cyan]{new_node.session_id}[/]\n"
+                )
+                self.console.print("[green]Selected message placed in input buffer.[/]")
+                return rewind_user_message
+
             new_session_id = session_manager.rewind_session(
-                source_session_id, turn_num, include_assistant_response=True
+                source_session_id, turn_num - 1, include_assistant_response=True
             )
 
             # Switch to the new session (same pattern as cmd_resume)
@@ -1319,7 +1334,7 @@ class ChatCommands:
             new_messages = loader.get_session_messages(new_session_id)
             if new_messages:
                 self.console.print(
-                    f"\n[bold green]Rewound to turn {turn_num}![/] "
+                    f"\n[bold green]Rewound to before turn {turn_num}.[/] "
                     f"New session: [cyan]{new_session_id}[/] ({len(new_messages)} messages)\n"
                 )
                 action_display = ActionHistoryDisplay(self.console)
@@ -1356,11 +1371,13 @@ class ChatCommands:
                             self.all_turn_actions.append((current_user_msg, actions))
                         current_user_msg = ""
 
-            self.console.print("[green]You can now continue the conversation from this point.[/]")
+            self.console.print("[green]Selected message placed in input buffer.[/]")
+            return rewind_user_message
 
         except Exception as e:
             logger.error(f"Error rewinding session: {e}")
             self.console.print(f"[bold red]Error:[/] {str(e)}")
+        return None
 
     def add_in_sql_context(self, sql: str, explanation: str, incremental_actions: List[ActionHistory]):
         last_sql_action = None

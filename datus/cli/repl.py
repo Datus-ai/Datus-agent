@@ -110,6 +110,7 @@ class DatusCLI:
         # Last executed SQL and result
         self.last_sql = None
         self.last_result = None
+        self._prefill_input = None  # For rewind: prefill input buffer with user message
 
         # Action history manager for tracking all CLI operations
         self.actions = ActionHistoryManager()
@@ -340,9 +341,11 @@ class DatusCLI:
                 # Get dynamic prompt text
                 prompt_text = self._get_prompt_text()
 
-                # Get user input
+                # Get user input (with optional prefill from rewind)
+                prefill = self._prefill_input or ""
                 user_input_raw = self.session.prompt(
                     message=prompt_text,
+                    default=prefill,
                 )
                 if user_input_raw is None:
                     continue
@@ -350,6 +353,7 @@ class DatusCLI:
                     if not self.streamlit_mode and self.chat_commands and self.chat_commands.last_actions:
                         self.chat_commands.display_inline_trace_details(self.chat_commands.last_actions)
                     continue
+                self._prefill_input = None
                 user_input = user_input_raw.strip()
 
                 if not user_input:
@@ -852,7 +856,10 @@ class DatusCLI:
         """Execute an internal command (. prefix)."""
         logger.debug(f"Executing internal command: '{cmd}' with args: '{args}'")
         if cmd in self.commands:
-            self.commands[cmd](args)
+            result = self.commands[cmd](args)
+            # cmd_rewind returns a user message to prefill in input buffer
+            if cmd == ".rewind" and result is not None:
+                self._prefill_input = result
         else:
             self.console.print(f"[bold red]Unknown command:[/] {cmd}")
 

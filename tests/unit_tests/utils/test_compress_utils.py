@@ -545,6 +545,16 @@ class TestDataCompressorCompress:
         count = dc.count_tokens("hello world test token")
         assert count == len("hello world test token") // 4
 
+    def test_custom_model_name_stored(self):
+        """DataCompressor stores the provided model_name for token counting."""
+        dc = DataCompressor(model_name="gpt-4o")
+        assert dc.model_name == "gpt-4o"
+
+    def test_default_model_name(self):
+        """DataCompressor defaults to gpt-3.5-turbo when no model_name is given."""
+        dc = DataCompressor()
+        assert dc.model_name == "gpt-3.5-turbo"
+
 
 # ---------------------------------------------------------------------------
 # DataCompressor._compress_columns (lines 269-327)

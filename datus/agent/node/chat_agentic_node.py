@@ -199,7 +199,9 @@ class ChatAgenticNode(AgenticNode):
             )
             self.permission_manager.set_permission_callback(self._handle_permission_ask)
 
+            skills_config = getattr(self.agent_config, "skills_config", None) if self.agent_config else None
             self.skill_manager = SkillManager(
+                config=skills_config,
                 permission_manager=self.permission_manager,
             )
             self.skill_func_tool = SkillFuncTool(
@@ -423,6 +425,9 @@ class ChatAgenticNode(AgenticNode):
         )
         context["conversation_summary"] = conversation_summary
         context["has_task_tool"] = bool(self.sub_agent_task_tool)
+        from datus.utils.time_utils import get_default_current_date
+
+        context["current_date"] = get_default_current_date(None)
         prompt_version = prompt_version or self.node_config.get("prompt_version")
 
         system_prompt_name = self.node_config.get("system_prompt") or self.get_node_name()

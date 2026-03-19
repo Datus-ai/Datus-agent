@@ -66,6 +66,9 @@ Your final response MUST be a valid JSON object:
 {% endif %}
 
 ## Context
+{% if current_date -%}
+- Current date: {{ current_date }}
+{% endif -%}
 {% if namespace -%}
 - Database namespace: {{ namespace }}
 {% endif -%}

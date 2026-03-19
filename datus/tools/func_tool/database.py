@@ -157,7 +157,8 @@ class DBFuncTool:
         else:
             self._init_single_db_connector(connector_or_manager)
 
-        self.compressor = DataCompressor()
+        model_name = agent_config.active_model().model if agent_config else "gpt-3.5-turbo"
+        self.compressor = DataCompressor(model_name=model_name)
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
         self.schema_rag = SchemaWithValueRAG(agent_config, sub_agent_name) if agent_config else None
@@ -684,6 +685,7 @@ class DBFuncTool:
 
             result_dict["metadata"] = metadata_rows
             if current_has_semantic:
+                result_dict["sample_data"] = self.compressor.compress([])
                 return FuncToolResult(success=1, result=result_dict)
 
             sample_rows: List[Dict[str, Any]] = []
@@ -702,7 +704,7 @@ class DBFuncTool:
                         "_distance",
                     ]
                 sample_rows = sample_values.select(selected_fields).to_pylist()
-            result_dict["sample_data"] = sample_rows
+            result_dict["sample_data"] = self.compressor.compress(sample_rows)
             return FuncToolResult(result=result_dict)
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))

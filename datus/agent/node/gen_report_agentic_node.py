@@ -296,6 +296,10 @@ class GenReportAgenticNode(AgenticNode):
             context["namespace"] = getattr(self.agent_config, "current_namespace", None)
             context["db_name"] = getattr(self.agent_config, "current_database", None)
 
+        from datus.utils.time_utils import get_default_current_date
+
+        context["current_date"] = get_default_current_date(None)
+
         version = None if prompt_version in (None, "") else str(prompt_version)
 
         # Construct template name: {system_prompt}_system or fallback to {node_name}_system

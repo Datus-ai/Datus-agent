@@ -52,7 +52,6 @@ class DateParsingTools:
         """Get all available date parsing function tools."""
         return [
             trans_to_function_tool(self.parse_temporal_expressions),
-            trans_to_function_tool(self.get_current_date),
         ]
 
     def parse_temporal_expressions(
@@ -77,7 +76,7 @@ class DateParsingTools:
             from datus.utils.time_utils import get_default_current_date
 
             # Extract dates using DateParserTool
-            normalized_current_date = get_default_current_date(current_date)
+            normalized_current_date = get_default_current_date(current_date or self.reference_date)
             extracted_dates = self.date_parser_tool.execute(task_text, normalized_current_date, self.model)
 
             # Generate date context

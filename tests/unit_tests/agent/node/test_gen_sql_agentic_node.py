@@ -2073,11 +2073,33 @@ class TestRebuildTools:
         node.date_parsing_tools = mock_date
         node.filesystem_func_tool = None
         node._platform_doc_tool = None
+        node.ask_user_tool = None
 
         node._rebuild_tools()
 
-        # 3 mock tools + ask_user (injected by AgenticNode base class)
-        assert len(node.tools) == 4
+        # 3 mocked tools + ask_user tool (added in interactive mode)
+        expected = 4 if node.ask_user_tool else 3
+        assert len(node.tools) == expected
+
+    def test_rebuild_tools_with_ask_user(self, real_agent_config, mock_llm_create):
+        node = _make_node(real_agent_config, mock_llm_create)
+
+        mock_db = MagicMock()
+        mock_db.available_tools.return_value = [MagicMock(name="list_tables")]
+
+        node.db_func_tool = mock_db
+        node.context_search_tools = None
+        node.date_parsing_tools = None
+        node.filesystem_func_tool = None
+        node._platform_doc_tool = None
+        # ask_user_tool is set up by _make_node via setup_tools; keep it
+
+        node._rebuild_tools()
+
+        # 1 db tool + 1 ask_user tool
+        assert len(node.tools) == 2
+        tool_names = [getattr(t, "name", "") for t in node.tools]
+        assert "ask_user" in tool_names
 
     def test_rebuild_tools_empty_when_no_tools(self, real_agent_config, mock_llm_create):
         node = _make_node(real_agent_config, mock_llm_create)
@@ -2086,12 +2108,11 @@ class TestRebuildTools:
         node.date_parsing_tools = None
         node.filesystem_func_tool = None
         node._platform_doc_tool = None
+        node.ask_user_tool = None
 
         node._rebuild_tools()
 
-        # ask_user tool is always injected by AgenticNode base class
-        assert len(node.tools) == 1
-        assert node.tools[0].name == "ask_user"
+        assert node.tools == []
 
 
 # ---------------------------------------------------------------------------
@@ -2760,3 +2781,36 @@ class TestGenSQLUpdateContext:
 
         result = node.update_context(workflow)
         assert result["success"] is False
+
+
+class TestGenSQLSystemPromptCurrentDate:
+    """Verify current_date injection uses reference_date when available."""
+
+    def test_system_prompt_uses_reference_date(self, real_agent_config, mock_llm_create):
+        from unittest.mock import patch
+
+        node = _make_node(real_agent_config, mock_llm_create)
+        node.date_parsing_tools = MagicMock()
+        node.date_parsing_tools.reference_date = "2023-01-10"
+
+        with patch(
+            "datus.utils.time_utils.get_default_current_date",
+            return_value="2023-01-10",
+        ) as mock_date:
+            prompt = node._get_system_prompt()
+        mock_date.assert_called_once_with("2023-01-10")
+        assert "2023-01-10" in prompt
+
+    def test_system_prompt_falls_back_to_today(self, real_agent_config, mock_llm_create):
+        from unittest.mock import patch
+
+        node = _make_node(real_agent_config, mock_llm_create)
+        node.date_parsing_tools = None
+
+        with patch(
+            "datus.utils.time_utils.get_default_current_date",
+            return_value="2025-06-15",
+        ) as mock_date:
+            prompt = node._get_system_prompt()
+        mock_date.assert_called_once_with(None)
+        assert "2025-06-15" in prompt

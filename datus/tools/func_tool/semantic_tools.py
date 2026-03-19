@@ -83,7 +83,7 @@ class SemanticTools:
         # Initialize storage RAG interfaces
         self.semantic_model_rag = SemanticModelRAG(agent_config, sub_agent_name)
         self.metric_rag = MetricRAG(agent_config, sub_agent_name)
-        self.compressor = DataCompressor()
+        self.compressor = DataCompressor(model_name=agent_config.active_model().model)
 
         # Lazy load adapter and attribution tool
         self._adapter: Optional[BaseSemanticAdapter] = None
@@ -232,14 +232,14 @@ class SemanticTools:
                 ]
                 return FuncToolResult(
                     success=1,
-                    result=formatted_metrics,
+                    result=self.compressor.compress(formatted_metrics),
                 )
 
             # Fallback to adapter if storage is empty
             if not self.adapter:
                 return FuncToolResult(
                     success=1,
-                    result=[],
+                    result=self.compressor.compress([]),
                 )
 
             logger.info("Storage empty, falling back to adapter")
@@ -260,7 +260,7 @@ class SemanticTools:
 
             return FuncToolResult(
                 success=1,
-                result=paginated_metrics,
+                result=self.compressor.compress(paginated_metrics),
             )
 
         except Exception as e:

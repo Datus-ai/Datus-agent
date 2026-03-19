@@ -1873,7 +1873,7 @@ class SubAgentWizard:
             "context_search_tools": ContextSearchTools.all_tools_name(),
             "platform_doc_tools": PlatformDocSearchTool.all_tools_name(),
             "semantic_tools": SemanticTools.all_tools_name(),
-            "date_parsing_tools": ["parse_temporal_expressions", "get_current_date"],
+            "date_parsing_tools": ["parse_temporal_expressions"],
         }
 
 

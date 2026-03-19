@@ -335,6 +335,10 @@ When your generated SQL is **50 lines or more**, you MUST save it to a file inst
 For short SQL (under 50 lines), return the SQL inline as usual.
 {% endif %}
 
+{% if current_date -%}
+Current date: {{ current_date }}
+{% endif -%}
+
 ## Output Format: Return a JSON object with the following structure, *only JSON*
 
 ### For MetricFlow Mode (when using query_metrics):

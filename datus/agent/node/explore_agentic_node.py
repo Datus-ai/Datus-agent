@@ -148,6 +148,7 @@ class ExploreAgenticNode(AgenticNode):
     ) -> str:
         """Get the system prompt for the explore node."""
         from datus.prompts.prompt_manager import prompt_manager
+        from datus.utils.time_utils import get_default_current_date
 
         version = prompt_version or self.node_config.get("prompt_version")
         template_name = "explore_system"
@@ -160,6 +161,7 @@ class ExploreAgenticNode(AgenticNode):
             "namespace": getattr(self.agent_config, "current_namespace", None) if self.agent_config else None,
             "workspace_root": self._resolve_workspace_root(),
             "conversation_summary": conversation_summary,
+            "current_date": get_default_current_date(None),
         }
 
         try:

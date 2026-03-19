@@ -17,12 +17,7 @@ from datus.agent.node.agentic_node import AgenticNode
 from datus.configuration.node_type import NodeType
 from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.explore_agentic_node_models import ExploreNodeInput
-from tests.unit_tests.mock_llm_model import (
-    MockLLMModel,
-    MockToolCall,
-    build_simple_response,
-    build_tool_then_response,
-)
+from tests.unit_tests.mock_llm_model import MockLLMModel, MockToolCall, build_simple_response, build_tool_then_response
 
 
 class TestExploreAgenticNodeInit:
@@ -164,7 +159,6 @@ class TestExploreAgenticNodeTools:
             node_name="explore",
         )
         tool_names = [t.name for t in node.tools]
-        assert "get_current_date" in tool_names
         assert "parse_temporal_expressions" in tool_names
 
     def test_explore_has_no_mcp_servers(self, real_agent_config, mock_llm_create):
@@ -381,3 +375,27 @@ class TestExploreUpdateContext:
         result = node.update_context(mock_workflow)
         assert result["success"] is True
         assert "read-only" in result["message"]
+
+
+class TestExploreSystemPromptCurrentDate:
+    """Verify current_date is injected into the system prompt."""
+
+    def test_system_prompt_contains_current_date(self, real_agent_config, mock_llm_create):
+        from unittest.mock import patch
+
+        from datus.agent.node.explore_agentic_node import ExploreAgenticNode
+
+        node = ExploreAgenticNode(
+            node_id="test_explore_date",
+            description="Test current_date",
+            node_type=NodeType.TYPE_EXPLORE,
+            agent_config=real_agent_config,
+            node_name="explore",
+        )
+
+        with patch(
+            "datus.utils.time_utils.get_default_current_date",
+            return_value="2025-06-15",
+        ):
+            prompt = node._get_system_prompt()
+        assert "2025-06-15" in prompt

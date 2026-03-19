@@ -36,7 +36,6 @@ You **MUST** use context search tools to gather domain knowledge before concludi
 {% endif -%}
 {% if has_date_parsing_tools -%}
 ### Date Parsing Tools
-- Use `get_current_date` to obtain the current date
 - Use `parse_temporal_expressions` to convert relative dates to absolute date ranges
 {% endif -%}
 
@@ -69,8 +68,11 @@ Provide a structured summary of your findings:
 - Important filters, aggregations, or date handling notes
 - Any caveats or limitations discovered
 
-{% if namespace -%}
 Current context:
+{% if current_date -%}
+- Current date: {{ current_date }}
+{% endif -%}
+{% if namespace -%}
 - Database namespace: {{ namespace }}
 {% endif -%}
 {% if workspace_root -%}
