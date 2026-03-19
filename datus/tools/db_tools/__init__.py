@@ -2,8 +2,8 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-from .base import BaseSqlConnector
-from .registry import AdapterMetadata, ConnectorRegistry, connector_registry
+from datus_db_core import AdapterMetadata, BaseSqlConnector, ConnectorRegistry, connector_registry
+
 from .sqlite_connector import SQLiteConnector
 
 __all__ = [

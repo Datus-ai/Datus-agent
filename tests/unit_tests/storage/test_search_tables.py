@@ -15,7 +15,7 @@ from datus.tools.db_tools import connector_registry
 @pytest.fixture(autouse=True)
 def _register_test_capabilities():
     """Register dialect capabilities for testing, with snapshot/restore for isolation."""
-    from datus.tools.db_tools.registry import ConnectorRegistry
+    from datus_db_core import ConnectorRegistry
 
     attrs = ("_capabilities", "_uri_builders", "_context_resolvers")
     snapshots = {a: getattr(ConnectorRegistry, a).copy() for a in attrs}

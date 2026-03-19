@@ -4,16 +4,8 @@
 
 from typing import Optional
 
-from pydantic import BaseModel, Field
-
-
-class ConnectionConfig(BaseModel):
-    """Base connection configuration for all database connectors."""
-
-    timeout_seconds: int = Field(default=30, description="Connection timeout in seconds")
-
-    class Config:
-        extra = "forbid"  # Reject unknown fields to catch typos
+from datus_db_core import ConnectionConfig
+from pydantic import Field
 
 
 class FileConnectionConfig(ConnectionConfig):

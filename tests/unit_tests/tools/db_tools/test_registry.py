@@ -3,10 +3,9 @@
 from unittest.mock import MagicMock
 
 import pytest
+from datus_db_core import BaseSqlConnector, ConnectorRegistry, DatusException, connector_registry
 
-from datus.tools.db_tools.base import BaseSqlConnector
-from datus.tools.db_tools.registry import ConnectorRegistry, connector_registry
-from datus.utils.exceptions import DatusException
+import datus.tools.db_tools  # noqa: F401 — triggers builtin connector registration
 
 
 @pytest.fixture(autouse=True)

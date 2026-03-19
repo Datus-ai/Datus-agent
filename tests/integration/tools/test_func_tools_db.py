@@ -243,8 +243,9 @@ class TestConnectorInterface:
 
     def test_sqlite_test_connection(self):
         """Test SQLite connector test_connection() health check."""
+        from datus_db_core import connector_registry
+
         from datus.tools.db_tools.config import SQLiteConfig
-        from datus.tools.db_tools.registry import connector_registry
 
         config = SQLiteConfig(db_path="tests/data/SSB.db")
         connector = connector_registry.create_connector("sqlite", config)
@@ -256,8 +257,9 @@ class TestConnectorInterface:
 
     def test_duckdb_test_connection(self):
         """Test DuckDB connector test_connection() health check."""
+        from datus_db_core import connector_registry
+
         from datus.tools.db_tools.config import DuckDBConfig
-        from datus.tools.db_tools.registry import connector_registry
 
         config = DuckDBConfig(db_path="tests/data/datus_metricflow_db/duck.db")
         connector = connector_registry.create_connector("duckdb", config)

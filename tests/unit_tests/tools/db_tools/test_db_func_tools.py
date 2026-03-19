@@ -627,7 +627,7 @@ class TestDBFuncTool:
 
     def test_catalog_scoped_tables_filter_results(self, monkeypatch):
         """Catalog-qualified scopes should restrict databases, schemas, and tables."""
-        from datus.tools.db_tools.registry import connector_registry
+        from datus_db_core import connector_registry
 
         # Register snowflake capabilities so _determine_field_order includes catalog/database/schema.
         # In production this is done by the external datus_snowflake adapter package.

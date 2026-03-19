@@ -6,6 +6,7 @@ import json
 from functools import lru_cache
 from typing import Any, Dict, List, Optional
 
+from datus_db_core import BaseSqlConnector, connector_registry
 from rich import box
 from rich.console import Group
 from rich.table import Table
@@ -25,8 +26,6 @@ from datus.cli.screen.base_widgets import FocusableStatic, InputWithLabel
 from datus.cli.screen.context_screen import ContextScreen
 from datus.storage.catalog_manager import CatalogUpdater
 from datus.storage.semantic_model.store import SemanticModelRAG
-from datus.tools.db_tools.base import BaseSqlConnector
-from datus.tools.db_tools.registry import connector_registry
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_pretty_str

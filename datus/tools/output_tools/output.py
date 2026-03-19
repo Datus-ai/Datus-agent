@@ -8,12 +8,12 @@ from io import StringIO
 from typing import Any, Optional, Tuple
 
 import pandas as pd
+from datus_db_core import BaseSqlConnector
 
 from datus.models.base import LLMBaseModel
 from datus.prompts.output_checking import gen_prompt
 from datus.schemas.node_models import OutputInput, OutputResult
 from datus.tools.base import BaseTool
-from datus.tools.db_tools.base import BaseSqlConnector
 from datus.utils.loggings import get_logger
 from datus.utils.traceable_utils import optional_traceable
 

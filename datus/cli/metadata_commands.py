@@ -10,11 +10,11 @@ This module handles database, table, and schema listing/switching functionality.
 from typing import TYPE_CHECKING
 
 import numpy as np
+from datus_db_core import connector_registry
 from rich.box import SIMPLE_HEAD
 from rich.panel import Panel
 from rich.table import Table
 
-from datus.tools.db_tools.registry import connector_registry
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 

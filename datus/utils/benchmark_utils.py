@@ -28,9 +28,9 @@ from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional,
 
 import pandas as pd
 import yaml
+from datus_db_core import BaseSqlConnector
 
 from datus.configuration.agent_config import AgentConfig, BenchmarkConfig
-from datus.tools.db_tools import BaseSqlConnector
 from datus.tools.db_tools.db_manager import db_manager_instance, get_connection
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode

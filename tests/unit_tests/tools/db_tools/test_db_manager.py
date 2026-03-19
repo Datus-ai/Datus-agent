@@ -4,8 +4,8 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from datus_db_core import BaseSqlConnector
 
-from datus.tools.db_tools.base import BaseSqlConnector
 from datus.tools.db_tools.db_manager import (
     DBManager,
     _clean_str,
@@ -152,7 +152,7 @@ class TestGenUri:
 
     def test_builder_reraises_datus_exception(self, monkeypatch):
         """DatusException from a registered URI builder is re-raised as-is."""
-        from datus.tools.db_tools import registry as reg_mod
+        import datus_db_core.registry as reg_mod
 
         def _boom(_cfg):
             raise DatusException(code=ErrorCode.COMMON_CONFIG_ERROR, message="builder boom")
@@ -164,7 +164,7 @@ class TestGenUri:
 
     def test_builder_wraps_generic_exception(self, monkeypatch):
         """Generic exception from a registered URI builder is wrapped in DatusException."""
-        from datus.tools.db_tools import registry as reg_mod
+        import datus_db_core.registry as reg_mod
 
         def _boom(_cfg):
             raise RuntimeError("unexpected")
@@ -209,7 +209,7 @@ class TestResolveConnectionContext:
 
     def test_resolver_reraises_datus_exception(self, monkeypatch):
         """DatusException from a registered context resolver is re-raised as-is."""
-        from datus.tools.db_tools import registry as reg_mod
+        import datus_db_core.registry as reg_mod
 
         def _boom(_cfg, _uri):
             raise DatusException(code=ErrorCode.COMMON_CONFIG_ERROR, message="resolver boom")
@@ -221,7 +221,7 @@ class TestResolveConnectionContext:
 
     def test_resolver_wraps_generic_exception(self, monkeypatch):
         """Generic exception from a registered context resolver is wrapped in DatusException."""
-        from datus.tools.db_tools import registry as reg_mod
+        import datus_db_core.registry as reg_mod
 
         def _boom(_cfg, _uri):
             raise RuntimeError("unexpected")

@@ -5,13 +5,12 @@
 from typing import Any, Dict, List, Literal, Optional, Set, override
 
 import duckdb
+from datus_db_core import BaseSqlConnector, SchemaNamespaceMixin, list_to_in_str
 from pydantic import BaseModel, Field
 
 from datus.schemas.base import TABLE_TYPE
 from datus.schemas.node_models import ExecuteSQLResult
-from datus.tools.db_tools.base import BaseSqlConnector, list_to_in_str
 from datus.tools.db_tools.config import DuckDBConfig
-from datus.tools.db_tools.mixins import SchemaNamespaceMixin
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger

@@ -4,13 +4,14 @@
 
 from typing import Any, Dict, Optional
 
+from datus_db_core import BaseSqlConnector
+
 from datus.configuration.agent_config import AgentConfig
 from datus.models.base import LLMBaseModel
 from datus.schemas.node_models import TableSchema, TableValue
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput, SchemaLinkingResult
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.tools.base import BaseTool
-from datus.tools.db_tools.base import BaseSqlConnector
 from datus.tools.llms_tools.match_schema import MatchSchemaTool
 from datus.utils.loggings import get_logger
 

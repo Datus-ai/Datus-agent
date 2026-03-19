@@ -9,6 +9,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional
 
 from agents import Tool
+from datus_db_core import BaseSqlConnector
 
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.node_type import NodeType
@@ -32,7 +33,6 @@ from datus.schemas.node_models import (
 )
 from datus.schemas.reason_sql_node_models import ReasoningResult
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput, SchemaLinkingResult
-from datus.tools.db_tools.base import BaseSqlConnector
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.utils.loggings import get_logger
 

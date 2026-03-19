@@ -164,7 +164,7 @@ def metadata_identifier(
     """
     Generate a unique identifier for a table based on its metadata.
     """
-    from datus.tools.db_tools.registry import connector_registry
+    from datus_db_core import connector_registry
 
     # Built-in connectors
     if dialect == DBType.SQLITE:
@@ -205,7 +205,7 @@ def parse_table_name_parts(full_table_name: str, dialect: str = "snowflake") -> 
 
     # Build field mapping dynamically from registry capabilities
     def _build_field_mapping(d: str) -> list:
-        from datus.tools.db_tools.registry import connector_registry
+        from datus_db_core import connector_registry
 
         # Built-in connectors
         if d == DBType.SQLITE:

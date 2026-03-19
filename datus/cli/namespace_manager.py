@@ -128,7 +128,7 @@ class NamespaceManager:
             return 1
 
         # Get available adapters dynamically
-        from datus.tools.db_tools import connector_registry
+        from datus_db_core import connector_registry
 
         available_adapters = connector_registry.list_available_adapters()
         if not available_adapters:

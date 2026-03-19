@@ -30,6 +30,8 @@ from rich.table import Table
 if TYPE_CHECKING:
     from datus.agent.workflow_runner import WorkflowRunner
 
+from datus_db_core import BaseSqlConnector
+
 from datus.cli._cli_utils import prompt_input
 from datus.cli.agent_commands import AgentCommands
 from datus.cli.autocomplete import AtReferenceCompleter, CustomPygmentsStyle, CustomSqlLexer, SubagentCompleter
@@ -41,7 +43,6 @@ from datus.cli.sub_agent_commands import SubAgentCommands
 from datus.configuration.agent_config_loader import configuration_manager, load_agent_config
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
-from datus.tools.db_tools import BaseSqlConnector
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.utils.constants import SYS_SUB_AGENTS, DBType, SQLType
 from datus.utils.exceptions import setup_exception_handler

@@ -11,14 +11,13 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Union
 
 from agents import Tool
+from datus_db_core import BaseSqlConnector, connector_registry
 
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.agent_models import SubAgentConfig
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
-from datus.tools.db_tools import BaseSqlConnector
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
-from datus.tools.db_tools.registry import connector_registry
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.compress_utils import DataCompressor
 from datus.utils.constants import DBType, SQLType

@@ -3,12 +3,12 @@ from typing import Any, Dict
 from unittest.mock import MagicMock, patch
 
 import pytest
+from datus_db_core import ConnectorRegistry
 from datus_storage_base.conditions import build_where
 
 from datus.schemas.agent_models import ScopedContext, ScopedContextLists, SubAgentConfig
 from datus.storage.sub_agent_kb_bootstrap import SUPPORTED_COMPONENTS, SubAgentBootstrapper
 from datus.tools.db_tools import connector_registry
-from datus.tools.db_tools.registry import ConnectorRegistry
 
 
 @pytest.fixture(autouse=True)

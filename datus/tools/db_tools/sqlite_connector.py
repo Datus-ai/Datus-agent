@@ -5,12 +5,12 @@
 import sqlite3
 from typing import Any, Dict, List, Literal, Optional, override
 
+from datus_db_core import BaseSqlConnector
 from pandas import DataFrame
 from pyarrow import Table
 
 from datus.schemas.base import TABLE_TYPE
 from datus.schemas.node_models import ExecuteSQLResult
-from datus.tools.db_tools.base import BaseSqlConnector
 from datus.tools.db_tools.config import SQLiteConfig
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode

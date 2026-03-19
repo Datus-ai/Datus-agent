@@ -12,7 +12,9 @@ for executing scripts within skill directories.
 import fnmatch
 import logging
 import shlex
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, List
 
@@ -127,6 +129,11 @@ class SkillBashTool:
             argv = shlex.split(command)
         except ValueError as e:
             return FuncToolResult(success=0, error=f"Invalid command syntax: {e}")
+
+        # Resolve "python" to a real executable — handles environments
+        # where only "python3" exists (macOS, some Linux distros).
+        if argv and argv[0] == "python":
+            argv[0] = sys.executable or shutil.which("python3") or "python3"
 
         try:
             # Execute command in skill directory

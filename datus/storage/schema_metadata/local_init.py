@@ -4,12 +4,12 @@
 
 from typing import Any, Dict, List, Set
 
+from datus_db_core import BaseSqlConnector, connector_registry
+
 from datus.configuration.agent_config import AgentConfig, DbConfig
 from datus.schemas.base import TABLE_TYPE
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
-from datus.tools.db_tools.base import BaseSqlConnector
 from datus.tools.db_tools.db_manager import DBManager
-from datus.tools.db_tools.registry import connector_registry
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
