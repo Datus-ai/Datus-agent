@@ -4,7 +4,7 @@
 
 The **Builtin Subagent** are specialized AI assistants integrated within the Datus Agent system. Each subagent focuses on a specific aspect of data engineering automation — analyzing SQL, generating semantic models, and converting queries into reusable metrics — together forming a closed-loop workflow from raw SQL to knowledge-aware data products.
 
-This document covers six core subagents:
+This document covers seven core subagents:
 
 1. **[gen_sql_summary](#gen_sql_summary)** — Summarizes and classifies SQL queries
 2. **[gen_semantic_model](#gen_semantic_model)** — Generates MetricFlow semantic models
@@ -12,6 +12,7 @@ This document covers six core subagents:
 4. **[gen_ext_knowledge](#gen_ext_knowledge)** — Generates business concept definitions
 5. **[explore](#explore)** — Read-only data exploration and context gathering
 6. **[gen_sql](#gen_sql)** — Specialized SQL generation with deep expertise
+7. **[gen_report](#gen_report)** — Flexible report generation with configurable tools
 
 ## Configuration
 
@@ -43,6 +44,11 @@ agent:
     gen_sql:
       model: claude     # Optional: defaults to configured model
       max_turns: 30     # Optional: defaults to 30
+
+    gen_report:
+      model: claude     # Optional: defaults to configured model
+      max_turns: 30     # Optional: defaults to 30
+      tools: "semantic_tools.*, context_search_tools.list_subject_tree"  # Optional: defaults to semantic + context tools
 ```
 
 **Optional configuration parameters:**
@@ -824,6 +830,90 @@ The gen_sql subagent is typically invoked automatically by the chat agent via `t
 
 ---
 
+## gen_report
+
+### Overview
+
+The gen_report subagent is a flexible report generation assistant that combines semantic tools, database tools, and context search capabilities to produce structured reports. It can be used directly or extended by specialized report nodes for domain-specific reporting tasks (e.g., attribution analysis).
+
+### Key Features
+
+- **Configurable tools**: Supports `semantic_tools.*`, `db_tools.*`, and `context_search_tools.*` via configuration
+- **Flexible output**: Generates structured report content with SQL queries and analysis
+- **Extensible**: Can be subclassed for specialized report types
+- **Configuration-driven**: Tool setup and system prompts are driven by `agent.yml` configuration
+
+### Configuration
+
+```yaml
+agent:
+  agentic_nodes:
+    gen_report:
+      model: claude           # Optional: defaults to configured model
+      max_turns: 30           # Optional: defaults to 30
+      tools: "semantic_tools.*, db_tools.*, context_search_tools.list_subject_tree"  # Optional: customize available tools
+```
+
+**Tool patterns:**
+
+| Pattern | Description |
+|---------|-------------|
+| `semantic_tools.*` | All semantic tools (search metrics, semantic objects, etc.) |
+| `db_tools.*` | All database tools (list tables, describe table, read query, etc.) |
+| `context_search_tools.*` | All context search tools (search knowledge, reference SQL, etc.) |
+| `semantic_tools.search_metrics` | A specific semantic tool method |
+| `context_search_tools.list_subject_tree` | A specific context search method |
+
+Default tools (when not configured): `semantic_tools.*, context_search_tools.list_subject_tree`
+
+### How It Works
+
+```mermaid
+graph LR
+    A[User question + context] --> B[Analyze requirements]
+    B --> C[Search knowledge base]
+    C --> D[Query database]
+    D --> E[Generate report]
+    E --> F[Return structured result]
+```
+
+### Output Format
+
+The gen_report subagent returns results as a structured report:
+
+```json
+{
+  "report": "Structured report content with analysis...",
+  "response": "Summary explanation...",
+  "tokens_used": 2345
+}
+```
+
+### Usage
+
+The gen_report subagent can be launched manually or invoked by the chat agent via `task(type="gen_report")`:
+
+```bash
+/gen_report Analyze the revenue trend for the last quarter and provide insights
+```
+
+### Custom Report Subagents
+
+You can create custom subagents that use the gen_report node class by configuring them in `agent.yml`:
+
+```yaml
+agent:
+  agentic_nodes:
+    attribution_report:
+      node_class: gen_report
+      tools: "semantic_tools.*, db_tools.*, context_search_tools.*"
+      max_turns: 30
+```
+
+Then use it via `/attribution_report Analyze the conversion attribution for campaign X`.
+
+---
+
 ## Summary
 
 | Subagent | Purpose | Output | Stored In | Key Features                                        |
@@ -834,6 +924,7 @@ The gen_sql subagent is typically invoked automatically by the chat agent via `t
 | `gen_ext_knowledge` | Generate business concepts | YAML (external knowledge) | `/data/ext_knowledge` | Question&SQL → knowledge, subject tree support      |
 | `explore` | Read-only data exploration | Structured context | N/A | Strictly read-only, fast (15 turns), three-direction exploration |
 | `gen_sql` | Generate optimized SQL | SQL query / SQL file | N/A | Deep SQL expertise, auto-validation, file-based output |
+| `gen_report` | Flexible report generation | Structured report | N/A | Configurable tools, extensible, custom report subagents |
 
 **Built-in Features Across All Subagents:**
 - Minimal configuration required (only `model` and `max_turns` optional)

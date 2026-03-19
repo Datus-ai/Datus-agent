@@ -225,6 +225,30 @@ class SubAgentTaskTool:
                 agent_config=self.agent_config,
                 execution_mode="interactive",
             )
+        elif subagent_type == "gen_sql":
+            from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+            return GenSQLAgenticNode(
+                node_id=f"task_gen_sql_{uuid.uuid4().hex[:8]}",
+                description="SQL generation node for gen_sql",
+                node_type="gensql",
+                input_data=None,
+                agent_config=self.agent_config,
+                tools=None,
+                node_name="gen_sql",
+            )
+        elif subagent_type == "gen_report":
+            from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
+
+            return GenReportAgenticNode(
+                node_id=f"task_gen_report_{uuid.uuid4().hex[:8]}",
+                description="Report generation node for gen_report",
+                node_type="gen_report",
+                input_data=None,
+                agent_config=self.agent_config,
+                tools=None,
+                node_name="gen_report",
+            )
         else:
             raise ValueError(f"Unknown builtin subagent type: {subagent_type}")
 

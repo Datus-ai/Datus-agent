@@ -145,7 +145,29 @@ SQL: SELECT `Free Meal Count (K-12)` / `Enrollment (K-12)` FROM frpm WHERE `Coun
 
 ---
 
-### 7. Custom Subagents
+### 7. `gen_report`
+
+**Purpose**: A flexible report generation assistant that combines semantic tools, database tools, and context search capabilities to produce structured reports.
+
+**Use Case**: Generate structured reports with data analysis and insights. Can also be extended by specialized report nodes for domain-specific reporting tasks (e.g., attribution analysis).
+
+**Launch Command**:
+```bash
+/gen_report Analyze the revenue trend for the last quarter and provide insights
+```
+
+**Key Features**:
+
+- Configurable tools: supports `semantic_tools.*`, `db_tools.*`, and `context_search_tools.*`
+- Generates structured report content with SQL queries and analysis
+- Extensible: can be subclassed for specialized report types
+- Configuration-driven: tool setup and system prompts driven by `agent.yml`
+
+**See Also**: [Gen Report Subagent Details](./builtin_subagents.md#gen_report)
+
+---
+
+### 8. Custom Subagents
 
 You can define custom subagents in `agent.yml` for organization-specific workflows.
 
@@ -234,6 +256,7 @@ graph LR
 | `gen_metrics` | Convert SQL queries into MetricFlow metric definitions |
 | `gen_sql_summary` | Analyze and summarize SQL queries for knowledge reuse |
 | `gen_ext_knowledge` | Extract business knowledge from question-SQL pairs |
+| `gen_report` | Generate structured reports with data analysis and insights |
 | Custom types | Any custom subagent defined in `agent.yml` |
 
 **When does the chat agent delegate?**

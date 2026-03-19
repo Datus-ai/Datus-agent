@@ -145,7 +145,29 @@ SQL: SELECT `Free Meal Count (K-12)` / `Enrollment (K-12)` FROM frpm WHERE `Coun
 
 ---
 
-### 7. 自定义subagent
+### 7. `gen_report`
+
+**用途**：灵活的报告生成助手，结合语义工具、数据库工具和上下文搜索功能来生成结构化报告。
+
+**使用场景**：生成包含数据分析和洞察的结构化报告，也可以被特定领域的报告节点扩展（如归因分析）。
+
+**启动命令**：
+```bash
+/gen_report 分析上季度的收入趋势并提供洞察
+```
+
+**核心特性**：
+
+- 可配置工具：支持 `semantic_tools.*`、`db_tools.*` 和 `context_search_tools.*`
+- 生成包含 SQL 查询和分析的结构化报告
+- 可扩展：可被子类化用于特定报告类型
+- 配置驱动：工具设置和系统提示由 `agent.yml` 驱动
+
+**参考**：[Gen Report Subagent 详情](./builtin_subagents.zh.md#gen_report)
+
+---
+
+### 8. 自定义subagent
 
 你可以在 `agent.yml` 中定义自定义subagent，用于组织特定的工作流。
 
@@ -234,6 +256,7 @@ graph LR
 | `gen_metrics` | 将 SQL 查询转换为 MetricFlow 指标定义 |
 | `gen_sql_summary` | 分析和总结 SQL 查询用于知识复用 |
 | `gen_ext_knowledge` | 从问题-SQL 对中提取业务知识 |
+| `gen_report` | 生成包含数据分析和洞察的结构化报告 |
 | 自定义类型 | 在 `agent.yml` 中定义的任何自定义 subagent |
 
 **聊天助手何时委派？**

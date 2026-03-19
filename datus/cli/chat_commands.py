@@ -150,9 +150,8 @@ class ChatCommands:
                     agent_config=self.cli.agent_config,
                     execution_mode="interactive",
                 )
-            # Config-based node class for custom subagents
-            # node_class only has two types: "gen_sql" (default) and "gen_report"
-            elif node_class_type == "gen_report":
+            # gen_report: either direct /gen_report command or custom subagent with node_class="gen_report"
+            elif subagent_name == "gen_report" or node_class_type == "gen_report":
                 from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
 
                 self.console.print(f"[dim]Creating new {subagent_name} session (gen_report)...[/]")
