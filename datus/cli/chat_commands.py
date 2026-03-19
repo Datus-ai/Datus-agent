@@ -967,17 +967,22 @@ class ChatCommands:
         sys.stdout.flush()
         self.console.print(f"[bold bright_black]  ⎯ switched to {mode_label} mode ⎯[/]")
         action_display = ActionHistoryDisplay(self.console)
+
+        def _render_turn_response(turn_actions: List[ActionHistory]) -> None:
+            """Callback to render the final response for each turn."""
+            final_action = self._find_node_final_action(turn_actions)
+            if final_action:
+                self._render_final_response(final_action)
+
         if self.all_turn_actions:
-            action_display.render_multi_turn_history(self.all_turn_actions, verbose=self._trace_verbose)
+            action_display.render_multi_turn_history(
+                self.all_turn_actions, verbose=self._trace_verbose, per_turn_callback=_render_turn_response
+            )
         else:
             action_display.render_action_history(actions, verbose=self._trace_verbose)
+            _render_turn_response(actions)
 
-        # Re-render final response output (SQL, markdown, etc.) after the trace
-        last_turn_actions = self.all_turn_actions[-1][1] if self.all_turn_actions else actions
-        final_action = self._find_node_final_action(last_turn_actions)
-        if final_action:
-            self._render_final_response(final_action)
-            self.cli.console.print("[bold bright_black]Press Ctrl+O to toggle trace details.[/]")
+        self.cli.console.print("[bold bright_black]Press Ctrl+O to toggle trace details.[/]")
 
     def cmd_compact(self, args: str):
         """Manually compact the current session by summarizing conversation history."""

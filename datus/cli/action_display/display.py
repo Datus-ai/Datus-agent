@@ -5,7 +5,7 @@
 """Public interface: ActionHistoryDisplay."""
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
 
 from rich.console import Console
 
@@ -229,8 +229,17 @@ class ActionHistoryDisplay:
         self,
         turns: List[Tuple[str, List[ActionHistory]]],
         verbose: bool = False,
+        per_turn_callback: Optional[Callable[[List[ActionHistory]], None]] = None,
     ) -> None:
-        """Render all historical turns, each preceded by a user-message header."""
+        """Render all historical turns, each preceded by a user-message header.
+
+        Args:
+            turns: List of (user_message, actions) tuples.
+            verbose: If True, show full arguments/output.
+            per_turn_callback: If provided, called after rendering each turn's action
+                history with the turn's raw actions list. Useful for rendering final
+                response output that render_action_history skips.
+        """
         for user_message, actions in turns:
             self.renderer.print_renderables(
                 self.console,
@@ -238,6 +247,8 @@ class ActionHistoryDisplay:
             )
             non_user_actions = [a for a in actions if not (a.role == ActionRole.USER and a.depth == 0)]
             self.render_action_history(non_user_actions, verbose=verbose)
+            if per_turn_callback:
+                per_turn_callback(actions)
             self.console.print()
 
     def display_streaming_actions(

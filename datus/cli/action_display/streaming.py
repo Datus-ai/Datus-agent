@@ -303,9 +303,21 @@ class InlineStreamingContext:
                 with an "in progress" indicator (used for verbose/frozen snapshot).
         """
         with self._print_lock:
-            # 1. Render previous turns
+            # 1. Render previous turns (with per-turn response rendering)
             if self._history_turns:
-                self.display.render_multi_turn_history(self._history_turns, verbose=verbose)
+
+                def _render_turn_response(turn_actions: List[ActionHistory]) -> None:
+                    for a in reversed(turn_actions):
+                        if a.role == ActionRole.ASSISTANT and a.action_type and a.action_type.endswith("_response"):
+                            self.display.renderer.print_renderables(
+                                self.display.console,
+                                self.display.renderer.render_main_action(a, verbose=verbose),
+                            )
+                            break
+
+                self.display.render_multi_turn_history(
+                    self._history_turns, verbose=verbose, per_turn_callback=_render_turn_response
+                )
             # 2. Render current turn header
             if self._current_user_message:
                 self.display.renderer.print_renderables(
