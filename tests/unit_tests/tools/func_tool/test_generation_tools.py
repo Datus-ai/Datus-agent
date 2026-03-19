@@ -46,9 +46,7 @@ class TestCheckSemanticObjectExists:
         generation_tools.semantic_rag.storage = mock_storage
         mock_storage.search_all.return_value = [{"id": "t1", "name": "orders", "kind": "table"}]
 
-        with patch("datus.tools.func_tool.generation_tools.And"), patch(
-            "datus.tools.func_tool.generation_tools.eq"
-        ):
+        with patch("datus.tools.func_tool.generation_tools.And"), patch("datus.tools.func_tool.generation_tools.eq"):
             result = generation_tools.check_semantic_object_exists("orders", kind="table")
 
         assert result.success == 1
@@ -60,9 +58,7 @@ class TestCheckSemanticObjectExists:
         generation_tools.semantic_rag.storage = mock_storage
         mock_storage.search_all.return_value = []
 
-        with patch("datus.tools.func_tool.generation_tools.And"), patch(
-            "datus.tools.func_tool.generation_tools.eq"
-        ):
+        with patch("datus.tools.func_tool.generation_tools.And"), patch("datus.tools.func_tool.generation_tools.eq"):
             result = generation_tools.check_semantic_object_exists("unknown_table", kind="table")
 
         assert result.success == 1
@@ -129,9 +125,7 @@ class TestCheckSemanticObjectExists:
         generation_tools.semantic_rag.storage = mock_storage
         mock_storage.search_all.return_value = [{"id": "t1", "name": "orders", "kind": "table"}]
 
-        with patch("datus.tools.func_tool.generation_tools.And"), patch(
-            "datus.tools.func_tool.generation_tools.eq"
-        ):
+        with patch("datus.tools.func_tool.generation_tools.And"), patch("datus.tools.func_tool.generation_tools.eq"):
             result = generation_tools.check_semantic_object_exists("public.orders", kind="table")
 
         assert result.success == 1
@@ -141,9 +135,7 @@ class TestCheckSemanticObjectExists:
         generation_tools.semantic_rag.storage = mock_storage
         mock_storage.search_all.side_effect = Exception("storage error")
 
-        with patch("datus.tools.func_tool.generation_tools.And"), patch(
-            "datus.tools.func_tool.generation_tools.eq"
-        ):
+        with patch("datus.tools.func_tool.generation_tools.And"), patch("datus.tools.func_tool.generation_tools.eq"):
             result = generation_tools.check_semantic_object_exists("orders", kind="table")
 
         assert result.success == 0
@@ -154,9 +146,7 @@ class TestCheckSemanticObjectExists:
         generation_tools.semantic_rag.storage = mock_storage
         mock_storage.search_all.return_value = []
 
-        with patch("datus.tools.func_tool.generation_tools.And"), patch(
-            "datus.tools.func_tool.generation_tools.eq"
-        ):
+        with patch("datus.tools.func_tool.generation_tools.And"), patch("datus.tools.func_tool.generation_tools.eq"):
             result = generation_tools.check_semantic_model_exists("orders")
 
         assert result.success == 1
