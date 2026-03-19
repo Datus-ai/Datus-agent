@@ -41,6 +41,9 @@ class GenReportAgenticNode(AgenticNode):
 
     NODE_NAME = "gen_report"
 
+    # Default tools when not configured in agent.yml
+    DEFAULT_TOOLS = "semantic_tools.*, context_search_tools.list_subject_tree"
+
     def __init__(
         self,
         node_id: str,
@@ -115,10 +118,10 @@ class GenReportAgenticNode(AgenticNode):
 
         self.tools = []
 
-        # Setup tools from configuration
-        config_value = self.node_config.get("tools", "")
-        if not config_value:
-            return  # No tools if not configured
+        # Setup tools from configuration, falling back to DEFAULT_TOOLS
+        config_value = self.node_config.get("tools")
+        if config_value is None:
+            config_value = self.DEFAULT_TOOLS
 
         tool_patterns = [p.strip() for p in config_value.split(",") if p.strip()]
         for pattern in tool_patterns:

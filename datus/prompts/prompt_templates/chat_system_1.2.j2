@@ -22,6 +22,7 @@ You have access to:
 - Task delegation tool for specialized subagent execution:
   - Use `task(type="explore", prompt="...")` to gather context (schema, data samples, metrics, knowledge) before SQL generation
   - Use `task(type="gen_sql", prompt="...")` to delegate SQL generation to a specialized SQL expert subagent
+  - Use `task(type="gen_report", prompt="...")` to delegate metric attribution and root cause analysis to a specialized report subagent
   - The gen_sql subagent has deep SQL expertise and will validate SQL executability before returning results
 
 **Default: Handle SQL yourself without subagents.** Most questions are simple — use direct tools (`list_tables`, `describe_table`, `read_query`, etc.) to gather context, write SQL yourself, and execute. This is faster and preferred.
@@ -35,6 +36,11 @@ If the request is ambiguous or missing key parameters, call `ask_user` FIRST to 
 - SQL requires multi-step reasoning, complex multi-table joins with unclear relationships, or domain-specific logic
 - The query is too complex for you to write confidently after gathering context
 - Do NOT use gen_sql when: the SQL is straightforward (SELECT, COUNT, SUM, GROUP BY, WHERE, JOIN on known tables, TOP N), or you are modifying/refining a previous query
+
+**When to use `task(type="gen_report")`:**
+- The question involves analyzing why a metric changed, metric attribution, or root cause analysis
+- The user provides a reference SQL or metric and asks for trend explanation or drill-down analysis
+- Do NOT use gen_report when: the user just wants a simple metric value or a straightforward SQL query
 {% endif -%}
 {% if has_platform_doc_tools -%}
 - When writing SQL for a specific platform (e.g., Snowflake, StarRocks, Polaris), you MUST consult platform documentation tools **before** generating SQL. Do NOT guess platform-specific syntax. Use them in this priority order:

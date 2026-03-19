@@ -248,6 +248,10 @@ class SubAgentTaskTool:
         if subagent_type == "explore":
             return NodeType.TYPE_EXPLORE, "explore"
 
+        # Built-in gen_report type
+        if subagent_type == "gen_report":
+            return NodeType.TYPE_GEN_REPORT, "gen_report"
+
         # Built-in system subagents (SYS_SUB_AGENTS)
         builtin_type_map = {
             "gen_semantic_model": (NodeType.TYPE_SEMANTIC, "gen_semantic_model"),
@@ -620,6 +624,14 @@ class SubAgentTaskTool:
                     "Modifications return sql_diff in unified diff format. "
                     "Use for data queries, analysis, and report SQL. Prompt: provide the question directly."
                 )
+            elif t == "gen_report":
+                lines.append(
+                    "- gen_report: Analyze and attribute metrics using reference SQL and semantic layer. "
+                    "Use when the question involves metric attribution, root cause analysis, metric trend explanation, "
+                    "or analyzing why a metric changed. "
+                    "Prompt: provide the metric question, include reference SQL or metric name if available. "
+                    "Returns JSON with {response, report_result, tokens_used}."
+                )
             elif t in BUILTIN_SUBAGENT_DESCRIPTIONS:
                 lines.append(f"- {t}: {BUILTIN_SUBAGENT_DESCRIPTIONS[t]}")
             else:
@@ -641,6 +653,8 @@ class SubAgentTaskTool:
                 '- For quick single-direction lookups, call one task(type="explore") with a focused prompt',
                 '- Use task(type="gen_sql") for SQL generation requiring multi-step reasoning, '
                 "complex joins, or domain-specific logic",
+                '- Use task(type="gen_report") for metric attribution, root cause analysis, '
+                "or analyzing why a metric/reference_sql result changed",
                 "- In plan mode, use task() for each SQL sub-step",
                 "- Always provide a short 'description' summarizing the task goal",
             ]
@@ -650,7 +664,7 @@ class SubAgentTaskTool:
 
     def _get_available_types(self) -> List[str]:
         """Discover available subagent types."""
-        types = ["gen_sql", "explore"]
+        types = ["gen_sql", "explore", "gen_report"]
 
         # Add built-in system subagents (always available)
         types.extend(sorted(SYS_SUB_AGENTS))
@@ -661,7 +675,7 @@ class SubAgentTaskTool:
         current_namespace = self.agent_config.current_namespace
 
         for name, config in self.agent_config.agentic_nodes.items():
-            if name in ("chat", "gen_sql", "explore") or name in SYS_SUB_AGENTS:
+            if name in ("chat", "gen_sql", "explore", "gen_report") or name in SYS_SUB_AGENTS:
                 continue
 
             # If scoped_context is configured, namespace must match current namespace
