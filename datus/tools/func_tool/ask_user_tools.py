@@ -29,7 +29,7 @@ class QuestionItem(BaseModel):
     question: str = Field(description="The question to ask. Should be clear and specific.")
     options: Optional[List[str]] = Field(
         default=None,
-        description="2-5 predefined answer choices. The user can always type a custom answer "
+        description="2-10 predefined answer choices. The user can always type a custom answer "
         "even when options are provided, so do NOT include an 'Other' or 'Custom' option. "
         "If omitted, the user provides free-text input.",
     )
@@ -48,7 +48,7 @@ class AskUserTool:
     """
 
     MAX_QUESTIONS = 10
-    MAX_OPTIONS_PER_QUESTION = 5
+    MAX_OPTIONS_PER_QUESTION = 10
     MIN_OPTIONS_PER_QUESTION = 2
 
     def __init__(self, broker: InteractionBroker):
@@ -83,6 +83,7 @@ class AskUserTool:
             "question" and "answer" keys.
         """
         # --- validation ---
+        logger.info(f"AskUserTool: asking user with questions: {questions}")
         if not questions or not isinstance(questions, list):
             return FuncToolResult(success=0, error="questions must be a non-empty list")
 

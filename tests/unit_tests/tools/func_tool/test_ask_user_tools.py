@@ -83,14 +83,15 @@ class TestAskUserToolValidation:
         """Less than 2 options returns error."""
         result = await tool.ask_user(questions=[{"question": "Pick one?", "options": ["only"]}])
         assert result.success == 0
-        assert "2-5" in result.error
+        assert "2-10" in result.error
 
     @pytest.mark.asyncio
     async def test_too_many_options_rejected(self, tool):
-        """More than 5 options returns error."""
-        result = await tool.ask_user(questions=[{"question": "Pick one?", "options": ["a", "b", "c", "d", "e", "f"]}])
+        """More than 10 options returns error."""
+        opts = [chr(ord("a") + i) for i in range(11)]  # 11 options
+        result = await tool.ask_user(questions=[{"question": "Pick one?", "options": opts}])
         assert result.success == 0
-        assert "2-5" in result.error
+        assert "2-10" in result.error
 
     @pytest.mark.asyncio
     async def test_too_many_questions_rejected(self, tool):

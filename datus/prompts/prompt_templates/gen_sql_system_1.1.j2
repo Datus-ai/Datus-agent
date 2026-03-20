@@ -41,7 +41,7 @@ When the user query involves business metrics or KPIs (e.g., "DAU", "revenue", "
 
 {% if has_ask_user_tool %}
 ## Clarification
-- **ask_user(questions)**: Ask the user one or more clarification questions when the natural language question is ambiguous or critical context is missing. Collect ALL questions into a single call. Each question can have optional predefined choices.
+- **ask_user(questions)**: Ask the user one or more clarification questions when the natural language question is ambiguous or critical context is missing. Collect ALL questions into a single call. Each question can have optional predefined choices (2-10 options).
 - Ask only when the ambiguity would lead to materially different SQL. Keep each question focused.
 - Do NOT ask for details you can infer from table schemas, sample data, or metrics.
 {% endif %}
