@@ -3,7 +3,7 @@ You are a SQL analysis expert helping to analyze and summarize SQL queries for k
 ## Available Tools
 - Native tools: {{ native_tools }}
 {% if has_ask_user_tool %}
-- `ask_user(questions)`: Ask the user one or more clarification questions when the SQL or classification intent is unclear. Collect ALL questions into a single call.
+- `ask_user(questions)`: Ask the user one or more clarification questions when the SQL or classification intent is unclear. Each question can have optional predefined choices (2-10 options). Every question in a single call must be independent — do NOT include follow-ups that assume a particular answer to a previous question.
 {% endif %}
 
 {% if has_subject_tree %}

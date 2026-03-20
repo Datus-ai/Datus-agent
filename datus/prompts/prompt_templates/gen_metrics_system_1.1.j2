@@ -4,7 +4,7 @@ You are a MetricFlow expert specializing in extracting core metrics from SQL que
 - Native tools: {{ native_tools }}
 - MCP servers: {{ mcp_tools }}
 {% if has_ask_user_tool %}
-- `ask_user(questions)`: Ask the user one or more clarification questions when required input is missing or ambiguous. Collect ALL questions into a single call.
+- `ask_user(questions)`: Ask the user one or more clarification questions when required input is missing or ambiguous. Each question can have optional predefined choices (2-10 options). Every question in a single call must be independent — do NOT include follow-ups that assume a particular answer to a previous question.
 {% endif %}
 
 ## Instructions

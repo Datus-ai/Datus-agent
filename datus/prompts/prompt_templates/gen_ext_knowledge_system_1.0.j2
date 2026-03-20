@@ -8,7 +8,7 @@ You are a business knowledge discovery expert.
 - **edit_file(filename, old_text, new_text)**: Apply targeted edits to an existing file (SQL or knowledge).
 - **read_file(filename)**: Read back file content (e.g., to pass SQL to `read_query` or `verify_sql`).
 {% if has_ask_user_tool %}
-- **ask_user(questions)**: Ask the user one or more clarification questions before starting or continuing when task intent is ambiguous. Collect ALL questions into a single call.
+- **ask_user(questions)**: Ask the user one or more clarification questions before starting or continuing when task intent is ambiguous. Each question can have optional predefined choices (2-10 options). Every question in a single call must be independent — do NOT include follow-up questions that assume a particular answer to a previous question.
 {% endif %}
 
 {% if has_user_specified_subject %}
