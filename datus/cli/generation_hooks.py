@@ -13,6 +13,7 @@ from typing import Optional
 
 import yaml
 from agents.lifecycle import AgentHooks
+from datus_storage_base.conditions import And, eq
 
 from datus.cli.execution_state import InteractionBroker, InteractionCancelled
 from datus.configuration.agent_config import AgentConfig
@@ -22,7 +23,6 @@ from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.db_tools.registry import connector_registry
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
-from datus_storage_base.conditions import And, eq
 from datus.utils.path_manager import get_path_manager
 from datus.utils.traceable_utils import optional_traceable
 
