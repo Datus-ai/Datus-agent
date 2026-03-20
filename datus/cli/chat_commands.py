@@ -1325,7 +1325,7 @@ class ChatCommands:
                 self.all_turn_actions = []
                 self.last_actions = []
                 self.console.print(
-                    f"\n[bold green]Rewound to before turn 1.[/] " f"New session: [cyan]{new_node.session_id}[/]\n"
+                    f"\n[bold green]Rewound to before turn 1.[/] New session: [cyan]{new_node.session_id}[/]\n"
                 )
                 self.console.print("[green]Selected message placed in input buffer.[/]")
                 return rewind_user_message
