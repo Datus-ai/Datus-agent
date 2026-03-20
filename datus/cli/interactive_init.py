@@ -227,15 +227,24 @@ class InteractiveInit:
             self.console.print(f"  [dim]reference options: {options_hint}[/dim]")
         model_name = Prompt.ask("- Enter your model name", default=providers[provider]["model"])
 
+        # Model-specific parameter overrides (some models enforce fixed values)
+        model_param_overrides = {
+            "kimi-k2.5": {"temperature": 1.0, "top_p": 0.95},
+            "qwen3-coder-plus": {"temperature": 1.0, "top_p": 0.95},
+        }
+
         # Store configuration
         self.config["agent"]["target"] = provider
-        self.config["agent"]["models"][provider] = {
+        model_config_entry = {
             "type": providers[provider]["type"],
             "vendor": provider,
             "base_url": base_url,
             "api_key": api_key,
             "model": model_name,
         }
+        if model_name in model_param_overrides:
+            model_config_entry.update(model_param_overrides[model_name])
+        self.config["agent"]["models"][provider] = model_config_entry
 
         # Test LLM connectivity
         self.console.print("→ Testing LLM connectivity...")
@@ -446,6 +455,8 @@ class InteractiveInit:
                 base_url=model_config_data["base_url"],
                 api_key=model_config_data["api_key"],
                 model=model_config_data["model"],
+                temperature=model_config_data.get("temperature"),
+                top_p=model_config_data.get("top_p"),
             )
 
             # Import and create the specific model class

@@ -436,6 +436,85 @@ class TestConfigureLLM:
 
             assert result is False
 
+    def test_kimi_k25_sets_temperature_and_top_p_in_config(self):
+        """kimi-k2.5 requires temperature=1.0 and top_p=0.95; verify they are stored in config."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            init = InteractiveInit(user_home=tmpdir)
+
+            mock_model_instance = MagicMock()
+            mock_model_instance.generate.return_value = "Hello!"
+            mock_module = MagicMock()
+            mock_module.KimiModel.return_value = mock_model_instance
+
+            with (
+                patch(
+                    "datus.cli.interactive_init.Prompt.ask",
+                    side_effect=["kimi", "https://api.moonshot.cn/v1", "kimi-k2.5"],
+                ),
+                patch("datus.cli.interactive_init.getpass", return_value="test-key"),
+                patch.dict("sys.modules", {"datus.models.kimi_model": mock_module}),
+            ):
+                result = init._configure_llm()
+
+            assert result is True
+            kimi_config = init.config["agent"]["models"]["kimi"]
+            assert kimi_config["temperature"] == 1.0, "kimi-k2.5 should have temperature=1.0"
+            assert kimi_config["top_p"] == 0.95, "kimi-k2.5 should have top_p=0.95"
+
+    def test_kimi_k25_passes_params_to_model_config(self):
+        """Verify _test_llm_connectivity passes temperature/top_p to ModelConfig for kimi-k2.5."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            init = InteractiveInit(user_home=tmpdir)
+
+            init.config["agent"]["target"] = "kimi"
+            init.config["agent"]["models"]["kimi"] = {
+                "type": "kimi",
+                "base_url": "https://api.moonshot.cn/v1",
+                "api_key": "test-key",
+                "model": "kimi-k2.5",
+                "temperature": 1.0,
+                "top_p": 0.95,
+            }
+
+            mock_model_instance = MagicMock()
+            mock_model_instance.generate.return_value = "Hello!"
+            mock_module = MagicMock()
+            mock_module.KimiModel.return_value = mock_model_instance
+
+            with patch.dict("sys.modules", {"datus.models.kimi_model": mock_module}):
+                success, error_msg = init._test_llm_connectivity()
+
+            assert success is True
+            # Verify ModelConfig was created with correct temperature and top_p
+            model_config = mock_module.KimiModel.call_args.kwargs["model_config"]
+            assert model_config.temperature == 1.0, "ModelConfig should have temperature=1.0"
+            assert model_config.top_p == 0.95, "ModelConfig should have top_p=0.95"
+
+    def test_non_kimi_model_has_no_param_overrides(self):
+        """Non-kimi models should not get temperature/top_p overrides in config."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            init = InteractiveInit(user_home=tmpdir)
+
+            mock_model_instance = MagicMock()
+            mock_model_instance.generate.return_value = "Hello!"
+            mock_module = MagicMock()
+            mock_module.OpenAIModel.return_value = mock_model_instance
+
+            with (
+                patch(
+                    "datus.cli.interactive_init.Prompt.ask",
+                    side_effect=["openai", "https://api.openai.com/v1", "gpt-4.1"],
+                ),
+                patch("datus.cli.interactive_init.getpass", return_value="test-key"),
+                patch.dict("sys.modules", {"datus.models.openai_model": mock_module}),
+            ):
+                result = init._configure_llm()
+
+            assert result is True
+            openai_config = init.config["agent"]["models"]["openai"]
+            assert "temperature" not in openai_config, "OpenAI models should not have temperature override"
+            assert "top_p" not in openai_config, "OpenAI models should not have top_p override"
+
 
 # ---------------------------------------------------------------------------
 # do_init_sql_and_log_result: edge cases
