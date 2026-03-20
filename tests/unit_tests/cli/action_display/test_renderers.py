@@ -835,7 +835,8 @@ class TestRenderBatchInteractionSuccess:
         )
         result = _renderer().render_interaction_success(action, verbose=False)
         text = _plain(result)
-        assert "Answers submitted (2/2)" in text
+        # Non-list JSON gives 1 answer for 2 questions
+        assert "Answers submitted (1/2)" in text
 
     def test_success_truncates_long_question(self):
         """Long question text is truncated to 40 chars."""
