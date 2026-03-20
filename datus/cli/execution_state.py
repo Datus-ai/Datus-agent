@@ -183,6 +183,12 @@ class InteractionBroker:
         Raises:
             InteractionCancelled: If broker is closed while waiting
         """
+        # Fail fast if broker is already closed or contents is empty
+        if self._closed:
+            raise InteractionCancelled("Broker is already closed")
+        if not contents:
+            raise InteractionCancelled("No questions to ask (empty contents)")
+
         choices_list = choices
         if default_choices is None:
             default_choices = [""] * len(contents)
