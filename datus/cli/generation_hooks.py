@@ -22,6 +22,7 @@ from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.db_tools.registry import connector_registry
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
+from datus_storage_base.conditions import And, eq
 from datus.utils.path_manager import get_path_manager
 from datus.utils.traceable_utils import optional_traceable
 
@@ -1050,7 +1051,7 @@ class GenerationHooks(AgentHooks):
                             measure_name = base_measures[0]
                             # Query semantic objects to find the measure's table
                             measure_objs = semantic_rag.storage._search_all(
-                                where=f"kind = 'column' AND is_measure = true AND name = '{measure_name}'"
+                                where=And([eq("kind", "column"), eq("is_measure", True), eq("name", measure_name)])
                             ).to_pylist()
                             if measure_objs:
                                 measure_table = measure_objs[0].get("table_name", "")
