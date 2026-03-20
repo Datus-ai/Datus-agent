@@ -635,7 +635,9 @@ class ActionRenderer:
         for i, q_text in enumerate(contents):
             answer = answers[i] if i < len(answers) else ""
             short_q = q_text[:40] + "..." if len(q_text) > 40 else q_text
-            lines.append(f"  {short_q} \u2192 **{answer}**")
+            # Strip leading numbering (e.g. "1. " or "2. ") to avoid duplication
+            short_q = re.sub(r"^\d+\.\s*", "", short_q)
+            lines.append(f"  {i + 1}. {short_q} \u2192 **{answer}**")
         if lines:
             result.append(Markdown("\n".join(lines)))
 
