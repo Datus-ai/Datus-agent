@@ -4,6 +4,7 @@
 
 """Unit tests for datus/cli/action_display/tool_content.py."""
 
+import json
 import uuid
 from datetime import datetime, timedelta
 
@@ -14,6 +15,7 @@ from datus.cli.action_display.tool_content import (
     ToolCallContentBuilder,
     _build_analyze_columns,
     _build_analyze_relationships,
+    _build_ask_user,
     _build_attribution_analyze,
     _build_check_exists,
     _build_create_directory,
@@ -1689,6 +1691,67 @@ class TestBuildLoadSkill:
         assert "Skill loaded" in tc.output_preview
 
 
+class TestBuildAskUser:
+    def test_compact_success(self):
+        result_json = json.dumps([{"question": "Which DB?", "answer": "MySQL"}])
+        a = _make(
+            input_data={
+                "function_name": "ask_user",
+                "arguments": {"questions": [{"question": "Which DB?", "options": ["MySQL", "PostgreSQL"]}]},
+            },
+            output_data={"raw_output": json.dumps({"success": 1, "result": result_json})},
+        )
+        tc = _build_ask_user(a, verbose=False)
+        assert "1 answer" in tc.output_preview
+
+    def test_compact_error(self):
+        a = _make(
+            input_data={"function_name": "ask_user", "arguments": {"questions": []}},
+            output_data={"raw_output": json.dumps({"success": 0, "error": "questions must be a non-empty list"})},
+        )
+        tc = _build_ask_user(a, verbose=False)
+        assert "non-empty" in tc.output_preview
+
+    def test_verbose_shows_formatted_questions(self):
+        result_json = json.dumps(
+            [
+                {"question": "Which DB?", "answer": "MySQL"},
+                {"question": "Time range?", "answer": "Last 7 days"},
+            ]
+        )
+        a = _make(
+            input_data={
+                "function_name": "ask_user",
+                "arguments": {
+                    "questions": [
+                        {"question": "Which DB?", "options": ["MySQL", "PostgreSQL"]},
+                        {"question": "Time range?"},
+                    ]
+                },
+            },
+            output_data={"raw_output": json.dumps({"success": 1, "result": result_json})},
+        )
+        tc = _build_ask_user(a, verbose=True)
+        # Args: formatted Q1/Q2 with options
+        assert any("Q1" in line for line in tc.args_lines)
+        assert any("Which DB?" in line for line in tc.args_lines)
+        assert any("options" in line for line in tc.args_lines)
+        # Output: Q→A pairs
+        assert any("MySQL" in line for line in tc.output_lines)
+        assert any("\u2192" in line for line in tc.output_lines)
+
+    def test_verbose_fallback_on_bad_args(self):
+        """When arguments can't be parsed, fallback to standard extract_args_markup."""
+        a = _make(
+            input_data={"function_name": "ask_user", "arguments": "not valid json {{{"},
+            output_data={"raw_output": json.dumps({"success": 0, "error": "parse error"})},
+        )
+        tc = _build_ask_user(a, verbose=True)
+        # Should fallback to standard args display, not be empty
+        assert len(tc.args_lines) >= 1
+        assert len(tc.output_lines) >= 1
+
+
 # ── Registry completeness ─────────────────────────────────────────
 
 
@@ -1759,6 +1822,8 @@ class TestAllToolsRegistered:
         "execute_command",
         "skill_execute_command",
         "load_skill",
+        # Interaction
+        "ask_user",
     ]
 
     def test_all_expected_tools_registered(self):

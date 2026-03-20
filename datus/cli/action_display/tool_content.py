@@ -1517,6 +1517,76 @@ def _build_load_skill(action: ActionHistory, verbose: bool) -> ToolCallContent:
     return _build_simple_action(action, verbose, "Skill loaded")
 
 
+def _build_ask_user(action: ActionHistory, verbose: bool) -> ToolCallContent:
+    """ask_user: show answer count or error in compact, formatted Q&A in verbose."""
+    tc = make_base_content(action)
+    if verbose:
+        # Args: show each question with options
+        args_lines: List[str] = []
+        try:
+            args = action.input.get("arguments", {}) if action.input else {}
+            if isinstance(args, str):
+                args = json.loads(args)
+            if isinstance(args, dict):
+                raw_qs = args.get("questions", [])
+                if isinstance(raw_qs, str):
+                    raw_qs = json.loads(raw_qs)
+                if isinstance(raw_qs, list):
+                    for i, q in enumerate(raw_qs):
+                        if isinstance(q, dict):
+                            q_text = q.get("question", "")
+                            options = q.get("options")
+                            args_lines.append(f"[bold]Q{i + 1}[/bold]: {_escape_markup(q_text)}")
+                            if options and isinstance(options, list):
+                                args_lines.append(
+                                    f"  [dim]options: {', '.join(_escape_markup(str(o)) for o in options)}[/dim]"
+                                )
+        except Exception:
+            args_lines = []
+        tc.args_lines = args_lines if args_lines else extract_args_markup(action)
+
+        # Output: show Q→A pairs or error
+        output_lines: List[str] = []
+        try:
+            data = parse_output_data(action.output)
+            if data:
+                result = data.get("result")
+                if isinstance(result, str):
+                    result = json.loads(result)
+                if isinstance(result, list):
+                    for item in result:
+                        if isinstance(item, dict):
+                            q = item.get("question", "")
+                            a = item.get("answer", "")
+                            short_q = q[:40] + "..." if len(q) > 40 else q
+                            output_lines.append(
+                                f"{_escape_markup(short_q)} \u2192 [bold]{_escape_markup(str(a))}[/bold]"
+                            )
+        except Exception:
+            output_lines = []
+        if action.output:
+            tc.output_lines = output_lines if output_lines else _format_result_only_markup(action.output)
+    else:
+        data = parse_output_data(action.output)
+        if data:
+            if data.get("success") and data.get("result"):
+                result = data["result"]
+                if isinstance(result, str):
+                    try:
+                        result = json.loads(result)
+                    except Exception:
+                        pass
+                if isinstance(result, list):
+                    tc.output_preview = f"\u2713 {len(result)} answer(s)"
+                else:
+                    tc.output_preview = "\u2713 Answered"
+            elif not data.get("success") and data.get("error"):
+                error = str(data["error"])
+                error = error[:50] + "..." if len(error) > 50 else error
+                tc.output_preview = f"\u2717 {error}"
+    return tc
+
+
 # ── Output item extraction helper ──────────────────────────────────
 
 
@@ -1626,6 +1696,9 @@ class ToolCallContentBuilder:
         self._registry["execute_command"] = _build_execute_command
         self._registry["skill_execute_command"] = _build_execute_command
         self._registry["load_skill"] = _build_load_skill
+
+        # Interaction tools
+        self._registry["ask_user"] = _build_ask_user
 
     def register(self, function_name: str, fn: ToolCallContentFn) -> None:
         """Register a custom content builder for a specific tool function."""
