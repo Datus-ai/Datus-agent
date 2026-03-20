@@ -111,6 +111,9 @@ class AskUserTool:
 
             if not q_text or not str(q_text).strip():
                 return FuncToolResult(success=0, error=f"questions[{i}].question must not be empty")
+            # Treat empty list the same as None (free-text input)
+            if isinstance(options, list) and len(options) == 0:
+                options = None
             if options is not None:
                 if not isinstance(options, list):
                     return FuncToolResult(success=0, error=f"questions[{i}].options must be a list")

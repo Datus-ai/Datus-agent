@@ -109,6 +109,26 @@ class TestAskUserToolValidation:
         assert "must not be empty" in result.error
 
     @pytest.mark.asyncio
+    async def test_empty_options_treated_as_free_text(self, broker, tool):
+        """Empty options list is treated as free-text (same as None)."""
+
+        async def simulate_user():
+            for _ in range(50):
+                if broker.has_pending:
+                    pending = list(broker._pending.values())[0]
+                    await broker.submit(pending.action_id, json.dumps(["my answer"]))
+                    return
+                await asyncio.sleep(0.01)
+
+        task = asyncio.create_task(simulate_user())
+        result = await tool.ask_user(questions=[{"question": "Time range?", "options": []}])
+        await task
+
+        assert result.success == 1
+        answers = json.loads(result.result)
+        assert answers[0]["answer"] == "my answer"
+
+    @pytest.mark.asyncio
     async def test_too_few_options_rejected(self, tool):
         """Less than 2 options returns error."""
         result = await tool.ask_user(questions=[{"question": "Pick one?", "options": ["only"]}])
