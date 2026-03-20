@@ -168,9 +168,9 @@ class TestInteractionBrokerRequest:
         # Start the request in background; it will block until submit
         async def do_request():
             return await broker.request(
-                content="Pick one",
-                choices={"a": "Option A", "b": "Option B"},
-                default_choice="a",
+                contents=["Pick one"],
+                choices=[{"a": "Option A", "b": "Option B"}],
+                default_choices=["a"],
             )
 
         task = asyncio.create_task(do_request())
@@ -205,9 +205,9 @@ class TestInteractionBrokerRequest:
 
         async def do_request():
             return await broker.request(
-                content="Confirm?",
-                choices={"y": "Yes", "n": "No"},
-                default_choice="y",
+                contents=["Confirm?"],
+                choices=[{"y": "Yes", "n": "No"}],
+                default_choices=["y"],
                 content_type="text",
             )
 
@@ -242,9 +242,9 @@ class TestInteractionBrokerRequest:
 
         async def do_request():
             return await broker.request(
-                content="Pick one",
-                choices={"a": "A"},
-                default_choice="a",
+                contents=["Pick one"],
+                choices=[{"a": "A"}],
+                default_choices=["a"],
             )
 
         task = asyncio.create_task(do_request())
@@ -274,9 +274,9 @@ class TestInteractionBrokerSubmit:
 
         async def do_request():
             return await broker.request(
-                content="Pick",
-                choices={"a": "A", "b": "B"},
-                default_choice="a",
+                contents=["Pick"],
+                choices=[{"a": "A", "b": "B"}],
+                default_choices=["a"],
             )
 
         task = asyncio.create_task(do_request())
@@ -303,9 +303,9 @@ class TestInteractionBrokerSubmit:
 
         async def do_request():
             return await broker.request(
-                content="Pick",
-                choices={"x": "X"},
-                default_choice="x",
+                contents=["Pick"],
+                choices=[{"x": "X"}],
+                default_choices=["x"],
             )
 
         task = asyncio.create_task(do_request())
@@ -328,9 +328,9 @@ class TestInteractionBrokerSubmit:
 
         async def do_request():
             return await broker.request(
-                content="Enter text",
-                choices={},
-                default_choice="",
+                contents=["Enter text"],
+                choices=[{}],
+                default_choices=[""],
             )
 
         task = asyncio.create_task(do_request())

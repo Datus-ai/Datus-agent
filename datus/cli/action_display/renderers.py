@@ -544,7 +544,6 @@ class ActionRenderer:
         """
         input_data = action.input or {}
         contents = input_data.get("contents", [])
-        choices = input_data.get("choices", [])
         content_type = input_data.get("content_type", "text")
 
         result: List[Union[Text, Markdown, Syntax]] = []
@@ -565,22 +564,13 @@ class ActionRenderer:
                 else:
                     result.append(Text(content))
         else:
-            # Multiple questions — numbered overview
+            # Multiple questions — brief header only; individual questions
+            # are shown interactively by _collect_batch during input collection.
             result.append(
                 Text.from_markup(
                     f"[bold bright_yellow]\u2753 Agent Questions ({len(contents)} questions)[/bold bright_yellow]"
                 )
             )
-            lines = []
-            for i, q_text in enumerate(contents):
-                ch = choices[i] if i < len(choices) else {}
-                lines.append(f"  **{i + 1}. {q_text}**")
-                if ch:
-                    opts = " / ".join(ch.values())
-                    lines.append(f"     Options: {opts}")
-                else:
-                    lines.append("     _(free text)_")
-            result.append(Markdown("\n".join(lines)))
 
         return result
 
@@ -645,7 +635,7 @@ class ActionRenderer:
         for i, q_text in enumerate(contents):
             answer = answers[i] if i < len(answers) else ""
             short_q = q_text[:40] + "..." if len(q_text) > 40 else q_text
-            lines.append(f"  {i + 1}. {short_q} \u2192 **{answer}**")
+            lines.append(f"  {short_q} \u2192 **{answer}**")
         if lines:
             result.append(Markdown("\n".join(lines)))
 

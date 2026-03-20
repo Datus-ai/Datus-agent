@@ -126,9 +126,9 @@ class AskUserTool:
 
         try:
             choice, callback = await self._broker.request(
-                content=contents,
+                contents=contents,
                 choices=choices,
-                default_choice=[""] * len(validated),
+                default_choices=[""] * len(validated),
                 allow_free_text=True,
             )
 

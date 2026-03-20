@@ -450,9 +450,9 @@ class GenerationHooks(AgentHooks):
             request_content = f"{display_content}\n### Sync to Knowledge Base?"
 
             choice, callback = await self.broker.request(
-                content=request_content,
-                choices={"y": "Yes - Save to Knowledge Base", "n": "No - Keep file only"},
-                default_choice="y",
+                contents=[request_content],
+                choices=[{"y": "Yes - Save to Knowledge Base", "n": "No - Keep file only"}],
+                default_choices=["y"],
             )
 
             if choice == "y":
@@ -505,9 +505,9 @@ class GenerationHooks(AgentHooks):
             request_content = f"{display_content}\n### Sync to Knowledge Base?"
 
             choice, callback = await self.broker.request(
-                content=request_content,
-                choices={"y": "Yes - Save to Knowledge Base", "n": "No - Keep file only"},
-                default_choice="y",
+                contents=[request_content],
+                choices=[{"y": "Yes - Save to Knowledge Base", "n": "No - Keep file only"}],
+                default_choices=["y"],
             )
 
             if choice == "y":

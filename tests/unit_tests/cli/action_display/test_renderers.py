@@ -699,8 +699,8 @@ class TestRenderBatchInteractionRequest:
         assert "Interaction Request" in text
         assert "Which DB?" in text
 
-    def test_multi_question_shows_numbered_overview(self):
-        """Multiple questions render with numbered overview."""
+    def test_multi_question_shows_brief_header(self):
+        """Multiple questions render brief header only (no detailed listing)."""
         action = _make_action(
             ActionRole.INTERACTION,
             ActionStatus.PROCESSING,
@@ -713,10 +713,8 @@ class TestRenderBatchInteractionRequest:
         result = _renderer().render_interaction_request(action, verbose=False)
         text = _plain(result)
         assert "Agent Questions (2 questions)" in text
-        assert "1. Which DB?" in text
-        assert "2. Time range?" in text
-        assert "MySQL / PG" in text
-        assert "(free text)" in text
+        # Individual questions are NOT listed in the overview
+        assert "MySQL / PG" not in text
 
     def test_empty_contents_fallback(self):
         """Empty contents list renders header only."""

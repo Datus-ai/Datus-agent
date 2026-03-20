@@ -907,7 +907,7 @@ class ChatCommands:
             console.print(f"  [green]\u2705 Answers submitted ({total}/{total})[/green]")
             for idx, answer in enumerate(answers):
                 short_q = contents[idx][:40] + "..." if len(contents[idx]) > 40 else contents[idx]
-                console.print(f"     [dim]{idx + 1}. {short_q} \u2192 {answer}[/dim]")
+                console.print(f"     [dim]{short_q} \u2192 {answer}[/dim]")
 
         return json.dumps(answers, ensure_ascii=False)
 

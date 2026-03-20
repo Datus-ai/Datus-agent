@@ -95,9 +95,9 @@ class PlanModeHooks(AgentHooks):
         if not todo_list:
             # No plan generated - need a simple request to show error
             choice, callback = await self.broker.request(
-                content="**No plan generated**\n\nPlease try again with a different request.",
-                choices={"1": "OK"},
-                default_choice="1",
+                contents=["**No plan generated**\n\nPlease try again with a different request."],
+                choices=[{"1": "OK"}],
+                default_choices=["1"],
             )
             await callback("Plan generation failed")
             return
@@ -113,9 +113,9 @@ class PlanModeHooks(AgentHooks):
             self.execution_mode = "auto"
             self._transition_state("executing", {"mode": "auto"})
             choice, callback = await self.broker.request(
-                content=f"{plan_content}\n\n**Auto execution mode** (workflow/benchmark context)",
-                choices={"1": "Continue"},
-                default_choice="1",
+                contents=[f"{plan_content}\n\n**Auto execution mode** (workflow/benchmark context)"],
+                choices=[{"1": "Continue"}],
+                default_choices=["1"],
             )
             await callback("Auto execution mode started")
             return
@@ -136,14 +136,16 @@ class PlanModeHooks(AgentHooks):
             request_content += "**Choose Execution Mode:**"
 
             choice, callback = await self.broker.request(
-                content=request_content,
-                choices={
-                    "1": "Manual Confirm - Confirm each step",
-                    "2": "Auto Execute - Run all steps automatically",
-                    "3": "Revise - Provide feedback and regenerate plan",
-                    "4": "Cancel",
-                },
-                default_choice="1",
+                contents=[request_content],
+                choices=[
+                    {
+                        "1": "Manual Confirm - Confirm each step",
+                        "2": "Auto Execute - Run all steps automatically",
+                        "3": "Revise - Provide feedback and regenerate plan",
+                        "4": "Cancel",
+                    }
+                ],
+                default_choices=["1"],
             )
 
             if choice == "1":  # Manual
@@ -176,9 +178,9 @@ class PlanModeHooks(AgentHooks):
         try:
             # Request free-text input for replan feedback
             feedback, callback = await self.broker.request(
-                content="### Provide feedback for replanning\n\nEnter your feedback:",
-                choices={},  # Empty dict means free-text input
-                default_choice="",
+                contents=["### Provide feedback for replanning\n\nEnter your feedback:"],
+                choices=[{}],  # Empty dict means free-text input
+                default_choices=[""],
             )
 
             if feedback:
@@ -243,9 +245,9 @@ class PlanModeHooks(AgentHooks):
             if self.execution_mode == "auto":
                 # Merge progress into request content
                 choice, callback = await self.broker.request(
-                    content=f"{progress_content}\n\n**Auto Mode:** {current_item.content}",
-                    choices={"y": "Execute", "n": "Cancel"},
-                    default_choice="y",
+                    contents=[f"{progress_content}\n\n**Auto Mode:** {current_item.content}"],
+                    choices=[{"y": "Execute", "n": "Cancel"}],
+                    default_choices=["y"],
                 )
 
                 if choice == "y":
@@ -258,14 +260,16 @@ class PlanModeHooks(AgentHooks):
             else:
                 # Manual mode - merge progress into request content
                 choice, callback = await self.broker.request(
-                    content=f"{progress_content}",
-                    choices={
-                        "1": "Execute this step",
-                        "2": "Execute this step and continue automatically",
-                        "3": "Revise remaining plan",
-                        "4": "Cancel",
-                    },
-                    default_choice="1",
+                    contents=[f"{progress_content}"],
+                    choices=[
+                        {
+                            "1": "Execute this step",
+                            "2": "Execute this step and continue automatically",
+                            "3": "Revise remaining plan",
+                            "4": "Cancel",
+                        }
+                    ],
+                    default_choices=["1"],
                 )
 
                 if choice == "1":  # Execute this step

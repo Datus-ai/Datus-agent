@@ -311,13 +311,15 @@ class PermissionHooks(AgentHooks):
 
         try:
             choice, callback = await self.broker.request(
-                content=content,
-                choices={
-                    "y": "Allow (once)",
-                    "a": "Always allow (session)",
-                    "n": "Deny",
-                },
-                default_choice="n",
+                contents=[content],
+                choices=[
+                    {
+                        "y": "Allow (once)",
+                        "a": "Always allow (session)",
+                        "n": "Deny",
+                    }
+                ],
+                default_choices=["n"],
             )
 
             if choice == "a":

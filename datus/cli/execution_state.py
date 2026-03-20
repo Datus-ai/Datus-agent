@@ -75,31 +75,25 @@ class InteractionBroker:
     - submit(): For UI to submit responses
     - close(): Place a sentinel so fetch() terminates naturally
 
-    Supports two calling conventions (normalized to list format internally):
+    All parameters use list format. ``action_type`` is auto-inferred:
+    ``"request_choice"`` (single) or ``"request_batch"`` (multiple questions).
 
     Single question::
 
         choice, callback = await broker.request(
-            content="Sync to Knowledge Base?",
-            choices={"y": "Yes - Save to KB", "n": "No - Keep file only"},
-            default_choice="y",
+            contents=["Sync to Knowledge Base?"],
+            choices=[{"y": "Yes - Save to KB", "n": "No - Keep file only"}],
+            default_choices=["y"],
         )
 
     Batch questions::
 
         choice, callback = await broker.request(
-            content=["Which DB?", "Description?"],
+            contents=["Which DB?", "Description?"],
             choices=[{"1": "MySQL", "2": "PostgreSQL"}, {}],
-            default_choice=["1", ""],
+            default_choices=["1", ""],
             allow_free_text=True,
         )
-
-    The ``input`` dict on the queued ActionHistory always uses list format::
-
-        {"contents": [...], "choices": [...], "default_choices": [...], ...}
-
-    ``action_type`` is auto-inferred: ``"request_choice"`` (single) or
-    ``"request_batch"`` (multiple questions).
     """
 
     _STOP_SENTINEL = object()
@@ -165,20 +159,21 @@ class InteractionBroker:
 
     async def request(
         self,
-        content,
-        choices,
-        default_choice="",
+        contents: List[str],
+        choices: List[Dict[str, str]],
+        default_choices: Optional[List[str]] = None,
         content_type: str = "markdown",
         allow_free_text: bool = False,
     ) -> Tuple[str, Callable[[str, str], Awaitable[None]]]:
         """
         Request user input with choices. Blocks until user responds.
 
-        Accepts both single-question and batch-question calling conventions.
-        Inputs are normalized to list format internally.
-
-        Single:  content="Q?", choices={"y": "Yes"}, default_choice="y"
-        Batch:   content=["Q1?", "Q2?"], choices=[{...}, {}], default_choice=["1", ""]
+        Args:
+            contents: List of question strings. Single question: ``["Q?"]``.
+            choices: List of choice dicts, one per question. ``{}`` means free text.
+            default_choices: Default choice key per question. Defaults to ``[""]``.
+            content_type: How to render the content (markdown, sql, yaml, text).
+            allow_free_text: When True, accept values outside choices.
 
         Returns:
             Tuple of (choice, callback):
@@ -188,13 +183,9 @@ class InteractionBroker:
         Raises:
             InteractionCancelled: If broker is closed while waiting
         """
-        # --- normalize to list format ---
-        contents = [content] if isinstance(content, str) else list(content)
-        choices_list = [choices] if isinstance(choices, dict) else list(choices)
-        if isinstance(default_choice, str):
-            default_choices = [default_choice] * len(contents)
-        else:
-            default_choices = list(default_choice)
+        choices_list = choices
+        if default_choices is None:
+            default_choices = [""] * len(contents)
         while len(default_choices) < len(contents):
             default_choices.append("")
 
