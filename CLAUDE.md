@@ -6,7 +6,7 @@ Datus-Agent is an AI-powered data analysis agent: natural language → SQL, mult
 
 - **Stack**: Python 3.12+, OpenAI Agents SDK + LiteLLM, LanceDB, FastAPI, FastMCP, Streamlit
 - **Package manager**: uv
-- **Version**: 0.2.5 | License: Apache-2.0
+- **Version**: 0.2.6 | License: Apache-2.0
 
 ## Build & Run
 
