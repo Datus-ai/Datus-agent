@@ -673,3 +673,163 @@ class TestVerboseMarkupRendering:
         for line in lines:
             assert "[bold]" not in line
             assert "[/bold]" not in line
+
+
+# ── render_interaction (batch) ──────────────────────────────────
+
+
+@pytest.mark.ci
+class TestRenderBatchInteractionRequest:
+    """Test batch interaction request rendering."""
+
+    def test_single_question_shows_legacy_header(self):
+        """Single question renders with legacy Interaction Request header."""
+        action = _make_action(
+            ActionRole.INTERACTION,
+            ActionStatus.PROCESSING,
+            action_type="request_batch",
+            input_data={
+                "questions": [{"question": "Which DB?", "options": ["MySQL", "PG"]}],
+                "content": "### Agent Question\n\nWhich DB?",
+            },
+        )
+        result = _renderer().render_interaction_request(action, verbose=False)
+        text = _plain(result)
+        assert "Interaction Request" in text
+        assert "Which DB?" in text
+
+    def test_multi_question_shows_numbered_overview(self):
+        """Multiple questions render with numbered overview."""
+        action = _make_action(
+            ActionRole.INTERACTION,
+            ActionStatus.PROCESSING,
+            action_type="request_batch",
+            input_data={
+                "questions": [
+                    {"question": "Which DB?", "options": ["MySQL", "PG"]},
+                    {"question": "Time range?", "options": None},
+                ],
+                "content": "overview",
+            },
+        )
+        result = _renderer().render_interaction_request(action, verbose=False)
+        text = _plain(result)
+        assert "Agent Questions (2 questions)" in text
+        assert "1. Which DB?" in text
+        assert "2. Time range?" in text
+        assert "MySQL / PG" in text
+        assert "(free text)" in text
+
+    def test_empty_questions_fallback_to_content(self):
+        """Empty questions list falls back to content display."""
+        action = _make_action(
+            ActionRole.INTERACTION,
+            ActionStatus.PROCESSING,
+            action_type="request_batch",
+            input_data={"questions": [], "content": "Fallback content here"},
+        )
+        result = _renderer().render_interaction_request(action, verbose=False)
+        text = _plain(result)
+        assert "Interaction Request" in text
+        assert "Fallback content here" in text
+
+    def test_legacy_request_choice_not_routed(self):
+        """request_choice action_type does NOT route to batch renderer."""
+        action = _make_action(
+            ActionRole.INTERACTION,
+            ActionStatus.PROCESSING,
+            action_type="request_choice",
+            input_data={"content": "Legacy question", "content_type": "markdown"},
+        )
+        result = _renderer().render_interaction_request(action, verbose=False)
+        text = _plain(result)
+        assert "Interaction Request" in text
+        assert "Legacy question" in text
+
+
+@pytest.mark.ci
+class TestRenderBatchInteractionSuccess:
+    """Test batch interaction success rendering."""
+
+    def test_success_with_questions_and_answers(self):
+        """SUCCESS renders answers matched to questions."""
+        import json
+
+        action = _make_action(
+            ActionRole.INTERACTION,
+            ActionStatus.SUCCESS,
+            action_type="request_batch",
+            input_data={
+                "questions": [
+                    {"question": "Which DB?"},
+                    {"question": "Time range?"},
+                ],
+            },
+            output_data={"user_choice": json.dumps(["MySQL", "Last 7 days"])},
+        )
+        result = _renderer().render_interaction_success(action, verbose=False)
+        text = _plain(result)
+        assert "Answers submitted (2/2)" in text
+        assert "Which DB?" in text
+        assert "MySQL" in text
+        assert "Time range?" in text
+        assert "Last 7 days" in text
+
+    def test_success_without_questions_shows_raw_answers(self):
+        """SUCCESS with empty questions falls back to raw answers."""
+        import json
+
+        action = _make_action(
+            ActionRole.INTERACTION,
+            ActionStatus.SUCCESS,
+            action_type="request_batch",
+            input_data={"questions": []},
+            output_data={"user_choice": json.dumps(["answer1", "answer2"])},
+        )
+        result = _renderer().render_interaction_success(action, verbose=False)
+        text = _plain(result)
+        assert "Answers submitted (2/2)" in text
+        assert "answer1" in text
+        assert "answer2" in text
+
+    def test_success_non_json_user_choice(self):
+        """SUCCESS with non-JSON user_choice wraps as single answer."""
+        action = _make_action(
+            ActionRole.INTERACTION,
+            ActionStatus.SUCCESS,
+            action_type="request_batch",
+            input_data={"questions": [{"question": "Q1?"}]},
+            output_data={"user_choice": "plain text"},
+        )
+        result = _renderer().render_interaction_success(action, verbose=False)
+        text = _plain(result)
+        assert "Answers submitted (1/1)" in text
+        assert "plain text" in text
+
+    def test_success_truncates_long_question(self):
+        """Long question text is truncated to 40 chars."""
+        import json
+
+        long_q = "A" * 60
+        action = _make_action(
+            ActionRole.INTERACTION,
+            ActionStatus.SUCCESS,
+            action_type="request_batch",
+            input_data={"questions": [{"question": long_q}]},
+            output_data={"user_choice": json.dumps(["yes"])},
+        )
+        result = _renderer().render_interaction_success(action, verbose=False)
+        text = _plain(result)
+        assert "..." in text
+
+    def test_legacy_success_not_routed(self):
+        """request_choice SUCCESS does NOT route to batch renderer."""
+        action = _make_action(
+            ActionRole.INTERACTION,
+            ActionStatus.SUCCESS,
+            action_type="request_choice",
+            output_data={"user_choice": "y", "content": "Saved", "content_type": "markdown"},
+        )
+        result = _renderer().render_interaction_success(action, verbose=False)
+        text = _plain(result)
+        assert "Selected: y" in text
