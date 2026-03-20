@@ -401,3 +401,50 @@ class TestAskUserToolEdgeCases:
 
         assert result.success == 0
         assert "No response" in result.error
+
+    @pytest.mark.asyncio
+    async def test_multi_question_non_json_string_rejected(self, broker, tool):
+        """Multi-question batch with non-JSON string response returns error."""
+
+        async def simulate_user():
+            for _ in range(50):
+                if broker.has_pending:
+                    pending = list(broker._pending.values())[0]
+                    await broker.submit(pending.action_id, "plain text not json")
+                    return
+                await asyncio.sleep(0.01)
+
+        task = asyncio.create_task(simulate_user())
+        result = await tool.ask_user(
+            questions=[
+                {"question": "Q1?", "options": ["A", "B"]},
+                {"question": "Q2?", "options": ["C", "D"]},
+            ]
+        )
+        await task
+
+        assert result.success == 0
+        assert "Malformed" in result.error
+
+    @pytest.mark.asyncio
+    async def test_choice_key_resolved_to_display_value(self, broker, tool):
+        """When user submits a choice key (e.g. '2'), it resolves to the display value."""
+
+        async def simulate_user():
+            for _ in range(50):
+                if broker.has_pending:
+                    pending = list(broker._pending.values())[0]
+                    # Submit choice keys instead of display values
+                    await broker.submit(pending.action_id, json.dumps(["2"]))
+                    return
+                await asyncio.sleep(0.01)
+
+        task = asyncio.create_task(simulate_user())
+        result = await tool.ask_user(
+            questions=[{"question": "Which DB?", "options": ["MySQL", "PostgreSQL", "SQLite"]}]
+        )
+        await task
+
+        assert result.success == 1
+        answers = json.loads(result.result)
+        assert answers[0]["answer"] == "PostgreSQL"

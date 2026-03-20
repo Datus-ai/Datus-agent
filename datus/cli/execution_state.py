@@ -6,6 +6,7 @@
 """Interaction broker for async user interaction flow control."""
 
 import asyncio
+import json
 import threading
 import uuid
 from dataclasses import dataclass, field
@@ -354,6 +355,42 @@ class InteractionBroker:
     def is_queue_empty(self) -> bool:
         """Check if the output queue is empty."""
         return self._output_queue.empty()
+
+
+async def auto_submit_interaction(broker: InteractionBroker, action: ActionHistory) -> None:
+    """Auto-submit default choice for a PROCESSING interaction action.
+
+    Used by non-interactive CLI mode and Web executor to automatically
+    resolve pending interactions without user input.
+    """
+    input_data = action.input or {}
+    contents = input_data.get("contents", [])
+    choices_list = input_data.get("choices", [])
+    default_choices = input_data.get("default_choices", [])
+
+    if len(contents) > 1:
+        # Batch: auto-submit first option value or empty for each question
+        answers = []
+        for ch in choices_list:
+            answers.append(next(iter(ch.values())) if ch else "")
+        await broker.submit(action.action_id, json.dumps(answers))
+        logger.info(f"Auto-submitted batch answers: {len(answers)}")
+    elif len(contents) == 1:
+        ch = choices_list[0] if choices_list else {}
+        default = default_choices[0] if default_choices else ""
+        if ch and default:
+            await broker.submit(action.action_id, default)
+            logger.info(f"Auto-submitted default choice: {default}")
+        elif not ch:
+            await broker.submit(action.action_id, "")
+            logger.info("Auto-submitted empty string for free-text input")
+        elif ch:
+            first_key = next(iter(ch))
+            await broker.submit(action.action_id, first_key)
+            logger.info(f"Auto-submitted first choice (no default): {first_key}")
+    else:
+        await broker.submit(action.action_id, "")
+        logger.warning("Auto-submit: empty contents list, submitted empty string")
 
 
 async def merge_interaction_stream(

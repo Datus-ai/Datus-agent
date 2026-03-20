@@ -24,6 +24,7 @@ from datus.cli.execution_state import (
     InteractionCancelled,
     InterruptController,
     PendingInteraction,
+    auto_submit_interaction,
     merge_interaction_stream,
 )
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
@@ -650,3 +651,222 @@ class TestInteractionBrokerClose:
         await broker._queue_put(action)
         # Queue should only contain the sentinel, not the ignored action
         assert broker._output_queue.qsize() == 1
+
+
+# ===========================================================================
+# InteractionBroker.request() fail-fast Tests
+# ===========================================================================
+
+
+class TestInteractionBrokerRequestFailFast:
+    """Tests for request() fail-fast guards."""
+
+    @pytest.mark.asyncio
+    async def test_request_when_closed_raises(self):
+        """request() raises InteractionCancelled when broker is already closed."""
+        broker = InteractionBroker()
+        broker.close()
+
+        with pytest.raises(InteractionCancelled, match="already closed"):
+            await broker.request(
+                contents=["Q?"],
+                choices=[{"a": "A"}],
+            )
+
+    @pytest.mark.asyncio
+    async def test_request_with_empty_contents_raises(self):
+        """request() raises InteractionCancelled when contents is empty."""
+        broker = InteractionBroker()
+
+        with pytest.raises(InteractionCancelled, match="empty contents"):
+            await broker.request(
+                contents=[],
+                choices=[],
+            )
+
+    @pytest.mark.asyncio
+    async def test_request_default_choices_none_pads(self):
+        """request() auto-generates default_choices when None is passed."""
+        broker = InteractionBroker()
+
+        async def do_request():
+            return await broker.request(
+                contents=["Q1?", "Q2?"],
+                choices=[{"a": "A"}, {"b": "B"}],
+                default_choices=None,
+            )
+
+        task = asyncio.create_task(do_request())
+        await asyncio.sleep(0.05)
+
+        action = broker._output_queue.get_nowait()
+        assert action.input["default_choices"] == ["", ""]
+
+        await broker.submit(action.action_id, "a")
+        await task
+
+    @pytest.mark.asyncio
+    async def test_request_default_choices_shorter_pads(self):
+        """request() pads default_choices with empty strings when shorter than contents."""
+        broker = InteractionBroker()
+
+        async def do_request():
+            return await broker.request(
+                contents=["Q1?", "Q2?", "Q3?"],
+                choices=[{"a": "A"}, {"b": "B"}, {"c": "C"}],
+                default_choices=["a"],
+            )
+
+        task = asyncio.create_task(do_request())
+        await asyncio.sleep(0.05)
+
+        action = broker._output_queue.get_nowait()
+        assert action.input["default_choices"] == ["a", "", ""]
+
+        await broker.submit(action.action_id, "a")
+        await task
+
+
+# ===========================================================================
+# auto_submit_interaction Tests
+# ===========================================================================
+
+
+class TestAutoSubmitInteraction:
+    """Tests for auto_submit_interaction helper function."""
+
+    @pytest.mark.asyncio
+    async def test_batch_auto_submit(self):
+        """Batch questions: auto-submits first option value for each."""
+        import json
+
+        broker = InteractionBroker()
+
+        async def do_request():
+            return await broker.request(
+                contents=["Q1?", "Q2?"],
+                choices=[{"1": "MySQL", "2": "PostgreSQL"}, {"a": "Yes", "b": "No"}],
+            )
+
+        task = asyncio.create_task(do_request())
+        await asyncio.sleep(0.05)
+
+        action = broker._output_queue.get_nowait()
+        await auto_submit_interaction(broker, action)
+
+        result, _ = await task
+        answers = json.loads(result)
+        assert answers == ["MySQL", "Yes"]
+
+    @pytest.mark.asyncio
+    async def test_batch_with_free_text_question(self):
+        """Batch with empty choices dict: auto-submits empty string for that question."""
+        import json
+
+        broker = InteractionBroker()
+
+        async def do_request():
+            return await broker.request(
+                contents=["Q1?", "Q2?"],
+                choices=[{"1": "MySQL"}, {}],
+                allow_free_text=True,
+            )
+
+        task = asyncio.create_task(do_request())
+        await asyncio.sleep(0.05)
+
+        action = broker._output_queue.get_nowait()
+        await auto_submit_interaction(broker, action)
+
+        result, _ = await task
+        answers = json.loads(result)
+        assert answers == ["MySQL", ""]
+
+    @pytest.mark.asyncio
+    async def test_single_with_default(self):
+        """Single question with choices and default: auto-submits default."""
+        broker = InteractionBroker()
+
+        async def do_request():
+            return await broker.request(
+                contents=["Pick?"],
+                choices=[{"y": "Yes", "n": "No"}],
+                default_choices=["y"],
+            )
+
+        task = asyncio.create_task(do_request())
+        await asyncio.sleep(0.05)
+
+        action = broker._output_queue.get_nowait()
+        await auto_submit_interaction(broker, action)
+
+        result, _ = await task
+        assert result == "y"
+
+    @pytest.mark.asyncio
+    async def test_single_free_text(self):
+        """Single question without choices: auto-submits empty string."""
+        broker = InteractionBroker()
+
+        async def do_request():
+            return await broker.request(
+                contents=["Enter text?"],
+                choices=[{}],
+            )
+
+        task = asyncio.create_task(do_request())
+        await asyncio.sleep(0.05)
+
+        action = broker._output_queue.get_nowait()
+        await auto_submit_interaction(broker, action)
+
+        result, _ = await task
+        assert result == ""
+
+    @pytest.mark.asyncio
+    async def test_single_no_default(self):
+        """Single question with choices but no default: auto-submits first choice key."""
+        broker = InteractionBroker()
+
+        async def do_request():
+            return await broker.request(
+                contents=["Pick?"],
+                choices=[{"a": "Alpha", "b": "Beta"}],
+                default_choices=[""],
+            )
+
+        task = asyncio.create_task(do_request())
+        await asyncio.sleep(0.05)
+
+        action = broker._output_queue.get_nowait()
+        await auto_submit_interaction(broker, action)
+
+        result, _ = await task
+        assert result == "a"
+
+    @pytest.mark.asyncio
+    async def test_empty_contents(self):
+        """Empty contents list: auto-submits empty string."""
+        broker = InteractionBroker()
+
+        # Manually create a pending interaction for this edge case
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        broker._pending["edge-id"] = PendingInteraction(
+            action_id="edge-id", future=future, choices=[{}], allow_free_text=True
+        )
+
+        action = ActionHistory(
+            action_id="edge-id",
+            role=ActionRole.INTERACTION,
+            status=ActionStatus.PROCESSING,
+            action_type="request_choice",
+            messages="",
+            input={"contents": [], "choices": [], "default_choices": []},
+            output=None,
+        )
+
+        await auto_submit_interaction(broker, action)
+        # Let event loop process the call_soon_threadsafe callback
+        await asyncio.sleep(0.05)
+        assert future.result() == ""

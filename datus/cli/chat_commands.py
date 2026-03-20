@@ -24,7 +24,7 @@ from rich.table import Table
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
 from datus.cli._cli_utils import select_choice
 from datus.cli.action_display.display import ActionHistoryDisplay
-from datus.cli.execution_state import ExecutionInterrupted
+from datus.cli.execution_state import ExecutionInterrupted, auto_submit_interaction
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
 from datus.utils.loggings import get_logger
@@ -485,44 +485,7 @@ class ChatCommands:
                             if action.status == ActionStatus.PROCESSING:
                                 broker = current_node.interaction_broker
                                 if broker:
-                                    input_data = action.input or {}
-                                    contents = input_data.get("contents", [])
-                                    choices_list = input_data.get("choices", [])
-                                    default_choices = input_data.get("default_choices", [])
-                                    if len(contents) > 1:
-                                        # Batch: auto-submit first option value or empty
-                                        answers = []
-                                        for ch in choices_list:
-                                            answers.append(next(iter(ch.values())) if ch else "")
-                                        await broker.submit(action.action_id, json.dumps(answers))
-                                        logger.info(
-                                            f"Non-interactive mode auto-submitted batch answers: {len(answers)}"
-                                        )
-                                    elif len(contents) == 1:
-                                        ch = choices_list[0] if choices_list else {}
-                                        default = default_choices[0] if default_choices else ""
-                                        if ch and default:
-                                            await broker.submit(action.action_id, default)
-                                            logger.info(
-                                                f"Non-interactive mode auto-submitted default choice: {default}"
-                                            )
-                                        elif not ch:
-                                            await broker.submit(action.action_id, "")
-                                            logger.info(
-                                                "Non-interactive mode auto-submitted empty string for free-text input"
-                                            )
-                                        elif ch:
-                                            first_value = next(iter(ch.values()))
-                                            await broker.submit(action.action_id, first_value)
-                                            logger.info(
-                                                "Non-interactive mode auto-submitted first choice "
-                                                f"(no default): {first_value}"
-                                            )
-                                    else:
-                                        await broker.submit(action.action_id, "")
-                                        logger.warning(
-                                            "Non-interactive mode: empty contents list, submitted empty string"
-                                        )
+                                    await auto_submit_interaction(broker, action)
                             continue
                         if action.role == ActionRole.TOOL and action.status == ActionStatus.PROCESSING:
                             continue

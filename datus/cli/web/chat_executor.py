@@ -12,9 +12,9 @@ Handles:
 """
 
 import asyncio
-import json
 from typing import List, Optional, Tuple
 
+from datus.cli.execution_state import auto_submit_interaction
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.utils.loggings import get_logger
 
@@ -74,34 +74,9 @@ class ChatExecutor:
 
                             # Auto-submit default choice for PROCESSING interactions (Web mode)
                             if action.role == ActionRole.INTERACTION and action.status == ActionStatus.PROCESSING:
-                                input_data = action.input or {}
                                 broker = current_node.interaction_broker
                                 if broker:
-                                    contents = input_data.get("contents", [])
-                                    choices_list = input_data.get("choices", [])
-                                    default_choices = input_data.get("default_choices", [])
-                                    if len(contents) > 1:
-                                        # Batch: auto-submit first option value or empty
-                                        answers = []
-                                        for ch in choices_list:
-                                            answers.append(next(iter(ch.values())) if ch else "")
-                                        await broker.submit(action.action_id, json.dumps(answers))
-                                        logger.info(f"Web auto-submitted batch answers: {len(answers)}")
-                                    elif len(contents) == 1:
-                                        ch = choices_list[0] if choices_list else {}
-                                        default = default_choices[0] if default_choices else ""
-                                        if ch and default:
-                                            await broker.submit(action.action_id, default)
-                                            logger.info(f"Web auto-submitted default choice: {default}")
-                                        elif not ch:
-                                            await broker.submit(action.action_id, "")
-                                        elif ch:
-                                            first_value = next(iter(ch.values()))
-                                            await broker.submit(action.action_id, first_value)
-                                            logger.info(f"Web auto-submitted first choice (no default): {first_value}")
-                                    else:
-                                        await broker.submit(action.action_id, "")
-                                        logger.warning("Web auto-submit: empty contents list, submitted empty string")
+                                    await auto_submit_interaction(broker, action)
                                 continue  # Don't yield PROCESSING to UI
 
                             # SUCCESS interactions are yielded for UI rendering
