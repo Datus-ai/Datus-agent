@@ -3,14 +3,18 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 """
-Ask User tool — allows the agent to pause and ask the user a question.
+Ask User tool — allows the agent to pause and ask the user questions.
 
 When the LLM is uncertain about the user's intent or needs clarification,
-it can call ``ask_user`` to present a question with options. The tool blocks
-until the user responds, then returns the answer so the agent can continue.
+it can call ``ask_user`` to present one or more questions with optional
+predefined options. The tool blocks until the user responds to all
+questions, then returns the answers so the agent can continue.
 """
 
-from typing import Any, List, Optional
+import json
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, Field
 
 from datus.cli.execution_state import InteractionBroker, InteractionCancelled
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
@@ -19,16 +23,33 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
-class AskUserTool:
-    """Tool that lets the agent ask the user a question with predefined options.
+class QuestionItem(BaseModel):
+    """A single question to ask the user."""
 
-    The tool uses ``InteractionBroker`` to present a question to the user and
-    wait for their response. The user can pick one of the provided options or
-    type a custom answer.
+    question: str = Field(description="The question to ask. Should be clear and specific.")
+    options: Optional[List[str]] = Field(
+        default=None,
+        description="2-5 predefined answer choices. The user can always type a custom answer "
+        "even when options are provided, so do NOT include an 'Other' or 'Custom' option. "
+        "If omitted, the user provides free-text input.",
+    )
+
+
+class AskUserTool:
+    """Tool that lets the agent ask the user one or more questions.
+
+    Each question can optionally include predefined options. The tool uses
+    ``InteractionBroker`` to present all questions to the user and wait for
+    their responses. The user can pick one of the provided options or type
+    a custom answer for each question.
 
     Args:
         broker: InteractionBroker instance (shared with permission hooks).
     """
+
+    MAX_QUESTIONS = 10
+    MAX_OPTIONS_PER_QUESTION = 5
+    MIN_OPTIONS_PER_QUESTION = 2
 
     def __init__(self, broker: InteractionBroker):
         self._broker = broker
@@ -39,60 +60,106 @@ class AskUserTool:
 
     async def ask_user(
         self,
-        question: str,
-        options: Optional[List[str]] = None,
+        questions: List[QuestionItem],
     ) -> FuncToolResult:
-        """Ask the user a question and wait for their response.
+        """Ask the user one or more questions and wait for their responses.
 
         Use this tool when you need clarification from the user before
         proceeding. For example:
         - The user's request is ambiguous and could be interpreted multiple ways
         - You need the user to choose between several approaches
-        - You want to confirm an important action before executing it
+        - You want to confirm important actions before executing them
+
+        Collect ALL questions you need to ask into a single call rather than
+        asking one at a time.
 
         Args:
-            question: The question to ask the user. Should be clear and specific.
-            options: Optional list of 2-5 predefined answer choices.
-                     The user can always type a custom answer even when options
-                     are provided, so do NOT include an "Other" or "Custom"
-                     option — the free-text input is built-in.
-                     If omitted, the user provides free-text input.
+            questions: A list of question objects, each with a "question" string
+                and optional "options" list of 2-5 predefined answer choices.
 
         Returns:
-            FuncToolResult with the user's answer in the ``result`` field.
+            FuncToolResult with the answers in the ``result`` field.
+            The result is a JSON array of answer objects, each containing
+            "question" and "answer" keys.
         """
-        if not question or not question.strip():
-            return FuncToolResult(success=0, error="Question must not be empty")
+        # --- validation ---
+        if not questions or not isinstance(questions, list):
+            return FuncToolResult(success=0, error="questions must be a non-empty list")
 
-        # Build choices dict for the broker
-        choices: dict = {}
-        if options:
-            if len(options) < 2 or len(options) > 5:
-                return FuncToolResult(success=0, error="options must contain 2-5 items")
-            for i, opt in enumerate(options, 1):
-                choices[str(i)] = opt
+        if len(questions) > self.MAX_QUESTIONS:
+            return FuncToolResult(success=0, error=f"questions must contain at most {self.MAX_QUESTIONS} items")
 
-        # Build display content
-        content = f"### Agent Question\n\n{question}"
+        validated: List[Dict[str, Any]] = []
+        for i, q in enumerate(questions):
+            # Accept both QuestionItem and plain dict (from tests / non-SDK callers)
+            if isinstance(q, QuestionItem):
+                q_text = q.question
+                options = q.options
+            elif isinstance(q, dict):
+                q_text = q.get("question", "")
+                options = q.get("options")
+            else:
+                return FuncToolResult(success=0, error=f"questions[{i}] must be a dict")
+
+            if not q_text or not str(q_text).strip():
+                return FuncToolResult(success=0, error=f"questions[{i}].question must not be empty")
+            if options is not None:
+                if not isinstance(options, list):
+                    return FuncToolResult(success=0, error=f"questions[{i}].options must be a list")
+                if len(options) < self.MIN_OPTIONS_PER_QUESTION or len(options) > self.MAX_OPTIONS_PER_QUESTION:
+                    return FuncToolResult(
+                        success=0,
+                        error=f"questions[{i}].options must contain "
+                        f"{self.MIN_OPTIONS_PER_QUESTION}-{self.MAX_OPTIONS_PER_QUESTION} items",
+                    )
+                # Coerce all options to non-empty strings
+                options = [str(opt) for opt in options]
+                if any(not opt.strip() for opt in options):
+                    return FuncToolResult(success=0, error=f"questions[{i}].options must be non-empty strings")
+            validated.append({"question": str(q_text).strip(), "options": options})
+
+        # --- build display content ---
+        content = self._build_content(validated)
 
         try:
             choice, callback = await self._broker.request(
                 content=content,
-                choices=choices,
-                default_choice="1" if choices else "",
+                choices={},
+                default_choice="",
                 allow_free_text=True,
+                action_type="request_batch",
+                questions=validated,
             )
 
-            # Resolve the display text for the answer
-            if choices and choice in choices:
-                answer = choices[choice]
-            else:
-                answer = choice  # free-text input
+            # Parse the JSON response from the collector
+            try:
+                answers = json.loads(choice)
+            except (json.JSONDecodeError, TypeError):
+                if len(validated) == 1:
+                    answers = [choice]
+                else:
+                    logger.warning(f"AskUserTool: expected JSON array, got: {choice!r}")
+                    return FuncToolResult(success=0, error="Malformed batch response from collector")
 
-            await callback(f"User answered: {answer}")
+            # Ensure answers is a list (json.loads may return dict/str/int)
+            if not isinstance(answers, list):
+                if len(validated) == 1:
+                    answers = [answers]
+                else:
+                    logger.warning(f"AskUserTool: expected list, got {type(answers).__name__}: {answers!r}")
+                    return FuncToolResult(success=0, error="Malformed batch response from collector")
 
-            logger.info(f"AskUserTool: question='{question}', answer='{answer}'")
-            return FuncToolResult(success=1, result=answer)
+            # Build structured result
+            result_list = []
+            for i, q in enumerate(validated):
+                answer = answers[i] if i < len(answers) else ""
+                result_list.append({"question": q["question"], "answer": answer})
+
+            result_json = json.dumps(result_list, ensure_ascii=False)
+            await callback(f"User answered {len(result_list)} question(s)")
+
+            logger.info(f"AskUserTool: {len(validated)} question(s), answers={result_json}")
+            return FuncToolResult(success=1, result=result_json)
 
         except InteractionCancelled:
             logger.info("AskUserTool: interaction cancelled by user")
@@ -100,6 +167,24 @@ class AskUserTool:
         except Exception as e:
             logger.error(f"AskUserTool: unexpected error: {e}")
             return FuncToolResult(success=0, error=f"Failed to ask user: {e}")
+
+    @staticmethod
+    def _build_content(questions: List[Dict[str, Any]]) -> str:
+        """Build markdown display content for the questions."""
+        if len(questions) == 1:
+            q = questions[0]
+            return f"### Agent Question\n\n{q['question']}"
+
+        lines = [f"### Agent Questions ({len(questions)} questions)\n"]
+        for i, q in enumerate(questions, 1):
+            lines.append(f"**{i}. {q['question']}**")
+            if q.get("options"):
+                opts = " / ".join(q["options"])
+                lines.append(f"   Options: {opts}")
+            else:
+                lines.append("   _(free text)_")
+            lines.append("")
+        return "\n".join(lines)
 
     def available_tools(self):
         """Return list of FunctionTool instances for this tool group."""

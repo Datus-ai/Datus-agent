@@ -10,7 +10,7 @@ import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import AsyncGenerator, Awaitable, Callable, Dict, Optional, Tuple
+from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.utils.loggings import get_logger
@@ -94,8 +94,9 @@ class InteractionBroker:
 
     Usage in UI:
         # CLI - distinguish by status (PROCESSING = waiting for input, SUCCESS = show result)
+        # action_type is "request_choice" (single) or "request_batch" (batch questions)
         for action in merged_stream:
-            if action.role == ActionRole.INTERACTION and action.action_type == "request_choice":
+            if action.role == ActionRole.INTERACTION and action.action_type in ("request_choice", "request_batch"):
                 if action.status == ActionStatus.PROCESSING:
                     choice = display_and_get_user_choice(action)
                     broker.submit(action.action_id, choice)
@@ -171,6 +172,8 @@ class InteractionBroker:
         default_choice: str = "",
         content_type: str = "markdown",
         allow_free_text: bool = False,
+        action_type: str = "request_choice",
+        questions: Optional[List[Any]] = None,
     ) -> Tuple[str, Callable[[str, str], Awaitable[None]]]:
         """
         Request user input with choices. Blocks until user responds.
@@ -207,19 +210,23 @@ class InteractionBroker:
             self._pending[action_id] = pending
 
         # Create ActionHistory with INTERACTION role
+        input_data = {
+            "content": content,
+            "content_type": content_type,
+            "choices": choices,
+            "default_choice": default_choice,
+            "allow_free_text": allow_free_text,
+        }
+        if questions is not None:
+            input_data["questions"] = questions
+
         action = ActionHistory(
             action_id=action_id,
             role=ActionRole.INTERACTION,
             status=ActionStatus.PROCESSING,
-            action_type="request_choice",
+            action_type=action_type,
             messages=content,
-            input={
-                "content": content,
-                "content_type": content_type,
-                "choices": choices,
-                "default_choice": default_choice,
-                "allow_free_text": allow_free_text,
-            },
+            input=input_data,
             output=None,
         )
 
@@ -243,13 +250,14 @@ class InteractionBroker:
                     action_id=action_id,  # Same action_id to link with the original request
                     role=ActionRole.INTERACTION,
                     status=ActionStatus.SUCCESS,  # SUCCESS indicates completion
-                    action_type="request_choice",  # Same action_type, UI distinguishes by status
+                    action_type=action_type,  # Same action_type, UI distinguishes by status
                     messages=callback_content,
                     input={
                         "content": content,  # Original request content
                         "content_type": content_type,
                         "choices": choices,
                         "default_choice": default_choice,
+                        **({"questions": questions} if questions is not None else {}),
                     },
                     output={
                         "content": callback_content,
@@ -276,7 +284,7 @@ class InteractionBroker:
         items enqueued before the sentinel are yielded first.
 
         Yields:
-            ActionHistory objects with INTERACTION role (request_choice and success types)
+            ActionHistory objects with INTERACTION role (request_choice / request_batch types)
         """
         while True:
             try:

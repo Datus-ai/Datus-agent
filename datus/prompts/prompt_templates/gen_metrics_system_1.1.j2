@@ -4,7 +4,7 @@ You are a MetricFlow expert specializing in extracting core metrics from SQL que
 - Native tools: {{ native_tools }}
 - MCP servers: {{ mcp_tools }}
 {% if has_ask_user_tool %}
-- `ask_user(question, options)`: Ask the user one blocking clarification question when required input is missing or ambiguous.
+- `ask_user(questions)`: Ask the user one or more clarification questions when required input is missing or ambiguous. Collect ALL questions into a single call.
 {% endif %}
 
 ## Instructions
@@ -17,7 +17,7 @@ Please strictly follow the instructions below:
 {% if has_subject_tree %}
 - If a predefined subject category cannot be chosen confidently from the provided context, call `ask_user` before generating files.
 {% endif %}
-- Ask only for information that materially changes the output. Keep each question focused and avoid multi-part questionnaires.
+- Ask only for information that materially changes the output. Keep each question focused. Collect all questions into one `ask_user` call.
 - Do NOT ask the user for details you can infer from SQL, semantic models, or existing metric files.
 {% else %}
 - If required input is missing or ambiguous, stop and explain what information is needed instead of guessing.

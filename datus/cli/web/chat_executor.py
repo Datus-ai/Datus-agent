@@ -12,13 +12,13 @@ Handles:
 """
 
 import asyncio
+import json
 from typing import List, Optional, Tuple
 
-import structlog
-
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+from datus.utils.loggings import get_logger
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 class ChatExecutor:
@@ -58,39 +58,6 @@ class ChatExecutor:
 
             # Stream execution with deduplication
             incremental_actions = []
-            seen_thinking_content = set()  # Track unique thinking content (without prefix)
-            last_message = None  # Track last message to avoid consecutive duplicates
-
-            async def collect_actions():
-                """Collect all actions from the stream"""
-                nonlocal last_message
-
-                current_node.input = node_input
-                async for action in current_node.execute_stream(cli.actions):
-                    incremental_actions.append(action)
-                    formatted = self.format_action_for_stream(action)
-
-                    # Skip empty messages
-                    if not formatted:
-                        continue
-
-                    # Deduplicate: skip if same as last message
-                    if formatted == last_message:
-                        continue
-
-                    # For thinking messages, check content without emoji and prefix
-                    if formatted.startswith("💭Thinking:"):
-                        # Extract actual content without "💭Thinking: "
-                        thinking_content = formatted[11:].strip()  # Remove "💭Thinking: "
-
-                        # Skip if we've seen this exact thinking content before
-                        if thinking_content in seen_thinking_content:
-                            continue
-
-                        seen_thinking_content.add(thinking_content)
-
-                    last_message = formatted
-                    yield formatted
 
             # Execute async generator with proper event loop handling
             loop = asyncio.new_event_loop()
@@ -106,29 +73,31 @@ class ChatExecutor:
                                 continue
 
                             # Auto-submit default choice for PROCESSING interactions (Web mode)
-                            if (
-                                action.role == ActionRole.INTERACTION
-                                and action.action_type == "request_choice"
-                                and action.status == ActionStatus.PROCESSING
-                            ):
-                                # Get default choice and auto-submit
+                            if action.role == ActionRole.INTERACTION and action.status == ActionStatus.PROCESSING:
                                 input_data = action.input or {}
-                                choices = input_data.get("choices", {})  # dict: {key: display_text}
-                                default_choice = input_data.get("default_choice", "")  # str key
                                 broker = current_node.interaction_broker
                                 if broker:
-                                    if choices and default_choice:
-                                        # Has choices: submit default key
-                                        await broker.submit(action.action_id, default_choice)
-                                        logger.info(f"Web auto-submitted default choice: {default_choice}")
-                                    elif not choices:
-                                        # Free-text input: submit empty string
-                                        await broker.submit(action.action_id, "")
-                                    elif choices:
-                                        # Choices exist but no default - submit first key
-                                        first_key = next(iter(choices.keys()))
-                                        await broker.submit(action.action_id, first_key)
-                                        logger.info(f"Web auto-submitted first choice (no default): {first_key}")
+                                    if action.action_type == "request_batch":
+                                        # Batch: auto-submit first option or empty for each question
+                                        questions = input_data.get("questions", [])
+                                        answers = []
+                                        for q in questions:
+                                            options = q.get("options")
+                                            answers.append(options[0] if options else "")
+                                        await broker.submit(action.action_id, json.dumps(answers))
+                                        logger.info(f"Web auto-submitted batch answers: {len(answers)}")
+                                    elif action.action_type == "request_choice":
+                                        choices = input_data.get("choices", {})
+                                        default_choice = input_data.get("default_choice", "")
+                                        if choices and default_choice:
+                                            await broker.submit(action.action_id, default_choice)
+                                            logger.info(f"Web auto-submitted default choice: {default_choice}")
+                                        elif not choices:
+                                            await broker.submit(action.action_id, "")
+                                        elif choices:
+                                            first_key = next(iter(choices.keys()))
+                                            await broker.submit(action.action_id, first_key)
+                                            logger.info(f"Web auto-submitted first choice (no default): {first_key}")
                                 continue  # Don't yield PROCESSING to UI
 
                             # SUCCESS interactions are yielded for UI rendering

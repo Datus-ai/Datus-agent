@@ -2,14 +2,16 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""Unit tests for AskUserTool."""
+"""Unit tests for AskUserTool (batch questions)."""
 
 import asyncio
+import json
 
 import pytest
 import pytest_asyncio
 
 from datus.cli.execution_state import InteractionBroker
+from datus.schemas.action_history import ActionStatus
 from datus.tools.func_tool.ask_user_tools import AskUserTool
 
 
@@ -25,8 +27,8 @@ async def tool(broker):
     return AskUserTool(broker=broker)
 
 
-class TestAskUserTool:
-    """Tests for AskUserTool."""
+class TestAskUserToolValidation:
+    """Validation tests for AskUserTool."""
 
     @pytest.mark.asyncio
     async def test_available_tools(self, tool):
@@ -36,89 +38,203 @@ class TestAskUserTool:
         assert tools[0].name == "ask_user"
 
     @pytest.mark.asyncio
-    async def test_empty_question_rejected(self, tool):
-        """Empty question returns error."""
-        result = await tool.ask_user(question="")
+    async def test_empty_list_rejected(self, tool):
+        """Empty questions list returns error."""
+        result = await tool.ask_user(questions=[])
         assert result.success == 0
-        assert "empty" in result.error.lower()
+        assert "non-empty" in result.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_non_list_rejected(self, tool):
+        """Non-list questions returns error."""
+        result = await tool.ask_user(questions="not a list")
+        assert result.success == 0
+        assert "non-empty" in result.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_none_rejected(self, tool):
+        """None questions returns error."""
+        result = await tool.ask_user(questions=None)
+        assert result.success == 0
+
+    @pytest.mark.asyncio
+    async def test_non_dict_question_rejected(self, tool):
+        """Non-dict question item returns error."""
+        result = await tool.ask_user(questions=["not a dict"])
+        assert result.success == 0
+        assert "must be a dict" in result.error
+
+    @pytest.mark.asyncio
+    async def test_empty_question_text_rejected(self, tool):
+        """Empty question text returns error."""
+        result = await tool.ask_user(questions=[{"question": ""}])
+        assert result.success == 0
+        assert "must not be empty" in result.error
 
     @pytest.mark.asyncio
     async def test_whitespace_question_rejected(self, tool):
-        """Whitespace-only question returns error."""
-        result = await tool.ask_user(question="   ")
+        """Whitespace-only question text returns error."""
+        result = await tool.ask_user(questions=[{"question": "   "}])
         assert result.success == 0
+        assert "must not be empty" in result.error
 
     @pytest.mark.asyncio
     async def test_too_few_options_rejected(self, tool):
         """Less than 2 options returns error."""
-        result = await tool.ask_user(question="Pick one?", options=["only"])
+        result = await tool.ask_user(questions=[{"question": "Pick one?", "options": ["only"]}])
         assert result.success == 0
         assert "2-5" in result.error
 
     @pytest.mark.asyncio
     async def test_too_many_options_rejected(self, tool):
         """More than 5 options returns error."""
-        result = await tool.ask_user(question="Pick one?", options=["a", "b", "c", "d", "e", "f"])
+        result = await tool.ask_user(questions=[{"question": "Pick one?", "options": ["a", "b", "c", "d", "e", "f"]}])
         assert result.success == 0
         assert "2-5" in result.error
 
     @pytest.mark.asyncio
-    async def test_ask_with_options_returns_answer(self, broker, tool):
-        """User picks an option and the answer text is returned."""
-
-        async def simulate_user():
-            # Wait for the interaction to appear, then submit choice "2"
-            for _ in range(50):
-                if broker.has_pending:
-                    pending = list(broker._pending.values())[0]
-                    await broker.submit(pending.action_id, "2")
-                    return
-                await asyncio.sleep(0.01)
-
-        task = asyncio.create_task(simulate_user())
-        result = await tool.ask_user(question="Which DB?", options=["MySQL", "PostgreSQL", "SQLite"])
-        await task
-
-        assert result.success == 1
-        assert result.result == "PostgreSQL"
+    async def test_too_many_questions_rejected(self, tool):
+        """More than MAX_QUESTIONS returns error."""
+        questions = [{"question": f"Q{i}?"} for i in range(AskUserTool.MAX_QUESTIONS + 1)]
+        result = await tool.ask_user(questions=questions)
+        assert result.success == 0
+        assert "at most" in result.error
 
     @pytest.mark.asyncio
-    async def test_ask_free_text_returns_answer(self, broker, tool):
-        """Without options the user types free text."""
+    async def test_options_not_list_rejected(self, tool):
+        """Non-list options returns error."""
+        result = await tool.ask_user(questions=[{"question": "Pick?", "options": "not a list"}])
+        assert result.success == 0
+        assert "must be a list" in result.error
 
-        async def simulate_user():
-            for _ in range(50):
-                if broker.has_pending:
-                    pending = list(broker._pending.values())[0]
-                    await broker.submit(pending.action_id, "my custom answer")
-                    return
-                await asyncio.sleep(0.01)
 
-        task = asyncio.create_task(simulate_user())
-        result = await tool.ask_user(question="What table name?")
-        await task
-
-        assert result.success == 1
-        assert result.result == "my custom answer"
+class TestAskUserToolSingleQuestion:
+    """Tests for single-question batch (questions list of length 1)."""
 
     @pytest.mark.asyncio
-    async def test_ask_with_options_free_text(self, broker, tool):
-        """User types custom text instead of picking a predefined option."""
+    async def test_single_question_with_options(self, broker, tool):
+        """Single question with options: user picks option, answer resolved."""
 
         async def simulate_user():
             for _ in range(50):
                 if broker.has_pending:
                     pending = list(broker._pending.values())[0]
-                    await broker.submit(pending.action_id, "MongoDB")
+                    # Submit JSON array with one answer
+                    await broker.submit(pending.action_id, json.dumps(["PostgreSQL"]))
                     return
                 await asyncio.sleep(0.01)
 
         task = asyncio.create_task(simulate_user())
-        result = await tool.ask_user(question="Which DB?", options=["MySQL", "PostgreSQL"])
+        result = await tool.ask_user(
+            questions=[{"question": "Which DB?", "options": ["MySQL", "PostgreSQL", "SQLite"]}]
+        )
         await task
 
         assert result.success == 1
-        assert result.result == "MongoDB"
+        answers = json.loads(result.result)
+        assert len(answers) == 1
+        assert answers[0]["answer"] == "PostgreSQL"
+        assert answers[0]["question"] == "Which DB?"
+
+    @pytest.mark.asyncio
+    async def test_single_question_free_text(self, broker, tool):
+        """Single question without options: user types free text."""
+
+        async def simulate_user():
+            for _ in range(50):
+                if broker.has_pending:
+                    pending = list(broker._pending.values())[0]
+                    await broker.submit(pending.action_id, json.dumps(["my_table"]))
+                    return
+                await asyncio.sleep(0.01)
+
+        task = asyncio.create_task(simulate_user())
+        result = await tool.ask_user(questions=[{"question": "What table name?"}])
+        await task
+
+        assert result.success == 1
+        answers = json.loads(result.result)
+        assert len(answers) == 1
+        assert answers[0]["answer"] == "my_table"
+
+
+class TestAskUserToolBatch:
+    """Tests for multi-question batch."""
+
+    @pytest.mark.asyncio
+    async def test_batch_questions(self, broker, tool):
+        """Multiple questions: all answers returned together."""
+
+        async def simulate_user():
+            for _ in range(50):
+                if broker.has_pending:
+                    pending = list(broker._pending.values())[0]
+                    answers = json.dumps(["MySQL", "Last 30 days", "user_id > 1000"])
+                    await broker.submit(pending.action_id, answers)
+                    return
+                await asyncio.sleep(0.01)
+
+        task = asyncio.create_task(simulate_user())
+        result = await tool.ask_user(
+            questions=[
+                {"question": "Which DB?", "options": ["MySQL", "PostgreSQL", "SQLite"]},
+                {"question": "Time range?", "options": ["Last 7 days", "Last 30 days"]},
+                {"question": "Filter conditions?"},
+            ]
+        )
+        await task
+
+        assert result.success == 1
+        answers = json.loads(result.result)
+        assert len(answers) == 3
+        assert answers[0]["answer"] == "MySQL"
+        assert answers[1]["answer"] == "Last 30 days"
+        assert answers[2]["answer"] == "user_id > 1000"
+
+    @pytest.mark.asyncio
+    async def test_batch_broker_sends_request_batch_action_type(self, broker, tool):
+        """Batch request uses 'request_batch' action_type in the broker."""
+
+        async def simulate_user():
+            for _ in range(50):
+                if broker.has_pending:
+                    pending = list(broker._pending.values())[0]
+                    await broker.submit(pending.action_id, json.dumps(["A", "B"]))
+                    return
+                await asyncio.sleep(0.01)
+
+        # Also consume the queue to check action_type
+        actions = []
+
+        async def consume_queue():
+            async for action in broker.fetch():
+                actions.append(action)
+
+        consumer = asyncio.create_task(consume_queue())
+        simulate = asyncio.create_task(simulate_user())
+
+        result = await tool.ask_user(
+            questions=[
+                {"question": "Q1?", "options": ["A", "B"]},
+                {"question": "Q2?", "options": ["C", "D"]},
+            ]
+        )
+        await simulate
+        broker.close()
+        await consumer
+
+        assert result.success == 1
+        # First action should be PROCESSING with request_batch
+        processing_actions = [a for a in actions if a.status == ActionStatus.PROCESSING]
+        assert len(processing_actions) >= 1
+        assert processing_actions[0].action_type == "request_batch"
+        # Check questions are in input
+        questions_in_input = processing_actions[0].input.get("questions", [])
+        assert len(questions_in_input) == 2
+
+
+class TestAskUserToolEdgeCases:
+    """Edge case tests."""
 
     @pytest.mark.asyncio
     async def test_cancelled_interaction(self, broker, tool):
@@ -129,7 +245,7 @@ class TestAskUserTool:
             broker.close()
 
         task = asyncio.create_task(close_broker())
-        result = await tool.ask_user(question="Will be cancelled?", options=["Yes", "No"])
+        result = await tool.ask_user(questions=[{"question": "Will be cancelled?", "options": ["Yes", "No"]}])
         await task
 
         assert result.success == 0
@@ -147,7 +263,7 @@ class TestAskUserTool:
 
         tool._broker.request = broken_request
 
-        result = await tool.ask_user(question="Test?", options=["A", "B"])
+        result = await tool.ask_user(questions=[{"question": "Test?", "options": ["A", "B"]}])
         assert result.success == 0
         assert "something broke" in result.error
 
@@ -158,3 +274,93 @@ class TestAskUserTool:
         assert tool._tool_context is None
         tool.set_tool_context({"run_id": "abc"})
         assert tool._tool_context == {"run_id": "abc"}
+
+    @pytest.mark.asyncio
+    async def test_fallback_when_response_not_json(self, broker, tool):
+        """When broker returns non-JSON string, fallback to using it as-is for single question."""
+
+        async def simulate_user():
+            for _ in range(50):
+                if broker.has_pending:
+                    pending = list(broker._pending.values())[0]
+                    await broker.submit(pending.action_id, "plain text answer")
+                    return
+                await asyncio.sleep(0.01)
+
+        task = asyncio.create_task(simulate_user())
+        result = await tool.ask_user(questions=[{"question": "What?"}])
+        await task
+
+        assert result.success == 1
+        answers = json.loads(result.result)
+        assert answers[0]["answer"] == "plain text answer"
+
+    @pytest.mark.asyncio
+    async def test_non_list_json_single_question_coerced(self, broker, tool):
+        """When broker returns valid JSON that is not a list (e.g. dict), coerce for single question."""
+
+        async def simulate_user():
+            for _ in range(50):
+                if broker.has_pending:
+                    pending = list(broker._pending.values())[0]
+                    # Submit a JSON string (not an array)
+                    await broker.submit(pending.action_id, json.dumps("direct answer"))
+                    return
+                await asyncio.sleep(0.01)
+
+        task = asyncio.create_task(simulate_user())
+        result = await tool.ask_user(questions=[{"question": "What?"}])
+        await task
+
+        assert result.success == 1
+        answers = json.loads(result.result)
+        assert answers[0]["answer"] == "direct answer"
+
+    @pytest.mark.asyncio
+    async def test_non_list_json_multi_question_rejected(self, broker, tool):
+        """When broker returns valid JSON that is not a list for multi-question, return error."""
+
+        async def simulate_user():
+            for _ in range(50):
+                if broker.has_pending:
+                    pending = list(broker._pending.values())[0]
+                    # Submit a JSON dict (not an array)
+                    await broker.submit(pending.action_id, json.dumps({"key": "value"}))
+                    return
+                await asyncio.sleep(0.01)
+
+        task = asyncio.create_task(simulate_user())
+        result = await tool.ask_user(
+            questions=[
+                {"question": "Q1?", "options": ["A", "B"]},
+                {"question": "Q2?", "options": ["C", "D"]},
+            ]
+        )
+        await task
+
+        assert result.success == 0
+        assert "Malformed" in result.error
+
+
+class TestBuildContent:
+    """Tests for _build_content static method."""
+
+    def test_single_question_content(self):
+        content = AskUserTool._build_content([{"question": "Which DB?", "options": ["MySQL", "PG"]}])
+        assert "### Agent Question" in content
+        assert "Which DB?" in content
+        # Single question should NOT have numbered format
+        assert "Agent Questions" not in content
+
+    def test_multi_question_content(self):
+        content = AskUserTool._build_content(
+            [
+                {"question": "Q1?", "options": ["A", "B"]},
+                {"question": "Q2?", "options": None},
+            ]
+        )
+        assert "Agent Questions (2 questions)" in content
+        assert "1. Q1?" in content
+        assert "2. Q2?" in content
+        assert "A / B" in content
+        assert "_(free text)_" in content

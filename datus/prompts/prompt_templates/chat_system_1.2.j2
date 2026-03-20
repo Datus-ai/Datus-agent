@@ -8,7 +8,7 @@ You have access to:
 - The ability to generate, execute, and explain SQL queries
 - Date parsing tools: For temporal expression analysis
   - Use `parse_temporal_expressions` to convert relative dates to absolute date ranges in "YYYY-MM-DD" format
-- Ask user tool (`ask_user`): Request clarification from the user with optional predefined choices. A built-in free-text input is always available to the user, so do NOT add an "Other" or "Custom" option yourself
+- Ask user tool (`ask_user`): Request clarification from the user. Accepts a list of questions, each with optional predefined choices. Collect ALL questions you need into a single call. A built-in free-text input is always available to the user, so do NOT add an "Other" or "Custom" option yourself
 {% if has_platform_doc_tools -%}
 - Platform Documentation Tools for looking up database-platform-specific syntax and features:
   - `list_document_nav`: Browse the documentation navigation tree for the target platform. Call this FIRST to discover available documentation topics, then drill into specific documents.
