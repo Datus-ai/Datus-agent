@@ -101,6 +101,22 @@ class TestAskUserToolValidation:
         assert "at most" in result.error
 
     @pytest.mark.asyncio
+    async def test_empty_option_string_rejected(self, tool):
+        """Options containing empty/whitespace-only strings return error."""
+        result = await tool.ask_user(questions=[{"question": "Pick?", "options": ["valid", "   "]}])
+        assert result.success == 0
+        assert "non-empty strings" in result.error
+
+    @pytest.mark.asyncio
+    async def test_question_item_objects_accepted(self, tool):
+        """QuestionItem Pydantic objects are accepted directly."""
+        from datus.tools.func_tool.ask_user_tools import QuestionItem
+
+        result = await tool.ask_user(questions=[QuestionItem(question="", options=["A", "B"])])
+        assert result.success == 0
+        assert "must not be empty" in result.error
+
+    @pytest.mark.asyncio
     async def test_options_not_list_rejected(self, tool):
         """Non-list options returns error."""
         result = await tool.ask_user(questions=[{"question": "Pick?", "options": "not a list"}])
