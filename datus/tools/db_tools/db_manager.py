@@ -5,7 +5,7 @@
 from collections import defaultdict
 from typing import Dict, Optional, Tuple, Union
 
-from datus_db_core import BaseSqlConnector, ConnectionConfig, connector_registry
+from datus_db_core import BaseSqlConnector, ConnectionConfig, DatusDbException, connector_registry
 from sqlalchemy.engine.url import URL, make_url
 
 from datus.configuration.agent_config import DbConfig
@@ -70,7 +70,7 @@ def _resolve_connection_context(db_config: DbConfig, uri: str) -> Tuple[str, str
     if resolver:
         try:
             return resolver(db_config, uri)
-        except DatusException:
+        except DatusDbException:
             raise
         except Exception as exc:
             raise DatusException(
@@ -97,7 +97,7 @@ def gen_uri(db_config: DbConfig) -> str:
     if builder:
         try:
             return builder(db_config)
-        except DatusException:
+        except DatusDbException:
             raise
         except Exception as exc:
             raise DatusException(

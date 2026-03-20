@@ -4,7 +4,8 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from datus_db_core import BaseSqlConnector
+from datus_db_core import BaseSqlConnector, DatusDbException
+from datus_db_core import ErrorCode as DbErrorCode
 
 from datus.tools.db_tools.db_manager import (
     DBManager,
@@ -18,7 +19,7 @@ from datus.tools.db_tools.db_manager import (
     get_connection,
 )
 from datus.utils.constants import DBType
-from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.exceptions import DatusException
 
 
 def _cfg(**kwargs):
@@ -150,16 +151,16 @@ class TestGenUri:
         uri = gen_uri(cfg)
         assert "postgresql" in uri
 
-    def test_builder_reraises_datus_exception(self, monkeypatch):
-        """DatusException from a registered URI builder is re-raised as-is."""
+    def test_builder_reraises_db_exception(self, monkeypatch):
+        """DatusDbException from a registered URI builder is re-raised as-is."""
         import datus_db_core.registry as reg_mod
 
         def _boom(_cfg):
-            raise DatusException(code=ErrorCode.COMMON_CONFIG_ERROR, message="builder boom")
+            raise DatusDbException(code=DbErrorCode.COMMON_CONFIG_ERROR, message="builder boom")
 
         monkeypatch.setattr(reg_mod.ConnectorRegistry, "get_uri_builder", classmethod(lambda cls, dt: _boom))
         cfg = _cfg(type="mysql", host="localhost", database="db")
-        with pytest.raises(DatusException, match="builder boom"):
+        with pytest.raises(DatusDbException, match="builder boom"):
             gen_uri(cfg)
 
     def test_builder_wraps_generic_exception(self, monkeypatch):
@@ -207,16 +208,16 @@ class TestResolveConnectionContext:
         assert catalog == "my_catalog"
         assert schema == "myschema"
 
-    def test_resolver_reraises_datus_exception(self, monkeypatch):
-        """DatusException from a registered context resolver is re-raised as-is."""
+    def test_resolver_reraises_db_exception(self, monkeypatch):
+        """DatusDbException from a registered context resolver is re-raised as-is."""
         import datus_db_core.registry as reg_mod
 
         def _boom(_cfg, _uri):
-            raise DatusException(code=ErrorCode.COMMON_CONFIG_ERROR, message="resolver boom")
+            raise DatusDbException(code=DbErrorCode.COMMON_CONFIG_ERROR, message="resolver boom")
 
         monkeypatch.setattr(reg_mod.ConnectorRegistry, "get_context_resolver", classmethod(lambda cls, dt: _boom))
         cfg = _cfg(type="mysql", database="mydb")
-        with pytest.raises(DatusException, match="resolver boom"):
+        with pytest.raises(DatusDbException, match="resolver boom"):
             _resolve_connection_context(cfg, "mysql://root@localhost/mydb")
 
     def test_resolver_wraps_generic_exception(self, monkeypatch):

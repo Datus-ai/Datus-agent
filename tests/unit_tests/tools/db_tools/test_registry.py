@@ -3,7 +3,7 @@
 from unittest.mock import MagicMock
 
 import pytest
-from datus_db_core import BaseSqlConnector, ConnectorRegistry, DatusException, connector_registry
+from datus_db_core import BaseSqlConnector, ConnectorRegistry, DatusDbException, connector_registry
 
 import datus.tools.db_tools  # noqa: F401 — triggers builtin connector registration
 
@@ -140,5 +140,5 @@ class TestCreateConnector:
         mock_factory.assert_called_once_with({"host": "h"})
 
     def test_create_triggers_dynamic_load(self):
-        with pytest.raises(DatusException):
+        with pytest.raises(DatusDbException):
             ConnectorRegistry.create_connector("nonexistent_db_xyz_999", {})

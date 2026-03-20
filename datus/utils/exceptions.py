@@ -20,7 +20,7 @@ class ErrorCode(Enum):
         "100001",
         "Unexcepted value of {field_name}, excepted value: {except_values}, your value: {your_value}",
     )
-    COMMON_FILE_NOT_FOUND = ("100002", "{config_name} file not found: {file_name}")
+    COMMON_FILE_NOT_FOUND = ("100011", "{config_name} file not found: {file_name}")
     COMMON_FIELD_REQUIRED = ("100003", "Missing required field: {field_name}")
     COMMON_UNSUPPORTED = ("100004", "Unsupported value `{your_value}` for field `{field_name}`")
     COMMON_ENV = ("100005", "The environment variable {env_var} is not set")
@@ -111,7 +111,7 @@ class ErrorCode(Enum):
 
     # Database errors - Constraints (SQLAlchemy IntegrityError)
     DB_CONSTRAINT_VIOLATION = (
-        "500008",
+        "500011",
         "Database constraint violation occurred. Error details: {error_message}",
     )
 
@@ -131,7 +131,29 @@ class ErrorCode(Enum):
         self.desc = desc
 
 
-from datus_db_core.exceptions import DatusException  # noqa: E402 - unified exception class
+class DatusException(Exception):
+    """Datus agent exception with error code."""
+
+    def __init__(self, code: ErrorCode, message=None, message_args=None, *args):
+        self.code = code
+        self.message_args = message_args or {}
+        self.message = self.build_msg(message, message_args)
+        super().__init__(self.message, *args)
+
+    def __str__(self):
+        return self.message
+
+    def build_msg(self, message=None, message_args=None):
+        if message:
+            final_message = message
+        elif message_args:
+            try:
+                final_message = self.code.desc.format(**message_args)
+            except (KeyError, IndexError):
+                final_message = f"{self.code.desc} (args={message_args})"
+        else:
+            final_message = self.code.desc
+        return f"error_code={self.code.code}, error_message={final_message}"
 
 
 def setup_exception_handler(console_logger=None, prefix_wrap_func=None):
