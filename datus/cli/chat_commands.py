@@ -876,10 +876,8 @@ class ChatCommands:
                 if answers:
                     prev_q = contents[idx - 1]
                     short_q = prev_q[:50] + "..." if len(prev_q) > 50 else prev_q
-                    short_q = re.sub(r"^\d+\.\s*", "", short_q)
-                    console.print(f"  [green]\u2705[/green] [dim]{idx}. {short_q} \u2192 {answers[-1]}[/dim]")
-                display_q = re.sub(r"^\d+\.\s*", "", q_text)
-                console.print(f"\n  [bold bright_cyan][{idx + 1}/{total}][/bold bright_cyan] {display_q}")
+                    console.print(f"  [green]\u2705[/green] [dim]{short_q} \u2192 {answers[-1]}[/dim]")
+                console.print(f"\n  [bold bright_cyan][{idx + 1}/{total}][/bold bright_cyan] {q_text}")
             else:
                 pass  # Single question — already rendered by the renderer
 
@@ -909,9 +907,7 @@ class ChatCommands:
             console.print(f"  [green]\u2705 Answers submitted ({total}/{total})[/green]")
             for idx, answer in enumerate(answers):
                 short_q = contents[idx][:40] + "..." if len(contents[idx]) > 40 else contents[idx]
-                # Strip leading numbering (e.g. "1. ") to avoid duplication
-                short_q = re.sub(r"^\d+\.\s*", "", short_q)
-                console.print(f"     [dim]{idx + 1}. {short_q} \u2192 {answer}[/dim]")
+                console.print(f"     [dim]{short_q} \u2192 {answer}[/dim]")
 
         return json.dumps(answers, ensure_ascii=False)
 
