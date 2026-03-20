@@ -12,7 +12,6 @@ from abc import abstractmethod
 from typing import Any, Dict, Iterable, List, Tuple, Union
 
 import pyarrow
-from datus_db_core import connector_registry
 from prompt_toolkit.completion import Completer, Completion, PathCompleter
 from prompt_toolkit.document import Document
 from pygments.lexers.sql import SqlLexer
@@ -21,6 +20,7 @@ from pygments.token import Token
 
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
+from datus.tools.db_tools import connector_registry
 from datus.utils.constants import SYS_SUB_AGENTS, DBType
 from datus.utils.loggings import get_logger
 from datus.utils.path_utils import get_file_fuzzy_matches

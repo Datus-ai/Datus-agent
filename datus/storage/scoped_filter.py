@@ -13,9 +13,9 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-from datus_db_core import connector_registry
 from datus_storage_base.conditions import Node, and_, eq, like, or_
 
+from datus.tools.db_tools import connector_registry
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 from datus.utils.reference_paths import split_reference_path

@@ -11,7 +11,6 @@ import asyncio
 import uuid
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
-from datus_db_core import connector_registry
 from rich.prompt import Confirm
 from rich.syntax import Syntax
 from rich.table import Table
@@ -26,6 +25,7 @@ from datus.schemas.compare_node_models import CompareInput
 from datus.schemas.node_models import ExecuteSQLInput, GenerateSQLInput, OutputInput, SqlTask
 from datus.schemas.reason_sql_node_models import ReasoningInput
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput
+from datus.tools.db_tools import connector_registry
 from datus.tools.func_tool.context_search import ContextSearchTools
 from datus.tools.output_tools import OutputTool
 from datus.utils.constants import DBType
