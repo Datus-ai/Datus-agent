@@ -10,7 +10,7 @@ import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, Tuple
+from typing import AsyncGenerator, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.utils.loggings import get_logger
@@ -55,7 +55,7 @@ class PendingInteraction:
 
     action_id: str
     future: asyncio.Future
-    choices: Dict[str, str]  # key=submit value, value=display text
+    choices: List[Dict[str, str]]  # per-question choices; each dict is {shortcut: display}
     allow_free_text: bool = False  # When True, accept values outside choices
     created_at: datetime = field(default_factory=datetime.now)
 
@@ -75,33 +75,31 @@ class InteractionBroker:
     - submit(): For UI to submit responses
     - close(): Place a sentinel so fetch() terminates naturally
 
-    Usage in hooks:
+    Supports two calling conventions (normalized to list format internally):
+
+    Single question::
+
         choice, callback = await broker.request(
-            content="## Generated YAML\\n```yaml\\n...\\n```\\n\\nSync to Knowledge Base?",
+            content="Sync to Knowledge Base?",
             choices={"y": "Yes - Save to KB", "n": "No - Keep file only"},
             default_choice="y",
-            content_type="markdown",
         )
-        if choice == "y":
-            await sync_to_storage(...)
-            await callback("**Successfully synced to Knowledge Base**")
-        else:
-            await callback("File saved locally only")
 
-    Usage in node (merging with execute_stream):
-        async for action in merge_interaction_stream(node.execute_stream(), broker):
-            yield action
+    Batch questions::
 
-    Usage in UI:
-        # CLI - distinguish by status (PROCESSING = waiting for input, SUCCESS = show result)
-        # action_type is "request_choice" (single) or "request_batch" (batch questions)
-        for action in merged_stream:
-            if action.role == ActionRole.INTERACTION and action.action_type in ("request_choice", "request_batch"):
-                if action.status == ActionStatus.PROCESSING:
-                    choice = display_and_get_user_choice(action)
-                    broker.submit(action.action_id, choice)
-                elif action.status == ActionStatus.SUCCESS:
-                    display_success_content(action)
+        choice, callback = await broker.request(
+            content=["Which DB?", "Description?"],
+            choices=[{"1": "MySQL", "2": "PostgreSQL"}, {}],
+            default_choice=["1", ""],
+            allow_free_text=True,
+        )
+
+    The ``input`` dict on the queued ActionHistory always uses list format::
+
+        {"contents": [...], "choices": [...], "default_choices": [...], ...}
+
+    ``action_type`` is auto-inferred: ``"request_choice"`` (single) or
+    ``"request_batch"`` (multiple questions).
     """
 
     _STOP_SENTINEL = object()
@@ -167,33 +165,39 @@ class InteractionBroker:
 
     async def request(
         self,
-        content: str,
-        choices: Dict[str, str],
-        default_choice: str = "",
+        content,
+        choices,
+        default_choice="",
         content_type: str = "markdown",
         allow_free_text: bool = False,
-        action_type: str = "request_choice",
-        questions: Optional[List[Any]] = None,
     ) -> Tuple[str, Callable[[str, str], Awaitable[None]]]:
         """
         Request user input with choices. Blocks until user responds.
 
-        Args:
-            content: Display content/prompt for user (supports markdown)
-            choices: Dict of {key: display_text}. Empty dict means free-text input.
-            default_choice: Key of default choice (required when choices is non-empty)
-            content_type: Type of content ("text", "yaml", "sql", "markdown")
-            allow_free_text: When True, accept values outside choices (e.g. "Other" input).
+        Accepts both single-question and batch-question calling conventions.
+        Inputs are normalized to list format internally.
+
+        Single:  content="Q?", choices={"y": "Yes"}, default_choice="y"
+        Batch:   content=["Q1?", "Q2?"], choices=[{...}, {}], default_choice=["1", ""]
 
         Returns:
             Tuple of (choice, callback):
-            - choice: The selected choice key (or free text if choices is empty)
+            - choice: The selected choice key (single) or JSON array of answers (batch)
             - callback: Async function to generate SUCCESS action with result content.
-                        Signature: async def callback(content: str, content_type: str = "markdown") -> None
 
         Raises:
             InteractionCancelled: If broker is closed while waiting
         """
+        # --- normalize to list format ---
+        contents = [content] if isinstance(content, str) else list(content)
+        choices_list = [choices] if isinstance(choices, dict) else list(choices)
+        if isinstance(default_choice, str):
+            default_choices = [default_choice] * len(contents)
+        else:
+            default_choices = list(default_choice)
+        while len(default_choices) < len(contents):
+            default_choices.append("")
+
         action_id = str(uuid.uuid4())
         loop = asyncio.get_running_loop()
         future = loop.create_future()
@@ -202,30 +206,45 @@ class InteractionBroker:
         pending = PendingInteraction(
             action_id=action_id,
             future=future,
-            choices=choices,
+            choices=choices_list,
             allow_free_text=allow_free_text,
         )
 
         with self._lock:
             self._pending[action_id] = pending
 
-        # Create ActionHistory with INTERACTION role
+        # Build display content for messages field
+        if len(contents) == 1:
+            display_content = contents[0]
+        else:
+            lines = []
+            for i, (q, ch) in enumerate(zip(contents, choices_list), 1):
+                lines.append(f"**{i}. {q}**")
+                if ch:
+                    opts = " / ".join(ch.values())
+                    lines.append(f"   Options: {opts}")
+                else:
+                    lines.append("   _(free text)_")
+                lines.append("")
+            display_content = "\n".join(lines)
+
+        # Auto-infer action_type
+        action_type = "request_batch" if len(contents) > 1 else "request_choice"
+
         input_data = {
-            "content": content,
+            "contents": contents,
             "content_type": content_type,
-            "choices": choices,
-            "default_choice": default_choice,
+            "choices": choices_list,
+            "default_choices": default_choices,
             "allow_free_text": allow_free_text,
         }
-        if questions is not None:
-            input_data["questions"] = questions
 
         action = ActionHistory(
             action_id=action_id,
             role=ActionRole.INTERACTION,
             status=ActionStatus.PROCESSING,
             action_type=action_type,
-            messages=content,
+            messages=display_content,
             input=input_data,
             output=None,
         )
@@ -244,21 +263,13 @@ class InteractionBroker:
                 callback_content_type: str = "markdown",
             ) -> None:
                 """Generate a SUCCESS interaction action with the given content."""
-
-                # Use same action_id and action_type, but status=SUCCESS to indicate completion
                 success_action = ActionHistory(
-                    action_id=action_id,  # Same action_id to link with the original request
+                    action_id=action_id,
                     role=ActionRole.INTERACTION,
-                    status=ActionStatus.SUCCESS,  # SUCCESS indicates completion
-                    action_type=action_type,  # Same action_type, UI distinguishes by status
+                    status=ActionStatus.SUCCESS,
+                    action_type=action_type,
                     messages=callback_content,
-                    input={
-                        "content": content,  # Original request content
-                        "content_type": content_type,
-                        "choices": choices,
-                        "default_choice": default_choice,
-                        **({"questions": questions} if questions is not None else {}),
-                    },
+                    input=input_data,
                     output={
                         "content": callback_content,
                         "content_type": callback_content_type,
@@ -284,7 +295,7 @@ class InteractionBroker:
         items enqueued before the sentinel are yielded first.
 
         Yields:
-            ActionHistory objects with INTERACTION role (request_choice / request_batch types)
+            ActionHistory objects with INTERACTION role
         """
         while True:
             try:
@@ -295,13 +306,15 @@ class InteractionBroker:
             except asyncio.CancelledError:
                 break
 
-    async def submit(self, action_id: str, user_choice: str) -> bool:
+    async def submit(self, action_id: str, user_choice: Optional[str]) -> bool:
         """
         Submit user response for a pending interaction.
 
         Args:
             action_id: The action_id from the INTERACTION ActionHistory
-            user_choice: The user's selected choice key (must be in choices keys if choices is non-empty)
+            user_choice: The user's response. For single-question with choices, must be
+                a valid choice key. For batch questions, must be a JSON-encoded list
+                of answer strings. ``None`` indicates a collector failure.
 
         Returns:
             True if submission was successful, False if action_id not found or invalid choice
@@ -314,11 +327,16 @@ class InteractionBroker:
 
             pending = self._pending.get(action_id)
 
-            # Validate choice: if choices is non-empty and free text is not allowed,
-            # user_choice must be a valid key
-            if pending.choices and not pending.allow_free_text and user_choice not in pending.choices:
+            # Validate choice: only for single-question with concrete choices
+            if (
+                user_choice is not None
+                and len(pending.choices) == 1
+                and pending.choices[0]
+                and not pending.allow_free_text
+                and user_choice not in pending.choices[0]
+            ):
                 logger.warning(
-                    f"InteractionBroker: invalid choice '{user_choice}', not in {list(pending.choices.keys())}"
+                    f"InteractionBroker: invalid choice '{user_choice}', not in {list(pending.choices[0].keys())}"
                 )
                 return False
 

@@ -538,71 +538,45 @@ class ActionRenderer:
     def render_interaction_request(self, action: ActionHistory, verbose: bool) -> List[Union[Text, Markdown, Syntax]]:
         """Render INTERACTION PROCESSING -- request content.
 
-        Routes to batch rendering for ``request_batch`` action_type.
-        Choices are NOT rendered here since the content field typically already
-        describes available options, and the actual selection UI (select_choice)
-        is handled by the input_collector callback.
+        Reads ``contents`` (list) and ``choices`` (list of dicts) from
+        ``action.input``.  Single-question renders with the legacy header;
+        multiple questions render a numbered overview.
         """
-        if action.action_type == "request_batch":
-            return self._render_batch_interaction_request(action, verbose)
-
         input_data = action.input or {}
-        content = input_data.get("content", "")
+        contents = input_data.get("contents", [])
+        choices = input_data.get("choices", [])
         content_type = input_data.get("content_type", "text")
 
         result: List[Union[Text, Markdown, Syntax]] = []
-        result.append(Text.from_markup("[bold bright_yellow]\u2753 Interaction Request[/bold bright_yellow]"))
 
-        if content:
-            if content_type == "yaml":
-                result.append(Syntax(content, "yaml", theme="monokai", line_numbers=True))
-            elif content_type == "sql":
-                result.append(Syntax(content, "sql", theme="monokai", line_numbers=True))
-            elif content_type == "markdown":
-                result.append(Markdown(content))
-            else:
-                result.append(Text(content))
-
-        return result
-
-    def _render_batch_interaction_request(
-        self, action: ActionHistory, verbose: bool
-    ) -> List[Union[Text, Markdown, Syntax]]:
-        """Render request_batch PROCESSING -- questions overview.
-
-        For a single question, renders identically to the legacy single-question
-        format. For multiple questions, renders a numbered overview so the user
-        can see all questions before answering.
-        """
-        input_data = action.input or {}
-        questions = input_data.get("questions", [])
-
-        result: List[Union[Text, Markdown, Syntax]] = []
-
-        if not questions:
-            # No questions — fallback to content display
+        if not contents:
             result.append(Text.from_markup("[bold bright_yellow]\u2753 Interaction Request[/bold bright_yellow]"))
-            content = input_data.get("content", "")
+        elif len(contents) == 1:
+            # Single question
+            result.append(Text.from_markup("[bold bright_yellow]\u2753 Interaction Request[/bold bright_yellow]"))
+            content = contents[0]
             if content:
-                result.append(Markdown(content))
-        elif len(questions) == 1:
-            # Single question — same header as legacy
-            result.append(Text.from_markup("[bold bright_yellow]\u2753 Interaction Request[/bold bright_yellow]"))
-            result.append(Markdown(f"**{questions[0].get('question', '')}**"))
+                if content_type == "yaml":
+                    result.append(Syntax(content, "yaml", theme="monokai", line_numbers=True))
+                elif content_type == "sql":
+                    result.append(Syntax(content, "sql", theme="monokai", line_numbers=True))
+                elif content_type == "markdown":
+                    result.append(Markdown(content))
+                else:
+                    result.append(Text(content))
         else:
             # Multiple questions — numbered overview
             result.append(
                 Text.from_markup(
-                    f"[bold bright_yellow]\u2753 Agent Questions ({len(questions)} questions)[/bold bright_yellow]"
+                    f"[bold bright_yellow]\u2753 Agent Questions ({len(contents)} questions)[/bold bright_yellow]"
                 )
             )
             lines = []
-            for i, q in enumerate(questions, 1):
-                q_text = q.get("question", "")
-                options = q.get("options")
-                lines.append(f"  **{i}. {q_text}**")
-                if options:
-                    opts = " / ".join(options)
+            for i, q_text in enumerate(contents):
+                ch = choices[i] if i < len(choices) else {}
+                lines.append(f"  **{i + 1}. {q_text}**")
+                if ch:
+                    opts = " / ".join(ch.values())
                     lines.append(f"     Options: {opts}")
                 else:
                     lines.append("     _(free text)_")
@@ -613,12 +587,17 @@ class ActionRenderer:
     def render_interaction_success(self, action: ActionHistory, verbose: bool) -> List[Union[Text, Markdown, Syntax]]:
         """Render INTERACTION SUCCESS -- user choice + result content.
 
-        Routes to batch rendering for ``request_batch`` action_type.
+        Reads ``contents`` from ``action.input`` to decide between single
+        and batch rendering.
         """
-        if action.action_type == "request_batch":
-            return self._render_batch_interaction_success(action, verbose)
-
+        input_data = action.input or {}
         output_data = action.output or {}
+        contents = input_data.get("contents", [])
+
+        if len(contents) > 1:
+            return self._render_batch_success(contents, output_data)
+
+        # --- single question ---
         content = output_data.get("content", "") or action.messages or ""
         content_type = output_data.get("content_type", "markdown")
         user_choice = output_data.get("user_choice", "")
@@ -643,16 +622,9 @@ class ActionRenderer:
 
         return result
 
-    def _render_batch_interaction_success(
-        self, action: ActionHistory, verbose: bool
-    ) -> List[Union[Text, Markdown, Syntax]]:
-        """Render request_batch SUCCESS -- answers summary."""
-        input_data = action.input or {}
-        output_data = action.output or {}
-        questions = input_data.get("questions", [])
+    def _render_batch_success(self, contents: list, output_data: dict) -> List[Union[Text, Markdown, Syntax]]:
+        """Render batch SUCCESS -- answers summary."""
         user_choice = output_data.get("user_choice", "")
-
-        result: List[Union[Text, Markdown, Syntax]] = []
 
         # Parse the JSON answers
         answers = []
@@ -662,27 +634,18 @@ class ActionRenderer:
             except (_json.JSONDecodeError, TypeError):
                 answers = [user_choice]
             else:
-                if isinstance(parsed, list):
-                    answers = parsed
-                elif len(questions) == 1:
-                    answers = [parsed]
-                else:
-                    answers = [user_choice]
+                answers = parsed if isinstance(parsed, list) else [user_choice]
 
-        total = len(questions) if questions else len(answers)
+        total = len(contents)
         answered = len(answers)
+        result: List[Union[Text, Markdown, Syntax]] = []
         result.append(Text.from_markup(f"\u2705 [dim]Answers submitted ({answered}/{total})[/dim]"))
 
         lines = []
-        if questions:
-            for i, q in enumerate(questions):
-                q_text = q.get("question", "")
-                answer = answers[i] if i < len(answers) else ""
-                short_q = q_text[:40] + "..." if len(q_text) > 40 else q_text
-                lines.append(f"  {i + 1}. {short_q} \u2192 **{answer}**")
-        elif answers:
-            for i, ans in enumerate(answers):
-                lines.append(f"  {i + 1}. \u2192 **{ans}**")
+        for i, q_text in enumerate(contents):
+            answer = answers[i] if i < len(answers) else ""
+            short_q = q_text[:40] + "..." if len(q_text) > 40 else q_text
+            lines.append(f"  {i + 1}. {short_q} \u2192 **{answer}**")
         if lines:
             result.append(Markdown("\n".join(lines)))
 

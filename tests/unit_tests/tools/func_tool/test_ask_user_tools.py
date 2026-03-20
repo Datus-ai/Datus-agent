@@ -244,9 +244,9 @@ class TestAskUserToolBatch:
         processing_actions = [a for a in actions if a.status == ActionStatus.PROCESSING]
         assert len(processing_actions) >= 1
         assert processing_actions[0].action_type == "request_batch"
-        # Check questions are in input
-        questions_in_input = processing_actions[0].input.get("questions", [])
-        assert len(questions_in_input) == 2
+        # Check contents are in input
+        contents_in_input = processing_actions[0].input.get("contents", [])
+        assert len(contents_in_input) == 2
 
 
 class TestAskUserToolEdgeCases:
@@ -400,27 +400,3 @@ class TestAskUserToolEdgeCases:
 
         assert result.success == 0
         assert "No response" in result.error
-
-
-class TestBuildContent:
-    """Tests for _build_content static method."""
-
-    def test_single_question_content(self):
-        content = AskUserTool._build_content([{"question": "Which DB?", "options": ["MySQL", "PG"]}])
-        assert "### Agent Question" in content
-        assert "Which DB?" in content
-        # Single question should NOT have numbered format
-        assert "Agent Questions" not in content
-
-    def test_multi_question_content(self):
-        content = AskUserTool._build_content(
-            [
-                {"question": "Q1?", "options": ["A", "B"]},
-                {"question": "Q2?", "options": None},
-            ]
-        )
-        assert "Agent Questions (2 questions)" in content
-        assert "1. Q1?" in content
-        assert "2. Q2?" in content
-        assert "A / B" in content
-        assert "_(free text)_" in content

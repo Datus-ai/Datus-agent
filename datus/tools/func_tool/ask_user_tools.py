@@ -116,19 +116,20 @@ class AskUserTool:
                 options = [str(opt) for opt in options]
                 if any(not opt.strip() for opt in options):
                     return FuncToolResult(success=0, error=f"questions[{i}].options must be non-empty strings")
-            validated.append({"question": str(q_text).strip(), "options": options})
+            # Convert List[str] → Dict[str, str] for broker choices format
+            choices_dict = {str(j): opt for j, opt in enumerate(options, 1)} if options else None
+            validated.append({"question": str(q_text).strip(), "choices": choices_dict})
 
-        # --- build display content ---
-        content = self._build_content(validated)
+        # --- pass to broker ---
+        contents = [q["question"] for q in validated]
+        choices = [q["choices"] or {} for q in validated]
 
         try:
             choice, callback = await self._broker.request(
-                content=content,
-                choices={},
-                default_choice="",
+                content=contents,
+                choices=choices,
+                default_choice=[""] * len(validated),
                 allow_free_text=True,
-                action_type="request_batch",
-                questions=validated,
             )
 
             # Reject None response (collector failure)
@@ -159,6 +160,11 @@ class AskUserTool:
                 logger.warning(f"AskUserTool: answer count mismatch (expected {len(validated)}, got {len(answers)})")
                 return FuncToolResult(success=0, error="Malformed batch response from collector")
 
+            # Resolve choice keys to display values (e.g. "2" → "PostgreSQL")
+            for i, q in enumerate(validated):
+                if q["choices"] and str(answers[i]) in q["choices"]:
+                    answers[i] = q["choices"][str(answers[i])]
+
             # Build structured result
             result_list = []
             for i, q in enumerate(validated):
@@ -176,24 +182,6 @@ class AskUserTool:
         except Exception as e:
             logger.error(f"AskUserTool: unexpected error: {e}")
             return FuncToolResult(success=0, error=f"Failed to ask user: {e}")
-
-    @staticmethod
-    def _build_content(questions: List[Dict[str, Any]]) -> str:
-        """Build markdown display content for the questions."""
-        if len(questions) == 1:
-            q = questions[0]
-            return f"### Agent Question\n\n{q['question']}"
-
-        lines = [f"### Agent Questions ({len(questions)} questions)\n"]
-        for i, q in enumerate(questions, 1):
-            lines.append(f"**{i}. {q['question']}**")
-            if q.get("options"):
-                opts = " / ".join(q["options"])
-                lines.append(f"   Options: {opts}")
-            else:
-                lines.append("   _(free text)_")
-            lines.append("")
-        return "\n".join(lines)
 
     def available_tools(self):
         """Return list of FunctionTool instances for this tool group."""

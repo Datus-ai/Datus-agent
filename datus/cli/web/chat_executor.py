@@ -77,27 +77,31 @@ class ChatExecutor:
                                 input_data = action.input or {}
                                 broker = current_node.interaction_broker
                                 if broker:
-                                    if action.action_type == "request_batch":
-                                        # Batch: auto-submit first option or empty for each question
-                                        questions = input_data.get("questions", [])
+                                    contents = input_data.get("contents", [])
+                                    choices_list = input_data.get("choices", [])
+                                    default_choices = input_data.get("default_choices", [])
+                                    if len(contents) > 1:
+                                        # Batch: auto-submit first option value or empty
                                         answers = []
-                                        for q in questions:
-                                            options = q.get("options")
-                                            answers.append(options[0] if options else "")
+                                        for ch in choices_list:
+                                            answers.append(next(iter(ch.values())) if ch else "")
                                         await broker.submit(action.action_id, json.dumps(answers))
                                         logger.info(f"Web auto-submitted batch answers: {len(answers)}")
-                                    elif action.action_type == "request_choice":
-                                        choices = input_data.get("choices", {})
-                                        default_choice = input_data.get("default_choice", "")
-                                        if choices and default_choice:
-                                            await broker.submit(action.action_id, default_choice)
-                                            logger.info(f"Web auto-submitted default choice: {default_choice}")
-                                        elif not choices:
+                                    elif len(contents) == 1:
+                                        ch = choices_list[0] if choices_list else {}
+                                        default = default_choices[0] if default_choices else ""
+                                        if ch and default:
+                                            await broker.submit(action.action_id, default)
+                                            logger.info(f"Web auto-submitted default choice: {default}")
+                                        elif not ch:
                                             await broker.submit(action.action_id, "")
-                                        elif choices:
-                                            first_key = next(iter(choices.keys()))
-                                            await broker.submit(action.action_id, first_key)
-                                            logger.info(f"Web auto-submitted first choice (no default): {first_key}")
+                                        elif ch:
+                                            first_value = next(iter(ch.values()))
+                                            await broker.submit(action.action_id, first_value)
+                                            logger.info(f"Web auto-submitted first choice (no default): {first_value}")
+                                    else:
+                                        await broker.submit(action.action_id, "")
+                                        logger.warning("Web auto-submit: empty contents list, submitted empty string")
                                 continue  # Don't yield PROCESSING to UI
 
                             # SUCCESS interactions are yielded for UI rendering

@@ -90,13 +90,13 @@ class TestPendingInteractionInit:
         """PendingInteraction stores action_id, future, and choices correctly."""
         loop = asyncio.new_event_loop()
         future = loop.create_future()
-        choices = {"y": "Yes", "n": "No"}
+        choices = [{"y": "Yes", "n": "No"}]
 
         pending = PendingInteraction(action_id="test-id", future=future, choices=choices)
 
         assert pending.action_id == "test-id"
         assert pending.future is future
-        assert pending.choices == {"y": "Yes", "n": "No"}
+        assert pending.choices == [{"y": "Yes", "n": "No"}]
         assert pending.created_at is not None
         loop.close()
 
@@ -105,7 +105,7 @@ class TestPendingInteractionInit:
         loop = asyncio.new_event_loop()
         future = loop.create_future()
 
-        pending = PendingInteraction(action_id="test-id-2", future=future, choices={})
+        pending = PendingInteraction(action_id="test-id-2", future=future, choices=[{}])
 
         assert pending.created_at is not None
         # created_at should be a datetime object
@@ -186,9 +186,9 @@ class TestInteractionBrokerRequest:
         assert action.role == ActionRole.INTERACTION
         assert action.status == ActionStatus.PROCESSING
         assert action.action_type == "request_choice"
-        assert action.input["content"] == "Pick one"
-        assert action.input["choices"] == {"a": "Option A", "b": "Option B"}
-        assert action.input["default_choice"] == "a"
+        assert action.input["contents"] == ["Pick one"]
+        assert action.input["choices"] == [{"a": "Option A", "b": "Option B"}]
+        assert action.input["default_choices"] == ["a"]
 
         # Submit response so the task completes
         action_id = action.action_id

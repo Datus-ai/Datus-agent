@@ -3605,50 +3605,39 @@ class TestCollectBatch:
         console = Console(file=io.StringIO(), no_color=True)
         return _make_chat_commands(real_agent_config, console=console), console
 
-    def test_empty_questions_returns_empty_json(self, real_agent_config, mock_llm_create):
-        """Empty questions list returns '[]'."""
+    def test_empty_contents_returns_empty_json(self, real_agent_config, mock_llm_create):
+        """Empty contents list returns '[]'."""
         chat_cmd, console = self._make(real_agent_config)
-        result = chat_cmd._collect_batch(console, {"questions": []})
-        assert result == json.dumps([])
-
-    def test_no_questions_key_returns_empty_json(self, real_agent_config, mock_llm_create):
-        """Missing questions key returns '[]'."""
-        chat_cmd, console = self._make(real_agent_config)
-        result = chat_cmd._collect_batch(console, {})
+        result = chat_cmd._collect_batch(console, [], [])
         assert result == json.dumps([])
 
     def test_single_free_text_question(self, real_agent_config, mock_llm_create):
         """Single free-text question collects via prompt_input."""
         chat_cmd, console = self._make(real_agent_config)
         chat_cmd.cli.prompt_input = MagicMock(return_value="my answer")
-        result = chat_cmd._collect_batch(console, {"questions": [{"question": "What name?"}]})
+        result = chat_cmd._collect_batch(console, ["What name?"], [{}])
         answers = json.loads(result)
         assert len(answers) == 1
         assert answers[0] == "my answer"
 
     @patch("datus.cli.chat_commands.select_choice", return_value="2")
-    def test_single_question_with_options(self, mock_select, real_agent_config, mock_llm_create):
-        """Single question with options uses select_choice."""
+    def test_single_question_with_choices(self, mock_select, real_agent_config, mock_llm_create):
+        """Single question with choices uses select_choice."""
         chat_cmd, console = self._make(real_agent_config)
-        result = chat_cmd._collect_batch(console, {"questions": [{"question": "Pick DB?", "options": ["MySQL", "PG"]}]})
+        result = chat_cmd._collect_batch(console, ["Pick DB?"], [{"1": "MySQL", "2": "PG"}])
         answers = json.loads(result)
         assert len(answers) == 1
         assert answers[0] == "PG"
 
     @patch("datus.cli.chat_commands.select_choice", return_value="1")
     def test_multi_question_batch(self, mock_select, real_agent_config, mock_llm_create):
-        """Multiple questions with options collects answers sequentially."""
+        """Multiple questions with choices collects answers sequentially."""
         chat_cmd, console = self._make(real_agent_config)
         chat_cmd.cli.prompt_input = MagicMock(return_value="custom filter")
         result = chat_cmd._collect_batch(
             console,
-            {
-                "questions": [
-                    {"question": "DB?", "options": ["MySQL", "PG"]},
-                    {"question": "Time?", "options": ["7d", "30d"]},
-                    {"question": "Filter?"},
-                ]
-            },
+            ["DB?", "Time?", "Filter?"],
+            [{"1": "MySQL", "2": "PG"}, {"1": "7d", "2": "30d"}, {}],
         )
         answers = json.loads(result)
         assert len(answers) == 3
@@ -3660,7 +3649,7 @@ class TestCollectBatch:
     def test_free_text_option_preserves_input(self, mock_select, real_agent_config, mock_llm_create):
         """Free-text input via select_choice is preserved as-is."""
         chat_cmd, console = self._make(real_agent_config)
-        result = chat_cmd._collect_batch(console, {"questions": [{"question": "Q?", "options": ["A", "B"]}]})
+        result = chat_cmd._collect_batch(console, ["Q?"], [{"1": "A", "2": "B"}])
         answers = json.loads(result)
         assert answers[0] == "custom text"
 
@@ -3670,12 +3659,8 @@ class TestCollectBatch:
         chat_cmd, console = self._make(real_agent_config)
         result = chat_cmd._collect_batch(
             console,
-            {
-                "questions": [
-                    {"question": "Q1?", "options": ["A", "B"]},
-                    {"question": "Q2?", "options": ["C", "D"]},
-                ]
-            },
+            ["Q1?", "Q2?"],
+            [{"1": "A", "2": "B"}, {"1": "C", "2": "D"}],
         )
         output = console.file.getvalue()
         assert "Answers submitted" in output
@@ -3703,19 +3688,29 @@ class TestMakeInputCollector:
         )
 
     def test_collect_routes_batch_to_collect_batch(self, real_agent_config, mock_llm_create):
-        """collect() routes request_batch to _collect_batch."""
+        """collect() routes multi-question contents to _collect_batch."""
         chat_cmd, console = self._make(real_agent_config)
+        chat_cmd.cli.prompt_input = MagicMock(return_value="ans1")
         esc_guard = MagicMock()
         esc_guard.paused.return_value.__enter__ = MagicMock()
         esc_guard.paused.return_value.__exit__ = MagicMock()
         collector = chat_cmd._make_input_collector(esc_guard)
-        action = self._make_action("request_batch", {"questions": []})
+        action = self._make_action(
+            "request_batch",
+            {
+                "contents": ["Q1?", "Q2?"],
+                "choices": [{}, {}],
+                "default_choices": ["", ""],
+                "allow_free_text": True,
+            },
+        )
         result = collector(action, console)
-        assert result == json.dumps([])
+        answers = json.loads(result)
+        assert len(answers) == 2
 
     @patch("datus.cli.chat_commands.select_choice", return_value="y")
     def test_collect_routes_choice_to_single(self, mock_select, real_agent_config, mock_llm_create):
-        """collect() routes request_choice to _collect_single_choice."""
+        """collect() routes single-question contents to single choice."""
         chat_cmd, console = self._make(real_agent_config)
         esc_guard = MagicMock()
         esc_guard.paused.return_value.__enter__ = MagicMock()
@@ -3723,7 +3718,12 @@ class TestMakeInputCollector:
         collector = chat_cmd._make_input_collector(esc_guard)
         action = self._make_action(
             "request_choice",
-            {"choices": {"y": "Yes", "n": "No"}, "default_choice": "y", "allow_free_text": False},
+            {
+                "contents": ["Confirm?"],
+                "choices": [{"y": "Yes", "n": "No"}],
+                "default_choices": ["y"],
+                "allow_free_text": False,
+            },
         )
         result = collector(action, console)
         assert result == "y"
@@ -3736,7 +3736,15 @@ class TestMakeInputCollector:
         esc_guard.paused.return_value.__enter__ = MagicMock()
         esc_guard.paused.return_value.__exit__ = MagicMock()
         collector = chat_cmd._make_input_collector(esc_guard)
-        action = self._make_action("request_choice", {"choices": {}, "default_choice": "", "allow_free_text": True})
+        action = self._make_action(
+            "request_choice",
+            {
+                "contents": ["Enter text"],
+                "choices": [{}],
+                "default_choices": [""],
+                "allow_free_text": True,
+            },
+        )
         result = collector(action, console)
         assert result == "typed answer"
 
@@ -3750,7 +3758,12 @@ class TestMakeInputCollector:
         collector = chat_cmd._make_input_collector(esc_guard)
         action = self._make_action(
             "request_choice",
-            {"choices": {"a": "Option A"}, "default_choice": "a", "allow_free_text": True},
+            {
+                "contents": ["Pick?"],
+                "choices": [{"a": "Option A"}],
+                "default_choices": ["a"],
+                "allow_free_text": True,
+            },
         )
         result = collector(action, console)
         assert result == ""
@@ -3773,6 +3786,6 @@ class TestMakeInputCollector:
         esc_guard.paused.return_value.__enter__ = MagicMock(side_effect=RuntimeError("boom"))
         esc_guard.paused.return_value.__exit__ = MagicMock()
         collector = chat_cmd._make_input_collector(esc_guard)
-        action = self._make_action("request_batch", {"questions": [{"question": "Q?"}]})
+        action = self._make_action("request_batch", {"contents": ["Q1?", "Q2?"], "choices": [{}, {}]})
         result = collector(action, console)
         assert result is None

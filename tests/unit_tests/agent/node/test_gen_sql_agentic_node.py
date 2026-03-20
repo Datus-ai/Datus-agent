@@ -1210,7 +1210,8 @@ class TestEndToEndPlanModeHooksInteraction:
         # Verify the PROCESSING interaction offered plan mode choices (1/2/3/4)
         processing = [a for a in actions if a.role == ActionRole.INTERACTION and a.status == ActionStatus.PROCESSING]
         assert len(processing) >= 1
-        choices = processing[0].input.get("choices", {}) if isinstance(processing[0].input, dict) else {}
+        choices_list = processing[0].input.get("choices", []) if isinstance(processing[0].input, dict) else []
+        choices = choices_list[0] if choices_list else {}
         assert "1" in choices  # Manual Confirm
         assert "2" in choices  # Auto Execute
         assert "4" in choices  # Cancel
@@ -1535,7 +1536,8 @@ class TestEndToEndGenerationHooksInteraction:
         # The interaction content should reference the YAML file
         interaction_input = processing_interactions[0].input
         if isinstance(interaction_input, dict):
-            content = interaction_input.get("content", "")
+            contents = interaction_input.get("contents", [])
+            content = contents[0] if contents else ""
             assert "Sync to Knowledge Base" in content or "yaml" in content.lower()
 
     @pytest.mark.asyncio
