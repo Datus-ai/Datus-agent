@@ -515,6 +515,31 @@ class TestConfigureLLM:
             assert "temperature" not in openai_config, "OpenAI models should not have temperature override"
             assert "top_p" not in openai_config, "OpenAI models should not have top_p override"
 
+    def test_qwen3_coder_plus_sets_temperature_and_top_p(self):
+        """qwen3-coder-plus requires temperature=1.0 and top_p=0.95; verify they are stored in config."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            init = InteractiveInit(user_home=tmpdir)
+
+            mock_model_instance = MagicMock()
+            mock_model_instance.generate.return_value = "Hello!"
+            mock_module = MagicMock()
+            mock_module.OpenAIModel.return_value = mock_model_instance
+
+            with (
+                patch(
+                    "datus.cli.interactive_init.Prompt.ask",
+                    side_effect=["qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen3-coder-plus"],
+                ),
+                patch("datus.cli.interactive_init.getpass", return_value="test-key"),
+                patch.dict("sys.modules", {"datus.models.openai_model": mock_module}),
+            ):
+                result = init._configure_llm()
+
+            assert result is True
+            qwen_config = init.config["agent"]["models"]["qwen"]
+            assert qwen_config["temperature"] == 1.0, "qwen3-coder-plus should have temperature=1.0"
+            assert qwen_config["top_p"] == 0.95, "qwen3-coder-plus should have top_p=0.95"
+
 
 # ---------------------------------------------------------------------------
 # do_init_sql_and_log_result: edge cases

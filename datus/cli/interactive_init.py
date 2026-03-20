@@ -225,7 +225,7 @@ class InteractiveInit:
         if "options" in providers[provider]:
             options_hint = ", ".join(providers[provider]["options"])
             self.console.print(f"  [dim]reference options: {options_hint}[/dim]")
-        model_name = Prompt.ask("- Enter your model name", default=providers[provider]["model"])
+        model_name = Prompt.ask("- Enter your model name", default=providers[provider]["model"]).strip()
 
         # Model-specific parameter overrides (some models enforce fixed values)
         model_param_overrides = {
