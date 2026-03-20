@@ -841,9 +841,6 @@ class ChatCommands:
                     short_q = prev_q[:50] + "..." if len(prev_q) > 50 else prev_q
                     console.print(f"  [green]\u2705[/green] [dim]{short_q} \u2192 {answers[-1]}[/dim]")
                 console.print(f"\n  [bold bright_cyan][{idx + 1}/{total}][/bold bright_cyan] {q_text}")
-            else:
-                pass  # Single question — already rendered by the renderer
-
             if not ch:
                 console.print()
                 console.print("[dim](Paste supported. Enter to submit)[/]")

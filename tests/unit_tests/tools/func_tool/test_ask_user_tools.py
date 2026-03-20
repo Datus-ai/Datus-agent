@@ -52,6 +52,36 @@ class TestAskUserToolValidation:
         assert "non-empty" in result.error.lower()
 
     @pytest.mark.asyncio
+    async def test_json_string_coerced_to_list(self, broker, tool):
+        """JSON string containing a list of questions is auto-parsed."""
+
+        async def simulate_user():
+            for _ in range(50):
+                if broker.has_pending:
+                    pending = list(broker._pending.values())[0]
+                    await broker.submit(pending.action_id, json.dumps(["Yes"]))
+                    return
+                await asyncio.sleep(0.01)
+
+        task = asyncio.create_task(simulate_user())
+        # Pass questions as a JSON string (LLM double-serialization)
+        questions_str = json.dumps([{"question": "Continue?", "options": ["Yes", "No"]}])
+        result = await tool.ask_user(questions=questions_str)
+        await task
+
+        assert result.success == 1
+        answers = json.loads(result.result)
+        assert answers[0]["answer"] == "Yes"
+
+    @pytest.mark.asyncio
+    async def test_json_string_non_list_rejected(self, tool):
+        """JSON string that parses to a non-list (e.g. dict) is rejected."""
+        questions_str = json.dumps({"question": "Not a list"})
+        result = await tool.ask_user(questions=questions_str)
+        assert result.success == 0
+        assert "non-empty" in result.error.lower()
+
+    @pytest.mark.asyncio
     async def test_none_rejected(self, tool):
         """None questions returns error."""
         result = await tool.ask_user(questions=None)

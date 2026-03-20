@@ -372,7 +372,7 @@ async def auto_submit_interaction(broker: InteractionBroker, action: ActionHisto
         # Batch: auto-submit first option value or empty for each question
         answers = []
         for ch in choices_list:
-            answers.append(next(iter(ch.values())) if ch else "")
+            answers.append(next(iter(ch.keys())) if ch else "")
         await broker.submit(action.action_id, json.dumps(answers))
         logger.info(f"Auto-submitted batch answers: {len(answers)}")
     elif len(contents) == 1:

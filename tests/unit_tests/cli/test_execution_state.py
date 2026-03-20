@@ -756,7 +756,7 @@ class TestAutoSubmitInteraction:
 
         result, _ = await task
         answers = json.loads(result)
-        assert answers == ["MySQL", "Yes"]
+        assert answers == ["1", "a"]
 
     @pytest.mark.asyncio
     async def test_batch_with_free_text_question(self):
@@ -780,7 +780,7 @@ class TestAutoSubmitInteraction:
 
         result, _ = await task
         answers = json.loads(result)
-        assert answers == ["MySQL", ""]
+        assert answers == ["1", ""]
 
     @pytest.mark.asyncio
     async def test_single_with_default(self):

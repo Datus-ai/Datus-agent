@@ -624,7 +624,11 @@ class ActionRenderer:
             except (_json.JSONDecodeError, TypeError):
                 answers = [user_choice]
             else:
-                answers = parsed if isinstance(parsed, list) else [user_choice]
+                if isinstance(parsed, list):
+                    answers = parsed
+                else:
+                    logger.warning(f"Expected list from user_choice JSON, got {type(parsed).__name__}")
+                    answers = [user_choice]
 
         total = len(contents)
         answered = len(answers)

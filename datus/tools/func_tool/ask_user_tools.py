@@ -74,16 +74,23 @@ class AskUserTool:
         asking one at a time.
 
         Args:
-            questions: A list of question objects, each with a "question" string
-                and optional "options" list of 2-5 predefined answer choices.
+            questions: A JSON array of question objects (NOT a JSON string).
+                Each object has a "question" string and optional "options" list.
+                Example: [{"question": "Which DB?", "options": ["MySQL", "PostgreSQL"]}]
 
         Returns:
             FuncToolResult with the answers in the ``result`` field.
             The result is a JSON array of answer objects, each containing
             "question" and "answer" keys.
         """
+        # --- coerce JSON-string to list (LLMs sometimes double-serialize) ---
+        if isinstance(questions, str):
+            try:
+                questions = json.loads(questions)
+            except (json.JSONDecodeError, TypeError):
+                return FuncToolResult(success=0, error="questions must be a non-empty list (got unparseable string)")
+
         # --- validation ---
-        logger.info(f"AskUserTool: asking user with questions: {questions}")
         if not questions or not isinstance(questions, list):
             return FuncToolResult(success=0, error="questions must be a non-empty list")
 
