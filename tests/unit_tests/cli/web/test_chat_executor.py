@@ -150,6 +150,7 @@ class TestChatExecutorExtractSqlAndResponse:
         executor = ChatExecutor()
         sql, response = executor.extract_sql_and_response([action], None)
         assert sql is None
+        assert response is None
 
     def test_extracts_sql_and_response(self):
         action = _make_action(
