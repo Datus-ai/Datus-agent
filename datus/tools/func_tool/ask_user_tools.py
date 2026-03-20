@@ -138,7 +138,7 @@ class AskUserTool:
                 if len(validated) == 1:
                     answers = [choice]
                 else:
-                    logger.warning(f"AskUserTool: expected JSON array, got: {choice!r}")
+                    logger.warning("AskUserTool: expected JSON array for multi-question batch response")
                     return FuncToolResult(success=0, error="Malformed batch response from collector")
 
             # Ensure answers is a list (json.loads may return dict/str/int)
@@ -146,19 +146,23 @@ class AskUserTool:
                 if len(validated) == 1:
                     answers = [answers]
                 else:
-                    logger.warning(f"AskUserTool: expected list, got {type(answers).__name__}: {answers!r}")
+                    logger.warning(f"AskUserTool: expected list batch response, got type={type(answers).__name__}")
                     return FuncToolResult(success=0, error="Malformed batch response from collector")
+
+            # Validate answer count matches question count
+            if len(answers) != len(validated):
+                logger.warning(f"AskUserTool: answer count mismatch (expected {len(validated)}, got {len(answers)})")
+                return FuncToolResult(success=0, error="Malformed batch response from collector")
 
             # Build structured result
             result_list = []
             for i, q in enumerate(validated):
-                answer = answers[i] if i < len(answers) else ""
-                result_list.append({"question": q["question"], "answer": answer})
+                result_list.append({"question": q["question"], "answer": answers[i]})
 
             result_json = json.dumps(result_list, ensure_ascii=False)
             await callback(f"User answered {len(result_list)} question(s)")
 
-            logger.info(f"AskUserTool: {len(validated)} question(s), answers={result_json}")
+            logger.info(f"AskUserTool: completed batch clarification with {len(validated)} question(s)")
             return FuncToolResult(success=1, result=result_json)
 
         except InteractionCancelled:

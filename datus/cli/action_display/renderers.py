@@ -658,9 +658,16 @@ class ActionRenderer:
         answers = []
         if user_choice:
             try:
-                answers = _json.loads(user_choice)
+                parsed = _json.loads(user_choice)
             except (_json.JSONDecodeError, TypeError):
                 answers = [user_choice]
+            else:
+                if isinstance(parsed, list):
+                    answers = parsed
+                elif len(questions) == 1:
+                    answers = [parsed]
+                else:
+                    answers = [user_choice]
 
         count = len(questions) if questions else len(answers)
         result.append(Text.from_markup(f"\u2705 [dim]Answers submitted ({count}/{count})[/dim]"))

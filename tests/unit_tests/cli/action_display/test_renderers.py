@@ -806,6 +806,37 @@ class TestRenderBatchInteractionSuccess:
         assert "Answers submitted (1/1)" in text
         assert "plain text" in text
 
+    def test_success_single_question_non_list_json_coerced(self):
+        """SUCCESS with single question and non-list JSON coerces to list."""
+        import json
+
+        action = _make_action(
+            ActionRole.INTERACTION,
+            ActionStatus.SUCCESS,
+            action_type="request_batch",
+            input_data={"questions": [{"question": "Name?"}]},
+            output_data={"user_choice": json.dumps("direct answer")},
+        )
+        result = _renderer().render_interaction_success(action, verbose=False)
+        text = _plain(result)
+        assert "Answers submitted (1/1)" in text
+        assert "direct answer" in text
+
+    def test_success_multi_question_non_list_json_falls_back(self):
+        """SUCCESS with multiple questions and non-list JSON falls back to raw string."""
+        import json
+
+        action = _make_action(
+            ActionRole.INTERACTION,
+            ActionStatus.SUCCESS,
+            action_type="request_batch",
+            input_data={"questions": [{"question": "Q1?"}, {"question": "Q2?"}]},
+            output_data={"user_choice": json.dumps("just a string")},
+        )
+        result = _renderer().render_interaction_success(action, verbose=False)
+        text = _plain(result)
+        assert "Answers submitted (2/2)" in text
+
     def test_success_truncates_long_question(self):
         """Long question text is truncated to 40 chars."""
         import json

@@ -357,6 +357,31 @@ class TestAskUserToolEdgeCases:
         assert result.success == 0
         assert "Malformed" in result.error
 
+    @pytest.mark.asyncio
+    async def test_answer_count_mismatch_rejected(self, broker, tool):
+        """When answer count doesn't match question count, return error."""
+
+        async def simulate_user():
+            for _ in range(50):
+                if broker.has_pending:
+                    pending = list(broker._pending.values())[0]
+                    # Submit only 1 answer for 2 questions
+                    await broker.submit(pending.action_id, json.dumps(["only one"]))
+                    return
+                await asyncio.sleep(0.01)
+
+        task = asyncio.create_task(simulate_user())
+        result = await tool.ask_user(
+            questions=[
+                {"question": "Q1?", "options": ["A", "B"]},
+                {"question": "Q2?", "options": ["C", "D"]},
+            ]
+        )
+        await task
+
+        assert result.success == 0
+        assert "Malformed" in result.error
+
 
 class TestBuildContent:
     """Tests for _build_content static method."""

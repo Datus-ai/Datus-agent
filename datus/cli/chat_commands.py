@@ -843,8 +843,7 @@ class ChatCommands:
                     return _collect_single_choice(console, choices, default_choice, allow_free_text)
             except Exception as e:
                 logger.error(f"Error collecting interaction input: {e}")
-                # For batch, return empty answers so the agent sees [] rather than a hard failure
-                return json.dumps([]) if action.action_type == "request_batch" else None
+                return None
 
         return collect
 

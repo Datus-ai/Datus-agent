@@ -3766,8 +3766,8 @@ class TestMakeInputCollector:
         result = collector(action, console)
         assert result is None
 
-    def test_collect_exception_returns_empty_json_for_batch(self, real_agent_config, mock_llm_create):
-        """collect() returns json.dumps([]) on exception for request_batch."""
+    def test_collect_exception_returns_none_for_batch(self, real_agent_config, mock_llm_create):
+        """collect() returns None on exception for request_batch."""
         chat_cmd, console = self._make(real_agent_config)
         esc_guard = MagicMock()
         esc_guard.paused.return_value.__enter__ = MagicMock(side_effect=RuntimeError("boom"))
@@ -3775,4 +3775,4 @@ class TestMakeInputCollector:
         collector = chat_cmd._make_input_collector(esc_guard)
         action = self._make_action("request_batch", {"questions": [{"question": "Q?"}]})
         result = collector(action, console)
-        assert result == json.dumps([])
+        assert result is None
