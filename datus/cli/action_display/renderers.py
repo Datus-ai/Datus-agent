@@ -669,8 +669,9 @@ class ActionRenderer:
                 else:
                     answers = [user_choice]
 
-        count = len(questions) if questions else len(answers)
-        result.append(Text.from_markup(f"\u2705 [dim]Answers submitted ({count}/{count})[/dim]"))
+        total = len(questions) if questions else len(answers)
+        answered = len(answers)
+        result.append(Text.from_markup(f"\u2705 [dim]Answers submitted ({answered}/{total})[/dim]"))
 
         lines = []
         if questions:

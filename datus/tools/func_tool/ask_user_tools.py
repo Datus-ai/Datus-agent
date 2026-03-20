@@ -131,6 +131,11 @@ class AskUserTool:
                 questions=validated,
             )
 
+            # Reject None response (collector failure)
+            if choice is None:
+                logger.warning("AskUserTool: collector returned None (interaction failure)")
+                return FuncToolResult(success=0, error="No response received from collector")
+
             # Parse the JSON response from the collector
             try:
                 answers = json.loads(choice)

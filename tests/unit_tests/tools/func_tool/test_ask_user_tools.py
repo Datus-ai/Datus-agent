@@ -382,6 +382,25 @@ class TestAskUserToolEdgeCases:
         assert result.success == 0
         assert "Malformed" in result.error
 
+    @pytest.mark.asyncio
+    async def test_none_collector_response_rejected(self, broker, tool):
+        """When collector returns None (interaction failure), return error instead of wrapping as answer."""
+
+        async def simulate_user():
+            for _ in range(50):
+                if broker.has_pending:
+                    pending = list(broker._pending.values())[0]
+                    await broker.submit(pending.action_id, None)
+                    return
+                await asyncio.sleep(0.01)
+
+        task = asyncio.create_task(simulate_user())
+        result = await tool.ask_user(questions=[{"question": "Will fail?"}])
+        await task
+
+        assert result.success == 0
+        assert "No response" in result.error
+
 
 class TestBuildContent:
     """Tests for _build_content static method."""
