@@ -19,9 +19,10 @@ class TestDBFuncToolCompressorModelName:
         mock_config = Mock()
         mock_config.active_model.return_value.model = "claude-sonnet-4"
 
-        with patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag, patch(
-            "datus.tools.func_tool.database.SemanticModelRAG"
-        ) as mock_sem:
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+        ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
             tool = DBFuncTool(mock_connector, agent_config=mock_config)
@@ -34,8 +35,9 @@ class TestDBFuncToolCompressorModelName:
         mock_connector.dialect = "sqlite"
         mock_connector.get_databases.return_value = []
 
-        with patch("datus.tools.func_tool.database.SchemaWithValueRAG"), patch(
-            "datus.tools.func_tool.database.SemanticModelRAG"
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG"),
+            patch("datus.tools.func_tool.database.SemanticModelRAG"),
         ):
             tool = DBFuncTool(mock_connector)
 
