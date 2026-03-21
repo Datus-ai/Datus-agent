@@ -30,7 +30,7 @@
 - **Generation Hooks Condition** - Fixed `generation_hooks` to use correct `where` expression condition. [#482](https://github.com/Datus-ai/Datus-agent/pull/482)
 - **Ctrl+O Toggle** - Fixed missing response display for previous turns when toggling with Ctrl+O. [#477](https://github.com/Datus-ai/Datus-agent/pull/477)
 - **Missing Tabulate Dependency** - Added missing `tabulate` dependency to pyproject.toml and requirements.txt. [#476](https://github.com/Datus-ai/Datus-agent/pull/476)
-- **Skill Scan Paths** - Removed `~/.claude/skills` from default scan paths and passed `agent.yml` config to ChatAgenticNode correctly. [#475](https://github.com/Datus-ai/Datus-agent/pull/475)
+- **Skill Scan Paths** - Removed `~/.claude/skills` from default scan paths and improved config passing for ChatAgenticNode. [#475](https://github.com/Datus-ai/Datus-agent/pull/475)
 
 **Documentation**
 
@@ -62,6 +62,7 @@
 - **Attribution Analysis** - Simplified attribution analysis logic for clearer and more reliable results.
 
 ### 0.2.4
+
 **Dashboard Copilot (Auto-generation)**
 
 - Dashboard to Sub-Agent: Automatically generate sub-agents from BI dashboard configurations [#339](https://github.com/Datus-ai/Datus-agent/pull/339)
@@ -125,6 +126,7 @@
 - **FastEmbed Cache Directory** - Fixed cache directory path for fastembed to resolve caching issues on different platforms. [#251](https://github.com/Datus-ai/Datus-agent/issues/251)
 
 ### 0.2.2
+
 skipped
 
 ### 0.2.1
@@ -188,7 +190,6 @@ skipped
 - Automatic collection of user behavior logs.
 - Transforms human–computer interaction data into trainable datasets for future improvements.
 
-
 ## 0.1
 
 ### 0.1.0
@@ -248,3 +249,4 @@ skipped
 **Datus-cli**
 
 - Enhanced !reason and !gen_semantic_model commands for a more agentic and intuitive experience.
+
