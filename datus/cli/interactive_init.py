@@ -160,87 +160,26 @@ class InteractiveInit:
             for handler, original_handler_level in original_handler_levels.items():
                 handler.setLevel(original_handler_level)
 
+    def _load_provider_catalog(self) -> dict:
+        """Load LLM provider catalog from conf/providers.yml."""
+        try:
+            text = read_data_file_text(resource_path="conf/providers.yml", encoding="utf-8")
+            return yaml.safe_load(text)
+        except Exception as e:
+            logger.error(f"Failed to load providers.yml: {e}")
+            return {"providers": {}, "model_overrides": {}}
+
     def _configure_llm(self) -> bool:
         """Step 1: Configure LLM provider and test connectivity."""
         self.console.print("[bold yellow][1/5] Configure LLM[/bold yellow]")
 
-        # Provider selection
-        providers = {
-            "openai": {
-                "type": "openai",
-                "base_url": "https://api.openai.com/v1",
-                "model": "gpt-4.1",
-                "options": ["gpt-5.2", "gpt-4.1", "gpt-4.1-mini", "o3", "o3-pro", "o4-mini"],
-            },
-            "deepseek": {
-                "type": "deepseek",
-                "base_url": "https://api.deepseek.com",
-                "model": "deepseek-chat",
-                "options": ["deepseek-chat", "deepseek-reasoner"],
-            },
-            "claude": {
-                "type": "claude",
-                "base_url": "https://api.anthropic.com",
-                "model": "claude-sonnet-4-5",
-                "options": [
-                    "claude-haiku-4-5",
-                    "claude-sonnet-4-5",
-                    "claude-opus-4-5",
-                    "claude-sonnet-4",
-                    "claude-opus-4",
-                ],
-            },
-            "kimi": {
-                "type": "kimi",
-                "base_url": "https://api.moonshot.cn/v1",
-                "model": "kimi-k2.5",
-                "options": ["kimi-k2.5", "kimi-k2-turbo-preview", "kimi-k2-0905-Preview", "kimi-k2-thinking"],
-            },
-            "qwen": {
-                "type": "openai",
-                "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                "model": "qwen3-max",
-                "options": ["qwen3-max", "qwen3-coder-plus", "qwen-plus", "qwen-flash"],
-            },
-            "gemini": {
-                "type": "gemini",
-                "base_url": "https://generativelanguage.googleapis.com/v1beta",
-                "model": "gemini-2.5-flash",
-                "options": ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-3-flash-preview", "gemini-3-pro-preview"],
-            },
-            "alibaba_coding": {
-                "type": "claude",
-                "base_url": "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic",
-                "model": "qwen3-coder-plus",
-                "options": [
-                    "qwen3-coder-plus",
-                    "qwen3.5-plus",
-                    "glm-5",
-                    "glm-4.7",
-                    "kimi-k2.5",
-                    "MiniMax-M2.5",
-                    "claude-sonnet-4",
-                ],
-            },
-            "glm_coding": {
-                "type": "claude",
-                "base_url": "https://open.bigmodel.cn/api/anthropic",
-                "model": "glm-5",
-                "options": ["glm-5", "glm-4.7", "glm-4.5-air", "glm-4.5-flash", "claude-sonnet-4"],
-            },
-            "minimax_coding": {
-                "type": "claude",
-                "base_url": "https://api.minimaxi.com/anthropic",
-                "model": "MiniMax-M2.7",
-                "options": ["MiniMax-M2.7", "claude-sonnet-4"],
-            },
-            "kimi_coding": {
-                "type": "claude",
-                "base_url": "https://api.kimi.com/coding/",
-                "model": "kimi-for-coding",
-                "options": ["kimi-for-coding", "claude-sonnet-4"],
-            },
-        }
+        catalog = self._load_provider_catalog()
+        providers = catalog.get("providers", {})
+        model_param_overrides = catalog.get("model_overrides", {})
+
+        if not providers:
+            self.console.print("❌ No providers found in conf/providers.yml")
+            return False
 
         provider = Prompt.ask("- Which LLM provider?", choices=list(providers.keys()), default="openai")
 
@@ -250,25 +189,21 @@ class InteractiveInit:
             self.console.print("❌ API key cannot be empty")
             return False
 
+        provider_info = providers[provider]
+
         # Base URL (with default)
-        base_url = Prompt.ask("- Enter your base URL", default=providers[provider]["base_url"])
+        base_url = Prompt.ask("- Enter your base URL", default=provider_info["base_url"])
 
         # Model name (with default and options hint)
-        if "options" in providers[provider]:
-            options_hint = ", ".join(providers[provider]["options"])
+        models = provider_info.get("models", [])
+        if models:
+            options_hint = ", ".join(str(m) for m in models)
             self.console.print(f"  [dim]reference options: {options_hint}[/dim]")
-        model_name = Prompt.ask("- Enter your model name", default=providers[provider]["model"]).strip()
-
-        # Model-specific parameter overrides (some models enforce fixed values)
-        model_param_overrides = {
-            "kimi-k2.5": {"temperature": 1.0, "top_p": 0.95},
-            "qwen3-coder-plus": {"temperature": 1.0, "top_p": 0.95},
-        }
+        model_name = Prompt.ask("- Enter your model name", default=provider_info["default_model"]).strip()
 
         # Coding Plan providers: prompt for User-Agent header
-        coding_plan_providers = {"alibaba_coding", "glm_coding", "minimax_coding", "kimi_coding"}
         default_headers = None
-        if provider in coding_plan_providers:
+        if provider_info.get("coding_plan"):
             default_ua = "datus-agent (cli)"
             self.console.print("  [dim]Coding Plan endpoints may verify User-Agent header[/dim]")
             user_agent = Prompt.ask("- User-Agent header", default=default_ua).strip()
@@ -278,7 +213,7 @@ class InteractiveInit:
         # Store configuration
         self.config["agent"]["target"] = provider
         model_config_entry = {
-            "type": providers[provider]["type"],
+            "type": provider_info["type"],
             "base_url": base_url,
             "api_key": api_key,
             "model": model_name,
