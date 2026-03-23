@@ -254,6 +254,39 @@ class TestAutoDetectWithBaseUrl:
         assert adapter.provider == "claude"
         assert adapter.litellm_model_name == "anthropic/MiniMax-M2.5"
 
+    def test_domain_match_rejects_label_substring(self):
+        """Ensure 'evil-deepseek.com' does NOT match known domain 'deepseek.com'."""
+        adapter = LiteLLMAdapter(
+            provider="openai",
+            model="deepseek-chat",
+            api_key="test-key",
+            base_url="https://evil-deepseek.com/v1",
+        )
+        # Domain 'evil-deepseek.com' should NOT match 'deepseek.com',
+        # so auto-detection should be skipped and provider stays 'openai'
+        assert adapter.provider == "openai"
+
+    def test_domain_match_accepts_exact_domain(self):
+        """Ensure exact domain 'api.deepseek.com' matches correctly."""
+        adapter = LiteLLMAdapter(
+            provider="openai",
+            model="deepseek-chat",
+            api_key="test-key",
+            base_url="https://api.deepseek.com/v1",
+        )
+        # Exact domain match → auto-detection applies
+        assert adapter.provider == "deepseek"
+
+    def test_domain_match_accepts_subdomain(self):
+        """Ensure 'api.deepseek.com' matches via .deepseek.com suffix."""
+        adapter = LiteLLMAdapter(
+            provider="openai",
+            model="deepseek-chat",
+            api_key="test-key",
+            base_url="https://api.deepseek.com/v1",
+        )
+        assert adapter.provider == "deepseek"
+
 
 class TestDefaultHeaders:
     """Tests for default_headers passthrough to LiteLLM and Anthropic clients."""

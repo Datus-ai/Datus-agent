@@ -1283,18 +1283,18 @@ class OpenAICompatibleModel(LLMBaseModel):
             "kimi-k2-turbo": {"context_length": 256000, "max_tokens": 8192},
             # Qwen Models
             "qwen3-coder": {"context_length": 128000, "max_tokens": 8192},
-            "qwen3.5-plus": {"context_length": 131072, "max_tokens": 16384},
-            "qwen3-coder-plus": {"context_length": 131072, "max_tokens": 16384},
+            "qwen3.5-plus": {"context_length": 1000000, "max_tokens": 16384},
+            "qwen3-coder-plus": {"context_length": 1000000, "max_tokens": 16384},
             # GLM Models (Coding Plan)
-            "glm-5": {"context_length": 128000, "max_tokens": 8192},
-            "glm-4.7": {"context_length": 128000, "max_tokens": 8192},
+            "glm-5": {"context_length": 200000, "max_tokens": 131072},
+            "glm-4.7": {"context_length": 200000, "max_tokens": 131072},
             "glm-4.5-air": {"context_length": 128000, "max_tokens": 8192},
             "glm-4.5-flash": {"context_length": 128000, "max_tokens": 8192},
             # MiniMax Models (Coding Plan) — use official casing to match config options
-            "MiniMax-M2.5": {"context_length": 1048576, "max_tokens": 16384},
-            "MiniMax-M2.7": {"context_length": 1048576, "max_tokens": 16384},
+            "MiniMax-M2.5": {"context_length": 204800, "max_tokens": 16384},
+            "MiniMax-M2.7": {"context_length": 204800, "max_tokens": 16384},
             # Kimi Coding Plan
-            "kimi-for-coding": {"context_length": 131072, "max_tokens": 8192},
+            "kimi-for-coding": {"context_length": 256000, "max_tokens": 8192},
             # Gemini Models
             "gemini-2.5-pro": {"context_length": 1048576, "max_tokens": 65535},
             "gemini-2.5-flash": {"context_length": 1048576, "max_tokens": 8192},

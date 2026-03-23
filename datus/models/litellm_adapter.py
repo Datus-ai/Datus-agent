@@ -158,7 +158,7 @@ class LiteLLMAdapter:
                     domain = parsed.hostname or ""
                     path = parsed.path.lower()
                     known_domains = self.PROVIDER_DOMAINS.get(detected, [])
-                    domain_matches = any(domain.endswith(d) for d in known_domains)
+                    domain_matches = any(domain == d or domain.endswith(f".{d}") for d in known_domains)
 
                     # Skip auto-detection if domain doesn't match detected provider
                     if not domain_matches:
