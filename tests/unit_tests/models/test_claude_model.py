@@ -386,3 +386,124 @@ class TestClaudeModelClose:
         model.anthropic_client.close.side_effect = RuntimeError("already closed")
         # Should not raise
         model.close()
+
+
+# ---------------------------------------------------------------------------
+# generate_with_mcp: tool routing and duplicate tool names
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateWithMcpToolRouting:
+    """Tests for MCP tool_server_map construction and routing (Issue #2 + #6)."""
+
+    def _make_mcp_tool(self, name):
+        tool = MagicMock()
+        tool.name = name
+        return tool
+
+    @pytest.mark.asyncio
+    async def test_duplicate_tool_name_logs_warning(self):
+        """When two MCP servers expose a tool with the same name, a warning should be logged."""
+        cfg = _make_model_config(use_native_api=True)
+        model = _make_claude_model(cfg)
+
+        tool_a = self._make_mcp_tool("shared_tool")
+        tool_b = self._make_mcp_tool("shared_tool")
+
+        server1 = AsyncMock()
+        server1.list_tools = AsyncMock(return_value=[tool_a])
+        server2 = AsyncMock()
+        server2.list_tools = AsyncMock(return_value=[tool_b])
+
+        connected_servers = {"server1": server1, "server2": server2}
+
+        # Mock the context manager to yield our servers
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def mock_mcp_ctx(servers):
+            yield connected_servers
+
+        # Mock anthropic response with no tool calls (stop immediately)
+        content_block = MagicMock()
+        content_block.type = "text"
+        content_block.text = "done"
+        mock_response = MagicMock()
+        mock_response.content = [content_block]
+        model.anthropic_client.messages.create = MagicMock(return_value=mock_response)
+
+        with (
+            patch("datus.models.claude_model.multiple_mcp_servers", side_effect=mock_mcp_ctx),
+            patch("datus.models.claude_model.convert_tools_for_anthropic", return_value=[]),
+            patch("datus.models.claude_model.logger") as mock_logger,
+        ):
+            await model.generate_with_mcp(
+                prompt="test",
+                mcp_servers={"s1": MagicMock(), "s2": MagicMock()},
+                instruction="instr",
+                output_type=str,
+            )
+
+        # Verify warning was logged for the duplicate tool name
+        warning_calls = [str(c) for c in mock_logger.warning.call_args_list]
+        assert any("shared_tool" in w for w in warning_calls), (
+            f"Expected warning about duplicate tool 'shared_tool', got: {warning_calls}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_tool_call_uses_shallow_copy_of_input(self):
+        """block.input should be shallow-copied before passing to call_tool."""
+        cfg = _make_model_config(use_native_api=True)
+        model = _make_claude_model(cfg)
+
+        tool_mock = self._make_mcp_tool("my_tool")
+        server = AsyncMock()
+        server.list_tools = AsyncMock(return_value=[tool_mock])
+        tool_content = MagicMock()
+        tool_content.text = "query result"
+        tool_result_obj = MagicMock()
+        tool_result_obj.content = [tool_content]
+        server.call_tool = AsyncMock(return_value=tool_result_obj)
+        connected_servers = {"server1": server}
+
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def mock_mcp_ctx(servers):
+            yield connected_servers
+
+        # First response: tool_use block, second response: text block (stop)
+        tool_block = MagicMock()
+        tool_block.type = "tool_use"
+        tool_block.name = "my_tool"
+        tool_block.id = "call_1"
+        original_input = {"query": "SELECT 1"}
+        tool_block.input = original_input
+
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = "done"
+
+        response1 = MagicMock()
+        response1.content = [tool_block]
+        response2 = MagicMock()
+        response2.content = [text_block]
+
+        model.anthropic_client.messages.create = MagicMock(side_effect=[response1, response2])
+
+        with (
+            patch("datus.models.claude_model.multiple_mcp_servers", side_effect=mock_mcp_ctx),
+            patch("datus.models.claude_model.convert_tools_for_anthropic", return_value=[]),
+        ):
+            await model.generate_with_mcp(
+                prompt="test",
+                mcp_servers={"s1": MagicMock()},
+                instruction="instr",
+                output_type=str,
+            )
+
+        # Verify call_tool was called with a copy, not the original dict
+        call_args = server.call_tool.call_args
+        passed_args = call_args[1]["arguments"]
+        assert passed_args == {"query": "SELECT 1"}
+        assert passed_args is not original_input  # must be a different object

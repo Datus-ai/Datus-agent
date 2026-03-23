@@ -512,6 +512,73 @@ class OpenAICompatibleModel(LLMBaseModel):
         ):
             yield action
 
+    def _build_agent(
+        self,
+        instruction: str,
+        output_type: type,
+        strict_json_schema: bool,
+        connected_servers: dict,
+        tools: Optional[List[Tool]],
+        hooks=None,
+        agent_name: str = "default_agent",
+    ) -> Agent:
+        """Build Agent with consistent configuration for both streaming and non-streaming paths."""
+        actual_output_type = output_type
+        enable_structured_output = False
+        if output_type is not str:
+            from agents import AgentOutputSchema
+
+            actual_output_type = AgentOutputSchema(output_type, strict_json_schema=strict_json_schema)
+            enable_structured_output = True
+            logger.debug(
+                f"Wrapped output_type with AgentOutputSchema: type={output_type.__name__}, strict={strict_json_schema}"
+            )
+
+        litellm_model = self.litellm_adapter.get_agents_sdk_model()
+
+        # DeepSeek requires "json" keyword in prompt for JSON mode
+        final_instruction = instruction
+        if enable_structured_output and self.litellm_adapter.provider == "deepseek":
+            if "json" not in instruction.lower():
+                final_instruction = f"{instruction}\n\nIMPORTANT: Return output in valid JSON format."
+                logger.debug("Added JSON keyword to instructions for DeepSeek")
+
+        agent_kwargs = {
+            "name": agent_name,
+            "instructions": final_instruction,
+            "output_type": actual_output_type,
+            "model": litellm_model,
+        }
+
+        # Build ModelSettings with provider-specific configurations
+        model_settings_kwargs = {"include_usage": True}
+
+        if self.model_config.temperature is not None:
+            model_settings_kwargs["temperature"] = self.model_config.temperature
+
+        if self.model_config.top_p is not None:
+            model_settings_kwargs["top_p"] = self.model_config.top_p
+
+        if self.default_headers:
+            model_settings_kwargs["extra_headers"] = self.default_headers
+
+        if self.litellm_adapter.is_thinking_model:
+            model_settings_kwargs["reasoning"] = Reasoning(effort="medium")
+            logger.debug(f"Enabled thinking mode for model: {self.model_name}")
+
+        agent_kwargs["model_settings"] = ModelSettings(**model_settings_kwargs)
+
+        if connected_servers:
+            agent_kwargs["mcp_servers"] = list(connected_servers.values())
+
+        if tools:
+            agent_kwargs["tools"] = tools
+
+        if hooks:
+            agent_kwargs["hooks"] = hooks
+
+        return Agent(**agent_kwargs)
+
     async def _generate_with_tools_internal(
         self,
         prompt: Union[str, List[Dict[str, str]]],
@@ -532,80 +599,17 @@ class OpenAICompatibleModel(LLMBaseModel):
         self._setup_custom_json_encoder()
 
         async def _tools_operation():
-            # Wrap output_type with AgentOutputSchema for strict JSON mode control
-            # This ensures the model outputs valid JSON that matches the Pydantic schema
-            actual_output_type = output_type
-            enable_structured_output = False
-            if output_type is not str:
-                from agents import AgentOutputSchema
-
-                actual_output_type = AgentOutputSchema(output_type, strict_json_schema=strict_json_schema)
-                enable_structured_output = True
-                logger.debug(
-                    f"Wrapped output_type with AgentOutputSchema: "
-                    f"type={output_type.__name__}, strict={strict_json_schema}"
-                )
-
-            # Use LiteLLM model for unified provider support
-            litellm_model = self.litellm_adapter.get_agents_sdk_model()
-
-            # DeepSeek requires "json" keyword in prompt for JSON mode
-            # Add it to instructions if using structured output
-            final_instruction = instruction
-            if enable_structured_output and self.litellm_adapter.provider == "deepseek":
-                if "json" not in instruction.lower():
-                    final_instruction = f"{instruction}\n\nIMPORTANT: Return output in valid JSON format."
-                    logger.debug("Added JSON keyword to instructions for DeepSeek")
-
             # Use multiple_mcp_servers context manager with empty dict if no MCP servers
             async with multiple_mcp_servers(mcp_servers or {}) as connected_servers:
-                agent_kwargs = {
-                    "name": kwargs.pop("agent_name", "default_agent"),
-                    "instructions": final_instruction,
-                    "output_type": actual_output_type,
-                    "model": litellm_model,
-                }
-
-                # Build ModelSettings with provider-specific configurations
-                model_settings_kwargs = {
-                    "include_usage": True,
-                }
-
-                # Apply temperature from model config (e.g., kimi-k2.5 requires temperature=1)
-                if self.model_config.temperature is not None:
-                    model_settings_kwargs["temperature"] = self.model_config.temperature
-
-                # Apply top_p from model config (e.g., kimi-k2.5 requires top_p=0.95)
-                if self.model_config.top_p is not None:
-                    model_settings_kwargs["top_p"] = self.model_config.top_p
-
-                # Inject custom headers for Coding Plan endpoints
-                if self.default_headers:
-                    model_settings_kwargs["extra_headers"] = self.default_headers
-
-                # Enable reasoning/thinking mode for thinking models (deepseek-r1, o1, kimi-k2.5, etc.)
-                # This enables preserve_thinking_blocks in LitellmModel to correctly handle
-                # reasoning_content in multi-turn conversations with tool calls
-                if self.litellm_adapter.is_thinking_model:
-                    model_settings_kwargs["reasoning"] = Reasoning(effort="medium")
-                    logger.debug(f"Enabled thinking mode for model: {self.model_name}")
-
-                model_settings = ModelSettings(**model_settings_kwargs)
-                agent_kwargs["model_settings"] = model_settings
-
-                # Only add mcp_servers if we have connected servers
-                if connected_servers:
-                    agent_kwargs["mcp_servers"] = list(connected_servers.values())
-
-                # Only add tools if we have them
-                if tools:
-                    agent_kwargs["tools"] = tools
-
-                # Add hooks to agent if provided (AgentHooks)
-                if hooks:
-                    agent_kwargs["hooks"] = hooks
-
-                agent = Agent(**agent_kwargs)
+                agent = self._build_agent(
+                    instruction=instruction,
+                    output_type=output_type,
+                    strict_json_schema=strict_json_schema,
+                    connected_servers=connected_servers,
+                    tools=tools,
+                    hooks=hooks,
+                    agent_name=kwargs.pop("agent_name", "default_agent"),
+                )
 
                 # Run agent with LangSmith tracing via OpenAIAgentsTracingProcessor
                 # (configured at module level, captures all SDK traces automatically)
@@ -644,42 +648,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                 # Extract usage information from the correct location: result.context_wrapper.usage
                 usage_info = {}
                 if hasattr(result, "context_wrapper") and hasattr(result.context_wrapper, "usage"):
-                    usage = result.context_wrapper.usage
-
-                    # Extract basic token counts
-                    input_tokens = getattr(usage, "input_tokens", 0)
-                    output_tokens = getattr(usage, "output_tokens", 0)
-                    total_tokens = getattr(usage, "total_tokens", 0)
-
-                    # Extract cache information
-                    cached_tokens = 0
-                    if hasattr(usage, "input_tokens_details") and usage.input_tokens_details:
-                        cached_tokens = getattr(usage.input_tokens_details, "cached_tokens", 0)
-
-                    # Extract reasoning tokens (for reasoning models like DeepSeek R1)
-                    reasoning_tokens = 0
-                    if hasattr(usage, "output_tokens_details") and usage.output_tokens_details:
-                        reasoning_tokens = getattr(usage.output_tokens_details, "reasoning_tokens", 0)
-
-                    # Calculate cache hit rate
-                    cache_hit_rate = round(cached_tokens / input_tokens, 3) if input_tokens > 0 else 0
-
-                    # Calculate context usage ratio
-                    context_usage_ratio = 0
-                    max_context = self.context_length()
-                    if max_context and total_tokens > 0:
-                        context_usage_ratio = round(total_tokens / max_context, 3)
-
-                    usage_info = {
-                        "requests": getattr(usage, "requests", 0),
-                        "input_tokens": input_tokens,
-                        "output_tokens": output_tokens,
-                        "total_tokens": total_tokens,
-                        "cached_tokens": cached_tokens,
-                        "reasoning_tokens": reasoning_tokens,
-                        "cache_hit_rate": cache_hit_rate,
-                        "context_usage_ratio": context_usage_ratio,
-                    }
+                    usage_info = self._extract_usage_info(result.context_wrapper.usage)
                     logger.debug(f"Agent execution usage: {usage_info}")
                 else:
                     logger.warning("No usage information found in result.context_wrapper")
@@ -721,83 +690,18 @@ class OpenAICompatibleModel(LLMBaseModel):
         self._setup_custom_json_encoder()
 
         async def _stream_operation():
-            # Wrap output_type with AgentOutputSchema for strict JSON mode control
-            # This ensures the model outputs valid JSON that matches the Pydantic schema
-            actual_output_type = output_type
-            enable_structured_output = False
-            if output_type is not str:
-                from agents import AgentOutputSchema
-
-                actual_output_type = AgentOutputSchema(output_type, strict_json_schema=strict_json_schema)
-                enable_structured_output = True
-                logger.debug(
-                    f"Wrapped output_type with AgentOutputSchema (streaming): "
-                    f"type={output_type.__name__}, strict={strict_json_schema}"
-                )
-
-            # Use LiteLLM model for unified provider support
-            litellm_model = self.litellm_adapter.get_agents_sdk_model()
-
-            # DeepSeek requires "json" keyword in prompt for JSON mode
-            # Add it to instructions if using structured output
-            final_instruction = instruction
-            if enable_structured_output and self.litellm_adapter.provider == "deepseek":
-                if "json" not in instruction.lower():
-                    final_instruction = f"{instruction}\n\nIMPORTANT: Return output in valid JSON format."
-                    logger.debug("Added JSON keyword to instructions for DeepSeek (streaming)")
-
             # Use multiple_mcp_servers context manager with empty dict if no MCP servers
             async with multiple_mcp_servers(mcp_servers or {}) as connected_servers:
-                agent_kwargs = {
-                    "name": kwargs.pop("agent_name", "Tools_Agent"),
-                    "instructions": final_instruction,
-                    "output_type": actual_output_type,
-                    "model": litellm_model,
-                }
+                agent = self._build_agent(
+                    instruction=instruction,
+                    output_type=output_type,
+                    strict_json_schema=strict_json_schema,
+                    connected_servers=connected_servers,
+                    tools=tools,
+                    hooks=hooks,
+                    agent_name=kwargs.pop("agent_name", "Tools_Agent"),
+                )
 
-                # Build ModelSettings with provider-specific configurations
-                model_settings_kwargs = {
-                    "include_usage": True,
-                }
-
-                # Apply temperature from model config (e.g., kimi-k2.5 requires temperature=1)
-                if self.model_config.temperature is not None:
-                    model_settings_kwargs["temperature"] = self.model_config.temperature
-
-                # Apply top_p from model config (e.g., kimi-k2.5 requires top_p=0.95)
-                if self.model_config.top_p is not None:
-                    model_settings_kwargs["top_p"] = self.model_config.top_p
-
-                # Inject custom headers for Coding Plan endpoints
-                if self.default_headers:
-                    model_settings_kwargs["extra_headers"] = self.default_headers
-
-                # Enable reasoning/thinking mode for thinking models (deepseek-r1, o1, kimi-k2.5, etc.)
-                # This enables preserve_thinking_blocks in LitellmModel to correctly handle
-                # reasoning_content in multi-turn conversations with tool calls
-                if self.litellm_adapter.is_thinking_model:
-                    model_settings_kwargs["reasoning"] = Reasoning(effort="medium")
-                    logger.debug(f"Enabled thinking mode for streaming: {self.model_name}")
-
-                model_settings = ModelSettings(**model_settings_kwargs)
-                agent_kwargs["model_settings"] = model_settings
-
-                # Only add mcp_servers if we have connected servers
-                if connected_servers:
-                    agent_kwargs["mcp_servers"] = list(connected_servers.values())
-
-                # Only add tools if we have them
-                if tools:
-                    agent_kwargs["tools"] = tools
-
-                # Add hooks to agent if provided (AgentHooks)
-                if hooks:
-                    agent_kwargs["hooks"] = hooks
-
-                agent = Agent(**agent_kwargs)
-
-                # Run agent with LangSmith tracing via OpenAIAgentsTracingProcessor
-                # (configured at module level, captures all SDK traces automatically)
                 try:
                     result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns, session=session)
                 except MaxTurnsExceeded as e:
@@ -1190,46 +1094,49 @@ class OpenAICompatibleModel(LLMBaseModel):
                     logger.exception(f"Stream failed after {max_retries} attempts: {type(e).__name__}: {e}")
                     raise
 
+    def _extract_usage_info(self, usage) -> dict:
+        """Extract standardized usage info from SDK usage object.
+
+        Used by both streaming and non-streaming code paths to avoid duplication.
+        """
+        input_tokens = getattr(usage, "input_tokens", 0)
+        output_tokens = getattr(usage, "output_tokens", 0)
+        total_tokens = getattr(usage, "total_tokens", 0)
+
+        cached_tokens = 0
+        if hasattr(usage, "input_tokens_details") and usage.input_tokens_details:
+            cached_tokens = getattr(usage.input_tokens_details, "cached_tokens", 0)
+
+        reasoning_tokens = 0
+        if hasattr(usage, "output_tokens_details") and usage.output_tokens_details:
+            reasoning_tokens = getattr(usage.output_tokens_details, "reasoning_tokens", 0)
+
+        cache_hit_rate = round(cached_tokens / input_tokens, 3) if input_tokens > 0 else 0
+
+        context_usage_ratio = 0
+        max_context = self.context_length()
+        if max_context and total_tokens > 0:
+            context_usage_ratio = round(total_tokens / max_context, 3)
+
+        return {
+            "requests": getattr(usage, "requests", 0),
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "cached_tokens": cached_tokens,
+            "reasoning_tokens": reasoning_tokens,
+            "cache_hit_rate": cache_hit_rate,
+            "context_usage_ratio": context_usage_ratio,
+        }
+
     async def _extract_and_distribute_token_usage(self, result, action_history_manager: ActionHistoryManager) -> None:
         """Extract token usage from completed streaming result and distribute to ActionHistory objects."""
         try:
-            # With stream_options: {"include_usage": true}, usage should now be properly populated
             if not (hasattr(result, "context_wrapper") and hasattr(result.context_wrapper, "usage")):
                 logger.warning("No usage information found in streaming result")
                 return
 
-            usage = result.context_wrapper.usage
-
-            # Extract all usage information (same as non-streaming version)
-            usage_info = {
-                "requests": getattr(usage, "requests", 0),
-                "input_tokens": getattr(usage, "input_tokens", 0),
-                "output_tokens": getattr(usage, "output_tokens", 0),
-                "total_tokens": getattr(usage, "total_tokens", 0),
-                "cached_tokens": (
-                    getattr(usage.input_tokens_details, "cached_tokens", 0)
-                    if hasattr(usage, "input_tokens_details") and usage.input_tokens_details
-                    else 0
-                ),
-                "reasoning_tokens": (
-                    getattr(usage.output_tokens_details, "reasoning_tokens", 0)
-                    if hasattr(usage, "output_tokens_details") and usage.output_tokens_details
-                    else 0
-                ),
-                "cache_hit_rate": (
-                    round(
-                        getattr(usage.input_tokens_details, "cached_tokens", 0) / getattr(usage, "input_tokens", 1), 3
-                    )
-                    if hasattr(usage, "input_tokens_details") and getattr(usage, "input_tokens", 0) > 0
-                    else 0
-                ),
-                "context_usage_ratio": (
-                    round(getattr(usage, "total_tokens", 0) / self.context_length(), 3)
-                    if self.context_length() and getattr(usage, "total_tokens", 0) > 0
-                    else 0
-                ),
-            }
-
+            usage_info = self._extract_usage_info(result.context_wrapper.usage)
             logger.debug(f"Extracted streaming token usage: {usage_info}")
 
             self._distribute_token_usage_to_actions(action_history_manager, usage_info)

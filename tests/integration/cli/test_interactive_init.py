@@ -26,7 +26,6 @@ class TestInitKimiConnectivity:
             init.config["agent"]["target"] = "kimi"
             init.config["agent"]["models"]["kimi"] = {
                 "type": "kimi",
-                "vendor": "kimi",
                 "base_url": "https://api.moonshot.cn/v1",
                 "api_key": os.getenv("KIMI_API_KEY"),
                 "model": "kimi-k2.5",
@@ -51,7 +50,6 @@ class TestInitKimiConnectivity:
             init.config["agent"]["target"] = "kimi"
             init.config["agent"]["models"]["kimi"] = {
                 "type": "kimi",
-                "vendor": "kimi",
                 "base_url": "https://api.moonshot.cn/v1",
                 "api_key": os.getenv("KIMI_API_KEY"),
                 "model": "kimi-k2.5",

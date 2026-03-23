@@ -12,9 +12,8 @@ Inherits from OpenAICompatibleModel and adds Claude-specific features:
 """
 
 import copy
-import json
 import os
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import anthropic
 import httpx
@@ -24,7 +23,7 @@ from agents.mcp import MCPServerStdio
 from datus.configuration.agent_config import ModelConfig
 from datus.models.mcp_utils import multiple_mcp_servers
 from datus.models.openai_compatible import OpenAICompatibleModel
-from datus.schemas.action_history import ActionHistory, ActionHistoryManager
+from datus.schemas.action_history import ActionHistoryManager
 from datus.schemas.node_models import SQLContext
 from datus.utils.loggings import get_logger
 
@@ -142,14 +141,18 @@ class ClaudeModel(OpenAICompatibleModel):
 
     @property
     def model_specs(self) -> Dict[str, Dict[str, int]]:
-        """Model specifications for Claude models."""
-        return {
-            "claude-sonnet-4-5": {"context_length": 1048576, "max_tokens": 65536},
-            "claude-opus-4-1": {"context_length": 200000, "max_tokens": 32000},
-            "claude-opus-4": {"context_length": 200000, "max_tokens": 32000},
-            "claude-sonnet-4": {"context_length": 1048576, "max_tokens": 65536},
-            "claude-3-7-sonnet": {"context_length": 200000, "max_tokens": 128000},
-        }
+        """Model specifications for Claude models, merged with parent specs."""
+        specs = super().model_specs.copy()
+        specs.update(
+            {
+                "claude-sonnet-4-5": {"context_length": 1048576, "max_tokens": 65536},
+                "claude-opus-4-1": {"context_length": 200000, "max_tokens": 32000},
+                "claude-opus-4": {"context_length": 200000, "max_tokens": 32000},
+                "claude-sonnet-4": {"context_length": 1048576, "max_tokens": 65536},
+                "claude-3-7-sonnet": {"context_length": 200000, "max_tokens": 128000},
+            }
+        )
+        return specs
 
     def generate(self, prompt: Any, enable_thinking: bool = False, **kwargs) -> str:
         """Generate response using LiteLLM (default) or native Anthropic API.
@@ -240,13 +243,20 @@ class ClaudeModel(OpenAICompatibleModel):
 
             # Use context manager to manage multiple MCP servers
             async with multiple_mcp_servers(mcp_servers) as connected_servers:
-                # Get all tools
+                # Get all tools and build tool-name-to-server mapping once
+                tool_server_map = {}  # tool_name -> connected_server
                 for server_name, connected_server in connected_servers.items():
                     try:
-                        # Create minimal agent and run context for the new interface
                         agent = Agent(name="mcp-tools-agent")
                         run_context = RunContextWrapper(context=None, usage=Usage())
                         mcp_tools = await connected_server.list_tools(run_context, agent)
+                        for tool in mcp_tools:
+                            if tool.name in tool_server_map:
+                                logger.warning(
+                                    f"Duplicate MCP tool name '{tool.name}' from server '{server_name}', "
+                                    f"overwriting previous mapping"
+                                )
+                            tool_server_map[tool.name] = connected_server
                         all_tools.extend(mcp_tools)
                         logger.info(f"Retrieved {len(mcp_tools)} tools from {server_name}")
 
@@ -293,22 +303,18 @@ class ClaudeModel(OpenAICompatibleModel):
                             logger.debug(f"Executing tool: {block.name}")
                             tool_executed = False
 
-                            for _, connected_server in connected_servers.items():
+                            # Look up the server from pre-built mapping instead of re-listing tools
+                            target_server = tool_server_map.get(block.name)
+                            if target_server:
                                 try:
-                                    agent = Agent(name="mcp-claude-agent")
-                                    run_context = RunContextWrapper(context=None, usage=Usage())
-                                    tmp_tools = await connected_server.list_tools(run_context, agent)
-                                    if any(tool.name == block.name for tool in tmp_tools):
-                                        tool_result = await connected_server.call_tool(
-                                            tool_name=block.name,
-                                            arguments=json.loads(json.dumps(block.input)),
-                                        )
-                                        tool_call_cache[block.id] = tool_result
-                                        tool_executed = True
-                                        break
+                                    tool_result = await target_server.call_tool(
+                                        tool_name=block.name,
+                                        arguments=dict(block.input) if isinstance(block.input, dict) else block.input,
+                                    )
+                                    tool_call_cache[block.id] = tool_result
+                                    tool_executed = True
                                 except Exception as e:
                                     logger.error(f"Error executing tool {block.name}: {str(e)}")
-                                    continue
 
                             if not tool_executed:
                                 logger.error(f"Tool {block.name} could not be executed")
@@ -416,40 +422,6 @@ class ClaudeModel(OpenAICompatibleModel):
             hooks=hooks,
             **kwargs,
         )
-
-    async def generate_with_tools_stream(
-        self,
-        prompt: Union[str, List[Dict[str, str]]],
-        mcp_servers: Optional[Dict[str, MCPServerStdio]] = None,
-        tools: Optional[List[Any]] = None,
-        instruction: str = "",
-        output_type: type = str,
-        strict_json_schema: bool = True,
-        max_turns: int = 10,
-        session=None,
-        action_history_manager: Optional[ActionHistoryManager] = None,
-        hooks=None,
-        **kwargs,
-    ) -> AsyncGenerator[ActionHistory, None]:
-        """Generate response with streaming and tool support.
-
-        Uses parent class LiteLLM implementation for streaming.
-        Note: Native Anthropic streaming API can be added later if needed.
-        """
-        async for action in super().generate_with_tools_stream(
-            prompt=prompt,
-            mcp_servers=mcp_servers,
-            tools=tools,
-            instruction=instruction,
-            output_type=output_type,
-            strict_json_schema=strict_json_schema,
-            max_turns=max_turns,
-            session=session,
-            action_history_manager=action_history_manager,
-            hooks=hooks,
-            **kwargs,
-        ):
-            yield action
 
     async def aclose(self):
         """Async cleanup of resources."""

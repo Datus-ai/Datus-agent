@@ -279,7 +279,6 @@ class InteractiveInit:
         self.config["agent"]["target"] = provider
         model_config_entry = {
             "type": providers[provider]["type"],
-            "vendor": provider,
             "base_url": base_url,
             "api_key": api_key,
             "model": model_name,
@@ -487,11 +486,9 @@ class InteractiveInit:
     def _test_llm_connectivity(self) -> tuple[bool, str]:
         """Test LLM model connectivity."""
         try:
-            # Test LLM connectivity by creating the specific model directly
             provider = self.config["agent"]["target"]
             model_config_data = self.config["agent"]["models"][provider]
 
-            # Create model config object
             from datus.configuration.agent_config import ModelConfig
 
             model_config = ModelConfig(
@@ -504,32 +501,20 @@ class InteractiveInit:
                 default_headers=model_config_data.get("default_headers"),
             )
 
-            # Import and create the specific model class
-            model_type = model_config_data["type"]
+            # Reuse the centralized MODEL_TYPE_MAP from LLMBaseModel
+            from datus.models.base import LLMBaseModel
 
-            # Map model types to class names
-            type_map = {
-                "deepseek": "DeepSeekModel",
-                "openai": "OpenAIModel",
-                "claude": "ClaudeModel",
-                "qwen": "QwenModel",
-                "gemini": "GeminiModel",
-                "kimi": "KimiModel",
-            }
-
-            if model_type not in type_map:
+            model_type = model_config.type
+            class_name = LLMBaseModel.MODEL_TYPE_MAP.get(model_type)
+            if not class_name:
                 error_msg = f"Unsupported model type: {model_type}"
                 logger.error(error_msg)
                 return False, error_msg
 
-            class_name = type_map[model_type]
             module = __import__(f"datus.models.{model_type}_model", fromlist=[class_name])
             model_class = getattr(module, class_name)
-
-            # Create model instance
             llm_model = model_class(model_config=model_config)
 
-            # Simple test - try to generate a response
             response = llm_model.generate("Hi")
             if response is not None and len(response.strip()) > 0:
                 return True, ""

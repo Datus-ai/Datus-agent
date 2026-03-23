@@ -32,7 +32,6 @@ agent:
   models: # Define available models
     openai:
       type: openai
-      vendor: openai
       base_url: https://api.openai.com/v1
       api_key: ${OPENAI_API_KEY}
       model: gpt-4-turbo
@@ -174,7 +173,6 @@ Add to the `models` section in agent.yml:
 models:
   my_provider:
     type: openai  # Use openai for OpenAI-compatible APIs
-    vendor: custom
     base_url: https://api.my-provider.com/v1
     api_key: ${MY_PROVIDER_API_KEY}
     model: my-model-name

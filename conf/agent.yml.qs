@@ -3,13 +3,11 @@ agent:
   models:
     deepseek-v3:
       type: deepseek
-      vendor: deepseek
       base_url: https://api.deepseek.com
       api_key: ${DEEPSEEK_API_KEY}
       model: deepseek-chat
     kimi-k2-turbo:
       type: openai
-      vendor: openai
       base_url: https://api.moonshot.cn/v1
       api_key: ${KIMI_API_KEY}
       model: kimi-k2-turbo-preview
