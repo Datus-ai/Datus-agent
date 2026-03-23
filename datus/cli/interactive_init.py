@@ -208,6 +208,38 @@ class InteractiveInit:
                 "model": "gemini-2.5-flash",
                 "options": ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-3-flash-preview", "gemini-3-pro-preview"],
             },
+            "alibaba_coding": {
+                "type": "claude",
+                "base_url": "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic",
+                "model": "qwen3-coder-plus",
+                "options": [
+                    "qwen3-coder-plus",
+                    "qwen3.5-plus",
+                    "glm-5",
+                    "glm-4.7",
+                    "kimi-k2.5",
+                    "MiniMax-M2.5",
+                    "claude-sonnet-4",
+                ],
+            },
+            "glm_coding": {
+                "type": "claude",
+                "base_url": "https://open.bigmodel.cn/api/anthropic",
+                "model": "glm-5",
+                "options": ["glm-5", "glm-4.7", "glm-4.5-air", "glm-4.5-flash", "claude-sonnet-4"],
+            },
+            "minimax_coding": {
+                "type": "claude",
+                "base_url": "https://api.minimaxi.com/anthropic",
+                "model": "MiniMax-M2.7",
+                "options": ["MiniMax-M2.7", "claude-sonnet-4"],
+            },
+            "kimi_coding": {
+                "type": "claude",
+                "base_url": "https://api.kimi.com/coding/",
+                "model": "kimi-for-coding",
+                "options": ["kimi-for-coding", "claude-sonnet-4"],
+            },
         }
 
         provider = Prompt.ask("- Which LLM provider?", choices=list(providers.keys()), default="openai")
@@ -233,6 +265,16 @@ class InteractiveInit:
             "qwen3-coder-plus": {"temperature": 1.0, "top_p": 0.95},
         }
 
+        # Coding Plan providers: prompt for User-Agent header
+        coding_plan_providers = {"alibaba_coding", "glm_coding", "minimax_coding", "kimi_coding"}
+        default_headers = None
+        if provider in coding_plan_providers:
+            default_ua = "claude-code/2.1.76 (cli)"
+            self.console.print("  [dim]Coding Plan endpoints may verify User-Agent header[/dim]")
+            user_agent = Prompt.ask("- User-Agent header", default=default_ua).strip()
+            if user_agent:
+                default_headers = {"User-Agent": user_agent}
+
         # Store configuration
         self.config["agent"]["target"] = provider
         model_config_entry = {
@@ -242,6 +284,8 @@ class InteractiveInit:
             "api_key": api_key,
             "model": model_name,
         }
+        if default_headers:
+            model_config_entry["default_headers"] = default_headers
         if model_name in model_param_overrides:
             model_config_entry.update(model_param_overrides[model_name])
         self.config["agent"]["models"][provider] = model_config_entry

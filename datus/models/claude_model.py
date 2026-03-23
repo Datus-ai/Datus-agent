@@ -127,6 +127,7 @@ class ClaudeModel(OpenAICompatibleModel):
             api_key=self.api_key,
             base_url=self.base_url if self.base_url else None,
             http_client=self.proxy_client,
+            default_headers=self.default_headers if self.default_headers else None,
         )
 
         # Wrap with LangSmith if available

@@ -29,6 +29,26 @@ agent:
       api_key: ${DEEPSEEK_API_KEY}
       model: deepseek-chat
 
+    # Coding Plan - Alibaba (multi-model aggregation, one subscription covers multiple models)
+    # Note: Coding Plan endpoints may verify request headers (User-Agent, etc.)
+    # Use default_headers to set required headers for your endpoint.
+    alibaba_coding:
+      type: claude
+      vendor: alibaba_coding
+      base_url: https://coding-intl.dashscope.aliyuncs.com/apps/anthropic
+      api_key: ${DASHSCOPE_API_KEY}
+      model: qwen3-coder-plus
+      # default_headers:
+      #   User-Agent: "your-tool-name/1.0"
+
+    # Coding Plan - GLM
+    glm_coding:
+      type: claude
+      vendor: glm_coding
+      base_url: https://open.bigmodel.cn/api/anthropic
+      api_key: ${GLM_API_KEY}
+      model: glm-5
+
   nodes:
     schema_linking:
       model: openai

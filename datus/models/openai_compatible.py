@@ -106,7 +106,10 @@ class OpenAICompatibleModel(LLMBaseModel):
         self.model_name = model_config.model
         self.api_key = self._get_api_key()
         self.base_url = self._get_base_url()
-        self.default_headers = self.model_config.default_headers
+        # Build headers: internal defaults, then user overrides
+        self.default_headers = {"User-Agent": "claude-code/2.1.76 (cli)"}
+        if self.model_config.default_headers:
+            self.default_headers.update(self.model_config.default_headers)
 
         # Initialize LiteLLM adapter for unified LLM calls
         self.litellm_adapter = LiteLLMAdapter(
@@ -115,6 +118,7 @@ class OpenAICompatibleModel(LLMBaseModel):
             api_key=self.api_key,
             base_url=self.base_url,
             enable_thinking=model_config.enable_thinking,
+            default_headers=self.default_headers,
         )
 
         # Context for tracing ToDo: replace it with Context object
@@ -1360,6 +1364,18 @@ class OpenAICompatibleModel(LLMBaseModel):
             "kimi-k2-turbo": {"context_length": 256000, "max_tokens": 8192},
             # Qwen Models
             "qwen3-coder": {"context_length": 128000, "max_tokens": 8192},
+            "qwen3.5-plus": {"context_length": 131072, "max_tokens": 16384},
+            "qwen3-coder-plus": {"context_length": 131072, "max_tokens": 16384},
+            # GLM Models (Coding Plan)
+            "glm-5": {"context_length": 128000, "max_tokens": 8192},
+            "glm-4.7": {"context_length": 128000, "max_tokens": 8192},
+            "glm-4.5-air": {"context_length": 128000, "max_tokens": 8192},
+            "glm-4.5-flash": {"context_length": 128000, "max_tokens": 8192},
+            # MiniMax Models (Coding Plan)
+            "MiniMax-M2.5": {"context_length": 1048576, "max_tokens": 16384},
+            "MiniMax-M2.7": {"context_length": 1048576, "max_tokens": 16384},
+            # Kimi Coding Plan
+            "kimi-for-coding": {"context_length": 131072, "max_tokens": 8192},
             # Gemini Models
             "gemini-2.5-pro": {"context_length": 1048576, "max_tokens": 65535},
             "gemini-2.5-flash": {"context_length": 1048576, "max_tokens": 8192},
