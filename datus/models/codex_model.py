@@ -4,16 +4,22 @@
 
 """Codex model implementation using OAuth authentication and Responses API."""
 
+import uuid
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
-from agents import SQLiteSession, Tool
+from agents import Agent, ModelSettings, Runner, Tool
+from agents.exceptions import MaxTurnsExceeded
+from agents.extensions.memory import AdvancedSQLiteSession
 from agents.mcp import MCPServerStdio
 
 from datus.auth.oauth_config import CODEX_API_BASE_URL
 from datus.auth.oauth_manager import OAuthManager
 from datus.configuration.agent_config import ModelConfig
 from datus.models.base import LLMBaseModel
-from datus.schemas.action_history import ActionHistory, ActionHistoryManager
+from datus.models.mcp_result_extractors import extract_sql_contexts
+from datus.models.mcp_utils import multiple_mcp_servers
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -40,9 +46,10 @@ class CodexModel(LLMBaseModel):
         self.model_name = model_config.model
         self.oauth_manager = OAuthManager()
         self._client = None
+        self._async_client = None
 
     def _get_client(self):
-        """Lazy-initialize the OpenAI client with OAuth token."""
+        """Lazy-initialize the sync OpenAI client with OAuth token."""
         if self._client is None:
             from openai import OpenAI
 
@@ -52,10 +59,31 @@ class CodexModel(LLMBaseModel):
             )
         return self._client
 
+    def _get_async_client(self):
+        """Lazy-initialize the async OpenAI client for Agent SDK."""
+        if self._async_client is None:
+            from openai import AsyncOpenAI
+
+            self._async_client = AsyncOpenAI(
+                api_key=self.oauth_manager.get_access_token(),
+                base_url=CODEX_API_BASE_URL,
+            )
+        return self._async_client
+
+    def _get_responses_model(self):
+        """Create an OpenAIResponsesModel for use with the Agent SDK."""
+        from agents.models.openai_responses import OpenAIResponsesModel
+
+        async_client = self._get_async_client()
+        return OpenAIResponsesModel(model=self.model_name, openai_client=async_client)
+
     def _refresh_client_token(self):
-        """Refresh the OAuth token on the existing client."""
-        client = self._get_client()
-        client.api_key = self.oauth_manager.get_access_token()
+        """Refresh the OAuth token on existing clients."""
+        token = self.oauth_manager.get_access_token()
+        if self._client is not None:
+            self._client.api_key = token
+        if self._async_client is not None:
+            self._async_client.api_key = token
 
     @staticmethod
     def _convert_prompt_to_input(prompt: Any) -> Any:
@@ -145,11 +173,41 @@ class CodexModel(LLMBaseModel):
         instruction: str = "",
         output_type: type = str,
         max_turns: int = 10,
-        session: Optional[SQLiteSession] = None,
+        session: Optional[AdvancedSQLiteSession] = None,
         **kwargs,
     ) -> Dict:
-        """Not implemented for Codex models in this initial version."""
-        raise NotImplementedError("generate_with_tools is not yet supported for Codex models")
+        """Generate response with tool support via the Codex Responses API."""
+        self._refresh_client_token()
+        responses_model = self._get_responses_model()
+
+        async with multiple_mcp_servers(mcp_servers or {}) as connected_servers:
+            agent_kwargs: Dict[str, Any] = {
+                "name": kwargs.pop("agent_name", "codex_agent"),
+                "instructions": instruction,
+                "output_type": output_type,
+                "model": responses_model,
+                "model_settings": ModelSettings(include_usage=True),
+            }
+            if connected_servers:
+                agent_kwargs["mcp_servers"] = list(connected_servers.values())
+            if tools:
+                agent_kwargs["tools"] = tools
+            if kwargs.get("hooks"):
+                agent_kwargs["hooks"] = kwargs["hooks"]
+
+            agent = Agent(**agent_kwargs)
+
+            try:
+                result = await Runner.run(agent, input=prompt, max_turns=max_turns, session=session)
+            except MaxTurnsExceeded as e:
+                raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns}) from e
+
+            return {
+                "content": result.final_output,
+                "sql_contexts": extract_sql_contexts(result),
+                "model": self.model_name,
+                "turns_used": getattr(result, "turn_count", 0),
+            }
 
     async def generate_with_tools_stream(
         self,
@@ -159,15 +217,137 @@ class CodexModel(LLMBaseModel):
         instruction: str = "",
         output_type: type = str,
         max_turns: int = 10,
-        session: Optional[SQLiteSession] = None,
+        session: Optional[AdvancedSQLiteSession] = None,
         action_history_manager: Optional[ActionHistoryManager] = None,
         hooks=None,
         interrupt_controller=None,
         **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
-        """Not implemented for Codex models in this initial version."""
-        raise NotImplementedError("generate_with_tools_stream is not yet supported for Codex models")
-        yield  # pragma: no cover — make this a generator
+        """Generate response with streaming and tool support via the Codex Responses API."""
+        if action_history_manager is None:
+            action_history_manager = ActionHistoryManager()
+
+        self._refresh_client_token()
+        responses_model = self._get_responses_model()
+
+        async with multiple_mcp_servers(mcp_servers or {}) as connected_servers:
+            agent_kwargs: Dict[str, Any] = {
+                "name": kwargs.pop("agent_name", "codex_agent"),
+                "instructions": instruction,
+                "output_type": output_type,
+                "model": responses_model,
+                "model_settings": ModelSettings(include_usage=True),
+            }
+            if connected_servers:
+                agent_kwargs["mcp_servers"] = list(connected_servers.values())
+            if tools:
+                agent_kwargs["tools"] = tools
+            if hooks:
+                agent_kwargs["hooks"] = hooks
+
+            agent = Agent(**agent_kwargs)
+
+            try:
+                result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns, session=session)
+            except MaxTurnsExceeded as e:
+                raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns}) from e
+
+            # Stream events and yield ActionHistory objects
+            while not result.is_complete:
+                if interrupt_controller and interrupt_controller.is_interrupted:
+                    from datus.cli.execution_state import ExecutionInterrupted
+
+                    raise ExecutionInterrupted("Interrupted by user")
+
+                async for event in result.stream_events():
+                    if interrupt_controller and interrupt_controller.is_interrupted:
+                        from datus.cli.execution_state import ExecutionInterrupted
+
+                        raise ExecutionInterrupted("Interrupted by user")
+
+                    # Handle assistant text from raw response events
+                    if hasattr(event, "type") and event.type == "raw_response_event":
+                        raw_data = getattr(event, "data", None)
+                        if raw_data and getattr(raw_data, "type", None) == "response.output_item.done":
+                            raw_item = getattr(raw_data, "item", None)
+                            if raw_item and getattr(raw_item, "type", None) == "message":
+                                content_list = getattr(raw_item, "content", [])
+                                text_parts = [
+                                    getattr(p, "text", "") for p in (content_list or []) if getattr(p, "text", None)
+                                ]
+                                full_text = "\n".join(text_parts).strip()
+                                if full_text:
+                                    action = ActionHistory(
+                                        action_id=f"assistant_{uuid.uuid4().hex[:8]}",
+                                        role=ActionRole.ASSISTANT,
+                                        messages=full_text[:200] + ("..." if len(full_text) > 200 else ""),
+                                        action_type="response",
+                                        input={},
+                                        output={"raw_output": full_text},
+                                        status=ActionStatus.SUCCESS,
+                                    )
+                                    action_history_manager.add_action(action)
+                                    yield action
+                        continue
+
+                    if not hasattr(event, "type") or event.type != "run_item_stream_event":
+                        continue
+                    if not (hasattr(event, "item") and hasattr(event.item, "type")):
+                        continue
+
+                    item_type = event.item.type
+
+                    # Handle tool call events
+                    if item_type == "tool_call_item":
+                        raw_item = getattr(event.item, "raw_item", None)
+                        if raw_item:
+                            tool_name = getattr(raw_item, "name", "unknown")
+                            call_id = getattr(raw_item, "call_id", f"tool_{uuid.uuid4().hex[:8]}")
+                            action = ActionHistory(
+                                action_id=call_id,
+                                role=ActionRole.TOOL,
+                                messages=f"Calling tool: {tool_name}",
+                                action_type="tool_call",
+                                input={"tool": tool_name, "arguments": getattr(raw_item, "arguments", "{}")},
+                                output={},
+                                status=ActionStatus.PROCESSING,
+                            )
+                            action_history_manager.add_action(action)
+                            yield action
+
+                    elif item_type == "tool_call_output_item":
+                        raw_item = getattr(event.item, "raw_item", None)
+                        if raw_item:
+                            call_id = getattr(raw_item, "call_id", f"tool_{uuid.uuid4().hex[:8]}")
+                            output_text = getattr(raw_item, "output", "")
+                            action = ActionHistory(
+                                action_id=f"result_{call_id}",
+                                role=ActionRole.TOOL,
+                                messages=f"Tool result: {str(output_text)[:200]}",
+                                action_type="tool_result",
+                                input={"call_id": call_id},
+                                output={"result": str(output_text)},
+                                status=ActionStatus.SUCCESS,
+                            )
+                            action_history_manager.add_action(action)
+                            yield action
+
+            # Final summary after streaming completes
+            final_output = result.final_output if hasattr(result, "final_output") else ""
+            final_action = ActionHistory(
+                action_id=f"final_{uuid.uuid4().hex[:8]}",
+                role=ActionRole.ASSISTANT,
+                messages=str(final_output)[:200] if final_output else "",
+                action_type="final_response",
+                input={},
+                output={
+                    "raw_output": str(final_output) if final_output else "",
+                    "sql_contexts": extract_sql_contexts(result) if hasattr(result, "final_output") else [],
+                },
+                status=ActionStatus.SUCCESS,
+            )
+            action_history_manager.add_action(final_action)
+            yield final_action
 
     def token_count(self, prompt: str) -> int:
         """Estimate token count using a simple heuristic."""
