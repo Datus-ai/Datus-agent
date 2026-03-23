@@ -71,6 +71,7 @@ class TestCodexModelGenerate:
         mock_client.responses.create.assert_called_once_with(
             model="gpt-5.3-codex",
             input="Say hello",
+            store=False,
         )
 
     @patch("datus.models.codex_model.OAuthManager")

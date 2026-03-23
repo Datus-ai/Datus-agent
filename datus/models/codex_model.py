@@ -116,6 +116,7 @@ class CodexModel(LLMBaseModel):
             response = self._get_client().responses.create(
                 model=self.model_name,
                 input=input_data,
+                store=False,
             )
             return response.output_text
         except Exception as e:
@@ -127,6 +128,7 @@ class CodexModel(LLMBaseModel):
                 response = self._get_client().responses.create(
                     model=self.model_name,
                     input=input_data,
+                    store=False,
                 )
                 return response.output_text
             raise
@@ -149,6 +151,7 @@ class CodexModel(LLMBaseModel):
         create_kwargs: Dict[str, Any] = {
             "model": self.model_name,
             "input": input_data,
+            "store": False,
         }
 
         output_schema = kwargs.get("output_schema")
@@ -186,7 +189,7 @@ class CodexModel(LLMBaseModel):
                 "instructions": instruction,
                 "output_type": output_type,
                 "model": responses_model,
-                "model_settings": ModelSettings(include_usage=True),
+                "model_settings": ModelSettings(store=False, include_usage=True),
             }
             if connected_servers:
                 agent_kwargs["mcp_servers"] = list(connected_servers.values())
@@ -236,7 +239,7 @@ class CodexModel(LLMBaseModel):
                 "instructions": instruction,
                 "output_type": output_type,
                 "model": responses_model,
-                "model_settings": ModelSettings(include_usage=True),
+                "model_settings": ModelSettings(store=False, include_usage=True),
             }
             if connected_servers:
                 agent_kwargs["mcp_servers"] = list(connected_servers.values())
