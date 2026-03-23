@@ -44,6 +44,9 @@ litellm.drop_params = True
 # When tool_choice is set but tools is empty, LiteLLM will add a dummy tool
 litellm.modify_params = True
 litellm.set_verbose = False
+# Suppress "Provider List: ..." debug prints to stdout when LiteLLM encounters
+# model names not in its built-in list (e.g. Coding Plan models like kimi-for-coding)
+litellm.suppress_debug_info = True
 
 setup_tracing()
 
