@@ -168,6 +168,7 @@ async def _collect_actions(events_list) -> List[ActionHistory]:
     mock_config.max_retry = 1
     mock_config.retry_interval = 0
     model.model_config = mock_config
+    model.default_headers = None
 
     fake_result = _build_fake_result(events_list)
 

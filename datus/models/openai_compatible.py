@@ -273,6 +273,10 @@ class OpenAICompatibleModel(LLMBaseModel):
             if self.base_url:
                 params["api_base"] = self.base_url
 
+            # Add custom headers for Coding Plan endpoints
+            if self.default_headers:
+                params["extra_headers"] = self.default_headers
+
             # Add temperature: priority is kwargs > model_config > default (0.7)
             if "temperature" in kwargs:
                 params["temperature"] = kwargs["temperature"]
@@ -572,6 +576,10 @@ class OpenAICompatibleModel(LLMBaseModel):
                 if self.model_config.top_p is not None:
                     model_settings_kwargs["top_p"] = self.model_config.top_p
 
+                # Inject custom headers for Coding Plan endpoints
+                if self.default_headers:
+                    model_settings_kwargs["extra_headers"] = self.default_headers
+
                 # Enable reasoning/thinking mode for thinking models (deepseek-r1, o1, kimi-k2.5, etc.)
                 # This enables preserve_thinking_blocks in LitellmModel to correctly handle
                 # reasoning_content in multi-turn conversations with tool calls
@@ -756,6 +764,10 @@ class OpenAICompatibleModel(LLMBaseModel):
                 # Apply top_p from model config (e.g., kimi-k2.5 requires top_p=0.95)
                 if self.model_config.top_p is not None:
                     model_settings_kwargs["top_p"] = self.model_config.top_p
+
+                # Inject custom headers for Coding Plan endpoints
+                if self.default_headers:
+                    model_settings_kwargs["extra_headers"] = self.default_headers
 
                 # Enable reasoning/thinking mode for thinking models (deepseek-r1, o1, kimi-k2.5, etc.)
                 # This enables preserve_thinking_blocks in LitellmModel to correctly handle

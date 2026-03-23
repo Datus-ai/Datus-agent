@@ -264,9 +264,9 @@ class LiteLLMAdapter:
         if self.base_url:
             model_kwargs["base_url"] = self.base_url
 
-        # Add custom headers if specified (e.g., for Coding Plan endpoint compatibility)
-        if self.default_headers:
-            model_kwargs["extra_headers"] = self.default_headers
+        # Note: default_headers are NOT passed here — LitellmModel.__init__ only
+        # accepts model/base_url/api_key. Headers are injected via ModelSettings.extra_headers
+        # at call time in OpenAICompatibleModel.generate_with_tools/_stream.
 
         logger.debug(f"Creating LitellmModel with model={self.litellm_model_name}")
 
