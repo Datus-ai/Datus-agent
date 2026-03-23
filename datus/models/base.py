@@ -44,6 +44,7 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         LLMProvider.CLAUDE: "ClaudeModel",
         LLMProvider.GEMINI: "GeminiModel",
         LLMProvider.KIMI: "KimiModel",
+        LLMProvider.CODEX: "CodexModel",
     }
 
     def __init__(self, model_config: ModelConfig):

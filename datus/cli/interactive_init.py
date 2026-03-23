@@ -208,9 +208,20 @@ class InteractiveInit:
                 "model": "gemini-2.5-flash",
                 "options": ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-3-flash-preview", "gemini-3-pro-preview"],
             },
+            "codex": {
+                "type": "codex",
+                "base_url": "https://chatgpt.com/backend-api/codex",
+                "model": "gpt-5.3-codex",
+                "options": ["gpt-5.3-codex", "gpt-5.1-codex-mini", "o3-codex"],
+                "auth_type": "oauth",
+            },
         }
 
         provider = Prompt.ask("- Which LLM provider?", choices=list(providers.keys()), default="openai")
+
+        # OAuth flow for Codex provider
+        if providers[provider].get("auth_type") == "oauth":
+            return self._configure_codex_oauth(provider, providers[provider])
 
         # API key input
         api_key = getpass("- Enter your API key: ")
@@ -440,6 +451,45 @@ class InteractiveInit:
         self.console.print(f"\nYou are ready to run `datus-cli --namespace {self.namespace_name}` 🚀")
         self.console.print("\nCheck the document at https://docs.datus.ai/ for more details.")
 
+    def _configure_codex_oauth(self, provider: str, provider_config: dict) -> bool:
+        """Configure Codex provider with OAuth authentication."""
+        # Model selection
+        if "options" in provider_config:
+            options_hint = ", ".join(provider_config["options"])
+            self.console.print(f"  [dim]reference options: {options_hint}[/dim]")
+        model_name = Prompt.ask("- Enter your model name", default=provider_config["model"]).strip()
+
+        # Authentication method
+        auth_method = Prompt.ask("- Authentication method", choices=["browser", "device_code"], default="browser")
+
+        # Run OAuth login
+        self.console.print("→ Starting OAuth authentication...")
+        try:
+            from datus.auth.oauth_manager import OAuthManager
+
+            oauth_mgr = OAuthManager()
+            if auth_method == "browser":
+                oauth_mgr.login_browser()
+            else:
+                oauth_mgr.login_device()
+        except Exception as e:
+            self.console.print(f"❌ OAuth authentication failed: {e}")
+            return False
+
+        # Store configuration
+        self.config["agent"]["target"] = provider
+        self.config["agent"]["models"][provider] = {
+            "type": provider_config["type"],
+            "vendor": provider,
+            "base_url": provider_config["base_url"],
+            "api_key": "",
+            "model": model_name,
+            "auth_type": "oauth",
+        }
+
+        self.console.print(" ✅ OAuth authentication successful\n")
+        return True
+
     def _test_llm_connectivity(self) -> tuple[bool, str]:
         """Test LLM model connectivity."""
         try:
@@ -470,6 +520,7 @@ class InteractiveInit:
                 "qwen": "QwenModel",
                 "gemini": "GeminiModel",
                 "kimi": "KimiModel",
+                "codex": "CodexModel",
             }
 
             if model_type not in type_map:

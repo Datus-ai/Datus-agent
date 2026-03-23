@@ -89,6 +89,7 @@ class ModelConfig:
     # Model-specific parameters
     temperature: Optional[float] = None  # Some models like kimi-k2.5 require temperature=1
     top_p: Optional[float] = None  # Some models like kimi-k2.5 require top_p=0.95
+    auth_type: str = "api_key"  # "api_key" | "oauth" (oauth for Codex subscription)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -857,7 +858,7 @@ def load_model_config(data: dict) -> ModelConfig:
     return ModelConfig(
         type=data["type"],
         base_url=resolve_env(data["base_url"]) if "base_url" in data else None,
-        api_key=resolve_env(data["api_key"]),
+        api_key=resolve_env(data.get("api_key", "")),
         model=resolve_env(data["model"]),
         save_llm_trace=data.get("save_llm_trace", False),
         enable_thinking=data.get("enable_thinking", False),
@@ -867,6 +868,7 @@ def load_model_config(data: dict) -> ModelConfig:
         retry_interval=float(retry_interval) if retry_interval is not None else 2.0,
         temperature=float(temperature) if temperature is not None else None,
         top_p=float(top_p) if top_p is not None else None,
+        auth_type=data.get("auth_type", "api_key"),
     )
 
 

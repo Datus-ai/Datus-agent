@@ -29,6 +29,16 @@ agent:
       api_key: ${DEEPSEEK_API_KEY}
       model: deepseek-chat
 
+    # OpenAI Codex (ChatGPT subscription, OAuth authentication)
+    # Run `datus init` and select "codex" to complete OAuth login
+    codex:
+      type: codex
+      vendor: codex
+      base_url: https://chatgpt.com/backend-api/codex
+      api_key: ""
+      model: gpt-5.3-codex
+      auth_type: oauth
+
   nodes:
     schema_linking:
       model: openai

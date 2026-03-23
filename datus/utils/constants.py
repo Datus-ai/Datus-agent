@@ -28,6 +28,7 @@ class LLMProvider(str, Enum):
     GEMINI = "gemini"
     LLAMA = "llama"
     GPT = "gpt"  # Alternative name for OpenAI
+    CODEX = "codex"  # OpenAI Codex (ChatGPT subscription, OAuth authentication)
 
 
 class EmbeddingProvider(str, Enum):
