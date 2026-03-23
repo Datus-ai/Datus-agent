@@ -56,6 +56,13 @@ class ErrorCode(Enum):
         "300023",
         "Model returned response in illegal format. Response: '{response_preview}' (length: {response_length})",
     )
+
+    # OAuth authentication errors
+    OAUTH_NOT_AUTHENTICATED = ("300030", "Not authenticated. Please run OAuth login first.")
+    OAUTH_AUTH_FAILED = ("300031", "OAuth authorization failed: {error_detail}")
+    OAUTH_NO_REFRESH_TOKEN = ("300032", "No refresh token available. Please re-authenticate.")
+    OAUTH_TIMEOUT = ("300033", "OAuth authentication timed out")
+
     # Tool errors
     TOOL_EXECUTION_FAILED = ("400001", "Tool execution failed")
     TOOL_INVALID_INPUT = ("400002", "Invalid tool input")

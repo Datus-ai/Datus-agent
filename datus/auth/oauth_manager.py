@@ -31,6 +31,7 @@ from datus.auth.oauth_config import (
 )
 from datus.auth.pkce import generate_pkce_pair, generate_state
 from datus.auth.token_storage import TokenStorage
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -111,9 +112,12 @@ class OAuthManager:
         server.server_close()
 
         if result["error"]:
-            raise RuntimeError(f"OAuth authorization failed: {result['error']}")
+            raise DatusException(ErrorCode.OAUTH_AUTH_FAILED, message_args={"error_detail": result["error"]})
         if not result["code"]:
-            raise RuntimeError("No authorization code received (timeout or cancelled)")
+            raise DatusException(
+                ErrorCode.OAUTH_AUTH_FAILED,
+                message_args={"error_detail": "No authorization code received (timeout or cancelled)"},
+            )
 
         tokens = self._exchange_code(result["code"], code_verifier)
         self.token_storage.save(tokens)
@@ -175,7 +179,13 @@ class OAuthManager:
                 logger.info("Device code OAuth login successful")
                 return tokens
 
-            error_body = token_resp.json()
+            try:
+                error_body = token_resp.json()
+            except Exception:
+                raise DatusException(
+                    ErrorCode.OAUTH_AUTH_FAILED,
+                    message_args={"error_detail": f"Unexpected response (HTTP {token_resp.status_code})"},
+                )
             error_code = error_body.get("error", "")
             if error_code == "authorization_pending":
                 continue
@@ -183,9 +193,9 @@ class OAuthManager:
                 interval = min(interval + 5, 30)
                 continue
             else:
-                raise RuntimeError(f"Device code authentication failed: {error_code}")
+                raise DatusException(ErrorCode.OAUTH_AUTH_FAILED, message_args={"error_detail": error_code})
 
-        raise RuntimeError("Device code authentication timed out")
+        raise DatusException(ErrorCode.OAUTH_TIMEOUT)
 
     # ------------------------------------------------------------------
     # Token management
@@ -199,7 +209,7 @@ class OAuthManager:
         """
         tokens = self.token_storage.load()
         if not tokens or "access_token" not in tokens:
-            raise RuntimeError("Not authenticated. Please run OAuth login first.")
+            raise DatusException(ErrorCode.OAUTH_NOT_AUTHENTICATED)
 
         if self.token_storage.needs_refresh():
             tokens = self.refresh_tokens()
@@ -214,7 +224,7 @@ class OAuthManager:
         """
         tokens = self.token_storage.load()
         if not tokens or "refresh_token" not in tokens:
-            raise RuntimeError("No refresh token available. Please re-authenticate.")
+            raise DatusException(ErrorCode.OAUTH_NO_REFRESH_TOKEN)
 
         resp = httpx.post(
             TOKEN_URL,

@@ -487,6 +487,26 @@ class InteractiveInit:
             "auth_type": "oauth",
         }
 
+        # Verify connectivity
+        self.console.print("→ Verifying Codex API connectivity...")
+        try:
+            from datus.configuration.agent_config import ModelConfig
+            from datus.models.codex_model import CodexModel
+
+            test_config = ModelConfig(
+                type="codex",
+                base_url=provider_config["base_url"],
+                api_key="",
+                model=model_name,
+                auth_type="oauth",
+            )
+            test_model = CodexModel(model_config=test_config)
+            resp = test_model.generate("Hi")
+            if not resp or not resp.strip():
+                self.console.print("⚠️  OAuth login succeeded but model returned empty response")
+        except Exception as e:
+            self.console.print(f"⚠️  OAuth login succeeded but connectivity test failed: {e}")
+
         self.console.print(" ✅ OAuth authentication successful\n")
         return True
 

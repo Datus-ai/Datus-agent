@@ -7,9 +7,8 @@
 import uuid
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
-from agents import Agent, ModelSettings, Runner, Tool
+from agents import Agent, ModelSettings, Runner, SQLiteSession, Tool
 from agents.exceptions import MaxTurnsExceeded
-from agents.extensions.memory import AdvancedSQLiteSession
 from agents.mcp import MCPServerStdio
 
 from datus.auth.oauth_config import CODEX_API_BASE_URL
@@ -120,8 +119,9 @@ class CodexModel(LLMBaseModel):
             )
             return response.output_text
         except Exception as e:
-            # On 401, try refreshing token once and retry
-            if "401" in str(e) or "unauthorized" in str(e).lower():
+            from openai import AuthenticationError
+
+            if isinstance(e, AuthenticationError):
                 logger.info("Got 401, refreshing OAuth token and retrying...")
                 self.oauth_manager.refresh_tokens()
                 self._refresh_client_token()
@@ -176,7 +176,7 @@ class CodexModel(LLMBaseModel):
         instruction: str = "",
         output_type: type = str,
         max_turns: int = 10,
-        session: Optional[AdvancedSQLiteSession] = None,
+        session: Optional[SQLiteSession] = None,
         **kwargs,
     ) -> Dict:
         """Generate response with tool support via the Codex Responses API."""
@@ -220,7 +220,7 @@ class CodexModel(LLMBaseModel):
         instruction: str = "",
         output_type: type = str,
         max_turns: int = 10,
-        session: Optional[AdvancedSQLiteSession] = None,
+        session: Optional[SQLiteSession] = None,
         action_history_manager: Optional[ActionHistoryManager] = None,
         hooks=None,
         interrupt_controller=None,
@@ -335,7 +335,11 @@ class CodexModel(LLMBaseModel):
                         raw_item = getattr(event.item, "raw_item", None)
                         output_content = getattr(event.item, "output", "")
                         if raw_item:
-                            call_id = getattr(raw_item, "call_id", None)
+                            # raw_item can be a dict (Responses API) or Pydantic model (Chat Completions)
+                            if isinstance(raw_item, dict):
+                                call_id = raw_item.get("call_id")
+                            else:
+                                call_id = getattr(raw_item, "call_id", None)
                             if not call_id:
                                 call_id = f"tool_{uuid.uuid4().hex[:8]}"
 

@@ -32,6 +32,7 @@ class TokenStorage:
         Args:
             tokens: Dictionary containing access_token, refresh_token, etc.
         """
+        tokens = dict(tokens)
         tokens.setdefault("last_refresh", datetime.now(timezone.utc).isoformat())
 
         dir_path = os.path.dirname(self.path)

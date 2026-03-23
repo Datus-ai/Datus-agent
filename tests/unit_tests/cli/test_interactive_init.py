@@ -607,3 +607,104 @@ class TestOverwriteSqlAndLogResult:
 
         # Exception should be caught and reported via print_rich_exception
         mock_print_exc.assert_called_once()
+
+
+class TestConfigureCodexOAuth:
+    """Tests for the Codex OAuth configuration flow."""
+
+    def test_codex_oauth_success(self):
+        """Test successful Codex OAuth configuration."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            init = InteractiveInit(user_home=tmpdir)
+
+            provider_config = {
+                "type": "codex",
+                "base_url": "https://chatgpt.com/backend-api/codex",
+                "model": "gpt-5.3-codex",
+                "options": ["gpt-5.3-codex", "gpt-5.1-codex-mini", "o3-codex"],
+                "auth_type": "oauth",
+            }
+
+            with (
+                patch(
+                    "datus.cli.interactive_init.Prompt.ask",
+                    side_effect=["gpt-5.3-codex", "browser"],
+                ),
+                patch("datus.auth.oauth_manager.OAuthManager") as mock_oauth_cls,
+                patch.object(init, "console"),
+            ):
+                mock_oauth = MagicMock()
+                mock_oauth_cls.return_value = mock_oauth
+
+                # Mock the connectivity test
+                with patch("datus.models.codex_model.CodexModel") as mock_model_cls:
+                    mock_model = MagicMock()
+                    mock_model.generate.return_value = "Hi there!"
+                    mock_model_cls.return_value = mock_model
+
+                    result = init._configure_codex_oauth("codex", provider_config)
+
+            assert result is True
+            assert init.config["agent"]["target"] == "codex"
+            assert init.config["agent"]["models"]["codex"]["type"] == "codex"
+            assert init.config["agent"]["models"]["codex"]["auth_type"] == "oauth"
+            assert init.config["agent"]["models"]["codex"]["api_key"] == ""
+
+    def test_codex_oauth_login_failure(self):
+        """Test Codex OAuth when login fails."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            init = InteractiveInit(user_home=tmpdir)
+
+            provider_config = {
+                "type": "codex",
+                "base_url": "https://chatgpt.com/backend-api/codex",
+                "model": "gpt-5.3-codex",
+                "auth_type": "oauth",
+            }
+
+            with (
+                patch(
+                    "datus.cli.interactive_init.Prompt.ask",
+                    side_effect=["gpt-5.3-codex", "browser"],
+                ),
+                patch("datus.auth.oauth_manager.OAuthManager") as mock_oauth_cls,
+                patch.object(init, "console"),
+            ):
+                mock_oauth = MagicMock()
+                mock_oauth.login_browser.side_effect = Exception("Login failed")
+                mock_oauth_cls.return_value = mock_oauth
+
+                result = init._configure_codex_oauth("codex", provider_config)
+
+            assert result is False
+
+    def test_codex_oauth_device_code(self):
+        """Test Codex OAuth with device code method."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            init = InteractiveInit(user_home=tmpdir)
+
+            provider_config = {
+                "type": "codex",
+                "base_url": "https://chatgpt.com/backend-api/codex",
+                "model": "gpt-5.3-codex",
+                "options": ["gpt-5.3-codex"],
+                "auth_type": "oauth",
+            }
+
+            with (
+                patch("datus.cli.interactive_init.Prompt.ask", side_effect=["gpt-5.3-codex", "device_code"]),
+                patch("datus.auth.oauth_manager.OAuthManager") as mock_oauth_cls,
+                patch.object(init, "console"),
+            ):
+                mock_oauth = MagicMock()
+                mock_oauth_cls.return_value = mock_oauth
+
+                with patch("datus.models.codex_model.CodexModel") as mock_model_cls:
+                    mock_model = MagicMock()
+                    mock_model.generate.return_value = "Hello"
+                    mock_model_cls.return_value = mock_model
+
+                    result = init._configure_codex_oauth("codex", provider_config)
+
+            assert result is True
+            mock_oauth.login_device.assert_called_once()
