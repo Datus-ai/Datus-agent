@@ -47,6 +47,8 @@ class LiteLLMAdapter:
         "qwen": "dashscope/",
         "gemini": "gemini/",
         "kimi": "moonshot/",  # Moonshot AI - https://docs.litellm.ai/docs/providers/moonshot
+        "minimax": "openai/",  # MiniMax - OpenAI-compatible API
+        "glm": "openai/",  # Zhipu GLM - OpenAI-compatible API
     }
 
     # Provider-specific base URLs (if not using default)
@@ -57,6 +59,8 @@ class LiteLLMAdapter:
         "qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1",
         "gemini": None,  # Use LiteLLM default (native Gemini API, not OpenAI-compatible)
         "kimi": "https://api.moonshot.ai/v1",  # Moonshot AI global endpoint
+        "minimax": "https://api.minimaxi.com/v1",  # MiniMax OpenAI-compatible endpoint
+        "glm": "https://open.bigmodel.cn/api/paas/v4",  # Zhipu GLM OpenAI-compatible endpoint
     }
 
     # Model name prefixes for auto-detection
@@ -71,8 +75,8 @@ class LiteLLMAdapter:
         "deepseek": "deepseek",  # deepseek-chat, deepseek-reasoner
         "qwen": "qwen",  # qwen3-coder, etc.
         "gemini": "gemini",  # gemini-2.5-pro, gemini-3-flash
-        "minimax": "minimax",  # MiniMax-M2.5, etc. (Coding Plan only — no standalone LiteLLM routing)
-        "glm": "glm",  # glm-5, glm-4.7, etc. (Coding Plan only — no standalone LiteLLM routing)
+        "minimax": "minimax",  # MiniMax-M2.5, MiniMax-M2.7
+        "glm": "glm",  # glm-5, glm-4.7, etc.
     }
 
     # Known domains for each provider (used to validate auto-detection against base_url)

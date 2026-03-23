@@ -139,21 +139,6 @@ class ClaudeModel(OpenAICompatibleModel):
 
         logger.debug(f"Initialized Claude model: {self.model_name}, use_native_api={self.use_native_api}")
 
-    @property
-    def model_specs(self) -> Dict[str, Dict[str, int]]:
-        """Model specifications for Claude models, merged with parent specs."""
-        specs = super().model_specs.copy()
-        specs.update(
-            {
-                "claude-sonnet-4-5": {"context_length": 1048576, "max_tokens": 65536},
-                "claude-opus-4-1": {"context_length": 200000, "max_tokens": 32000},
-                "claude-opus-4": {"context_length": 200000, "max_tokens": 32000},
-                "claude-sonnet-4": {"context_length": 1048576, "max_tokens": 65536},
-                "claude-3-7-sonnet": {"context_length": 200000, "max_tokens": 128000},
-            }
-        )
-        return specs
-
     def generate(self, prompt: Any, enable_thinking: bool = False, **kwargs) -> str:
         """Generate response using LiteLLM (default) or native Anthropic API.
 

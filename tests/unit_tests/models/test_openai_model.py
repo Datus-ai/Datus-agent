@@ -263,3 +263,85 @@ class TestGeminiModel:
         assert "gemini-2.5-pro" in specs
         assert "context_length" in specs["gemini-2.0-flash"]
         assert "max_tokens" in specs["gemini-2.0-flash"]
+
+
+# ---------------------------------------------------------------------------
+# MiniMaxModel
+# ---------------------------------------------------------------------------
+
+
+class TestMiniMaxModel:
+    def _make(self, api_key="test-minimax-key", base_url=None):
+        from datus.models.minimax_model import MiniMaxModel
+
+        config = _make_model_config(model="MiniMax-M2.7", api_key=api_key, base_url=base_url)
+        with patch("datus.models.openai_compatible.OpenAICompatibleModel.__init__", return_value=None):
+            instance = MiniMaxModel.__new__(MiniMaxModel)
+            instance.model_config = config
+            instance.model_name = "MiniMax-M2.7"
+        return instance
+
+    def test_get_api_key_from_config(self):
+        node = self._make(api_key="my-minimax-key")
+        assert node._get_api_key() == "my-minimax-key"
+
+    def test_get_api_key_from_env(self, monkeypatch):
+        node = self._make(api_key="")
+        monkeypatch.setenv("MINIMAX_API_KEY", "env-minimax-key")
+        assert node._get_api_key() == "env-minimax-key"
+
+    def test_get_api_key_raises_when_missing(self, monkeypatch):
+        node = self._make(api_key="")
+        monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
+        with pytest.raises(ValueError, match="MiniMax API key"):
+            node._get_api_key()
+
+    def test_get_base_url_default(self, monkeypatch):
+        node = self._make(base_url=None)
+        monkeypatch.delenv("MINIMAX_API_BASE", raising=False)
+        assert "minimaxi.com" in node._get_base_url()
+
+    def test_get_base_url_custom(self):
+        node = self._make(base_url="https://my-minimax.example.com/v1")
+        assert node._get_base_url() == "https://my-minimax.example.com/v1"
+
+
+# ---------------------------------------------------------------------------
+# GLMModel
+# ---------------------------------------------------------------------------
+
+
+class TestGLMModel:
+    def _make(self, api_key="test-glm-key", base_url=None):
+        from datus.models.glm_model import GLMModel
+
+        config = _make_model_config(model="glm-5", api_key=api_key, base_url=base_url)
+        with patch("datus.models.openai_compatible.OpenAICompatibleModel.__init__", return_value=None):
+            instance = GLMModel.__new__(GLMModel)
+            instance.model_config = config
+            instance.model_name = "glm-5"
+        return instance
+
+    def test_get_api_key_from_config(self):
+        node = self._make(api_key="my-glm-key")
+        assert node._get_api_key() == "my-glm-key"
+
+    def test_get_api_key_from_env(self, monkeypatch):
+        node = self._make(api_key="")
+        monkeypatch.setenv("GLM_API_KEY", "env-glm-key")
+        assert node._get_api_key() == "env-glm-key"
+
+    def test_get_api_key_raises_when_missing(self, monkeypatch):
+        node = self._make(api_key="")
+        monkeypatch.delenv("GLM_API_KEY", raising=False)
+        with pytest.raises(ValueError, match="GLM API key"):
+            node._get_api_key()
+
+    def test_get_base_url_default(self, monkeypatch):
+        node = self._make(base_url=None)
+        monkeypatch.delenv("GLM_API_BASE", raising=False)
+        assert "bigmodel.cn" in node._get_base_url()
+
+    def test_get_base_url_custom(self):
+        node = self._make(base_url="https://my-glm.example.com/v4")
+        assert node._get_base_url() == "https://my-glm.example.com/v4"

@@ -63,6 +63,24 @@ providers:
       - gemini-3-flash-preview
       - gemini-3-pro-preview
 
+  minimax:
+    type: minimax
+    base_url: https://api.minimaxi.com/v1
+    default_model: MiniMax-M2.7
+    models:
+      - MiniMax-M2.7
+      - MiniMax-M2.5
+
+  glm:
+    type: glm
+    base_url: https://open.bigmodel.cn/api/paas/v4
+    default_model: glm-5
+    models:
+      - glm-5
+      - glm-4.7
+      - glm-4.5-air
+      - glm-4.5-flash
+
   # Coding Plan providers (coding_plan: true enables User-Agent header prompt)
   alibaba_coding:
     type: claude
@@ -117,3 +135,130 @@ model_overrides:
   qwen3-coder-plus:
     temperature: 1.0
     top_p: 0.95
+
+# Model specifications: context_length and max_tokens for each model.
+# Used for token budget management. Prefix matching is applied at runtime
+# (e.g. "gpt-4o-mini" matches "gpt-4o", "kimi-k2-0711-preview" matches "kimi-k2").
+model_specs:
+  # OpenAI Models
+  gpt-5:
+    context_length: 400000
+    max_tokens: 128000
+  gpt-4.1:
+    context_length: 400000
+    max_tokens: 128000
+  gpt-4o:
+    context_length: 128000
+    max_tokens: 16384
+  o3:
+    context_length: 200000
+    max_tokens: 200000
+  o4:
+    context_length: 200000
+    max_tokens: 200000
+
+  # DeepSeek Models
+  deepseek-chat:
+    context_length: 65535
+    max_tokens: 8192
+  deepseek-v3:
+    context_length: 65535
+    max_tokens: 8192
+  deepseek-reasoner:
+    context_length: 65535
+    max_tokens: 65535
+  deepseek-r1:
+    context_length: 65535
+    max_tokens: 65535
+
+  # Moonshot (Kimi) Models
+  kimi-k2:
+    context_length: 256000
+    max_tokens: 8192
+  kimi-k2.5:
+    context_length: 256000
+    max_tokens: 16384
+  kimi-k2-turbo:
+    context_length: 256000
+    max_tokens: 8192
+
+  # Qwen Models
+  qwen3-coder:
+    context_length: 128000
+    max_tokens: 8192
+  qwen3.5-plus:
+    context_length: 1000000
+    max_tokens: 16384
+  qwen3-coder-plus:
+    context_length: 1000000
+    max_tokens: 16384
+
+  # GLM Models (Coding Plan)
+  glm-5:
+    context_length: 200000
+    max_tokens: 131072
+  glm-4.7:
+    context_length: 200000
+    max_tokens: 131072
+  glm-4.5-air:
+    context_length: 128000
+    max_tokens: 8192
+  glm-4.5-flash:
+    context_length: 128000
+    max_tokens: 8192
+
+  # MiniMax Models (Coding Plan)
+  MiniMax-M2.5:
+    context_length: 204800
+    max_tokens: 16384
+  MiniMax-M2.7:
+    context_length: 204800
+    max_tokens: 16384
+
+  # Kimi Coding Plan
+  kimi-for-coding:
+    context_length: 256000
+    max_tokens: 8192
+
+  # Claude Models
+  claude-sonnet-4-5:
+    context_length: 1048576
+    max_tokens: 65536
+  claude-opus-4-1:
+    context_length: 200000
+    max_tokens: 32000
+  claude-opus-4:
+    context_length: 200000
+    max_tokens: 32000
+  claude-sonnet-4:
+    context_length: 1048576
+    max_tokens: 65536
+  claude-3-7-sonnet:
+    context_length: 200000
+    max_tokens: 128000
+
+  # Gemini Models
+  gemini-2.5-pro:
+    context_length: 1048576
+    max_tokens: 65535
+  gemini-2.5-flash:
+    context_length: 1048576
+    max_tokens: 8192
+  gemini-2.5-flash-lite:
+    context_length: 1048576
+    max_tokens: 8192
+  gemini-2.0-flash:
+    context_length: 1048576
+    max_tokens: 8192
+  gemini-3-pro-preview:
+    context_length: 1048576
+    max_tokens: 65536
+  gemini-3-flash-preview:
+    context_length: 1048576
+    max_tokens: 65536
+  gemini-1.5-pro:
+    context_length: 2097152
+    max_tokens: 8192
+  gemini-1.5-flash:
+    context_length: 1048576
+    max_tokens: 8192

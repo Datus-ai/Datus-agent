@@ -31,6 +31,7 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
+from datus.utils.resource_utils import read_data_file_text
 from datus.utils.traceable_utils import optional_traceable, setup_tracing
 
 logger = get_logger(__name__)
@@ -49,6 +50,23 @@ litellm.set_verbose = False
 litellm.suppress_debug_info = True
 
 setup_tracing()
+
+# Module-level cache for model specs loaded from conf/providers.yml
+_MODEL_SPECS_CACHE: Optional[Dict[str, Dict[str, int]]] = None
+
+
+def _load_model_specs() -> Dict[str, Dict[str, int]]:
+    """Load model specifications from conf/providers.yml (cached after first call)."""
+    global _MODEL_SPECS_CACHE
+    if _MODEL_SPECS_CACHE is None:
+        try:
+            text = read_data_file_text("conf/providers.yml")
+            catalog = yaml.safe_load(text)
+            _MODEL_SPECS_CACHE = catalog.get("model_specs", {})
+        except Exception as e:
+            logger.warning(f"Failed to load model_specs from providers.yml, using empty specs: {e}")
+            _MODEL_SPECS_CACHE = {}
+    return _MODEL_SPECS_CACHE
 
 
 def classify_openai_compatible_error(error: Exception) -> tuple[ErrorCode, bool]:
@@ -1262,44 +1280,8 @@ class OpenAICompatibleModel(LLMBaseModel):
 
     @property
     def model_specs(self) -> Dict[str, Dict[str, int]]:
-        """
-        Model specifications dictionary containing context_length and max_tokens for various models.
-        """
-        return {
-            # OpenAI Models
-            "gpt-5": {"context_length": 400000, "max_tokens": 128000},
-            "gpt-4.1": {"context_length": 400000, "max_tokens": 128000},
-            "gpt-4o": {"context_length": 128000, "max_tokens": 16384},
-            "o3": {"context_length": 200000, "max_tokens": 200000},
-            "o4": {"context_length": 200000, "max_tokens": 200000},
-            # DeepSeek Models
-            "deepseek-chat": {"context_length": 65535, "max_tokens": 8192},
-            "deepseek-v3": {"context_length": 65535, "max_tokens": 8192},
-            "deepseek-reasoner": {"context_length": 65535, "max_tokens": 65535},
-            "deepseek-r1": {"context_length": 65535, "max_tokens": 65535},
-            # Moonshot (Kimi) Models - https://platform.moonshot.cn/docs/price/pricing
-            "kimi-k2": {"context_length": 256000, "max_tokens": 8192},
-            "kimi-k2.5": {"context_length": 256000, "max_tokens": 16384},
-            "kimi-k2-turbo": {"context_length": 256000, "max_tokens": 8192},
-            # Qwen Models
-            "qwen3-coder": {"context_length": 128000, "max_tokens": 8192},
-            "qwen3.5-plus": {"context_length": 1000000, "max_tokens": 16384},
-            "qwen3-coder-plus": {"context_length": 1000000, "max_tokens": 16384},
-            # GLM Models (Coding Plan)
-            "glm-5": {"context_length": 200000, "max_tokens": 131072},
-            "glm-4.7": {"context_length": 200000, "max_tokens": 131072},
-            "glm-4.5-air": {"context_length": 128000, "max_tokens": 8192},
-            "glm-4.5-flash": {"context_length": 128000, "max_tokens": 8192},
-            # MiniMax Models (Coding Plan) — use official casing to match config options
-            "MiniMax-M2.5": {"context_length": 204800, "max_tokens": 16384},
-            "MiniMax-M2.7": {"context_length": 204800, "max_tokens": 16384},
-            # Kimi Coding Plan
-            "kimi-for-coding": {"context_length": 256000, "max_tokens": 8192},
-            # Gemini Models
-            "gemini-2.5-pro": {"context_length": 1048576, "max_tokens": 65535},
-            "gemini-2.5-flash": {"context_length": 1048576, "max_tokens": 8192},
-            "gemini-2.5-flash-lite": {"context_length": 1048576, "max_tokens": 8192},
-        }
+        """Model specifications loaded from conf/providers.yml (cached)."""
+        return _load_model_specs()
 
     def max_tokens(self) -> Optional[int]:
         """
