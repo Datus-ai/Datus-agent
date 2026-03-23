@@ -256,6 +256,8 @@ class CodexModel(LLMBaseModel):
                 raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns}) from e
 
             # Stream events and yield ActionHistory objects
+            temp_tool_calls = {}  # {call_id: {"tool_name": ..., "arguments": ...}}
+
             while not result.is_complete:
                 if interrupt_controller and interrupt_controller.is_interrupted:
                     from datus.cli.execution_state import ExecutionInterrupted
@@ -310,6 +312,13 @@ class CodexModel(LLMBaseModel):
                                 call_id = f"tool_{uuid.uuid4().hex[:8]}"
                             arguments = getattr(raw_item, "arguments", "{}")
                             args_str = str(arguments)[:80]
+
+                            temp_tool_calls[call_id] = {
+                                "tool_name": tool_name,
+                                "arguments": arguments,
+                                "args_display": args_str,
+                            }
+
                             action = ActionHistory(
                                 action_id=call_id,
                                 role=ActionRole.TOOL,
@@ -329,12 +338,19 @@ class CodexModel(LLMBaseModel):
                             call_id = getattr(raw_item, "call_id", None)
                             if not call_id:
                                 call_id = f"tool_{uuid.uuid4().hex[:8]}"
+
+                            # Match back to stored tool call for name
+                            tool_info = temp_tool_calls.pop(call_id, None)
+                            tool_name = tool_info["tool_name"] if tool_info else "unknown"
+                            args_display = tool_info["args_display"] if tool_info else ""
+                            arguments = tool_info["arguments"] if tool_info else "{}"
+
                             action = ActionHistory(
                                 action_id=f"complete_{call_id}",
                                 role=ActionRole.TOOL,
-                                messages="Tool result",
-                                action_type="tool_result",
-                                input={"function_name": "unknown"},
+                                messages=f"Tool call: {tool_name}('{args_display}...')",
+                                action_type=tool_name,
+                                input={"function_name": tool_name, "arguments": arguments},
                                 output={"success": True, "raw_output": output_content},
                                 status=ActionStatus.SUCCESS,
                             )
