@@ -231,6 +231,17 @@ class TestAutoDetectWithBaseUrl:
         assert adapter.provider == "claude"
         assert adapter.litellm_model_name == "anthropic/glm-5"
 
+    def test_skip_auto_detect_kimi_coding_endpoint(self):
+        """type: claude + model: kimi-for-coding + kimi coding base_url → provider stays claude."""
+        adapter = LiteLLMAdapter(
+            provider="claude",
+            model="kimi-for-coding",
+            api_key="test-key",
+            base_url="https://api.kimi.com/coding/",
+        )
+        assert adapter.provider == "claude"
+        assert adapter.litellm_model_name == "anthropic/kimi-for-coding"
+
     def test_skip_auto_detect_minimax_on_alibaba(self):
         """type: claude + model: MiniMax-M2.5 + alibaba base_url → provider stays claude."""
         adapter = LiteLLMAdapter(

@@ -87,10 +87,13 @@ class LiteLLMAdapter:
         "glm": ["open.bigmodel.cn"],
     }
 
-    # Protocol keywords that appear in proxy URL paths (e.g. /apps/anthropic)
+    # Protocol keywords that appear in proxy URL paths (e.g. /apps/anthropic, /coding/)
+    # When a keyword is found in the base_url path, auto-detection is skipped to
+    # preserve the configured provider. Supports Coding Plan endpoints where
+    # Anthropic-compatible proxies use vendor-specific paths like /coding/.
     PROVIDER_PROTOCOL_KEYWORDS = {
-        "claude": "anthropic",
-        "openai": "openai",
+        "claude": ["anthropic", "coding"],
+        "openai": ["openai"],
     }
 
     def __init__(
@@ -166,12 +169,13 @@ class LiteLLMAdapter:
                         return provider
 
                     # Even if domain matches, check if URL path indicates a proxy
-                    # for the configured provider (e.g. /apps/anthropic on dashscope)
-                    protocol_keyword = self.PROVIDER_PROTOCOL_KEYWORDS.get(provider.lower())
-                    if protocol_keyword and protocol_keyword in path:
+                    # for the configured provider (e.g. /apps/anthropic, /coding/)
+                    protocol_keywords = self.PROVIDER_PROTOCOL_KEYWORDS.get(provider.lower(), [])
+                    matched_keyword = next((kw for kw in protocol_keywords if kw in path), None)
+                    if matched_keyword:
                         logger.info(
                             f"Keeping provider '{provider}' — base_url path indicates "
-                            f"'{protocol_keyword}' proxy on '{domain}'"
+                            f"'{matched_keyword}' proxy on '{domain}'"
                         )
                         return provider
                 if provider.lower() != detected:
