@@ -12,6 +12,7 @@ Provides:
 """
 
 from typing import TYPE_CHECKING, Dict, Optional
+from urllib.parse import urlparse
 
 from datus.utils.loggings import get_logger
 
@@ -70,8 +71,8 @@ class LiteLLMAdapter:
         "deepseek": "deepseek",  # deepseek-chat, deepseek-reasoner
         "qwen": "qwen",  # qwen3-coder, etc.
         "gemini": "gemini",  # gemini-2.5-pro, gemini-3-flash
-        "minimax": "minimax",  # MiniMax-M2.5, MiniMax-M2.7
-        "glm": "glm",  # glm-5, glm-4.7, glm-4.5-air
+        "minimax": "minimax",  # MiniMax-M2.5, etc. (Coding Plan only — no standalone LiteLLM routing)
+        "glm": "glm",  # glm-5, glm-4.7, etc. (Coding Plan only — no standalone LiteLLM routing)
     }
 
     # Known domains for each provider (used to validate auto-detection against base_url)
@@ -150,8 +151,6 @@ class LiteLLMAdapter:
                 # If base_url is set and detected provider differs from configured,
                 # check if the base_url domain matches the detected provider's known domains
                 if base_url and detected != provider.lower():
-                    from urllib.parse import urlparse
-
                     parsed = urlparse(base_url)
                     domain = parsed.hostname or ""
                     path = parsed.path.lower()

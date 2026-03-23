@@ -106,10 +106,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         self.model_name = model_config.model
         self.api_key = self._get_api_key()
         self.base_url = self._get_base_url()
-        # Build headers: internal defaults, then user overrides
-        self.default_headers = {"User-Agent": "claude-code/2.1.76 (cli)"}
-        if self.model_config.default_headers:
-            self.default_headers.update(self.model_config.default_headers)
+        self.default_headers = dict(self.model_config.default_headers) if self.model_config.default_headers else None
 
         # Initialize LiteLLM adapter for unified LLM calls
         self.litellm_adapter = LiteLLMAdapter(
@@ -1371,7 +1368,7 @@ class OpenAICompatibleModel(LLMBaseModel):
             "glm-4.7": {"context_length": 128000, "max_tokens": 8192},
             "glm-4.5-air": {"context_length": 128000, "max_tokens": 8192},
             "glm-4.5-flash": {"context_length": 128000, "max_tokens": 8192},
-            # MiniMax Models (Coding Plan)
+            # MiniMax Models (Coding Plan) — use official casing to match config options
             "MiniMax-M2.5": {"context_length": 1048576, "max_tokens": 16384},
             "MiniMax-M2.7": {"context_length": 1048576, "max_tokens": 16384},
             # Kimi Coding Plan

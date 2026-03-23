@@ -515,6 +515,38 @@ class TestConfigureLLM:
             assert "temperature" not in openai_config, "OpenAI models should not have temperature override"
             assert "top_p" not in openai_config, "OpenAI models should not have top_p override"
 
+    def test_coding_plan_provider_prompts_user_agent_header(self):
+        """Coding Plan providers (alibaba_coding, etc.) should prompt for User-Agent and store default_headers."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            init = InteractiveInit(user_home=tmpdir)
+
+            mock_model_instance = MagicMock()
+            mock_model_instance.generate.return_value = "Hello!"
+            mock_module = MagicMock()
+            mock_module.ClaudeModel.return_value = mock_model_instance
+
+            # Prompt.ask calls: provider, base_url, model, User-Agent header
+            with (
+                patch(
+                    "datus.cli.interactive_init.Prompt.ask",
+                    side_effect=[
+                        "alibaba_coding",
+                        "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic",
+                        "qwen3-coder-plus",
+                        "datus-agent (cli)",
+                    ],
+                ),
+                patch("datus.cli.interactive_init.getpass", return_value="test-key"),
+                patch.dict("sys.modules", {"datus.models.claude_model": mock_module}),
+            ):
+                result = init._configure_llm()
+
+            assert result is True
+            alibaba_config = init.config["agent"]["models"]["alibaba_coding"]
+            assert alibaba_config["default_headers"] == {"User-Agent": "datus-agent (cli)"}
+            assert alibaba_config["temperature"] == 1.0
+            assert alibaba_config["top_p"] == 0.95
+
     def test_qwen3_coder_plus_sets_temperature_and_top_p(self):
         """qwen3-coder-plus requires temperature=1.0 and top_p=0.95; verify they are stored in config."""
         with tempfile.TemporaryDirectory() as tmpdir:

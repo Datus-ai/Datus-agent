@@ -149,6 +149,20 @@ class TestGetAgentsSdkModel:
         assert result is mock_model
         mock_litellm_model_cls.assert_called_once()
 
+    def test_extra_headers_passed_to_litellm_model(self):
+        """default_headers should be forwarded as extra_headers to LitellmModel."""
+        headers = {"User-Agent": "datus-agent (cli)"}
+        adapter = LiteLLMAdapter(provider="claude", model="claude-sonnet-4", api_key="key", default_headers=headers)
+        mock_model = MagicMock()
+        mock_litellm_model_cls = MagicMock(return_value=mock_model)
+        mock_module = MagicMock()
+        mock_module.LitellmModel = mock_litellm_model_cls
+
+        with patch.dict("sys.modules", {"agents.extensions.models.litellm_model": mock_module}):
+            adapter.get_agents_sdk_model()
+        call_kwargs = mock_litellm_model_cls.call_args
+        assert call_kwargs.kwargs.get("extra_headers") == headers
+
 
 class TestAutoDetectWithBaseUrl:
     """Tests for auto-detection bypass when base_url doesn't match detected provider."""

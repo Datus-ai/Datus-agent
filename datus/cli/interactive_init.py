@@ -269,7 +269,7 @@ class InteractiveInit:
         coding_plan_providers = {"alibaba_coding", "glm_coding", "minimax_coding", "kimi_coding"}
         default_headers = None
         if provider in coding_plan_providers:
-            default_ua = "claude-code/2.1.76 (cli)"
+            default_ua = "datus-agent (cli)"
             self.console.print("  [dim]Coding Plan endpoints may verify User-Agent header[/dim]")
             user_agent = Prompt.ask("- User-Agent header", default=default_ua).strip()
             if user_agent:
@@ -501,6 +501,7 @@ class InteractiveInit:
                 model=model_config_data["model"],
                 temperature=model_config_data.get("temperature"),
                 top_p=model_config_data.get("top_p"),
+                default_headers=model_config_data.get("default_headers"),
             )
 
             # Import and create the specific model class
