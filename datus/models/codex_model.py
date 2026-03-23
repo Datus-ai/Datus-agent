@@ -305,13 +305,17 @@ class CodexModel(LLMBaseModel):
                         raw_item = getattr(event.item, "raw_item", None)
                         if raw_item:
                             tool_name = getattr(raw_item, "name", "unknown")
-                            call_id = getattr(raw_item, "call_id", f"tool_{uuid.uuid4().hex[:8]}")
+                            call_id = getattr(raw_item, "call_id", None)
+                            if not call_id:
+                                call_id = f"tool_{uuid.uuid4().hex[:8]}"
+                            arguments = getattr(raw_item, "arguments", "{}")
+                            args_str = str(arguments)[:80]
                             action = ActionHistory(
                                 action_id=call_id,
                                 role=ActionRole.TOOL,
-                                messages=f"Calling tool: {tool_name}",
-                                action_type="tool_call",
-                                input={"tool": tool_name, "arguments": getattr(raw_item, "arguments", "{}")},
+                                messages=f"Tool call: {tool_name}('{args_str}...')",
+                                action_type=tool_name,
+                                input={"function_name": tool_name, "arguments": arguments},
                                 output={},
                                 status=ActionStatus.PROCESSING,
                             )
@@ -320,16 +324,18 @@ class CodexModel(LLMBaseModel):
 
                     elif item_type == "tool_call_output_item":
                         raw_item = getattr(event.item, "raw_item", None)
+                        output_content = getattr(event.item, "output", "")
                         if raw_item:
-                            call_id = getattr(raw_item, "call_id", f"tool_{uuid.uuid4().hex[:8]}")
-                            output_text = getattr(raw_item, "output", "")
+                            call_id = getattr(raw_item, "call_id", None)
+                            if not call_id:
+                                call_id = f"tool_{uuid.uuid4().hex[:8]}"
                             action = ActionHistory(
-                                action_id=f"result_{call_id}",
+                                action_id=f"complete_{call_id}",
                                 role=ActionRole.TOOL,
-                                messages=f"Tool result: {str(output_text)[:200]}",
+                                messages="Tool result",
                                 action_type="tool_result",
-                                input={"call_id": call_id},
-                                output={"result": str(output_text)},
+                                input={"function_name": "unknown"},
+                                output={"success": True, "raw_output": output_content},
                                 status=ActionStatus.SUCCESS,
                             )
                             action_history_manager.add_action(action)
