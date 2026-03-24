@@ -46,6 +46,7 @@ class LiteLLMAdapter:
         "qwen": "dashscope/",
         "gemini": "gemini/",
         "kimi": "moonshot/",  # Moonshot AI - https://docs.litellm.ai/docs/providers/moonshot
+        "openrouter": "openrouter/",  # OpenRouter unified gateway
     }
 
     # Provider-specific base URLs (if not using default)
@@ -56,6 +57,7 @@ class LiteLLMAdapter:
         "qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1",
         "gemini": None,  # Use LiteLLM default (native Gemini API, not OpenAI-compatible)
         "kimi": "https://api.moonshot.ai/v1",  # Moonshot AI global endpoint
+        "openrouter": None,  # Use LiteLLM default (https://openrouter.ai/api/v1)
     }
 
     # Model name prefixes for auto-detection
@@ -113,6 +115,11 @@ class LiteLLMAdapter:
         Returns:
             The detected provider name
         """
+        # Skip auto-detection for providers that must not be overridden
+        # (e.g., openrouter models contain provider/ prefix that would trigger false detection)
+        if provider.lower() == "openrouter":
+            return provider
+
         model_lower = model.lower()
 
         # Check if model name starts with a known prefix
@@ -149,6 +156,11 @@ class LiteLLMAdapter:
             - deepseek/deepseek-chat -> deepseek/deepseek-chat
         """
         prefix = self.MODEL_PREFIX_MAP.get(self.provider, "")
+
+        # OpenRouter models always need the openrouter/ prefix,
+        # even when model name contains / (e.g., anthropic/claude-sonnet-4)
+        if self.provider == "openrouter":
+            return f"openrouter/{self.model}"
 
         # If model already has a prefix, don't add another
         if "/" in self.model:

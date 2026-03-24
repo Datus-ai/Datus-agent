@@ -189,14 +189,17 @@ class TestGetApiKey:
         cfg = _make_model_config(api_key=None)
         cfg.api_key = None
 
+        from datus.utils.exceptions import DatusException
+
         with (
             patch("datus.models.openai_compatible.setup_tracing"),
             patch("datus.models.openai_compatible.LiteLLMAdapter"),
             patch("anthropic.Anthropic"),
             patch.dict("os.environ", {}, clear=True),
         ):
-            with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):
+            with pytest.raises(DatusException) as exc_info:
                 ClaudeModel(cfg)
+            assert "300011" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------
@@ -386,3 +389,64 @@ class TestClaudeModelClose:
         model.anthropic_client.close.side_effect = RuntimeError("already closed")
         # Should not raise
         model.close()
+
+
+# ---------------------------------------------------------------------------
+# Subscription auth
+# ---------------------------------------------------------------------------
+
+
+class TestClaudeModelSubscriptionAuth:
+    def test_subscription_auth_calls_credential_resolver(self):
+        cfg = _make_model_config(api_key="sk-ant-oat01-sub-token")
+        cfg.auth_type = "subscription"
+
+        with (
+            patch("datus.models.openai_compatible.setup_tracing"),
+            patch("datus.models.openai_compatible.LiteLLMAdapter") as mock_adapter_cls,
+            patch("anthropic.Anthropic"),
+            patch(
+                "datus.auth.claude_credential.get_claude_subscription_token",
+                return_value="sk-ant-oat01-sub-token",
+            ) as mock_resolver,
+        ):
+            mock_adapter = MagicMock()
+            mock_adapter.litellm_model_name = "anthropic/claude-sonnet-4-5"
+            mock_adapter.provider = "anthropic"
+            mock_adapter.is_thinking_model = False
+            mock_adapter.get_agents_sdk_model.return_value = MagicMock()
+            mock_adapter_cls.return_value = mock_adapter
+
+            model = ClaudeModel(cfg)
+            mock_resolver.assert_called_once_with("sk-ant-oat01-sub-token")
+            assert model.api_key == "sk-ant-oat01-sub-token"
+
+    def test_subscription_auth_type_in_config(self):
+        cfg = _make_model_config(api_key="")
+        cfg.auth_type = "subscription"
+
+        with (
+            patch("datus.models.openai_compatible.setup_tracing"),
+            patch("datus.models.openai_compatible.LiteLLMAdapter") as mock_adapter_cls,
+            patch("anthropic.Anthropic"),
+            patch(
+                "datus.auth.claude_credential.get_claude_subscription_token",
+                return_value="sk-ant-oat01-from-env",
+            ),
+        ):
+            mock_adapter = MagicMock()
+            mock_adapter.litellm_model_name = "anthropic/claude-sonnet-4-5"
+            mock_adapter.provider = "anthropic"
+            mock_adapter.is_thinking_model = False
+            mock_adapter.get_agents_sdk_model.return_value = MagicMock()
+            mock_adapter_cls.return_value = mock_adapter
+
+            model = ClaudeModel(cfg)
+            assert model.api_key == "sk-ant-oat01-from-env"
+
+    def test_non_subscription_auth_ignores_resolver(self):
+        """Default auth_type='api_key' should not call the credential resolver."""
+        cfg = _make_model_config(api_key="sk-ant-regular-key")
+        cfg.auth_type = "api_key"
+        model = _make_claude_model(cfg)
+        assert model.api_key == "sk-ant-regular-key"

@@ -215,6 +215,29 @@ class InteractiveInit:
                 "options": ["gpt-5.3-codex", "gpt-5.1-codex-mini", "o3-codex"],
                 "auth_type": "oauth",
             },
+            "claude_subscription": {
+                "type": "claude",
+                "base_url": "https://api.anthropic.com",
+                "model": "claude-sonnet-4-20250514",
+                "options": [
+                    "claude-sonnet-4-20250514",
+                    "claude-opus-4-20250514",
+                    "claude-haiku-4-5-20251001",
+                ],
+                "auth_type": "subscription",
+            },
+            "openrouter": {
+                "type": "openrouter",
+                "base_url": "https://openrouter.ai/api/v1",
+                "model": "anthropic/claude-sonnet-4",
+                "options": [
+                    "anthropic/claude-sonnet-4",
+                    "openai/gpt-4o",
+                    "google/gemini-2.5-pro",
+                    "deepseek/deepseek-chat",
+                    "meta-llama/llama-4-maverick",
+                ],
+            },
         }
 
         provider = Prompt.ask("- Which LLM provider?", choices=list(providers.keys()), default="openai")
@@ -222,6 +245,10 @@ class InteractiveInit:
         # OAuth flow for Codex provider
         if providers[provider].get("auth_type") == "oauth":
             return self._configure_codex_oauth(provider, providers[provider])
+
+        # Subscription flow for Claude subscription
+        if providers[provider].get("auth_type") == "subscription":
+            return self._configure_claude_subscription(provider, providers[provider])
 
         # API key input
         api_key = getpass("- Enter your API key: ")
@@ -451,6 +478,63 @@ class InteractiveInit:
         self.console.print(f"\nYou are ready to run `datus-cli --namespace {self.namespace_name}` 🚀")
         self.console.print("\nCheck the document at https://docs.datus.ai/ for more details.")
 
+    def _configure_claude_subscription(self, provider: str, provider_config: dict) -> bool:
+        """Configure Claude with subscription token (Pro/Max plan via setup-token)."""
+        # Model selection
+        if "options" in provider_config:
+            options_hint = ", ".join(provider_config["options"])
+            self.console.print(f"  [dim]reference options: {options_hint}[/dim]")
+        model_name = Prompt.ask("- Enter your model name", default=provider_config["model"]).strip()
+
+        # Token source selection
+        self.console.print("  [dim]How to provide your subscription token:[/dim]")
+        self.console.print("  [dim]  1. Paste token directly (from 'claude setup-token')[/dim]")
+        self.console.print("  [dim]  2. Use CLAUDE_CODE_OAUTH_TOKEN environment variable[/dim]")
+        self.console.print("  [dim]  3. Auto-detect from ~/.claude/.credentials.json[/dim]")
+        token_method = Prompt.ask("- Token source", choices=["paste", "env", "auto"], default="auto")
+
+        api_key_value = ""
+        if token_method == "paste":
+            api_key_value = getpass("- Paste your subscription token (sk-ant-oat01-...): ")
+            if not api_key_value.strip():
+                self.console.print("❌ Token cannot be empty")
+                return False
+        elif token_method == "env":
+            api_key_value = "${CLAUDE_CODE_OAUTH_TOKEN}"
+
+        # Store configuration
+        self.config["agent"]["target"] = provider
+        self.config["agent"]["models"][provider] = {
+            "type": provider_config["type"],
+            "vendor": provider,
+            "base_url": provider_config["base_url"],
+            "api_key": api_key_value,
+            "model": model_name,
+            "auth_type": "subscription",
+        }
+
+        # Verify token resolution
+        self.console.print("→ Verifying subscription token...")
+        try:
+            from datus.auth.claude_credential import get_claude_subscription_token
+
+            resolved_key = api_key_value if api_key_value and not api_key_value.startswith("${") else None
+            get_claude_subscription_token(resolved_key)
+        except Exception as e:
+            self.console.print(f"⚠️  Token resolution warning: {e}")
+            if not Confirm.ask("Continue anyway?", default=False):
+                return False
+
+        # Test LLM connectivity
+        self.console.print("→ Testing LLM connectivity...")
+        success, error_msg = self._test_llm_connectivity()
+        if success:
+            self.console.print(" ✅ Claude subscription model test successful\n")
+            return True
+        else:
+            self.console.print(f"❌ LLM connectivity test failed: {error_msg}\n")
+            return False
+
     def _configure_codex_oauth(self, provider: str, provider_config: dict) -> bool:
         """Configure Codex provider with OAuth authentication."""
         # Model selection
@@ -527,6 +611,7 @@ class InteractiveInit:
                 model=model_config_data["model"],
                 temperature=model_config_data.get("temperature"),
                 top_p=model_config_data.get("top_p"),
+                auth_type=model_config_data.get("auth_type", "api_key"),
             )
 
             # Import and create the specific model class
@@ -541,6 +626,7 @@ class InteractiveInit:
                 "gemini": "GeminiModel",
                 "kimi": "KimiModel",
                 "codex": "CodexModel",
+                "openrouter": "OpenRouterModel",
             }
 
             if model_type not in type_map:

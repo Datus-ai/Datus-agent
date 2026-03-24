@@ -263,3 +263,51 @@ class TestGeminiModel:
         assert "gemini-2.5-pro" in specs
         assert "context_length" in specs["gemini-2.0-flash"]
         assert "max_tokens" in specs["gemini-2.0-flash"]
+
+
+# ---------------------------------------------------------------------------
+# OpenRouterModel
+# ---------------------------------------------------------------------------
+
+
+class TestOpenRouterModel:
+    def _make(self, api_key="test-openrouter-key", base_url=None):
+        from datus.models.openrouter_model import OpenRouterModel
+
+        config = ModelConfig(
+            type="openrouter",
+            api_key=api_key,
+            model="anthropic/claude-sonnet-4",
+            base_url=base_url,
+        )
+        with patch("datus.models.openai_compatible.OpenAICompatibleModel.__init__", return_value=None):
+            instance = OpenRouterModel.__new__(OpenRouterModel)
+            instance.model_config = config
+            instance.model_name = "anthropic/claude-sonnet-4"
+        return instance
+
+    def test_get_api_key_from_config(self):
+        node = self._make(api_key="sk-or-config-key")
+        assert node._get_api_key() == "sk-or-config-key"
+
+    def test_get_api_key_from_env(self, monkeypatch):
+        node = self._make(api_key="")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-env-key")
+        assert node._get_api_key() == "sk-or-env-key"
+
+    def test_get_api_key_raises_when_missing(self, monkeypatch):
+        from datus.utils.exceptions import DatusException, ErrorCode
+
+        node = self._make(api_key="")
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        with pytest.raises(DatusException) as exc_info:
+            node._get_api_key()
+        assert exc_info.value.code == ErrorCode.COMMON_ENV
+
+    def test_get_base_url_returns_config_value(self):
+        node = self._make(base_url="https://custom.openrouter.ai/api/v1")
+        assert node._get_base_url() == "https://custom.openrouter.ai/api/v1"
+
+    def test_get_base_url_defaults_to_openrouter(self):
+        node = self._make(base_url=None)
+        assert node._get_base_url() == "https://openrouter.ai/api/v1"

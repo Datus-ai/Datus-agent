@@ -103,6 +103,51 @@ class TestLiteLLMAdapterModelName:
         assert adapter.litellm_model_name == "moonshot/kimi-k2.5"
 
 
+class TestOpenRouterModelName:
+    def test_openrouter_prefixes_model_with_slash(self):
+        """OpenRouter models like anthropic/claude-sonnet-4 need openrouter/ prefix."""
+        adapter = LiteLLMAdapter(provider="openrouter", model="anthropic/claude-sonnet-4", api_key="key")
+        assert adapter.litellm_model_name == "openrouter/anthropic/claude-sonnet-4"
+
+    def test_openrouter_prefixes_simple_model(self):
+        adapter = LiteLLMAdapter(provider="openrouter", model="mistralai/mistral-large", api_key="key")
+        assert adapter.litellm_model_name == "openrouter/mistralai/mistral-large"
+
+    def test_openrouter_default_base_url_is_none(self):
+        """LiteLLM handles the default OpenRouter base URL."""
+        adapter = LiteLLMAdapter(provider="openrouter", model="openai/gpt-4o", api_key="key")
+        assert adapter.base_url is None
+
+    def test_openrouter_custom_base_url(self):
+        adapter = LiteLLMAdapter(
+            provider="openrouter", model="openai/gpt-4o", api_key="key", base_url="https://custom.openrouter.ai/api/v1"
+        )
+        assert adapter.base_url == "https://custom.openrouter.ai/api/v1"
+
+    def test_openrouter_not_autodetected(self):
+        """OpenRouter models have provider/ prefix — should NOT be auto-detected as another provider."""
+        adapter = LiteLLMAdapter(provider="openrouter", model="anthropic/claude-sonnet-4", api_key="key")
+        assert adapter.provider == "openrouter"
+
+    def test_openrouter_unprefixed_gpt_stays_openrouter(self):
+        """Unprefixed model like gpt-4o should NOT be auto-detected away from openrouter."""
+        adapter = LiteLLMAdapter(provider="openrouter", model="gpt-4o", api_key="key")
+        assert adapter.provider == "openrouter"
+        assert adapter.litellm_model_name == "openrouter/gpt-4o"
+
+    def test_openrouter_unprefixed_deepseek_stays_openrouter(self):
+        """Unprefixed model like deepseek-chat should NOT be auto-detected away from openrouter."""
+        adapter = LiteLLMAdapter(provider="openrouter", model="deepseek-chat", api_key="key")
+        assert adapter.provider == "openrouter"
+        assert adapter.litellm_model_name == "openrouter/deepseek-chat"
+
+    def test_openrouter_unprefixed_claude_stays_openrouter(self):
+        """Unprefixed model like claude-sonnet-4 should NOT be auto-detected away from openrouter."""
+        adapter = LiteLLMAdapter(provider="openrouter", model="claude-sonnet-4", api_key="key")
+        assert adapter.provider == "openrouter"
+        assert adapter.litellm_model_name == "openrouter/claude-sonnet-4"
+
+
 class TestGetCompletionKwargs:
     def test_includes_model(self):
         adapter = LiteLLMAdapter(provider="openai", model="gpt-4o", api_key="sk-test")

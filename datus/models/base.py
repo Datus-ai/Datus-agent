@@ -45,6 +45,7 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         LLMProvider.GEMINI: "GeminiModel",
         LLMProvider.KIMI: "KimiModel",
         LLMProvider.CODEX: "CodexModel",
+        LLMProvider.OPENROUTER: "OpenRouterModel",
     }
 
     def __init__(self, model_config: ModelConfig):

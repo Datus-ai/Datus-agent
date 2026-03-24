@@ -89,7 +89,7 @@ class ModelConfig:
     # Model-specific parameters
     temperature: Optional[float] = None  # Some models like kimi-k2.5 require temperature=1
     top_p: Optional[float] = None  # Some models like kimi-k2.5 require top_p=0.95
-    auth_type: str = "api_key"  # "api_key" | "oauth" (oauth for Codex subscription)
+    auth_type: str = "api_key"  # "api_key" | "oauth" | "subscription"
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

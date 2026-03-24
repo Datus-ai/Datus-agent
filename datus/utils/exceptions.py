@@ -63,6 +63,12 @@ class ErrorCode(Enum):
     OAUTH_NO_REFRESH_TOKEN = ("300032", "No refresh token available. Please re-authenticate.")
     OAUTH_TIMEOUT = ("300033", "OAuth authentication timed out")
 
+    # Claude subscription token errors
+    CLAUDE_SUBSCRIPTION_TOKEN_NOT_FOUND = (
+        "300034",
+        "Claude subscription token not found. Run 'claude setup-token' or set CLAUDE_CODE_OAUTH_TOKEN.",
+    )
+
     # Tool errors
     TOOL_EXECUTION_FAILED = ("400001", "Tool execution failed")
     TOOL_INVALID_INPUT = ("400002", "Invalid tool input")

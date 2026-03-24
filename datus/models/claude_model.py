@@ -102,9 +102,15 @@ class ClaudeModel(OpenAICompatibleModel):
 
     def _get_api_key(self) -> str:
         """Get Anthropic API key from config or environment."""
+        if self.model_config.auth_type == "subscription":
+            from datus.auth.claude_credential import get_claude_subscription_token
+
+            return get_claude_subscription_token(self.model_config.api_key)
         api_key = self.model_config.api_key or os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
-            raise ValueError("ANTHROPIC_API_KEY environment variable is not set")
+            from datus.utils.exceptions import DatusException, ErrorCode
+
+            raise DatusException(ErrorCode.MODEL_AUTHENTICATION_ERROR)
         return api_key
 
     def _get_base_url(self) -> Optional[str]:
