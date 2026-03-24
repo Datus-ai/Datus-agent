@@ -90,6 +90,7 @@ class BaseEmbeddingStore(StorageBase):
         table_prefix: str = "",
         extra_fields: Optional[List[pa.Field]] = None,
         default_values: Optional[Dict[str, Any]] = None,
+        scope_indices: Optional[List[str]] = None,
     ):
         super().__init__(db=db)
         self.model = embedding_model
@@ -104,6 +105,7 @@ class BaseEmbeddingStore(StorageBase):
         self._schema = schema
         self._unique_columns = unique_columns
         self._default_values: Dict[str, Any] = default_values or {}
+        self._scope_indices: List[str] = scope_indices or []
         self._scope_filter: Optional[Node] = None
         # Delay table initialization until first use
         self.table: Optional[VectorTable] = None
@@ -124,6 +126,9 @@ class BaseEmbeddingStore(StorageBase):
             self._check_embedding_model_ready()
             # Initialize table with embedding function
             self._ensure_table(self._schema)
+            # Auto-create scalar indices for scope fields (e.g. workspace_id)
+            for col in self._scope_indices:
+                self._create_scalar_index(col)
             self._table_initialized = True
             logger.debug(f"Table {self.table_name} initialized successfully with embedding function")
 

@@ -87,18 +87,26 @@ class SubjectTreeStore:
         defaults = get_storage_defaults()
         table_prefix = defaults.get("table_prefix", "")
 
-        # Build table definition with optional prefix and extra columns
+        # Build table definition with optional prefix, extra columns, and scope indices
         table_def = _SUBJECT_NODES_TABLE
-        if table_prefix or defaults.get("extra_fields"):
+        scope_indices = defaults.get("scope_indices", [])
+        extra_pa_fields = defaults.get("extra_fields")
+
+        if table_prefix or extra_pa_fields or scope_indices:
             import copy
 
             table_def = copy.copy(table_def)
             if table_prefix:
                 table_def.table_name = f"{table_prefix}{_SUBJECT_NODES_TABLE.table_name}"
-            extra_pa_fields = defaults.get("extra_fields")
             if extra_pa_fields:
                 extra_cols = [ColumnDef(name=f.name, col_type="TEXT", default="") for f in extra_pa_fields]
                 table_def.columns = list(table_def.columns) + extra_cols
+            if scope_indices:
+                existing_idx_names = {idx.name for idx in table_def.indices}
+                for col in scope_indices:
+                    idx_name = f"idx_subject_{col}"
+                    if idx_name not in existing_idx_names:
+                        table_def.indices = list(table_def.indices) + [IndexDef(name=idx_name, columns=[col])]
 
         self._rdb = create_rdb_for_store("subject_tree")
         self._table = self._rdb.ensure_table(table_def)

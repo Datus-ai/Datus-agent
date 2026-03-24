@@ -73,6 +73,9 @@ def configure_storage_defaults(
     """
     _storage_defaults.clear()
     _storage_defaults.update(kwargs)
+    # scope_fields are also used as scalar indices on the storage tables
+    if scope_fields:
+        _storage_defaults["scope_indices"] = list(scope_fields)
     _scope_fields.clear()
     if scope_fields:
         _scope_fields.extend(scope_fields)
