@@ -90,12 +90,19 @@ class ClaudeModel(OpenAICompatibleModel):
     - Native Anthropic API (when use_native_api=True, enables prompt caching)
     """
 
+    # Beta headers required for OAuth subscription tokens (sk-ant-oat01-...)
+    # Without these, Anthropic API rejects OAuth tokens with "invalid x-api-key"
+    OAUTH_BETA_HEADERS = ["claude-code-20250219", "oauth-2025-04-20"]
+
     def __init__(self, model_config: ModelConfig, **kwargs):
         # Initialize parent class (handles LiteLLM adapter, OpenAI client, etc.)
         super().__init__(model_config, **kwargs)
 
         # Claude-specific: check if we should use native Anthropic API
         self.use_native_api = getattr(model_config, "use_native_api", False)
+
+        # Detect OAuth subscription token
+        self._is_oauth_token = isinstance(self.api_key, str) and "sk-ant-oat" in self.api_key
 
         # Initialize native Anthropic client (always available for prompt caching)
         self._init_anthropic_client()
@@ -129,10 +136,17 @@ class ClaudeModel(OpenAICompatibleModel):
                 timeout=60.0,
             )
 
+        # OAuth tokens require extra beta headers for Anthropic API to accept them
+        extra_headers = {}
+        if self._is_oauth_token:
+            extra_headers["anthropic-beta"] = ",".join(self.OAUTH_BETA_HEADERS)
+            logger.debug("Using OAuth subscription token — injecting anthropic-beta headers")
+
         self.anthropic_client = anthropic.Anthropic(
             api_key=self.api_key,
             base_url=self.base_url if self.base_url else None,
             http_client=self.proxy_client,
+            default_headers=extra_headers or None,
         )
 
         # Wrap with LangSmith if available
@@ -144,6 +158,12 @@ class ClaudeModel(OpenAICompatibleModel):
             logger.debug("No langsmith wrapper available")
 
         logger.debug(f"Initialized Claude model: {self.model_name}, use_native_api={self.use_native_api}")
+
+    def _inject_oauth_headers(self, kwargs: dict) -> dict:
+        """Inject OAuth beta headers into kwargs for LiteLLM calls if using subscription token."""
+        if self._is_oauth_token:
+            kwargs["extra_headers"] = {"anthropic-beta": ",".join(self.OAUTH_BETA_HEADERS)}
+        return kwargs
 
     @property
     def model_specs(self) -> Dict[str, Dict[str, int]]:
@@ -176,6 +196,7 @@ class ClaudeModel(OpenAICompatibleModel):
             # Explicitly override top_p to None so the parent's default top_p=1.0
             # is not added to the request — LiteLLM omits None-valued parameters.
             kwargs["top_p"] = None
+            self._inject_oauth_headers(kwargs)
             return super().generate(prompt, enable_thinking=enable_thinking, **kwargs)
 
         # Native Anthropic client path (only when use_native_api=True)
@@ -408,6 +429,7 @@ class ClaudeModel(OpenAICompatibleModel):
             )
 
         # Use parent class LiteLLM implementation
+        self._inject_oauth_headers(kwargs)
         return await super().generate_with_tools(
             prompt=prompt,
             tools=tools,
@@ -441,6 +463,7 @@ class ClaudeModel(OpenAICompatibleModel):
         Uses parent class LiteLLM implementation for streaming.
         Note: Native Anthropic streaming API can be added later if needed.
         """
+        self._inject_oauth_headers(kwargs)
         async for action in super().generate_with_tools_stream(
             prompt=prompt,
             mcp_servers=mcp_servers,
