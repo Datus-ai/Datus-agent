@@ -30,10 +30,12 @@ from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
     from datus.configuration.agent_config import AgentConfig
+    from datus.storage.subject_tree.store import SubjectTreeStore
 
 logger = get_logger(__name__)
 
 _storage_instances: Dict[Tuple[str, str], BaseEmbeddingStore] = {}
+_subject_tree_instances: Dict[str, Any] = {}  # keyed by namespace
 
 # Deployment-level config injected once via configure_storage_defaults().
 _storage_defaults: Dict[str, Any] = {}
@@ -192,12 +194,30 @@ def build_scope_filter_from_context(agent_config: "AgentConfig") -> Optional[Nod
     return conditions[0] if len(conditions) == 1 else and_(*conditions)
 
 
+def get_subject_tree_store(namespace: str = "") -> "SubjectTreeStore":
+    """Return a singleton SubjectTreeStore per namespace.
+
+    SubjectTreeStore is RDB-backed (not embedding-based), so it has its own
+    cache separate from the vector storage registry.
+    """
+    cached = _subject_tree_instances.get(namespace)
+    if cached is not None:
+        return cached
+
+    from datus.storage.subject_tree.store import SubjectTreeStore
+
+    instance = SubjectTreeStore()
+    _subject_tree_instances[namespace] = instance
+    return instance
+
+
 def clear_storage_registry() -> None:
     """Clear all cached storage instances and reset backends.
 
     Does NOT clear ``_storage_defaults`` or ``_scope_fields``.
     """
     _storage_instances.clear()
+    _subject_tree_instances.clear()
 
     from datus.storage.backend_holder import reset_backends
 

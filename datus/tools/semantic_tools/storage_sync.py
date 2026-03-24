@@ -58,9 +58,11 @@ class SemanticStorageManager:
         return self.metric_store
 
     def _ensure_subject_tree_store(self) -> SubjectTreeStore:
-        """Lazy init subject tree storage."""
+        """Lazy init subject tree storage via registry singleton."""
         if self.subject_tree_store is None:
-            self.subject_tree_store = SubjectTreeStore()
+            from datus.storage.registry import get_subject_tree_store
+
+            self.subject_tree_store = get_subject_tree_store()
         return self.subject_tree_store
 
     def store_semantic_model(

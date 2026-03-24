@@ -103,7 +103,7 @@ class TestEnsureSubjectTreeStore:
         manager = _make_manager()
         mock_store = MagicMock()
 
-        with patch("datus.tools.semantic_tools.storage_sync.SubjectTreeStore", return_value=mock_store):
+        with patch("datus.storage.registry.get_subject_tree_store", return_value=mock_store):
             store = manager._ensure_subject_tree_store()
 
         assert store is mock_store

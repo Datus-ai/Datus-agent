@@ -640,8 +640,10 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
             **kwargs,
         )
 
-        # Initialize SubjectTreeStore for managing subject hierarchy
-        self.subject_tree = SubjectTreeStore()
+        # Get singleton SubjectTreeStore from registry
+        from datus.storage.registry import get_subject_tree_store
+
+        self.subject_tree = get_subject_tree_store()
 
     def batch_store(
         self,
