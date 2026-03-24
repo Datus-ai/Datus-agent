@@ -236,12 +236,15 @@ class TestCreateSemanticModelsForTables:
                 action = SimpleNamespace(status=ActionStatus.SUCCESS, messages="ok")
                 yield action
 
-        with patch(
-            "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode",
-            MockNode,
-        ), patch(
-            "datus.schemas.semantic_agentic_node_models.SemanticNodeInput",
-            MagicMock(return_value=MagicMock()),
+        with (
+            patch(
+                "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode",
+                MockNode,
+            ),
+            patch(
+                "datus.schemas.semantic_agentic_node_models.SemanticNodeInput",
+                MagicMock(return_value=MagicMock()),
+            ),
         ):
             success, error = await create_semantic_models_for_tables(["users", "orders"], mock_config)
         assert success is True
@@ -271,12 +274,15 @@ class TestCreateSemanticModelsForTables:
                 action = SimpleNamespace(status=ActionStatus.FAILED, messages="Generation failed")
                 yield action
 
-        with patch(
-            "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode",
-            MockNode,
-        ), patch(
-            "datus.schemas.semantic_agentic_node_models.SemanticNodeInput",
-            MagicMock(return_value=MagicMock()),
+        with (
+            patch(
+                "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode",
+                MockNode,
+            ),
+            patch(
+                "datus.schemas.semantic_agentic_node_models.SemanticNodeInput",
+                MagicMock(return_value=MagicMock()),
+            ),
         ):
             success, error = await create_semantic_models_for_tables(["users"], mock_config)
         assert success is False
@@ -306,12 +312,15 @@ class TestCreateSemanticModelsForTables:
                 action = SimpleNamespace(status=ActionStatus.FAILED, messages=None)
                 yield action
 
-        with patch(
-            "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode",
-            MockNode,
-        ), patch(
-            "datus.schemas.semantic_agentic_node_models.SemanticNodeInput",
-            MagicMock(return_value=MagicMock()),
+        with (
+            patch(
+                "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode",
+                MockNode,
+            ),
+            patch(
+                "datus.schemas.semantic_agentic_node_models.SemanticNodeInput",
+                MagicMock(return_value=MagicMock()),
+            ),
         ):
             success, error = await create_semantic_models_for_tables(["users"], mock_config)
         assert success is False
@@ -339,12 +348,15 @@ class TestCreateSemanticModelsForTables:
                 raise RuntimeError("connection lost")
                 yield  # async generator marker
 
-        with patch(
-            "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode",
-            MockNode,
-        ), patch(
-            "datus.schemas.semantic_agentic_node_models.SemanticNodeInput",
-            MagicMock(return_value=MagicMock()),
+        with (
+            patch(
+                "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode",
+                MockNode,
+            ),
+            patch(
+                "datus.schemas.semantic_agentic_node_models.SemanticNodeInput",
+                MagicMock(return_value=MagicMock()),
+            ),
         ):
             success, error = await create_semantic_models_for_tables(["users"], mock_config)
         assert success is False
@@ -376,12 +388,15 @@ class TestCreateSemanticModelsForTables:
                     yield action
 
         emit_count = []
-        with patch(
-            "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode",
-            MockNode,
-        ), patch(
-            "datus.schemas.semantic_agentic_node_models.SemanticNodeInput",
-            MagicMock(return_value=MagicMock()),
+        with (
+            patch(
+                "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode",
+                MockNode,
+            ),
+            patch(
+                "datus.schemas.semantic_agentic_node_models.SemanticNodeInput",
+                MagicMock(return_value=MagicMock()),
+            ),
         ):
             success, error = await create_semantic_models_for_tables(["users"], mock_config, emit=emit_count.append)
         assert success is True

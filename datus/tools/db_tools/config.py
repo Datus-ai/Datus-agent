@@ -5,10 +5,7 @@
 from typing import Optional
 
 from datus_db_core import ConnectionConfig
-from pydantic import Field
-
 from pydantic import ConfigDict, Field
-
 
 
 class FileConnectionConfig(ConnectionConfig):
