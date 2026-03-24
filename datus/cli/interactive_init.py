@@ -10,6 +10,7 @@ This module provides an interactive CLI for setting up the basic configuration
 without requiring users to manually write conf/agent.yml files.
 """
 
+import os
 import sys
 from getpass import getpass
 from pathlib import Path
@@ -500,6 +501,12 @@ class InteractiveInit:
                 self.console.print("❌ Token cannot be empty")
                 return False
         elif token_method == "env":
+            if not os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
+                self.console.print(
+                    "❌ CLAUDE_CODE_OAUTH_TOKEN environment variable is not set.\n"
+                    "   Run 'claude setup-token' first, then: export CLAUDE_CODE_OAUTH_TOKEN=<token>"
+                )
+                return False
             api_key_value = "${CLAUDE_CODE_OAUTH_TOKEN}"
 
         # Store configuration
@@ -532,7 +539,13 @@ class InteractiveInit:
             self.console.print(" ✅ Claude subscription model test successful\n")
             return True
         else:
-            self.console.print(f"❌ LLM connectivity test failed: {error_msg}\n")
+            self.console.print(f"❌ LLM connectivity test failed: {error_msg}")
+            if "401" in error_msg or "300011" in error_msg:
+                self.console.print(
+                    "   Token may be expired. Run 'claude setup-token' to refresh, then retry 'datus init'.\n"
+                )
+            else:
+                self.console.print("")
             return False
 
     def _configure_codex_oauth(self, provider: str, provider_config: dict) -> bool:
