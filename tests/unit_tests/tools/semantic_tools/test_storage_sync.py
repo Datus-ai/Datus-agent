@@ -45,17 +45,10 @@ class TestEnsureSemanticModelStore:
         manager = _make_manager()
         mock_rag_instance = MagicMock()
         mock_expected_store = MagicMock()
-        mock_rag_instance.store = mock_expected_store
+        mock_rag_instance.storage = mock_expected_store
         mock_rag_class = MagicMock(return_value=mock_rag_instance)
 
-        # The method does: from datus.storage.semantic_model.rag import SemanticModelRAG
-        # Patch using sys.modules to inject a fake module
-        import sys
-        import types
-
-        fake_module = types.ModuleType("datus.storage.semantic_model.rag")
-        fake_module.SemanticModelRAG = mock_rag_class
-        with patch.dict(sys.modules, {"datus.storage.semantic_model.rag": fake_module}):
+        with patch("datus.storage.semantic_model.store.SemanticModelRAG", mock_rag_class):
             store = manager._ensure_semantic_model_store()
 
         assert store is mock_expected_store
@@ -76,15 +69,10 @@ class TestEnsureMetricStore:
         manager = _make_manager()
         mock_rag_instance = MagicMock()
         mock_expected_store = MagicMock()
-        mock_rag_instance.store = mock_expected_store
+        mock_rag_instance.storage = mock_expected_store
         mock_rag_class = MagicMock(return_value=mock_rag_instance)
 
-        import sys
-        import types
-
-        fake_module = types.ModuleType("datus.storage.metric.rag")
-        fake_module.MetricRAG = mock_rag_class
-        with patch.dict(sys.modules, {"datus.storage.metric.rag": fake_module}):
+        with patch("datus.storage.metric.store.MetricRAG", mock_rag_class):
             store = manager._ensure_metric_store()
 
         assert store is mock_expected_store

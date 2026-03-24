@@ -42,19 +42,19 @@ class SemanticStorageManager:
     def _ensure_semantic_model_store(self) -> SemanticModelStorage:
         """Lazy init semantic model storage."""
         if self.semantic_model_store is None:
-            from datus.storage.semantic_model.rag import SemanticModelRAG
+            from datus.storage.semantic_model.store import SemanticModelRAG
 
             rag = SemanticModelRAG(self.agent_config)
-            self.semantic_model_store = rag.store
+            self.semantic_model_store = rag.storage
         return self.semantic_model_store
 
     def _ensure_metric_store(self) -> MetricStorage:
         """Lazy init metric storage."""
         if self.metric_store is None:
-            from datus.storage.metric.rag import MetricRAG
+            from datus.storage.metric.store import MetricRAG
 
             rag = MetricRAG(self.agent_config)
-            self.metric_store = rag.store
+            self.metric_store = rag.storage
         return self.metric_store
 
     def _ensure_subject_tree_store(self) -> SubjectTreeStore:

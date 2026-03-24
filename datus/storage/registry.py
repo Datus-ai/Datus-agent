@@ -78,6 +78,11 @@ def configure_storage_defaults(
         _scope_fields.extend(scope_fields)
 
 
+def get_storage_defaults() -> Dict[str, Any]:
+    """Return the current deployment-level defaults (read-only copy)."""
+    return dict(_storage_defaults)
+
+
 def get_storage(
     factory: Callable[..., BaseEmbeddingStore],
     embedding_model_conf_name: str,

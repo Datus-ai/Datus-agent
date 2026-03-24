@@ -74,11 +74,34 @@ class SubjectTreeStore:
     """
 
     def __init__(self):
-        """Initialize SubjectTreeStore."""
+        """Initialize SubjectTreeStore.
+
+        Reads ``table_prefix`` and ``extra_fields`` from the storage registry
+        defaults (set via ``configure_storage_defaults()``).  This ensures that
+        SaaS deployments get prefixed table names (e.g. ``tb_subject_nodes``)
+        and multi-tenant columns (e.g. ``workspace_id``).
+        """
         from datus.storage.backend_holder import create_rdb_for_store
+        from datus.storage.registry import get_storage_defaults
+
+        defaults = get_storage_defaults()
+        table_prefix = defaults.get("table_prefix", "")
+
+        # Build table definition with optional prefix and extra columns
+        table_def = _SUBJECT_NODES_TABLE
+        if table_prefix or defaults.get("extra_fields"):
+            import copy
+
+            table_def = copy.copy(table_def)
+            if table_prefix:
+                table_def.table_name = f"{table_prefix}{_SUBJECT_NODES_TABLE.table_name}"
+            extra_pa_fields = defaults.get("extra_fields")
+            if extra_pa_fields:
+                extra_cols = [ColumnDef(name=f.name, col_type="TEXT", default="") for f in extra_pa_fields]
+                table_def.columns = list(table_def.columns) + extra_cols
 
         self._rdb = create_rdb_for_store("subject_tree")
-        self._table = self._rdb.ensure_table(_SUBJECT_NODES_TABLE)
+        self._table = self._rdb.ensure_table(table_def)
         self._migrate_null_parents()
         logger.info("SubjectTreeStore initialized")
 
