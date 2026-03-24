@@ -21,6 +21,22 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
+class _SharedTableState:
+    """Mutable state shared between a singleton storage and its scoped views.
+
+    Using a dedicated object (instead of a plain bool) ensures that
+    ``copy.copy()`` preserves the reference — when the singleton sets
+    ``initialized = True`` or updates ``table``, all scoped views see
+    the change immediately.
+    """
+
+    __slots__ = ("initialized", "table")
+
+    def __init__(self):
+        self.initialized: bool = False
+        self.table: Optional[VectorTable] = None
+
+
 class StorageBase:
     """Base class for all storage components using a vector backend."""
 
@@ -107,29 +123,39 @@ class BaseEmbeddingStore(StorageBase):
         self._default_values: Dict[str, Any] = default_values or {}
         self._scope_indices: List[str] = scope_indices or []
         self._scope_filter: Optional[Node] = None
-        # Delay table initialization until first use
-        self.table: Optional[VectorTable] = None
-        self._table_initialized = False
+        # Delay table initialization until first use.
+        # _shared is a mutable object so that shallow copies (scoped views)
+        # share the same state — once the singleton initializes the table,
+        # all views see it immediately without re-entering the lock.
+        self._shared = _SharedTableState()
         self._table_lock = Lock()
         self._write_lock = Lock()
 
+    @property
+    def table(self) -> Optional[VectorTable]:
+        return self._shared.table
+
+    @table.setter
+    def table(self, value: Optional[VectorTable]):
+        self._shared.table = value
+
     def _ensure_table_ready(self):
         """Ensure table is ready for operations, with proper error handling."""
-        if self._table_initialized:
+        if self._shared.initialized:
             return
 
         with self._table_lock:
-            if self._table_initialized:
+            if self._shared.initialized:
                 return
 
             # First check if embedding model is available
             self._check_embedding_model_ready()
             # Initialize table with embedding function
             self._ensure_table(self._schema)
+            self._shared.initialized = True
             # Auto-create scalar indices for scope fields (e.g. workspace_id)
             for col in self._scope_indices:
                 self._create_scalar_index(col)
-            self._table_initialized = True
             logger.debug(f"Table {self.table_name} initialized successfully with embedding function")
 
     def __copy__(self):
@@ -198,8 +224,8 @@ class BaseEmbeddingStore(StorageBase):
         """Drop the table and reset state. Table will be recreated on next use."""
         with self._table_lock:
             self.db.drop_table(self.table_name, ignore_missing=True)
-            self.table = None
-            self._table_initialized = False
+            self._shared.table = None
+            self._shared.initialized = False
 
     def _ensure_table(self, schema: Optional[pa.Schema] = None):
         if self.db.table_exists(self.table_name):

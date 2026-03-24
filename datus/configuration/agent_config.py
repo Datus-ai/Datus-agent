@@ -418,9 +418,6 @@ class AgentConfig:
             )
         if value == self._current_namespace:
             return
-        from datus.storage.registry import clear_storage_registry
-
-        clear_storage_registry()
         self._current_database = ""
         self._current_namespace = value
         self.db_type = list(self.namespaces[self._current_namespace].values())[0].type

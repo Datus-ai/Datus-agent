@@ -423,6 +423,9 @@ class ChatCommands:
                     async for action in current_node.execute_stream_with_interactions(
                         action_history_manager=self.cli.actions
                     ):
+                        # Skip USER actions (depth=0) — already printed by _echo_user_input
+                        if action.role == ActionRole.USER and action.depth == 0:
+                            continue
                         # Skip TOOL PROCESSING entries — SUCCESS version follows
                         if action.role == ActionRole.TOOL and action.status == ActionStatus.PROCESSING:
                             continue

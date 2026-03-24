@@ -289,12 +289,12 @@ class TestTruncate:
         store = SchemaStorage(get_db_embedding_model())
         # Force table initialization
         store._ensure_table_ready()
-        assert store._table_initialized is True
+        assert store._shared.initialized is True
         assert store.table is not None
 
         store.truncate()
         assert store.table is None
-        assert store._table_initialized is False
+        assert store._shared.initialized is False
 
     def test_truncate_allows_reinitialization(self, tmp_path):
         """After truncate, calling _ensure_table_ready should recreate the table."""
@@ -517,9 +517,9 @@ class TestEnsureTableReady:
     def test_ensure_table_ready_sets_initialized(self, tmp_path):
         """After _ensure_table_ready, _table_initialized is True."""
         store = SchemaStorage(get_db_embedding_model())
-        assert store._table_initialized is False
+        assert store._shared.initialized is False
         store._ensure_table_ready()
-        assert store._table_initialized is True
+        assert store._shared.initialized is True
         assert store.table is not None
 
     def test_ensure_table_ready_idempotent(self, tmp_path):

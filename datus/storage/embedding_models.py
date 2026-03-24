@@ -169,7 +169,6 @@ class EmbeddingModel:
                     batch_size=self.batch_size,
                 )
                 # first download
-                # self._model.generate_embeddings(["foo"])
                 logger.debug(f"Model {self.registry_name}/{self.model_name} initialized successfully")
             except Exception as e:
                 raise DatusException(

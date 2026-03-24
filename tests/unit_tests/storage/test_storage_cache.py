@@ -48,7 +48,10 @@ class _DummyStore:
         self.init_kwargs = kwargs
         self._scope_filter = None
         self._default_values = {}
-        self._table_initialized = True
+        from datus.storage.base import _SharedTableState
+
+        self._shared = _SharedTableState()
+        self._shared.initialized = True
 
     def _ensure_table_ready(self):
         pass

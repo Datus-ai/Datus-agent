@@ -154,9 +154,10 @@ def create_scoped_view(
     if scope_filter is None and not write_defaults:
         return storage
 
-    # Ensure table is initialized on the singleton before copying
-    storage._ensure_table_ready()
-
+    # Shallow copy shares db/table/locks/_init_state with the singleton.
+    # _init_state is a shared mutable list — once the singleton initializes
+    # the table, all scoped views see it immediately without re-entering
+    # the lock. No eager _ensure_table_ready() call needed here.
     view = copy.copy(storage)
     if scope_filter is not None:
         view._scope_filter = scope_filter

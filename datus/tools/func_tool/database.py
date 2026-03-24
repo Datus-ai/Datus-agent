@@ -137,6 +137,7 @@ class DBFuncTool:
             scoped_tables: Optional explicit table scope patterns
             connector_cache_size: Max connectors to cache (LRU eviction), default 8
         """
+        print("$$$$ start connector")
         # Determine mode based on input type
         if isinstance(connector_or_manager, DBManager):
             if not agent_config:
@@ -160,11 +161,17 @@ class DBFuncTool:
         self.compressor = DataCompressor(model_name=model_name)
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
+        print("$$$ START schema_rag")
         self.schema_rag = SchemaWithValueRAG(agent_config, sub_agent_name) if agent_config else None
         self._field_order = self._determine_field_order()
         self._scoped_patterns = self._load_scoped_patterns(scoped_tables)
+        print("$$$ START _semantic_storage")
+
         self._semantic_storage = SemanticModelRAG(agent_config, sub_agent_name) if agent_config else None
+        print("$$$ CHECK schema count")
         self.has_schema = self.schema_rag and self.schema_rag.schema_store.table_size() > 0
+        print("$$$ CHECK semantic count")
+
         self.has_semantic_models = self._semantic_storage and self._semantic_storage.get_size() > 0
 
     def _init_single_db_connector(self, connector: BaseSqlConnector):
