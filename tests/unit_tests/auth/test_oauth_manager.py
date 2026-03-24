@@ -6,6 +6,7 @@
 
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 from datus.auth.oauth_manager import OAuthManager
@@ -338,13 +339,16 @@ class TestLoginBrowserFull:
             assert tokens["access_token"] == "browser_tok"
             assert manager.token_storage.load()["access_token"] == "browser_tok"
 
+    @patch("datus.auth.oauth_manager.time.monotonic")
     @patch("datus.auth.oauth_manager.webbrowser.open")
     @patch("datus.auth.oauth_manager.HTTPServer")
     @patch("datus.auth.oauth_manager.generate_pkce_pair")
     @patch("datus.auth.oauth_manager.generate_state")
-    def test_browser_flow_error(self, mock_state, mock_pkce, mock_server_cls, mock_browser, manager):
+    def test_browser_flow_error(self, mock_state, mock_pkce, mock_server_cls, mock_browser, mock_monotonic, manager):
         mock_pkce.return_value = ("verifier", "challenge")
         mock_state.return_value = "test_state"
+        # First call sets deadline (0+120=120), second call exceeds it (200>120 → break)
+        mock_monotonic.side_effect = [0, 200]
 
         mock_server = MagicMock()
 
@@ -358,6 +362,86 @@ class TestLoginBrowserFull:
         mock_server_cls.return_value = mock_server
 
         # The result dict starts with code=None, error=None
-        # Since handle_request doesn't set code, it will raise "No authorization code"
+        # Since handle_request doesn't set code and deadline passes, it will raise "No authorization code"
         with pytest.raises(DatusException, match="No authorization code"):
             manager.login_browser()
+
+
+class TestRefreshTokensErrors:
+    @patch("datus.auth.oauth_manager.httpx.post")
+    def test_http_error_raises_datus_exception(self, mock_post, manager):
+        manager.token_storage.save({"access_token": "old", "refresh_token": "rt"})
+
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.text = "Internal Server Error"
+        mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "Server Error", request=MagicMock(), response=mock_response
+        )
+        mock_post.return_value = mock_response
+
+        with pytest.raises(DatusException, match="Token refresh failed"):
+            manager.refresh_tokens()
+
+    @patch("datus.auth.oauth_manager.httpx.post")
+    def test_timeout_raises_datus_exception(self, mock_post, manager):
+        manager.token_storage.save({"access_token": "old", "refresh_token": "rt"})
+        mock_post.side_effect = httpx.TimeoutException("timeout")
+
+        with pytest.raises(DatusException, match="timed out"):
+            manager.refresh_tokens()
+
+
+class TestExchangeCodeErrors:
+    @patch("datus.auth.oauth_manager.httpx.post")
+    def test_http_error_raises_datus_exception(self, mock_post, manager):
+        mock_response = MagicMock()
+        mock_response.status_code = 400
+        mock_response.text = "Bad Request"
+        mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "Bad Request", request=MagicMock(), response=mock_response
+        )
+        mock_post.return_value = mock_response
+
+        with pytest.raises(DatusException, match="Code exchange failed"):
+            manager._exchange_code("code", "verifier")
+
+    @patch("datus.auth.oauth_manager.httpx.post")
+    def test_timeout_raises_datus_exception(self, mock_post, manager):
+        mock_post.side_effect = httpx.TimeoutException("timeout")
+
+        with pytest.raises(DatusException, match="timed out"):
+            manager._exchange_code("code", "verifier")
+
+
+class TestHttpTimeout:
+    @patch("datus.auth.oauth_manager.httpx.post")
+    def test_refresh_passes_timeout(self, mock_post, manager):
+        from datus.auth.oauth_config import HTTP_TIMEOUT
+
+        manager.token_storage.save({"access_token": "old", "refresh_token": "rt"})
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"access_token": "new", "refresh_token": "rt"}
+        mock_response.raise_for_status = MagicMock()
+        mock_post.return_value = mock_response
+
+        manager.refresh_tokens()
+        assert mock_post.call_args[1]["timeout"] == HTTP_TIMEOUT
+
+    @patch("datus.auth.oauth_manager.httpx.post")
+    def test_exchange_code_passes_timeout(self, mock_post, manager):
+        from datus.auth.oauth_config import HTTP_TIMEOUT
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"access_token": "tok"}
+        mock_response.raise_for_status = MagicMock()
+        mock_post.return_value = mock_response
+
+        manager._exchange_code("code", "verifier")
+        assert mock_post.call_args[1]["timeout"] == HTTP_TIMEOUT
+
+
+class TestThreadSafety:
+    def test_has_refresh_lock(self, manager):
+        assert hasattr(manager._refresh_lock, "acquire")
+        assert hasattr(manager._refresh_lock, "release")

@@ -111,3 +111,47 @@ class TestNeedsRefresh:
     def test_true_on_invalid_timestamp(self, storage):
         storage.save({"access_token": "tok", "last_refresh": "not-a-date"})
         assert storage.needs_refresh() is True
+
+
+class TestIsExpired:
+    def test_true_when_no_tokens(self, storage):
+        assert storage.is_expired(None) is True
+
+    def test_false_with_valid_expires_at(self, storage):
+        future = datetime.now(timezone.utc).timestamp() + 3600
+        assert storage.is_expired({"access_token": "tok", "expires_at": future}) is False
+
+    def test_true_with_past_expires_at(self, storage):
+        past = datetime.now(timezone.utc).timestamp() - 100
+        assert storage.is_expired({"access_token": "tok", "expires_at": past}) is True
+
+    def test_true_within_safety_buffer(self, storage):
+        # expires_at is 30 seconds from now (within 60s safety buffer)
+        near_future = datetime.now(timezone.utc).timestamp() + 30
+        assert storage.is_expired({"access_token": "tok", "expires_at": near_future}) is True
+
+    def test_falls_back_to_last_refresh(self, storage):
+        old_time = datetime.now(timezone.utc) - timedelta(seconds=TOKEN_REFRESH_INTERVAL_SECONDS + 100)
+        tokens = {"access_token": "tok", "last_refresh": old_time.isoformat()}
+        assert storage.is_expired(tokens) is True
+
+    def test_not_expired_with_recent_last_refresh(self, storage):
+        recent = datetime.now(timezone.utc).isoformat()
+        tokens = {"access_token": "tok", "last_refresh": recent}
+        assert storage.is_expired(tokens) is False
+
+
+class TestSaveExpiresAt:
+    def test_computes_expires_at_from_expires_in(self, storage, token_file):
+        storage.save({"access_token": "tok", "expires_in": 3600})
+        with open(token_file) as f:
+            data = json.load(f)
+        assert "expires_at" in data
+        expected = datetime.now(timezone.utc).timestamp() + 3600
+        assert abs(data["expires_at"] - expected) < 5
+
+    def test_preserves_existing_expires_at(self, storage, token_file):
+        storage.save({"access_token": "tok", "expires_in": 3600, "expires_at": 99999})
+        with open(token_file) as f:
+            data = json.load(f)
+        assert data["expires_at"] == 99999

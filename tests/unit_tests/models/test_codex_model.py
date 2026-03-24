@@ -613,3 +613,125 @@ class TestCodexModelGenerateWithToolsStream:
             assert "mcp_servers" in agent_kwargs
             assert "tools" in agent_kwargs
             assert "hooks" in agent_kwargs
+
+
+class TestCodexModelBaseUrl:
+    @patch("datus.models.codex_model.OAuthManager")
+    def test_base_url_from_config(self, mock_oauth_cls, model_config):
+        from datus.models.codex_model import CodexModel
+
+        mock_oauth_cls.return_value = MagicMock()
+        model = CodexModel(model_config=model_config)
+        assert model._base_url == "https://chatgpt.com/backend-api/codex"
+
+    @patch("datus.models.codex_model.OAuthManager")
+    def test_base_url_defaults_when_not_set(self, mock_oauth_cls):
+        from datus.models.codex_model import CODEX_API_BASE_URL, CodexModel
+
+        mock_oauth_cls.return_value = MagicMock()
+        config = ModelConfig(type="codex", api_key="", model="gpt-5.3-codex", auth_type="oauth")
+        model = CodexModel(model_config=config)
+        assert model._base_url == CODEX_API_BASE_URL
+
+    @patch("datus.models.codex_model.OAuthManager")
+    def test_custom_base_url(self, mock_oauth_cls):
+        from datus.models.codex_model import CodexModel
+
+        mock_oauth_cls.return_value = MagicMock()
+        config = ModelConfig(
+            type="codex",
+            api_key="",
+            model="gpt-5.3-codex",
+            base_url="https://my-proxy.example.com/codex",
+            auth_type="oauth",
+        )
+        model = CodexModel(model_config=config)
+        assert model._base_url == "https://my-proxy.example.com/codex"
+
+
+class TestCodexModelJsonOutput401Retry:
+    @patch("datus.models.codex_model.OAuthManager")
+    def test_json_output_401_retry(self, mock_oauth_cls, model_config):
+        from openai import AuthenticationError
+
+        from datus.models.codex_model import CodexModel
+
+        mock_oauth = MagicMock()
+        mock_oauth.get_access_token.return_value = "tok"
+        mock_oauth_cls.return_value = mock_oauth
+
+        model = CodexModel(model_config=model_config)
+
+        mock_client = MagicMock()
+        good_response = MagicMock()
+        good_response.output_text = json.dumps({"sql": "SELECT 1"})
+
+        auth_error = AuthenticationError(
+            message="Unauthorized",
+            response=MagicMock(status_code=401, headers={}),
+            body=None,
+        )
+        mock_client.responses.create.side_effect = [auth_error, good_response]
+        model._client = mock_client
+
+        result = model.generate_with_json_output("test")
+        assert result == {"sql": "SELECT 1"}
+        mock_oauth.refresh_tokens.assert_called_once()
+
+    @patch("datus.models.codex_model.OAuthManager")
+    def test_json_output_reraises_non_auth_error(self, mock_oauth_cls, model_config):
+        from datus.models.codex_model import CodexModel
+
+        mock_oauth = MagicMock()
+        mock_oauth.get_access_token.return_value = "tok"
+        mock_oauth_cls.return_value = mock_oauth
+
+        model = CodexModel(model_config=model_config)
+        mock_client = MagicMock()
+        mock_client.responses.create.side_effect = ValueError("some error")
+        model._client = mock_client
+
+        with pytest.raises(ValueError, match="some error"):
+            model.generate_with_json_output("test")
+
+
+class TestCodexModelToolsAuth401Retry:
+    @pytest.mark.asyncio
+    @patch("datus.models.codex_model.OAuthManager")
+    @patch("datus.models.codex_model.multiple_mcp_servers")
+    @patch("datus.models.codex_model.Runner")
+    @patch("datus.models.codex_model.Agent")
+    @patch("datus.models.codex_model.extract_sql_contexts")
+    async def test_generate_with_tools_401_retry(
+        self, mock_extract, mock_agent_cls, mock_runner, mock_mcp, mock_oauth_cls, model_config
+    ):
+        from openai import AuthenticationError
+
+        from datus.models.codex_model import CodexModel
+
+        mock_oauth = MagicMock()
+        mock_oauth.get_access_token.return_value = "tok"
+        mock_oauth_cls.return_value = mock_oauth
+
+        model = CodexModel(model_config=model_config)
+        model._async_client = MagicMock()
+
+        with patch("agents.models.openai_responses.OpenAIResponsesModel"):
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            auth_error = AuthenticationError(
+                message="Unauthorized",
+                response=MagicMock(status_code=401, headers={}),
+                body=None,
+            )
+            mock_result = MagicMock()
+            mock_result.final_output = "Retried result"
+            mock_result.turn_count = 1
+            mock_runner.run = AsyncMock(side_effect=[auth_error, mock_result])
+            mock_extract.return_value = []
+
+            result = await model.generate_with_tools(prompt="test")
+
+            assert result["content"] == "Retried result"
+            mock_oauth.refresh_tokens.assert_called_once()

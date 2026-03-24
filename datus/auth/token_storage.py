@@ -6,7 +6,6 @@
 
 import json
 import os
-import stat
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -35,15 +34,18 @@ class TokenStorage:
         tokens = dict(tokens)
         tokens.setdefault("last_refresh", datetime.now(timezone.utc).isoformat())
 
+        # Compute expires_at from expires_in if available (prefer server metadata)
+        if "expires_in" in tokens and "expires_at" not in tokens:
+            tokens["expires_at"] = datetime.now(timezone.utc).timestamp() + tokens["expires_in"]
+
         dir_path = os.path.dirname(self.path)
         if dir_path:
-            os.makedirs(dir_path, exist_ok=True)
+            os.makedirs(dir_path, mode=0o700, exist_ok=True)
 
-        with open(self.path, "w", encoding="utf-8") as f:
+        # Atomically create file with restricted permissions (no TOCTOU window)
+        fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(tokens, f, indent=2)
-
-        # Set file permissions to owner-only read/write (0o600)
-        os.chmod(self.path, stat.S_IRUSR | stat.S_IWUSR)
         logger.debug("OAuth tokens saved to %s", self.path)
 
     def load(self) -> Optional[dict]:
@@ -68,15 +70,28 @@ class TokenStorage:
             logger.debug("OAuth tokens cleared from %s", self.path)
 
     def needs_refresh(self) -> bool:
-        """Check whether the stored token needs to be refreshed.
-
-        Returns:
-            True if tokens are missing, have no last_refresh timestamp,
-            or if more than TOKEN_REFRESH_INTERVAL_SECONDS have elapsed.
-        """
+        """Check whether the stored token needs to be refreshed (reads from disk)."""
         tokens = self.load()
+        return self.is_expired(tokens)
+
+    def is_expired(self, tokens: Optional[dict]) -> bool:
+        """Check whether the given tokens dict indicates expiry.
+
+        Uses expires_at (server-derived) with a 60-second safety buffer,
+        falling back to last_refresh + TOKEN_REFRESH_INTERVAL_SECONDS.
+        """
         if not tokens:
             return True
+
+        # Prefer expires_at (computed from server's expires_in during save)
+        expires_at = tokens.get("expires_at")
+        if expires_at is not None:
+            try:
+                return datetime.now(timezone.utc).timestamp() >= (float(expires_at) - 60)
+            except (ValueError, TypeError):
+                pass
+
+        # Fallback to last_refresh + fixed interval
         last_refresh_str = tokens.get("last_refresh")
         if not last_refresh_str:
             return True

@@ -43,6 +43,7 @@ class CodexModel(LLMBaseModel):
     def __init__(self, model_config: ModelConfig, **kwargs):
         super().__init__(model_config)
         self.model_name = model_config.model
+        self._base_url = model_config.base_url or CODEX_API_BASE_URL
         self.oauth_manager = OAuthManager()
         self._client = None
         self._async_client = None
@@ -54,7 +55,7 @@ class CodexModel(LLMBaseModel):
 
             self._client = OpenAI(
                 api_key=self.oauth_manager.get_access_token(),
-                base_url=CODEX_API_BASE_URL,
+                base_url=self._base_url,
             )
         return self._client
 
@@ -65,7 +66,7 @@ class CodexModel(LLMBaseModel):
 
             self._async_client = AsyncOpenAI(
                 api_key=self.oauth_manager.get_access_token(),
-                base_url=CODEX_API_BASE_URL,
+                base_url=self._base_url,
             )
         return self._async_client
 
@@ -165,8 +166,19 @@ class CodexModel(LLMBaseModel):
         else:
             create_kwargs["text"] = {"format": {"type": "json_object"}}
 
-        response = self._get_client().responses.create(**create_kwargs)
-        return json.loads(response.output_text)
+        try:
+            response = self._get_client().responses.create(**create_kwargs)
+            return json.loads(response.output_text)
+        except Exception as e:
+            from openai import AuthenticationError
+
+            if isinstance(e, AuthenticationError):
+                logger.info("Got 401 in generate_with_json_output, refreshing OAuth token and retrying...")
+                self.oauth_manager.refresh_tokens()
+                self._refresh_client_token()
+                response = self._get_client().responses.create(**create_kwargs)
+                return json.loads(response.output_text)
+            raise
 
     async def generate_with_tools(
         self,
@@ -204,6 +216,24 @@ class CodexModel(LLMBaseModel):
                 result = await Runner.run(agent, input=prompt, max_turns=max_turns, session=session)
             except MaxTurnsExceeded as e:
                 raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns}) from e
+            except Exception as e:
+                from openai import AuthenticationError
+
+                if isinstance(e, AuthenticationError):
+                    logger.info("Got 401 in generate_with_tools, refreshing OAuth token and retrying...")
+                    self.oauth_manager.refresh_tokens()
+                    self._refresh_client_token()
+                    responses_model = self._get_responses_model()
+                    agent_kwargs["model"] = responses_model
+                    agent = Agent(**agent_kwargs)
+                    try:
+                        result = await Runner.run(agent, input=prompt, max_turns=max_turns, session=session)
+                    except MaxTurnsExceeded as e2:
+                        raise DatusException(
+                            ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns}
+                        ) from e2
+                else:
+                    raise
 
             return {
                 "content": result.final_output,
@@ -250,116 +280,122 @@ class CodexModel(LLMBaseModel):
 
             agent = Agent(**agent_kwargs)
 
-            try:
-                result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns, session=session)
-            except MaxTurnsExceeded as e:
-                raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns}) from e
+            result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns, session=session)
 
             # Stream events and yield ActionHistory objects
             temp_tool_calls = {}  # {call_id: {"tool_name": ..., "arguments": ...}}
 
-            while not result.is_complete:
-                if interrupt_controller and interrupt_controller.is_interrupted:
-                    from datus.cli.execution_state import ExecutionInterrupted
-
-                    raise ExecutionInterrupted("Interrupted by user")
-
-                async for event in result.stream_events():
+            try:
+                while not result.is_complete:
                     if interrupt_controller and interrupt_controller.is_interrupted:
                         from datus.cli.execution_state import ExecutionInterrupted
 
                         raise ExecutionInterrupted("Interrupted by user")
 
-                    # Handle assistant text from raw response events
-                    if hasattr(event, "type") and event.type == "raw_response_event":
-                        raw_data = getattr(event, "data", None)
-                        if raw_data and getattr(raw_data, "type", None) == "response.output_item.done":
-                            raw_item = getattr(raw_data, "item", None)
-                            if raw_item and getattr(raw_item, "type", None) == "message":
-                                content_list = getattr(raw_item, "content", [])
-                                text_parts = [
-                                    getattr(p, "text", "") for p in (content_list or []) if getattr(p, "text", None)
-                                ]
-                                full_text = "\n".join(text_parts).strip()
-                                if full_text:
-                                    action = ActionHistory(
-                                        action_id=f"assistant_{uuid.uuid4().hex[:8]}",
-                                        role=ActionRole.ASSISTANT,
-                                        messages=full_text[:200] + ("..." if len(full_text) > 200 else ""),
-                                        action_type="response",
-                                        input={},
-                                        output={"raw_output": full_text},
-                                        status=ActionStatus.SUCCESS,
-                                    )
-                                    action_history_manager.add_action(action)
-                                    yield action
-                        continue
+                    async for event in result.stream_events():
+                        if interrupt_controller and interrupt_controller.is_interrupted:
+                            from datus.cli.execution_state import ExecutionInterrupted
 
-                    if not hasattr(event, "type") or event.type != "run_item_stream_event":
-                        continue
-                    if not (hasattr(event, "item") and hasattr(event.item, "type")):
-                        continue
+                            raise ExecutionInterrupted("Interrupted by user")
 
-                    item_type = event.item.type
+                        # Handle assistant text from raw response events
+                        if hasattr(event, "type") and event.type == "raw_response_event":
+                            raw_data = getattr(event, "data", None)
+                            if raw_data and getattr(raw_data, "type", None) == "response.output_item.done":
+                                raw_item = getattr(raw_data, "item", None)
+                                if raw_item and getattr(raw_item, "type", None) == "message":
+                                    content_list = getattr(raw_item, "content", [])
+                                    text_parts = [
+                                        getattr(p, "text", "") for p in (content_list or []) if getattr(p, "text", None)
+                                    ]
+                                    full_text = "\n".join(text_parts).strip()
+                                    if full_text:
+                                        action = ActionHistory(
+                                            action_id=f"assistant_{uuid.uuid4().hex[:8]}",
+                                            role=ActionRole.ASSISTANT,
+                                            messages=full_text[:200] + ("..." if len(full_text) > 200 else ""),
+                                            action_type="response",
+                                            input={},
+                                            output={"raw_output": full_text},
+                                            status=ActionStatus.SUCCESS,
+                                        )
+                                        action_history_manager.add_action(action)
+                                        yield action
+                            continue
 
-                    # Handle tool call events
-                    if item_type == "tool_call_item":
-                        raw_item = getattr(event.item, "raw_item", None)
-                        if raw_item:
-                            tool_name = getattr(raw_item, "name", "unknown")
-                            call_id = getattr(raw_item, "call_id", None)
-                            if not call_id:
-                                call_id = f"tool_{uuid.uuid4().hex[:8]}"
-                            arguments = getattr(raw_item, "arguments", "{}")
-                            args_str = str(arguments)[:80]
+                        if not hasattr(event, "type") or event.type != "run_item_stream_event":
+                            continue
+                        if not (hasattr(event, "item") and hasattr(event.item, "type")):
+                            continue
 
-                            temp_tool_calls[call_id] = {
-                                "tool_name": tool_name,
-                                "arguments": arguments,
-                                "args_display": args_str,
-                            }
+                        item_type = event.item.type
 
-                            action = ActionHistory(
-                                action_id=call_id,
-                                role=ActionRole.TOOL,
-                                messages=f"Tool call: {tool_name}('{args_str}...')",
-                                action_type=tool_name,
-                                input={"function_name": tool_name, "arguments": arguments},
-                                output={},
-                                status=ActionStatus.PROCESSING,
-                            )
-                            action_history_manager.add_action(action)
-                            yield action
+                        # Handle tool call events
+                        if item_type == "tool_call_item":
+                            raw_item = getattr(event.item, "raw_item", None)
+                            if raw_item:
+                                # Normalize access: raw_item can be dict (Responses API) or object
+                                if isinstance(raw_item, dict):
+                                    tool_name = raw_item.get("name", "unknown")
+                                    call_id = raw_item.get("call_id")
+                                    arguments = raw_item.get("arguments", "{}")
+                                else:
+                                    tool_name = getattr(raw_item, "name", "unknown")
+                                    call_id = getattr(raw_item, "call_id", None)
+                                    arguments = getattr(raw_item, "arguments", "{}")
+                                if not call_id:
+                                    call_id = f"tool_{uuid.uuid4().hex[:8]}"
+                                args_str = str(arguments)[:80]
 
-                    elif item_type == "tool_call_output_item":
-                        raw_item = getattr(event.item, "raw_item", None)
-                        output_content = getattr(event.item, "output", "")
-                        if raw_item:
-                            # raw_item can be a dict (Responses API) or Pydantic model (Chat Completions)
-                            if isinstance(raw_item, dict):
-                                call_id = raw_item.get("call_id")
-                            else:
-                                call_id = getattr(raw_item, "call_id", None)
-                            if not call_id:
-                                call_id = f"tool_{uuid.uuid4().hex[:8]}"
+                                temp_tool_calls[call_id] = {
+                                    "tool_name": tool_name,
+                                    "arguments": arguments,
+                                    "args_display": args_str,
+                                }
 
-                            # Match back to stored tool call for name
-                            tool_info = temp_tool_calls.pop(call_id, None)
-                            tool_name = tool_info["tool_name"] if tool_info else "unknown"
-                            args_display = tool_info["args_display"] if tool_info else ""
-                            arguments = tool_info["arguments"] if tool_info else "{}"
+                                action = ActionHistory(
+                                    action_id=call_id,
+                                    role=ActionRole.TOOL,
+                                    messages=f"Tool call: {tool_name}('{args_str}...')",
+                                    action_type=tool_name,
+                                    input={"function_name": tool_name, "arguments": arguments},
+                                    output={},
+                                    status=ActionStatus.PROCESSING,
+                                )
+                                action_history_manager.add_action(action)
+                                yield action
 
-                            action = ActionHistory(
-                                action_id=f"complete_{call_id}",
-                                role=ActionRole.TOOL,
-                                messages=f"Tool call: {tool_name}('{args_display}...')",
-                                action_type=tool_name,
-                                input={"function_name": tool_name, "arguments": arguments},
-                                output={"success": True, "raw_output": output_content},
-                                status=ActionStatus.SUCCESS,
-                            )
-                            action_history_manager.add_action(action)
-                            yield action
+                        elif item_type == "tool_call_output_item":
+                            raw_item = getattr(event.item, "raw_item", None)
+                            output_content = getattr(event.item, "output", "")
+                            if raw_item:
+                                # raw_item can be a dict (Responses API) or Pydantic model (Chat Completions)
+                                if isinstance(raw_item, dict):
+                                    call_id = raw_item.get("call_id")
+                                else:
+                                    call_id = getattr(raw_item, "call_id", None)
+                                if not call_id:
+                                    call_id = f"tool_{uuid.uuid4().hex[:8]}"
+
+                                # Match back to stored tool call for name
+                                tool_info = temp_tool_calls.pop(call_id, None)
+                                tool_name = tool_info["tool_name"] if tool_info else "unknown"
+                                args_display = tool_info["args_display"] if tool_info else ""
+                                arguments = tool_info["arguments"] if tool_info else "{}"
+
+                                action = ActionHistory(
+                                    action_id=f"complete_{call_id}",
+                                    role=ActionRole.TOOL,
+                                    messages=f"Tool call: {tool_name}('{args_display}...')",
+                                    action_type=tool_name,
+                                    input={"function_name": tool_name, "arguments": arguments},
+                                    output={"success": True, "raw_output": output_content},
+                                    status=ActionStatus.SUCCESS,
+                                )
+                                action_history_manager.add_action(action)
+                                yield action
+            except MaxTurnsExceeded as e:
+                raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns}) from e
 
             # Final summary after streaming completes
             final_output = result.final_output if hasattr(result, "final_output") else ""

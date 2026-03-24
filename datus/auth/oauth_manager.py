@@ -25,6 +25,7 @@ from datus.auth.oauth_config import (
     DEVICE_CODE_POLL_INTERVAL,
     DEVICE_CODE_TIMEOUT,
     DEVICE_CODE_URL,
+    HTTP_TIMEOUT,
     REDIRECT_URI,
     SCOPES,
     TOKEN_URL,
@@ -42,6 +43,7 @@ class OAuthManager:
 
     def __init__(self, token_storage: Optional[TokenStorage] = None):
         self.token_storage = token_storage or TokenStorage()
+        self._refresh_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Browser PKCE flow
@@ -80,7 +82,14 @@ class OAuthManager:
 
         class _CallbackHandler(BaseHTTPRequestHandler):
             def do_GET(self):  # noqa: N802
-                qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                parsed = urllib.parse.urlparse(self.path)
+                # Only accept requests to the OAuth callback path
+                if parsed.path != "/auth/callback":
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+
+                qs = urllib.parse.parse_qs(parsed.query)
                 returned_state = qs.get("state", [None])[0]
                 if returned_state != state:
                     result["error"] = "State mismatch"
@@ -102,13 +111,17 @@ class OAuthManager:
                 pass
 
         server = HTTPServer(("127.0.0.1", CALLBACK_PORT), _CallbackHandler)
-        server.timeout = 120  # 2 minutes
+        server.timeout = 10  # Short timeout per handle_request; loop controls overall deadline
 
         # Open browser in a background thread so we can serve the callback
         threading.Thread(target=webbrowser.open, args=(auth_url,), daemon=True).start()
 
         logger.info("Waiting for OAuth callback on port %d ...", CALLBACK_PORT)
-        server.handle_request()
+        deadline = time.monotonic() + 120  # 2 minutes overall
+        while result["code"] is None and result["error"] is None:
+            if time.monotonic() > deadline:
+                break
+            server.handle_request()
         server.server_close()
 
         if result["error"]:
@@ -140,15 +153,24 @@ class OAuthManager:
             Token dictionary with access_token, refresh_token, etc.
         """
         # Step 1: Request device code
-        resp = httpx.post(
-            DEVICE_CODE_URL,
-            data={
-                "client_id": CLIENT_ID,
-                "scope": SCOPES,
-            },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-        resp.raise_for_status()
+        try:
+            resp = httpx.post(
+                DEVICE_CODE_URL,
+                data={
+                    "client_id": CLIENT_ID,
+                    "scope": SCOPES,
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                timeout=HTTP_TIMEOUT,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            raise DatusException(
+                ErrorCode.OAUTH_AUTH_FAILED,
+                message_args={"error_detail": f"Device code request failed (HTTP {e.response.status_code})"},
+            ) from e
+        except httpx.TimeoutException as e:
+            raise DatusException(ErrorCode.OAUTH_TIMEOUT) from e
         device_data = resp.json()
 
         user_code = device_data.get("user_code")
@@ -156,23 +178,27 @@ class OAuthManager:
         device_code = device_data.get("device_code")
         interval = device_data.get("interval", DEVICE_CODE_POLL_INTERVAL)
 
-        logger.info("Device code flow: visit %s and enter code: %s", verification_uri, user_code)
-        print(f"\nPlease visit: {verification_uri}")  # noqa: T201
-        print(f"And enter code: {user_code}\n")  # noqa: T201
+        logger.info("Device code flow initiated. Visit the URL below to authenticate.")
+        logger.info("Verification URL: %s", verification_uri)
+        logger.info("User code: %s", user_code)
 
         # Step 2: Poll for completion
         deadline = time.monotonic() + DEVICE_CODE_TIMEOUT
         while time.monotonic() < deadline:
             time.sleep(interval)
-            token_resp = httpx.post(
-                TOKEN_URL,
-                data={
-                    "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-                    "client_id": CLIENT_ID,
-                    "device_code": device_code,
-                },
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-            )
+            try:
+                token_resp = httpx.post(
+                    TOKEN_URL,
+                    data={
+                        "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                        "client_id": CLIENT_ID,
+                        "device_code": device_code,
+                    },
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    timeout=HTTP_TIMEOUT,
+                )
+            except httpx.TimeoutException:
+                continue  # Retry on timeout during polling
             if token_resp.status_code == 200:
                 tokens = token_resp.json()
                 self.token_storage.save(tokens)
@@ -204,15 +230,21 @@ class OAuthManager:
     def get_access_token(self) -> str:
         """Return a valid access token, refreshing if needed.
 
+        Thread-safe: uses a lock to prevent concurrent refresh races.
+
         Raises:
-            RuntimeError: If not authenticated or refresh fails.
+            DatusException: If not authenticated or refresh fails.
         """
         tokens = self.token_storage.load()
         if not tokens or "access_token" not in tokens:
             raise DatusException(ErrorCode.OAUTH_NOT_AUTHENTICATED)
 
-        if self.token_storage.needs_refresh():
-            tokens = self.refresh_tokens()
+        if self.token_storage.is_expired(tokens):
+            with self._refresh_lock:
+                # Re-check after acquiring lock (another thread may have refreshed)
+                tokens = self.token_storage.load()
+                if not tokens or self.token_storage.is_expired(tokens):
+                    tokens = self.refresh_tokens()
 
         return tokens["access_token"]
 
@@ -226,16 +258,25 @@ class OAuthManager:
         if not tokens or "refresh_token" not in tokens:
             raise DatusException(ErrorCode.OAUTH_NO_REFRESH_TOKEN)
 
-        resp = httpx.post(
-            TOKEN_URL,
-            data={
-                "grant_type": "refresh_token",
-                "client_id": CLIENT_ID,
-                "refresh_token": tokens["refresh_token"],
-            },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-        resp.raise_for_status()
+        try:
+            resp = httpx.post(
+                TOKEN_URL,
+                data={
+                    "grant_type": "refresh_token",
+                    "client_id": CLIENT_ID,
+                    "refresh_token": tokens["refresh_token"],
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                timeout=HTTP_TIMEOUT,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            raise DatusException(
+                ErrorCode.OAUTH_AUTH_FAILED,
+                message_args={"error_detail": f"Token refresh failed (HTTP {e.response.status_code})"},
+            ) from e
+        except httpx.TimeoutException as e:
+            raise DatusException(ErrorCode.OAUTH_TIMEOUT) from e
         new_tokens = resp.json()
 
         # Preserve refresh_token if the server didn't rotate it
@@ -262,16 +303,25 @@ class OAuthManager:
 
     def _exchange_code(self, code: str, code_verifier: str) -> dict:
         """Exchange an authorization code for tokens."""
-        resp = httpx.post(
-            TOKEN_URL,
-            data={
-                "grant_type": "authorization_code",
-                "client_id": CLIENT_ID,
-                "code": code,
-                "redirect_uri": REDIRECT_URI,
-                "code_verifier": code_verifier,
-            },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-        resp.raise_for_status()
+        try:
+            resp = httpx.post(
+                TOKEN_URL,
+                data={
+                    "grant_type": "authorization_code",
+                    "client_id": CLIENT_ID,
+                    "code": code,
+                    "redirect_uri": REDIRECT_URI,
+                    "code_verifier": code_verifier,
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                timeout=HTTP_TIMEOUT,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            raise DatusException(
+                ErrorCode.OAUTH_AUTH_FAILED,
+                message_args={"error_detail": f"Code exchange failed (HTTP {e.response.status_code})"},
+            ) from e
+        except httpx.TimeoutException as e:
+            raise DatusException(ErrorCode.OAUTH_TIMEOUT) from e
         return resp.json()
