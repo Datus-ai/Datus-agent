@@ -138,27 +138,27 @@ extend-exclude = ["mcp/"]
 
 [tool.ruff.lint]
 select = [
-    "E",    # pycodestyle errors
-    "W",    # pycodestyle warnings
-    "F",    # pyflakes
-    "B",    # flake8-bugbear
-    "I",    # isort
-    "C90",  # mccabe complexity
-    "T20",  # flake8-print (enforce "no print()" guardrail)
+    "E", # pycodestyle errors
+    "W", # pycodestyle warnings
+    "F", # pyflakes
+    "B", # flake8-bugbear
+    "I", # isort
+    "C90", # mccabe complexity
+    "T20", # flake8-print (enforce "no print()" guardrail)
 ]
 ignore = [
-    "E203",  # whitespace before ':'
-    "E266",  # too many leading '#' for block comment
-    "E501",  # line too long (handled by formatter)
+    "E203", # whitespace before ':'
+    "E266", # too many leading '#' for block comment
+    "E501", # line too long (handled by formatter)
     # TODO: enable these rules incrementally in follow-up PRs
-    "C901",  # function too complex (218 existing violations)
-    "B904",  # raise without from inside except (22 existing violations)
-    "B905",  # zip without explicit strict (21 existing violations)
-    "B027",  # empty method without abstract decorator
-    "B007",  # unused loop control variable
-    "B019",  # cached instance method
-    "B024",  # abstract base class without abstract method
-    "T201",  # print found (63 existing violations, clean up incrementally)
+    "C901", # function too complex (218 existing violations)
+    "B904", # raise without from inside except (22 existing violations)
+    "B905", # zip without explicit strict (21 existing violations)
+    "B027", # empty method without abstract decorator
+    "B007", # unused loop control variable
+    "B019", # cached instance method
+    "B024", # abstract base class without abstract method
+    "T201", # print found (63 existing violations, clean up incrementally)
 ]
 
 [tool.ruff.lint.mccabe]
@@ -178,7 +178,8 @@ testpaths = ["tests"]
 dev = [
     "pytest==8.0.2",
     "pytest-asyncio>=0.23.8",
-    "ruff>=0.15.0",
+    # Keep consistent with the workflow version of github
+    "ruff==0.15.6",
     "mypy==1.8.0",
     "tqdm>=4.27.0",
     "pytest-timeout>=2.3.1",
