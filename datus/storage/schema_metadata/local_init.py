@@ -2,12 +2,14 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-from typing import Any, Dict, List, Set
+import asyncio
+from typing import Any, Dict, List, Optional, Set
 
 from datus_db_core import BaseSqlConnector, connector_registry
 
 from datus.configuration.agent_config import AgentConfig, DbConfig
 from datus.schemas.base import TABLE_TYPE
+from datus.schemas.batch_events import BatchEventEmitter, BatchEventHelper
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.tools.db_tools.db_manager import DBManager
 from datus.utils.constants import DBType
@@ -16,6 +18,51 @@ from datus.utils.loggings import get_logger
 from .init_utils import exists_table_value
 
 logger = get_logger(__name__)
+
+BIZ_NAME = "metadata_init"
+
+
+async def init_local_schema_async(
+    table_lineage_store: SchemaWithValueRAG,
+    agent_config: AgentConfig,
+    db_manager: DBManager,
+    build_mode: str = "overwrite",
+    table_type: TABLE_TYPE = "full",
+    init_catalog_name: str = "",
+    init_database_name: str = "",
+    pool_size: int = 4,
+    emit: Optional[BatchEventEmitter] = None,
+):
+    """Async version: Initialize local schema from the configured database.
+
+    Wraps the synchronous init_local_schema in asyncio.to_thread so that
+    blocking DB I/O does not stall the event loop.  The *emit* callback is
+    invoked synchronously from the worker thread (it only appends to a
+    queue / sends SSE, so this is safe).
+
+    Args:
+        table_lineage_store: Schema storage instance
+        agent_config: Agent configuration
+        db_manager: Database manager
+        build_mode: "overwrite" or "incremental"
+        table_type: Which object types to initialise
+        init_catalog_name: Optional catalog filter
+        init_database_name: Optional database filter
+        pool_size: Reserved for future multi-threading support
+        emit: Optional callback to stream BatchEvent progress events
+    """
+    await asyncio.to_thread(
+        init_local_schema,
+        table_lineage_store,
+        agent_config,
+        db_manager,
+        build_mode,
+        table_type,
+        init_catalog_name,
+        init_database_name,
+        pool_size,
+        emit,
+    )
 
 
 def init_local_schema(
@@ -27,9 +74,26 @@ def init_local_schema(
     init_catalog_name: str = "",
     init_database_name: str = "",
     pool_size: int = 4,  # TODO: support multi-threading
+    emit: Optional[BatchEventEmitter] = None,
 ):
-    """Initialize local schema from the configured database."""
+    """Initialize local schema from the configured database.
+
+    Args:
+        table_lineage_store: Schema storage instance
+        agent_config: Agent configuration
+        db_manager: Database manager
+        build_mode: "overwrite" or "incremental"
+        table_type: Which object types to initialise
+        init_catalog_name: Optional catalog filter
+        init_database_name: Optional database filter
+        pool_size: Reserved for future multi-threading support
+        emit: Optional callback to stream BatchEvent progress events
+    """
+    event_helper = BatchEventHelper(BIZ_NAME, emit)
+
     logger.info(f"Initializing local schema for namespace: {agent_config.current_namespace}")
+    event_helper.task_started(namespace=agent_config.current_namespace, build_mode=build_mode, table_type=table_type)
+
     db_configs = agent_config.namespaces[agent_config.current_namespace]
     if len(db_configs) == 1:
         db_configs = list(db_configs.values())[0]
@@ -45,6 +109,7 @@ def init_local_schema(
                 db_manager,
                 table_type=table_type,
                 build_mode=build_mode,
+                event_helper=event_helper,
             )
         elif db_configs.type == DBType.DUCKDB:
             init_duckdb_schema(
@@ -55,6 +120,7 @@ def init_local_schema(
                 schema_name=init_database_name,
                 table_type=table_type,
                 build_mode=build_mode,
+                event_helper=event_helper,
             )
         else:
             init_other_three_level_schema(
@@ -66,6 +132,7 @@ def init_local_schema(
                 database_name=init_database_name,
                 table_type=table_type,
                 build_mode=build_mode,
+                event_helper=event_helper,
             )
 
     else:
@@ -89,6 +156,7 @@ def init_local_schema(
                     db_manager,
                     table_type=table_type,
                     build_mode=build_mode,
+                    event_helper=event_helper,
                 )
             elif db_config.type == DBType.DUCKDB:
                 init_duckdb_schema(
@@ -100,11 +168,13 @@ def init_local_schema(
                     schema_name=init_database_name,
                     table_type=table_type,
                     build_mode=build_mode,
+                    event_helper=event_helper,
                 )
             else:
                 logger.warning(f"Unsupported database type {db_config.type} for multi-database configuration")
     # Create indices after initialization
     table_lineage_store.after_init()
+    event_helper.task_completed(total_items=0, completed_items=0)
     logger.info("Local schema initialization completed")
 
 
@@ -115,6 +185,7 @@ def init_sqlite_schema(
     db_manager: DBManager,
     table_type: TABLE_TYPE = "table",
     build_mode: str = "overwrite",
+    event_helper: Optional[BatchEventHelper] = None,
 ):
     database_name = getattr(db_config, "database", "")
     sql_connector = db_manager.get_conn(agent_config.current_namespace, database_name)
@@ -140,6 +211,7 @@ def init_sqlite_schema(
             tables,
             "table",
             sql_connector,
+            event_helper=event_helper,
         )
 
     if (table_type == "view" or table_type == "full") and hasattr(sql_connector, "get_views_with_ddl"):
@@ -152,6 +224,7 @@ def init_sqlite_schema(
             views,
             "view",
             sql_connector,
+            event_helper=event_helper,
         )
 
 
@@ -164,6 +237,7 @@ def init_duckdb_schema(
     schema_name: str = "",
     table_type: TABLE_TYPE = "table",
     build_mode: str = "overwrite",
+    event_helper: Optional[BatchEventHelper] = None,
 ):
     # means schema_name here
     database_name = database_name or getattr(db_config, "database", "")
@@ -196,6 +270,7 @@ def init_duckdb_schema(
             tables,
             "table",
             sql_connector,
+            event_helper=event_helper,
         )
 
     if (table_type == "view" or table_type == "full") and hasattr(sql_connector, "get_views_with_ddl"):
@@ -208,6 +283,7 @@ def init_duckdb_schema(
             views,
             "view",
             sql_connector,
+            event_helper=event_helper,
         )
 
 
@@ -220,6 +296,7 @@ def init_other_three_level_schema(
     database_name: str = "",
     table_type: TABLE_TYPE = "table",
     build_mode: str = "overwrite",
+    event_helper: Optional[BatchEventHelper] = None,
 ):
     db_type = db_config.type
     database_name = database_name or getattr(db_config, "database", "")
@@ -297,6 +374,7 @@ def init_other_three_level_schema(
             tables,
             "table",
             sql_connector,
+            event_helper=event_helper,
         )
 
     if (table_type == "view" or table_type == "full") and hasattr(sql_connector, "get_views_with_ddl"):
@@ -320,6 +398,7 @@ def init_other_three_level_schema(
             views,
             "view",
             sql_connector,
+            event_helper=event_helper,
         )
     if (table_type == "mv" or table_type == "full") and hasattr(sql_connector, "get_materialized_views_with_ddl"):
         materialized_views = sql_connector.get_materialized_views_with_ddl(
@@ -342,6 +421,7 @@ def init_other_three_level_schema(
             materialized_views,
             "mv",
             sql_connector,
+            event_helper=event_helper,
         )
 
 
@@ -353,6 +433,7 @@ def store_tables(
     tables: List[Dict[str, str]],
     table_type: TABLE_TYPE,
     connector: BaseSqlConnector,
+    event_helper: Optional[BatchEventHelper] = None,
 ):
     """
     Store tables to the table_lineage_store.
@@ -363,8 +444,14 @@ def store_tables(
     if not tables:
         logger.info(f"No schemas of {table_type} to store for {database_name}")
         return
+
+    if event_helper:
+        event_helper.group_started(group_id=database_name, total_items=len(tables), table_type=table_type)
+
     new_tables: List[Dict[str, Any]] = []
     new_values: List[Dict[str, Any]] = []
+    completed_count = 0
+    failed_count = 0
     for table in tables:
         if not table.get("database_name"):
             table["database_name"] = database_name
@@ -377,31 +464,52 @@ def store_tables(
             )
 
         identifier = table["identifier"]
-        if identifier not in exists_tables:
-            logger.debug(f"Add {table_type} {identifier}")
-            new_tables.append(table)
-            if identifier in exists_values:
-                continue
-            _fill_sample_rows(new_values=new_values, identifier=identifier, table_data=table, connector=connector)
+        try:
+            if identifier not in exists_tables:
+                logger.debug(f"Add {table_type} {identifier}")
+                new_tables.append(table)
+                if identifier not in exists_values:
+                    _fill_sample_rows(
+                        new_values=new_values, identifier=identifier, table_data=table, connector=connector
+                    )
 
-        elif exists_tables[identifier] != table["definition"]:
-            # update table and value
-            logger.debug(f"Update {table_type} {identifier}")
-            table_lineage_store.remove_data(
-                catalog_name=table["catalog_name"],
-                database_name=table["database_name"],
-                schema_name=table["schema_name"],
-                table_name=table["table_name"],
-                table_type=table_type,
-            )
-            new_tables.append(table)
+            elif exists_tables[identifier] != table["definition"]:
+                # update table and value
+                logger.debug(f"Update {table_type} {identifier}")
+                table_lineage_store.remove_data(
+                    catalog_name=table["catalog_name"],
+                    database_name=table["database_name"],
+                    schema_name=table["schema_name"],
+                    table_name=table["table_name"],
+                    table_type=table_type,
+                )
+                new_tables.append(table)
 
-            _fill_sample_rows(new_values=new_values, identifier=identifier, table_data=table, connector=connector)
+                _fill_sample_rows(new_values=new_values, identifier=identifier, table_data=table, connector=connector)
 
-        elif identifier not in exists_values:
-            logger.debug(f"Just add sample rows for {identifier}")
+            elif identifier not in exists_values:
+                logger.debug(f"Just add sample rows for {identifier}")
 
-            _fill_sample_rows(new_values=new_values, identifier=identifier, table_data=table, connector=connector)
+                _fill_sample_rows(new_values=new_values, identifier=identifier, table_data=table, connector=connector)
+
+            completed_count += 1
+            if event_helper:
+                event_helper.item_completed(
+                    item_id=identifier,
+                    group_id=database_name,
+                    table_name=table.get("table_name", ""),
+                    table_type=table_type,
+                )
+        except Exception as e:
+            failed_count += 1
+            logger.warning(f"Failed to process {table_type} {identifier}: {e}")
+            if event_helper:
+                event_helper.item_failed(
+                    item_id=identifier,
+                    error=str(e),
+                    group_id=database_name,
+                    exception_type=type(e).__name__,
+                )
 
     if new_tables or new_values:
         for item in new_values:
@@ -410,6 +518,15 @@ def store_tables(
         logger.info(f"Stored {len(new_tables)} {table_type}s and {len(new_values)} values for {database_name}")
     else:
         logger.info(f"No new {table_type}s or values to store for {database_name}")
+
+    if event_helper:
+        event_helper.group_completed(
+            group_id=database_name,
+            total_items=len(tables),
+            completed_items=completed_count,
+            failed_items=failed_count,
+            table_type=table_type,
+        )
 
 
 def _fill_sample_rows(
