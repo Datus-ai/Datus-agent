@@ -9,10 +9,12 @@ Used to manage editing operations related to Catalog
 import json
 from typing import Any, Dict, List, Optional
 
+from datus_storage_base.conditions import And, eq
+
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.agent_models import SubAgentConfig
-from datus.storage.cache import get_storage_cache_instance
-from datus.storage.conditions import And, eq
+from datus.storage.rag_scope import build_rag_scope
+from datus.storage.registry import create_scoped_view, get_storage
 from datus.storage.semantic_model.store import SemanticModelStorage
 from datus.utils.loggings import get_logger
 
@@ -26,11 +28,15 @@ class CatalogUpdater:
 
     def __init__(self, agent_config: AgentConfig):
         self._agent_config = agent_config
-        self.semantic_model_storage = get_storage_cache_instance(agent_config).semantic_storage()
+        self.semantic_model_storage = get_storage(
+            SemanticModelStorage, "semantic_model", agent_config.current_namespace
+        )
 
     def _sub_agent_storage(self, sub_agent_config: SubAgentConfig) -> SemanticModelStorage | None:
         name = sub_agent_config.system_prompt
-        return get_storage_cache_instance(self._agent_config).semantic_storage(name)
+        storage = get_storage(SemanticModelStorage, "semantic_model", self._agent_config.current_namespace)
+        scope = build_rag_scope(self._agent_config, name, storage, "tables")
+        return create_scoped_view(storage, scope)
 
     def _get_all_storages(self) -> List[SemanticModelStorage]:
         """Get main storage and all sub-agent storages."""

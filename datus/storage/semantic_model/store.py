@@ -19,7 +19,7 @@ logger = get_logger(__name__)
 class SemanticModelStorage(BaseEmbeddingStore):
     """Storage for field-level semantic objects (tables, columns) - excluding metrics."""
 
-    def __init__(self, embedding_model: EmbeddingModel):
+    def __init__(self, embedding_model: EmbeddingModel, **kwargs):
         super().__init__(
             table_name="semantic_model",
             embedding_model=embedding_model,
@@ -66,6 +66,7 @@ class SemanticModelStorage(BaseEmbeddingStore):
             vector_source_name="description",
             vector_column_name="vector",
             unique_columns=["id"],
+            **kwargs,
         )
 
     def create_indices(self):
@@ -115,10 +116,11 @@ class SemanticModelRAG:
     """RAG interface for semantic model operations."""
 
     def __init__(self, agent_config: "AgentConfig", sub_agent_name: Optional[str] = None):
-        from datus.storage.cache import get_storage_cache_instance
+        from datus.storage.registry import get_rag_storage
 
-        cache = get_storage_cache_instance(agent_config)
-        self.storage: SemanticModelStorage = cache.semantic_storage(sub_agent_name)
+        self.storage: SemanticModelStorage = get_rag_storage(
+            SemanticModelStorage, "semantic_model", agent_config, sub_agent_name, "tables"
+        )
 
     def truncate(self) -> None:
         """Drop the semantic model table and reset state."""

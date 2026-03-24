@@ -46,11 +46,12 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         LLMProvider.KIMI: "KimiModel",
     }
 
-    def __init__(self, model_config: ModelConfig):
+    def __init__(self, model_config: ModelConfig, **kwargs):
         """Initialize model with configuration and parameters"""
         self.model_config = model_config  # Model configuration
         # Initialize session manager for all models
         self._session_manager = None
+        self.session_dir = kwargs.get("session_dir")
 
     @classmethod
     def create_model(cls, agent_config: AgentConfig, model_name: str = None, **kwargs) -> "LLMBaseModel":
@@ -69,7 +70,7 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         module = __import__(f"datus.models.{model_type}_model", fromlist=[model_class_name])
         model_class = getattr(module, model_class_name)
 
-        return model_class(model_config=target_config)
+        return model_class(model_config=target_config, session_dir=agent_config.session_dir)
 
     @abstractmethod
     def generate(self, prompt: Any, enable_thinking: bool = False, **kwargs) -> str:
@@ -190,7 +191,7 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         if self._session_manager is None:
             from datus.models.session_manager import SessionManager
 
-            self._session_manager = SessionManager()
+            self._session_manager = SessionManager(session_dir=self.session_dir)
         return self._session_manager
 
     def create_session(self, session_id: str) -> SQLiteSession:

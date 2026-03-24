@@ -765,9 +765,10 @@ class MetricsCompleter(DynamicAtReferenceCompleter):
         self.max_level = 4
 
     def load_data(self) -> Union[List[str], Dict[str, Any]]:
-        from datus.storage.cache import get_storage_cache_instance
+        from datus.storage.metric.store import MetricStorage
+        from datus.storage.registry import get_storage
 
-        storage = get_storage_cache_instance(self.agent_config).metric_storage()
+        storage = get_storage(MetricStorage, "metric", self.agent_config.current_namespace)
         data = storage.search_all_metrics()
 
         result = {}

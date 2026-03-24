@@ -1,150 +1,249 @@
-from pathlib import Path
+# Copyright 2025-present DatusAI, Inc.
+# Licensed under the Apache License, Version 2.0.
+# See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-from datus_storage_base.conditions import build_where
+"""Unit tests for datus.storage.registry (singleton + scoped view)."""
 
-from datus.configuration.agent_config import AgentConfig
-from datus.storage.cache import StorageCache, clear_cache
-from datus.storage.conditions import build_where
-from datus.utils.exceptions import DatusException
+from unittest.mock import MagicMock, patch
 
+import pytest
 
-class DummyAgentConfig(AgentConfig):
-    def __init__(self, base_dir: Path):
-        self._base_dir = base_dir
-        self._sub_agent_configs = {}
+from datus.storage.registry import (
+    clear_storage_registry,
+    configure_storage_defaults,
+    create_scoped_view,
+    get_rag_storage,
+    get_storage,
+)
 
-    def rag_storage_path(self) -> str:
-        return str(self._base_dir / "global")
-
-    def sub_agent_storage_path(self, sub_agent_name: str) -> str:
-        return str(self._base_dir / "sub_agents" / sub_agent_name)
-
-    def sub_agent_config(self, sub_agent_name: str) -> dict:
-        """Return sub agent config. Returns dict with scoped_context if configured."""
-        return self._sub_agent_configs.get(sub_agent_name, {})
-
-    def add_sub_agent_with_scoped_context(self, sub_agent_name: str, scoped_attrs: dict):
-        """Add a sub agent with scoped context configuration."""
-        self._sub_agent_configs[sub_agent_name] = {"scoped_context": scoped_attrs}
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 
-class RecordingStorage:
-    def __init__(self, path: str):
-        self.path = path
+class _FakeEmbeddingModel:
+    """Minimal stand-in for EmbeddingModel to avoid real model loading."""
+
+    dim_size = 384
+    batch_size = 32
+    model_name = "fake"
+    is_model_failed = False
+    model_error_message = ""
+    device = None
+
+    @property
+    def model(self):
+        return MagicMock()
 
 
-def _build_cache(tmp_path):
-    return StorageCache(agent_config=DummyAgentConfig(tmp_path))
+def _fake_get_embedding_model(_conf_name):
+    return _FakeEmbeddingModel()
 
 
-def test_global_instances_are_cached(tmp_path):
-    cache = _build_cache(tmp_path)
+class _DummyStore:
+    """Trivial 'storage' that records its init args."""
 
-    schema_first = cache.schema_storage()
-    schema_second = cache.schema_storage()
-    assert schema_first is schema_second
+    def __init__(self, embedding_model, **kwargs):
+        self.embedding_model = embedding_model
+        self.init_kwargs = kwargs
+        self._scope_filter = None
+        self._default_values = {}
+        self._table_initialized = True
 
-    metrics_first = cache.metric_storage()
-    metrics_second = cache.metric_storage()
-    assert metrics_first is metrics_second
+    def _ensure_table_ready(self):
+        pass
 
-    sql_first = cache.reference_sql_storage()
-    sql_second = cache.reference_sql_storage()
-    assert sql_first is sql_second
+    def __copy__(self):
 
-
-def test_sub_agent_instances_are_cached_per_name(tmp_path):
-    config = DummyAgentConfig(tmp_path)
-    # Sub agents without scoped_context fall back to global storage
-    # which uses the LRU cache, so all calls return the same instance
-    cache = StorageCache(agent_config=config)
-
-    first = cache.schema_storage("team_a")
-    second = cache.schema_storage("team_a")
-    third = cache.schema_storage("team_b")
-
-    # Without scoped_context, all sub agents use the same global cached instance
-    assert first is second
-    assert first is third
+        cls = self.__class__
+        new = cls.__new__(cls)
+        new.__dict__.update(self.__dict__)
+        return new
 
 
-def test_invalidate_resets_scope(tmp_path):
-    config = DummyAgentConfig(tmp_path)
-    # Add scoped context for team_a to use global storage with scope filter
-    # tables field must be a non-empty string to enable scoped storage
-    config.add_sub_agent_with_scoped_context("team_a", {"tables": "orders"})
-    cache = StorageCache(agent_config=config)
-
-    original = cache.schema_storage("team_a")
-    clear_cache()
-    refreshed = cache.schema_storage("team_a")
-
-    assert original is not refreshed
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
 
 
-def test_ext_knowledge_global_instances_are_cached(tmp_path):
-    cache = _build_cache(tmp_path)
-
-    first = cache.ext_knowledge_storage()
-    second = cache.ext_knowledge_storage()
-    assert first is second
-
-
-def test_ext_knowledge_scoped_fails_close_without_subject_tree(tmp_path):
-    """Scoped ext_knowledge raises when subject_tree is unavailable (fail-close)."""
-    import pytest
-
-    config = DummyAgentConfig(tmp_path)
-    config.add_sub_agent_with_scoped_context("team_a", {"ext_knowledge": "Finance/*"})
-    cache = StorageCache(agent_config=config)
-
-    with pytest.raises(DatusException, match="Cannot build scope filter"):
-        cache.ext_knowledge_storage("team_a")
+@pytest.fixture(autouse=True)
+def _clean_registry():
+    """Ensure a fresh registry and defaults for every test."""
+    configure_storage_defaults()  # reset to empty
+    clear_storage_registry()
+    yield
+    configure_storage_defaults()  # reset to empty
+    clear_storage_registry()
 
 
-def test_scoped_instances_are_cached_across_calls(tmp_path):
-    """Scoped storage instances are cached so repeated calls return the same object."""
-    config = DummyAgentConfig(tmp_path)
-    config.add_sub_agent_with_scoped_context("team_a", {"tables": "orders"})
-    cache = StorageCache(agent_config=config)
+class TestGetStorage:
+    """Tests for get_storage singleton behaviour."""
 
-    first = cache.schema_storage("team_a")
-    second = cache.schema_storage("team_a")
-    assert first is second
+    def test_same_factory_namespace_returns_same_instance(self):
+        """Same (factory, namespace) key must return the identical instance."""
+        with patch("datus.storage.registry.get_embedding_model", side_effect=_fake_get_embedding_model):
+            a = get_storage(_DummyStore, "metric", "ns1")
+            b = get_storage(_DummyStore, "metric", "ns1")
+        assert a is b
 
+    def test_different_namespace_returns_different_instance(self):
+        """Different namespaces produce different singletons."""
+        with patch("datus.storage.registry.get_embedding_model", side_effect=_fake_get_embedding_model):
+            a = get_storage(_DummyStore, "metric", "ns1")
+            b = get_storage(_DummyStore, "metric", "ns2")
+        assert a is not b
 
-def test_table_scoped_storage_has_scope_filter(tmp_path):
-    """Sub-agent with tables scoped context gets a scope filter on the storage."""
-    config = DummyAgentConfig(tmp_path)
-    config.add_sub_agent_with_scoped_context("team_a", {"tables": "public.users"})
-    cache = StorageCache(agent_config=config)
-
-    storage = cache.schema_storage("team_a")
-    # The scope filter should be set because 'tables' was specified
-    assert storage._scope_filter is not None
-    clause = build_where(storage._scope_filter)
-    assert "users" in clause
-
-
-def test_build_scope_filter_empty_value_returns_none(tmp_path):
-    """_build_scope_filter returns None when scope value is empty."""
-    config = DummyAgentConfig(tmp_path)
-    config.add_sub_agent_with_scoped_context("team_a", {"tables": ""})
-    cache = StorageCache(agent_config=config)
-
-    # With empty tables value, sub-agent falls back to global cached storage
-    storage = cache.schema_storage("team_a")
-    # No scope filter should be set since tables is empty
-    assert storage._scope_filter is None
+    def test_clear_registry_invalidates_cache(self):
+        """After clear_storage_registry, get_storage returns a new instance."""
+        with patch("datus.storage.registry.get_embedding_model", side_effect=_fake_get_embedding_model):
+            a = get_storage(_DummyStore, "metric", "ns1")
+            clear_storage_registry()
+            b = get_storage(_DummyStore, "metric", "ns1")
+        assert a is not b
 
 
-def test_semantic_scoped_storage_has_scope_filter(tmp_path):
-    """Sub-agent with tables scoped context for semantic storage gets a filter."""
-    config = DummyAgentConfig(tmp_path)
-    config.add_sub_agent_with_scoped_context("team_a", {"tables": "orders"})
-    cache = StorageCache(agent_config=config)
+class TestCreateScopedView:
+    """Tests for create_scoped_view."""
 
-    storage = cache.semantic_storage("team_a")
-    assert storage._scope_filter is not None
-    clause = build_where(storage._scope_filter)
-    assert "orders" in clause
+    def test_none_filter_returns_original(self):
+        """No filter → return the singleton directly (no copy)."""
+        store = _DummyStore(_FakeEmbeddingModel())
+        view = create_scoped_view(store, None)
+        assert view is store
+
+    def test_scoped_view_is_different_object(self):
+        """With a filter the returned view must be a distinct object."""
+        store = _DummyStore(_FakeEmbeddingModel())
+        from datus_storage_base.conditions import eq
+
+        view = create_scoped_view(store, eq("table_name", "orders"))
+        assert view is not store
+
+    def test_scoped_view_has_filter(self):
+        """The view's _scope_filter must be the one we passed in."""
+        store = _DummyStore(_FakeEmbeddingModel())
+        from datus_storage_base.conditions import eq
+
+        filt = eq("table_name", "orders")
+        view = create_scoped_view(store, filt)
+        assert view._scope_filter is filt
+
+    def test_scoped_view_does_not_affect_singleton(self):
+        """Setting a filter on the view must not mutate the singleton."""
+        store = _DummyStore(_FakeEmbeddingModel())
+        from datus_storage_base.conditions import eq
+
+        create_scoped_view(store, eq("table_name", "orders"))
+        assert store._scope_filter is None
+
+    def test_scoped_view_shares_internal_state(self):
+        """The view must share the same embedding_model reference as the singleton."""
+        store = _DummyStore(_FakeEmbeddingModel())
+        from datus_storage_base.conditions import eq
+
+        view = create_scoped_view(store, eq("table_name", "orders"))
+        assert view.embedding_model is store.embedding_model
+
+
+class TestConfigureStorageDefaults:
+    """Tests for configure_storage_defaults."""
+
+    def test_defaults_forwarded_to_factory(self):
+        """Global defaults should arrive as kwargs in the factory call."""
+        configure_storage_defaults(table_prefix="tb_")
+        with patch("datus.storage.registry.get_embedding_model", side_effect=_fake_get_embedding_model):
+            store = get_storage(_DummyStore, "metric", "ns1")
+        assert store.init_kwargs == {"table_prefix": "tb_"}
+
+    def test_no_defaults_gives_empty_kwargs(self):
+        """Without configure_storage_defaults, factory gets no extra kwargs."""
+        with patch("datus.storage.registry.get_embedding_model", side_effect=_fake_get_embedding_model):
+            store = get_storage(_DummyStore, "metric", "ns1")
+        assert store.init_kwargs == {}
+
+    def test_reconfigure_overwrites_previous(self):
+        """Calling configure_storage_defaults again replaces old values."""
+        configure_storage_defaults(table_prefix="old_")
+        configure_storage_defaults(table_prefix="new_")
+        with patch("datus.storage.registry.get_embedding_model", side_effect=_fake_get_embedding_model):
+            store = get_storage(_DummyStore, "metric", "ns1")
+        assert store.init_kwargs == {"table_prefix": "new_"}
+
+    def test_clear_registry_preserves_defaults(self):
+        """clear_storage_registry should NOT wipe defaults."""
+        configure_storage_defaults(table_prefix="tb_")
+        clear_storage_registry()
+        with patch("datus.storage.registry.get_embedding_model", side_effect=_fake_get_embedding_model):
+            store = get_storage(_DummyStore, "metric", "ns1")
+        assert store.init_kwargs == {"table_prefix": "tb_"}
+
+
+class TestScopedViewWriteDefaults:
+    """Tests for create_scoped_view write_defaults parameter."""
+
+    def test_write_defaults_set_on_view(self):
+        """write_defaults should be merged into the view's _default_values."""
+        store = _DummyStore(_FakeEmbeddingModel())
+        store._default_values = {}
+        view = create_scoped_view(store, None, write_defaults={"workspace_id": "ws_1"})
+        assert view is not store
+        assert view._default_values == {"workspace_id": "ws_1"}
+
+    def test_write_defaults_do_not_mutate_singleton(self):
+        """Setting write_defaults on view must not affect the singleton."""
+        store = _DummyStore(_FakeEmbeddingModel())
+        store._default_values = {"existing": "val"}
+        create_scoped_view(store, None, write_defaults={"workspace_id": "ws_1"})
+        assert store._default_values == {"existing": "val"}
+
+    def test_write_defaults_merged_with_existing(self):
+        """write_defaults should merge with deployment-level defaults."""
+        store = _DummyStore(_FakeEmbeddingModel())
+        store._default_values = {"tenant": "t1"}
+        view = create_scoped_view(store, None, write_defaults={"workspace_id": "ws_1"})
+        assert view._default_values == {"tenant": "t1", "workspace_id": "ws_1"}
+
+    def test_no_write_defaults_no_filter_returns_original(self):
+        """No filter + no write_defaults → return singleton directly."""
+        store = _DummyStore(_FakeEmbeddingModel())
+        view = create_scoped_view(store, None, write_defaults=None)
+        assert view is store
+
+
+class TestGetRagStorage:
+    """Tests for the get_rag_storage one-stop helper."""
+
+    def _mock_agent_config(self, namespace="ns1", request_context=None):
+        config = MagicMock()
+        config.current_namespace = namespace
+        config.request_context = request_context
+        config.db_type = ""
+        config.sub_agent_config = MagicMock(return_value={})
+        return config
+
+    def test_returns_singleton_for_cli_mode(self):
+        """CLI mode (no request_context, no sub-agent) → returns singleton."""
+        config = self._mock_agent_config()
+        with patch("datus.storage.registry.get_embedding_model", side_effect=_fake_get_embedding_model):
+            a = get_rag_storage(_DummyStore, "metric", config, None, "metrics")
+            b = get_rag_storage(_DummyStore, "metric", config, None, "metrics")
+        assert a is b  # no scoping → singleton returned directly
+
+    def test_request_context_creates_scoped_view(self):
+        """SaaS mode (request_context + scope_fields) → scoped view with read filter + write defaults."""
+        configure_storage_defaults(scope_fields=["workspace_id"])
+        config = self._mock_agent_config(
+            request_context={"workspace_id": "ws_abc", "creator_id": "user_1", "updator_id": "user_1"},
+        )
+        with patch("datus.storage.registry.get_embedding_model", side_effect=_fake_get_embedding_model):
+            singleton = get_storage(_DummyStore, "metric", "ns1")
+            view = get_rag_storage(_DummyStore, "metric", config, None, "metrics")
+        assert view is not singleton
+        # Write defaults include ALL request_context fields
+        assert view._default_values == {"workspace_id": "ws_abc", "creator_id": "user_1", "updator_id": "user_1"}
+        # Read filter only has scope_fields (workspace_id), NOT creator_id/updator_id
+        from datus_storage_base.conditions import build_where
+
+        clause = build_where(view._scope_filter)
+        assert "workspace_id" in clause
+        assert "creator_id" not in clause

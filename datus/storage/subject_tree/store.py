@@ -627,6 +627,7 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
         vector_source_name: str = "definition",
         vector_column_name: str = "vector",
         unique_columns: Optional[List[str]] = None,
+        **kwargs,
     ):
         super().__init__(
             table_name=table_name,
@@ -636,6 +637,7 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
             vector_source_name=vector_source_name,
             vector_column_name=vector_column_name,
             unique_columns=unique_columns,
+            **kwargs,
         )
 
         # Initialize SubjectTreeStore for managing subject hierarchy

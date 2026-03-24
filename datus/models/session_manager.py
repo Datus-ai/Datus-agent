@@ -37,8 +37,8 @@ class SessionManager:
                 per-project session isolation). When None, falls back to the
                 default {agent.home}/sessions path.
         """
-        if session_dir and session_dir.strip():
-            self.session_dir = session_dir
+        if session_dir and str(session_dir).strip():
+            self.session_dir = str(session_dir)
         else:
             from datus.utils.path_manager import get_path_manager
 

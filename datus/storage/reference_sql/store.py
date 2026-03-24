@@ -15,7 +15,7 @@ logger = get_logger(__name__)
 
 
 class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
-    def __init__(self, embedding_model: EmbeddingModel):
+    def __init__(self, embedding_model: EmbeddingModel, **kwargs):
         """Initialize the reference SQL store.
 
         Args:
@@ -39,6 +39,7 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
             ),
             vector_source_name="search_text",
             unique_columns=["id"],
+            **kwargs,
         )
 
     def create_indices(self):
@@ -176,9 +177,11 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
 
 class ReferenceSqlRAG:
     def __init__(self, agent_config: AgentConfig, sub_agent_name: Optional[str] = None):
-        from datus.storage.cache import get_storage_cache_instance
+        from datus.storage.registry import get_rag_storage
 
-        self.reference_sql_storage = get_storage_cache_instance(agent_config).reference_sql_storage(sub_agent_name)
+        self.reference_sql_storage = get_rag_storage(
+            ReferenceSqlStorage, "reference_sql", agent_config, sub_agent_name, "sqls"
+        )
 
     def truncate(self) -> None:
         """Drop the reference_sql table and reset state."""

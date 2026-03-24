@@ -46,13 +46,12 @@ logger = get_logger(__name__)
 @pytest.fixture
 def _init_vector_backend(tmp_path):
     """Initialize storage backends with tmp_path so data goes to a temp directory, not project root."""
-    from datus.storage.backend_holder import init_backends, reset_backends
-    from datus.storage.cache import clear_cache
+    from datus.storage.backend_holder import init_backends
+    from datus.storage.registry import clear_storage_registry
 
     init_backends(data_dir=str(tmp_path))
     yield
-    clear_cache()
-    reset_backends()
+    clear_storage_registry()
 
 
 # ---------------------------------------------------------------------------
@@ -103,9 +102,9 @@ class TestNoArgparseNamespaceDependency:
 
     def _assert_no_args_param(self, func):
         sig = inspect.signature(func)
-        assert (
-            "args" not in sig.parameters
-        ), f"{func.__name__} still has 'args' parameter — argparse.Namespace dependency not removed"
+        assert "args" not in sig.parameters, (
+            f"{func.__name__} still has 'args' parameter — argparse.Namespace dependency not removed"
+        )
 
     def test_semantic_model_async_no_args(self):
         self._assert_no_args_param(init_success_story_semantic_model_async)
@@ -716,5 +715,5 @@ class TestAgentConfigSkipInitDirs:
 
 
 # ===========================================================================
-# Section 10.2: StorageCache (placeholder — full redesign pending)
+# Section 10.2: Storage Registry (singleton + scoped view)
 # ===========================================================================

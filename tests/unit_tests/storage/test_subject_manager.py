@@ -14,8 +14,8 @@ from datus.storage.subject_manager import SubjectUpdater
 def _build_updater() -> SubjectUpdater:
     """Create a SubjectUpdater with all storage dependencies mocked."""
     mock_config = MagicMock()
-    mock_cache = MagicMock()
-    with patch("datus.storage.subject_manager.get_storage_cache_instance", return_value=mock_cache):
+    mock_storage = MagicMock()
+    with patch("datus.storage.subject_manager.get_storage", return_value=mock_storage):
         updater = SubjectUpdater(mock_config)
     return updater
 

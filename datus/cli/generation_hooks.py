@@ -1217,7 +1217,8 @@ class GenerationHooks(AgentHooks):
             dict: Sync result with success, error, and message fields
         """
         try:
-            from datus.storage.cache import get_storage_cache_instance
+            from datus.storage.ext_knowledge.store import ExtKnowledgeStore
+            from datus.storage.registry import get_storage
 
             # Load YAML file - supports multiple documents
             with open(file_path, "r", encoding="utf-8") as f:
@@ -1227,7 +1228,7 @@ class GenerationHooks(AgentHooks):
                 return {"success": False, "error": "Empty YAML file or all documents are empty"}
 
             # Get storage instance
-            knowledge_store = get_storage_cache_instance(agent_config).ext_knowledge_storage()
+            knowledge_store = get_storage(ExtKnowledgeStore, "ext_knowledge", agent_config.current_namespace)
 
             # Collect all valid entries for batch upsert
             knowledge_entries = []

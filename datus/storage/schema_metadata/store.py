@@ -49,6 +49,7 @@ class BaseMetadataStorage(BaseEmbeddingStore):
         embedding_model: EmbeddingModel,
         table_name: str,
         vector_source_name: str,
+        **kwargs,
     ):
         super().__init__(
             table_name=table_name,
@@ -66,6 +67,7 @@ class BaseMetadataStorage(BaseEmbeddingStore):
                 ]
             ),
             vector_source_name=vector_source_name,
+            **kwargs,
         )
 
     def search_similar(
@@ -132,12 +134,13 @@ class BaseMetadataStorage(BaseEmbeddingStore):
 class SchemaStorage(BaseMetadataStorage):
     """Store and manage schema lineage data."""
 
-    def __init__(self, embedding_model: EmbeddingModel):
+    def __init__(self, embedding_model: EmbeddingModel, **kwargs):
         """Initialize the schema store."""
         super().__init__(
             table_name="schema_metadata",
             embedding_model=embedding_model,
             vector_source_name="definition",
+            **kwargs,
         )
 
     def _extract_table_name(self, schema_text: str) -> str:
@@ -212,11 +215,12 @@ class SchemaStorage(BaseMetadataStorage):
 
 
 class SchemaValueStorage(BaseMetadataStorage):
-    def __init__(self, embedding_model: EmbeddingModel):
+    def __init__(self, embedding_model: EmbeddingModel, **kwargs):
         super().__init__(
             embedding_model=embedding_model,
             table_name="schema_value",
             vector_source_name="sample_rows",
+            **kwargs,
         )
 
 
@@ -226,10 +230,10 @@ class SchemaWithValueRAG:
         agent_config: AgentConfig,
         sub_agent_name: Optional[str] = None,
     ):
-        from datus.storage.cache import get_storage_cache_instance
+        from datus.storage.registry import get_rag_storage
 
-        self.schema_store = get_storage_cache_instance(agent_config).schema_storage(sub_agent_name)
-        self.value_store = get_storage_cache_instance(agent_config).schema_value_storage(sub_agent_name)
+        self.schema_store = get_rag_storage(SchemaStorage, "database", agent_config, sub_agent_name, "tables")
+        self.value_store = get_rag_storage(SchemaValueStorage, "database", agent_config, sub_agent_name, "tables")
 
     def truncate(self) -> None:
         """Drop both schema and value tables and reset state."""

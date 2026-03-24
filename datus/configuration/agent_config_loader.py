@@ -211,8 +211,5 @@ def load_agent_config(reload: bool = False, **kwargs) -> AgentConfig:
     if agent_config.db_type in {DBType.SQLITE, DBType.DUCKDB} and not agent_config.current_database:
         current_configs = agent_config.current_db_configs()
         agent_config.current_database = current_configs[list(current_configs.keys())[0]].logic_name
-    from datus.storage.cache import get_storage_cache_instance
-
-    get_storage_cache_instance(agent_config)
 
     return agent_config

@@ -44,10 +44,10 @@ def reset_global_singletons():
 
     set_db_manager_factory(None)
 
-    # Clean up StorageCache
-    from datus.storage.cache import clear_cache
+    # Clean up storage registry
+    from datus.storage.registry import clear_storage_registry
 
-    clear_cache()
+    clear_storage_registry()
 
     # Note: Do NOT reset path_manager here -- AgentConfig.__init__ calls
     # path_manager.update_home() which keeps it in sync.

@@ -87,16 +87,23 @@ class BaseEmbeddingStore(StorageBase):
         vector_column_name: str = "vector",
         unique_columns: Optional[List[str]] = None,
         db: Optional[VectorDatabase] = None,
+        table_prefix: str = "",
+        extra_fields: Optional[List[pa.Field]] = None,
+        default_values: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(db=db)
         self.model = embedding_model
         self.batch_size = embedding_model.batch_size
-        self.table_name = table_name
+        self.table_name = f"{table_prefix}{table_name}" if table_prefix else table_name
         self.vector_source_name = vector_source_name
         self.vector_column_name = vector_column_name
         self.on_duplicate_columns = on_duplicate_columns
+        # Append extra fields to schema if provided
+        if schema is not None and extra_fields:
+            schema = pa.schema(list(schema) + extra_fields)
         self._schema = schema
         self._unique_columns = unique_columns
+        self._default_values: Dict[str, Any] = default_values or {}
         self._scope_filter: Optional[Node] = None
         # Delay table initialization until first use
         self.table: Optional[VectorTable] = None
@@ -119,6 +126,22 @@ class BaseEmbeddingStore(StorageBase):
             self._ensure_table(self._schema)
             self._table_initialized = True
             logger.debug(f"Table {self.table_name} initialized successfully with embedding function")
+
+    def __copy__(self):
+        """Shallow copy that shares db/table/locks but allows independent _scope_filter."""
+        cls = self.__class__
+        new = cls.__new__(cls)
+        new.__dict__.update(self.__dict__)
+        return new
+
+    def _apply_default_values(self, data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Fill in default values for rows that are missing them."""
+        if not self._default_values:
+            return data
+        for row in data:
+            for k, v in self._default_values.items():
+                row.setdefault(k, v)
+        return data
 
     def _apply_scope_filter(self, where: WhereExpr = None) -> WhereExpr:
         """Combine the provided where expression with the scope filter (if any)."""
@@ -274,6 +297,7 @@ class BaseEmbeddingStore(StorageBase):
         """
         if not data:
             return
+        data = self._apply_default_values(data)
         # Ensure table is ready before storing data
         self._ensure_table_ready()
 
@@ -290,6 +314,9 @@ class BaseEmbeddingStore(StorageBase):
             raise DatusException(ErrorCode.STORAGE_SAVE_FAILED, message_args={"error_message": str(e)}) from e
 
     def store(self, data: List[Dict[str, Any]]):
+        if not data:
+            return
+        data = self._apply_default_values(data)
         # Ensure table is ready before storing data
         self._ensure_table_ready()
         try:
@@ -308,6 +335,7 @@ class BaseEmbeddingStore(StorageBase):
         """
         if not data:
             return
+        data = self._apply_default_values(data)
         self._ensure_table_ready()
 
         # Deduplicate input data by on_column, keeping the last occurrence

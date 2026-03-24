@@ -9,7 +9,7 @@ import pytest
 from datus_storage_base.backend_config import RdbBackendConfig, StorageBackendConfig, VectorBackendConfig
 
 from datus.storage.backend_holder import init_backends, reset_backends
-from datus.storage.cache import clear_cache
+from datus.storage.registry import clear_storage_registry
 from tests.unit_tests.storage._backend_discovery import discover_test_backends
 
 _BACKENDS = discover_test_backends()
@@ -32,7 +32,7 @@ def _init_storage_backends(request, tmp_path, storage_test_namespace):
     init_backends(config=config, data_dir=str(tmp_path), namespace=storage_test_namespace)
     yield backend
     # 1. Clear cache and reset backends (close connection pools)
-    clear_cache()
+    clear_storage_registry()
     reset_backends()
     # 2. Clear server-side data (after connection pools are closed)
     if backend.rdb_test_env is not None:

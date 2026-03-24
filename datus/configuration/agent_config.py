@@ -317,9 +317,15 @@ class AgentConfig:
             self._save_dir = ""
             self._trajectory_dir = ""
             self.benchmark_configs = {}
+            self.session_dir = kwargs.get("session_dir", str(home_path / "sessions"))
         else:
             self._init_dirs()
 
+        # Per-request context for storage (SaaS only).
+        # ALL fields are auto-filled on writes (insert/upsert).
+        # Only fields listed in configure_storage_defaults(scope_fields=[...]) are used as read filters.
+        # Example: {"workspace_id": "ws_abc", "creator_id": "user_123", "updator_id": "user_123"}
+        self.request_context: Dict[str, Any] = kwargs.get("request_context", {})
         self.workspace_root = None
         storage_config = kwargs.get("storage", {})
         # use default embedding model if not provided
@@ -339,9 +345,6 @@ class AgentConfig:
 
         if not self._skip_init_dirs:
             # Initialize storage backend configuration (rdb + vector)
-            from datus.storage.backend_config import StorageBackendConfig
-            from datus.storage.backend_holder import init_backends
-
             backend_config = StorageBackendConfig.from_dict(storage_config)
             self._backend_config = backend_config
             init_backends(backend_config, data_dir=self.rag_base_path, namespace=self._current_namespace)
@@ -415,9 +418,9 @@ class AgentConfig:
             )
         if value == self._current_namespace:
             return
-        from datus.storage.cache import clear_cache
+        from datus.storage.registry import clear_storage_registry
 
-        clear_cache()
+        clear_storage_registry()
         self._current_database = ""
         self._current_namespace = value
         self.db_type = list(self.namespaces[self._current_namespace].values())[0].type
@@ -620,6 +623,7 @@ class AgentConfig:
         self.rag_base_path = str(get_path_manager().data_dir)
 
         self._init_benchmark_configs()
+        self.session_dir = path_manager.sessions_dir
 
     def _init_benchmark_configs(self):
         self.benchmark_configs = {
@@ -798,7 +802,22 @@ class AgentConfig:
     def sub_agent_storage_path(self, sub_agent_name: str):
         return os.path.join(self.rag_base_path, "sub_agents", sub_agent_name)
 
+    def _is_file_based_vector_backend(self) -> bool:
+        """Return True if the vector backend stores data in local files (e.g. LanceDB).
+
+        The ``datus_db.cfg`` embedding-config check is only meaningful for
+        file-based backends where changing the embedding model without
+        rebuilding the data would cause dimension mismatches.
+        """
+        if self._skip_init_dirs:
+            return False  # SaaS mode: backends not initialized here
+        if not hasattr(self, "_backend_config"):
+            return True  # default is lance (file-based)
+        return self._backend_config.vector.type == "lance"
+
     def check_init_storage_config(self, storage_type: str, save_config: bool = True):
+        if not self._is_file_based_vector_backend():
+            return
         check_storage_config(
             storage_type,
             None if storage_type not in self.storage_configs else self.storage_configs[storage_type].to_dict(),
@@ -807,6 +826,8 @@ class AgentConfig:
         )
 
     def save_storage_config(self, storage_type: str):
+        if not self._is_file_based_vector_backend():
+            return
         save_storage_config(
             storage_type,
             self.rag_storage_path(),

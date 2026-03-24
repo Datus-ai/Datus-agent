@@ -17,7 +17,7 @@ logger = get_logger(__name__)
 class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
     """Store and manage external business knowledge."""
 
-    def __init__(self, embedding_model: EmbeddingModel):
+    def __init__(self, embedding_model: EmbeddingModel, **kwargs):
         """Initialize the external knowledge store.
 
         Args:
@@ -37,6 +37,7 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
             ),
             vector_source_name="search_text",
             unique_columns=["id"],
+            **kwargs,
         )
 
     def create_indices(self):
@@ -294,9 +295,9 @@ class ExtKnowledgeRAG:
     """
 
     def __init__(self, agent_config: AgentConfig, sub_agent_name: Optional[str] = None):
-        from datus.storage.cache import get_storage_cache_instance
+        from datus.storage.registry import get_rag_storage
 
-        self.store = get_storage_cache_instance(agent_config).ext_knowledge_storage(sub_agent_name)
+        self.store = get_rag_storage(ExtKnowledgeStore, "ext_knowledge", agent_config, sub_agent_name, "ext_knowledge")
 
     def truncate(self) -> None:
         """Drop the ext_knowledge table and reset state."""

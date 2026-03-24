@@ -16,7 +16,7 @@ logger = get_logger(__name__)
 
 
 class MetricStorage(BaseSubjectEmbeddingStore):
-    def __init__(self, embedding_model: EmbeddingModel):
+    def __init__(self, embedding_model: EmbeddingModel, **kwargs):
         super().__init__(
             table_name="metrics",
             embedding_model=embedding_model,
@@ -49,6 +49,7 @@ class MetricStorage(BaseSubjectEmbeddingStore):
             vector_source_name="description",
             vector_column_name="vector",
             unique_columns=["id"],
+            **kwargs,
         )
 
     def create_indices(self):
@@ -269,10 +270,9 @@ class MetricRAG:
     """RAG interface for metric operations."""
 
     def __init__(self, agent_config: AgentConfig, sub_agent_name: Optional[str] = None):
-        from datus.storage.cache import get_storage_cache_instance
+        from datus.storage.registry import get_rag_storage
 
-        cache = get_storage_cache_instance(agent_config)
-        self.storage: MetricStorage = cache.metric_storage(sub_agent_name)
+        self.storage: MetricStorage = get_rag_storage(MetricStorage, "metric", agent_config, sub_agent_name, "metrics")
 
     def truncate(self) -> None:
         """Drop the metrics table and reset state."""

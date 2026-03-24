@@ -1081,7 +1081,7 @@ class ChatCommands:
             # Create a session manager directly (don't rely on chat_node)
             from datus.models.session_manager import SessionManager
 
-            session_manager = SessionManager()
+            session_manager = SessionManager(self.cli.agent_config.session_dir)
             sessions = session_manager.list_sessions()
 
             if not sessions:
@@ -1156,7 +1156,7 @@ class ChatCommands:
         from datus.models.session_manager import SessionManager
 
         try:
-            session_manager = SessionManager()
+            session_manager = SessionManager(self.cli.agent_config.session_dir)
 
             # If session_id provided directly, use it
             target_session_id = args.strip() if args else None
@@ -1363,7 +1363,7 @@ class ChatCommands:
             rewind_user_message = user_turns[turn_num - 1].get("content", "")
 
             # Create the rewound session (keep everything BEFORE the selected turn)
-            session_manager = SessionManager()
+            session_manager = SessionManager(self.cli.agent_config.session_dir)
             if turn_num == 1:
                 # First turn selected — no prior messages, create a fresh session
                 node_name = self._extract_node_type_from_session_id(source_session_id)
