@@ -78,14 +78,18 @@ class TestBuildRagScope:
         clause = build_where(result)
         assert "users" in clause
 
-    def test_subject_scope_without_tree_returns_none(self):
-        """Subject-based scope without subject_tree on storage → None (fail-open)."""
+    def test_subject_scope_without_tree_raises(self):
+        """Subject-based scope without subject_tree on storage → raises DatusException."""
+        import pytest
+
+        from datus.utils.exceptions import DatusException
+
         config = _mock_agent_config(
             sub_agent_configs={"team_a": {"scoped_context": {"metrics": "Finance.Revenue"}}},
         )
         storage = _mock_storage(has_subject_tree=False)
-        result = build_rag_scope(config, "team_a", storage, "metrics")
-        assert result is None
+        with pytest.raises(DatusException, match="subject_tree"):
+            build_rag_scope(config, "team_a", storage, "metrics")
 
     def test_subject_scope_with_tree_builds_filter(self):
         """Subject-based scope with subject_tree → builds subject filter."""

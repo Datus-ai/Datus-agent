@@ -336,6 +336,9 @@ def db_config_name(namespace: str, db_type: str, name: str = "") -> str:
 
 # External factory for DBManager creation (used by SaaS backend for connection pooling)
 _factory: Optional[Callable[[Dict[str, Dict[str, DbConfig]]], DBManager]] = None
+# CLI-mode cache: keyed by frozenset of namespace names to avoid creating
+# duplicate DBManager instances (and leaking connections) for the same config.
+_cli_cache: Dict[frozenset, DBManager] = {}
 
 
 def set_db_manager_factory(factory: Optional[Callable[[Dict[str, Dict[str, DbConfig]]], "DBManager"]] = None) -> None:
@@ -353,6 +356,8 @@ def set_db_manager_factory(factory: Optional[Callable[[Dict[str, Dict[str, DbCon
     """
     global _factory
     _factory = factory
+    # Clear CLI cache when switching modes
+    _cli_cache.clear()
 
 
 def db_manager_instance(
@@ -362,10 +367,16 @@ def db_manager_instance(
 
     - With a factory set (SaaS mode): delegates to the factory every call,
       which typically returns a pooled/ref-counted instance.
-    - Without a factory (CLI mode): creates a new DBManager each call.
-      Callers that need to reuse one should keep a reference themselves
-      (e.g., ``self.db_manager = db_manager_instance(...)``).
+    - Without a factory (CLI mode): caches by namespace keys to avoid
+      creating duplicate instances and leaking connections.
     """
     if _factory is not None:
         return _factory(db_configs or {})
-    return DBManager(db_configs or {})
+    configs = db_configs or {}
+    cache_key = frozenset(configs.keys())
+    cached = _cli_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    manager = DBManager(configs)
+    _cli_cache[cache_key] = manager
+    return manager

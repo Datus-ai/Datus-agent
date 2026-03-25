@@ -264,6 +264,8 @@ class BaseEmbeddingStore(StorageBase):
                 Default: 'cosine'.
         """
         self._ensure_table_ready()
+        if not self._supports_runtime_indexing():
+            return
         try:
             row_count = self.table.count_rows()
             logger.debug(f"Creating vector index for {self.table_name} with {row_count} rows")
@@ -310,7 +312,10 @@ class BaseEmbeddingStore(StorageBase):
             logger.warning(f"Failed to create vector index for {self.table_name}: {str(e)}")
 
     def create_fts_index(self, field_names: Union[str, List[str]]):
+        """Create a full-text search index (LanceDB only)."""
         self._ensure_table_ready()
+        if not self._supports_runtime_indexing():
+            return
         try:
             self.table.create_fts_index(field_names)
         except Exception as e:
@@ -565,9 +570,20 @@ class BaseEmbeddingStore(StorageBase):
 
     # -- Convenience methods for subclasses --
 
+    def _supports_runtime_indexing(self) -> bool:
+        """Check if the backend supports runtime index creation.
+
+        LanceDB requires explicit index creation after data insertion.
+        Other backends (e.g. pgvector) handle indexing at DDL level
+        and should skip runtime index calls.
+        """
+        return hasattr(self.table, "create_scalar_index") and type(self.table).__name__.startswith("Lance")
+
     def _create_scalar_index(self, column: str) -> None:
-        """Create a scalar index on the given column."""
+        """Create a scalar index on the given column (LanceDB only)."""
         self._ensure_table_ready()
+        if not self._supports_runtime_indexing():
+            return
         try:
             self.table.create_scalar_index(column)
         except Exception as e:

@@ -90,8 +90,16 @@ def _build_sub_agent_filter(
     elif check_scope_attr in ("metrics", "sqls", "ext_knowledge"):
         subject_tree = getattr(storage, "subject_tree", None)
         if subject_tree is None:
-            logger.warning(f"Storage for '{check_scope_attr}' has no subject_tree; cannot build subject filter")
-            return None
+            from datus.utils.exceptions import DatusException, ErrorCode
+
+            raise DatusException(
+                code=ErrorCode.COMMON_VALIDATION_FAILED,
+                message=(
+                    f"Cannot build scope filter for sub-agent '{sub_agent_name}' "
+                    f"(scope attr='{check_scope_attr}'): storage has no subject_tree. "
+                    "Refusing to return unscoped storage."
+                ),
+            )
         return ScopedFilterBuilder.build_subject_filter(scope_value, subject_tree)
 
     return None

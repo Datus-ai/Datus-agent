@@ -610,16 +610,20 @@ class TestDBManagerFactory:
         finally:
             set_db_manager_factory(None)
 
-    def test_no_factory_creates_new_each_call(self):
-        """Without a factory, db_manager_instance creates a new DBManager each call (no singleton)."""
+    def test_no_factory_caches_by_config(self):
+        """Without a factory, db_manager_instance caches by namespace keys (avoids connection leak)."""
         from datus.tools.db_tools.db_manager import DBManager, db_manager_instance, set_db_manager_factory
 
         set_db_manager_factory(None)
+        # Same config → same instance (cached)
         instance1 = db_manager_instance()
         instance2 = db_manager_instance()
         assert isinstance(instance1, DBManager)
-        assert isinstance(instance2, DBManager)
-        assert instance1 is not instance2
+        assert instance1 is instance2
+
+        # Different config → different instance
+        instance3 = db_manager_instance({"other_ns": {}})
+        assert instance3 is not instance1
 
 
 # ===========================================================================
