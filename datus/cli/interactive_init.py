@@ -10,7 +10,6 @@ This module provides an interactive CLI for setting up the basic configuration
 without requiring users to manually write conf/agent.yml files.
 """
 
-import os
 import sys
 from getpass import getpass
 from pathlib import Path
@@ -487,27 +486,12 @@ class InteractiveInit:
             self.console.print(f"  [dim]reference options: {options_hint}[/dim]")
         model_name = Prompt.ask("- Enter your model name", default=provider_config["model"]).strip()
 
-        # Token source selection
-        self.console.print("  [dim]How to provide your subscription token:[/dim]")
-        self.console.print("  [dim]  1. Paste token directly (from 'claude setup-token')[/dim]")
-        self.console.print("  [dim]  2. Use CLAUDE_CODE_OAUTH_TOKEN environment variable[/dim]")
-        self.console.print("  [dim]  3. Auto-detect from ~/.claude/.credentials.json[/dim]")
-        token_method = Prompt.ask("- Token source", choices=["paste", "env", "auto"], default="auto")
-
-        api_key_value = ""
-        if token_method == "paste":
-            api_key_value = getpass("- Paste your subscription token (sk-ant-oat01-...): ")
-            if not api_key_value.strip():
-                self.console.print("❌ Token cannot be empty")
-                return False
-        elif token_method == "env":
-            if not os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
-                self.console.print(
-                    "❌ CLAUDE_CODE_OAUTH_TOKEN environment variable is not set.\n"
-                    "   Run 'claude setup-token' first, then: export CLAUDE_CODE_OAUTH_TOKEN=<token>"
-                )
-                return False
-            api_key_value = "${CLAUDE_CODE_OAUTH_TOKEN}"
+        # Token input
+        self.console.print("  [dim]Run 'claude setup-token' to get your subscription token[/dim]")
+        api_key_value = getpass("- Paste your subscription token (sk-ant-oat01-...): ")
+        if not api_key_value.strip():
+            self.console.print("❌ Token cannot be empty")
+            return False
 
         # Store configuration
         self.config["agent"]["target"] = provider
@@ -519,18 +503,6 @@ class InteractiveInit:
             "model": model_name,
             "auth_type": "subscription",
         }
-
-        # Verify token resolution
-        self.console.print("→ Verifying subscription token...")
-        try:
-            from datus.auth.claude_credential import get_claude_subscription_token
-
-            resolved_key = api_key_value if api_key_value and not api_key_value.startswith("${") else None
-            get_claude_subscription_token(resolved_key)
-        except Exception as e:
-            self.console.print(f"⚠️  Token resolution warning: {e}")
-            if not Confirm.ask("Continue anyway?", default=False):
-                return False
 
         # Test LLM connectivity
         self.console.print("→ Testing LLM connectivity...")
