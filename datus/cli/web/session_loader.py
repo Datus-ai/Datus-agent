@@ -16,6 +16,7 @@ import re
 import sqlite3
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import structlog
@@ -29,6 +30,20 @@ logger = structlog.get_logger(__name__)
 
 class SessionLoader:
     """Loads and reconstructs chat sessions from SQLite storage."""
+
+    def __init__(self, session_dir: Optional[str] = None):
+        """Initialize SessionLoader.
+
+        Args:
+            session_dir: Custom session directory. When None, falls back
+                to path_manager.sessions_dir (CLI default).
+        """
+        if session_dir and str(session_dir).strip():
+            self._session_dir = str(session_dir)
+        else:
+            from datus.utils.path_manager import get_path_manager
+
+            self._session_dir = str(get_path_manager().sessions_dir)
 
     def _parse_final_output(
         self, actions: List[ActionHistory], current_assistant_group: Dict
@@ -100,9 +115,7 @@ class SessionLoader:
             return messages
 
         # Build path with pathlib and resolve to absolute path
-        from datus.utils.path_manager import get_path_manager
-
-        sessions_dir = get_path_manager().sessions_dir
+        sessions_dir = Path(self._session_dir)
         db_path = (sessions_dir / f"{session_id}.db").resolve()
 
         # Ensure resolved path is within sessions directory

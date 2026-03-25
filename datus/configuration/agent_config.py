@@ -620,7 +620,7 @@ class AgentConfig:
         self.rag_base_path = str(get_path_manager().data_dir)
 
         self._init_benchmark_configs()
-        self.session_dir = path_manager.sessions_dir
+        self.session_dir = str(path_manager.sessions_dir)
 
     def _init_benchmark_configs(self):
         self.benchmark_configs = {
