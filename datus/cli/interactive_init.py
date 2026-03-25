@@ -221,15 +221,6 @@ class InteractiveInit:
         else:
             model_name = Prompt.ask("- Enter your model name", default=provider_info.get("default_model", "")).strip()
 
-        # Coding Plan providers: prompt for User-Agent header
-        default_headers = None
-        if provider_info.get("coding_plan"):
-            default_ua = "datus-agent (cli)"
-            self.console.print("  [dim]Coding Plan endpoints may verify User-Agent header[/dim]")
-            user_agent = Prompt.ask("- User-Agent header", default=default_ua).strip()
-            if user_agent:
-                default_headers = {"User-Agent": user_agent}
-
         # Store configuration
         self.config["agent"]["target"] = provider
         model_config_entry = {
@@ -238,8 +229,6 @@ class InteractiveInit:
             "api_key": api_key,
             "model": model_name,
         }
-        if default_headers:
-            model_config_entry["default_headers"] = default_headers
         if model_name in model_param_overrides:
             model_config_entry.update(model_param_overrides[model_name])
         self.config["agent"]["models"][provider] = model_config_entry
