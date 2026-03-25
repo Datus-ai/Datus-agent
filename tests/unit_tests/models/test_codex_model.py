@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from datus.configuration.agent_config import ModelConfig
+from datus.utils.exceptions import DatusException
 
 
 def _mock_stream(output_text: str):
@@ -308,7 +309,7 @@ class TestCodexModelGenerateNonAuthError:
         mock_client.responses.create.side_effect = ValueError("some other error")
         model._client = mock_client
 
-        with pytest.raises(ValueError, match="some other error"):
+        with pytest.raises(DatusException, match="Codex generate failed"):
             model.generate("test")
 
 
@@ -691,7 +692,7 @@ class TestCodexModelJsonOutput401Retry:
         mock_client.responses.create.side_effect = ValueError("some error")
         model._client = mock_client
 
-        with pytest.raises(ValueError, match="some error"):
+        with pytest.raises(DatusException, match="Codex generate_with_json_output failed"):
             model.generate_with_json_output("test")
 
 

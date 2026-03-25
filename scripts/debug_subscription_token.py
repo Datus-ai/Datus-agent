@@ -242,7 +242,13 @@ def test_native_sdk(token: str):
             default_headers={"anthropic-beta": ALL_BETA_HEADERS},
         )
         # Check if there's an auth_token vs api_key distinction
-        print(f"      SDK auth_token attr: {getattr(client, 'auth_token', 'N/A')}")  # noqa: T201
+        auth_token_val = getattr(client, "auth_token", "N/A")
+        masked = (
+            f"{auth_token_val[:12]}...{auth_token_val[-4:]}"
+            if auth_token_val and len(auth_token_val) > 16
+            else "(not set)"
+        )
+        print(f"      SDK auth_token attr: {masked}")  # noqa: T201
     except Exception as e:
         print(f"      Inspect error: {e}")  # noqa: T201
 
@@ -295,7 +301,11 @@ def test_native_sdk(token: str):
             auth_token=token,
             default_headers={"anthropic-beta": ALL_BETA_HEADERS},
         )
-        print(f"      auth_headers: {client.auth_headers}")  # noqa: T201
+        safe_auth_headers = {
+            k: (_redact_token(v) if isinstance(v, str) and ("sk-ant" in v or "Bearer" in v) else v)
+            for k, v in client.auth_headers.items()
+        }
+        print(f"      auth_headers: {safe_auth_headers}")  # noqa: T201
         resp = client.messages.create(
             model=SHORT_MODEL,
             max_tokens=20,

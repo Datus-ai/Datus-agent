@@ -159,7 +159,10 @@ class CodexModel(LLMBaseModel):
                         ErrorCode.MODEL_AUTHENTICATION_ERROR,
                         message_args={"error_detail": f"Codex auth failed after token refresh: {retry_e}"},
                     ) from retry_e
-            raise
+            raise DatusException(
+                ErrorCode.MODEL_REQUEST_FAILED,
+                message=f"Codex generate failed: {e}",
+            ) from e
 
     def generate_with_json_output(self, prompt: Any, **kwargs) -> Dict:
         """Generate a JSON-structured response via the Codex Responses API.
@@ -226,7 +229,10 @@ class CodexModel(LLMBaseModel):
                         ErrorCode.MODEL_INVALID_RESPONSE,
                         message_args={"error_detail": f"Invalid JSON from Codex after retry: {json_e}"},
                     ) from json_e
-            raise
+            raise DatusException(
+                ErrorCode.MODEL_REQUEST_FAILED,
+                message=f"Codex generate_with_json_output failed: {e}",
+            ) from e
 
     async def generate_with_tools(
         self,
@@ -452,11 +458,17 @@ class CodexModel(LLMBaseModel):
                 from openai import AuthenticationError
 
                 if isinstance(e, AuthenticationError):
-                    logger.info("Got 401 in generate_with_tools_stream, refreshing OAuth token and retrying...")
+                    logger.info("Got 401 in generate_with_tools_stream, refreshing OAuth token...")
                     self.oauth_manager.refresh_tokens()
                     self._refresh_client_token()
-                    # Re-raise to let caller retry the full stream
-                raise
+                    raise DatusException(
+                        ErrorCode.MODEL_AUTHENTICATION_ERROR,
+                        message_args={"error_detail": "Codex auth failed; token refreshed, please retry"},
+                    ) from e
+                raise DatusException(
+                    ErrorCode.MODEL_REQUEST_FAILED,
+                    message=f"Codex streaming failed: {e}",
+                ) from e
 
             # Final summary after streaming completes
             has_final_output = hasattr(result, "final_output")

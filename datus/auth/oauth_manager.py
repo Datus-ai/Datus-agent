@@ -112,7 +112,7 @@ class OAuthManager:
                 pass
 
         try:
-            server = HTTPServer(("127.0.0.1", CALLBACK_PORT), _CallbackHandler)
+            server = HTTPServer(("localhost", CALLBACK_PORT), _CallbackHandler)
         except OSError as e:
             raise DatusException(
                 ErrorCode.OAUTH_AUTH_FAILED,
@@ -343,7 +343,8 @@ class OAuthManager:
 
     def logout(self) -> None:
         """Clear stored tokens."""
-        self.token_storage.clear()
+        with self._refresh_lock:
+            self.token_storage.clear()
         logger.info("OAuth tokens cleared")
 
     # ------------------------------------------------------------------

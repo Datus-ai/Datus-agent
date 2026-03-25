@@ -6,6 +6,7 @@
 
 import json
 import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -36,18 +37,34 @@ class TokenStorage:
 
         # Compute expires_at from expires_in if available (prefer server metadata)
         if "expires_in" in tokens and "expires_at" not in tokens:
-            tokens["expires_at"] = datetime.now(timezone.utc).timestamp() + tokens["expires_in"]
+            try:
+                expires_in = float(tokens["expires_in"])
+                tokens["expires_at"] = datetime.now(timezone.utc).timestamp() + expires_in
+            except (TypeError, ValueError):
+                logger.warning("Invalid expires_in in OAuth tokens; skipping expires_at derivation")
 
-        dir_path = os.path.dirname(self.path)
+        dir_path = os.path.dirname(self.path) or "."
         if dir_path:
             os.makedirs(dir_path, mode=0o700, exist_ok=True)
 
-        # Atomically create file with restricted permissions (no TOCTOU window)
-        fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(tokens, f, indent=2)
-        # Ensure permissions are correct even if file pre-existed with broader access
-        os.chmod(self.path, 0o600)
+        # Atomic write: write to temp file then rename (prevents partial reads)
+        try:
+            fd, tmp_path = tempfile.mkstemp(dir=dir_path)
+            try:
+                os.fchmod(fd, 0o600)
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(tokens, f, indent=2)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_path, self.path)
+                os.chmod(self.path, 0o600)
+            except BaseException:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+                raise
+        except OSError as e:
+            logger.error("Failed to save OAuth tokens to %s: %s", self.path, e)
+            raise
         logger.debug("OAuth tokens saved to %s", self.path)
 
     def load(self) -> Optional[dict]:
@@ -67,9 +84,12 @@ class TokenStorage:
 
     def clear(self) -> None:
         """Remove the stored token file."""
-        if os.path.exists(self.path):
-            os.remove(self.path)
-            logger.debug("OAuth tokens cleared from %s", self.path)
+        try:
+            if os.path.exists(self.path):
+                os.remove(self.path)
+                logger.debug("OAuth tokens cleared from %s", self.path)
+        except OSError as e:
+            logger.error("Failed to clear OAuth tokens from %s: %s", self.path, e)
 
     def needs_refresh(self) -> bool:
         """Check whether the stored token needs to be refreshed (reads from disk)."""

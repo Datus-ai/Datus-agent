@@ -28,6 +28,7 @@ from tests.conftest import load_acceptance_config
 
 logger = get_logger(__name__)
 set_tracing_disabled(True)
+load_dotenv()
 
 
 # ============================================================
@@ -66,7 +67,7 @@ PROVIDER_MODELS = {
     },
     "R07-codex": {
         "type": "codex",
-        "env_var": "CODEX_OAUTH_TOKEN",
+        "env_var": "CODEX_OAUTH_TOKEN",  # CI gate only; CodexModel uses OAuthManager token storage
         "models": ["o3-codex"],
     },
 }
