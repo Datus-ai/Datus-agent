@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from agents.lifecycle import AgentHooks
 
-from datus.cli.execution_state import InteractionBroker, InteractionCancelled
+from datus.cli.execution_state import InteractionBroker, InteractionCancelled, SingleRequest
 from datus.tools.permission.permission_config import PermissionLevel
 
 if TYPE_CHECKING:
@@ -310,16 +310,16 @@ class PermissionHooks(AgentHooks):
             content += f"\n**Args:** `{args_str}`\n"
 
         try:
-            choice, callback = await self.broker.request(
-                contents=[content],
-                choices=[
-                    {
+            [choice], callback = await self.broker.request(
+                SingleRequest(
+                    content=content,
+                    choices={
                         "y": "Allow (once)",
                         "a": "Always allow (session)",
                         "n": "Deny",
-                    }
-                ],
-                default_choices=["n"],
+                    },
+                    default_choice="n",
+                )
             )
 
             if choice == "a":

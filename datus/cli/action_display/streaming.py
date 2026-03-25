@@ -100,10 +100,10 @@ class InlineStreamingContext:
         """Set the asyncio event loop for broker.submit calls from daemon thread."""
         self._event_loop = loop
 
-    def set_input_collector(self, collector: Callable[[ActionHistory, Console], Optional[str]]) -> None:
+    def set_input_collector(self, collector: Callable[[ActionHistory, Console], Optional[List[str]]]) -> None:
         """Set the synchronous input collector callback for INTERACTION actions.
 
-        The collector returns the user's choice string, or None if the interaction was aborted.
+        The collector returns a list of answer strings, or None if the interaction was aborted.
         """
         self._input_collector = collector
 

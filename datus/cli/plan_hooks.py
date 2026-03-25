@@ -9,7 +9,7 @@ import time
 from agents import SQLiteSession
 from agents.lifecycle import AgentHooks
 
-from datus.cli.execution_state import InteractionBroker, InteractionCancelled
+from datus.cli.execution_state import InteractionBroker, InteractionCancelled, SingleRequest
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -94,10 +94,12 @@ class PlanModeHooks(AgentHooks):
 
         if not todo_list:
             # No plan generated - need a simple request to show error
-            choice, callback = await self.broker.request(
-                contents=["**No plan generated**\n\nPlease try again with a different request."],
-                choices=[{"1": "OK"}],
-                default_choices=["1"],
+            [choice], callback = await self.broker.request(
+                SingleRequest(
+                    content="**No plan generated**\n\nPlease try again with a different request.",
+                    choices={"1": "OK"},
+                    default_choice="1",
+                )
             )
             await callback("Plan generation failed")
             return
@@ -112,10 +114,12 @@ class PlanModeHooks(AgentHooks):
         if self.auto_mode:
             self.execution_mode = "auto"
             self._transition_state("executing", {"mode": "auto"})
-            choice, callback = await self.broker.request(
-                contents=[f"{plan_content}\n\n**Auto execution mode** (workflow/benchmark context)"],
-                choices=[{"1": "Continue"}],
-                default_choices=["1"],
+            [choice], callback = await self.broker.request(
+                SingleRequest(
+                    content=f"{plan_content}\n\n**Auto execution mode** (workflow/benchmark context)",
+                    choices={"1": "Continue"},
+                    default_choice="1",
+                )
             )
             await callback("Auto execution mode started")
             return
@@ -135,17 +139,17 @@ class PlanModeHooks(AgentHooks):
                 request_content = f"{plan_content}\n\n"
             request_content += "**Choose Execution Mode:**"
 
-            choice, callback = await self.broker.request(
-                contents=[request_content],
-                choices=[
-                    {
+            [choice], callback = await self.broker.request(
+                SingleRequest(
+                    content=request_content,
+                    choices={
                         "1": "Manual Confirm - Confirm each step",
                         "2": "Auto Execute - Run all steps automatically",
                         "3": "Revise - Provide feedback and regenerate plan",
                         "4": "Cancel",
-                    }
-                ],
-                default_choices=["1"],
+                    },
+                    default_choice="1",
+                )
             )
 
             if choice == "1":  # Manual
@@ -177,10 +181,8 @@ class PlanModeHooks(AgentHooks):
     async def _handle_replan(self):
         try:
             # Request free-text input for replan feedback
-            feedback, callback = await self.broker.request(
-                contents=["### Provide feedback for replanning\n\nEnter your feedback:"],
-                choices=[{}],  # Empty dict means free-text input
-                default_choices=[""],
+            [feedback], callback = await self.broker.request(
+                SingleRequest(content="### Provide feedback for replanning\n\nEnter your feedback:")
             )
 
             if feedback:
@@ -244,10 +246,12 @@ class PlanModeHooks(AgentHooks):
         try:
             if self.execution_mode == "auto":
                 # Merge progress into request content
-                choice, callback = await self.broker.request(
-                    contents=[f"{progress_content}\n\n**Auto Mode:** {current_item.content}"],
-                    choices=[{"y": "Execute", "n": "Cancel"}],
-                    default_choices=["y"],
+                [choice], callback = await self.broker.request(
+                    SingleRequest(
+                        content=f"{progress_content}\n\n**Auto Mode:** {current_item.content}",
+                        choices={"y": "Execute", "n": "Cancel"},
+                        default_choice="y",
+                    )
                 )
 
                 if choice == "y":
@@ -259,17 +263,17 @@ class PlanModeHooks(AgentHooks):
                     raise UserCancelledException("Execution cancelled by user")
             else:
                 # Manual mode - merge progress into request content
-                choice, callback = await self.broker.request(
-                    contents=[f"{progress_content}"],
-                    choices=[
-                        {
+                [choice], callback = await self.broker.request(
+                    SingleRequest(
+                        content=f"{progress_content}",
+                        choices={
                             "1": "Execute this step",
                             "2": "Execute this step and continue automatically",
                             "3": "Revise remaining plan",
                             "4": "Cancel",
-                        }
-                    ],
-                    default_choices=["1"],
+                        },
+                        default_choice="1",
+                    )
                 )
 
                 if choice == "1":  # Execute this step

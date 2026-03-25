@@ -15,7 +15,7 @@ import yaml
 from agents.lifecycle import AgentHooks
 from datus_storage_base.conditions import And, eq
 
-from datus.cli.execution_state import InteractionBroker, InteractionCancelled
+from datus.cli.execution_state import InteractionBroker, InteractionCancelled, SingleRequest
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.metric.store import MetricRAG
 from datus.storage.reference_sql.store import ReferenceSqlRAG
@@ -450,10 +450,12 @@ class GenerationHooks(AgentHooks):
         try:
             request_content = f"{display_content}\n### Sync to Knowledge Base?"
 
-            choice, callback = await self.broker.request(
-                contents=[request_content],
-                choices=[{"y": "Yes - Save to Knowledge Base", "n": "No - Keep file only"}],
-                default_choices=["y"],
+            [choice], callback = await self.broker.request(
+                SingleRequest(
+                    content=request_content,
+                    choices={"y": "Yes - Save to Knowledge Base", "n": "No - Keep file only"},
+                    default_choice="y",
+                )
             )
 
             if choice == "y":
@@ -505,10 +507,12 @@ class GenerationHooks(AgentHooks):
 
             request_content = f"{display_content}\n### Sync to Knowledge Base?"
 
-            choice, callback = await self.broker.request(
-                contents=[request_content],
-                choices=[{"y": "Yes - Save to Knowledge Base", "n": "No - Keep file only"}],
-                default_choices=["y"],
+            [choice], callback = await self.broker.request(
+                SingleRequest(
+                    content=request_content,
+                    choices={"y": "Yes - Save to Knowledge Base", "n": "No - Keep file only"},
+                    default_choice="y",
+                )
             )
 
             if choice == "y":

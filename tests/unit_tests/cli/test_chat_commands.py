@@ -3605,29 +3605,29 @@ class TestCollectBatch:
         console = Console(file=io.StringIO(), no_color=True)
         return _make_chat_commands(real_agent_config, console=console), console
 
-    def test_empty_contents_returns_empty_json(self, real_agent_config, mock_llm_create):
-        """Empty contents list returns '[]'."""
+    def test_empty_contents_returns_empty_list(self, real_agent_config, mock_llm_create):
+        """Empty contents list returns []."""
         chat_cmd, console = self._make(real_agent_config)
         result = chat_cmd._collect_batch(console, [], [])
-        assert result == json.dumps([])
+        assert result == []
 
     def test_single_free_text_question(self, real_agent_config, mock_llm_create):
         """Single free-text question collects via prompt_input."""
         chat_cmd, console = self._make(real_agent_config)
         chat_cmd.cli.prompt_input = MagicMock(return_value="my answer")
         result = chat_cmd._collect_batch(console, ["What name?"], [{}])
-        answers = json.loads(result)
-        assert len(answers) == 1
-        assert answers[0] == "my answer"
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0] == "my answer"
 
     @patch("datus.cli.chat_commands.select_choice", return_value="2")
     def test_single_question_with_choices(self, mock_select, real_agent_config, mock_llm_create):
         """Single question with choices uses select_choice."""
         chat_cmd, console = self._make(real_agent_config)
         result = chat_cmd._collect_batch(console, ["Pick DB?"], [{"1": "MySQL", "2": "PG"}])
-        answers = json.loads(result)
-        assert len(answers) == 1
-        assert answers[0] == "PG"
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0] == "PG"
 
     @patch("datus.cli.chat_commands.select_choice", return_value="1")
     def test_multi_question_batch(self, mock_select, real_agent_config, mock_llm_create):
@@ -3639,19 +3639,19 @@ class TestCollectBatch:
             ["DB?", "Time?", "Filter?"],
             [{"1": "MySQL", "2": "PG"}, {"1": "7d", "2": "30d"}, {}],
         )
-        answers = json.loads(result)
-        assert len(answers) == 3
-        assert answers[0] == "MySQL"
-        assert answers[1] == "7d"
-        assert answers[2] == "custom filter"
+        assert isinstance(result, list)
+        assert len(result) == 3
+        assert result[0] == "MySQL"
+        assert result[1] == "7d"
+        assert result[2] == "custom filter"
 
     @patch("datus.cli.chat_commands.select_choice", return_value="custom text")
     def test_free_text_option_preserves_input(self, mock_select, real_agent_config, mock_llm_create):
         """Free-text input via select_choice is preserved as-is."""
         chat_cmd, console = self._make(real_agent_config)
         result = chat_cmd._collect_batch(console, ["Q?"], [{"1": "A", "2": "B"}])
-        answers = json.loads(result)
-        assert answers[0] == "custom text"
+        assert isinstance(result, list)
+        assert result[0] == "custom text"
 
     @patch("datus.cli.chat_commands.select_choice", return_value="1")
     def test_multi_question_shows_summary(self, mock_select, real_agent_config, mock_llm_create):
@@ -3664,8 +3664,8 @@ class TestCollectBatch:
         )
         output = console.file.getvalue()
         assert "Answers submitted" in output
-        answers = json.loads(result)
-        assert len(answers) == 2
+        assert isinstance(result, list)
+        assert len(result) == 2
 
 
 class TestMakeInputCollector:
@@ -3705,8 +3705,8 @@ class TestMakeInputCollector:
             },
         )
         result = collector(action, console)
-        answers = json.loads(result)
-        assert len(answers) == 2
+        assert isinstance(result, list)
+        assert len(result) == 2
 
     @patch("datus.cli.chat_commands.select_choice", return_value="y")
     def test_collect_routes_choice_to_single(self, mock_select, real_agent_config, mock_llm_create):
@@ -3726,7 +3726,7 @@ class TestMakeInputCollector:
             },
         )
         result = collector(action, console)
-        assert result == "y"
+        assert result == ["y"]
 
     def test_collect_free_text_no_choices(self, real_agent_config, mock_llm_create):
         """collect() with empty choices calls prompt_input for free text."""
@@ -3746,11 +3746,11 @@ class TestMakeInputCollector:
             },
         )
         result = collector(action, console)
-        assert result == "typed answer"
+        assert result == ["typed answer"]
 
     @patch("datus.cli.chat_commands.select_choice", return_value="")
     def test_collect_empty_free_text_returns_empty(self, mock_select, real_agent_config, mock_llm_create):
-        """collect() with allow_free_text and empty result returns empty string."""
+        """collect() with allow_free_text and empty result returns list with empty string."""
         chat_cmd, console = self._make(real_agent_config)
         esc_guard = MagicMock()
         esc_guard.paused.return_value.__enter__ = MagicMock()
@@ -3766,7 +3766,7 @@ class TestMakeInputCollector:
             },
         )
         result = collector(action, console)
-        assert result == ""
+        assert result == [""]
 
     def test_collect_exception_returns_none_for_choice(self, real_agent_config, mock_llm_create):
         """collect() returns None on exception for request_choice."""

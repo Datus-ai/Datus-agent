@@ -6,6 +6,7 @@
 Unit tests for datus/cli/execution_state.py.
 
 Tests cover:
+- SingleRequest dataclass
 - PendingInteraction dataclass
 - InteractionCancelled exception
 - InteractionBroker: init, request, submit, fetch, has_pending, is_queue_empty
@@ -24,6 +25,7 @@ from datus.cli.execution_state import (
     InteractionCancelled,
     InterruptController,
     PendingInteraction,
+    SingleRequest,
     auto_submit_interaction,
     merge_interaction_stream,
 )
@@ -80,6 +82,39 @@ class TestInterruptController:
 
 
 # ===========================================================================
+# SingleRequest Tests
+# ===========================================================================
+
+
+class TestSingleRequest:
+    """Tests for SingleRequest dataclass."""
+
+    def test_creation_with_defaults(self):
+        """SingleRequest with only content uses correct defaults."""
+        req = SingleRequest(content="Hello?")
+        assert req.content == "Hello?"
+        assert req.choices == {}
+        assert req.default_choice == ""
+        assert req.content_type == "markdown"
+        assert req.allow_free_text is False
+
+    def test_creation_with_all_fields(self):
+        """SingleRequest stores all fields correctly."""
+        req = SingleRequest(
+            content="Pick one",
+            choices={"a": "Alpha", "b": "Beta"},
+            default_choice="a",
+            content_type="text",
+            allow_free_text=True,
+        )
+        assert req.content == "Pick one"
+        assert req.choices == {"a": "Alpha", "b": "Beta"}
+        assert req.default_choice == "a"
+        assert req.content_type == "text"
+        assert req.allow_free_text is True
+
+
+# ===========================================================================
 # PendingInteraction Tests
 # ===========================================================================
 
@@ -88,16 +123,17 @@ class TestPendingInteractionInit:
     """Tests for PendingInteraction dataclass creation."""
 
     def test_pending_interaction_creation(self):
-        """PendingInteraction stores action_id, future, and choices correctly."""
+        """PendingInteraction stores action_id, future, and requests correctly."""
         loop = asyncio.new_event_loop()
         future = loop.create_future()
-        choices = [{"y": "Yes", "n": "No"}]
+        requests = [SingleRequest(content="Q?", choices={"y": "Yes", "n": "No"})]
 
-        pending = PendingInteraction(action_id="test-id", future=future, choices=choices)
+        pending = PendingInteraction(action_id="test-id", future=future, requests=requests)
 
         assert pending.action_id == "test-id"
         assert pending.future is future
-        assert pending.choices == [{"y": "Yes", "n": "No"}]
+        assert len(pending.requests) == 1
+        assert pending.requests[0].choices == {"y": "Yes", "n": "No"}
         assert pending.created_at is not None
         loop.close()
 
@@ -106,7 +142,7 @@ class TestPendingInteractionInit:
         loop = asyncio.new_event_loop()
         future = loop.create_future()
 
-        pending = PendingInteraction(action_id="test-id-2", future=future, choices=[{}])
+        pending = PendingInteraction(action_id="test-id-2", future=future, requests=[SingleRequest(content="Q?")])
 
         assert pending.created_at is not None
         # created_at should be a datetime object
@@ -169,9 +205,11 @@ class TestInteractionBrokerRequest:
         # Start the request in background; it will block until submit
         async def do_request():
             return await broker.request(
-                contents=["Pick one"],
-                choices=[{"a": "Option A", "b": "Option B"}],
-                default_choices=["a"],
+                SingleRequest(
+                    content="Pick one",
+                    choices={"a": "Option A", "b": "Option B"},
+                    default_choice="a",
+                )
             )
 
         task = asyncio.create_task(do_request())
@@ -193,10 +231,10 @@ class TestInteractionBrokerRequest:
 
         # Submit response so the task completes
         action_id = action.action_id
-        await broker.submit(action_id, "a")
+        await broker.submit(action_id, ["a"])
         result, callback = await task
 
-        assert result == "a"
+        assert result == ["a"]
         assert callable(callback)
 
     @pytest.mark.asyncio
@@ -206,10 +244,12 @@ class TestInteractionBrokerRequest:
 
         async def do_request():
             return await broker.request(
-                contents=["Confirm?"],
-                choices=[{"y": "Yes", "n": "No"}],
-                default_choices=["y"],
-                content_type="text",
+                SingleRequest(
+                    content="Confirm?",
+                    choices={"y": "Yes", "n": "No"},
+                    default_choice="y",
+                    content_type="text",
+                )
             )
 
         task = asyncio.create_task(do_request())
@@ -220,8 +260,8 @@ class TestInteractionBrokerRequest:
         action_id = action.action_id
 
         # Submit and get callback
-        await broker.submit(action_id, "y")
-        choice, callback = await task
+        await broker.submit(action_id, ["y"])
+        [choice], callback = await task
 
         assert choice == "y"
 
@@ -234,7 +274,7 @@ class TestInteractionBrokerRequest:
         assert success_action.action_id == action_id
         assert success_action.output["content"] == "Done!"
         assert success_action.output["content_type"] == "text"
-        assert success_action.output["user_choice"] == "y"
+        assert success_action.output["user_choice"] == ["y"]
 
     @pytest.mark.asyncio
     async def test_request_cancelled_raises_interaction_cancelled(self):
@@ -242,11 +282,7 @@ class TestInteractionBrokerRequest:
         broker = InteractionBroker()
 
         async def do_request():
-            return await broker.request(
-                contents=["Pick one"],
-                choices=[{"a": "A"}],
-                default_choices=["a"],
-            )
+            return await broker.request(SingleRequest(content="Pick one", choices={"a": "A"}, default_choice="a"))
 
         task = asyncio.create_task(do_request())
         await asyncio.sleep(0.05)
@@ -258,6 +294,28 @@ class TestInteractionBrokerRequest:
             await task
 
 
+class TestInteractionBrokerRequestShorthand:
+    """Tests for request() with a single SingleRequest (non-list) auto-normalization."""
+
+    @pytest.mark.asyncio
+    async def test_single_request_normalized_to_list(self):
+        """A single SingleRequest is automatically wrapped in a list."""
+        broker = InteractionBroker()
+
+        async def do_request():
+            return await broker.request(SingleRequest(content="Yes?", choices={"y": "Yes"}, default_choice="y"))
+
+        task = asyncio.create_task(do_request())
+        await asyncio.sleep(0.05)
+
+        action = broker._output_queue.get_nowait()
+        assert action.input["contents"] == ["Yes?"]
+
+        await broker.submit(action.action_id, ["y"])
+        result, _ = await task
+        assert result == ["y"]
+
+
 class TestInteractionBrokerSubmit:
     """Tests for InteractionBroker.submit() method."""
 
@@ -265,7 +323,7 @@ class TestInteractionBrokerSubmit:
     async def test_submit_unknown_action_id_returns_false(self):
         """submit() returns False when action_id is not found."""
         broker = InteractionBroker()
-        result = await broker.submit("nonexistent-id", "choice")
+        result = await broker.submit("nonexistent-id", ["choice"])
         assert result is False
 
     @pytest.mark.asyncio
@@ -274,11 +332,7 @@ class TestInteractionBrokerSubmit:
         broker = InteractionBroker()
 
         async def do_request():
-            return await broker.request(
-                contents=["Pick"],
-                choices=[{"a": "A", "b": "B"}],
-                default_choices=["a"],
-            )
+            return await broker.request(SingleRequest(content="Pick", choices={"a": "A", "b": "B"}, default_choice="a"))
 
         task = asyncio.create_task(do_request())
         await asyncio.sleep(0.05)
@@ -287,14 +341,14 @@ class TestInteractionBrokerSubmit:
         action_id = action.action_id
 
         # Submit an invalid choice
-        result = await broker.submit(action_id, "z")
+        result = await broker.submit(action_id, ["z"])
         assert result is False
 
         # The pending should still be there
         assert broker.has_pending is True
 
         # Clean up: submit valid choice to unblock the task
-        await broker.submit(action_id, "a")
+        await broker.submit(action_id, ["a"])
         await task
 
     @pytest.mark.asyncio
@@ -303,11 +357,7 @@ class TestInteractionBrokerSubmit:
         broker = InteractionBroker()
 
         async def do_request():
-            return await broker.request(
-                contents=["Pick"],
-                choices=[{"x": "X"}],
-                default_choices=["x"],
-            )
+            return await broker.request(SingleRequest(content="Pick", choices={"x": "X"}, default_choice="x"))
 
         task = asyncio.create_task(do_request())
         await asyncio.sleep(0.05)
@@ -315,11 +365,11 @@ class TestInteractionBrokerSubmit:
         action = broker._output_queue.get_nowait()
         action_id = action.action_id
 
-        result = await broker.submit(action_id, "x")
+        result = await broker.submit(action_id, ["x"])
         assert result is True
         assert broker.has_pending is False
 
-        choice, _ = await task
+        [choice], _ = await task
         assert choice == "x"
 
     @pytest.mark.asyncio
@@ -328,10 +378,31 @@ class TestInteractionBrokerSubmit:
         broker = InteractionBroker()
 
         async def do_request():
+            return await broker.request(SingleRequest(content="Enter text"))
+
+        task = asyncio.create_task(do_request())
+        await asyncio.sleep(0.05)
+
+        action = broker._output_queue.get_nowait()
+        action_id = action.action_id
+
+        result = await broker.submit(action_id, ["free text input"])
+        assert result is True
+
+        [choice], _ = await task
+        assert choice == "free text input"
+
+    @pytest.mark.asyncio
+    async def test_submit_length_mismatch_returns_false(self):
+        """submit() returns False when answer count doesn't match request count."""
+        broker = InteractionBroker()
+
+        async def do_request():
             return await broker.request(
-                contents=["Enter text"],
-                choices=[{}],
-                default_choices=[""],
+                [
+                    SingleRequest(content="Q1?"),
+                    SingleRequest(content="Q2?"),
+                ]
             )
 
         task = asyncio.create_task(do_request())
@@ -340,11 +411,14 @@ class TestInteractionBrokerSubmit:
         action = broker._output_queue.get_nowait()
         action_id = action.action_id
 
-        result = await broker.submit(action_id, "free text input")
-        assert result is True
+        # Submit only 1 answer for 2 questions
+        result = await broker.submit(action_id, ["only one"])
+        assert result is False
+        assert broker.has_pending is True
 
-        choice, _ = await task
-        assert choice == "free text input"
+        # Clean up
+        await broker.submit(action_id, ["a", "b"])
+        await task
 
 
 class TestInteractionBrokerFetch:
@@ -668,32 +742,27 @@ class TestInteractionBrokerRequestFailFast:
         broker.close()
 
         with pytest.raises(InteractionCancelled, match="already closed"):
-            await broker.request(
-                contents=["Q?"],
-                choices=[{"a": "A"}],
-            )
+            await broker.request(SingleRequest(content="Q?", choices={"a": "A"}))
 
     @pytest.mark.asyncio
-    async def test_request_with_empty_contents_raises(self):
-        """request() raises InteractionCancelled when contents is empty."""
+    async def test_request_with_empty_requests_raises(self):
+        """request() raises InteractionCancelled when requests list is empty."""
         broker = InteractionBroker()
 
         with pytest.raises(InteractionCancelled, match="empty contents"):
-            await broker.request(
-                contents=[],
-                choices=[],
-            )
+            await broker.request([])
 
     @pytest.mark.asyncio
-    async def test_request_default_choices_none_pads(self):
-        """request() auto-generates default_choices when None is passed."""
+    async def test_request_default_choices_from_requests(self):
+        """request() extracts default_choices from SingleRequest objects."""
         broker = InteractionBroker()
 
         async def do_request():
             return await broker.request(
-                contents=["Q1?", "Q2?"],
-                choices=[{"a": "A"}, {"b": "B"}],
-                default_choices=None,
+                [
+                    SingleRequest(content="Q1?", choices={"a": "A"}),
+                    SingleRequest(content="Q2?", choices={"b": "B"}),
+                ]
             )
 
         task = asyncio.create_task(do_request())
@@ -702,28 +771,7 @@ class TestInteractionBrokerRequestFailFast:
         action = broker._output_queue.get_nowait()
         assert action.input["default_choices"] == ["", ""]
 
-        await broker.submit(action.action_id, "a")
-        await task
-
-    @pytest.mark.asyncio
-    async def test_request_default_choices_shorter_pads(self):
-        """request() pads default_choices with empty strings when shorter than contents."""
-        broker = InteractionBroker()
-
-        async def do_request():
-            return await broker.request(
-                contents=["Q1?", "Q2?", "Q3?"],
-                choices=[{"a": "A"}, {"b": "B"}, {"c": "C"}],
-                default_choices=["a"],
-            )
-
-        task = asyncio.create_task(do_request())
-        await asyncio.sleep(0.05)
-
-        action = broker._output_queue.get_nowait()
-        assert action.input["default_choices"] == ["a", "", ""]
-
-        await broker.submit(action.action_id, "a")
+        await broker.submit(action.action_id, ["a", "b"])
         await task
 
 
@@ -738,14 +786,14 @@ class TestAutoSubmitInteraction:
     @pytest.mark.asyncio
     async def test_batch_auto_submit(self):
         """Batch questions: auto-submits first option value for each."""
-        import json
-
         broker = InteractionBroker()
 
         async def do_request():
             return await broker.request(
-                contents=["Q1?", "Q2?"],
-                choices=[{"1": "MySQL", "2": "PostgreSQL"}, {"a": "Yes", "b": "No"}],
+                [
+                    SingleRequest(content="Q1?", choices={"1": "MySQL", "2": "PostgreSQL"}),
+                    SingleRequest(content="Q2?", choices={"a": "Yes", "b": "No"}),
+                ]
             )
 
         task = asyncio.create_task(do_request())
@@ -755,21 +803,19 @@ class TestAutoSubmitInteraction:
         await auto_submit_interaction(broker, action)
 
         result, _ = await task
-        answers = json.loads(result)
-        assert answers == ["1", "a"]
+        assert result == ["1", "a"]
 
     @pytest.mark.asyncio
     async def test_batch_with_free_text_question(self):
         """Batch with empty choices dict: auto-submits empty string for that question."""
-        import json
-
         broker = InteractionBroker()
 
         async def do_request():
             return await broker.request(
-                contents=["Q1?", "Q2?"],
-                choices=[{"1": "MySQL"}, {}],
-                allow_free_text=True,
+                [
+                    SingleRequest(content="Q1?", choices={"1": "MySQL"}, allow_free_text=True),
+                    SingleRequest(content="Q2?", allow_free_text=True),
+                ]
             )
 
         task = asyncio.create_task(do_request())
@@ -779,8 +825,7 @@ class TestAutoSubmitInteraction:
         await auto_submit_interaction(broker, action)
 
         result, _ = await task
-        answers = json.loads(result)
-        assert answers == ["1", ""]
+        assert result == ["1", ""]
 
     @pytest.mark.asyncio
     async def test_single_with_default(self):
@@ -789,9 +834,7 @@ class TestAutoSubmitInteraction:
 
         async def do_request():
             return await broker.request(
-                contents=["Pick?"],
-                choices=[{"y": "Yes", "n": "No"}],
-                default_choices=["y"],
+                SingleRequest(content="Pick?", choices={"y": "Yes", "n": "No"}, default_choice="y")
             )
 
         task = asyncio.create_task(do_request())
@@ -801,7 +844,7 @@ class TestAutoSubmitInteraction:
         await auto_submit_interaction(broker, action)
 
         result, _ = await task
-        assert result == "y"
+        assert result == ["y"]
 
     @pytest.mark.asyncio
     async def test_single_free_text(self):
@@ -809,10 +852,7 @@ class TestAutoSubmitInteraction:
         broker = InteractionBroker()
 
         async def do_request():
-            return await broker.request(
-                contents=["Enter text?"],
-                choices=[{}],
-            )
+            return await broker.request(SingleRequest(content="Enter text?"))
 
         task = asyncio.create_task(do_request())
         await asyncio.sleep(0.05)
@@ -821,7 +861,7 @@ class TestAutoSubmitInteraction:
         await auto_submit_interaction(broker, action)
 
         result, _ = await task
-        assert result == ""
+        assert result == [""]
 
     @pytest.mark.asyncio
     async def test_single_no_default(self):
@@ -829,11 +869,7 @@ class TestAutoSubmitInteraction:
         broker = InteractionBroker()
 
         async def do_request():
-            return await broker.request(
-                contents=["Pick?"],
-                choices=[{"a": "Alpha", "b": "Beta"}],
-                default_choices=[""],
-            )
+            return await broker.request(SingleRequest(content="Pick?", choices={"a": "Alpha", "b": "Beta"}))
 
         task = asyncio.create_task(do_request())
         await asyncio.sleep(0.05)
@@ -842,18 +878,18 @@ class TestAutoSubmitInteraction:
         await auto_submit_interaction(broker, action)
 
         result, _ = await task
-        assert result == "a"
+        assert result == ["a"]
 
     @pytest.mark.asyncio
     async def test_empty_contents(self):
-        """Empty contents list: auto-submits empty string."""
+        """Empty contents list: auto-submits list with empty string."""
         broker = InteractionBroker()
 
         # Manually create a pending interaction for this edge case
         loop = asyncio.get_running_loop()
         future = loop.create_future()
         broker._pending["edge-id"] = PendingInteraction(
-            action_id="edge-id", future=future, choices=[{}], allow_free_text=True
+            action_id="edge-id", future=future, requests=[SingleRequest(content="")]
         )
 
         action = ActionHistory(
@@ -869,4 +905,4 @@ class TestAutoSubmitInteraction:
         await auto_submit_interaction(broker, action)
         # Let event loop process the call_soon_threadsafe callback
         await asyncio.sleep(0.05)
-        assert future.result() == ""
+        assert future.result() == [""]

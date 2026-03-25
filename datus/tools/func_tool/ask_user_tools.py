@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from datus.cli.execution_state import InteractionBroker, InteractionCancelled
+from datus.cli.execution_state import InteractionBroker, InteractionCancelled, SingleRequest
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.loggings import get_logger
 
@@ -132,44 +132,17 @@ class AskUserTool:
             validated.append({"question": str(q_text).strip(), "choices": choices_dict})
 
         # --- pass to broker ---
-        contents = [q["question"] for q in validated]
-        choices = [q["choices"] or {} for q in validated]
-
-        try:
-            choice, callback = await self._broker.request(
-                contents=contents,
-                choices=choices,
-                default_choices=[""] * len(validated),
+        reqs = [
+            SingleRequest(
+                content=q["question"],
+                choices=q["choices"] or {},
                 allow_free_text=True,
             )
+            for q in validated
+        ]
 
-            # Reject None response (collector failure)
-            if choice is None:
-                logger.warning("AskUserTool: collector returned None (interaction failure)")
-                return FuncToolResult(success=0, error="No response received from collector")
-
-            # Parse the JSON response from the collector
-            try:
-                answers = json.loads(choice)
-            except (json.JSONDecodeError, TypeError):
-                if len(validated) == 1:
-                    answers = [choice]
-                else:
-                    logger.warning("AskUserTool: expected JSON array for multi-question batch response")
-                    return FuncToolResult(success=0, error="Malformed batch response from collector")
-
-            # Ensure answers is a list (json.loads may return dict/str/int)
-            if not isinstance(answers, list):
-                if len(validated) == 1:
-                    answers = [answers]
-                else:
-                    logger.warning(f"AskUserTool: expected list batch response, got type={type(answers).__name__}")
-                    return FuncToolResult(success=0, error="Malformed batch response from collector")
-
-            # Validate answer count matches question count
-            if len(answers) != len(validated):
-                logger.warning(f"AskUserTool: answer count mismatch (expected {len(validated)}, got {len(answers)})")
-                return FuncToolResult(success=0, error="Malformed batch response from collector")
+        try:
+            answers, callback = await self._broker.request(reqs)
 
             # Resolve choice keys to display values (e.g. "2" → "PostgreSQL")
             for i, q in enumerate(validated):

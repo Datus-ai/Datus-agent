@@ -797,7 +797,7 @@ class ChatCommands:
                 return ""
             return result or default_key
 
-        def collect(action: ActionHistory, console) -> Optional[str]:
+        def collect(action: ActionHistory, console) -> Optional[List[str]]:
 
             try:
                 input_data = action.input or {}
@@ -813,23 +813,24 @@ class ChatCommands:
                     # --- single question ---
                     ch = choices_list[0] if choices_list else {}
                     default = default_choices[0] if default_choices else ""
-                    return _collect_single_choice(console, ch, default, allow_free_text)
+                    result = _collect_single_choice(console, ch, default, allow_free_text)
+                    return [result]
             except Exception as e:
                 logger.error(f"Error collecting interaction input: {e}")
                 return None
 
         return collect
 
-    def _collect_batch(self, console, contents: list, choices_list: list) -> Optional[str]:
+    def _collect_batch(self, console, contents: list, choices_list: list) -> Optional[List[str]]:
         """Collect answers for a batch of questions.
 
         Steps through each question, showing progress (e.g. [1/3]),
-        and returns a JSON-encoded list of answer strings.
+        and returns a list of answer strings.
 
         Caller is responsible for holding ``esc_guard.paused()`` context.
         """
         if not contents:
-            return json.dumps([])
+            return []
 
         answers = []
         total = len(contents)
@@ -872,7 +873,7 @@ class ChatCommands:
                 short_q = contents[idx][:40] + "..." if len(contents[idx]) > 40 else contents[idx]
                 console.print(f"     [dim]{short_q} \u2192 {answer}[/dim]")
 
-        return json.dumps(answers, ensure_ascii=False)
+        return answers
 
     def _extract_report_from_json(self, response: str) -> Optional[str]:
         """
