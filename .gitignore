@@ -41,6 +41,8 @@ before_reflection_*.yaml
 /site
 
 # Coverage & CI output
+.coverage
+coverage.xml
 ci/htmlcov/
 ci/coverage.xml
 ci/test-results.xml
@@ -50,6 +52,9 @@ ci/pytest-coverage.txt
 ci/test-report.md
 ci/dir-cover.json
 ci/.coverage
+
+# Scratch/debug scripts
+test.py
 
 # Test evaluation output
 evaluation_details.json
