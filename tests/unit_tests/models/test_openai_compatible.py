@@ -1121,3 +1121,183 @@ class TestGenerateWithToolsStream:
 
         assert len(captured_manager) == 1
         assert isinstance(captured_manager[0], ActionHistoryManager)
+
+
+# ---------------------------------------------------------------------------
+# _build_agent
+# ---------------------------------------------------------------------------
+
+
+class TestBuildAgent:
+    """Tests for _build_agent. We patch Agent to capture kwargs without SDK validation."""
+
+    def _call_build_agent(self, model, **kwargs):
+        defaults = {
+            "instruction": "test",
+            "output_type": str,
+            "strict_json_schema": True,
+            "connected_servers": {},
+            "tools": None,
+        }
+        defaults.update(kwargs)
+        with patch("datus.models.openai_compatible.Agent") as MockAgent:
+            MockAgent.return_value = MagicMock()
+            model._build_agent(**defaults)
+            return MockAgent, MockAgent.call_args
+
+    def test_str_output_type_no_schema_wrapping(self):
+        model = _make_model()
+        _, call_args = self._call_build_agent(model, output_type=str)
+        assert call_args[1]["output_type"] is str
+
+    def test_structured_output_wraps_with_schema(self):
+        from pydantic import BaseModel
+
+        class MyOutput(BaseModel):
+            sql: str
+
+        model = _make_model()
+        _, call_args = self._call_build_agent(model, output_type=MyOutput)
+        # Should be wrapped in AgentOutputSchema, not the raw type
+        assert call_args[1]["output_type"] is not MyOutput
+
+    def test_deepseek_adds_json_keyword_for_structured_output(self):
+        from pydantic import BaseModel
+
+        class Out(BaseModel):
+            x: int
+
+        cfg = _make_model_config(model="deepseek-chat", model_type="deepseek")
+        model = _make_model(cfg)
+        model.litellm_adapter.provider = "deepseek"
+
+        _, call_args = self._call_build_agent(model, instruction="Generate output", output_type=Out)
+        assert "json" in call_args[1]["instructions"].lower()
+
+    def test_deepseek_no_duplicate_json_keyword(self):
+        from pydantic import BaseModel
+
+        class Out(BaseModel):
+            x: int
+
+        cfg = _make_model_config(model="deepseek-chat", model_type="deepseek")
+        model = _make_model(cfg)
+        model.litellm_adapter.provider = "deepseek"
+
+        _, call_args = self._call_build_agent(model, instruction="Return valid JSON output", output_type=Out)
+        assert call_args[1]["instructions"] == "Return valid JSON output"
+
+    def test_default_headers_set_as_extra_headers(self):
+        cfg = _make_model_config(default_headers={"X-Custom": "value"})
+        model = _make_model(cfg)
+        _, call_args = self._call_build_agent(model)
+        ms = call_args[1]["model_settings"]
+        assert ms.extra_headers == {"X-Custom": "value"}
+
+    def test_thinking_model_gets_reasoning(self):
+        model = _make_model()
+        model.litellm_adapter.is_thinking_model = True
+        _, call_args = self._call_build_agent(model)
+        ms = call_args[1]["model_settings"]
+        assert ms.reasoning is not None
+        assert ms.reasoning.effort == "medium"
+
+    def test_temperature_and_top_p_from_config(self):
+        cfg = _make_model_config(temperature=0.5, top_p=0.9)
+        model = _make_model(cfg)
+        _, call_args = self._call_build_agent(model)
+        ms = call_args[1]["model_settings"]
+        assert ms.temperature == 0.5
+        assert ms.top_p == 0.9
+
+    def test_connected_servers_set_as_mcp_servers(self):
+        model = _make_model()
+        server1 = MagicMock()
+        server2 = MagicMock()
+        servers = {"s1": server1, "s2": server2}
+        _, call_args = self._call_build_agent(model, connected_servers=servers)
+        assert call_args[1]["mcp_servers"] == [server1, server2]
+
+    def test_tools_passed_through(self):
+        model = _make_model()
+        mock_tool = MagicMock()
+        _, call_args = self._call_build_agent(model, tools=[mock_tool])
+        assert call_args[1]["tools"] == [mock_tool]
+
+
+# ---------------------------------------------------------------------------
+# _extract_usage_info
+# ---------------------------------------------------------------------------
+
+
+class TestExtractUsageInfo:
+    def test_normal_usage(self):
+        model = _make_model()
+        usage = MagicMock()
+        usage.requests = 2
+        usage.input_tokens = 100
+        usage.output_tokens = 50
+        usage.total_tokens = 150
+        usage.input_tokens_details = MagicMock()
+        usage.input_tokens_details.cached_tokens = 20
+        usage.output_tokens_details = MagicMock()
+        usage.output_tokens_details.reasoning_tokens = 10
+
+        with patch.object(model, "context_length", return_value=128000):
+            info = model._extract_usage_info(usage)
+
+        assert info["requests"] == 2
+        assert info["input_tokens"] == 100
+        assert info["output_tokens"] == 50
+        assert info["total_tokens"] == 150
+        assert info["cached_tokens"] == 20
+        assert info["reasoning_tokens"] == 10
+        assert info["cache_hit_rate"] == round(20 / 100, 3)
+        assert info["context_usage_ratio"] == round(150 / 128000, 3)
+
+    def test_zero_input_tokens_no_division_error(self):
+        model = _make_model()
+        usage = MagicMock()
+        usage.requests = 0
+        usage.input_tokens = 0
+        usage.output_tokens = 0
+        usage.total_tokens = 0
+        usage.input_tokens_details = None
+        usage.output_tokens_details = None
+
+        with patch.object(model, "context_length", return_value=128000):
+            info = model._extract_usage_info(usage)
+
+        assert info["cache_hit_rate"] == 0
+        assert info["cached_tokens"] == 0
+        assert info["reasoning_tokens"] == 0
+
+    def test_missing_details_attributes(self):
+        model = _make_model()
+        usage = MagicMock(spec=["requests", "input_tokens", "output_tokens", "total_tokens"])
+        usage.requests = 1
+        usage.input_tokens = 50
+        usage.output_tokens = 25
+        usage.total_tokens = 75
+
+        with patch.object(model, "context_length", return_value=128000):
+            info = model._extract_usage_info(usage)
+
+        assert info["cached_tokens"] == 0
+        assert info["reasoning_tokens"] == 0
+
+    def test_unknown_model_context_length_none(self):
+        cfg = _make_model_config(model="unknown-model-xyz")
+        model = _make_model(cfg)
+        usage = MagicMock()
+        usage.requests = 1
+        usage.input_tokens = 100
+        usage.output_tokens = 50
+        usage.total_tokens = 150
+        usage.input_tokens_details = None
+        usage.output_tokens_details = None
+
+        with patch.object(model, "context_length", return_value=None):
+            info = model._extract_usage_info(usage)
+
+        assert info["context_usage_ratio"] == 0

@@ -7,20 +7,17 @@ agent:
   models:
     deepseek:
       type: deepseek
-      vendor: deepseek
       base_url: https://api.deepseek.com
       api_key: ${DEEPSEEK_API_KEY}
       model: deepseek-chat
     deepseek-r1:
       type: deepseek
-      vendor: deepseek
       base_url: https://api.deepseek.com
       api_key: ${DEEPSEEK_API_KEY}
       model: deepseek-reasoner
       enable_thinking: true
     deepseek-ark:
       type: deepseek
-      vendor: ark
       base_url: https://ark.cn-beijing.volces.com/api/v3
       api_key: ${DEEPSEEK_ARK_API_KEY}
       model: deepseek-v3-250324
@@ -31,14 +28,12 @@ agent:
       model: qwen3-coder-plus
     anthropic:
       type: claude
-      vendor: anthropic
       base_url: https://api.anthropic.com
       api_key: ${ANTHROPIC_API_KEY}
       #model: claude-3-7-sonnet-latest
       model: claude-haiku-4-5
     kimi-k2:
       type: kimi
-      vendor: kimi
       base_url: https://api.moonshot.cn/v1
       api_key: ${KIMI_API_KEY}
       model: kimi-k2.5
@@ -47,13 +42,11 @@ agent:
       enable_thinking: true
     openai-4o-mini:
       type: openai
-      vendor: openai
       base_url: https://api.openai.com/v1
       api_key: ${OPENAI_API_KEY}
       model: gpt-4o-mini
     gemini-2.5:
       type: gemini
-      vendor: google
       base_url: https://generativelanguage.googleapis.com/v1beta
       api_key: ${GEMINI_API_KEY}
       model: gemini-2.5-flash-lite

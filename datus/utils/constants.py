@@ -26,6 +26,8 @@ class LLMProvider(str, Enum):
     KIMI = "kimi"  # Moonshot Kimi models
     ANTHROPIC = "anthropic"  # Alternative name for Claude
     GEMINI = "gemini"
+    MINIMAX = "minimax"
+    GLM = "glm"
     LLAMA = "llama"
     GPT = "gpt"  # Alternative name for OpenAI
     CODEX = "codex"  # OpenAI Codex (ChatGPT subscription, OAuth authentication)

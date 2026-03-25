@@ -3,28 +3,24 @@ agent:
   models:
     openai:
       type: openai
-      vendor: openai
       base_url: https://api.openai.com/v1
       api_key: ${OPENAI_API_KEY}
       model: gpt-4-turbo
 
     google:
       type: gemini
-      vendor: google
       base_url: https://generativelanguage.googleapis.com/v1beta
       api_key: ${GEMINI_API_KEY}
       model: gemini-2.0-flash-exp
 
     anthropic:
       type: claude
-      vendor: anthropic
       base_url: https://api.anthropic.com
       api_key: ${ANTHROPIC_API_KEY}
       model: claude-haiku-4-5
 
     deepseek_v3:
       type: deepseek
-      vendor: deepseek
       base_url: https://api.deepseek.com
       api_key: ${DEEPSEEK_API_KEY}
       model: deepseek-chat
@@ -58,6 +54,24 @@ agent:
       api_key: ""
       model: gpt-5.3-codex
       auth_type: oauth
+
+    # Coding Plan - Alibaba (multi-model aggregation, one subscription covers multiple models)
+    # Note: Coding Plan endpoints may verify request headers (User-Agent, etc.)
+    # Use default_headers to set required headers for your endpoint.
+    alibaba_coding:
+      type: claude
+      base_url: https://coding-intl.dashscope.aliyuncs.com/apps/anthropic
+      api_key: ${DASHSCOPE_API_KEY}
+      model: qwen3-coder-plus
+      # default_headers:
+      #   User-Agent: "your-tool-name/1.0"
+
+    # Coding Plan - GLM
+    glm_coding:
+      type: claude
+      base_url: https://open.bigmodel.cn/api/anthropic
+      api_key: ${GLM_API_KEY}
+      model: glm-5
 
   nodes:
     schema_linking:

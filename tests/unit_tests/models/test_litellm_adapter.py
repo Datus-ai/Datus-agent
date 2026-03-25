@@ -199,6 +199,183 @@ class TestGetAgentsSdkModel:
         assert result is mock_model
         mock_litellm_model_cls.assert_called_once()
 
+    def test_extra_headers_not_passed_to_litellm_model_constructor(self):
+        """default_headers should NOT be passed to LitellmModel constructor.
+        Headers are injected via ModelSettings.extra_headers at call time instead."""
+        headers = {"User-Agent": "datus-agent (cli)"}
+        adapter = LiteLLMAdapter(provider="claude", model="claude-sonnet-4", api_key="key", default_headers=headers)
+        mock_model = MagicMock()
+        mock_litellm_model_cls = MagicMock(return_value=mock_model)
+        mock_module = MagicMock()
+        mock_module.LitellmModel = mock_litellm_model_cls
+
+        with patch.dict("sys.modules", {"agents.extensions.models.litellm_model": mock_module}):
+            adapter.get_agents_sdk_model()
+        call_kwargs = mock_litellm_model_cls.call_args
+        assert "extra_headers" not in (call_kwargs.kwargs or {})
+
+
+class TestAutoDetectWithBaseUrl:
+    """Tests for auto-detection bypass when base_url doesn't match detected provider."""
+
+    def test_skip_auto_detect_when_base_url_mismatches(self):
+        """type: claude + model: qwen3-coder-plus + alibaba base_url → provider stays claude."""
+        adapter = LiteLLMAdapter(
+            provider="claude",
+            model="qwen3-coder-plus",
+            api_key="test-key",
+            base_url="https://coding-intl.dashscope.aliyuncs.com/apps/anthropic",
+        )
+        assert adapter.provider == "claude"
+        assert adapter.litellm_model_name == "anthropic/qwen3-coder-plus"
+
+    def test_skip_auto_detect_kimi_on_alibaba(self):
+        """type: claude + model: kimi-k2.5 + alibaba base_url → provider stays claude."""
+        adapter = LiteLLMAdapter(
+            provider="claude",
+            model="kimi-k2.5",
+            api_key="test-key",
+            base_url="https://coding-intl.dashscope.aliyuncs.com/apps/anthropic",
+        )
+        assert adapter.provider == "claude"
+        assert adapter.litellm_model_name == "anthropic/kimi-k2.5"
+
+    def test_auto_detect_works_when_url_matches(self):
+        """type: openai + model: kimi-k2.5 + moonshot base_url → provider becomes kimi."""
+        adapter = LiteLLMAdapter(
+            provider="openai",
+            model="kimi-k2.5",
+            api_key="test-key",
+            base_url="https://api.moonshot.cn/v1",
+        )
+        assert adapter.provider == "kimi"
+        assert adapter.litellm_model_name == "moonshot/kimi-k2.5"
+
+    def test_auto_detect_works_without_base_url(self):
+        """type: openai + model: kimi-k2.5 + no base_url → provider becomes kimi (backward compat)."""
+        adapter = LiteLLMAdapter(
+            provider="openai",
+            model="kimi-k2.5",
+            api_key="test-key",
+        )
+        assert adapter.provider == "kimi"
+
+    def test_coding_plan_claude_model_name_passthrough(self):
+        """type: claude + model: claude-sonnet-4 + alibaba base_url → provider stays claude."""
+        adapter = LiteLLMAdapter(
+            provider="claude",
+            model="claude-sonnet-4",
+            api_key="test-key",
+            base_url="https://coding-intl.dashscope.aliyuncs.com/apps/anthropic",
+        )
+        assert adapter.provider == "claude"
+        assert adapter.litellm_model_name == "anthropic/claude-sonnet-4"
+
+    def test_skip_auto_detect_glm_on_alibaba(self):
+        """type: claude + model: glm-5 + alibaba base_url → provider stays claude."""
+        adapter = LiteLLMAdapter(
+            provider="claude",
+            model="glm-5",
+            api_key="test-key",
+            base_url="https://coding-intl.dashscope.aliyuncs.com/apps/anthropic",
+        )
+        assert adapter.provider == "claude"
+        assert adapter.litellm_model_name == "anthropic/glm-5"
+
+    def test_skip_auto_detect_kimi_coding_endpoint(self):
+        """type: claude + model: kimi-for-coding + kimi coding base_url → provider stays claude."""
+        adapter = LiteLLMAdapter(
+            provider="claude",
+            model="kimi-for-coding",
+            api_key="test-key",
+            base_url="https://api.kimi.com/coding/",
+        )
+        assert adapter.provider == "claude"
+        assert adapter.litellm_model_name == "anthropic/kimi-for-coding"
+
+    def test_skip_auto_detect_minimax_on_alibaba(self):
+        """type: claude + model: MiniMax-M2.5 + alibaba base_url → provider stays claude."""
+        adapter = LiteLLMAdapter(
+            provider="claude",
+            model="MiniMax-M2.5",
+            api_key="test-key",
+            base_url="https://coding-intl.dashscope.aliyuncs.com/apps/anthropic",
+        )
+        assert adapter.provider == "claude"
+        assert adapter.litellm_model_name == "anthropic/MiniMax-M2.5"
+
+    def test_domain_match_rejects_label_substring(self):
+        """Ensure 'evil-deepseek.com' does NOT match known domain 'deepseek.com'."""
+        adapter = LiteLLMAdapter(
+            provider="openai",
+            model="deepseek-chat",
+            api_key="test-key",
+            base_url="https://evil-deepseek.com/v1",
+        )
+        # Domain 'evil-deepseek.com' should NOT match 'deepseek.com',
+        # so auto-detection should be skipped and provider stays 'openai'
+        assert adapter.provider == "openai"
+
+    def test_domain_match_accepts_exact_domain(self):
+        """Ensure exact domain 'api.deepseek.com' matches correctly."""
+        adapter = LiteLLMAdapter(
+            provider="openai",
+            model="deepseek-chat",
+            api_key="test-key",
+            base_url="https://api.deepseek.com/v1",
+        )
+        # Exact domain match → auto-detection applies
+        assert adapter.provider == "deepseek"
+
+    def test_domain_match_accepts_subdomain(self):
+        """Ensure 'api.deepseek.com' matches via .deepseek.com suffix."""
+        adapter = LiteLLMAdapter(
+            provider="openai",
+            model="deepseek-chat",
+            api_key="test-key",
+            base_url="https://api.deepseek.com/v1",
+        )
+        assert adapter.provider == "deepseek"
+
+
+class TestDefaultHeaders:
+    """Tests for default_headers passthrough to LiteLLM and Anthropic clients."""
+
+    def test_default_headers_stored(self):
+        headers = {"User-Agent": "my-tool/1.0"}
+        adapter = LiteLLMAdapter(provider="claude", model="claude-sonnet-4", api_key="key", default_headers=headers)
+        assert adapter.default_headers == headers
+
+    def test_default_headers_none_by_default(self):
+        adapter = LiteLLMAdapter(provider="claude", model="claude-sonnet-4", api_key="key")
+        assert adapter.default_headers is None
+
+    def test_default_headers_in_completion_kwargs(self):
+        headers = {"User-Agent": "my-tool/1.0", "X-Custom": "value"}
+        adapter = LiteLLMAdapter(provider="claude", model="claude-sonnet-4", api_key="key", default_headers=headers)
+        kwargs = adapter.get_completion_kwargs()
+        assert kwargs["extra_headers"] == headers
+
+    def test_no_extra_headers_when_none(self):
+        adapter = LiteLLMAdapter(provider="claude", model="claude-sonnet-4", api_key="key")
+        kwargs = adapter.get_completion_kwargs()
+        assert "extra_headers" not in kwargs
+
+    def test_coding_plan_with_custom_headers(self):
+        """Coding Plan endpoint with custom headers — provider stays claude, headers preserved."""
+        headers = {"User-Agent": "my-coding-tool/1.0"}
+        adapter = LiteLLMAdapter(
+            provider="claude",
+            model="qwen3-coder-plus",
+            api_key="sk-sp-test",
+            base_url="https://coding-intl.dashscope.aliyuncs.com/apps/anthropic",
+            default_headers=headers,
+        )
+        assert adapter.provider == "claude"
+        assert adapter.default_headers == headers
+        kwargs = adapter.get_completion_kwargs()
+        assert kwargs["extra_headers"] == headers
+
 
 class TestCreateLiteLLMAdapter:
     def test_factory_function(self):
@@ -219,3 +396,13 @@ class TestCreateLiteLLMAdapter:
             base_url="https://custom.url",
         )
         assert adapter.base_url == "https://custom.url"
+
+    def test_factory_with_default_headers(self):
+        headers = {"User-Agent": "test/1.0"}
+        adapter = create_litellm_adapter(
+            provider="claude",
+            model="claude-sonnet-4",
+            api_key="key",
+            default_headers=headers,
+        )
+        assert adapter.default_headers == headers

@@ -161,85 +161,26 @@ class InteractiveInit:
             for handler, original_handler_level in original_handler_levels.items():
                 handler.setLevel(original_handler_level)
 
+    def _load_provider_catalog(self) -> dict:
+        """Load LLM provider catalog from conf/providers.yml."""
+        try:
+            text = read_data_file_text(resource_path="conf/providers.yml", encoding="utf-8")
+            return yaml.safe_load(text)
+        except Exception as e:
+            logger.error(f"Failed to load providers.yml: {e}")
+            return {"providers": {}, "model_overrides": {}}
+
     def _configure_llm(self) -> bool:
         """Step 1: Configure LLM provider and test connectivity."""
         self.console.print("[bold yellow][1/5] Configure LLM[/bold yellow]")
 
-        # Provider selection
-        providers = {
-            "openai": {
-                "type": "openai",
-                "base_url": "https://api.openai.com/v1",
-                "model": "gpt-4.1",
-                "options": ["gpt-5.2", "gpt-4.1", "gpt-4.1-mini", "o3", "o3-pro", "o4-mini"],
-            },
-            "deepseek": {
-                "type": "deepseek",
-                "base_url": "https://api.deepseek.com",
-                "model": "deepseek-chat",
-                "options": ["deepseek-chat", "deepseek-reasoner"],
-            },
-            "claude": {
-                "type": "claude",
-                "base_url": "https://api.anthropic.com",
-                "model": "claude-sonnet-4-5",
-                "options": [
-                    "claude-haiku-4-5",
-                    "claude-sonnet-4-5",
-                    "claude-opus-4-5",
-                    "claude-sonnet-4",
-                    "claude-opus-4",
-                ],
-            },
-            "kimi": {
-                "type": "kimi",
-                "base_url": "https://api.moonshot.cn/v1",
-                "model": "kimi-k2.5",
-                "options": ["kimi-k2.5", "kimi-k2-turbo-preview", "kimi-k2-0905-Preview", "kimi-k2-thinking"],
-            },
-            "qwen": {
-                "type": "openai",
-                "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                "model": "qwen3-max",
-                "options": ["qwen3-max", "qwen3-coder-plus", "qwen-plus", "qwen-flash"],
-            },
-            "gemini": {
-                "type": "gemini",
-                "base_url": "https://generativelanguage.googleapis.com/v1beta",
-                "model": "gemini-2.5-flash",
-                "options": ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-3-flash-preview", "gemini-3-pro-preview"],
-            },
-            "codex": {
-                "type": "codex",
-                "base_url": "https://chatgpt.com/backend-api/codex",
-                "model": "gpt-5.3-codex",
-                "options": ["gpt-5.3-codex", "gpt-5.1-codex-mini", "o3-codex"],
-                "auth_type": "oauth",
-            },
-            "claude_subscription": {
-                "type": "claude",
-                "base_url": "https://api.anthropic.com",
-                "model": "claude-sonnet-4-20250514",
-                "options": [
-                    "claude-sonnet-4-20250514",
-                    "claude-opus-4-20250514",
-                    "claude-haiku-4-5-20251001",
-                ],
-                "auth_type": "subscription",
-            },
-            "openrouter": {
-                "type": "openrouter",
-                "base_url": "https://openrouter.ai/api/v1",
-                "model": "anthropic/claude-sonnet-4",
-                "options": [
-                    "anthropic/claude-sonnet-4",
-                    "openai/gpt-4o",
-                    "google/gemini-2.5-pro",
-                    "deepseek/deepseek-chat",
-                    "meta-llama/llama-4-maverick",
-                ],
-            },
-        }
+        catalog = self._load_provider_catalog()
+        providers = catalog.get("providers", {})
+        model_param_overrides = catalog.get("model_overrides", {})
+
+        if not providers:
+            self.console.print("❌ No providers found in conf/providers.yml")
+            return False
 
         self.console.print("- Which LLM provider?")
         provider = select_choice(
@@ -262,36 +203,43 @@ class InteractiveInit:
             self.console.print("❌ API key cannot be empty")
             return False
 
-        # Base URL (with default)
-        base_url = Prompt.ask("- Enter your base URL", default=providers[provider]["base_url"])
+        provider_info = providers[provider]
 
-        # Model name selection
-        if "options" in providers[provider]:
+        # Base URL (with default)
+        base_url = Prompt.ask("- Enter your base URL", default=provider_info["base_url"])
+
+        # Model name selection (arrow-key with free-text custom input)
+        models = provider_info.get("models", [])
+        if models:
             self.console.print("- Select your model:")
             model_name = select_choice(
                 self.console,
-                {m: m for m in providers[provider]["options"]},
-                default=providers[provider]["model"],
+                {str(m): str(m) for m in models},
+                default=provider_info.get("default_model", str(models[0])),
                 allow_free_text=True,
             )
         else:
-            model_name = Prompt.ask("- Enter your model name", default=providers[provider]["model"]).strip()
+            model_name = Prompt.ask("- Enter your model name", default=provider_info.get("default_model", "")).strip()
 
-        # Model-specific parameter overrides (some models enforce fixed values)
-        model_param_overrides = {
-            "kimi-k2.5": {"temperature": 1.0, "top_p": 0.95},
-            "qwen3-coder-plus": {"temperature": 1.0, "top_p": 0.95},
-        }
+        # Coding Plan providers: prompt for User-Agent header
+        default_headers = None
+        if provider_info.get("coding_plan"):
+            default_ua = "datus-agent (cli)"
+            self.console.print("  [dim]Coding Plan endpoints may verify User-Agent header[/dim]")
+            user_agent = Prompt.ask("- User-Agent header", default=default_ua).strip()
+            if user_agent:
+                default_headers = {"User-Agent": user_agent}
 
         # Store configuration
         self.config["agent"]["target"] = provider
         model_config_entry = {
-            "type": providers[provider]["type"],
-            "vendor": provider,
+            "type": provider_info["type"],
             "base_url": base_url,
             "api_key": api_key,
             "model": model_name,
         }
+        if default_headers:
+            model_config_entry["default_headers"] = default_headers
         if model_name in model_param_overrides:
             model_config_entry.update(model_param_overrides[model_name])
         self.config["agent"]["models"][provider] = model_config_entry
@@ -614,11 +562,9 @@ class InteractiveInit:
     def _test_llm_connectivity(self) -> tuple[bool, str]:
         """Test LLM model connectivity."""
         try:
-            # Test LLM connectivity by creating the specific model directly
             provider = self.config["agent"]["target"]
             model_config_data = self.config["agent"]["models"][provider]
 
-            # Create model config object
             from datus.configuration.agent_config import ModelConfig
 
             model_config = ModelConfig(
@@ -629,36 +575,23 @@ class InteractiveInit:
                 temperature=model_config_data.get("temperature"),
                 top_p=model_config_data.get("top_p"),
                 auth_type=model_config_data.get("auth_type", "api_key"),
+                default_headers=model_config_data.get("default_headers"),
             )
 
-            # Import and create the specific model class
-            model_type = model_config_data["type"]
+            # Reuse the centralized MODEL_TYPE_MAP from LLMBaseModel
+            from datus.models.base import LLMBaseModel
 
-            # Map model types to class names
-            type_map = {
-                "deepseek": "DeepSeekModel",
-                "openai": "OpenAIModel",
-                "claude": "ClaudeModel",
-                "qwen": "QwenModel",
-                "gemini": "GeminiModel",
-                "kimi": "KimiModel",
-                "codex": "CodexModel",
-                "openrouter": "OpenRouterModel",
-            }
-
-            if model_type not in type_map:
+            model_type = model_config.type
+            class_name = LLMBaseModel.MODEL_TYPE_MAP.get(model_type)
+            if not class_name:
                 error_msg = f"Unsupported model type: {model_type}"
                 logger.error(error_msg)
                 return False, error_msg
 
-            class_name = type_map[model_type]
             module = __import__(f"datus.models.{model_type}_model", fromlist=[class_name])
             model_class = getattr(module, class_name)
-
-            # Create model instance
             llm_model = model_class(model_config=model_config)
 
-            # Simple test - try to generate a response
             response = llm_model.generate("Hi")
             if response is not None and len(response.strip()) > 0:
                 return True, ""

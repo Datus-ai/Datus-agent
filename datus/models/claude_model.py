@@ -157,8 +157,8 @@ class ClaudeModel(OpenAICompatibleModel):
                 timeout=60.0,
             )
 
-        # OAuth tokens require extra beta headers + client headers for Anthropic API
-        extra_headers = {}
+        # Build headers: merge config default_headers with OAuth headers if needed
+        extra_headers = dict(self.default_headers) if self.default_headers else {}
         if self._is_oauth_token:
             extra_headers["anthropic-beta"] = ",".join(self.OAUTH_BETA_HEADERS)
             extra_headers.update(self.OAUTH_CLIENT_HEADERS)
@@ -229,17 +229,6 @@ class ClaudeModel(OpenAICompatibleModel):
         # Token is not expired (or no expiry info) — something else is wrong
         logger.warning("Claude subscription token rejected (401) but token is not expired")
         raise DatusException(ErrorCode.CLAUDE_SUBSCRIPTION_AUTH_FAILED) from original_error
-
-    @property
-    def model_specs(self) -> Dict[str, Dict[str, int]]:
-        """Model specifications for Claude models."""
-        return {
-            "claude-sonnet-4-5": {"context_length": 1048576, "max_tokens": 65536},
-            "claude-opus-4-1": {"context_length": 200000, "max_tokens": 32000},
-            "claude-opus-4": {"context_length": 200000, "max_tokens": 32000},
-            "claude-sonnet-4": {"context_length": 1048576, "max_tokens": 65536},
-            "claude-3-7-sonnet": {"context_length": 200000, "max_tokens": 128000},
-        }
 
     def generate(self, prompt: Any, enable_thinking: bool = False, **kwargs) -> str:
         """Generate response using LiteLLM (default) or native Anthropic API.
@@ -330,13 +319,20 @@ class ClaudeModel(OpenAICompatibleModel):
 
             # Use context manager to manage multiple MCP servers
             async with multiple_mcp_servers(mcp_servers) as connected_servers:
-                # Get all tools
+                # Get all tools and build tool-name-to-server mapping once
+                tool_server_map = {}  # tool_name -> connected_server
                 for server_name, connected_server in connected_servers.items():
                     try:
-                        # Create minimal agent and run context for the new interface
                         agent = Agent(name="mcp-tools-agent")
                         run_context = RunContextWrapper(context=None, usage=Usage())
                         mcp_tools = await connected_server.list_tools(run_context, agent)
+                        for tool in mcp_tools:
+                            if tool.name in tool_server_map:
+                                logger.warning(
+                                    f"Duplicate MCP tool name '{tool.name}' from server '{server_name}', "
+                                    f"overwriting previous mapping"
+                                )
+                            tool_server_map[tool.name] = connected_server
                         all_tools.extend(mcp_tools)
                         logger.info(f"Retrieved {len(mcp_tools)} tools from {server_name}")
 
@@ -446,24 +442,21 @@ class ClaudeModel(OpenAICompatibleModel):
                                 except Exception as e:
                                     logger.error(f"Error executing function tool {block.name}: {str(e)}")
 
-                            # Fall back to MCP servers
+                            # Fall back to MCP servers via pre-built mapping
                             if not tool_executed:
-                                for _, connected_server in connected_servers.items():
+                                target_server = tool_server_map.get(block.name)
+                                if target_server:
                                     try:
-                                        agent = Agent(name="mcp-claude-agent")
-                                        run_context = RunContextWrapper(context=None, usage=Usage())
-                                        tmp_tools = await connected_server.list_tools(run_context, agent)
-                                        if any(tool.name == block.name for tool in tmp_tools):
-                                            tool_result = await connected_server.call_tool(
-                                                tool_name=block.name,
-                                                arguments=json.loads(json.dumps(block.input)),
-                                            )
-                                            tool_call_cache[block.id] = tool_result
-                                            tool_executed = True
-                                            break
+                                        tool_result = await target_server.call_tool(
+                                            tool_name=block.name,
+                                            arguments=dict(block.input)
+                                            if isinstance(block.input, dict)
+                                            else block.input,
+                                        )
+                                        tool_call_cache[block.id] = tool_result
+                                        tool_executed = True
                                     except Exception as e:
                                         logger.error(f"Error executing tool {block.name}: {str(e)}")
-                                        continue
 
                             if not tool_executed:
                                 logger.error(f"Tool {block.name} could not be executed")
