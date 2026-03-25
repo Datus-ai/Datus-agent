@@ -183,6 +183,11 @@ class OAuthManager:
             ) from e
         except httpx.TimeoutException as e:
             raise DatusException(ErrorCode.OAUTH_TIMEOUT) from e
+        except httpx.RequestError as e:
+            raise DatusException(
+                ErrorCode.OAUTH_AUTH_FAILED,
+                message_args={"error_detail": f"Device code request failed (network error: {e})"},
+            ) from e
         device_data = resp.json()
 
         self._device_user_code = device_data.get("user_code")
@@ -227,8 +232,8 @@ class OAuthManager:
                     headers={"Content-Type": "application/json"},
                     timeout=HTTP_TIMEOUT,
                 )
-            except httpx.TimeoutException:
-                continue  # Retry on timeout during polling
+            except (httpx.TimeoutException, httpx.RequestError):
+                continue  # Retry on timeout or network error during polling
             if token_resp.status_code == 200:
                 device_data = token_resp.json()
                 # Codex device code flow returns authorization_code + code_verifier,
@@ -326,6 +331,11 @@ class OAuthManager:
             ) from e
         except httpx.TimeoutException as e:
             raise DatusException(ErrorCode.OAUTH_TIMEOUT) from e
+        except httpx.RequestError as e:
+            raise DatusException(
+                ErrorCode.OAUTH_AUTH_FAILED,
+                message_args={"error_detail": f"Token refresh failed (network error: {e})"},
+            ) from e
         new_tokens = resp.json()
 
         # Preserve refresh_token if the server didn't rotate it
@@ -376,4 +386,9 @@ class OAuthManager:
             ) from e
         except httpx.TimeoutException as e:
             raise DatusException(ErrorCode.OAUTH_TIMEOUT) from e
+        except httpx.RequestError as e:
+            raise DatusException(
+                ErrorCode.OAUTH_AUTH_FAILED,
+                message_args={"error_detail": f"Code exchange failed (network error: {e})"},
+            ) from e
         return resp.json()

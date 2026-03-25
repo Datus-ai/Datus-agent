@@ -339,10 +339,13 @@ class TestMiniMaxModel:
         assert node._get_api_key() == "env-minimax-key"
 
     def test_get_api_key_raises_when_missing(self, monkeypatch):
+        from datus.utils.exceptions import DatusException, ErrorCode
+
         node = self._make(api_key="")
         monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
-        with pytest.raises(ValueError, match="MiniMax API key"):
+        with pytest.raises(DatusException) as exc_info:
             node._get_api_key()
+        assert exc_info.value.code == ErrorCode.COMMON_ENV
 
     def test_get_base_url_default(self, monkeypatch):
         node = self._make(base_url=None)
@@ -380,10 +383,13 @@ class TestGLMModel:
         assert node._get_api_key() == "env-glm-key"
 
     def test_get_api_key_raises_when_missing(self, monkeypatch):
+        from datus.utils.exceptions import DatusException, ErrorCode
+
         node = self._make(api_key="")
         monkeypatch.delenv("GLM_API_KEY", raising=False)
-        with pytest.raises(ValueError, match="GLM API key"):
+        with pytest.raises(DatusException) as exc_info:
             node._get_api_key()
+        assert exc_info.value.code == ErrorCode.COMMON_ENV
 
     def test_get_base_url_default(self, monkeypatch):
         node = self._make(base_url=None)

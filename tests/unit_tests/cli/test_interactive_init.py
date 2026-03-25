@@ -653,8 +653,8 @@ class TestConfigureCodexOAuth:
             provider_config = {
                 "type": "codex",
                 "base_url": "https://chatgpt.com/backend-api/codex",
-                "model": "gpt-5.3-codex",
-                "options": ["gpt-5.3-codex", "gpt-5.1-codex-mini", "o3-codex"],
+                "default_model": "gpt-5.3-codex",
+                "models": ["gpt-5.3-codex", "gpt-5.1-codex-mini", "o3-codex"],
                 "auth_type": "oauth",
             }
 
@@ -689,7 +689,7 @@ class TestConfigureCodexOAuth:
             provider_config = {
                 "type": "codex",
                 "base_url": "https://chatgpt.com/backend-api/codex",
-                "model": "gpt-5.3-codex",
+                "default_model": "gpt-5.3-codex",
                 "auth_type": "oauth",
             }
 

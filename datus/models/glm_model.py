@@ -6,6 +6,7 @@ import os
 
 from datus.configuration.agent_config import ModelConfig
 from datus.models.openai_compatible import OpenAICompatibleModel
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -22,7 +23,7 @@ class GLMModel(OpenAICompatibleModel):
         """Get GLM API key from config or environment."""
         api_key = self.model_config.api_key or os.environ.get("GLM_API_KEY")
         if not api_key:
-            raise ValueError("GLM API key must be provided or set as GLM_API_KEY environment variable")
+            raise DatusException(ErrorCode.COMMON_ENV, message_args={"env_var": "GLM_API_KEY"})
         return api_key
 
     def _get_base_url(self) -> str:

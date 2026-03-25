@@ -251,7 +251,7 @@ class CodexModel(LLMBaseModel):
 
         async with multiple_mcp_servers(mcp_servers or {}) as connected_servers:
             agent_kwargs: Dict[str, Any] = {
-                "name": kwargs.pop("agent_name", "codex_agent"),
+                "name": kwargs.get("agent_name", "codex_agent"),
                 "instructions": instruction,
                 "output_type": output_type,
                 "model": responses_model,
@@ -323,7 +323,7 @@ class CodexModel(LLMBaseModel):
 
         async with multiple_mcp_servers(mcp_servers or {}) as connected_servers:
             agent_kwargs: Dict[str, Any] = {
-                "name": kwargs.pop("agent_name", "codex_agent"),
+                "name": kwargs.get("agent_name", "codex_agent"),
                 "instructions": instruction,
                 "output_type": output_type,
                 "model": responses_model,

@@ -126,6 +126,26 @@ providers:
       - kimi-for-coding
       - claude-sonnet-4
 
+  # Claude subscription (Pro/Max plan via setup-token)
+  claude_subscription:
+    type: claude
+    auth_type: subscription
+    base_url: https://api.anthropic.com
+    default_model: claude-sonnet-4-6
+    models:
+      - claude-sonnet-4-6
+      - claude-opus-4-6
+      - claude-haiku-4-5
+
+  # Codex (ChatGPT Plus/Pro subscription via OAuth)
+  codex:
+    type: codex
+    auth_type: oauth
+    base_url: https://api.openai.com/v1
+    default_model: codex-mini-latest
+    models:
+      - codex-mini-latest
+
 # Model-specific parameter overrides
 # Some models enforce fixed values; these are auto-applied during init.
 model_overrides:

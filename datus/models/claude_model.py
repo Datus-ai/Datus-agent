@@ -106,7 +106,9 @@ class ClaudeModel(OpenAICompatibleModel):
     ]
 
     # Claude Code client headers — required for subscription tokens to be accepted.
-    # These mimic the official Claude CLI client identity.
+    # These mimic the official Claude CLI client identity. The version string is
+    # cosmetic (Anthropic validates via anthropic-beta + x-app, not user-agent version).
+    # Update the version periodically to stay current if desired.
     OAUTH_CLIENT_HEADERS = {
         "user-agent": "claude-cli/2.1.75 (external, cli)",
         "x-app": "cli",
@@ -377,6 +379,7 @@ class ClaudeModel(OpenAICompatibleModel):
                 cache_read_tokens = 0
 
                 # Execute conversation loop
+                turn = -1
                 for turn in range(max_turns):
                     logger.debug(f"Turn {turn + 1}/{max_turns}")
 
@@ -487,10 +490,12 @@ class ClaudeModel(OpenAICompatibleModel):
                                 action_history_manager.add_action(complete_action)
                             yield complete_action
 
+                    # Build assistant message content from all blocks
+                    content = []
+                    tool_use_blocks = []
                     for block in message:
-                        content = []
                         if block.type == "text":
-                            content.append({"type": "text", "content": block.text})
+                            content.append({"type": "text", "text": block.text})
                         elif block.type == "tool_use":
                             content.append(
                                 {
@@ -500,45 +505,49 @@ class ClaudeModel(OpenAICompatibleModel):
                                     "input": block.input,
                                 }
                             )
-                            messages.append({"role": "assistant", "content": content})
+                            tool_use_blocks.append(block)
 
-                            if block.id in tool_call_cache:
-                                sql_result = tool_call_cache[block.id].content[0].text
-                                # Use "Error" to determine execution success
-                                if "Error" not in sql_result and block.name == "read_query":
-                                    sql_query = block.input.get("query") or block.input.get("sql", "")
-                                    sql_context = SQLContext(
-                                        sql_query=sql_query,
-                                        sql_return=sql_result,
-                                        row_count=None,
-                                    )
-                                    sql_contexts.append(sql_context)
-                                messages.append(
-                                    {
-                                        "role": "user",
-                                        "content": [
-                                            {
-                                                "type": "tool_result",
-                                                "tool_use_id": block.id,
-                                                "content": sql_result,
-                                            }
-                                        ],
-                                    }
+                    if content:
+                        messages.append({"role": "assistant", "content": content})
+
+                    for block in tool_use_blocks:
+                        if block.id in tool_call_cache:
+                            sql_result = tool_call_cache[block.id].content[0].text
+                            # Use "Error" to determine execution success
+                            if "Error" not in sql_result and block.name == "read_query":
+                                sql_query = block.input.get("query") or block.input.get("sql", "")
+                                sql_context = SQLContext(
+                                    sql_query=sql_query,
+                                    sql_return=sql_result,
+                                    row_count=None,
                                 )
-                            else:
-                                error_message = f"Tool {block.name} execution failed"
-                                messages.append(
-                                    {
-                                        "role": "user",
-                                        "content": [
-                                            {
-                                                "type": "tool_result",
-                                                "tool_use_id": block.id,
-                                                "content": error_message,
-                                            }
-                                        ],
-                                    }
-                                )
+                                sql_contexts.append(sql_context)
+                            messages.append(
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {
+                                            "type": "tool_result",
+                                            "tool_use_id": block.id,
+                                            "content": sql_result,
+                                        }
+                                    ],
+                                }
+                            )
+                        else:
+                            error_message = f"Tool {block.name} execution failed"
+                            messages.append(
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {
+                                            "type": "tool_result",
+                                            "tool_use_id": block.id,
+                                            "content": error_message,
+                                        }
+                                    ],
+                                }
+                            )
 
                 logger.debug("Agent execution completed")
                 total_tokens = cumulative_input_tokens + cumulative_output_tokens

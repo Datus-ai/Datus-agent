@@ -446,16 +446,17 @@ class InteractiveInit:
     def _configure_claude_subscription(self, provider: str, provider_config: dict) -> bool:
         """Configure Claude with subscription token (Pro/Max plan via setup-token)."""
         # Model selection
-        if "options" in provider_config:
+        models = provider_config.get("models", [])
+        if models:
             self.console.print("- Select your model:")
             model_name = select_choice(
                 self.console,
-                {m: m for m in provider_config["options"]},
-                default=provider_config["model"],
+                {m: m for m in models},
+                default=provider_config.get("default_model", models[0]),
                 allow_free_text=True,
             )
         else:
-            model_name = Prompt.ask("- Enter your model name", default=provider_config["model"]).strip()
+            model_name = Prompt.ask("- Enter your model name", default=provider_config.get("default_model", "")).strip()
 
         # Token input
         self.console.print("  [dim]Run 'claude setup-token' to get your subscription token[/dim]")
@@ -494,16 +495,17 @@ class InteractiveInit:
     def _configure_codex_oauth(self, provider: str, provider_config: dict) -> bool:
         """Configure Codex provider with OAuth authentication."""
         # Model selection
-        if "options" in provider_config:
+        models = provider_config.get("models", [])
+        if models:
             self.console.print("- Select your model:")
             model_name = select_choice(
                 self.console,
-                {m: m for m in provider_config["options"]},
-                default=provider_config["model"],
+                {m: m for m in models},
+                default=provider_config.get("default_model", models[0]),
                 allow_free_text=True,
             )
         else:
-            model_name = Prompt.ask("- Enter your model name", default=provider_config["model"]).strip()
+            model_name = Prompt.ask("- Enter your model name", default=provider_config.get("default_model", "")).strip()
 
         # Run OAuth login via browser
         self.console.print("→ Opening browser for OAuth authentication...")
