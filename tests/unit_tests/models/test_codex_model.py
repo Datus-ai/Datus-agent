@@ -725,10 +725,14 @@ class TestCodexModelToolsAuth401Retry:
                 response=MagicMock(status_code=401, headers={}),
                 body=None,
             )
-            mock_runner.run_streamed.side_effect = [auth_error, _mock_streamed_result("Retried result", 1)]
+            mock_runner.run_streamed.side_effect = auth_error
             mock_extract.return_value = []
 
-            result = await model.generate_with_tools(prompt="test")
+            # After review: no longer retries full run (tool side-effects risk).
+            # Instead refreshes token and raises DatusException.
+            from datus.utils.exceptions import DatusException
 
-            assert result["content"] == "Retried result"
+            with pytest.raises(DatusException, match="Authentication failed"):
+                await model.generate_with_tools(prompt="test")
+
             mock_oauth.refresh_tokens.assert_called_once()

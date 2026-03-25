@@ -616,6 +616,12 @@ class InteractiveInit:
                 oauth_mgr.login_browser()
             else:
                 oauth_mgr.login_device()
+                # Surface device code verification info (console logging may be muted)
+                uri = getattr(oauth_mgr, "_device_verification_uri", None)
+                code = getattr(oauth_mgr, "_device_user_code", None)
+                if uri and code:
+                    self.console.print(f"  Visit: [bold]{uri}[/bold]")
+                    self.console.print(f"  Enter code: [bold]{code}[/bold]")
         except Exception as e:
             self.console.print(f"❌ OAuth authentication failed: {e}")
             return False
@@ -633,6 +639,7 @@ class InteractiveInit:
 
         # Verify connectivity
         self.console.print("→ Verifying Codex API connectivity...")
+        connectivity_ok = True
         try:
             from datus.configuration.agent_config import ModelConfig
             from datus.models.codex_model import CodexModel
@@ -648,8 +655,16 @@ class InteractiveInit:
             resp = test_model.generate("Say hi", instructions="You are a helpful assistant.")
             if not resp or not resp.strip():
                 self.console.print("⚠️  OAuth login succeeded but model returned empty response")
+                connectivity_ok = False
         except Exception as e:
             self.console.print(f"⚠️  OAuth login succeeded but connectivity test failed: {e}")
+            connectivity_ok = False
+
+        if not connectivity_ok:
+            from rich.prompt import Confirm
+
+            if not Confirm.ask("Continue without verifying connectivity?", default=False):
+                return False
 
         self.console.print(" ✅ OAuth authentication successful\n")
         return True

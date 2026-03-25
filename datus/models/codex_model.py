@@ -151,8 +151,14 @@ class CodexModel(LLMBaseModel):
                 logger.info("Got 401, refreshing OAuth token and retrying...")
                 self.oauth_manager.refresh_tokens()
                 self._refresh_client_token()
-                stream = self._get_client().responses.create(**create_kwargs)
-                return self._consume_stream_text(stream)
+                try:
+                    stream = self._get_client().responses.create(**create_kwargs)
+                    return self._consume_stream_text(stream)
+                except AuthenticationError as retry_e:
+                    raise DatusException(
+                        ErrorCode.MODEL_AUTHENTICATION_ERROR,
+                        message_args={"error_detail": f"Codex auth failed after token refresh: {retry_e}"},
+                    ) from retry_e
             raise
 
     def generate_with_json_output(self, prompt: Any, **kwargs) -> Dict:
@@ -207,8 +213,19 @@ class CodexModel(LLMBaseModel):
                 logger.info("Got 401 in generate_with_json_output, refreshing OAuth token and retrying...")
                 self.oauth_manager.refresh_tokens()
                 self._refresh_client_token()
-                stream = self._get_client().responses.create(**create_kwargs)
-                return json.loads(self._consume_stream_text(stream))
+                try:
+                    stream = self._get_client().responses.create(**create_kwargs)
+                    return json.loads(self._consume_stream_text(stream))
+                except AuthenticationError as retry_e:
+                    raise DatusException(
+                        ErrorCode.MODEL_AUTHENTICATION_ERROR,
+                        message_args={"error_detail": f"Codex auth failed after token refresh: {retry_e}"},
+                    ) from retry_e
+                except json.JSONDecodeError as json_e:
+                    raise DatusException(
+                        ErrorCode.MODEL_INVALID_RESPONSE,
+                        message_args={"error_detail": f"Invalid JSON from Codex after retry: {json_e}"},
+                    ) from json_e
             raise
 
     async def generate_with_tools(
@@ -259,20 +276,16 @@ class CodexModel(LLMBaseModel):
                 from openai import AuthenticationError
 
                 if isinstance(e, AuthenticationError):
-                    logger.info("Got 401 in generate_with_tools, refreshing OAuth token and retrying...")
+                    logger.info("Got 401 in generate_with_tools, refreshing OAuth token...")
                     self.oauth_manager.refresh_tokens()
                     self._refresh_client_token()
-                    responses_model = self._get_responses_model()
-                    agent_kwargs["model"] = responses_model
-                    agent = Agent(**agent_kwargs)
-                    try:
-                        result = await _run_streamed_to_completion(agent, prompt)
-                    except MaxTurnsExceeded as e2:
-                        raise DatusException(
-                            ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns}
-                        ) from e2
-                else:
-                    raise
+                    # Don't retry the full run — tool calls may have had side effects.
+                    # Raise a retriable error so the caller can decide.
+                    raise DatusException(
+                        ErrorCode.MODEL_AUTHENTICATION_ERROR,
+                        message_args={"error_detail": "Codex auth failed; token refreshed, please retry"},
+                    ) from e
+                raise
 
             return {
                 "content": result.final_output,
@@ -446,16 +459,17 @@ class CodexModel(LLMBaseModel):
                 raise
 
             # Final summary after streaming completes
-            final_output = result.final_output if hasattr(result, "final_output") else ""
+            has_final_output = hasattr(result, "final_output")
+            final_output = result.final_output if has_final_output else None
             final_action = ActionHistory(
                 action_id=f"final_{uuid.uuid4().hex[:8]}",
                 role=ActionRole.ASSISTANT,
-                messages=str(final_output)[:200] if final_output else "",
+                messages=str(final_output)[:200] if final_output is not None else "",
                 action_type="final_response",
                 input={},
                 output={
-                    "raw_output": str(final_output) if final_output else "",
-                    "sql_contexts": extract_sql_contexts(result) if hasattr(result, "final_output") else [],
+                    "raw_output": str(final_output) if final_output is not None else "",
+                    "sql_contexts": extract_sql_contexts(result) if has_final_output else [],
                 },
                 status=ActionStatus.SUCCESS,
             )

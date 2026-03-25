@@ -49,7 +49,7 @@ class TestGetAccessToken:
         manager.token_storage.save({"access_token": "tok123"})
         assert manager.get_access_token() == "tok123"
 
-    @patch.object(OAuthManager, "refresh_tokens")
+    @patch.object(OAuthManager, "_refresh_tokens_unlocked")
     def test_refreshes_when_needed(self, mock_refresh, manager):
         from datetime import datetime, timedelta, timezone
 

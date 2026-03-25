@@ -188,6 +188,10 @@ class OAuthManager:
         logger.info("Verification URL: %s", verification_uri)
         logger.info("User code: %s", user_code)
 
+        # Store for caller to display (console logging may be muted in interactive init)
+        self._device_verification_uri = verification_uri
+        self._device_user_code = user_code
+
         # Step 2: Poll for completion
         deadline = time.monotonic() + DEVICE_CODE_TIMEOUT
         while time.monotonic() < deadline:
@@ -250,16 +254,23 @@ class OAuthManager:
                 # Re-check after acquiring lock (another thread may have refreshed)
                 tokens = self.token_storage.load()
                 if not tokens or self.token_storage.is_expired(tokens):
-                    tokens = self.refresh_tokens()
+                    tokens = self._refresh_tokens_unlocked()
 
         return tokens["access_token"]
 
     def refresh_tokens(self) -> dict:
         """Refresh the access token using the stored refresh token.
 
+        Thread-safe: acquires the refresh lock to prevent concurrent refresh races.
+
         Returns:
             Updated token dictionary.
         """
+        with self._refresh_lock:
+            return self._refresh_tokens_unlocked()
+
+    def _refresh_tokens_unlocked(self) -> dict:
+        """Internal refresh implementation (caller must hold _refresh_lock)."""
         tokens = self.token_storage.load()
         if not tokens or "refresh_token" not in tokens:
             raise DatusException(ErrorCode.OAUTH_NO_REFRESH_TOKEN)

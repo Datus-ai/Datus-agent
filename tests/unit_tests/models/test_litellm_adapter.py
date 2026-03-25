@@ -147,6 +147,11 @@ class TestOpenRouterModelName:
         assert adapter.provider == "openrouter"
         assert adapter.litellm_model_name == "openrouter/claude-sonnet-4"
 
+    def test_openrouter_no_double_prefix(self):
+        """Model already prefixed with openrouter/ should NOT get double-prefixed."""
+        adapter = LiteLLMAdapter(provider="openrouter", model="openrouter/anthropic/claude-sonnet-4", api_key="key")
+        assert adapter.litellm_model_name == "openrouter/anthropic/claude-sonnet-4"
+
 
 class TestClaudeProxyAdapter:
     def test_claude_proxy_no_prefix(self):

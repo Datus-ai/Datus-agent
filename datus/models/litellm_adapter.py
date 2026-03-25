@@ -162,7 +162,7 @@ class LiteLLMAdapter:
         # OpenRouter models always need the openrouter/ prefix,
         # even when model name contains / (e.g., anthropic/claude-sonnet-4)
         if self.provider == "openrouter":
-            return f"openrouter/{self.model}"
+            return self.model if self.model.startswith("openrouter/") else f"openrouter/{self.model}"
 
         # If model already has a prefix, don't add another
         if "/" in self.model:
