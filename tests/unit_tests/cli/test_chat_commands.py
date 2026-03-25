@@ -3497,10 +3497,9 @@ class TestTriggerCompactExtended:
 
 class TestCreateNewNodeExtended:
     def test_create_chat_node_no_subagent(self, chat_cmd):
-        with patch("datus.cli.chat_commands.ChatAgenticNode") as mock_cls:
-            mock_cls.return_value = MagicMock()
+        with patch("datus.agent.node.chat_agentic_node.ChatAgenticNode.__init__", return_value=None) as mock_init:
             chat_cmd._create_new_node(None)
-        mock_cls.assert_called_once()
+        mock_init.assert_called_once()
 
     def test_create_gen_semantic_model(self, chat_cmd):
         mock_node = MagicMock()

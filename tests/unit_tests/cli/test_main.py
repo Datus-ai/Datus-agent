@@ -35,8 +35,9 @@ class TestArgumentParser:
         assert args.no_color is False
         assert args.namespace is None
         assert args.database == ""
-        assert args.prompt is None
+        assert args.print_mode is None
         assert args.web is False
+        assert args.resume is None
 
     def test_parse_args_debug_flag(self):
         ap = ArgumentParser()
@@ -45,11 +46,23 @@ class TestArgumentParser:
         assert args.debug is True
         assert args.namespace == "ns1"
 
-    def test_parse_args_prompt(self):
+    def test_parse_args_print(self):
         ap = ArgumentParser()
-        with patch.object(sys, "argv", ["datus", "--namespace", "ns1", "--prompt", "hello"]):
+        with patch.object(sys, "argv", ["datus", "--namespace", "ns1", "--print", "hello"]):
             args = ap.parse_args()
-        assert args.prompt == "hello"
+        assert args.print_mode == "hello"
+
+    def test_parse_args_print_short(self):
+        ap = ArgumentParser()
+        with patch.object(sys, "argv", ["datus", "--namespace", "ns1", "-p", "hello"]):
+            args = ap.parse_args()
+        assert args.print_mode == "hello"
+
+    def test_parse_args_resume(self):
+        ap = ArgumentParser()
+        with patch.object(sys, "argv", ["datus", "--namespace", "ns1", "--print", "hello", "--resume", "sess_123"]):
+            args = ap.parse_args()
+        assert args.resume == "sess_123"
 
     def test_parse_args_web(self):
         ap = ArgumentParser()
@@ -57,9 +70,9 @@ class TestArgumentParser:
             args = ap.parse_args()
         assert args.web is True
 
-    def test_prompt_and_web_are_mutually_exclusive(self):
+    def test_print_and_web_are_mutually_exclusive(self):
         ap = ArgumentParser()
-        with patch.object(sys, "argv", ["datus", "--web", "--prompt", "hello"]):
+        with patch.object(sys, "argv", ["datus", "--web", "--print", "hello"]):
             with pytest.raises(SystemExit):
                 ap.parse_args()
 
@@ -72,7 +85,7 @@ class TestArgumentParser:
 class TestApplicationRun:
     def test_run_no_namespace_prints_help(self):
         app = Application()
-        mock_args = SimpleNamespace(debug=False, namespace=None, prompt=None, web=False)
+        mock_args = SimpleNamespace(debug=False, namespace=None, print_mode=None, web=False, resume=None)
         with (
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
             patch("datus.cli.main.configure_logging"),
@@ -81,22 +94,32 @@ class TestApplicationRun:
             app.run()
         mock_help.assert_called_once()
 
-    def test_run_prompt_mode(self):
+    def test_resume_without_print_mode_errors(self):
         app = Application()
-        mock_args = SimpleNamespace(debug=False, namespace="ns1", prompt="hello world", web=False)
-        mock_cli = MagicMock()
+        mock_args = SimpleNamespace(debug=False, namespace="ns1", print_mode=None, web=False, resume="sess_123")
         with (
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
             patch("datus.cli.main.configure_logging"),
-            patch("datus.cli.main.DatusCLI", return_value=mock_cli) as MockCLI,
+        ):
+            with pytest.raises(SystemExit):
+                app.run()
+
+    def test_run_print_mode(self):
+        app = Application()
+        mock_args = SimpleNamespace(debug=False, namespace="ns1", print_mode="hello world", web=False, resume=None)
+        mock_runner = MagicMock()
+        with (
+            patch.object(app.arg_parser, "parse_args", return_value=mock_args),
+            patch("datus.cli.main.configure_logging"),
+            patch("datus.cli.print_mode.PrintModeRunner", return_value=mock_runner) as MockRunner,
         ):
             app.run()
-        MockCLI.assert_called_once_with(mock_args, interactive=False)
-        mock_cli.run_prompt.assert_called_once_with("hello world")
+        MockRunner.assert_called_once_with(mock_args)
+        mock_runner.run.assert_called_once()
 
     def test_run_interactive_mode(self):
         app = Application()
-        mock_args = SimpleNamespace(debug=False, namespace="ns1", prompt=None, web=False)
+        mock_args = SimpleNamespace(debug=False, namespace="ns1", print_mode=None, web=False, resume=None)
         mock_cli = MagicMock()
         with (
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
@@ -109,7 +132,7 @@ class TestApplicationRun:
 
     def test_run_web_mode(self):
         app = Application()
-        mock_args = SimpleNamespace(debug=False, namespace="ns1", prompt=None, web=True)
+        mock_args = SimpleNamespace(debug=False, namespace="ns1", print_mode=None, web=True, resume=None)
         with (
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
             patch("datus.cli.main.configure_logging"),

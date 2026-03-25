@@ -73,7 +73,7 @@ class ArgumentParser:
             help="Enable saving LLM input/output traces to YAML files",
         )
 
-        # Execution mode: --web and --prompt are mutually exclusive
+        # Execution mode: --web and --print are mutually exclusive
         mode_group = self.parser.add_mutually_exclusive_group()
         mode_group.add_argument(
             "--web",
@@ -82,10 +82,11 @@ class ArgumentParser:
         )
         mode_group.add_argument(
             "-p",
-            "--prompt",
+            "--print",
+            dest="print_mode",
             type=str,
             default=None,
-            help="Run a single prompt non-interactively and print the result to stdout",
+            help="Run a single prompt and stream MessagePayload JSON lines to stdout",
         )
 
         # Web interface settings
@@ -107,7 +108,14 @@ class ArgumentParser:
             "--subagent",
             type=str,
             default="",
-            help="Subagent name to open directly (for web mode)",
+            help="Subagent name to open directly (for web and print modes)",
+        )
+
+        self.parser.add_argument(
+            "--resume",
+            type=str,
+            default=None,
+            help="Resume an existing session by session_id (for print mode)",
         )
 
     def parse_args(self):
@@ -127,9 +135,13 @@ class Application:
             self.arg_parser.parser.print_help()
             return
 
-        if args.prompt is not None:
-            cli = DatusCLI(args, interactive=False)
-            cli.run_prompt(args.prompt)
+        if args.resume and args.print_mode is None:
+            self.arg_parser.parser.error("--resume requires --print mode")
+
+        if args.print_mode is not None:
+            from datus.cli.print_mode import PrintModeRunner
+
+            PrintModeRunner(args).run()
         elif args.web:
             self._run_web_interface(args)
         else:
