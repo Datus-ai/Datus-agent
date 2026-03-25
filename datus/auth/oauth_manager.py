@@ -186,11 +186,12 @@ class OAuthManager:
         device_data = resp.json()
 
         self._device_user_code = device_data.get("user_code")
+        # Codex server doesn't return verification_uri — it's constructed client-side
         self._device_verification_uri = (
             device_data.get("verification_uri")
             or device_data.get("verification_url")
             or device_data.get("verification_uri_complete")
-            or "https://chatgpt.com/login/device"
+            or "https://auth.openai.com/codex/device"
         )
         self._device_auth_id = device_data.get("device_auth_id") or device_data.get("device_code")
         self._device_poll_interval = int(device_data.get("interval", DEVICE_CODE_POLL_INTERVAL))
