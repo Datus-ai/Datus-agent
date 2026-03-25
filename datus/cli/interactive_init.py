@@ -546,14 +546,18 @@ class InteractiveInit:
             if auth_method == "browser":
                 oauth_mgr.login_browser()
             else:
-                oauth_mgr.request_device_code()
+                device_data = oauth_mgr.request_device_code()
                 # Show verification info BEFORE polling starts
                 uri = getattr(oauth_mgr, "_device_verification_uri", None)
                 code = getattr(oauth_mgr, "_device_user_code", None)
-                if uri and code:
-                    self.console.print(f"  Visit: [bold]{uri}[/bold]")
-                    self.console.print(f"  Enter code: [bold]{code}[/bold]")
-                    self.console.print("  [dim]Waiting for authentication...[/dim]")
+                if uri or code:
+                    if uri:
+                        self.console.print(f"  Visit: [bold]{uri}[/bold]")
+                    if code:
+                        self.console.print(f"  Enter code: [bold]{code}[/bold]")
+                else:
+                    self.console.print(f"  [dim]Server response: {device_data}[/dim]")
+                self.console.print("  [dim]Waiting for authentication...[/dim]")
                 oauth_mgr.poll_device_token()
         except Exception as e:
             self.console.print(f"❌ OAuth authentication failed: {e}")
