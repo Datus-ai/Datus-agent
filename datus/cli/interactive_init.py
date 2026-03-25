@@ -21,6 +21,7 @@ from rich.markup import escape
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
+from datus.cli._cli_utils import select_choice
 from datus.cli.init_util import detect_db_connectivity
 from datus.configuration.agent_config import AgentConfig
 from datus.utils.loggings import configure_logging, get_logger, print_rich_exception
@@ -529,7 +530,12 @@ class InteractiveInit:
         model_name = Prompt.ask("- Enter your model name", default=provider_config["model"]).strip()
 
         # Authentication method
-        auth_method = Prompt.ask("- Authentication method", choices=["browser", "device_code"], default="browser")
+        self.console.print("- Authentication method:")
+        auth_method = select_choice(
+            self.console,
+            {"browser": "Browser (opens browser for login)", "device_code": "Device Code (for headless/remote)"},
+            default="browser",
+        )
 
         # Run OAuth login
         self.console.print("→ Starting OAuth authentication...")
@@ -540,13 +546,15 @@ class InteractiveInit:
             if auth_method == "browser":
                 oauth_mgr.login_browser()
             else:
-                oauth_mgr.login_device()
-                # Surface device code verification info (console logging may be muted)
+                oauth_mgr.request_device_code()
+                # Show verification info BEFORE polling starts
                 uri = getattr(oauth_mgr, "_device_verification_uri", None)
                 code = getattr(oauth_mgr, "_device_user_code", None)
                 if uri and code:
                     self.console.print(f"  Visit: [bold]{uri}[/bold]")
                     self.console.print(f"  Enter code: [bold]{code}[/bold]")
+                    self.console.print("  [dim]Waiting for authentication...[/dim]")
+                oauth_mgr.poll_device_token()
         except Exception as e:
             self.console.print(f"❌ OAuth authentication failed: {e}")
             return False

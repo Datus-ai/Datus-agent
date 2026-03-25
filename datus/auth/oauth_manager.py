@@ -151,15 +151,23 @@ class OAuthManager:
     def login_device(self) -> dict:
         """Authenticate via Device Code flow (headless environments).
 
-        1. Request a device code and user code
-        2. Prompt the user to visit the verification URL and enter the code
-        3. Poll for token completion
-        4. Store tokens
+        Convenience wrapper that calls request_device_code() then poll_device_token().
 
         Returns:
             Token dictionary with access_token, refresh_token, etc.
         """
-        # Step 1: Request device code (Codex uses JSON body with only client_id)
+        self.request_device_code()
+        return self.poll_device_token()
+
+    def request_device_code(self) -> dict:
+        """Request a device code and user code from the auth server.
+
+        After calling this, display _device_verification_uri and _device_user_code
+        to the user, then call poll_device_token() to wait for completion.
+
+        Returns:
+            The raw device code response data.
+        """
         try:
             resp = httpx.post(
                 DEVICE_CODE_URL,
@@ -177,20 +185,28 @@ class OAuthManager:
             raise DatusException(ErrorCode.OAUTH_TIMEOUT) from e
         device_data = resp.json()
 
-        user_code = device_data.get("user_code")
-        verification_uri = device_data.get("verification_uri") or device_data.get("verification_url")
-        device_auth_id = device_data.get("device_auth_id") or device_data.get("device_code")
-        interval = device_data.get("interval", DEVICE_CODE_POLL_INTERVAL)
+        self._device_user_code = device_data.get("user_code")
+        self._device_verification_uri = device_data.get("verification_uri") or device_data.get("verification_url")
+        self._device_auth_id = device_data.get("device_auth_id") or device_data.get("device_code")
+        self._device_poll_interval = int(device_data.get("interval", DEVICE_CODE_POLL_INTERVAL))
 
         logger.info("Device code flow initiated. Visit the URL below to authenticate.")
-        logger.info("Verification URL: %s", verification_uri)
-        logger.info("User code: %s", user_code)
+        logger.info("Verification URL: %s", self._device_verification_uri)
+        logger.info("User code: %s", self._device_user_code)
+        return device_data
 
-        # Store for caller to display (console logging may be muted in interactive init)
-        self._device_verification_uri = verification_uri
-        self._device_user_code = user_code
+    def poll_device_token(self) -> dict:
+        """Poll the auth server until the user completes device code authentication.
 
-        # Step 2: Poll for completion (Codex uses JSON body with device_auth_id + user_code)
+        Must be called after request_device_code().
+
+        Returns:
+            Token dictionary with access_token, refresh_token, etc.
+        """
+        device_auth_id = self._device_auth_id
+        user_code = self._device_user_code
+        interval = self._device_poll_interval
+
         deadline = time.monotonic() + DEVICE_CODE_TIMEOUT
         while time.monotonic() < deadline:
             time.sleep(interval)

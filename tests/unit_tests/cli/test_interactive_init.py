@@ -626,10 +626,8 @@ class TestConfigureCodexOAuth:
             }
 
             with (
-                patch(
-                    "datus.cli.interactive_init.Prompt.ask",
-                    side_effect=["gpt-5.3-codex", "browser"],
-                ),
+                patch("datus.cli.interactive_init.Prompt.ask", side_effect=["gpt-5.3-codex"]),
+                patch("datus.cli.interactive_init.select_choice", return_value="browser"),
                 patch("datus.auth.oauth_manager.OAuthManager") as mock_oauth_cls,
                 patch.object(init, "console"),
             ):
@@ -663,10 +661,8 @@ class TestConfigureCodexOAuth:
             }
 
             with (
-                patch(
-                    "datus.cli.interactive_init.Prompt.ask",
-                    side_effect=["gpt-5.3-codex", "browser"],
-                ),
+                patch("datus.cli.interactive_init.Prompt.ask", side_effect=["gpt-5.3-codex"]),
+                patch("datus.cli.interactive_init.select_choice", return_value="browser"),
                 patch("datus.auth.oauth_manager.OAuthManager") as mock_oauth_cls,
                 patch.object(init, "console"),
             ):
@@ -692,7 +688,8 @@ class TestConfigureCodexOAuth:
             }
 
             with (
-                patch("datus.cli.interactive_init.Prompt.ask", side_effect=["gpt-5.3-codex", "device_code"]),
+                patch("datus.cli.interactive_init.Prompt.ask", side_effect=["gpt-5.3-codex"]),
+                patch("datus.cli.interactive_init.select_choice", return_value="device_code"),
                 patch("datus.auth.oauth_manager.OAuthManager") as mock_oauth_cls,
                 patch.object(init, "console"),
             ):
@@ -707,4 +704,5 @@ class TestConfigureCodexOAuth:
                     result = init._configure_codex_oauth("codex", provider_config)
 
             assert result is True
-            mock_oauth.login_device.assert_called_once()
+            mock_oauth.request_device_code.assert_called_once()
+            mock_oauth.poll_device_token.assert_called_once()
