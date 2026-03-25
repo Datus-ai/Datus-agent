@@ -25,6 +25,7 @@ from datus.auth.oauth_config import (
     DEVICE_CODE_POLL_INTERVAL,
     DEVICE_CODE_TIMEOUT,
     DEVICE_CODE_URL,
+    DEVICE_TOKEN_URL,
     HTTP_TIMEOUT,
     REDIRECT_URI,
     SCOPES,
@@ -158,15 +159,12 @@ class OAuthManager:
         Returns:
             Token dictionary with access_token, refresh_token, etc.
         """
-        # Step 1: Request device code
+        # Step 1: Request device code (Codex uses JSON body with only client_id)
         try:
             resp = httpx.post(
                 DEVICE_CODE_URL,
-                data={
-                    "client_id": CLIENT_ID,
-                    "scope": SCOPES,
-                },
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                json={"client_id": CLIENT_ID},
+                headers={"Content-Type": "application/json"},
                 timeout=HTTP_TIMEOUT,
             )
             resp.raise_for_status()
@@ -181,7 +179,7 @@ class OAuthManager:
 
         user_code = device_data.get("user_code")
         verification_uri = device_data.get("verification_uri") or device_data.get("verification_url")
-        device_code = device_data.get("device_code")
+        device_auth_id = device_data.get("device_auth_id") or device_data.get("device_code")
         interval = device_data.get("interval", DEVICE_CODE_POLL_INTERVAL)
 
         logger.info("Device code flow initiated. Visit the URL below to authenticate.")
@@ -192,19 +190,18 @@ class OAuthManager:
         self._device_verification_uri = verification_uri
         self._device_user_code = user_code
 
-        # Step 2: Poll for completion
+        # Step 2: Poll for completion (Codex uses JSON body with device_auth_id + user_code)
         deadline = time.monotonic() + DEVICE_CODE_TIMEOUT
         while time.monotonic() < deadline:
             time.sleep(interval)
             try:
                 token_resp = httpx.post(
-                    TOKEN_URL,
-                    data={
-                        "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-                        "client_id": CLIENT_ID,
-                        "device_code": device_code,
+                    DEVICE_TOKEN_URL,
+                    json={
+                        "device_auth_id": device_auth_id,
+                        "user_code": user_code,
                     },
-                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    headers={"Content-Type": "application/json"},
                     timeout=HTTP_TIMEOUT,
                 )
             except httpx.TimeoutException:
@@ -214,6 +211,10 @@ class OAuthManager:
                 self.token_storage.save(tokens)
                 logger.info("Device code OAuth login successful")
                 return tokens
+
+            # Codex server returns 403/404 while user hasn't completed auth yet
+            if token_resp.status_code in (403, 404):
+                continue
 
             try:
                 error_body = token_resp.json()

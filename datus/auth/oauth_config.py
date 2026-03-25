@@ -9,7 +9,8 @@ import os
 # OAuth endpoints
 AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize"
 TOKEN_URL = "https://auth.openai.com/oauth/token"
-DEVICE_CODE_URL = "https://auth.openai.com/deviceauth/usercode"
+DEVICE_CODE_URL = "https://auth.openai.com/api/accounts/deviceauth/usercode"
+DEVICE_TOKEN_URL = "https://auth.openai.com/api/accounts/deviceauth/token"
 
 # Client configuration — public PKCE client ID (not a secret).
 # Security is provided by the PKCE code_verifier/code_challenge, not by hiding the client_id.
