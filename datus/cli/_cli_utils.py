@@ -71,8 +71,10 @@ def select_choice(
             event.app.exit(result=default)
 
         # Direct shortcut keys (press y/a/n to pick immediately)
+        # Only register single-character keys; multi-char keys (e.g. "10") are
+        # invalid in prompt_toolkit and must be selected via arrow keys + Enter.
         for _i, _key in enumerate(keys):
-            if _key == _FREE_TEXT_SENTINEL:
+            if _key == _FREE_TEXT_SENTINEL or len(_key) > 1:
                 continue
 
             @kb.add(_key)
