@@ -68,13 +68,15 @@ class PrintModeRunner:
         async for action in node.execute_stream_with_interactions(self.actions):
             if action.role == ActionRole.INTERACTION and action.status == ActionStatus.PROCESSING:
                 contents = build_interaction_content(action)
-                self._write_payload(MessagePayload(
-                    message_id=action.action_id,
-                    role="assistant",
-                    content=contents,
-                    depth=action.depth,
-                    parent_action_id=action.parent_action_id,
-                ))
+                self._write_payload(
+                    MessagePayload(
+                        message_id=action.action_id,
+                        role="assistant",
+                        content=contents,
+                        depth=action.depth,
+                        parent_action_id=action.parent_action_id,
+                    )
+                )
                 user_input = await asyncio.to_thread(self._read_interaction_input)
                 await node.interaction_broker.submit(action.action_id, user_input)
                 continue
@@ -86,24 +88,28 @@ class PrintModeRunner:
                 and action.action_type.endswith("_response")
             ):
                 contents = build_response_content(action)
-                self._write_payload(MessagePayload(
-                    message_id=action.action_id,
-                    role="assistant",
-                    content=contents,
-                    depth=action.depth,
-                    parent_action_id=action.parent_action_id,
-                ))
+                self._write_payload(
+                    MessagePayload(
+                        message_id=action.action_id,
+                        role="assistant",
+                        content=contents,
+                        depth=action.depth,
+                        parent_action_id=action.parent_action_id,
+                    )
+                )
                 continue
 
             contents = action_to_content(action)
             if contents:
-                self._write_payload(MessagePayload(
-                    message_id=action.action_id,
-                    role="assistant",
-                    content=contents,
-                    depth=action.depth,
-                    parent_action_id=action.parent_action_id,
-                ))
+                self._write_payload(
+                    MessagePayload(
+                        message_id=action.action_id,
+                        role="assistant",
+                        content=contents,
+                        depth=action.depth,
+                        parent_action_id=action.parent_action_id,
+                    )
+                )
 
     def _validate_and_resolve_session(self):
         """Validate session exists and derive the correct subagent from session_id."""
