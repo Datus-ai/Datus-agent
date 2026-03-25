@@ -173,7 +173,8 @@ class TestExchangeCode:
 class TestLoginDevice:
     @patch("datus.auth.oauth_manager.time.sleep")
     @patch("datus.auth.oauth_manager.httpx.post")
-    def test_device_code_flow(self, mock_post, mock_sleep, manager):
+    def test_device_code_flow_with_code_exchange(self, mock_post, mock_sleep, manager):
+        """Codex device code flow returns authorization_code + code_verifier, not access_token."""
         # First call: device code request
         device_response = MagicMock()
         device_response.status_code = 200
@@ -190,19 +191,64 @@ class TestLoginDevice:
         pending_response.status_code = 400
         pending_response.json.return_value = {"error": "authorization_pending"}
 
-        # Third call: success
-        success_response = MagicMock()
-        success_response.status_code = 200
-        success_response.json.return_value = {
+        # Third call: polling success (returns authorization_code, not access_token)
+        poll_success_response = MagicMock()
+        poll_success_response.status_code = 200
+        poll_success_response.json.return_value = {
+            "status": "success",
+            "authorization_code": "oaistb_ac_test123",
+            "code_verifier": "test_verifier_abc",
+        }
+
+        # Fourth call: code exchange (returns actual tokens)
+        exchange_response = MagicMock()
+        exchange_response.status_code = 200
+        exchange_response.json.return_value = {
             "access_token": "device_tok",
             "refresh_token": "rt_device",
         }
+        exchange_response.raise_for_status = MagicMock()
 
-        mock_post.side_effect = [device_response, pending_response, success_response]
+        mock_post.side_effect = [device_response, pending_response, poll_success_response, exchange_response]
 
         tokens = manager.login_device()
         assert tokens["access_token"] == "device_tok"
         assert manager.token_storage.load()["access_token"] == "device_tok"
+
+        # Verify the code exchange call was made (4th call)
+        exchange_call = mock_post.call_args_list[3]
+        assert "oauth/token" in exchange_call[0][0]
+        assert exchange_call[1]["data"]["code"] == "oaistb_ac_test123"
+        assert exchange_call[1]["data"]["code_verifier"] == "test_verifier_abc"
+        assert "redirect_uri" not in exchange_call[1]["data"]
+
+    @patch("datus.auth.oauth_manager.time.sleep")
+    @patch("datus.auth.oauth_manager.httpx.post")
+    def test_device_code_flow_direct_token(self, mock_post, mock_sleep, manager):
+        """Fallback: if polling returns access_token directly, use it without exchange."""
+        device_response = MagicMock()
+        device_response.status_code = 200
+        device_response.json.return_value = {
+            "user_code": "ABCD-1234",
+            "verification_uri": "https://auth.openai.com/activate",
+            "device_code": "dc_123",
+            "interval": 1,
+        }
+        device_response.raise_for_status = MagicMock()
+
+        success_response = MagicMock()
+        success_response.status_code = 200
+        success_response.json.return_value = {
+            "access_token": "direct_tok",
+            "refresh_token": "rt_direct",
+        }
+
+        mock_post.side_effect = [device_response, success_response]
+
+        tokens = manager.login_device()
+        assert tokens["access_token"] == "direct_tok"
+        # Only 2 HTTP calls (no code exchange needed)
+        assert mock_post.call_count == 2
 
     @patch("datus.auth.oauth_manager.time.sleep")
     @patch("datus.auth.oauth_manager.httpx.post")
@@ -412,6 +458,38 @@ class TestExchangeCodeErrors:
 
         with pytest.raises(DatusException, match="timed out"):
             manager._exchange_code("code", "verifier")
+
+
+class TestExchangeCodeNoRedirectUri:
+    @patch("datus.auth.oauth_manager.httpx.post")
+    def test_exchange_code_without_redirect_uri(self, mock_post, manager):
+        """Device code flow exchanges without redirect_uri."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"access_token": "tok", "refresh_token": "rt"}
+        mock_response.raise_for_status = MagicMock()
+        mock_post.return_value = mock_response
+
+        tokens = manager._exchange_code("auth_code", "verifier", redirect_uri=None)
+        assert tokens["access_token"] == "tok"
+
+        call_data = mock_post.call_args[1]["data"]
+        assert "redirect_uri" not in call_data
+        assert call_data["code"] == "auth_code"
+        assert call_data["code_verifier"] == "verifier"
+
+    @patch("datus.auth.oauth_manager.httpx.post")
+    def test_exchange_code_with_redirect_uri(self, mock_post, manager):
+        """Browser flow exchanges with redirect_uri."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"access_token": "tok", "refresh_token": "rt"}
+        mock_response.raise_for_status = MagicMock()
+        mock_post.return_value = mock_response
+
+        tokens = manager._exchange_code("auth_code", "verifier")
+        assert tokens["access_token"] == "tok"
+
+        call_data = mock_post.call_args[1]["data"]
+        assert "redirect_uri" in call_data
 
 
 class TestHttpTimeout:

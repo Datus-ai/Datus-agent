@@ -241,7 +241,12 @@ class InteractiveInit:
             },
         }
 
-        provider = Prompt.ask("- Which LLM provider?", choices=list(providers.keys()), default="openai")
+        self.console.print("- Which LLM provider?")
+        provider = select_choice(
+            self.console,
+            {k: k for k in providers.keys()},
+            default="openai",
+        )
 
         # OAuth flow for Codex provider
         if providers[provider].get("auth_type") == "oauth":
@@ -260,11 +265,17 @@ class InteractiveInit:
         # Base URL (with default)
         base_url = Prompt.ask("- Enter your base URL", default=providers[provider]["base_url"])
 
-        # Model name (with default and options hint)
+        # Model name selection
         if "options" in providers[provider]:
-            options_hint = ", ".join(providers[provider]["options"])
-            self.console.print(f"  [dim]reference options: {options_hint}[/dim]")
-        model_name = Prompt.ask("- Enter your model name", default=providers[provider]["model"]).strip()
+            self.console.print("- Select your model:")
+            model_name = select_choice(
+                self.console,
+                {m: m for m in providers[provider]["options"]},
+                default=providers[provider]["model"],
+                allow_free_text=True,
+            )
+        else:
+            model_name = Prompt.ask("- Enter your model name", default=providers[provider]["model"]).strip()
 
         # Model-specific parameter overrides (some models enforce fixed values)
         model_param_overrides = {
@@ -316,7 +327,12 @@ class InteractiveInit:
         # Database type selection
         db_types = sorted(available_adapters.keys())
         default_type = "duckdb" if "duckdb" in db_types else db_types[0]
-        db_type = Prompt.ask("- Database type", choices=db_types, default=default_type)
+        self.console.print("- Database type:")
+        db_type = select_choice(
+            self.console,
+            {t: t for t in db_types},
+            default=default_type,
+        )
 
         # Get adapter metadata
         adapter_metadata = available_adapters[db_type]
@@ -483,9 +499,15 @@ class InteractiveInit:
         """Configure Claude with subscription token (Pro/Max plan via setup-token)."""
         # Model selection
         if "options" in provider_config:
-            options_hint = ", ".join(provider_config["options"])
-            self.console.print(f"  [dim]reference options: {options_hint}[/dim]")
-        model_name = Prompt.ask("- Enter your model name", default=provider_config["model"]).strip()
+            self.console.print("- Select your model:")
+            model_name = select_choice(
+                self.console,
+                {m: m for m in provider_config["options"]},
+                default=provider_config["model"],
+                allow_free_text=True,
+            )
+        else:
+            model_name = Prompt.ask("- Enter your model name", default=provider_config["model"]).strip()
 
         # Token input
         self.console.print("  [dim]Run 'claude setup-token' to get your subscription token[/dim]")
@@ -525,35 +547,23 @@ class InteractiveInit:
         """Configure Codex provider with OAuth authentication."""
         # Model selection
         if "options" in provider_config:
-            options_hint = ", ".join(provider_config["options"])
-            self.console.print(f"  [dim]reference options: {options_hint}[/dim]")
-        model_name = Prompt.ask("- Enter your model name", default=provider_config["model"]).strip()
+            self.console.print("- Select your model:")
+            model_name = select_choice(
+                self.console,
+                {m: m for m in provider_config["options"]},
+                default=provider_config["model"],
+                allow_free_text=True,
+            )
+        else:
+            model_name = Prompt.ask("- Enter your model name", default=provider_config["model"]).strip()
 
-        # Authentication method
-        self.console.print("- Authentication method:")
-        auth_method = select_choice(
-            self.console,
-            {"browser": "Browser (opens browser for login)", "device_code": "Device Code (for headless/remote)"},
-            default="browser",
-        )
-
-        # Run OAuth login
-        self.console.print("→ Starting OAuth authentication...")
+        # Run OAuth login via browser
+        self.console.print("→ Opening browser for OAuth authentication...")
         try:
             from datus.auth.oauth_manager import OAuthManager
 
             oauth_mgr = OAuthManager()
-            if auth_method == "browser":
-                oauth_mgr.login_browser()
-            else:
-                oauth_mgr.request_device_code()
-                # Show verification info BEFORE polling starts
-                uri = getattr(oauth_mgr, "_device_verification_uri", "")
-                code = getattr(oauth_mgr, "_device_user_code", "")
-                self.console.print(f"  Visit: [bold]{uri}[/bold]")
-                self.console.print(f"  Enter code: [bold]{code}[/bold]")
-                self.console.print("  [dim]Waiting for authentication...[/dim]")
-                oauth_mgr.poll_device_token()
+            oauth_mgr.login_browser()
         except Exception as e:
             self.console.print(f"❌ OAuth authentication failed: {e}")
             return False

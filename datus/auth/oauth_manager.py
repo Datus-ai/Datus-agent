@@ -230,7 +230,15 @@ class OAuthManager:
             except httpx.TimeoutException:
                 continue  # Retry on timeout during polling
             if token_resp.status_code == 200:
-                tokens = token_resp.json()
+                device_data = token_resp.json()
+                # Codex device code flow returns authorization_code + code_verifier,
+                # not access_token directly. Exchange them for real tokens.
+                auth_code = device_data.get("authorization_code")
+                verifier = device_data.get("code_verifier")
+                if auth_code and verifier:
+                    tokens = self._exchange_code(auth_code, verifier, redirect_uri=None)
+                else:
+                    tokens = device_data
                 self.token_storage.save(tokens)
                 logger.info("Device code OAuth login successful")
                 return tokens
@@ -342,18 +350,20 @@ class OAuthManager:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _exchange_code(self, code: str, code_verifier: str) -> dict:
+    def _exchange_code(self, code: str, code_verifier: str, redirect_uri: Optional[str] = REDIRECT_URI) -> dict:
         """Exchange an authorization code for tokens."""
+        data = {
+            "grant_type": "authorization_code",
+            "client_id": CLIENT_ID,
+            "code": code,
+            "code_verifier": code_verifier,
+        }
+        if redirect_uri:
+            data["redirect_uri"] = redirect_uri
         try:
             resp = httpx.post(
                 TOKEN_URL,
-                data={
-                    "grant_type": "authorization_code",
-                    "client_id": CLIENT_ID,
-                    "code": code,
-                    "redirect_uri": REDIRECT_URI,
-                    "code_verifier": code_verifier,
-                },
+                data=data,
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
                 timeout=HTTP_TIMEOUT,
             )

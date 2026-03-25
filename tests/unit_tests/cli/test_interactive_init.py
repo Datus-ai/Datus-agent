@@ -430,9 +430,11 @@ class TestConfigureLLM:
         with tempfile.TemporaryDirectory() as tmpdir:
             init = InteractiveInit(user_home=tmpdir)
 
-            with patch("datus.cli.interactive_init.Prompt.ask", return_value="openai"):
-                with patch("datus.cli.interactive_init.getpass", return_value=""):
-                    result = init._configure_llm()
+            with (
+                patch("datus.cli.interactive_init.select_choice", return_value="openai"),
+                patch("datus.cli.interactive_init.getpass", return_value=""),
+            ):
+                result = init._configure_llm()
 
             assert result is False
 
@@ -447,10 +449,8 @@ class TestConfigureLLM:
             mock_module.KimiModel.return_value = mock_model_instance
 
             with (
-                patch(
-                    "datus.cli.interactive_init.Prompt.ask",
-                    side_effect=["kimi", "https://api.moonshot.cn/v1", "kimi-k2.5"],
-                ),
+                patch("datus.cli.interactive_init.select_choice", side_effect=["kimi", "kimi-k2.5"]),
+                patch("datus.cli.interactive_init.Prompt.ask", return_value="https://api.moonshot.cn/v1"),
                 patch("datus.cli.interactive_init.getpass", return_value="test-key"),
                 patch.dict("sys.modules", {"datus.models.kimi_model": mock_module}),
             ):
@@ -501,10 +501,8 @@ class TestConfigureLLM:
             mock_module.OpenAIModel.return_value = mock_model_instance
 
             with (
-                patch(
-                    "datus.cli.interactive_init.Prompt.ask",
-                    side_effect=["openai", "https://api.openai.com/v1", "gpt-4.1"],
-                ),
+                patch("datus.cli.interactive_init.select_choice", side_effect=["openai", "gpt-4.1"]),
+                patch("datus.cli.interactive_init.Prompt.ask", return_value="https://api.openai.com/v1"),
                 patch("datus.cli.interactive_init.getpass", return_value="test-key"),
                 patch.dict("sys.modules", {"datus.models.openai_model": mock_module}),
             ):
@@ -526,9 +524,10 @@ class TestConfigureLLM:
             mock_module.OpenAIModel.return_value = mock_model_instance
 
             with (
+                patch("datus.cli.interactive_init.select_choice", side_effect=["qwen", "qwen3-coder-plus"]),
                 patch(
                     "datus.cli.interactive_init.Prompt.ask",
-                    side_effect=["qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen3-coder-plus"],
+                    return_value="https://dashscope.aliyuncs.com/compatible-mode/v1",
                 ),
                 patch("datus.cli.interactive_init.getpass", return_value="test-key"),
                 patch.dict("sys.modules", {"datus.models.openai_model": mock_module}),
@@ -626,8 +625,7 @@ class TestConfigureCodexOAuth:
             }
 
             with (
-                patch("datus.cli.interactive_init.Prompt.ask", side_effect=["gpt-5.3-codex"]),
-                patch("datus.cli.interactive_init.select_choice", return_value="browser"),
+                patch("datus.cli.interactive_init.select_choice", return_value="gpt-5.3-codex"),
                 patch("datus.auth.oauth_manager.OAuthManager") as mock_oauth_cls,
                 patch.object(init, "console"),
             ):
@@ -647,6 +645,7 @@ class TestConfigureCodexOAuth:
             assert init.config["agent"]["models"]["codex"]["type"] == "codex"
             assert init.config["agent"]["models"]["codex"]["auth_type"] == "oauth"
             assert init.config["agent"]["models"]["codex"]["api_key"] == ""
+            mock_oauth.login_browser.assert_called_once()
 
     def test_codex_oauth_login_failure(self):
         """Test Codex OAuth when login fails."""
@@ -662,7 +661,6 @@ class TestConfigureCodexOAuth:
 
             with (
                 patch("datus.cli.interactive_init.Prompt.ask", side_effect=["gpt-5.3-codex"]),
-                patch("datus.cli.interactive_init.select_choice", return_value="browser"),
                 patch("datus.auth.oauth_manager.OAuthManager") as mock_oauth_cls,
                 patch.object(init, "console"),
             ):
@@ -673,36 +671,3 @@ class TestConfigureCodexOAuth:
                 result = init._configure_codex_oauth("codex", provider_config)
 
             assert result is False
-
-    def test_codex_oauth_device_code(self):
-        """Test Codex OAuth with device code method."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            init = InteractiveInit(user_home=tmpdir)
-
-            provider_config = {
-                "type": "codex",
-                "base_url": "https://chatgpt.com/backend-api/codex",
-                "model": "gpt-5.3-codex",
-                "options": ["gpt-5.3-codex"],
-                "auth_type": "oauth",
-            }
-
-            with (
-                patch("datus.cli.interactive_init.Prompt.ask", side_effect=["gpt-5.3-codex"]),
-                patch("datus.cli.interactive_init.select_choice", return_value="device_code"),
-                patch("datus.auth.oauth_manager.OAuthManager") as mock_oauth_cls,
-                patch.object(init, "console"),
-            ):
-                mock_oauth = MagicMock()
-                mock_oauth_cls.return_value = mock_oauth
-
-                with patch("datus.models.codex_model.CodexModel") as mock_model_cls:
-                    mock_model = MagicMock()
-                    mock_model.generate.return_value = "Hello"
-                    mock_model_cls.return_value = mock_model
-
-                    result = init._configure_codex_oauth("codex", provider_config)
-
-            assert result is True
-            mock_oauth.request_device_code.assert_called_once()
-            mock_oauth.poll_device_token.assert_called_once()
