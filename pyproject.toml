@@ -109,7 +109,7 @@ exclude = ["benchmark*", "docs*"]
 "mcp.mcp-metricflow-server" = "mcp/mcp-metricflow-server"
 
 [tool.setuptools.data-files]
-"datus/conf" = ["conf/*.yml.*"]
+"datus/conf" = ["conf/*.yml", "conf/*.yml.*"]
 "datus/sample_data" = ["sample_data/duckdb-demo.duckdb"]
 "datus/sample_data/california_schools" = [
     "sample_data/california_schools/california_schools.csv",
