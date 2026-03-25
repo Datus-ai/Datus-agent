@@ -1,16 +1,6 @@
 agent:
-  target: deepseek-v3
-  models:
-    deepseek-v3:
-      type: deepseek
-      base_url: https://api.deepseek.com
-      api_key: ${DEEPSEEK_API_KEY}
-      model: deepseek-chat
-    kimi-k2-turbo:
-      type: openai
-      base_url: https://api.moonshot.cn/v1
-      api_key: ${KIMI_API_KEY}
-      model: kimi-k2-turbo-preview
+  target: ""
+  models: {}
 
   storage:
     # Data path is now fixed at {agent.home}/data (e.g., ~/.datus/data/datus_db_{namespace})
