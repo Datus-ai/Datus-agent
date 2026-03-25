@@ -1232,7 +1232,7 @@ class ChatCommands:
 
             from datus.cli.web.session_loader import SessionLoader
 
-            loader = SessionLoader()
+            loader = SessionLoader(session_dir=self.cli.agent_config.session_dir)
             messages = loader.get_session_messages(target_session_id)
             if messages:
                 self.console.print(f"\n[bold green]Session resumed![/] Showing {len(messages)} message(s):\n")
@@ -1313,7 +1313,7 @@ class ChatCommands:
             source_session_id = self.current_node.session_id
 
             # Load conversation history
-            loader = SessionLoader()
+            loader = SessionLoader(session_dir=self.cli.agent_config.session_dir)
             messages = loader.get_session_messages(source_session_id)
             if not messages:
                 self.console.print("[yellow]Current session has no messages.[/]")
