@@ -90,10 +90,6 @@ datus-cli = "datus.cli.main:main"
 datus = "datus.cli.main:main"
 datus-mcp = "datus.mcp_server:main"
 
-[[tool.uv.index]]
-url = "http://mirrors.aliyun.com/pypi/simple"
-default = true
-
 [build-system]
 requires = ["setuptools>=80.9.0", "wheel"]
 build-backend = "setuptools.build_meta"
