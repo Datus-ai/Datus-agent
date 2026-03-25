@@ -1,0 +1,284 @@
+# LLM Provider catalog for interactive init (`datus-cli init`)
+# Add new providers/models here without changing Python code.
+
+providers:
+  openai:
+    type: openai
+    base_url: https://api.openai.com/v1
+    default_model: gpt-4.1
+    models:
+      - gpt-5.2
+      - gpt-4.1
+      - gpt-4.1-mini
+      - o3
+      - o3-pro
+      - o4-mini
+
+  deepseek:
+    type: deepseek
+    base_url: https://api.deepseek.com
+    default_model: deepseek-chat
+    models:
+      - deepseek-chat
+      - deepseek-reasoner
+
+  claude:
+    type: claude
+    base_url: https://api.anthropic.com
+    default_model: claude-sonnet-4-5
+    models:
+      - claude-haiku-4-5
+      - claude-sonnet-4-5
+      - claude-opus-4-5
+      - claude-sonnet-4
+      - claude-opus-4
+
+  kimi:
+    type: kimi
+    base_url: https://api.moonshot.cn/v1
+    default_model: kimi-k2.5
+    models:
+      - kimi-k2.5
+      - kimi-k2-turbo-preview
+      - kimi-k2-0905-Preview
+      - kimi-k2-thinking
+
+  qwen:
+    type: openai
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    default_model: qwen3-max
+    models:
+      - qwen3-max
+      - qwen3-coder-plus
+      - qwen-plus
+      - qwen-flash
+
+  gemini:
+    type: gemini
+    base_url: https://generativelanguage.googleapis.com/v1beta
+    default_model: gemini-2.5-flash
+    models:
+      - gemini-2.5-flash
+      - gemini-2.5-pro
+      - gemini-3-flash-preview
+      - gemini-3-pro-preview
+
+  minimax:
+    type: minimax
+    base_url: https://api.minimaxi.com/v1
+    default_model: MiniMax-M2.7
+    models:
+      - MiniMax-M2.7
+      - MiniMax-M2.5
+
+  glm:
+    type: glm
+    base_url: https://open.bigmodel.cn/api/paas/v4
+    default_model: glm-5
+    models:
+      - glm-5
+      - glm-4.7
+      - glm-4.5-air
+      - glm-4.5-flash
+
+  # Coding Plan providers (coding_plan: true enables User-Agent header prompt)
+  alibaba_coding:
+    type: claude
+    base_url: https://coding-intl.dashscope.aliyuncs.com/apps/anthropic
+    default_model: qwen3-coder-plus
+    coding_plan: true
+    models:
+      - qwen3-coder-plus
+      - qwen3.5-plus
+      - glm-5
+      - glm-4.7
+      - kimi-k2.5
+      - MiniMax-M2.5
+      - claude-sonnet-4
+
+  glm_coding:
+    type: claude
+    base_url: https://open.bigmodel.cn/api/anthropic
+    default_model: glm-5
+    coding_plan: true
+    models:
+      - glm-5
+      - glm-4.7
+      - glm-4.5-air
+      - glm-4.5-flash
+      - claude-sonnet-4
+
+  minimax_coding:
+    type: claude
+    base_url: https://api.minimaxi.com/anthropic
+    default_model: MiniMax-M2.7
+    coding_plan: true
+    models:
+      - MiniMax-M2.7
+      - claude-sonnet-4
+
+  kimi_coding:
+    type: claude
+    base_url: https://api.kimi.com/coding/
+    default_model: kimi-for-coding
+    coding_plan: true
+    models:
+      - kimi-for-coding
+      - claude-sonnet-4
+
+  # Claude subscription (Pro/Max plan via setup-token)
+  claude_subscription:
+    type: claude
+    auth_type: subscription
+    base_url: https://api.anthropic.com
+    default_model: claude-sonnet-4-6
+    models:
+      - claude-sonnet-4-6
+      - claude-opus-4-6
+      - claude-haiku-4-5
+
+  # Codex (ChatGPT Plus/Pro subscription via OAuth)
+  codex:
+    type: codex
+    auth_type: oauth
+    base_url: https://api.openai.com/v1
+    default_model: codex-mini-latest
+    models:
+      - codex-mini-latest
+
+# Model-specific parameter overrides
+# Some models enforce fixed values; these are auto-applied during init.
+model_overrides:
+  kimi-k2.5:
+    temperature: 1.0
+    top_p: 0.95
+  qwen3-coder-plus:
+    temperature: 1.0
+    top_p: 0.95
+
+# Model specifications: context_length and max_tokens for each model.
+# Used for token budget management. Prefix matching is applied at runtime
+# (e.g. "gpt-4o-mini" matches "gpt-4o", "kimi-k2-0711-preview" matches "kimi-k2").
+model_specs:
+  # OpenAI Models
+  gpt-5:
+    context_length: 400000
+    max_tokens: 128000
+  gpt-4.1:
+    context_length: 400000
+    max_tokens: 128000
+  gpt-4o:
+    context_length: 128000
+    max_tokens: 16384
+  o3:
+    context_length: 200000
+    max_tokens: 200000
+  o4:
+    context_length: 200000
+    max_tokens: 200000
+
+  # DeepSeek Models
+  deepseek-chat:
+    context_length: 65535
+    max_tokens: 8192
+  deepseek-v3:
+    context_length: 65535
+    max_tokens: 8192
+  deepseek-reasoner:
+    context_length: 65535
+    max_tokens: 65535
+  deepseek-r1:
+    context_length: 65535
+    max_tokens: 65535
+
+  # Moonshot (Kimi) Models
+  kimi-k2:
+    context_length: 256000
+    max_tokens: 8192
+  kimi-k2.5:
+    context_length: 256000
+    max_tokens: 16384
+  kimi-k2-turbo:
+    context_length: 256000
+    max_tokens: 8192
+
+  # Qwen Models
+  qwen3-coder:
+    context_length: 128000
+    max_tokens: 8192
+  qwen3.5-plus:
+    context_length: 1000000
+    max_tokens: 16384
+  qwen3-coder-plus:
+    context_length: 1000000
+    max_tokens: 16384
+
+  # GLM Models (Coding Plan)
+  glm-5:
+    context_length: 200000
+    max_tokens: 131072
+  glm-4.7:
+    context_length: 200000
+    max_tokens: 131072
+  glm-4.5-air:
+    context_length: 128000
+    max_tokens: 8192
+  glm-4.5-flash:
+    context_length: 128000
+    max_tokens: 8192
+
+  # MiniMax Models (Coding Plan)
+  MiniMax-M2.5:
+    context_length: 204800
+    max_tokens: 16384
+  MiniMax-M2.7:
+    context_length: 204800
+    max_tokens: 16384
+
+  # Kimi Coding Plan
+  kimi-for-coding:
+    context_length: 256000
+    max_tokens: 8192
+
+  # Claude Models
+  claude-sonnet-4-5:
+    context_length: 1048576
+    max_tokens: 65536
+  claude-opus-4-1:
+    context_length: 200000
+    max_tokens: 32000
+  claude-opus-4:
+    context_length: 200000
+    max_tokens: 32000
+  claude-sonnet-4:
+    context_length: 1048576
+    max_tokens: 65536
+  claude-3-7-sonnet:
+    context_length: 200000
+    max_tokens: 128000
+
+  # Gemini Models
+  gemini-2.5-pro:
+    context_length: 1048576
+    max_tokens: 65535
+  gemini-2.5-flash:
+    context_length: 1048576
+    max_tokens: 8192
+  gemini-2.5-flash-lite:
+    context_length: 1048576
+    max_tokens: 8192
+  gemini-2.0-flash:
+    context_length: 1048576
+    max_tokens: 8192
+  gemini-3-pro-preview:
+    context_length: 1048576
+    max_tokens: 65536
+  gemini-3-flash-preview:
+    context_length: 1048576
+    max_tokens: 65536
+  gemini-1.5-pro:
+    context_length: 2097152
+    max_tokens: 8192
+  gemini-1.5-flash:
+    context_length: 1048576
+    max_tokens: 8192
