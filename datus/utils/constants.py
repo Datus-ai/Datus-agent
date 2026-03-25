@@ -30,7 +30,6 @@ class LLMProvider(str, Enum):
     GPT = "gpt"  # Alternative name for OpenAI
     CODEX = "codex"  # OpenAI Codex (ChatGPT subscription, OAuth authentication)
     OPENROUTER = "openrouter"  # OpenRouter unified AI gateway
-    CLAUDE_PROXY = "claude_proxy"  # claude-max-api-proxy (local CLI proxy)
 
 
 class EmbeddingProvider(str, Enum):

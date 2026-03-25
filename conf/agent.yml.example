@@ -49,15 +49,6 @@ agent:
       model: claude-sonnet-4-20250514
       auth_type: subscription
 
-    # Claude Proxy (via claude-max-api-proxy, local CLI proxy)
-    # Install: npm install -g claude-max-api-proxy && claude-max-api
-    claude_proxy:
-      type: claude_proxy
-      vendor: claude_proxy
-      base_url: http://localhost:3456/v1
-      api_key: ""
-      model: claude-sonnet-4
-
     # OpenAI Codex (ChatGPT subscription, OAuth authentication)
     # Run `datus init` and select "codex" to complete OAuth login
     codex:

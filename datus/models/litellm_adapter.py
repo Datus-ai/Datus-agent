@@ -47,7 +47,6 @@ class LiteLLMAdapter:
         "gemini": "gemini/",
         "kimi": "moonshot/",  # Moonshot AI - https://docs.litellm.ai/docs/providers/moonshot
         "openrouter": "openrouter/",  # OpenRouter unified gateway
-        "claude_proxy": "",  # claude-max-api-proxy (OpenAI-compatible, no prefix)
     }
 
     # Provider-specific base URLs (if not using default)
@@ -59,7 +58,6 @@ class LiteLLMAdapter:
         "gemini": None,  # Use LiteLLM default (native Gemini API, not OpenAI-compatible)
         "kimi": "https://api.moonshot.ai/v1",  # Moonshot AI global endpoint
         "openrouter": None,  # Use LiteLLM default (https://openrouter.ai/api/v1)
-        "claude_proxy": "http://localhost:3456/v1",  # claude-max-api-proxy default
     }
 
     # Model name prefixes for auto-detection
@@ -119,7 +117,7 @@ class LiteLLMAdapter:
         """
         # Skip auto-detection for providers that must not be overridden
         # (e.g., openrouter models contain provider/ prefix that would trigger false detection)
-        if provider.lower() in ("openrouter", "claude_proxy"):
+        if provider.lower() == "openrouter":
             return provider
 
         model_lower = model.lower()
