@@ -186,12 +186,18 @@ class OAuthManager:
         device_data = resp.json()
 
         self._device_user_code = device_data.get("user_code")
-        self._device_verification_uri = device_data.get("verification_uri") or device_data.get("verification_url")
+        self._device_verification_uri = (
+            device_data.get("verification_uri")
+            or device_data.get("verification_url")
+            or device_data.get("verification_uri_complete")
+            or "https://chatgpt.com/login/device"
+        )
         self._device_auth_id = device_data.get("device_auth_id") or device_data.get("device_code")
         self._device_poll_interval = int(device_data.get("interval", DEVICE_CODE_POLL_INTERVAL))
 
         logger.info("Device code flow initiated. Visit the URL below to authenticate.")
         logger.info("Verification URL: %s", self._device_verification_uri)
+        logger.debug("Device code response fields: %s", list(device_data.keys()))
         logger.info("User code: %s", self._device_user_code)
         return device_data
 
