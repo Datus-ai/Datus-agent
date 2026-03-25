@@ -47,25 +47,21 @@ class InteractiveInit:
         self.template_dir = path_manager.template_dir
         self.sample_dir = path_manager.sample_dir
         self.benchmark_dir = path_manager.benchmark_dir
-        # Whether the model can initialize the indicator
-        try:
-            text = read_data_file_text(resource_path="conf/agent.yml.qs", encoding="utf-8")
-            self.config = yaml.safe_load(text)
-        except Exception as e:
-            logger.error(f"Loading sample configuration failed: {e}")
-            self.console.print("[yellow]Unable to load sample configuration file, using default configuration[/]")
-            self.config = {
-                "agent": {
-                    "target": "",
-                    "models": {},
-                    "namespace": {},
-                    "storage": {"embedding_device_type": "cpu"},  # base_path removed - now fixed at {home}/data
-                    "nodes": {
-                        "schema_linking": {"matching_rate": "fast"},
-                        "date_parser": {"language": "en"},
-                    },
-                }
+        self.config = {
+            "agent": {
+                "target": "",
+                "models": {},
+                "namespace": {},
+                "storage": {
+                    "workspace_root": "~/.datus/workspace",
+                    "embedding_device_type": "cpu",
+                },
+                "nodes": {
+                    "schema_linking": {"matching_rate": "fast"},
+                    "date_parser": {"language": "en"},
+                },
             }
+        }
 
     def _init_dirs(self):
         from datus.utils.path_manager import get_path_manager
