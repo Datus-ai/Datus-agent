@@ -374,6 +374,11 @@ class ClaudeModel(OpenAICompatibleModel):
                 tool_call_cache = {}
                 sql_contexts = []
                 final_content = ""
+                # Accumulate token usage across all turns
+                cumulative_input_tokens = 0
+                cumulative_output_tokens = 0
+                cache_creation_tokens = 0
+                cache_read_tokens = 0
 
                 # Execute conversation loop
                 for turn in range(max_turns):
@@ -387,6 +392,13 @@ class ClaudeModel(OpenAICompatibleModel):
                         max_tokens=kwargs.get("max_tokens", 20480),
                         temperature=kwargs.get("temperature", 0.7),
                     )
+
+                    # Track token usage from this turn
+                    if hasattr(response, "usage") and response.usage:
+                        cumulative_input_tokens += getattr(response.usage, "input_tokens", 0)
+                        cumulative_output_tokens += getattr(response.usage, "output_tokens", 0)
+                        cache_creation_tokens += getattr(response.usage, "cache_creation_input_tokens", 0)
+                        cache_read_tokens += getattr(response.usage, "cache_read_input_tokens", 0)
 
                     message = response.content
 
@@ -536,6 +548,27 @@ class ClaudeModel(OpenAICompatibleModel):
                                 )
 
                 logger.debug("Agent execution completed")
+                total_tokens = cumulative_input_tokens + cumulative_output_tokens
+                cached_tokens = cache_read_tokens
+                usage_info = {
+                    "requests": turn + 1,
+                    "input_tokens": cumulative_input_tokens,
+                    "output_tokens": cumulative_output_tokens,
+                    "total_tokens": total_tokens,
+                    "cached_tokens": cached_tokens,
+                    "cache_creation_tokens": cache_creation_tokens,
+                    "reasoning_tokens": 0,
+                    "cache_hit_rate": (
+                        round(cached_tokens / cumulative_input_tokens, 3) if cumulative_input_tokens > 0 else 0
+                    ),
+                    "context_usage_ratio": (
+                        round(total_tokens / self.context_length(), 3)
+                        if self.context_length() and total_tokens > 0
+                        else 0
+                    ),
+                }
+                logger.debug(f"Native API cumulative token usage: {usage_info}")
+
                 final_action = ActionHistory(
                     action_id=f"final_{uuid.uuid4().hex[:8]}",
                     role=ActionRole.ASSISTANT,
@@ -545,6 +578,7 @@ class ClaudeModel(OpenAICompatibleModel):
                     output={
                         "raw_output": final_content,
                         "sql_contexts": sql_contexts,
+                        "usage": usage_info,
                     },
                     status=ActionStatus.SUCCESS,
                 )

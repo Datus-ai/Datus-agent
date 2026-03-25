@@ -255,15 +255,25 @@ class AgenticNode(Node):
 
     async def _count_session_tokens(self) -> int:
         """
-        Count the total tokens in the current session from turn_usage table.
+        Count the total tokens in the current session.
+
+        Reads from session's turn_usage table first. Falls back to summing
+        usage from action history (for native API paths that bypass the SDK).
 
         Returns:
             Total token count in the session
         """
         if self._session and hasattr(self._session, "get_session_usage"):
             usage = await self._session.get_session_usage()
-            return usage.get("total_tokens", 0) if usage else 0
-        return 0
+            total = usage.get("total_tokens", 0) if usage else 0
+            if total > 0:
+                return total
+        # Fallback: sum usage from action history (native Anthropic API path)
+        total_from_actions = 0
+        for action in self.actions:
+            if isinstance(action.output, dict) and "usage" in action.output:
+                total_from_actions += action.output["usage"].get("total_tokens", 0)
+        return total_from_actions
 
     async def _manual_compact(self) -> dict:
         """
