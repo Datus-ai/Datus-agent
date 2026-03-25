@@ -68,6 +68,16 @@ class ErrorCode(Enum):
         "300034",
         "Claude subscription token not found. Run 'claude setup-token' or set CLAUDE_CODE_OAUTH_TOKEN.",
     )
+    CLAUDE_SUBSCRIPTION_TOKEN_EXPIRED = (
+        "300035",
+        "Claude subscription token has expired. Run 'claude setup-token' to get a fresh token.",
+    )
+    CLAUDE_SUBSCRIPTION_AUTH_FAILED = (
+        "300036",
+        "Claude subscription token rejected (HTTP 401) but token is not expired. "
+        "Possible causes: token revoked, Claude Max subscription inactive, or token corrupted. "
+        "Run 'claude setup-token' to get a fresh token.",
+    )
 
     # Tool errors
     TOOL_EXECUTION_FAILED = ("400001", "Tool execution failed")

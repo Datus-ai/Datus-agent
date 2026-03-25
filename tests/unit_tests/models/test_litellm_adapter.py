@@ -148,6 +148,28 @@ class TestOpenRouterModelName:
         assert adapter.litellm_model_name == "openrouter/claude-sonnet-4"
 
 
+class TestClaudeProxyAdapter:
+    def test_claude_proxy_no_prefix(self):
+        """claude_proxy models should have no LiteLLM prefix."""
+        adapter = LiteLLMAdapter(provider="claude_proxy", model="claude-sonnet-4", api_key="")
+        assert adapter.litellm_model_name == "claude-sonnet-4"
+
+    def test_claude_proxy_default_base_url(self):
+        adapter = LiteLLMAdapter(provider="claude_proxy", model="claude-sonnet-4", api_key="")
+        assert adapter.base_url == "http://localhost:3456/v1"
+
+    def test_claude_proxy_not_autodetected(self):
+        """claude_proxy should not be auto-detected as 'claude' provider."""
+        adapter = LiteLLMAdapter(provider="claude_proxy", model="claude-sonnet-4", api_key="")
+        assert adapter.provider == "claude_proxy"
+
+    def test_claude_proxy_custom_base_url(self):
+        adapter = LiteLLMAdapter(
+            provider="claude_proxy", model="claude-sonnet-4", api_key="", base_url="http://myhost:9999/v1"
+        )
+        assert adapter.base_url == "http://myhost:9999/v1"
+
+
 class TestGetCompletionKwargs:
     def test_includes_model(self):
         adapter = LiteLLMAdapter(provider="openai", model="gpt-4o", api_key="sk-test")

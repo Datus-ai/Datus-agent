@@ -110,7 +110,13 @@ class OAuthManager:
                 # Suppress default HTTP server logging
                 pass
 
-        server = HTTPServer(("127.0.0.1", CALLBACK_PORT), _CallbackHandler)
+        try:
+            server = HTTPServer(("127.0.0.1", CALLBACK_PORT), _CallbackHandler)
+        except OSError as e:
+            raise DatusException(
+                ErrorCode.OAUTH_AUTH_FAILED,
+                message_args={"error_detail": f"Could not start callback server on port {CALLBACK_PORT}: {e}"},
+            ) from e
         server.timeout = 10  # Short timeout per handle_request; loop controls overall deadline
 
         # Open browser in a background thread so we can serve the callback
@@ -207,11 +213,11 @@ class OAuthManager:
 
             try:
                 error_body = token_resp.json()
-            except Exception:
+            except Exception as e:
                 raise DatusException(
                     ErrorCode.OAUTH_AUTH_FAILED,
                     message_args={"error_detail": f"Unexpected response (HTTP {token_resp.status_code})"},
-                )
+                ) from e
             error_code = error_body.get("error", "")
             if error_code == "authorization_pending":
                 continue

@@ -49,7 +49,7 @@ class CodexModel(LLMBaseModel):
         self._async_client = None
 
     def _get_client(self):
-        """Lazy-initialize the sync OpenAI client with OAuth token."""
+        """Get sync OpenAI client, creating or refreshing token as needed."""
         if self._client is None:
             from openai import OpenAI
 
@@ -57,10 +57,13 @@ class CodexModel(LLMBaseModel):
                 api_key=self.oauth_manager.get_access_token(),
                 base_url=self._base_url,
             )
+        else:
+            # Ensure token is current on cached client
+            self._client.api_key = self.oauth_manager.get_access_token()
         return self._client
 
     def _get_async_client(self):
-        """Lazy-initialize the async OpenAI client for Agent SDK."""
+        """Get async OpenAI client, creating or refreshing token as needed."""
         if self._async_client is None:
             from openai import AsyncOpenAI
 
@@ -68,6 +71,9 @@ class CodexModel(LLMBaseModel):
                 api_key=self.oauth_manager.get_access_token(),
                 base_url=self._base_url,
             )
+        else:
+            # Ensure token is current on cached client
+            self._async_client.api_key = self.oauth_manager.get_access_token()
         return self._async_client
 
     def _get_responses_model(self):
@@ -86,17 +92,30 @@ class CodexModel(LLMBaseModel):
             self._async_client.api_key = token
 
     @staticmethod
-    def _convert_prompt_to_input(prompt: Any) -> Any:
-        """Convert messages-format prompt to Responses API input format.
+    def _consume_stream_text(stream) -> str:
+        """Consume a streaming response and return the full output text."""
+        collected = []
+        for event in stream:
+            event_type = getattr(event, "type", None)
+            if event_type == "response.completed":
+                response = getattr(event, "response", None)
+                if response:
+                    return getattr(response, "output_text", "")
+            elif event_type == "response.output_text.delta":
+                collected.append(getattr(event, "delta", ""))
+        return "".join(collected)
 
-        The Responses API accepts either a plain string or a list of
-        message dicts with 'role' and 'content' keys.
+    @staticmethod
+    def _convert_prompt_to_input(prompt: Any) -> list:
+        """Convert prompt to Responses API input format.
+
+        The Codex Responses API requires input as a list of message dicts
+        with 'role' and 'content' keys.
         """
-        if isinstance(prompt, str):
-            return prompt
         if isinstance(prompt, list):
             return prompt
-        return str(prompt)
+        # Wrap string/other types into a user message list
+        return [{"role": "user", "content": str(prompt)}]
 
     def generate(self, prompt: Any, enable_thinking: bool = False, **kwargs) -> str:
         """Generate a response via the Codex Responses API.
@@ -112,13 +131,19 @@ class CodexModel(LLMBaseModel):
         self._refresh_client_token()
         input_data = self._convert_prompt_to_input(prompt)
 
+        create_kwargs = {
+            "model": self.model_name,
+            "input": input_data,
+            "store": False,
+            "stream": True,
+        }
+        instructions = kwargs.get("instructions")
+        if instructions:
+            create_kwargs["instructions"] = instructions
+
         try:
-            response = self._get_client().responses.create(
-                model=self.model_name,
-                input=input_data,
-                store=False,
-            )
-            return response.output_text
+            stream = self._get_client().responses.create(**create_kwargs)
+            return self._consume_stream_text(stream)
         except Exception as e:
             from openai import AuthenticationError
 
@@ -126,12 +151,8 @@ class CodexModel(LLMBaseModel):
                 logger.info("Got 401, refreshing OAuth token and retrying...")
                 self.oauth_manager.refresh_tokens()
                 self._refresh_client_token()
-                response = self._get_client().responses.create(
-                    model=self.model_name,
-                    input=input_data,
-                    store=False,
-                )
-                return response.output_text
+                stream = self._get_client().responses.create(**create_kwargs)
+                return self._consume_stream_text(stream)
             raise
 
     def generate_with_json_output(self, prompt: Any, **kwargs) -> Dict:
@@ -153,7 +174,12 @@ class CodexModel(LLMBaseModel):
             "model": self.model_name,
             "input": input_data,
             "store": False,
+            "stream": True,
         }
+
+        instructions = kwargs.get("instructions")
+        if instructions:
+            create_kwargs["instructions"] = instructions
 
         output_schema = kwargs.get("output_schema")
         if output_schema:
@@ -167,8 +193,13 @@ class CodexModel(LLMBaseModel):
             create_kwargs["text"] = {"format": {"type": "json_object"}}
 
         try:
-            response = self._get_client().responses.create(**create_kwargs)
-            return json.loads(response.output_text)
+            stream = self._get_client().responses.create(**create_kwargs)
+            return json.loads(self._consume_stream_text(stream))
+        except json.JSONDecodeError as e:
+            raise DatusException(
+                ErrorCode.MODEL_INVALID_RESPONSE,
+                message_args={"error_detail": f"Invalid JSON from Codex: {e}"},
+            ) from e
         except Exception as e:
             from openai import AuthenticationError
 
@@ -176,8 +207,8 @@ class CodexModel(LLMBaseModel):
                 logger.info("Got 401 in generate_with_json_output, refreshing OAuth token and retrying...")
                 self.oauth_manager.refresh_tokens()
                 self._refresh_client_token()
-                response = self._get_client().responses.create(**create_kwargs)
-                return json.loads(response.output_text)
+                stream = self._get_client().responses.create(**create_kwargs)
+                return json.loads(self._consume_stream_text(stream))
             raise
 
     async def generate_with_tools(
@@ -212,8 +243,16 @@ class CodexModel(LLMBaseModel):
 
             agent = Agent(**agent_kwargs)
 
+            async def _run_streamed_to_completion(a, p):
+                """Run agent via streaming (Codex API requires stream=True) and return the result."""
+                result = Runner.run_streamed(a, input=p, max_turns=max_turns, session=session)
+                while not result.is_complete:
+                    async for _ in result.stream_events():
+                        pass
+                return result
+
             try:
-                result = await Runner.run(agent, input=prompt, max_turns=max_turns, session=session)
+                result = await _run_streamed_to_completion(agent, prompt)
             except MaxTurnsExceeded as e:
                 raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns}) from e
             except Exception as e:
@@ -227,7 +266,7 @@ class CodexModel(LLMBaseModel):
                     agent_kwargs["model"] = responses_model
                     agent = Agent(**agent_kwargs)
                     try:
-                        result = await Runner.run(agent, input=prompt, max_turns=max_turns, session=session)
+                        result = await _run_streamed_to_completion(agent, prompt)
                     except MaxTurnsExceeded as e2:
                         raise DatusException(
                             ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns}
@@ -396,6 +435,15 @@ class CodexModel(LLMBaseModel):
                                 yield action
             except MaxTurnsExceeded as e:
                 raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns}) from e
+            except Exception as e:
+                from openai import AuthenticationError
+
+                if isinstance(e, AuthenticationError):
+                    logger.info("Got 401 in generate_with_tools_stream, refreshing OAuth token and retrying...")
+                    self.oauth_manager.refresh_tokens()
+                    self._refresh_client_token()
+                    # Re-raise to let caller retry the full stream
+                raise
 
             # Final summary after streaming completes
             final_output = result.final_output if hasattr(result, "final_output") else ""

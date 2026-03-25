@@ -59,6 +59,16 @@ PROVIDER_MODELS = {
         "env_var": "KIMI_API_KEY",
         "models": ["kimi-k2.5", "kimi-k2-turbo-preview"],
     },
+    "R06-openrouter": {
+        "type": "openrouter",
+        "env_var": "OPENROUTER_API_KEY",
+        "models": ["anthropic/claude-sonnet-4", "openai/gpt-4.1-mini"],
+    },
+    "R07-codex": {
+        "type": "codex",
+        "env_var": "CODEX_OAUTH_TOKEN",
+        "models": ["o3-codex"],
+    },
 }
 
 # Models with restricted sampling parameters (reasoning/thinking models)

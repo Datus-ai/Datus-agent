@@ -11,7 +11,9 @@ AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize"
 TOKEN_URL = "https://auth.openai.com/oauth/token"
 DEVICE_CODE_URL = "https://auth.openai.com/deviceauth/usercode"
 
-# Client configuration (override via env var for testing or rotation)
+# Client configuration — public PKCE client ID (not a secret).
+# Security is provided by the PKCE code_verifier/code_challenge, not by hiding the client_id.
+# Override via DATUS_CODEX_CLIENT_ID env var if needed.
 CLIENT_ID = os.environ.get("DATUS_CODEX_CLIENT_ID", "app_EMoamEEZ73f0CkXaXp7hrann")
 REDIRECT_URI = "http://localhost:1455/auth/callback"
 CALLBACK_PORT = 1455

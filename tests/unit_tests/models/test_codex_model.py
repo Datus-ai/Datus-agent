@@ -12,6 +12,23 @@ import pytest
 from datus.configuration.agent_config import ModelConfig
 
 
+def _mock_stream(output_text: str):
+    """Create a mock stream that yields a response.completed event."""
+    event = MagicMock()
+    event.type = "response.completed"
+    event.response.output_text = output_text
+    return [event]
+
+
+def _mock_streamed_result(final_output, turn_count=0):
+    """Create a mock streaming result that appears already complete."""
+    mock = MagicMock()
+    mock.is_complete = True
+    mock.final_output = final_output
+    mock.turn_count = turn_count
+    return mock
+
+
 @pytest.fixture
 def model_config():
     return ModelConfig(
@@ -61,17 +78,16 @@ class TestCodexModelGenerate:
         model = CodexModel(model_config=model_config)
 
         mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.output_text = "Hello from Codex!"
-        mock_client.responses.create.return_value = mock_response
+        mock_client.responses.create.return_value = _mock_stream("Hello from Codex!")
         model._client = mock_client
 
         result = model.generate("Say hello")
         assert result == "Hello from Codex!"
         mock_client.responses.create.assert_called_once_with(
             model="gpt-5.3-codex",
-            input="Say hello",
+            input=[{"role": "user", "content": "Say hello"}],
             store=False,
+            stream=True,
         )
 
     @patch("datus.models.codex_model.OAuthManager")
@@ -85,9 +101,7 @@ class TestCodexModelGenerate:
         model = CodexModel(model_config=model_config)
 
         mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.output_text = "Result"
-        mock_client.responses.create.return_value = mock_response
+        mock_client.responses.create.return_value = _mock_stream("Result")
         model._client = mock_client
 
         messages = [{"role": "user", "content": "Hi"}]
@@ -107,8 +121,6 @@ class TestCodexModelGenerate:
         model = CodexModel(model_config=model_config)
 
         mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.output_text = "Retried result"
 
         # First call raises AuthenticationError, second succeeds
         auth_error = AuthenticationError(
@@ -118,7 +130,7 @@ class TestCodexModelGenerate:
         )
         mock_client.responses.create.side_effect = [
             auth_error,
-            mock_response,
+            _mock_stream("Retried result"),
         ]
         model._client = mock_client
 
@@ -139,9 +151,7 @@ class TestCodexModelJsonOutput:
         model = CodexModel(model_config=model_config)
 
         mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.output_text = json.dumps({"sql": "SELECT 1"})
-        mock_client.responses.create.return_value = mock_response
+        mock_client.responses.create.return_value = _mock_stream(json.dumps({"sql": "SELECT 1"}))
         model._client = mock_client
 
         result = model.generate_with_json_output("Generate SQL")
@@ -158,9 +168,7 @@ class TestCodexModelJsonOutput:
         model = CodexModel(model_config=model_config)
 
         mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.output_text = json.dumps({"answer": 42})
-        mock_client.responses.create.return_value = mock_response
+        mock_client.responses.create.return_value = _mock_stream(json.dumps({"answer": 42}))
         model._client = mock_client
 
         schema = {"type": "object", "properties": {"answer": {"type": "integer"}}}
@@ -203,9 +211,9 @@ class TestCodexModelUtils:
     def test_convert_prompt_to_input(self, mock_oauth_cls, model_config):
         from datus.models.codex_model import CodexModel
 
-        assert CodexModel._convert_prompt_to_input("hello") == "hello"
+        assert CodexModel._convert_prompt_to_input("hello") == [{"role": "user", "content": "hello"}]
         assert CodexModel._convert_prompt_to_input([{"role": "user"}]) == [{"role": "user"}]
-        assert CodexModel._convert_prompt_to_input(123) == "123"
+        assert CodexModel._convert_prompt_to_input(123) == [{"role": "user", "content": "123"}]
 
 
 class TestCodexModelClientInit:
@@ -331,11 +339,8 @@ class TestCodexModelGenerateWithTools:
             mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
             mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
 
-            # Mock Runner.run result
-            mock_result = MagicMock()
-            mock_result.final_output = "SQL result"
-            mock_result.turn_count = 2
-            mock_runner.run = AsyncMock(return_value=mock_result)
+            # Mock Runner.run_streamed result (Codex requires streaming)
+            mock_runner.run_streamed.return_value = _mock_streamed_result("SQL result", 2)
             mock_extract.return_value = [{"sql": "SELECT 1"}]
 
             result = await model.generate_with_tools(prompt="Generate SQL", instruction="You are a SQL expert")
@@ -367,7 +372,7 @@ class TestCodexModelGenerateWithTools:
         with patch("agents.models.openai_responses.OpenAIResponsesModel"):
             mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
             mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
-            mock_runner.run = AsyncMock(side_effect=MaxTurnsExceeded("exceeded"))
+            mock_runner.run_streamed.side_effect = MaxTurnsExceeded("exceeded")
 
             with pytest.raises(DatusException, match="Maximum turns"):
                 await model.generate_with_tools(prompt="test", max_turns=5)
@@ -397,10 +402,7 @@ class TestCodexModelGenerateWithTools:
             mock_mcp.return_value.__aenter__ = AsyncMock(return_value={"db": mock_server})
             mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
 
-            mock_result = MagicMock()
-            mock_result.final_output = "done"
-            mock_result.turn_count = 1
-            mock_runner.run = AsyncMock(return_value=mock_result)
+            mock_runner.run_streamed.return_value = _mock_streamed_result("done", 1)
 
             mock_tool = MagicMock()
             result = await model.generate_with_tools(
@@ -663,15 +665,13 @@ class TestCodexModelJsonOutput401Retry:
         model = CodexModel(model_config=model_config)
 
         mock_client = MagicMock()
-        good_response = MagicMock()
-        good_response.output_text = json.dumps({"sql": "SELECT 1"})
 
         auth_error = AuthenticationError(
             message="Unauthorized",
             response=MagicMock(status_code=401, headers={}),
             body=None,
         )
-        mock_client.responses.create.side_effect = [auth_error, good_response]
+        mock_client.responses.create.side_effect = [auth_error, _mock_stream(json.dumps({"sql": "SELECT 1"}))]
         model._client = mock_client
 
         result = model.generate_with_json_output("test")
@@ -725,10 +725,7 @@ class TestCodexModelToolsAuth401Retry:
                 response=MagicMock(status_code=401, headers={}),
                 body=None,
             )
-            mock_result = MagicMock()
-            mock_result.final_output = "Retried result"
-            mock_result.turn_count = 1
-            mock_runner.run = AsyncMock(side_effect=[auth_error, mock_result])
+            mock_runner.run_streamed.side_effect = [auth_error, _mock_streamed_result("Retried result", 1)]
             mock_extract.return_value = []
 
             result = await model.generate_with_tools(prompt="test")

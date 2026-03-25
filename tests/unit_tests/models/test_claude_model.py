@@ -27,6 +27,7 @@ def _make_model_config(
     temperature=None,
     top_p=None,
     enable_thinking=False,
+    auth_type="api_key",
 ):
     cfg = MagicMock()
     cfg.model = model
@@ -41,6 +42,7 @@ def _make_model_config(
     cfg.max_retry = 3
     cfg.retry_interval = 0.0
     cfg.strict_json_schema = True
+    cfg.auth_type = auth_type
     return cfg
 
 
@@ -450,3 +452,205 @@ class TestClaudeModelSubscriptionAuth:
         cfg.auth_type = "api_key"
         model = _make_claude_model(cfg)
         assert model.api_key == "sk-ant-regular-key"
+
+
+# ---------------------------------------------------------------------------
+# OAuth token: Bearer auth + client headers
+# ---------------------------------------------------------------------------
+
+
+class TestClaudeModelOAuthHeaders:
+    def test_oauth_token_forces_native_api(self):
+        """When auth_type='subscription', use_native_api should be forced to True."""
+        cfg = _make_model_config(api_key="sk-ant-oat01-test-token", use_native_api=False)
+        cfg.auth_type = "subscription"
+        model = _make_claude_model(cfg)
+        assert model._is_oauth_token is True
+        assert model.use_native_api is True
+
+    def test_oauth_uses_auth_token_not_api_key(self):
+        """Native client should be created with auth_token for OAuth tokens."""
+        cfg = _make_model_config(api_key="sk-ant-oat01-test-token")
+        cfg.auth_type = "subscription"
+
+        with (
+            patch("datus.models.openai_compatible.setup_tracing"),
+            patch("datus.models.openai_compatible.LiteLLMAdapter") as mock_adapter_cls,
+            patch("anthropic.Anthropic") as mock_anthropic_cls,
+        ):
+            mock_adapter = MagicMock()
+            mock_adapter.litellm_model_name = "anthropic/claude-sonnet-4-5"
+            mock_adapter.provider = "anthropic"
+            mock_adapter.is_thinking_model = False
+            mock_adapter.get_agents_sdk_model.return_value = MagicMock()
+            mock_adapter_cls.return_value = mock_adapter
+
+            ClaudeModel(cfg)
+
+            # Verify Anthropic was called with auth_token, not api_key
+            call_kwargs = mock_anthropic_cls.call_args[1]
+            assert call_kwargs["auth_token"] == "sk-ant-oat01-test-token"
+            assert call_kwargs["api_key"] is None
+
+    def test_oauth_injects_client_headers(self):
+        """OAuth tokens should inject user-agent, x-app, and dangerous-direct-browser-access headers."""
+        cfg = _make_model_config(api_key="sk-ant-oat01-test-token")
+        cfg.auth_type = "subscription"
+
+        with (
+            patch("datus.models.openai_compatible.setup_tracing"),
+            patch("datus.models.openai_compatible.LiteLLMAdapter") as mock_adapter_cls,
+            patch("anthropic.Anthropic") as mock_anthropic_cls,
+        ):
+            mock_adapter = MagicMock()
+            mock_adapter.litellm_model_name = "anthropic/claude-sonnet-4-5"
+            mock_adapter.provider = "anthropic"
+            mock_adapter.is_thinking_model = False
+            mock_adapter.get_agents_sdk_model.return_value = MagicMock()
+            mock_adapter_cls.return_value = mock_adapter
+
+            ClaudeModel(cfg)
+
+            call_kwargs = mock_anthropic_cls.call_args[1]
+            headers = call_kwargs["default_headers"]
+            assert "user-agent" in headers
+            assert headers["x-app"] == "cli"
+            assert headers["anthropic-dangerous-direct-browser-access"] == "true"
+
+    def test_oauth_beta_headers_correct(self):
+        """OAuth beta headers should contain the expected values."""
+        assert "claude-code-20250219" in ClaudeModel.OAUTH_BETA_HEADERS
+        assert "oauth-2025-04-20" in ClaudeModel.OAUTH_BETA_HEADERS
+        assert "interleaved-thinking-2025-05-14" in ClaudeModel.OAUTH_BETA_HEADERS
+        assert "prompt-caching-scope-2026-01-05" in ClaudeModel.OAUTH_BETA_HEADERS
+        # fine-grained-tool-streaming should NOT be present
+        assert "fine-grained-tool-streaming-2025-05-14" not in ClaudeModel.OAUTH_BETA_HEADERS
+
+    def test_non_oauth_uses_api_key(self):
+        """Regular API key (auth_type='api_key') should use api_key, not auth_token."""
+        cfg = _make_model_config(api_key="sk-ant-oat01-looks-like-oauth-but-not")
+        cfg.auth_type = "api_key"
+
+        with (
+            patch("datus.models.openai_compatible.setup_tracing"),
+            patch("datus.models.openai_compatible.LiteLLMAdapter") as mock_adapter_cls,
+            patch("anthropic.Anthropic") as mock_anthropic_cls,
+        ):
+            mock_adapter = MagicMock()
+            mock_adapter.litellm_model_name = "anthropic/claude-sonnet-4-5"
+            mock_adapter.provider = "anthropic"
+            mock_adapter.is_thinking_model = False
+            mock_adapter.get_agents_sdk_model.return_value = MagicMock()
+            mock_adapter_cls.return_value = mock_adapter
+
+            ClaudeModel(cfg)
+
+            call_kwargs = mock_anthropic_cls.call_args[1]
+            assert call_kwargs["api_key"] == "sk-ant-oat01-looks-like-oauth-but-not"
+            assert "auth_token" not in call_kwargs
+
+
+class TestDiagnoseOAuth401:
+    """Tests for _diagnose_oauth_401 smart error handling."""
+
+    def test_non_oauth_token_does_nothing(self):
+        """Non-OAuth tokens should pass through without raising."""
+        cfg = _make_model_config(api_key="sk-ant-regular-key", auth_type="api_key")
+        model = _make_claude_model(cfg)
+        original_error = Exception("401 Unauthorized")
+        # Should return without raising
+        model._diagnose_oauth_401(original_error)
+
+    def test_expired_token_raises_expired_error(self, tmp_path):
+        """When credentials file shows expired token, raise CLAUDE_SUBSCRIPTION_TOKEN_EXPIRED."""
+        import json
+        import time
+
+        from datus.utils.exceptions import DatusException, ErrorCode
+
+        # Create a credentials file with expired token
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        cred_file = claude_dir / ".credentials.json"
+        expired_ms = int((time.time() - 3600) * 1000)  # 1 hour ago
+        cred_file.write_text(
+            json.dumps({"claudeAiOauth": {"accessToken": "sk-ant-oat01-test", "expiresAt": expired_ms}})
+        )
+
+        cfg = _make_model_config(api_key="sk-ant-oat01-test", auth_type="subscription")
+        model = _make_claude_model(cfg)
+
+        original_error = Exception("401 Unauthorized")
+        with patch("datus.models.claude_model.Path.home", return_value=tmp_path):
+            with pytest.raises(DatusException) as exc_info:
+                model._diagnose_oauth_401(original_error)
+            assert exc_info.value.code == ErrorCode.CLAUDE_SUBSCRIPTION_TOKEN_EXPIRED
+
+    def test_valid_token_raises_auth_failed(self, tmp_path):
+        """When token is not expired but 401, raise CLAUDE_SUBSCRIPTION_AUTH_FAILED."""
+        import json
+        import time
+
+        from datus.utils.exceptions import DatusException, ErrorCode
+
+        # Create a credentials file with valid (non-expired) token
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        cred_file = claude_dir / ".credentials.json"
+        future_ms = int((time.time() + 3600) * 1000)  # 1 hour from now
+        cred_file.write_text(
+            json.dumps({"claudeAiOauth": {"accessToken": "sk-ant-oat01-test", "expiresAt": future_ms}})
+        )
+
+        cfg = _make_model_config(api_key="sk-ant-oat01-test", auth_type="subscription")
+        model = _make_claude_model(cfg)
+
+        original_error = Exception("401 Unauthorized")
+        with patch("datus.models.claude_model.Path.home", return_value=tmp_path):
+            with pytest.raises(DatusException) as exc_info:
+                model._diagnose_oauth_401(original_error)
+            assert exc_info.value.code == ErrorCode.CLAUDE_SUBSCRIPTION_AUTH_FAILED
+
+    def test_no_credentials_file_raises_auth_failed(self, tmp_path):
+        """When no credentials file exists, raise CLAUDE_SUBSCRIPTION_AUTH_FAILED."""
+        from datus.utils.exceptions import DatusException, ErrorCode
+
+        cfg = _make_model_config(api_key="sk-ant-oat01-test", auth_type="subscription")
+        model = _make_claude_model(cfg)
+
+        original_error = Exception("401 Unauthorized")
+        with patch("datus.models.claude_model.Path.home", return_value=tmp_path):
+            with pytest.raises(DatusException) as exc_info:
+                model._diagnose_oauth_401(original_error)
+            assert exc_info.value.code == ErrorCode.CLAUDE_SUBSCRIPTION_AUTH_FAILED
+
+    def test_malformed_credentials_file_raises_auth_failed(self, tmp_path):
+        """When credentials file is malformed, fall through to auth_failed."""
+        from datus.utils.exceptions import DatusException, ErrorCode
+
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        cred_file = claude_dir / ".credentials.json"
+        cred_file.write_text("not-valid-json{{{")
+
+        cfg = _make_model_config(api_key="sk-ant-oat01-test", auth_type="subscription")
+        model = _make_claude_model(cfg)
+
+        original_error = Exception("401 Unauthorized")
+        with patch("datus.models.claude_model.Path.home", return_value=tmp_path):
+            with pytest.raises(DatusException) as exc_info:
+                model._diagnose_oauth_401(original_error)
+            assert exc_info.value.code == ErrorCode.CLAUDE_SUBSCRIPTION_AUTH_FAILED
+
+    def test_preserves_original_error_as_cause(self, tmp_path):
+        """The original 401 error should be chained as __cause__."""
+        from datus.utils.exceptions import DatusException
+
+        cfg = _make_model_config(api_key="sk-ant-oat01-test", auth_type="subscription")
+        model = _make_claude_model(cfg)
+
+        original_error = Exception("401 from Anthropic API")
+        with patch("datus.models.claude_model.Path.home", return_value=tmp_path):
+            with pytest.raises(DatusException) as exc_info:
+                model._diagnose_oauth_401(original_error)
+            assert exc_info.value.__cause__ is original_error

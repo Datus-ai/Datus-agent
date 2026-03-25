@@ -14,6 +14,8 @@ Inherits from OpenAICompatibleModel and adds Claude-specific features:
 import copy
 import json
 import os
+import time
+from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 import anthropic
@@ -24,8 +26,9 @@ from agents.mcp import MCPServerStdio
 from datus.configuration.agent_config import ModelConfig
 from datus.models.mcp_utils import multiple_mcp_servers
 from datus.models.openai_compatible import OpenAICompatibleModel
-from datus.schemas.action_history import ActionHistory, ActionHistoryManager
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -91,8 +94,22 @@ class ClaudeModel(OpenAICompatibleModel):
     """
 
     # Beta headers required for OAuth subscription tokens (sk-ant-oat01-...)
-    # Without these, Anthropic API rejects OAuth tokens with "invalid x-api-key"
-    OAUTH_BETA_HEADERS = ["claude-code-20250219", "oauth-2025-04-20"]
+    # All four are required — without them, Anthropic API rejects OAuth tokens.
+    # Reference: OpenClaw PI_AI_OAUTH_ANTHROPIC_BETAS
+    OAUTH_BETA_HEADERS = [
+        "claude-code-20250219",
+        "oauth-2025-04-20",
+        "interleaved-thinking-2025-05-14",
+        "prompt-caching-scope-2026-01-05",
+    ]
+
+    # Claude Code client headers — required for subscription tokens to be accepted.
+    # These mimic the official Claude CLI client identity.
+    OAUTH_CLIENT_HEADERS = {
+        "user-agent": "claude-cli/2.1.75 (external, cli)",
+        "x-app": "cli",
+        "anthropic-dangerous-direct-browser-access": "true",
+    }
 
     def __init__(self, model_config: ModelConfig, **kwargs):
         # Initialize parent class (handles LiteLLM adapter, OpenAI client, etc.)
@@ -101,8 +118,12 @@ class ClaudeModel(OpenAICompatibleModel):
         # Claude-specific: check if we should use native Anthropic API
         self.use_native_api = getattr(model_config, "use_native_api", False)
 
-        # Detect OAuth subscription token
-        self._is_oauth_token = isinstance(self.api_key, str) and "sk-ant-oat" in self.api_key
+        # Detect OAuth subscription token via auth_type config (canonical source)
+        self._is_oauth_token = getattr(model_config, "auth_type", "api_key") == "subscription"
+
+        # OAuth tokens must use native API to avoid LiteLLM's x-api-key interference
+        if self._is_oauth_token:
+            self.use_native_api = True
 
         # Initialize native Anthropic client (always available for prompt caching)
         self._init_anthropic_client()
@@ -115,8 +136,6 @@ class ClaudeModel(OpenAICompatibleModel):
             return get_claude_subscription_token(self.model_config.api_key)
         api_key = self.model_config.api_key or os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
-            from datus.utils.exceptions import DatusException, ErrorCode
-
             raise DatusException(ErrorCode.MODEL_AUTHENTICATION_ERROR)
         return api_key
 
@@ -136,18 +155,29 @@ class ClaudeModel(OpenAICompatibleModel):
                 timeout=60.0,
             )
 
-        # OAuth tokens require extra beta headers for Anthropic API to accept them
+        # OAuth tokens require extra beta headers + client headers for Anthropic API
         extra_headers = {}
         if self._is_oauth_token:
             extra_headers["anthropic-beta"] = ",".join(self.OAUTH_BETA_HEADERS)
-            logger.debug("Using OAuth subscription token — injecting anthropic-beta headers")
+            extra_headers.update(self.OAUTH_CLIENT_HEADERS)
+            logger.debug("Using OAuth subscription token — injecting beta + client headers")
 
-        self.anthropic_client = anthropic.Anthropic(
-            api_key=self.api_key,
-            base_url=self.base_url if self.base_url else None,
-            http_client=self.proxy_client,
-            default_headers=extra_headers or None,
-        )
+        if self._is_oauth_token:
+            # Use auth_token (Bearer auth) instead of api_key (x-api-key) for OAuth tokens
+            self.anthropic_client = anthropic.Anthropic(
+                auth_token=self.api_key,
+                api_key=None,
+                base_url=self.base_url if self.base_url else None,
+                http_client=self.proxy_client,
+                default_headers=extra_headers or None,
+            )
+        else:
+            self.anthropic_client = anthropic.Anthropic(
+                api_key=self.api_key,
+                base_url=self.base_url if self.base_url else None,
+                http_client=self.proxy_client,
+                default_headers=extra_headers or None,
+            )
 
         # Wrap with LangSmith if available
         try:
@@ -160,10 +190,43 @@ class ClaudeModel(OpenAICompatibleModel):
         logger.debug(f"Initialized Claude model: {self.model_name}, use_native_api={self.use_native_api}")
 
     def _inject_oauth_headers(self, kwargs: dict) -> dict:
-        """Inject OAuth beta headers into kwargs for LiteLLM calls if using subscription token."""
+        """Inject OAuth beta + client headers into kwargs for LiteLLM calls if using subscription token."""
         if self._is_oauth_token:
-            kwargs["extra_headers"] = {"anthropic-beta": ",".join(self.OAUTH_BETA_HEADERS)}
+            existing = kwargs.get("extra_headers", {})
+            kwargs["extra_headers"] = {
+                **existing,
+                "anthropic-beta": ",".join(self.OAUTH_BETA_HEADERS),
+                "Authorization": f"Bearer {self.api_key}",
+                **self.OAUTH_CLIENT_HEADERS,
+            }
         return kwargs
+
+    def _diagnose_oauth_401(self, original_error: Exception) -> None:
+        """Diagnose a 401 error for OAuth subscription tokens and raise a specific exception.
+
+        Checks whether the token is expired (actionable: re-run setup-token) or
+        rejected for other reasons (revoked, subscription inactive, corrupted).
+        Only acts when ``_is_oauth_token`` is True; otherwise returns silently so
+        the caller can re-raise the original error unchanged.
+        """
+        if not self._is_oauth_token:
+            return
+
+        # Try to determine expiry from the credentials file
+        credentials_path = Path.home() / ".claude" / ".credentials.json"
+        if credentials_path.exists():
+            try:
+                data = json.loads(credentials_path.read_text(encoding="utf-8"))
+                expires_at = data.get("claudeAiOauth", {}).get("expiresAt")
+                if expires_at and int(expires_at) / 1000 < time.time():
+                    logger.warning("Claude subscription token has expired (expiresAt check)")
+                    raise DatusException(ErrorCode.CLAUDE_SUBSCRIPTION_TOKEN_EXPIRED) from original_error
+            except (json.JSONDecodeError, OSError, ValueError):
+                pass
+
+        # Token is not expired (or no expiry info) — something else is wrong
+        logger.warning("Claude subscription token rejected (401) but token is not expired")
+        raise DatusException(ErrorCode.CLAUDE_SUBSCRIPTION_AUTH_FAILED) from original_error
 
     @property
     def model_specs(self) -> Dict[str, Dict[str, int]]:
@@ -197,7 +260,12 @@ class ClaudeModel(OpenAICompatibleModel):
             # is not added to the request — LiteLLM omits None-valued parameters.
             kwargs["top_p"] = None
             self._inject_oauth_headers(kwargs)
-            return super().generate(prompt, enable_thinking=enable_thinking, **kwargs)
+            try:
+                return super().generate(prompt, enable_thinking=enable_thinking, **kwargs)
+            except DatusException as e:
+                if self._is_oauth_token and e.code == ErrorCode.MODEL_AUTHENTICATION_ERROR:
+                    self._diagnose_oauth_401(e)
+                raise
 
         # Native Anthropic client path (only when use_native_api=True)
         # Build messages
@@ -228,6 +296,9 @@ class ClaudeModel(OpenAICompatibleModel):
                 return response.content[0].text
             return ""
 
+        except anthropic.AuthenticationError as e:
+            self._diagnose_oauth_401(e)  # raises specific DatusException for OAuth tokens
+            raise
         except Exception as e:
             logger.error(f"Error generating with Anthropic: {str(e)}")
             raise
@@ -239,12 +310,13 @@ class ClaudeModel(OpenAICompatibleModel):
         instruction: str,
         output_type: dict,
         max_turns: int = 10,
+        func_tools: Optional[List[Any]] = None,
         **kwargs,
     ) -> Dict:
-        """Generate response using native Anthropic API with MCP servers.
+        """Generate response using native Anthropic API with MCP servers and/or function tools.
 
         This method uses the native Anthropic client directly, which enables
-        prompt caching for better performance with repeated prompts.
+        prompt caching and is required for OAuth subscription tokens (Bearer auth).
 
         Args:
             prompt: The input prompt
@@ -252,6 +324,7 @@ class ClaudeModel(OpenAICompatibleModel):
             instruction: System instruction
             output_type: Expected output type
             max_turns: Maximum conversation turns
+            func_tools: Optional Agent SDK function tools
             **kwargs: Additional parameters
 
         Returns:
@@ -283,6 +356,24 @@ class ClaudeModel(OpenAICompatibleModel):
                 logger.info(f"Retrieved {len(all_tools)} total tools from MCP servers")
 
                 tools = convert_tools_for_anthropic(all_tools)
+
+                # Convert and merge function tools (Agent SDK FunctionTool objects)
+                func_tool_map = {}
+                if func_tools:
+                    for ft in func_tools:
+                        tools.append(
+                            {
+                                "name": ft.name,
+                                "description": ft.description or "",
+                                "input_schema": ft.params_json_schema,
+                            }
+                        )
+                        func_tool_map[ft.name] = ft
+                    # Re-apply cache control on last tool
+                    if tools:
+                        for t in tools:
+                            t.pop("cache_control", None)
+                        tools[-1]["cache_control"] = {"type": "ephemeral"}
                 messages = [
                     {
                         "role": "user",
@@ -319,22 +410,41 @@ class ClaudeModel(OpenAICompatibleModel):
                             logger.debug(f"Executing tool: {block.name}")
                             tool_executed = False
 
-                            for _, connected_server in connected_servers.items():
+                            # Try function tools first
+                            if block.name in func_tool_map:
                                 try:
-                                    agent = Agent(name="mcp-claude-agent")
+                                    ft = func_tool_map[block.name]
                                     run_context = RunContextWrapper(context=None, usage=Usage())
-                                    tmp_tools = await connected_server.list_tools(run_context, agent)
-                                    if any(tool.name == block.name for tool in tmp_tools):
-                                        tool_result = await connected_server.call_tool(
-                                            tool_name=block.name,
-                                            arguments=json.loads(json.dumps(block.input)),
-                                        )
-                                        tool_call_cache[block.id] = tool_result
-                                        tool_executed = True
-                                        break
+                                    result_val = await ft.on_invoke_tool(run_context, json.dumps(block.input))
+                                    # Ensure result is a string (Anthropic API requires string content)
+                                    result_str = result_val if isinstance(result_val, str) else json.dumps(result_val)
+                                    # Wrap in object matching MCP tool result format
+                                    func_result = type(
+                                        "ToolResult", (), {"content": [type("Part", (), {"text": result_str})()]}
+                                    )()
+                                    tool_call_cache[block.id] = func_result
+                                    tool_executed = True
                                 except Exception as e:
-                                    logger.error(f"Error executing tool {block.name}: {str(e)}")
-                                    continue
+                                    logger.error(f"Error executing function tool {block.name}: {str(e)}")
+
+                            # Fall back to MCP servers
+                            if not tool_executed:
+                                for _, connected_server in connected_servers.items():
+                                    try:
+                                        agent = Agent(name="mcp-claude-agent")
+                                        run_context = RunContextWrapper(context=None, usage=Usage())
+                                        tmp_tools = await connected_server.list_tools(run_context, agent)
+                                        if any(tool.name == block.name for tool in tmp_tools):
+                                            tool_result = await connected_server.call_tool(
+                                                tool_name=block.name,
+                                                arguments=json.loads(json.dumps(block.input)),
+                                            )
+                                            tool_call_cache[block.id] = tool_result
+                                            tool_executed = True
+                                            break
+                                    except Exception as e:
+                                        logger.error(f"Error executing tool {block.name}: {str(e)}")
+                                        continue
 
                             if not tool_executed:
                                 logger.error(f"Tool {block.name} could not be executed")
@@ -358,8 +468,9 @@ class ClaudeModel(OpenAICompatibleModel):
                                 sql_result = tool_call_cache[block.id].content[0].text
                                 # Use "Error" to determine execution success
                                 if "Error" not in sql_result and block.name == "read_query":
+                                    sql_query = block.input.get("query") or block.input.get("sql", "")
                                     sql_context = SQLContext(
-                                        sql_query=block.input["query"],
+                                        sql_query=sql_query,
                                         sql_return=sql_result,
                                         row_count=None,
                                     )
@@ -394,6 +505,9 @@ class ClaudeModel(OpenAICompatibleModel):
                 logger.debug("Agent execution completed")
                 return {"content": final_content, "sql_contexts": sql_contexts}
 
+        except anthropic.AuthenticationError as e:
+            self._diagnose_oauth_401(e)
+            raise
         except Exception as e:
             logger.error(f"Error in generate_with_mcp: {str(e)}")
             raise
@@ -417,32 +531,39 @@ class ClaudeModel(OpenAICompatibleModel):
         Routes to native Anthropic API when use_native_api=True and mcp_servers provided,
         otherwise uses parent class LiteLLM implementation.
         """
-        # Use native Anthropic API for MCP if configured
-        if self.use_native_api and mcp_servers and not tools:
+        # Use native Anthropic API when configured (required for OAuth subscription tokens
+        # since LiteLLM sends x-api-key which is incompatible with Bearer auth)
+        if self.use_native_api and (mcp_servers or self._is_oauth_token):
             return await self.generate_with_mcp(
                 prompt=prompt,
-                mcp_servers=mcp_servers,
+                mcp_servers=mcp_servers or {},
                 instruction=instruction,
                 output_type=output_type,
                 max_turns=max_turns,
+                func_tools=tools,
                 **kwargs,
             )
 
         # Use parent class LiteLLM implementation
         self._inject_oauth_headers(kwargs)
-        return await super().generate_with_tools(
-            prompt=prompt,
-            tools=tools,
-            mcp_servers=mcp_servers,
-            instruction=instruction,
-            output_type=output_type,
-            strict_json_schema=strict_json_schema,
-            max_turns=max_turns,
-            session=session,
-            action_history_manager=action_history_manager,
-            hooks=hooks,
-            **kwargs,
-        )
+        try:
+            return await super().generate_with_tools(
+                prompt=prompt,
+                tools=tools,
+                mcp_servers=mcp_servers,
+                instruction=instruction,
+                output_type=output_type,
+                strict_json_schema=strict_json_schema,
+                max_turns=max_turns,
+                session=session,
+                action_history_manager=action_history_manager,
+                hooks=hooks,
+                **kwargs,
+            )
+        except DatusException as e:
+            if self._is_oauth_token and e.code == ErrorCode.MODEL_AUTHENTICATION_ERROR:
+                self._diagnose_oauth_401(e)
+            raise
 
     async def generate_with_tools_stream(
         self,
@@ -460,24 +581,60 @@ class ClaudeModel(OpenAICompatibleModel):
     ) -> AsyncGenerator[ActionHistory, None]:
         """Generate response with streaming and tool support.
 
-        Uses parent class LiteLLM implementation for streaming.
-        Note: Native Anthropic streaming API can be added later if needed.
+        Routes to native Anthropic API for OAuth subscription tokens,
+        otherwise uses parent class LiteLLM implementation.
         """
+        # For OAuth tokens, use native path (LiteLLM sends x-api-key which is incompatible)
+        if self.use_native_api and self._is_oauth_token:
+            if action_history_manager is None:
+                action_history_manager = ActionHistoryManager()
+            result = await self.generate_with_mcp(
+                prompt=prompt,
+                mcp_servers=mcp_servers or {},
+                instruction=instruction,
+                output_type=output_type,
+                max_turns=max_turns,
+                func_tools=tools,
+                **kwargs,
+            )
+            import uuid
+
+            final_action = ActionHistory(
+                action_id=f"final_{uuid.uuid4().hex[:8]}",
+                role=ActionRole.ASSISTANT,
+                messages=str(result.get("content", ""))[:200],
+                action_type="final_response",
+                input={},
+                output={
+                    "raw_output": str(result.get("content", "")),
+                    "sql_contexts": result.get("sql_contexts", []),
+                },
+                status=ActionStatus.SUCCESS,
+            )
+            action_history_manager.add_action(final_action)
+            yield final_action
+            return
+
         self._inject_oauth_headers(kwargs)
-        async for action in super().generate_with_tools_stream(
-            prompt=prompt,
-            mcp_servers=mcp_servers,
-            tools=tools,
-            instruction=instruction,
-            output_type=output_type,
-            strict_json_schema=strict_json_schema,
-            max_turns=max_turns,
-            session=session,
-            action_history_manager=action_history_manager,
-            hooks=hooks,
-            **kwargs,
-        ):
-            yield action
+        try:
+            async for action in super().generate_with_tools_stream(
+                prompt=prompt,
+                mcp_servers=mcp_servers,
+                tools=tools,
+                instruction=instruction,
+                output_type=output_type,
+                strict_json_schema=strict_json_schema,
+                max_turns=max_turns,
+                session=session,
+                action_history_manager=action_history_manager,
+                hooks=hooks,
+                **kwargs,
+            ):
+                yield action
+        except DatusException as e:
+            if self._is_oauth_token and e.code == ErrorCode.MODEL_AUTHENTICATION_ERROR:
+                self._diagnose_oauth_401(e)
+            raise
 
     async def aclose(self):
         """Async cleanup of resources."""

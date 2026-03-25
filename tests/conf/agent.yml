@@ -58,6 +58,23 @@ agent:
       api_key: ${GEMINI_API_KEY}
       model: gemini-2.5-flash-lite
       enable_thinking: true
+    claude-subscription:
+      type: claude
+      vendor: anthropic
+      auth_type: subscription
+      api_key: ${CLAUDE_CODE_OAUTH_TOKEN}
+      model: claude-sonnet-4-20250514
+      use_native_api: true
+    codex:
+      type: codex
+      vendor: openai
+      api_key: ${CODEX_OAUTH_TOKEN}
+      model: gpt-5.3-codex
+    openrouter:
+      type: openrouter
+      vendor: openrouter
+      api_key: ${OPENROUTER_API_KEY}
+      model: anthropic/claude-sonnet-4
 
   nodes:
     schema_linking:

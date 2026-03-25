@@ -46,6 +46,8 @@ class TokenStorage:
         fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(tokens, f, indent=2)
+        # Ensure permissions are correct even if file pre-existed with broader access
+        os.chmod(self.path, 0o600)
         logger.debug("OAuth tokens saved to %s", self.path)
 
     def load(self) -> Optional[dict]:

@@ -239,6 +239,17 @@ class InteractiveInit:
                     "meta-llama/llama-4-maverick",
                 ],
             },
+            "claude_proxy": {
+                "type": "claude_proxy",
+                "base_url": "http://localhost:3456/v1",
+                "model": "claude-sonnet-4",
+                "options": [
+                    "claude-sonnet-4",
+                    "claude-opus-4",
+                    "claude-haiku-4-5",
+                ],
+                "auth_type": "proxy",
+            },
         }
 
         provider = Prompt.ask("- Which LLM provider?", choices=list(providers.keys()), default="openai")
@@ -250,6 +261,10 @@ class InteractiveInit:
         # Subscription flow for Claude subscription
         if providers[provider].get("auth_type") == "subscription":
             return self._configure_claude_subscription(provider, providers[provider])
+
+        # Proxy flow for claude_proxy (no API key needed)
+        if providers[provider].get("auth_type") == "proxy":
+            return self._configure_proxy_provider(provider, providers[provider])
 
         # API key input
         api_key = getpass("- Enter your API key: ")
@@ -548,6 +563,38 @@ class InteractiveInit:
                 self.console.print("")
             return False
 
+    def _configure_proxy_provider(self, provider: str, provider_config: dict) -> bool:
+        """Configure a proxy-based provider (no API key required)."""
+        # Base URL
+        base_url = Prompt.ask("- Enter proxy base URL", default=provider_config["base_url"])
+
+        # Model selection
+        if "options" in provider_config:
+            options_hint = ", ".join(provider_config["options"])
+            self.console.print(f"  [dim]reference options: {options_hint}[/dim]")
+        model_name = Prompt.ask("- Enter your model name", default=provider_config["model"]).strip()
+
+        # Store configuration
+        self.config["agent"]["target"] = provider
+        self.config["agent"]["models"][provider] = {
+            "type": provider_config["type"],
+            "vendor": provider,
+            "base_url": base_url,
+            "api_key": "",
+            "model": model_name,
+        }
+
+        # Test LLM connectivity
+        self.console.print("→ Testing proxy connectivity...")
+        success, error_msg = self._test_llm_connectivity()
+        if success:
+            self.console.print(" ✅ Proxy model test successful\n")
+            return True
+        else:
+            self.console.print(f"❌ Proxy connectivity test failed: {error_msg}")
+            self.console.print("   Make sure the proxy is running (e.g., claude-max-api)\n")
+            return False
+
     def _configure_codex_oauth(self, provider: str, provider_config: dict) -> bool:
         """Configure Codex provider with OAuth authentication."""
         # Model selection
@@ -598,7 +645,7 @@ class InteractiveInit:
                 auth_type="oauth",
             )
             test_model = CodexModel(model_config=test_config)
-            resp = test_model.generate("Hi")
+            resp = test_model.generate("Say hi", instructions="You are a helpful assistant.")
             if not resp or not resp.strip():
                 self.console.print("⚠️  OAuth login succeeded but model returned empty response")
         except Exception as e:
@@ -640,6 +687,7 @@ class InteractiveInit:
                 "kimi": "KimiModel",
                 "codex": "CodexModel",
                 "openrouter": "OpenRouterModel",
+                "claude_proxy": "ClaudeProxyModel",
             }
 
             if model_type not in type_map:

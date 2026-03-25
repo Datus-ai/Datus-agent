@@ -90,6 +90,7 @@ class ModelConfig:
     temperature: Optional[float] = None  # Some models like kimi-k2.5 require temperature=1
     top_p: Optional[float] = None  # Some models like kimi-k2.5 require top_p=0.95
     auth_type: str = "api_key"  # "api_key" | "oauth" | "subscription"
+    use_native_api: bool = False  # Use native Anthropic client instead of LiteLLM
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -869,6 +870,7 @@ def load_model_config(data: dict) -> ModelConfig:
         temperature=float(temperature) if temperature is not None else None,
         top_p=float(top_p) if top_p is not None else None,
         auth_type=data.get("auth_type", "api_key"),
+        use_native_api=data.get("use_native_api", False),
     )
 
 
