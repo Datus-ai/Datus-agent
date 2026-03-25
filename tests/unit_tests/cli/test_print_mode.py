@@ -93,7 +93,7 @@ class TestReadInteractionInput:
         payload = MessagePayload(
             message_id="m1",
             role="user",
-            content=[MessageContent(type="interaction", payload={"content": "y"})],
+            content=[MessageContent(type="user-interaction", payload={"content": "y"})],
         )
         with patch("sys.stdin", io.StringIO(payload.model_dump_json() + "\n")):
             result = runner._read_interaction_input()
@@ -173,8 +173,55 @@ class TestPrintModeRun:
         output = buf.getvalue().strip()
         assert output  # at least one JSON line
         data = json.loads(output)
+        assert data["message_id"] == "a1"
         assert data["role"] == "assistant"
         assert data["content"][0]["type"] == "thinking"
+        assert data["depth"] == 0
+        assert data["parent_action_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_stream_chat_subagent_hierarchy(self):
+        """Test that _stream_chat propagates depth and parent_action_id from subagent actions."""
+        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+
+        mock_action = ActionHistory(
+            action_id="sub_a1",
+            role=ActionRole.ASSISTANT,
+            messages="subagent thinking",
+            action_type="llm_generation",
+            input=None,
+            output=None,
+            status=ActionStatus.PROCESSING,
+            depth=1,
+            parent_action_id="call_parent_123",
+        )
+
+        mock_node = MagicMock()
+        mock_node.session_id = None
+
+        async def fake_stream(actions):
+            yield mock_action
+
+        mock_node.execute_stream_with_interactions = fake_stream
+
+        with (
+            patch("datus.cli.print_mode.load_agent_config") as mock_cfg,
+            patch("datus.cli.print_mode.AtReferenceCompleter"),
+        ):
+            mock_cfg.return_value = MagicMock(namespaces=[])
+            from datus.cli.print_mode import PrintModeRunner
+
+            runner = PrintModeRunner(_make_args())
+
+        buf = io.StringIO()
+        with patch("sys.stdout", buf):
+            await runner._stream_chat(mock_node)
+
+        output = buf.getvalue().strip()
+        data = json.loads(output)
+        assert data["message_id"] == "sub_a1"
+        assert data["depth"] == 1
+        assert data["parent_action_id"] == "call_parent_123"
 
 
 # ---------------------------------------------------------------------------
@@ -205,14 +252,73 @@ class TestResumeSessionId:
 
         mock_node.execute_stream_with_interactions = fake_stream
 
+        mock_session_mgr = MagicMock()
+        mock_session_mgr.session_exists.return_value = True
+
         with (
             patch("datus.cli.print_mode.create_interactive_node", return_value=mock_node),
             patch("datus.cli.print_mode.create_node_input", return_value=MagicMock()),
+            patch("datus.models.session_manager.SessionManager", return_value=mock_session_mgr),
         ):
             runner.run()
 
         # session_id should be set on the node
         assert mock_node.session_id == "session_abc"
+
+    def test_resume_nonexistent_session_exits(self):
+        with (
+            patch("datus.cli.print_mode.load_agent_config") as mock_cfg,
+            patch("datus.cli.print_mode.AtReferenceCompleter"),
+        ):
+            mock_cfg.return_value = MagicMock(namespaces=[])
+            from datus.cli.print_mode import PrintModeRunner
+
+            runner = PrintModeRunner(_make_args(resume="no_such_session"))
+
+        mock_session_mgr = MagicMock()
+        mock_session_mgr.session_exists.return_value = False
+
+        with (
+            patch("datus.models.session_manager.SessionManager", return_value=mock_session_mgr),
+            pytest.raises(SystemExit, match="not found"),
+        ):
+            runner.run()
+
+    def test_resume_derives_subagent_from_session_id(self):
+        with (
+            patch("datus.cli.print_mode.load_agent_config") as mock_cfg,
+            patch("datus.cli.print_mode.AtReferenceCompleter") as mock_completer,
+        ):
+            mock_cfg.return_value = MagicMock(namespaces=[])
+            mock_completer.return_value.parse_at_context.return_value = ([], [], [])
+            from datus.cli.print_mode import PrintModeRunner
+
+            runner = PrintModeRunner(_make_args(resume="gen_sql_session_uuid123"))
+
+        assert runner.subagent_name is None  # not yet resolved
+
+        mock_node = MagicMock()
+        mock_node.session_id = None
+
+        async def fake_stream(actions):
+            return
+            yield
+
+        mock_node.execute_stream_with_interactions = fake_stream
+
+        mock_session_mgr = MagicMock()
+        mock_session_mgr.session_exists.return_value = True
+
+        with (
+            patch("datus.cli.print_mode.create_interactive_node", return_value=mock_node) as mock_create_node,
+            patch("datus.cli.print_mode.create_node_input", return_value=MagicMock()),
+            patch("datus.models.session_manager.SessionManager", return_value=mock_session_mgr),
+        ):
+            runner.run()
+
+        # subagent_name should be derived from session_id
+        assert runner.subagent_name == "gen_sql"
+        mock_create_node.assert_called_once_with("gen_sql", runner.agent_config, node_id_suffix="_print")
 
 
 # ---------------------------------------------------------------------------

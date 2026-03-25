@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -20,3 +20,5 @@ class MessagePayload(BaseModel):
     message_id: str = Field(..., description="Message ID")
     role: str = Field(..., description="Message role (user, assistant)")
     content: List[MessageContent] = Field(default_factory=list, description="Message content list")
+    depth: int = Field(default=0, description="Nesting depth (0=main, 1=sub-agent)")
+    parent_action_id: Optional[str] = Field(default=None, description="Parent action ID for sub-agent grouping")

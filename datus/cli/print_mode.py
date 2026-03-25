@@ -11,7 +11,6 @@ Streams MessagePayload JSON lines to stdout and reads interaction responses from
 import asyncio
 import json
 import sys
-import uuid
 
 from pydantic import ValidationError
 
@@ -37,7 +36,6 @@ class PrintModeRunner:
         self.message = args.print_mode
         self.session_id = getattr(args, "resume", None)
         self.subagent_name = getattr(args, "subagent", None) or None
-        self.message_id = str(uuid.uuid4())
 
         # Database context from args
         self.catalog = getattr(args, "catalog", None)
@@ -45,6 +43,9 @@ class PrintModeRunner:
         self.db_schema = getattr(args, "schema", None)
 
     def run(self):
+        if self.session_id:
+            self._validate_and_resolve_session()
+
         node = create_interactive_node(self.subagent_name, self.agent_config, node_id_suffix="_print")
         if self.session_id:
             node.session_id = self.session_id
@@ -67,7 +68,13 @@ class PrintModeRunner:
         async for action in node.execute_stream_with_interactions(self.actions):
             if action.role == ActionRole.INTERACTION and action.status == ActionStatus.PROCESSING:
                 contents = build_interaction_content(action)
-                self._write_payload(MessagePayload(message_id=self.message_id, role="assistant", content=contents))
+                self._write_payload(MessagePayload(
+                    message_id=action.action_id,
+                    role="assistant",
+                    content=contents,
+                    depth=action.depth,
+                    parent_action_id=action.parent_action_id,
+                ))
                 user_input = await asyncio.to_thread(self._read_interaction_input)
                 await node.interaction_broker.submit(action.action_id, user_input)
                 continue
@@ -79,12 +86,38 @@ class PrintModeRunner:
                 and action.action_type.endswith("_response")
             ):
                 contents = build_response_content(action)
-                self._write_payload(MessagePayload(message_id=self.message_id, role="assistant", content=contents))
+                self._write_payload(MessagePayload(
+                    message_id=action.action_id,
+                    role="assistant",
+                    content=contents,
+                    depth=action.depth,
+                    parent_action_id=action.parent_action_id,
+                ))
                 continue
 
             contents = action_to_content(action)
             if contents:
-                self._write_payload(MessagePayload(message_id=self.message_id, role="assistant", content=contents))
+                self._write_payload(MessagePayload(
+                    message_id=action.action_id,
+                    role="assistant",
+                    content=contents,
+                    depth=action.depth,
+                    parent_action_id=action.parent_action_id,
+                ))
+
+    def _validate_and_resolve_session(self):
+        """Validate session exists and derive the correct subagent from session_id."""
+        from datus.models.session_manager import SessionManager
+
+        session_manager = SessionManager()
+        if not session_manager.session_exists(self.session_id):
+            raise SystemExit(f"Error: session '{self.session_id}' not found or has no data.")
+
+        # Derive subagent from session_id format: {node_name}_session_{uuid}
+        if "_session_" in self.session_id:
+            node_name = self.session_id.rsplit("_session_", 1)[0]
+            if node_name != "chat":
+                self.subagent_name = node_name
 
     def _write_payload(self, payload: MessagePayload):
         sys.stdout.write(payload.model_dump_json() + "\n")
@@ -97,7 +130,7 @@ class PrintModeRunner:
         try:
             data = MessagePayload.model_validate_json(line.strip())
             for item in data.content:
-                if item.type == "interaction":
+                if item.type == "user-interaction":
                     return item.payload.get("content", "")
             return ""
         except (json.JSONDecodeError, ValidationError):

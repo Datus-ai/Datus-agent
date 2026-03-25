@@ -392,13 +392,6 @@ class DatusCLI:
                 logger.error(f"Error: {str(e)}")
                 self.console.print(f"[bold red]Error:[/] {str(e)}")
 
-    def run_prompt(self, message: str):
-        """Run a single prompt non-interactively and exit."""
-        if not self._wait_for_agent_available(max_attempts=30, delay=1):
-            logger.error("Agent initialization failed or timed out")
-            return
-        self.chat_commands.execute_prompt_command(message)
-
     def _async_init_agent(self):
         """Initialize the agent asynchronously in a background thread."""
         if self.agent_initializing or self.agent_ready:

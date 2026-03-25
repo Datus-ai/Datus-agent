@@ -169,7 +169,7 @@ class ChatCommands:
     ) -> Optional[str]:
         """Resolve clean output text from response and extraction results.
 
-        Used by both interactive (execute_chat_command) and non-interactive (execute_prompt_command) paths.
+        Used by execute_chat_command to resolve clean output text.
         """
         if sql:
             return extracted_output or response
@@ -191,10 +191,6 @@ class ChatCommands:
                     except (ValueError, SyntaxError, TypeError):
                         clean_output = response
             return clean_output
-
-    def execute_prompt_command(self, message: str):
-        """Execute a single prompt non-interactively (reuses interactive logic)."""
-        self._execute_chat(message, plan_mode=False, interactive=False)
 
     def _execute_chat(
         self,
