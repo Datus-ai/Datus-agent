@@ -305,7 +305,7 @@ class ClaudeModel(OpenAICompatibleModel):
             logger.error(f"Error generating with Anthropic: {str(e)}")
             raise
 
-    async def generate_with_mcp(
+    async def _generate_with_mcp_stream(
         self,
         prompt: Union[str, List[Dict[str, str]]],
         mcp_servers: Dict[str, MCPServerStdio],
@@ -315,23 +315,11 @@ class ClaudeModel(OpenAICompatibleModel):
         func_tools: Optional[List[Any]] = None,
         action_history_manager: Optional[ActionHistoryManager] = None,
         **kwargs,
-    ) -> Dict:
-        """Generate response using native Anthropic API with MCP servers and/or function tools.
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """Async generator: native Anthropic API with real-time tool call ActionHistory.
 
-        This method uses the native Anthropic client directly, which enables
-        prompt caching and is required for OAuth subscription tokens (Bearer auth).
-
-        Args:
-            prompt: The input prompt
-            mcp_servers: Dictionary of MCP servers
-            instruction: System instruction
-            output_type: Expected output type
-            max_turns: Maximum conversation turns
-            func_tools: Optional Agent SDK function tools
-            **kwargs: Additional parameters
-
-        Returns:
-            Dict with content and sql_contexts
+        Yields ActionHistory objects for each tool call (PROCESSING then SUCCESS/FAILURE),
+        and a final ASSISTANT action containing the result dict.
         """
         # Custom JSON encoder for special types
         self._setup_custom_json_encoder()
@@ -413,18 +401,19 @@ class ClaudeModel(OpenAICompatibleModel):
                             logger.debug(f"Executing tool: {block.name}")
                             args_str = json.dumps(block.input, ensure_ascii=False)[:80]
 
-                            # Record PROCESSING action for tool call display
+                            # Yield PROCESSING action for real-time tool call display
+                            start_action = ActionHistory(
+                                action_id=block.id,
+                                role=ActionRole.TOOL,
+                                messages=f"Tool call: {block.name}('{args_str}...')",
+                                action_type=block.name,
+                                input={"function_name": block.name, "arguments": block.input},
+                                output={},
+                                status=ActionStatus.PROCESSING,
+                            )
                             if action_history_manager is not None:
-                                start_action = ActionHistory(
-                                    action_id=block.id,
-                                    role=ActionRole.TOOL,
-                                    messages=f"Tool call: {block.name}('{args_str}...')",
-                                    action_type=block.name,
-                                    input={"function_name": block.name, "arguments": block.input},
-                                    output={},
-                                    status=ActionStatus.PROCESSING,
-                                )
                                 action_history_manager.add_action(start_action)
+                            yield start_action
 
                             tool_executed = False
 
@@ -467,30 +456,31 @@ class ClaudeModel(OpenAICompatibleModel):
                             if not tool_executed:
                                 logger.error(f"Tool {block.name} could not be executed")
 
-                            # Record SUCCESS/FAILURE action for tool call display
+                            # Yield SUCCESS/FAILURE action for real-time tool call display
+                            result_text = ""
+                            if block.id in tool_call_cache:
+                                result_text = tool_call_cache[block.id].content[0].text
+                            result_summary = (
+                                self._format_tool_result(result_text, block.name) if tool_executed else "Failed"
+                            )
+                            complete_action = ActionHistory(
+                                action_id=f"complete_{block.id}",
+                                role=ActionRole.TOOL,
+                                messages=f"Tool call: {block.name}('{args_str}...')",
+                                action_type=block.name,
+                                input={"function_name": block.name, "arguments": block.input},
+                                output={
+                                    "success": tool_executed,
+                                    "raw_output": result_text,
+                                    "summary": result_summary,
+                                    "status_message": result_summary,
+                                },
+                                status=ActionStatus.SUCCESS if tool_executed else ActionStatus.FAILED,
+                            )
+                            complete_action.end_time = datetime.now()
                             if action_history_manager is not None:
-                                result_text = ""
-                                if block.id in tool_call_cache:
-                                    result_text = tool_call_cache[block.id].content[0].text
-                                result_summary = (
-                                    self._format_tool_result(result_text, block.name) if tool_executed else "Failed"
-                                )
-                                complete_action = ActionHistory(
-                                    action_id=f"complete_{block.id}",
-                                    role=ActionRole.TOOL,
-                                    messages=f"Tool call: {block.name}('{args_str}...')",
-                                    action_type=block.name,
-                                    input={"function_name": block.name, "arguments": block.input},
-                                    output={
-                                        "success": tool_executed,
-                                        "raw_output": result_text,
-                                        "summary": result_summary,
-                                        "status_message": result_summary,
-                                    },
-                                    status=ActionStatus.SUCCESS if tool_executed else ActionStatus.FAILED,
-                                )
-                                complete_action.end_time = datetime.now()
                                 action_history_manager.add_action(complete_action)
+                            yield complete_action
 
                     for block in message:
                         content = []
@@ -546,14 +536,58 @@ class ClaudeModel(OpenAICompatibleModel):
                                 )
 
                 logger.debug("Agent execution completed")
-                return {"content": final_content, "sql_contexts": sql_contexts}
+                final_action = ActionHistory(
+                    action_id=f"final_{uuid.uuid4().hex[:8]}",
+                    role=ActionRole.ASSISTANT,
+                    messages=str(final_content)[:200],
+                    action_type="final_response",
+                    input={},
+                    output={
+                        "raw_output": final_content,
+                        "sql_contexts": sql_contexts,
+                    },
+                    status=ActionStatus.SUCCESS,
+                )
+                if action_history_manager is not None:
+                    action_history_manager.add_action(final_action)
+                yield final_action
 
         except anthropic.AuthenticationError as e:
             self._diagnose_oauth_401(e)
             raise
         except Exception as e:
-            logger.error(f"Error in generate_with_mcp: {str(e)}")
+            logger.error(f"Error in _generate_with_mcp_stream: {str(e)}")
             raise
+
+    async def generate_with_mcp(
+        self,
+        prompt: Union[str, List[Dict[str, str]]],
+        mcp_servers: Dict[str, MCPServerStdio],
+        instruction: str,
+        output_type: dict,
+        max_turns: int = 10,
+        func_tools: Optional[List[Any]] = None,
+        action_history_manager: Optional[ActionHistoryManager] = None,
+        **kwargs,
+    ) -> Dict:
+        """Non-streaming wrapper: consumes _generate_with_mcp_stream and returns result dict."""
+        result: Dict = {"content": "", "sql_contexts": []}
+        async for action in self._generate_with_mcp_stream(
+            prompt=prompt,
+            mcp_servers=mcp_servers,
+            instruction=instruction,
+            output_type=output_type,
+            max_turns=max_turns,
+            func_tools=func_tools,
+            action_history_manager=action_history_manager,
+            **kwargs,
+        ):
+            if action.role == ActionRole.ASSISTANT and action.action_type == "final_response":
+                result = {
+                    "content": action.output.get("raw_output", ""),
+                    "sql_contexts": action.output.get("sql_contexts", []),
+                }
+        return result
 
     async def generate_with_tools(
         self,
@@ -629,12 +663,11 @@ class ClaudeModel(OpenAICompatibleModel):
         otherwise uses parent class LiteLLM implementation.
         """
         # For OAuth tokens, use native path (LiteLLM sends x-api-key which is incompatible)
+        # Directly iterate the async generator for real-time tool call display
         if self.use_native_api and self._is_oauth_token:
             if action_history_manager is None:
                 action_history_manager = ActionHistoryManager()
-            # Track action count before generate_with_mcp to yield new actions afterward
-            actions_before = len(action_history_manager.actions)
-            result = await self.generate_with_mcp(
+            async for action in self._generate_with_mcp_stream(
                 prompt=prompt,
                 mcp_servers=mcp_servers or {},
                 instruction=instruction,
@@ -643,26 +676,8 @@ class ClaudeModel(OpenAICompatibleModel):
                 func_tools=tools,
                 action_history_manager=action_history_manager,
                 **kwargs,
-            )
-
-            # Yield tool call actions recorded by generate_with_mcp
-            for action in action_history_manager.actions[actions_before:]:
+            ):
                 yield action
-
-            final_action = ActionHistory(
-                action_id=f"final_{uuid.uuid4().hex[:8]}",
-                role=ActionRole.ASSISTANT,
-                messages=str(result.get("content", ""))[:200],
-                action_type="final_response",
-                input={},
-                output={
-                    "raw_output": str(result.get("content", "")),
-                    "sql_contexts": result.get("sql_contexts", []),
-                },
-                status=ActionStatus.SUCCESS,
-            )
-            action_history_manager.add_action(final_action)
-            yield final_action
             return
 
         self._inject_oauth_headers(kwargs)
