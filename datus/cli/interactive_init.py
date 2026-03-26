@@ -430,7 +430,12 @@ class InteractiveInit:
         self.console.print("\nCheck the document at https://docs.datus.ai/ for more details.")
 
     def _configure_claude_subscription(self, provider: str, provider_config: dict) -> bool:
-        """Configure Claude with subscription token (Pro/Max plan via setup-token)."""
+        """Configure Claude with subscription plan (Pro/Max).
+
+        Auth routing by model:
+        - Haiku: subscription token (sk-ant-oat01-*) via direct API
+        - Sonnet/Opus: regular ANTHROPIC_API_KEY via standard API
+        """
         # Model selection
         models = provider_config.get("models", [])
         if models:
@@ -444,12 +449,22 @@ class InteractiveInit:
         else:
             model_name = Prompt.ask("- Enter your model name", default=provider_config.get("default_model", "")).strip()
 
-        # Token input
-        self.console.print("  [dim]Run 'claude setup-token' to get your subscription token[/dim]")
-        api_key_value = getpass("- Paste your subscription token (sk-ant-oat01-...): ")
-        if not api_key_value.strip():
-            self.console.print("❌ Token cannot be empty")
-            return False
+        # Route auth by model: Haiku → subscription token, Sonnet/Opus → API key
+        is_haiku = "haiku" in model_name.lower()
+
+        if is_haiku:
+            api_key_value, auth_type = self._get_subscription_token()
+            if api_key_value is None:
+                return False
+        else:
+            self.console.print(
+                "  [dim]Sonnet/Opus requires an Anthropic API key (subscription tokens only work with Haiku)[/dim]"
+            )
+            api_key_value = getpass("- Enter your ANTHROPIC_API_KEY: ")
+            if not api_key_value.strip():
+                self.console.print("❌ API key cannot be empty")
+                return False
+            auth_type = "api_key"
 
         # Store configuration
         self.config["agent"]["target"] = provider
@@ -459,7 +474,7 @@ class InteractiveInit:
             "base_url": provider_config["base_url"],
             "api_key": api_key_value,
             "model": model_name,
-            "auth_type": "subscription",
+            "auth_type": auth_type,
         }
 
         # Test LLM connectivity
@@ -470,13 +485,35 @@ class InteractiveInit:
             return True
         else:
             self.console.print(f"❌ LLM connectivity test failed: {error_msg}")
-            if "401" in error_msg or "300011" in error_msg:
+            if is_haiku and ("401" in error_msg or "300011" in error_msg or "300035" in error_msg):
                 self.console.print(
                     "   Token may be expired. Run 'claude setup-token' to refresh, then retry 'datus init'.\n"
                 )
             else:
                 self.console.print("")
             return False
+
+    def _get_subscription_token(self) -> tuple[str | None, str]:
+        """Try to auto-detect Claude subscription token, fall back to manual input.
+
+        Returns:
+            (token, auth_type) on success, (None, "") on failure.
+        """
+        self.console.print("  [dim]Detecting Claude subscription token...[/dim]")
+        try:
+            from datus.auth.claude_credential import get_claude_subscription_token
+
+            token = get_claude_subscription_token()
+            self.console.print("  ✅ Subscription token detected")
+            return token, "subscription"
+        except Exception:
+            self.console.print("  [yellow]⚠️  Could not auto-detect subscription token[/yellow]")
+            self.console.print("  [dim]Run 'claude setup-token' to get your subscription token[/dim]")
+            token = getpass("- Paste your subscription token (sk-ant-oat01-...): ")
+            if not token.strip():
+                self.console.print("❌ Token cannot be empty")
+                return None, ""
+            return token, "subscription"
 
     def _configure_codex_oauth(self, provider: str, provider_config: dict) -> bool:
         """Configure Codex provider with OAuth authentication."""
