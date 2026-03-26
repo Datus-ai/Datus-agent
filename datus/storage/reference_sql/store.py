@@ -122,6 +122,7 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
         top_n: Optional[int] = 5,
         selected_fields: Optional[List[str]] = None,
         extra_conditions: Optional[List] = None,
+        datasource_id: str = "",
     ) -> List[Dict[str, Any]]:
         """Search reference SQL by query text with optional subject path filtering.
 
@@ -130,6 +131,7 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
             subject_path: Optional subject hierarchy path (e.g., ['Finance', 'Revenue'])
             top_n: Number of results to return
             extra_conditions: Additional filter conditions (e.g., datasource_id filter)
+            datasource_id: Datasource identifier for tenant isolation
 
         Returns:
             List of matching reference SQL entries with subject_path enriched
@@ -140,6 +142,7 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
             top_n=top_n,
             selected_fields=selected_fields,
             additional_conditions=extra_conditions,
+            datasource_id=datasource_id,
         )
 
     def search_all_reference_sql(
@@ -147,21 +150,28 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
         subject_path: Optional[List[str]] = None,
         select_fields: Optional[List[str]] = None,
         extra_conditions: Optional[List] = None,
+        datasource_id: str = "",
     ) -> List[Dict[str, Any]]:
         """Search all reference SQL entries with optional subject path filtering.
 
         Args:
             subject_path: Optional subject hierarchy path (e.g., ['Finance', 'Revenue'])
             extra_conditions: Additional filter conditions (e.g., datasource_id filter)
+            datasource_id: Datasource identifier for tenant isolation
 
         Returns:
             List of matching reference SQL entries
         """
         return self.search_with_subject_filter(
-            subject_path=subject_path, selected_fields=select_fields, additional_conditions=extra_conditions
+            subject_path=subject_path,
+            selected_fields=select_fields,
+            additional_conditions=extra_conditions,
+            datasource_id=datasource_id,
         )
 
-    def delete_reference_sql(self, subject_path: List[str], name: str, extra_conditions: Optional[List] = None) -> bool:
+    def delete_reference_sql(
+        self, subject_path: List[str], name: str, extra_conditions: Optional[List] = None, datasource_id: str = ""
+    ) -> bool:
         """Delete reference SQL by subject_path and name.
 
         Only deletes from vector store, does not modify any files.
@@ -180,7 +190,7 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
                 name='daily_sales_query'
             )
         """
-        return self.delete_entry(subject_path, name, extra_conditions=extra_conditions)
+        return self.delete_entry(subject_path, name, extra_conditions=extra_conditions, datasource_id=datasource_id)
 
 
 class ReferenceSqlRAG:
@@ -245,7 +255,10 @@ class ReferenceSqlRAG:
         select_fields: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         return self.reference_sql_storage.search_all_reference_sql(
-            subject_path, select_fields=select_fields, extra_conditions=self._ds_conditions()
+            subject_path,
+            select_fields=select_fields,
+            extra_conditions=self._ds_conditions(),
+            datasource_id=self.datasource_id,
         )
 
     def after_init(self):
@@ -270,6 +283,7 @@ class ReferenceSqlRAG:
             top_n=top_n,
             selected_fields=selected_fields,
             extra_conditions=self._ds_conditions(),
+            datasource_id=self.datasource_id,
         )
 
     def get_reference_sql_detail(
@@ -280,10 +294,13 @@ class ReferenceSqlRAG:
     ) -> List[Dict[str, Any]]:
         full_path = list(subject_path) + [name]
         return self.reference_sql_storage.search_all_reference_sql(
-            full_path, select_fields=selected_fields, extra_conditions=self._ds_conditions()
+            full_path,
+            select_fields=selected_fields,
+            extra_conditions=self._ds_conditions(),
+            datasource_id=self.datasource_id,
         )
 
     def delete_reference_sql(self, subject_path: List[str], name: str) -> bool:
         return self.reference_sql_storage.delete_reference_sql(
-            subject_path, name, extra_conditions=self._ds_conditions()
+            subject_path, name, extra_conditions=self._ds_conditions(), datasource_id=self.datasource_id
         )

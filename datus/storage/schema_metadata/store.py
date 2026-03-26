@@ -253,16 +253,20 @@ class SchemaWithValueRAG:
         self.updator_id = updator_id
         self._sub_agent_filter = _build_sub_agent_filter(agent_config, sub_agent_name, self.schema_store, "tables")
 
-    def _ds_condition(self):
-        return eq("datasource_id", self.datasource_id)
+    def _ds_conditions(self) -> list:
+        """Build datasource_id + sub-agent filter conditions."""
+        conditions = [eq("datasource_id", self.datasource_id)]
+        if self._sub_agent_filter:
+            conditions.append(self._sub_agent_filter)
+        return conditions
 
     def _add_ds_filter(self, where: WhereExpr) -> WhereExpr:
         """Add datasource_id + sub-agent filter to existing where clause."""
-        ds_cond = self._ds_condition()
-        extra = and_(ds_cond, self._sub_agent_filter) if self._sub_agent_filter else ds_cond
+        conditions = self._ds_conditions()
+        ds_filter = conditions[0] if len(conditions) == 1 else and_(*conditions)
         if where is None:
-            return extra
-        return and_(where, extra)
+            return ds_filter
+        return and_(where, ds_filter)
 
     def _inject_write_fields(self, data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         for row in data:
@@ -304,10 +308,10 @@ class SchemaWithValueRAG:
         self.value_store.create_indices()
 
     def get_schema_size(self):
-        return self.schema_store._count_rows(where=self._ds_condition())
+        return self.schema_store._count_rows(where=eq("datasource_id", self.datasource_id))
 
     def get_value_size(self):
-        return self.value_store._count_rows(where=self._ds_condition())
+        return self.value_store._count_rows(where=eq("datasource_id", self.datasource_id))
 
     def search_similar(
         self,

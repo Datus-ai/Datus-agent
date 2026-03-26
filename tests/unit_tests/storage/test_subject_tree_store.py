@@ -891,54 +891,45 @@ class TestSubjectTreeDatasourceFields:
 
 
 class TestSubjectTreeDatasourceIsolation:
-    """Tests for per-datasource isolation via set_request_context."""
+    """Tests for per-datasource isolation via datasource_id parameter."""
 
     def test_different_datasources_see_own_data(self):
         """Nodes created under ds_a are invisible to ds_b and vice versa."""
         store = SubjectTreeStore()
 
         # Create node under datasource ds_a
-        store.set_request_context({"datasource_id": "ds_a"}, scope_fields=["datasource_id"])
-        store.create_node(None, "NodeA")
+        store.create_node(None, "NodeA", datasource_id="ds_a")
 
         # Create node under datasource ds_b
-        store.set_request_context({"datasource_id": "ds_b"}, scope_fields=["datasource_id"])
-        store.create_node(None, "NodeB")
+        store.create_node(None, "NodeB", datasource_id="ds_b")
 
         # ds_a should see NodeA but not NodeB
-        store.set_request_context({"datasource_id": "ds_a"}, scope_fields=["datasource_id"])
-        children_a = store.get_children(None)
+        children_a = store.get_children(None, datasource_id="ds_a")
         names_a = {n["name"] for n in children_a}
         assert "NodeA" in names_a
         assert "NodeB" not in names_a
 
         # ds_b should see NodeB but not NodeA
-        store.set_request_context({"datasource_id": "ds_b"}, scope_fields=["datasource_id"])
-        children_b = store.get_children(None)
+        children_b = store.get_children(None, datasource_id="ds_b")
         names_b = {n["name"] for n in children_b}
         assert "NodeB" in names_b
         assert "NodeA" not in names_b
 
-    def test_write_defaults_stored_on_node(self):
-        """Nodes created with a request context carry the datasource_id value."""
+    def test_datasource_id_stored_on_node(self):
+        """Nodes created with datasource_id carry the value."""
         store = SubjectTreeStore()
-        store.set_request_context({"datasource_id": "ds_x"}, scope_fields=["datasource_id"])
-        node = store.create_node(None, "Finance")
+        node = store.create_node(None, "Finance", datasource_id="ds_x")
         assert node["datasource_id"] == "ds_x"
 
-    def test_no_context_sees_all_data(self):
-        """Without a request context, all nodes are visible (no filter applied)."""
+    def test_no_datasource_id_sees_all_data(self):
+        """Without a datasource_id filter, all nodes are visible."""
         store = SubjectTreeStore()
 
         # Create nodes for two different datasources
-        store.set_request_context({"datasource_id": "ds_1"}, scope_fields=["datasource_id"])
-        store.create_node(None, "NodeOne")
+        store.create_node(None, "NodeOne", datasource_id="ds_1")
+        store.create_node(None, "NodeTwo", datasource_id="ds_2")
 
-        store.set_request_context({"datasource_id": "ds_2"}, scope_fields=["datasource_id"])
-        store.create_node(None, "NodeTwo")
-
-        # Clear context → no filter → both visible
-        store.set_request_context({}, scope_fields=[])
+        # No datasource_id → no filter → both visible
         all_children = store.get_children(None)
         names = {n["name"] for n in all_children}
         assert "NodeOne" in names

@@ -135,13 +135,9 @@ class SemanticModelRAG:
         self.updator_id = updator_id
         self._sub_agent_filter = _build_sub_agent_filter(agent_config, sub_agent_name, self.storage, "tables")
 
-    def _ds_condition(self):
-        """Return datasource_id eq condition."""
-        return eq("datasource_id", self.datasource_id)
-
-    def _base_conditions(self) -> list:
-        """Build base conditions (datasource_id + sub-agent filter)."""
-        conditions = [self._ds_condition()]
+    def _ds_conditions(self) -> list:
+        """Build datasource_id + sub-agent filter conditions."""
+        conditions = [eq("datasource_id", self.datasource_id)]
         if self._sub_agent_filter:
             conditions.append(self._sub_agent_filter)
         return conditions
@@ -170,7 +166,7 @@ class SemanticModelRAG:
             logger.warning("get_semantic_model called without table_name")
             return None
 
-        base_conds = self._base_conditions()
+        base_conds = self._ds_conditions()
 
         # Build filter conditions
         table_conds = [eq("kind", "table"), eq("table_name", table_name)] + base_conds
@@ -284,7 +280,7 @@ class SemanticModelRAG:
 
     def search_all(self, database_name: str = "", select_fields: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """Search for all table-level semantic model objects."""
-        conditions = [eq("kind", "table")] + self._base_conditions()
+        conditions = [eq("kind", "table")] + self._ds_conditions()
         if database_name:
             conditions.append(eq("database_name", database_name))
 
@@ -294,7 +290,7 @@ class SemanticModelRAG:
     def get_size(self) -> int:
         """Get count of table-level semantic model objects (excluding columns)."""
         try:
-            return self.storage._count_rows(where=And([eq("kind", "table")] + self._base_conditions()))
+            return self.storage._count_rows(where=And([eq("kind", "table")] + self._ds_conditions()))
         except Exception:
             return 0
 

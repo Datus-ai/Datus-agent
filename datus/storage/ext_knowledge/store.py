@@ -215,6 +215,7 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
         select_fields: Optional[List[str]] = None,
         top_n: Optional[int] = 5,
         extra_conditions: Optional[List] = None,
+        datasource_id: str = "",
     ) -> List[Dict[str, Any]]:
         """Search for similar knowledge entries.
 
@@ -223,6 +224,7 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
             subject_path: Filter by subject path (e.g., ['Finance', 'Revenue']) (optional)
             top_n: Number of results to return
             extra_conditions: Additional filter conditions (e.g., datasource_id filter)
+            datasource_id: Datasource identifier for tenant isolation
 
         Returns:
             List of matching knowledge entries
@@ -235,42 +237,52 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
             top_n=top_n,
             name_field="name",
             additional_conditions=extra_conditions,
+            datasource_id=datasource_id,
         )
 
     def search_all_knowledge(
         self,
         subject_path: Optional[List[str]] = None,
         extra_conditions: Optional[List] = None,
+        datasource_id: str = "",
     ) -> List[Dict[str, Any]]:
         """Get all knowledge entries with optional filtering.
 
         Args:
             subject_path: Filter by subject path (e.g., ['Finance', 'Revenue']) (optional)
             extra_conditions: Additional filter conditions (e.g., datasource_id filter)
+            datasource_id: Datasource identifier for tenant isolation
 
         Returns:
             List of all matching knowledge entries
         """
         return self.search_knowledge(
-            query_text=None, subject_path=subject_path, top_n=None, extra_conditions=extra_conditions
+            query_text=None,
+            subject_path=subject_path,
+            top_n=None,
+            extra_conditions=extra_conditions,
+            datasource_id=datasource_id,
         )
 
     def after_init(self):
         """After initialization, create indices for the table."""
         self.create_indices()
 
-    def delete_knowledge(self, subject_path: List[str], name: str, extra_conditions: Optional[List] = None) -> bool:
+    def delete_knowledge(
+        self, subject_path: List[str], name: str, extra_conditions: Optional[List] = None, datasource_id: str = ""
+    ) -> bool:
         """Delete knowledge entry by subject_path and name.
 
         Args:
             subject_path: Subject hierarchy path (e.g., ['Business', 'Terms'])
             name: Name of the knowledge entry to delete
             extra_conditions: Additional filter conditions (e.g., datasource_id filter)
+            datasource_id: Datasource identifier for tenant isolation
 
         Returns:
             True if deleted successfully, False if entry not found
         """
-        return self.delete_entry(subject_path, name, extra_conditions=extra_conditions)
+        return self.delete_entry(subject_path, name, extra_conditions=extra_conditions, datasource_id=datasource_id)
 
 
 def gen_subject_item_id(subject_path: List[str], name: str) -> str:
@@ -353,22 +365,29 @@ class ExtKnowledgeRAG:
             subject_path=subject_path,
             top_n=top_n,
             extra_conditions=self._ds_conditions(),
+            datasource_id=self.datasource_id,
         )
 
     def get_knowledge_detail(self, subject_path: List[str], name: str) -> List[Dict[str, Any]]:
         full_path = subject_path.copy()
         full_path.append(name)
-        return self.store.search_all_knowledge(subject_path=full_path, extra_conditions=self._ds_conditions())
+        return self.store.search_all_knowledge(
+            subject_path=full_path, extra_conditions=self._ds_conditions(), datasource_id=self.datasource_id
+        )
 
     def delete_knowledge(self, subject_path: List[str], name: str) -> bool:
-        return self.store.delete_knowledge(subject_path, name, extra_conditions=self._ds_conditions())
+        return self.store.delete_knowledge(
+            subject_path, name, extra_conditions=self._ds_conditions(), datasource_id=self.datasource_id
+        )
 
     def get_knowledge_batch(self, paths: List[List[str]]) -> List[Dict[str, Any]]:
         results = []
         for path in paths:
             if not path:
                 continue
-            entries = self.store.search_all_knowledge(subject_path=path, extra_conditions=self._ds_conditions())
+            entries = self.store.search_all_knowledge(
+                subject_path=path, extra_conditions=self._ds_conditions(), datasource_id=self.datasource_id
+            )
             results.extend(entries)
         return results
 

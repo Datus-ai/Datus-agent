@@ -123,35 +123,7 @@ class SubjectTreeStore:
         self._table = self._rdb.ensure_table(table_def)
         self._migrate_null_parents()
 
-        # Per-request scope: set via set_request_context() before use in SaaS.
-        # _base_where: appended to every query for tenant isolation.
-        # _write_defaults: auto-filled on every insert for tenant tagging.
-        self._base_where: Dict[str, Any] = {}
-        self._write_defaults: Dict[str, Any] = {}
         logger.info("SubjectTreeStore initialized")
-
-    def set_request_context(self, request_context: Dict[str, Any], scope_fields: Optional[List[str]] = None) -> None:
-        """Set per-request context for tenant isolation.
-
-        Args:
-            request_context: All key-value pairs are auto-filled on writes.
-            scope_fields: Which fields from request_context become WHERE
-                filters on reads. If None, all fields are used.
-        """
-        self._write_defaults = dict(request_context) if request_context else {}
-        if scope_fields:
-            self._base_where = {k: v for k, v in request_context.items() if k in scope_fields and v is not None}
-        else:
-            self._base_where = dict(self._write_defaults)
-
-    def _scoped_where(self, where: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Merge caller where-clause with base tenant filter."""
-        if not self._base_where:
-            return where or {}
-        merged = dict(self._base_where)
-        if where:
-            merged.update(where)
-        return merged
 
     def _migrate_null_parents(self):
         """Migrate existing NULL parent_id values to ROOT_PARENT_ID (-1)."""
@@ -162,13 +134,16 @@ class SubjectTreeStore:
 
     # ========== CRUD Operations ==========
 
-    def create_node(self, parent_id: Optional[int], name: str, description: str = "") -> Dict[str, Any]:
+    def create_node(
+        self, parent_id: Optional[int], name: str, description: str = "", datasource_id: str = ""
+    ) -> Dict[str, Any]:
         """Create a new subject node.
 
         Args:
             parent_id: Parent node ID (None for root nodes)
             name: Node name (must be unique under same parent)
             description: Optional description
+            datasource_id: Datasource identifier for tenant isolation
 
         Returns:
             Created node dict with all fields
@@ -186,7 +161,7 @@ class SubjectTreeStore:
             if not parent:
                 raise ValueError(f"Parent node {parent_id} not found")
 
-        existing_node = self._find_child_by_name(parent_id, name)
+        existing_node = self._find_child_by_name(parent_id, name, datasource_id=datasource_id)
         if existing_node:
             raise ValueError(f"Node with name '{name}' already exists under parent {parent_id}")
 
@@ -195,12 +170,14 @@ class SubjectTreeStore:
 
         try:
             record = SubjectNodeRecord(
-                parent_id=db_parent_id, name=name, description=description, created_at=now, updated_at=now
+                parent_id=db_parent_id,
+                name=name,
+                description=description,
+                created_at=now,
+                updated_at=now,
+                datasource_id=datasource_id,
             )
             node_id = self._table.insert(record)
-            # Auto-fill tenant fields (e.g. workspace_id) from request context
-            if self._write_defaults:
-                self._table.update(self._write_defaults, where={"node_id": node_id})
 
             created_node = self.get_node(node_id)
             logger.info(f"Created node: {self.get_full_path(node_id)} (node_id={node_id})")
@@ -221,18 +198,19 @@ class SubjectTreeStore:
         Returns:
             Node dict or None if not found
         """
-        rows = self._table.query(SubjectNodeRecord, where=self._scoped_where({"node_id": node_id}))
+        rows = self._table.query(SubjectNodeRecord, where={"node_id": node_id})
         if rows:
             return _node_to_dict(rows[0])
         return None
 
-    def get_node_by_path(self, path: List[str]) -> Optional[Dict[str, Any]]:
+    def get_node_by_path(self, path: List[str], datasource_id: str = "") -> Optional[Dict[str, Any]]:
         """Get node by path components.
 
         Traverses the tree by following the path components.
 
         Args:
             path: Path components (e.g., ['Finance', 'Revenue', 'Q1'])
+            datasource_id: Datasource identifier for tenant isolation
 
         Returns:
             Node dict or None if not found
@@ -243,7 +221,7 @@ class SubjectTreeStore:
         parent_id = None
 
         for component in path:
-            node = self._find_child_by_name(parent_id, component)
+            node = self._find_child_by_name(parent_id, component, datasource_id=datasource_id)
             if not node:
                 return None
             parent_id = node["node_id"]
@@ -290,7 +268,7 @@ class SubjectTreeStore:
         data["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         try:
-            self._table.update(data, where=self._scoped_where({"node_id": node_id}))
+            self._table.update(data, where={"node_id": node_id})
             logger.info(f"Updated node {node_id}")
             return True
         except UniqueViolationError as e:
@@ -321,9 +299,9 @@ class SubjectTreeStore:
             with self._rdb.transaction():
                 for descendant in descendants:
                     child_path = self.get_full_path(descendant["node_id"])
-                    self._table.delete(where=self._scoped_where({"node_id": descendant["node_id"]}))
+                    self._table.delete(where={"node_id": descendant["node_id"]})
                     logger.info(f"Deleted child node {descendant['node_id']} ({child_path})")
-                self._table.delete(where=self._scoped_where({"node_id": node_id}))
+                self._table.delete(where={"node_id": node_id})
             logger.info(f"Deleted node {node_id} ({node_path})" + (" with cascade" if cascade else ""))
             return True
         except Exception as e:
@@ -332,32 +310,36 @@ class SubjectTreeStore:
 
     # ========== Tree Traversal ==========
 
-    def get_children(self, parent_id: Optional[int]) -> List[Dict[str, Any]]:
+    def get_children(self, parent_id: Optional[int], datasource_id: str = "") -> List[Dict[str, Any]]:
         """Get direct children of a node."""
         db_parent_id = ROOT_PARENT_ID if parent_id is None else parent_id
+        where = {"parent_id": db_parent_id}
+        if datasource_id:
+            where["datasource_id"] = datasource_id
         rows = self._table.query(
             SubjectNodeRecord,
-            where=self._scoped_where({"parent_id": db_parent_id}),
+            where=where,
             order_by=["name"],
         )
         return [_node_to_dict(row) for row in rows]
 
-    def get_descendants(self, node_id: int) -> List[Dict[str, Any]]:
+    def get_descendants(self, node_id: int, datasource_id: str = "") -> List[Dict[str, Any]]:
         """Get all descendants (recursive) of a node.
 
         Args:
             node_id: Root node ID
+            datasource_id: Datasource identifier for tenant isolation
 
         Returns:
             List of all descendant nodes (depth-first order)
         """
         descendants = []
-        children = self.get_children(node_id)
+        children = self.get_children(node_id, datasource_id=datasource_id)
 
         for child in children:
             descendants.append(child)
             # Recursively get grandchildren
-            descendants.extend(self.get_descendants(child["node_id"]))
+            descendants.extend(self.get_descendants(child["node_id"], datasource_id=datasource_id))
 
         return descendants
 
@@ -383,12 +365,15 @@ class SubjectTreeStore:
 
         return ancestors
 
-    def get_matched_children_id(self, subject_path: List[str] = None, descendant: bool = True) -> Optional[List[int]]:
+    def get_matched_children_id(
+        self, subject_path: List[str] = None, descendant: bool = True, datasource_id: str = ""
+    ) -> Optional[List[int]]:
         """Get all node IDs for a subject path including its descendants.
 
         Args:
             subject_path: Subject hierarchy path (e.g., ['Finance', 'Revenue'])
             descendant: collect all child nodes
+            datasource_id: Datasource identifier for tenant isolation
 
         Returns:
             List of node IDs including the target path and all its descendants,
@@ -397,7 +382,7 @@ class SubjectTreeStore:
         if not subject_path:
             subject_path = ["*"]
 
-        tree = self.get_tree_structure()
+        tree = self.get_tree_structure(datasource_id=datasource_id)
         result: List[int] = []
 
         def collect_all(node: Dict):
@@ -447,11 +432,12 @@ class SubjectTreeStore:
 
     # ========== Tree Building ==========
 
-    def get_tree_structure(self, root_id: Optional[int] = None) -> Dict[str, Any]:
+    def get_tree_structure(self, root_id: Optional[int] = None, datasource_id: str = "") -> Dict[str, Any]:
         """Build nested tree structure with node_id, name, and children.
 
         Args:
             root_id: Root node ID (None for entire forest)
+            datasource_id: Datasource identifier for tenant isolation
 
         Returns:
             Nested dict structure where each node has node_id, name, and children.
@@ -468,7 +454,7 @@ class SubjectTreeStore:
         roots = []
         if root_id is None:
             # Get all root nodes
-            roots = self.get_children(None)
+            roots = self.get_children(None, datasource_id=datasource_id)
             if not roots:
                 return {}
         else:
@@ -519,7 +505,7 @@ class SubjectTreeStore:
 
         return {"node_id": node["node_id"], "name": node["name"], "children": child_dict}
 
-    def find_or_create_path(self, path_components: List[str]) -> int:
+    def find_or_create_path(self, path_components: List[str], datasource_id: str = "") -> int:
         """Find or create nodes along a path.
 
         Handles race conditions in parallel writes: if create_node raises
@@ -528,6 +514,7 @@ class SubjectTreeStore:
         Args:
             path_components: List of node names from root to leaf
                            Example: ['Finance', 'Revenue', 'Q1']
+            datasource_id: Datasource identifier for tenant isolation
 
         Returns:
             Leaf node ID (last component)
@@ -547,7 +534,7 @@ class SubjectTreeStore:
 
         for component in path_components:
             # Try to find existing node
-            node = self._find_child_by_name(parent_id, component)
+            node = self._find_child_by_name(parent_id, component, datasource_id=datasource_id)
 
             if node:
                 # Node exists, continue
@@ -555,12 +542,14 @@ class SubjectTreeStore:
             else:
                 # Create new node, handle race condition with parallel writes
                 try:
-                    created = self.create_node(parent_id=parent_id, name=component, description="")
+                    created = self.create_node(
+                        parent_id=parent_id, name=component, description="", datasource_id=datasource_id
+                    )
                     parent_id = created["node_id"]
                 except ValueError:
                     # Race condition: another thread/process created the node between
                     # our _find_child_by_name check and create_node call
-                    existing_node = self._find_child_by_name(parent_id, component)
+                    existing_node = self._find_child_by_name(parent_id, component, datasource_id=datasource_id)
                     if existing_node:
                         parent_id = existing_node["node_id"]
                     else:
@@ -568,12 +557,17 @@ class SubjectTreeStore:
 
         return parent_id
 
-    def _find_child_by_name(self, parent_id: Optional[int], name: str) -> Optional[Dict[str, Any]]:
+    def _find_child_by_name(
+        self, parent_id: Optional[int], name: str, datasource_id: str = ""
+    ) -> Optional[Dict[str, Any]]:
         """Find a child node by name under a specific parent."""
         db_parent_id = ROOT_PARENT_ID if parent_id is None else parent_id
+        where = {"parent_id": db_parent_id, "name": name}
+        if datasource_id:
+            where["datasource_id"] = datasource_id
         rows = self._table.query(
             SubjectNodeRecord,
-            where=self._scoped_where({"parent_id": db_parent_id, "name": name}),
+            where=where,
         )
         if rows:
             return _node_to_dict(rows[0])
@@ -743,7 +737,8 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
 
             # Find or create the subject tree path to get node_id
             try:
-                subject_node_id = self.subject_tree.find_or_create_path(subject_path)
+                datasource_id = item.get("datasource_id", "")
+                subject_node_id = self.subject_tree.find_or_create_path(subject_path, datasource_id=datasource_id)
 
                 # Create new item dict without subject_path field and with subject_node_id
                 processed_item = item.copy()
@@ -791,7 +786,8 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
 
             # Find or create the subject tree path to get node_id
             try:
-                subject_node_id = self.subject_tree.find_or_create_path(subject_path)
+                datasource_id = item.get("datasource_id", "")
+                subject_node_id = self.subject_tree.find_or_create_path(subject_path, datasource_id=datasource_id)
 
                 # Create new item dict without subject_path field and with subject_node_id
                 processed_item = item.copy()
@@ -821,6 +817,7 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
         selected_fields: Optional[List[str]] = None,
         name_field: Optional[str] = "name",
         additional_conditions: Optional[List] = None,
+        datasource_id: str = "",
     ) -> List[Dict[str, Any]]:
         """Generic search with subject filtering supporting both exact path and parent+name patterns.
 
@@ -850,7 +847,9 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
             # Convert path to include all descendant node_ids if provided
             if path:
                 # Get all node IDs including the path and its descendants
-                node_ids = self.subject_tree.get_matched_children_id(path, False if name else True)
+                node_ids = self.subject_tree.get_matched_children_id(
+                    path, False if name else True, datasource_id=datasource_id
+                )
                 if node_ids:
                     subject_condition = in_(SUBJECT_ID_COLUMN_NAME, node_ids)
                     conditions.append(subject_condition)
@@ -1228,7 +1227,9 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
             logger.error(f"Failed to fetch entries by node_id={node_id}: {e}")
             return []
 
-    def delete_entry(self, subject_path: List[str], name: str, extra_conditions: Optional[List] = None) -> bool:
+    def delete_entry(
+        self, subject_path: List[str], name: str, extra_conditions: Optional[List] = None, datasource_id: str = ""
+    ) -> bool:
         """Delete entry by subject_path and name from vector store.
 
         This is a generic method for deleting entries from storage using
@@ -1239,6 +1240,7 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
             subject_path: Subject hierarchy path (e.g., ['Finance', 'Revenue'])
             name: Name of the entry to delete
             extra_conditions: Additional filter conditions (e.g., datasource_id filter)
+            datasource_id: Datasource identifier for tenant isolation
 
         Returns:
             True if deleted successfully, False if entry not found
@@ -1255,7 +1257,7 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
         name = name.strip()
 
         # Find subject_node_id from subject_path
-        subject_node = self.subject_tree.get_node_by_path(subject_path)
+        subject_node = self.subject_tree.get_node_by_path(subject_path, datasource_id=datasource_id)
         if not subject_node:
             logger.warning(f"Subject path not found: {'/'.join(subject_path)}")
             return False
