@@ -80,12 +80,17 @@ class TestMetricRAGPyArrow:
 
     def test_search_all_metrics_returns_pyarrow_table(self, temp_db_path, sample_metrics_with_domain_layers):
         """Test that search_all_metrics returns PyArrow Table."""
+        _datasource_id = "test_datasource"
+        for m in sample_metrics_with_domain_layers:
+            m.setdefault("datasource_id", _datasource_id)
         metric_storage = MetricStorage(embedding_model=get_metric_embedding_model())
         metric_storage.batch_store_metrics(sample_metrics_with_domain_layers)
 
         # Mock cache for MetricRAG
         rag = MetricRAG.__new__(MetricRAG)
         rag.storage = metric_storage
+        rag.datasource_id = _datasource_id
+        rag._sub_agent_filter = None
 
         result = rag.search_all_metrics()
 
@@ -131,11 +136,16 @@ class TestMetricRAGPyArrow:
 
     def test_get_metrics_detail_with_compound_where_clause(self, temp_db_path, sample_metrics_with_domain_layers):
         """Test metrics detail retrieval with compound WHERE clauses."""
+        _datasource_id = "test_datasource"
+        for m in sample_metrics_with_domain_layers:
+            m.setdefault("datasource_id", _datasource_id)
         metric_storage = MetricStorage(embedding_model=get_metric_embedding_model())
         metric_storage.batch_store_metrics(sample_metrics_with_domain_layers)
 
         rag = MetricRAG.__new__(MetricRAG)
         rag.storage = metric_storage
+        rag.datasource_id = _datasource_id
+        rag._sub_agent_filter = None
 
         # Test the get_metrics_detail method functionality
         result = rag.get_metrics_detail(subject_path=["Sales", "Revenue", "Monthly"], name="monthly_revenue")

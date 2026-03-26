@@ -8,7 +8,7 @@ import re
 from datetime import datetime
 
 import pytest
-from datus_storage_base.conditions import And, Node, build_where, eq
+from datus_storage_base.conditions import eq
 
 from datus.storage.base import BaseEmbeddingStore, StorageBase
 from datus.storage.embedding_models import EmbeddingModel, get_db_embedding_model
@@ -51,46 +51,6 @@ class TestGetCurrentTimestamp:
         after = datetime.utcnow()
         parsed = datetime.fromisoformat(ts)
         assert before <= parsed <= after
-
-
-# ---------------------------------------------------------------------------
-# BaseEmbeddingStore._apply_scope_filter  (additional edge cases beyond test_base_scope_filter.py)
-# ---------------------------------------------------------------------------
-
-
-class TestApplyScopeFilterAdditional:
-    """Additional tests for _apply_scope_filter not covered in test_base_scope_filter.py."""
-
-    def _make_store(self, tmp_path) -> SchemaStorage:
-        return SchemaStorage(get_db_embedding_model())
-
-    def test_apply_scope_filter_node_where_with_complex_scope(self, tmp_path):
-        """Scope filter with multiple conditions combined with a Node where."""
-        store = self._make_store(tmp_path)
-        scope = And([eq("schema_name", "public"), eq("database_name", "main")])
-        store._scope_filter = scope
-
-        result = store._apply_scope_filter(eq("table_name", "orders"))
-        assert isinstance(result, Node)
-        compiled = build_where(result)
-        assert "table_name" in compiled
-        assert "orders" in compiled
-        assert "schema_name" in compiled
-        assert "database_name" in compiled
-
-    def test_apply_scope_filter_node_where_preserves_both_conditions(self, tmp_path):
-        """Both scope and where Node conditions must appear in the compiled output."""
-        store = self._make_store(tmp_path)
-        scope = eq("database_name", "analytics")
-        store._scope_filter = scope
-
-        where = eq("table_type", "view")
-        result = store._apply_scope_filter(where)
-        assert isinstance(result, Node)
-
-        clause = build_where(result)
-        assert "database_name = 'analytics'" in clause
-        assert "table_type = 'view'" in clause
 
 
 # ---------------------------------------------------------------------------
@@ -487,17 +447,6 @@ class TestTableSize:
         store.store_batch(data)
 
         assert store.table_size() == 5
-
-    def test_table_size_with_scope_filter(self, tmp_path):
-        """table_size with scope filter counts only matching rows."""
-        store = self._make_store(tmp_path)
-        data = [self._make_row(i, db_name="db1") for i in range(3)]
-        data += [self._make_row(i + 10, db_name="db2") for i in range(2)]
-        store.store_batch(data)
-
-        # Set scope filter
-        store._scope_filter = eq("database_name", "db1")
-        assert store.table_size() == 3
 
     def test_table_size_empty_table(self, tmp_path):
         """table_size on empty table returns 0."""

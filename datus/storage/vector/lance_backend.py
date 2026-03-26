@@ -333,9 +333,9 @@ class LanceVectorBackend(BaseVectorBackend):
     def initialize(self, config: Dict[str, Any]) -> None:
         self._data_dir = config.get("data_dir", "")
 
-    def connect(self, namespace: str) -> LanceVectorDatabase:
-        safe_ns = _safe_path_segment(namespace, "namespace")
-        db_path = os.path.join(self._data_dir, f"datus_db_{safe_ns}")
+    def connect(self, namespace: str = "") -> LanceVectorDatabase:
+        db_name = namespace if namespace else "datus_db"
+        db_path = os.path.join(self._data_dir, db_name)
         raw_db = lancedb.connect(db_path)
         return LanceVectorDatabase(raw_db)
 

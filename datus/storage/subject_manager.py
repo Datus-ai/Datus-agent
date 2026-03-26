@@ -32,13 +32,9 @@ class SubjectUpdater:
 
     def __init__(self, agent_config: AgentConfig):
         self._agent_config = agent_config
-        self.metrics_storage: MetricStorage = get_storage(MetricStorage, "metric", agent_config.current_namespace)
-        self.reference_sql_storage: ReferenceSqlStorage = get_storage(
-            ReferenceSqlStorage, "reference_sql", agent_config.current_namespace
-        )
-        self.ext_knowledge_storage: ExtKnowledgeStore = get_storage(
-            ExtKnowledgeStore, "ext_knowledge", agent_config.current_namespace
-        )
+        self.metrics_storage: MetricStorage = get_storage(MetricStorage, "metric")
+        self.reference_sql_storage: ReferenceSqlStorage = get_storage(ReferenceSqlStorage, "reference_sql")
+        self.ext_knowledge_storage: ExtKnowledgeStore = get_storage(ExtKnowledgeStore, "ext_knowledge")
 
     def update_metrics_detail(self, subject_path: List[str], name: str, update_values: Dict[str, Any]):
         """Update metrics detail fields using subject_path and name.

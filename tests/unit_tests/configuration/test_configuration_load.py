@@ -50,7 +50,7 @@ def test_configuration_load(namespace: str, agent_config: AgentConfig):
 
     assert agent_config.schema_linking_rate == "slow"
     # rag_storage_path() returns absolute path, check it ends with expected relative path
-    assert agent_config.rag_storage_path().endswith(f"data/datus_db_{namespace}")
+    assert agent_config.rag_storage_path().endswith("data/datus_db")
 
     with pytest.raises(DatusException, match="Missing required field: namespace"):
         agent_config.current_namespace = ""

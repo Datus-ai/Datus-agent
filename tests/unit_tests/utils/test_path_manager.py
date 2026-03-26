@@ -129,8 +129,8 @@ class TestDatusPathManagerDataPaths:
         return DatusPathManager(datus_home=str(tmp_path / "datus"))
 
     def test_rag_storage_path_creates_dir(self, pm):
-        path = pm.rag_storage_path("test_ns")
-        assert path == pm.data_dir / "datus_db_test_ns"
+        path = pm.rag_storage_path()
+        assert path == pm.data_dir / "datus_db"
         assert path.exists()
 
     def test_sub_agent_path_creates_dir(self, pm):

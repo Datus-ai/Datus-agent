@@ -297,13 +297,13 @@ class TestSqliteRdbBackendConnect:
         db = b.connect("ns", "test")
         assert isinstance(db, SqliteRdbDatabase)
         assert db.db_file.endswith("test.db")
-        assert "datus_db_ns" in db.db_file
+        assert "datus_db" in db.db_file
 
     def test_connect_no_namespace(self, tmp_path):
-        """connect() without namespace puts db directly in data_dir."""
+        """connect() always uses datus_db/ subdirectory regardless of namespace."""
         from datus.storage.rdb.sqlite_backend import SqliteRdbBackend
 
         b = SqliteRdbBackend()
         b.initialize({"data_dir": str(tmp_path)})
         db = b.connect("", "test")
-        assert db.db_file == os.path.join(str(tmp_path), "test.db")
+        assert db.db_file == os.path.join(str(tmp_path), "datus_db", "test.db")

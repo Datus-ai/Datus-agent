@@ -192,7 +192,9 @@ class TestUpdateColumnsMethod:
 
     def _make_updater(self):
         """Create a bare CatalogUpdater for pure method tests."""
-        return object.__new__(CatalogUpdater)
+        obj = object.__new__(CatalogUpdater)
+        obj.datasource_id = "test_datasource"
+        return obj
 
     def test_update_columns_skips_items_without_name(self):
         """Columns without a 'name' key are skipped."""
@@ -356,7 +358,9 @@ class TestUpdateSemanticModel:
 
     def _make_updater(self):
         """Create a bare CatalogUpdater for tests."""
-        return object.__new__(CatalogUpdater)
+        obj = object.__new__(CatalogUpdater)
+        obj.datasource_id = "test_datasource"
+        return obj
 
     def test_update_semantic_model_description(self):
         """update_semantic_model updates table description across storages."""

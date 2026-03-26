@@ -1228,7 +1228,7 @@ class GenerationHooks(AgentHooks):
                 return {"success": False, "error": "Empty YAML file or all documents are empty"}
 
             # Get storage instance
-            knowledge_store = get_storage(ExtKnowledgeStore, "ext_knowledge", agent_config.current_namespace)
+            knowledge_store = get_storage(ExtKnowledgeStore, "ext_knowledge")
 
             # Collect all valid entries for batch upsert
             knowledge_entries = []

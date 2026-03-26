@@ -855,3 +855,91 @@ class TestSubjectTreeStore:
         assert updated_node["description"] == "Revenue management"  # Description preserved
         assert updated_node["created_at"] == original_created  # Created time preserved
         assert updated_node["updated_at"] > original_updated  # Updated time changed
+
+
+# ========== Datasource Fields Tests ==========
+
+
+class TestSubjectTreeDatasourceFields:
+    """Tests for datasource_id, creator_id, and updator_id columns on SubjectTreeStore."""
+
+    @pytest.fixture
+    def store(self):
+        """Create a fresh SubjectTreeStore for each test."""
+        return SubjectTreeStore()
+
+    def test_datasource_id_column_exists(self):
+        """datasource_id field is present on created nodes."""
+        store = SubjectTreeStore()
+        node = store.create_node(None, "Finance")
+        assert "datasource_id" in node
+
+    def test_creator_id_default_value(self):
+        """creator_id defaults to 'datus_agent' when not explicitly set."""
+        store = SubjectTreeStore()
+        node = store.create_node(None, "Finance")
+        assert node["creator_id"] == "datus_agent"
+
+    def test_updator_id_default_value(self):
+        """updator_id defaults to 'datus_agent' when not explicitly set."""
+        store = SubjectTreeStore()
+        node = store.create_node(None, "Finance")
+        assert node["updator_id"] == "datus_agent"
+
+
+# ========== Datasource Isolation Tests ==========
+
+
+class TestSubjectTreeDatasourceIsolation:
+    """Tests for per-datasource isolation via set_request_context."""
+
+    def test_different_datasources_see_own_data(self):
+        """Nodes created under ds_a are invisible to ds_b and vice versa."""
+        store = SubjectTreeStore()
+
+        # Create node under datasource ds_a
+        store.set_request_context({"datasource_id": "ds_a"}, scope_fields=["datasource_id"])
+        store.create_node(None, "NodeA")
+
+        # Create node under datasource ds_b
+        store.set_request_context({"datasource_id": "ds_b"}, scope_fields=["datasource_id"])
+        store.create_node(None, "NodeB")
+
+        # ds_a should see NodeA but not NodeB
+        store.set_request_context({"datasource_id": "ds_a"}, scope_fields=["datasource_id"])
+        children_a = store.get_children(None)
+        names_a = {n["name"] for n in children_a}
+        assert "NodeA" in names_a
+        assert "NodeB" not in names_a
+
+        # ds_b should see NodeB but not NodeA
+        store.set_request_context({"datasource_id": "ds_b"}, scope_fields=["datasource_id"])
+        children_b = store.get_children(None)
+        names_b = {n["name"] for n in children_b}
+        assert "NodeB" in names_b
+        assert "NodeA" not in names_b
+
+    def test_write_defaults_stored_on_node(self):
+        """Nodes created with a request context carry the datasource_id value."""
+        store = SubjectTreeStore()
+        store.set_request_context({"datasource_id": "ds_x"}, scope_fields=["datasource_id"])
+        node = store.create_node(None, "Finance")
+        assert node["datasource_id"] == "ds_x"
+
+    def test_no_context_sees_all_data(self):
+        """Without a request context, all nodes are visible (no filter applied)."""
+        store = SubjectTreeStore()
+
+        # Create nodes for two different datasources
+        store.set_request_context({"datasource_id": "ds_1"}, scope_fields=["datasource_id"])
+        store.create_node(None, "NodeOne")
+
+        store.set_request_context({"datasource_id": "ds_2"}, scope_fields=["datasource_id"])
+        store.create_node(None, "NodeTwo")
+
+        # Clear context → no filter → both visible
+        store.set_request_context({}, scope_fields=[])
+        all_children = store.get_children(None)
+        names = {n["name"] for n in all_children}
+        assert "NodeOne" in names
+        assert "NodeTwo" in names

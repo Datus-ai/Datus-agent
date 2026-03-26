@@ -197,17 +197,14 @@ class DatusPathManager:
 
     # Data paths
 
-    def rag_storage_path(self, namespace: str) -> Path:
+    def rag_storage_path(self) -> Path:
         """
-        RAG storage path for a namespace.
-
-        Args:
-            namespace: Namespace name
+        RAG storage path (unified for all namespaces).
 
         Returns:
-            Path: ~/.datus/data/datus_db_{namespace}
+            Path: ~/.datus/data/datus_db
         """
-        path = self.data_dir / f"datus_db_{namespace}"
+        path = self.data_dir / "datus_db"
         # Ensure the directory exists
         path.mkdir(parents=True, exist_ok=True)
         return path

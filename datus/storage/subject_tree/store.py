@@ -34,10 +34,14 @@ _SUBJECT_NODES_TABLE = TableDefinition(
         ColumnDef(name="description", col_type="TEXT", default=""),
         ColumnDef(name="created_at", col_type="TEXT", nullable=False),
         ColumnDef(name="updated_at", col_type="TEXT", nullable=False),
+        ColumnDef(name="datasource_id", col_type="TEXT", default=""),
+        ColumnDef(name="creator_id", col_type="TEXT", default="datus_agent"),
+        ColumnDef(name="updator_id", col_type="TEXT", default="datus_agent"),
     ],
     indices=[
         IndexDef(name="idx_subject_parent_id", columns=["parent_id"]),
         IndexDef(name="idx_subject_parent_name", columns=["parent_id", "name"], unique=True),
+        IndexDef(name="idx_subject_datasource_id", columns=["datasource_id"]),
     ],
     constraints=["UNIQUE(parent_id, name)"],
 )
@@ -53,6 +57,9 @@ class SubjectNodeRecord:
     description: str = ""
     created_at: str = ""
     updated_at: str = ""
+    datasource_id: str = ""
+    creator_id: str = "datus_agent"
+    updator_id: str = "datus_agent"
 
 
 def _node_to_dict(record: SubjectNodeRecord) -> Dict[str, Any]:
@@ -64,6 +71,9 @@ def _node_to_dict(record: SubjectNodeRecord) -> Dict[str, Any]:
         "description": record.description,
         "created_at": record.created_at,
         "updated_at": record.updated_at,
+        "datasource_id": record.datasource_id,
+        "creator_id": record.creator_id,
+        "updator_id": record.updator_id,
     }
 
 
@@ -76,42 +86,72 @@ class SubjectTreeStore:
     def __init__(self):
         """Initialize SubjectTreeStore.
 
-        Reads ``table_prefix`` and ``extra_fields`` from the storage registry
-        defaults (set via ``configure_storage_defaults()``).  This ensures that
-        SaaS deployments get prefixed table names (e.g. ``tb_subject_nodes``)
-        and multi-tenant columns (e.g. ``workspace_id``).
+        Reads ``table_prefix``, ``extra_fields``, and ``scope_indices`` from
+        the storage registry defaults (set via ``configure_storage_defaults()``).
+        This ensures SaaS deployments get prefixed table names
+        (e.g. ``tb_subject_nodes``), multi-tenant columns (e.g. ``workspace_id``),
+        and auto-filled default values on writes.
         """
         from datus.storage.backend_holder import create_rdb_for_store
         from datus.storage.registry import get_storage_defaults
 
         defaults = get_storage_defaults()
         table_prefix = defaults.get("table_prefix", "")
-
-        # Build table definition with optional prefix, extra columns, and scope indices
-        table_def = _SUBJECT_NODES_TABLE
         scope_indices = defaults.get("scope_indices", [])
         extra_pa_fields = defaults.get("extra_fields")
 
-        if table_prefix or extra_pa_fields or scope_indices:
-            import copy
-
-            table_def = copy.copy(table_def)
-            if table_prefix:
-                table_def.table_name = f"{table_prefix}{_SUBJECT_NODES_TABLE.table_name}"
-            if extra_pa_fields:
-                extra_cols = [ColumnDef(name=f.name, col_type="TEXT", default="") for f in extra_pa_fields]
-                table_def.columns = list(table_def.columns) + extra_cols
-            if scope_indices:
-                existing_idx_names = {idx.name for idx in table_def.indices}
-                for col in scope_indices:
-                    idx_name = f"idx_subject_{col}"
-                    if idx_name not in existing_idx_names:
-                        table_def.indices = list(table_def.indices) + [IndexDef(name=idx_name, columns=[col])]
+        # Build table definition with optional prefix, extra columns, and scope indices
+        table_def = TableDefinition(
+            table_name=f"{table_prefix}{_SUBJECT_NODES_TABLE.table_name}"
+            if table_prefix
+            else _SUBJECT_NODES_TABLE.table_name,
+            columns=list(_SUBJECT_NODES_TABLE.columns),
+            indices=list(_SUBJECT_NODES_TABLE.indices),
+            constraints=list(_SUBJECT_NODES_TABLE.constraints),
+        )
+        if extra_pa_fields:
+            extra_cols = [ColumnDef(name=f.name, col_type="TEXT", default="") for f in extra_pa_fields]
+            table_def.columns = table_def.columns + extra_cols
+        if scope_indices:
+            existing_idx_names = {idx.name for idx in table_def.indices}
+            for col in scope_indices:
+                idx_name = f"idx_subject_{col}"
+                if idx_name not in existing_idx_names:
+                    table_def.indices = table_def.indices + [IndexDef(name=idx_name, columns=[col])]
 
         self._rdb = create_rdb_for_store("subject_tree")
         self._table = self._rdb.ensure_table(table_def)
         self._migrate_null_parents()
+
+        # Per-request scope: set via set_request_context() before use in SaaS.
+        # _base_where: appended to every query for tenant isolation.
+        # _write_defaults: auto-filled on every insert for tenant tagging.
+        self._base_where: Dict[str, Any] = {}
+        self._write_defaults: Dict[str, Any] = {}
         logger.info("SubjectTreeStore initialized")
+
+    def set_request_context(self, request_context: Dict[str, Any], scope_fields: Optional[List[str]] = None) -> None:
+        """Set per-request context for tenant isolation.
+
+        Args:
+            request_context: All key-value pairs are auto-filled on writes.
+            scope_fields: Which fields from request_context become WHERE
+                filters on reads. If None, all fields are used.
+        """
+        self._write_defaults = dict(request_context) if request_context else {}
+        if scope_fields:
+            self._base_where = {k: v for k, v in request_context.items() if k in scope_fields and v is not None}
+        else:
+            self._base_where = dict(self._write_defaults)
+
+    def _scoped_where(self, where: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Merge caller where-clause with base tenant filter."""
+        if not self._base_where:
+            return where or {}
+        merged = dict(self._base_where)
+        if where:
+            merged.update(where)
+        return merged
 
     def _migrate_null_parents(self):
         """Migrate existing NULL parent_id values to ROOT_PARENT_ID (-1)."""
@@ -158,6 +198,9 @@ class SubjectTreeStore:
                 parent_id=db_parent_id, name=name, description=description, created_at=now, updated_at=now
             )
             node_id = self._table.insert(record)
+            # Auto-fill tenant fields (e.g. workspace_id) from request context
+            if self._write_defaults:
+                self._table.update(self._write_defaults, where={"node_id": node_id})
 
             created_node = self.get_node(node_id)
             logger.info(f"Created node: {self.get_full_path(node_id)} (node_id={node_id})")
@@ -178,7 +221,7 @@ class SubjectTreeStore:
         Returns:
             Node dict or None if not found
         """
-        rows = self._table.query(SubjectNodeRecord, where={"node_id": node_id})
+        rows = self._table.query(SubjectNodeRecord, where=self._scoped_where({"node_id": node_id}))
         if rows:
             return _node_to_dict(rows[0])
         return None
@@ -247,7 +290,7 @@ class SubjectTreeStore:
         data["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         try:
-            self._table.update(data, where={"node_id": node_id})
+            self._table.update(data, where=self._scoped_where({"node_id": node_id}))
             logger.info(f"Updated node {node_id}")
             return True
         except UniqueViolationError as e:
@@ -278,9 +321,9 @@ class SubjectTreeStore:
             with self._rdb.transaction():
                 for descendant in descendants:
                     child_path = self.get_full_path(descendant["node_id"])
-                    self._table.delete(where={"node_id": descendant["node_id"]})
+                    self._table.delete(where=self._scoped_where({"node_id": descendant["node_id"]}))
                     logger.info(f"Deleted child node {descendant['node_id']} ({child_path})")
-                self._table.delete(where={"node_id": node_id})
+                self._table.delete(where=self._scoped_where({"node_id": node_id}))
             logger.info(f"Deleted node {node_id} ({node_path})" + (" with cascade" if cascade else ""))
             return True
         except Exception as e:
@@ -294,7 +337,7 @@ class SubjectTreeStore:
         db_parent_id = ROOT_PARENT_ID if parent_id is None else parent_id
         rows = self._table.query(
             SubjectNodeRecord,
-            where={"parent_id": db_parent_id},
+            where=self._scoped_where({"parent_id": db_parent_id}),
             order_by=["name"],
         )
         return [_node_to_dict(row) for row in rows]
@@ -530,7 +573,7 @@ class SubjectTreeStore:
         db_parent_id = ROOT_PARENT_ID if parent_id is None else parent_id
         rows = self._table.query(
             SubjectNodeRecord,
-            where={"parent_id": db_parent_id, "name": name},
+            where=self._scoped_where({"parent_id": db_parent_id, "name": name}),
         )
         if rows:
             return _node_to_dict(rows[0])
@@ -1180,7 +1223,7 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
             logger.error(f"Failed to fetch entries by node_id={node_id}: {e}")
             return []
 
-    def delete_entry(self, subject_path: List[str], name: str) -> bool:
+    def delete_entry(self, subject_path: List[str], name: str, extra_conditions: Optional[List] = None) -> bool:
         """Delete entry by subject_path and name from vector store.
 
         This is a generic method for deleting entries from storage using
@@ -1190,25 +1233,13 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
         Args:
             subject_path: Subject hierarchy path (e.g., ['Finance', 'Revenue'])
             name: Name of the entry to delete
+            extra_conditions: Additional filter conditions (e.g., datasource_id filter)
 
         Returns:
             True if deleted successfully, False if entry not found
 
         Raises:
             ValueError: If subject_path is empty or name is empty
-
-        Examples:
-            # Delete a specific metric
-            deleted = store.delete_entry(
-                subject_path=['Finance', 'Revenue'],
-                name='total_revenue'
-            )
-
-            # Delete a reference SQL
-            deleted = store.delete_entry(
-                subject_path=['Analytics', 'Reports'],
-                name='daily_sales_query'
-            )
         """
         if not subject_path:
             raise ValueError("subject_path cannot be empty")
@@ -1230,7 +1261,10 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
         self._ensure_table_ready()
         from datus_storage_base.conditions import and_, eq
 
-        where_condition = and_(eq(SUBJECT_ID_COLUMN_NAME, subject_node_id), eq(NAME_COLUMN_NAME, name))
+        conditions = [eq(SUBJECT_ID_COLUMN_NAME, subject_node_id), eq(NAME_COLUMN_NAME, name)]
+        if extra_conditions:
+            conditions.extend(extra_conditions)
+        where_condition = and_(*conditions)
 
         # Check if entry exists
         count = self._count_rows(where_condition)

@@ -321,7 +321,7 @@ class TestSemanticModelRAGGetSemanticModel:
     def test_get_semantic_model_basic(self, sem_rag):
         """Store a table and retrieve it via get_semantic_model."""
         objs = [_make_table_object("orders", description="Orders table")]
-        sem_rag.storage.store_batch(objs)
+        sem_rag.store_batch(objs)
 
         result = sem_rag.get_semantic_model(table_name="orders")
         assert result is not None
@@ -357,7 +357,7 @@ class TestSemanticModelRAGGetSemanticModel:
                 entity="order",
             ),
         ]
-        sem_rag.storage.store_batch(objs)
+        sem_rag.store_batch(objs)
 
         result = sem_rag.get_semantic_model(table_name="orders")
         assert result is not None
@@ -394,7 +394,7 @@ class TestSemanticModelRAGGetSemanticModel:
                 schema_name="dbo",
             )
         ]
-        sem_rag.storage.store_batch(objs)
+        sem_rag.store_batch(objs)
 
         result = sem_rag.get_semantic_model(
             catalog_name="prod", database_name="sales", schema_name="dbo", table_name="orders"
@@ -413,7 +413,7 @@ class TestSemanticModelRAGGetSemanticModel:
                 schema_name="dbo",
             )
         ]
-        sem_rag.storage.store_batch(objs)
+        sem_rag.store_batch(objs)
 
         # Use a different catalog_name to trigger fallback
         result = sem_rag.get_semantic_model(
@@ -425,7 +425,7 @@ class TestSemanticModelRAGGetSemanticModel:
     def test_get_semantic_model_fallback_case_insensitive(self, sem_rag):
         """When table is stored with lowercase, querying uppercase triggers case-insensitive fallback."""
         objs = [_make_table_object("orders", description="Orders table")]
-        sem_rag.storage.store_batch(objs)
+        sem_rag.store_batch(objs)
 
         # Query with uppercase -- will try exact match first, then broad, then lowercase fallback
         # Since "ORDERS" != "orders", exact match fails, broad match also uses "ORDERS",
@@ -437,7 +437,7 @@ class TestSemanticModelRAGGetSemanticModel:
     def test_get_semantic_model_with_select_fields(self, sem_rag):
         """select_fields filters the returned dict."""
         objs = [_make_table_object("orders", description="Orders")]
-        sem_rag.storage.store_batch(objs)
+        sem_rag.store_batch(objs)
 
         result = sem_rag.get_semantic_model(table_name="orders", select_fields=["table_name", "description"])
         assert result is not None
@@ -461,7 +461,7 @@ class TestSemanticModelRAGGetSemanticModel:
                 time_granularity="DAY",
             ),
         ]
-        sem_rag.storage.store_batch(objs)
+        sem_rag.store_batch(objs)
 
         result = sem_rag.get_semantic_model(table_name="events")
         assert result is not None
@@ -476,7 +476,7 @@ class TestSemanticModelRAGGetSemanticModel:
             _make_table_object("orders", description="Orders"),
             _make_column_object("orders", "internal_col", description="Internal column"),
         ]
-        sem_rag.storage.store_batch(objs)
+        sem_rag.store_batch(objs)
 
         result = sem_rag.get_semantic_model(table_name="orders")
         assert result is not None
@@ -505,7 +505,7 @@ class TestSemanticModelRAGSearchAll:
             _make_table_object("products", description="Products"),
             _make_column_object("orders", "id", description="Order ID", is_entity_key=True),
         ]
-        sem_rag.storage.store_batch(objs)
+        sem_rag.store_batch(objs)
 
         results = sem_rag.search_all()
         # search_all filters kind=table
@@ -519,7 +519,7 @@ class TestSemanticModelRAGSearchAll:
             _make_table_object("orders", description="Orders", database_name="sales"),
             _make_table_object("products", description="Products", database_name="catalog"),
         ]
-        sem_rag.storage.store_batch(objs)
+        sem_rag.store_batch(objs)
 
         results = sem_rag.search_all(database_name="sales")
         assert len(results) == 1
@@ -545,7 +545,7 @@ class TestSemanticModelRAGGetSize:
             _make_table_object("products", description="Products table"),
             _make_column_object("orders", "amount", description="Amount", is_measure=True),
         ]
-        sem_rag.storage.store_batch(objs)
+        sem_rag.store_batch(objs)
 
         assert sem_rag.get_size() == 2
 

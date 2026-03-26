@@ -192,7 +192,12 @@ class SchemaStorage(BaseMetadataStorage):
         return pa.concat_tables(result, promote_options="default")
 
     def get_schema(
-        self, table_name: str, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+        self,
+        table_name: str,
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
+        extra_where: WhereExpr = None,
     ) -> pa.Table:
         where = _build_where_clause(
             catalog_name=catalog_name,
@@ -205,8 +210,8 @@ class SchemaStorage(BaseMetadataStorage):
             where_condition = and_(where, table_condition)
         else:
             where_condition = table_condition
-        # Apply scope filter to respect sub-agent scoped context
-        where_condition = self._apply_scope_filter(where_condition)
+        if extra_where:
+            where_condition = and_(where_condition, extra_where)
         self._ensure_table_ready()
         return self.table.search_all(
             where=where_condition,
@@ -225,15 +230,46 @@ class SchemaValueStorage(BaseMetadataStorage):
 
 
 class SchemaWithValueRAG:
+    """RAG interface for schema metadata operations.
+
+    Handles datasource_id filtering on reads and field injection on writes.
+    """
+
     def __init__(
         self,
         agent_config: AgentConfig,
         sub_agent_name: Optional[str] = None,
+        datasource_id: Optional[str] = None,
+        creator_id: str = "datus_agent",
+        updator_id: str = "datus_agent",
     ):
-        from datus.storage.registry import get_rag_storage
+        from datus.storage.rag_scope import _build_sub_agent_filter
+        from datus.storage.registry import get_storage
 
-        self.schema_store = get_rag_storage(SchemaStorage, "database", agent_config, sub_agent_name, "tables")
-        self.value_store = get_rag_storage(SchemaValueStorage, "database", agent_config, sub_agent_name, "tables")
+        self.schema_store = get_storage(SchemaStorage, "database")
+        self.value_store = get_storage(SchemaValueStorage, "database")
+        self.datasource_id = datasource_id or agent_config.current_namespace
+        self.creator_id = creator_id
+        self.updator_id = updator_id
+        self._sub_agent_filter = _build_sub_agent_filter(agent_config, sub_agent_name, self.schema_store, "tables")
+
+    def _ds_condition(self):
+        return eq("datasource_id", self.datasource_id)
+
+    def _add_ds_filter(self, where: WhereExpr) -> WhereExpr:
+        """Add datasource_id + sub-agent filter to existing where clause."""
+        ds_cond = self._ds_condition()
+        extra = and_(ds_cond, self._sub_agent_filter) if self._sub_agent_filter else ds_cond
+        if where is None:
+            return extra
+        return and_(where, extra)
+
+    def _inject_write_fields(self, data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        for row in data:
+            row.setdefault("datasource_id", self.datasource_id)
+            row.setdefault("creator_id", self.creator_id)
+            row.setdefault("updator_id", self.updator_id)
+        return data
 
     def truncate(self) -> None:
         """Drop both schema and value tables and reset state."""
@@ -241,9 +277,8 @@ class SchemaWithValueRAG:
         self.value_store.truncate()
 
     def store_batch(self, schemas: List[Dict[str, Any]], values: List[Dict[str, Any]]):
-        # Process schemas and values in batches of 500
-        # batch_size = 500
         if schemas:
+            self._inject_write_fields(schemas)
             self.schema_store.store_batch(schemas)
 
         if len(values) == 0:
@@ -258,6 +293,7 @@ class SchemaWithValueRAG:
                 sample_rows = json2csv(sample_rows)
             item["sample_rows"] = sample_rows
             final_values.append(item)
+        self._inject_write_fields(final_values)
         self.value_store.store_batch(final_values)
 
         logger.debug(f"Batch stored {len(schemas)} schemas, {len(final_values)} values")
@@ -268,10 +304,10 @@ class SchemaWithValueRAG:
         self.value_store.create_indices()
 
     def get_schema_size(self):
-        return self.schema_store.table_size()
+        return self.schema_store._count_rows(where=self._ds_condition())
 
     def get_value_size(self):
-        return self.value_store.table_size()
+        return self.value_store._count_rows(where=self._ds_condition())
 
     def search_similar(
         self,
@@ -289,6 +325,7 @@ class SchemaWithValueRAG:
             schema_name=schema_name,
             table_type=table_type,
         )
+        where = self._add_ds_filter(where)
         schema_results = self.schema_store.do_search_similar(
             query_text,
             top_n=top_n,
@@ -303,6 +340,18 @@ class SchemaWithValueRAG:
         )
         return schema_results, value_results
 
+    def get_schema(
+        self, table_name: str, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> pa.Table:
+        """Get schema for a specific table with datasource_id filtering."""
+        return self.schema_store.get_schema(
+            table_name=table_name,
+            catalog_name=catalog_name,
+            database_name=database_name,
+            schema_name=schema_name,
+            extra_where=self._add_ds_filter(None),
+        )
+
     def search_all_schemas(
         self,
         catalog_name: str = "",
@@ -311,39 +360,28 @@ class SchemaWithValueRAG:
         table_type: TABLE_TYPE = "full",
         select_fields: Optional[List[str]] = None,
     ) -> pa.Table:
-        """Search all schemas for a given database name.
-        Args:
-            database_name: The catalog name to search for. If not provided, search all catalogs.
-            catalog_name:  The database name to search for. If not provided, search all databases.
-            schema_name: The schema name to search for. If not provided, search all schemas.
-            table_type: The table type to search for.
-            select_fields: The fields to search for. If not provided, search all fields.
-
-        Returns:
-            A list of dictionaries containing the schema information.
-        """
-        return self.schema_store.search_all(
+        """Search all schemas for a given database name."""
+        where = _build_where_clause(
             catalog_name=catalog_name,
             database_name=database_name,
             schema_name=schema_name,
             table_type=table_type,
-            select_fields=select_fields,
         )
+        where = self._add_ds_filter(where)
+        return self.schema_store._search_all(where=where, select_fields=select_fields)
 
     def search_all_value(
         self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_type: TABLE_TYPE = "full"
     ) -> pa.Table:
-        """Search all schemas for a given database name.
-        :param database_name: The catalog name to search for. If not provided, search all catalogs.
-        :param catalog_name:  The database name to search for. If not provided, search all databases.
-        :param schema_name: The schema name to search for. If not provided, search all schemas.
-        :param table_type: The table type to search for.
-        Returns:
-            A list of dictionaries containing the schema information.
-        """
-        return self.value_store.search_all(
-            catalog_name=catalog_name, database_name=database_name, schema_name=schema_name, table_type=table_type
+        """Search all values for a given database name."""
+        where = _build_where_clause(
+            catalog_name=catalog_name,
+            database_name=database_name,
+            schema_name=schema_name,
+            table_type=table_type,
         )
+        where = self._add_ds_filter(where)
+        return self.value_store._search_all(where=where)
 
     def search_tables(
         self,
@@ -428,9 +466,9 @@ class SchemaWithValueRAG:
         else:
             combined_condition = None
 
-        # Apply scope filters to respect sub-agent scoped context
-        schema_condition = self.schema_store._apply_scope_filter(combined_condition)
-        value_condition = self.value_store._apply_scope_filter(combined_condition)
+        # Apply datasource_id + sub-agent scope filter
+        schema_condition = self._add_ds_filter(combined_condition)
+        value_condition = self._add_ds_filter(combined_condition)
 
         schema_fields = [
             "identifier",

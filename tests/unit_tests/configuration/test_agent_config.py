@@ -102,13 +102,12 @@ class TestFileStemFromUri:
 
 
 class TestRagStoragePath:
-    def test_includes_namespace(self):
-        path = rag_storage_path("my_ns", "/data")
-        assert "my_ns" in path
-        assert path.endswith("datus_db_my_ns")
+    def test_unified_datus_db_path(self):
+        path = rag_storage_path("/data")
+        assert path.endswith("datus_db")
 
     def test_includes_base_path(self):
-        path = rag_storage_path("ns", "/custom/base")
+        path = rag_storage_path("/custom/base")
         assert "/custom/base" in path
 
 

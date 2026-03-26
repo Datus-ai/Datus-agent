@@ -351,9 +351,8 @@ class SqliteRdbBackend(BaseRdbBackend):
         self._data_dir = config.get("data_dir", "")
 
     def connect(self, namespace: str, store_db_name: str) -> SqliteRdbDatabase:
-        safe_ns = _safe_path_segment(namespace, "namespace")
         safe_store = _safe_path_segment(store_db_name, "store_db_name")
-        base_path = os.path.join(self._data_dir, f"datus_db_{safe_ns}") if safe_ns else self._data_dir
+        base_path = os.path.join(self._data_dir, "datus_db")
         db_file = os.path.join(base_path, f"{safe_store}.db")
         return SqliteRdbDatabase(db_file)
 

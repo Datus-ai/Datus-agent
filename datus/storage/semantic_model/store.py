@@ -113,14 +113,45 @@ class SemanticModelStorage(BaseEmbeddingStore):
 
 
 class SemanticModelRAG:
-    """RAG interface for semantic model operations."""
+    """RAG interface for semantic model operations.
 
-    def __init__(self, agent_config: "AgentConfig", sub_agent_name: Optional[str] = None):
-        from datus.storage.registry import get_rag_storage
+    Handles datasource_id filtering on reads and field injection on writes.
+    """
 
-        self.storage: SemanticModelStorage = get_rag_storage(
-            SemanticModelStorage, "semantic_model", agent_config, sub_agent_name, "tables"
-        )
+    def __init__(
+        self,
+        agent_config: "AgentConfig",
+        sub_agent_name: Optional[str] = None,
+        datasource_id: Optional[str] = None,
+        creator_id: str = "datus_agent",
+        updator_id: str = "datus_agent",
+    ):
+        from datus.storage.rag_scope import _build_sub_agent_filter
+        from datus.storage.registry import get_storage
+
+        self.storage: SemanticModelStorage = get_storage(SemanticModelStorage, "semantic_model")
+        self.datasource_id = datasource_id or agent_config.current_namespace
+        self.creator_id = creator_id
+        self.updator_id = updator_id
+        self._sub_agent_filter = _build_sub_agent_filter(agent_config, sub_agent_name, self.storage, "tables")
+
+    def _ds_condition(self):
+        """Return datasource_id eq condition."""
+        return eq("datasource_id", self.datasource_id)
+
+    def _base_conditions(self) -> list:
+        """Build base conditions (datasource_id + sub-agent filter)."""
+        conditions = [self._ds_condition()]
+        if self._sub_agent_filter:
+            conditions.append(self._sub_agent_filter)
+        return conditions
+
+    def _inject_write_fields(self, data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        for row in data:
+            row.setdefault("datasource_id", self.datasource_id)
+            row.setdefault("creator_id", self.creator_id)
+            row.setdefault("updator_id", self.updator_id)
+        return data
 
     def truncate(self) -> None:
         """Drop the semantic model table and reset state."""
@@ -134,25 +165,15 @@ class SemanticModelRAG:
         table_name: str = "",
         select_fields: Optional[List[str]] = None,
     ) -> Optional[Dict[str, Any]]:
-        """
-        Reconstruct semantic model object from granular storage.
-
-        Args:
-            catalog_name: Optional catalog filter
-            database_name: Optional database filter
-            schema_name: Optional schema filter
-            table_name: Table name (required)
-            select_fields: Optional fields to return
-
-        Returns:
-            Semantic model dict, or None if not found
-        """
+        """Reconstruct semantic model object from granular storage."""
         if not table_name:
             logger.warning("get_semantic_model called without table_name")
             return None
 
+        ds_cond = self._ds_condition()
+
         # Build filter conditions
-        table_conds = [eq("kind", "table"), eq("table_name", table_name)]
+        table_conds = [eq("kind", "table"), eq("table_name", table_name), ds_cond]
         if catalog_name:
             table_conds.append(eq("catalog_name", catalog_name))
         if database_name:
@@ -162,19 +183,16 @@ class SemanticModelRAG:
 
         table_objs = self.storage._search_all(where=And(table_conds)).to_pylist()
 
-        # Fallback 1: If not found with full filters, try matching just the table_name
-        # This handles cases where stored database/schema names might differ slightly from the current coordinate
+        # Fallback 1: broad match
         if not table_objs and (catalog_name or database_name or schema_name):
             logger.debug(f"Semantic model not found for {table_name} with full filters, trying broad match.")
-            broad_conds = [eq("kind", "table"), eq("table_name", table_name)]
+            broad_conds = [eq("kind", "table"), eq("table_name", table_name), ds_cond]
             table_objs = self.storage._search_all(where=And(broad_conds)).to_pylist()
 
-        # Fallback 2: Case-insensitive match if still not found
+        # Fallback 2: case-insensitive
         if not table_objs:
-            # eq is case-sensitive. We could iterate or use LIKE for case-insensitivity depending on backend
-            # For now, let's just log and try one more common normalization
             if table_name.lower() != table_name:
-                lower_conds = [eq("kind", "table"), eq("table_name", table_name.lower())]
+                lower_conds = [eq("kind", "table"), eq("table_name", table_name.lower()), ds_cond]
                 table_objs = self.storage._search_all(where=And(lower_conds)).to_pylist()
 
         if not table_objs:
@@ -183,10 +201,11 @@ class SemanticModelRAG:
         semantic_model = table_objs[0]
         model_name = semantic_model.get("name", table_name)
 
-        # Find children (dimensions, measures, identifiers)
+        # Find children
         children_conds = [
             eq("kind", "column"),
             eq("table_name", semantic_model.get("table_name", table_name)),
+            ds_cond,
         ]
         if semantic_model.get("catalog_name"):
             children_conds.append(eq("catalog_name", semantic_model["catalog_name"]))
@@ -197,21 +216,18 @@ class SemanticModelRAG:
 
         children = self.storage._search_all(where=And(children_conds)).to_pylist()
 
-        # Aggregate children
         dimensions = []
         measures = []
         identifiers = []
 
         for child in children:
-            # Base fields for all column types
             child_dict = {
                 "name": child.get("name"),
                 "description": child.get("description"),
-                "expr": child.get("expr") or child.get("name"),  # Fallback to name for backward compatibility
+                "expr": child.get("expr") or child.get("name"),
             }
 
             if child.get("is_dimension"):
-                # Add dimension-specific fields
                 col_type = child.get("column_type")
                 if col_type:
                     child_dict["type"] = col_type
@@ -223,7 +239,6 @@ class SemanticModelRAG:
                 dimensions.append(child_dict)
 
             elif child.get("is_measure"):
-                # Add measure-specific fields
                 if child.get("agg"):
                     child_dict["agg"] = child.get("agg")
                 if child.get("create_metric"):
@@ -234,7 +249,6 @@ class SemanticModelRAG:
                 measures.append(child_dict)
 
             elif child.get("is_entity_key"):
-                # Add identifier-specific fields
                 col_type = child.get("column_type")
                 if col_type:
                     child_dict["type"] = col_type
@@ -243,7 +257,6 @@ class SemanticModelRAG:
                 child_dict = {k: v for k, v in child_dict.items() if v is not None and v != ""}
                 identifiers.append(child_dict)
 
-        # Construct result with identifying fields for update operations
         full_result = {
             "catalog_name": semantic_model.get("catalog_name", ""),
             "database_name": semantic_model.get("database_name", ""),
@@ -257,7 +270,6 @@ class SemanticModelRAG:
             "identifiers": identifiers,
         }
 
-        # Apply field selection
         if select_fields:
             result = {field: full_result.get(field) for field in select_fields if field in full_result}
         else:
@@ -267,7 +279,7 @@ class SemanticModelRAG:
 
     def search_all(self, database_name: str = "", select_fields: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """Search for all table-level semantic model objects."""
-        conditions = [eq("kind", "table")]
+        conditions = [eq("kind", "table"), self._ds_condition()]
         if database_name:
             conditions.append(eq("database_name", database_name))
 
@@ -277,16 +289,18 @@ class SemanticModelRAG:
     def get_size(self) -> int:
         """Get count of table-level semantic model objects (excluding columns)."""
         try:
-            return self.storage._count_rows(where=eq("kind", "table"))
+            return self.storage._count_rows(where=And([eq("kind", "table"), self._ds_condition()]))
         except Exception:
             return 0
 
     def store_batch(self, objects: List[Dict[str, Any]]):
         """Store a batch of semantic model objects."""
+        self._inject_write_fields(objects)
         self.storage.store_batch(objects)
 
     def upsert_batch(self, objects: List[Dict[str, Any]]):
         """Upsert a batch of semantic model objects (update if id exists, insert if not)."""
+        self._inject_write_fields(objects)
         self.storage.upsert_batch(objects, on_column="id")
 
     def create_indices(self):

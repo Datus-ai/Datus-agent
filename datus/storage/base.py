@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import pandas as pd
 import pyarrow as pa
-from datus_storage_base.conditions import Node, WhereExpr, and_
+from datus_storage_base.conditions import WhereExpr
 from datus_storage_base.vector.base import VectorDatabase, VectorTable
 
 from datus.storage.embedding_models import EmbeddingModel
@@ -56,32 +56,6 @@ class StorageBase:
 
             self.db = create_vector_connection()
 
-    def _ensure_tables(self):
-        """Ensure all required tables exist."""
-        self._ensure_success_story_table()
-
-    def _ensure_success_story_table(self):
-        """Ensure the success story table exists."""
-        try:
-            if not self.db.table_exists("success_story"):
-                schema = pa.schema(
-                    [
-                        pa.field("sql", pa.string()),
-                        pa.field("user_name", pa.string()),
-                        pa.field("type", pa.string()),
-                        pa.field("bi_tool", pa.string()),
-                        pa.field("description", pa.string()),
-                        pa.field("created_at", pa.string()),
-                        pa.field("embedding", pa.list_(pa.float64(), list_size=384)),
-                    ]
-                )
-                self.db.create_table("success_story", schema=schema)
-        except Exception as e:
-            raise DatusException(
-                ErrorCode.STORAGE_TABLE_OPERATION_FAILED,
-                message_args={"operation": "create_table", "table_name": "success_story", "error_message": str(e)},
-            ) from e
-
     def _get_current_timestamp(self) -> str:
         """Get current timestamp in ISO format."""
         return datetime.utcnow().isoformat()
@@ -118,15 +92,30 @@ class BaseEmbeddingStore(StorageBase):
         # Append extra fields to schema if provided
         if schema is not None and extra_fields:
             schema = pa.schema(list(schema) + extra_fields)
+        # Hardcoded standard fields for multi-tenant isolation and audit
+        _standard_fields = [
+            pa.field("datasource_id", pa.string()),
+            pa.field("creator_id", pa.string()),
+            pa.field("updator_id", pa.string()),
+        ]
+        if schema is not None:
+            existing_names = {f.name for f in schema}
+            new_fields = [f for f in _standard_fields if f.name not in existing_names]
+            if new_fields:
+                schema = pa.schema(list(schema) + new_fields)
         self._schema = schema
         self._unique_columns = unique_columns
-        self._default_values: Dict[str, Any] = default_values or {}
-        self._scope_indices: List[str] = scope_indices or []
-        self._scope_filter: Optional[Node] = None
+        # Ensure default values for standard audit fields
+        merged_defaults = {"creator_id": "datus_agent", "updator_id": "datus_agent"}
+        if default_values:
+            merged_defaults.update(default_values)
+        self._default_values: Dict[str, Any] = merged_defaults
+        # Ensure datasource_id is always indexed for fast filtering
+        _indices = list(scope_indices or [])
+        if "datasource_id" not in _indices:
+            _indices.append("datasource_id")
+        self._scope_indices: List[str] = _indices
         # Delay table initialization until first use.
-        # _shared is a mutable object so that shallow copies (scoped views)
-        # share the same state — once the singleton initializes the table,
-        # all views see it immediately without re-entering the lock.
         self._shared = _SharedTableState()
         self._table_lock = Lock()
         self._write_lock = Lock()
@@ -158,13 +147,6 @@ class BaseEmbeddingStore(StorageBase):
                 self._create_scalar_index(col)
             logger.debug(f"Table {self.table_name} initialized successfully with embedding function")
 
-    def __copy__(self):
-        """Shallow copy that shares db/table/locks but allows independent _scope_filter."""
-        cls = self.__class__
-        new = cls.__new__(cls)
-        new.__dict__.update(self.__dict__)
-        return new
-
     def _apply_default_values(self, data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Fill in default values for rows that are missing them."""
         if not self._default_values:
@@ -174,20 +156,10 @@ class BaseEmbeddingStore(StorageBase):
                 row.setdefault(k, v)
         return data
 
-    def _apply_scope_filter(self, where: WhereExpr = None) -> WhereExpr:
-        """Combine the provided where expression with the scope filter (if any)."""
-        if self._scope_filter is None:
-            return where
-        if where is None:
-            return self._scope_filter
-        # Both are Node objects – combine via and_()
-        return and_(self._scope_filter, where)
-
     def _search_all(
         self, where: WhereExpr = None, select_fields: Optional[List[str]] = None, limit: Optional[int] = None
     ) -> pa.Table:
         self._ensure_table_ready()
-        where = self._apply_scope_filter(where)
         if limit:
             row_limit = limit
         else:
@@ -479,7 +451,6 @@ class BaseEmbeddingStore(StorageBase):
         query_type: str = "vector",
     ) -> pa.Table:
         self._ensure_table_ready()
-        where = self._apply_scope_filter(where)
 
         if query_type == "hybrid":
             search_result = self._search_hybrid(query_txt, select_fields, top_n, where)
@@ -543,8 +514,6 @@ class BaseEmbeddingStore(StorageBase):
 
     def table_size(self) -> int:
         self._ensure_table_ready()
-        if self._scope_filter is not None:
-            return self.table.count_rows(self._scope_filter)
         return self.table.count_rows()
 
     def update(self, where: WhereExpr, update_values: Dict[str, Any], unique_filter: Optional[WhereExpr] = None):
@@ -553,9 +522,7 @@ class BaseEmbeddingStore(StorageBase):
             return
         if not where:
             return
-        where = self._apply_scope_filter(where)
         if unique_filter:
-            unique_filter = self._apply_scope_filter(unique_filter)
             existing = self.table.count_rows(unique_filter)
             if existing:
                 raise DatusException(
@@ -593,13 +560,11 @@ class BaseEmbeddingStore(StorageBase):
         """Delete rows matching the where clause."""
         self._ensure_table_ready()
         if where:
-            where = self._apply_scope_filter(where)
             self.table.delete(where)
 
     def _count_rows(self, where: WhereExpr = None) -> int:
         """Count rows with optional filter."""
         self._ensure_table_ready()
-        where = self._apply_scope_filter(where)
         return self.table.count_rows(where)
 
     def query_with_filter(
@@ -610,7 +575,6 @@ class BaseEmbeddingStore(StorageBase):
     ) -> pa.Table:
         """Query rows with filter, field selection, and optional limit."""
         self._ensure_table_ready()
-        where = self._apply_scope_filter(where)
         if limit is None:
             limit = self.table.count_rows(where)
         return self.table.search_all(

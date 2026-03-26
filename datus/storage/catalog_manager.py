@@ -13,8 +13,7 @@ from datus_storage_base.conditions import And, eq
 
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.agent_models import SubAgentConfig
-from datus.storage.rag_scope import build_rag_scope
-from datus.storage.registry import create_scoped_view, get_storage
+from datus.storage.registry import get_storage
 from datus.storage.semantic_model.store import SemanticModelStorage
 from datus.utils.loggings import get_logger
 
@@ -26,17 +25,14 @@ class CatalogUpdater:
     Used to update all catalog data, including vector databases specific to Sub-Agents.
     """
 
-    def __init__(self, agent_config: AgentConfig):
+    def __init__(self, agent_config: AgentConfig, datasource_id: Optional[str] = None):
         self._agent_config = agent_config
-        self.semantic_model_storage = get_storage(
-            SemanticModelStorage, "semantic_model", agent_config.current_namespace
-        )
+        self.datasource_id = datasource_id or agent_config.current_namespace
+        self.semantic_model_storage = get_storage(SemanticModelStorage, "semantic_model")
 
     def _sub_agent_storage(self, sub_agent_config: SubAgentConfig) -> SemanticModelStorage | None:
-        name = sub_agent_config.system_prompt
-        storage = get_storage(SemanticModelStorage, "semantic_model", self._agent_config.current_namespace)
-        scope = build_rag_scope(self._agent_config, name, storage, "tables")
-        return create_scoped_view(storage, scope)
+        # Sub-agent scoping is handled at the condition level, not via scoped views
+        return self.semantic_model_storage
 
     def _get_all_storages(self) -> List[SemanticModelStorage]:
         """Get main storage and all sub-agent storages."""
@@ -75,6 +71,8 @@ class CatalogUpdater:
 
         storages = self._get_all_storages()
 
+        ds_cond = eq("datasource_id", self.datasource_id)
+
         # 1. Update table-level record (description)
         if "description" in update_values:
             table_where = And(
@@ -85,6 +83,7 @@ class CatalogUpdater:
                     eq("schema_name", schema_name),
                     eq("table_name", table_name),
                     eq("name", semantic_model_name),
+                    ds_cond,
                 ]
             )
             table_update = {"description": update_values["description"]}
@@ -177,6 +176,7 @@ class CatalogUpdater:
                     eq("schema_name", schema_name),
                     eq("table_name", table_name),
                     eq("name", col_name),
+                    eq("datasource_id", self.datasource_id),
                 ]
             )
 

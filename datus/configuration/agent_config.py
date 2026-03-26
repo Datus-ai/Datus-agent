@@ -778,12 +778,7 @@ class AgentConfig:
         return self.models[name]
 
     def rag_storage_path(self) -> str:
-        if not self._current_namespace:
-            raise DatusException(
-                code=ErrorCode.COMMON_FIELD_REQUIRED,
-                message="Namespace is required, please run with --namespace <namespace>",
-            )
-        return rag_storage_path(self._current_namespace, self.rag_base_path)
+        return rag_storage_path(self.rag_base_path)
 
     def document_storage_path(self, platform: str) -> str:
         """Per-platform document storage path (namespace-independent).
@@ -866,8 +861,8 @@ class AgentConfig:
             )
 
 
-def rag_storage_path(namespace: str, rag_base_path: str = "data") -> str:
-    return os.path.join(rag_base_path, f"datus_db_{namespace}")
+def rag_storage_path(rag_base_path: str = "data") -> str:
+    return os.path.join(rag_base_path, "datus_db")
 
 
 def resolve_env(value: str) -> str:

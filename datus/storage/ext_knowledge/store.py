@@ -214,6 +214,7 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
         subject_path: Optional[List[str]] = None,
         select_fields: Optional[List[str]] = None,
         top_n: Optional[int] = 5,
+        extra_conditions: Optional[List] = None,
     ) -> List[Dict[str, Any]]:
         """Search for similar knowledge entries.
 
@@ -221,6 +222,7 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
             query_text: Query text to search for
             subject_path: Filter by subject path (e.g., ['Finance', 'Revenue']) (optional)
             top_n: Number of results to return
+            extra_conditions: Additional filter conditions (e.g., datasource_id filter)
 
         Returns:
             List of matching knowledge entries
@@ -232,45 +234,43 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
             selected_fields=select_fields,
             top_n=top_n,
             name_field="name",
+            additional_conditions=extra_conditions,
         )
 
     def search_all_knowledge(
         self,
         subject_path: Optional[List[str]] = None,
+        extra_conditions: Optional[List] = None,
     ) -> List[Dict[str, Any]]:
         """Get all knowledge entries with optional filtering.
 
         Args:
             subject_path: Filter by subject path (e.g., ['Finance', 'Revenue']) (optional)
+            extra_conditions: Additional filter conditions (e.g., datasource_id filter)
 
         Returns:
             List of all matching knowledge entries
         """
-        return self.search_knowledge(query_text=None, subject_path=subject_path, top_n=None)
+        return self.search_knowledge(
+            query_text=None, subject_path=subject_path, top_n=None, extra_conditions=extra_conditions
+        )
 
     def after_init(self):
         """After initialization, create indices for the table."""
         self.create_indices()
 
-    def delete_knowledge(self, subject_path: List[str], name: str) -> bool:
+    def delete_knowledge(self, subject_path: List[str], name: str, extra_conditions: Optional[List] = None) -> bool:
         """Delete knowledge entry by subject_path and name.
-
-        Only deletes from vector store, does not modify any files.
 
         Args:
             subject_path: Subject hierarchy path (e.g., ['Business', 'Terms'])
             name: Name of the knowledge entry to delete
+            extra_conditions: Additional filter conditions (e.g., datasource_id filter)
 
         Returns:
             True if deleted successfully, False if entry not found
-
-        Examples:
-            deleted = storage.delete_knowledge(
-                subject_path=['Business', 'Terms'],
-                name='annual_revenue'
-            )
         """
-        return self.delete_entry(subject_path, name)
+        return self.delete_entry(subject_path, name, extra_conditions=extra_conditions)
 
 
 def gen_subject_item_id(subject_path: List[str], name: str) -> str:
@@ -288,30 +288,48 @@ def gen_subject_item_id(subject_path: List[str], name: str) -> str:
 
 
 class ExtKnowledgeRAG:
-    """RAG interface for external knowledge with CRUD operations suitable for LLM tools.
+    """RAG interface for external knowledge with CRUD operations.
 
-    This class provides a simple, tool-friendly interface for managing external knowledge entries.
-    All methods return structured dictionaries with success/failure status and messages.
+    Handles datasource_id filtering on reads and field injection on writes.
     """
 
-    def __init__(self, agent_config: AgentConfig, sub_agent_name: Optional[str] = None):
-        from datus.storage.registry import get_rag_storage
+    def __init__(
+        self,
+        agent_config: AgentConfig,
+        sub_agent_name: Optional[str] = None,
+        datasource_id: Optional[str] = None,
+        creator_id: str = "datus_agent",
+        updator_id: str = "datus_agent",
+    ):
+        from datus.storage.rag_scope import _build_sub_agent_filter
+        from datus.storage.registry import get_storage
 
-        self.store = get_rag_storage(ExtKnowledgeStore, "ext_knowledge", agent_config, sub_agent_name, "ext_knowledge")
+        self.store = get_storage(ExtKnowledgeStore, "ext_knowledge")
+        self.datasource_id = datasource_id or agent_config.current_namespace
+        self.creator_id = creator_id
+        self.updator_id = updator_id
+        self._sub_agent_filter = _build_sub_agent_filter(agent_config, sub_agent_name, self.store, "ext_knowledge")
+
+    def _ds_conditions(self) -> List:
+        from datus_storage_base.conditions import eq
+
+        conditions = [eq("datasource_id", self.datasource_id)]
+        if self._sub_agent_filter:
+            conditions.append(self._sub_agent_filter)
+        return conditions
+
+    def _inject_write_fields(self, data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        for row in data:
+            row.setdefault("datasource_id", self.datasource_id)
+            row.setdefault("creator_id", self.creator_id)
+            row.setdefault("updator_id", self.updator_id)
+        return data
 
     def truncate(self) -> None:
         """Drop the ext_knowledge table and reset state."""
         self.store.truncate()
 
     def _parse_subject_path(self, subject_path) -> List[str]:
-        """Parse subject_path from string or list format.
-
-        Args:
-            subject_path: Either a string like "Finance/Revenue" or a list like ["Finance", "Revenue"]
-
-        Returns:
-            List of path components
-        """
         if isinstance(subject_path, str):
             return [part.strip() for part in subject_path.split("/") if part.strip()]
         elif isinstance(subject_path, list):
@@ -320,7 +338,9 @@ class ExtKnowledgeRAG:
             raise ValueError(f"subject_path must be string or list, got {type(subject_path)}")
 
     def get_knowledge_size(self):
-        return self.store.table_size()
+        from datus_storage_base.conditions import eq
+
+        return self.store._count_rows(where=eq("datasource_id", self.datasource_id))
 
     def query_knowledge(
         self,
@@ -328,57 +348,26 @@ class ExtKnowledgeRAG:
         subject_path: Optional[List[str]] = None,
         top_n: int = 5,
     ) -> List[Dict[str, Any]]:
-        # Perform search
         return self.store.search_knowledge(
             query_text=query_text,
             subject_path=subject_path,
             top_n=top_n,
+            extra_conditions=self._ds_conditions(),
         )
 
     def get_knowledge_detail(self, subject_path: List[str], name: str) -> List[Dict[str, Any]]:
-        """Get knowledge detail by subject path and name.
-
-        Args:
-            subject_path: Subject hierarchy path (e.g., ['Finance', 'Revenue', 'Q1'])
-            name: Knowledge entry name
-
-        Returns:
-            List containing the matching knowledge entry details
-        """
         full_path = subject_path.copy()
         full_path.append(name)
-        return self.store.search_all_knowledge(subject_path=full_path)
+        return self.store.search_all_knowledge(subject_path=full_path, extra_conditions=self._ds_conditions())
 
     def delete_knowledge(self, subject_path: List[str], name: str) -> bool:
-        """Delete knowledge entry by subject_path and name.
-
-        Only deletes from vector store, does not modify any files.
-
-        Args:
-            subject_path: Subject hierarchy path (e.g., ['Business', 'Terms'])
-            name: Name of the knowledge entry to delete
-
-        Returns:
-            True if deleted successfully, False if entry not found
-        """
-        return self.store.delete_knowledge(subject_path, name)
+        return self.store.delete_knowledge(subject_path, name, extra_conditions=self._ds_conditions())
 
     def get_knowledge_batch(self, paths: List[List[str]]) -> List[Dict[str, Any]]:
-        """Get multiple knowledge entries by their full paths.
-
-        Args:
-            paths: List of full paths, where each path is a list containing
-                   subject_path components followed by the knowledge name.
-                   e.g., [['Finance', 'Revenue', 'Q1', 'knowledge_name1'],
-                          ['Sales', 'Marketing', 'knowledge_name2']]
-
-        Returns:
-            List of matching knowledge entry details
-        """
         results = []
         for path in paths:
             if not path:
                 continue
-            entries = self.store.search_all_knowledge(subject_path=path)
+            entries = self.store.search_all_knowledge(subject_path=path, extra_conditions=self._ds_conditions())
             results.extend(entries)
         return results

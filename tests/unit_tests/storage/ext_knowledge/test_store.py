@@ -388,32 +388,32 @@ class TestExtKnowledgeRAGOperations:
     def test_store_and_query_knowledge(self, real_agent_config):
         """Test full round-trip: store via store, query via RAG."""
         rag = ExtKnowledgeRAG(agent_config=real_agent_config)
-        rag.store.batch_store_knowledge(
-            [
-                {
-                    "subject_path": ["Finance", "Banking"],
-                    "name": "APR",
-                    "search_text": "Annual Percentage Rate",
-                    "explanation": "The yearly cost of borrowing",
-                },
-            ]
-        )
+        entries = [
+            {
+                "subject_path": ["Finance", "Banking"],
+                "name": "APR",
+                "search_text": "Annual Percentage Rate",
+                "explanation": "The yearly cost of borrowing",
+            },
+        ]
+        rag._inject_write_fields(entries)
+        rag.store.batch_store_knowledge(entries)
         results = rag.query_knowledge(query_text="banking rate", top_n=5)
         assert len(results) >= 1
 
     def test_get_knowledge_detail(self, real_agent_config):
         """Test getting knowledge detail by path and name."""
         rag = ExtKnowledgeRAG(agent_config=real_agent_config)
-        rag.store.batch_store_knowledge(
-            [
-                {
-                    "subject_path": ["Tech", "AI"],
-                    "name": "ML",
-                    "search_text": "Machine Learning",
-                    "explanation": "Subset of AI focused on learning from data",
-                },
-            ]
-        )
+        entries = [
+            {
+                "subject_path": ["Tech", "AI"],
+                "name": "ML",
+                "search_text": "Machine Learning",
+                "explanation": "Subset of AI focused on learning from data",
+            },
+        ]
+        rag._inject_write_fields(entries)
+        rag.store.batch_store_knowledge(entries)
         results = rag.get_knowledge_detail(subject_path=["Tech", "AI"], name="ML")
         assert len(results) == 1
         assert results[0]["name"] == "ML"
@@ -421,16 +421,16 @@ class TestExtKnowledgeRAGOperations:
     def test_delete_knowledge(self, real_agent_config):
         """Test deleting knowledge entry via RAG."""
         rag = ExtKnowledgeRAG(agent_config=real_agent_config)
-        rag.store.batch_store_knowledge(
-            [
-                {
-                    "subject_path": ["Test", "Delete"],
-                    "name": "item",
-                    "search_text": "to delete",
-                    "explanation": "will be deleted",
-                },
-            ]
-        )
+        entries = [
+            {
+                "subject_path": ["Test", "Delete"],
+                "name": "item",
+                "search_text": "to delete",
+                "explanation": "will be deleted",
+            },
+        ]
+        rag._inject_write_fields(entries)
+        rag.store.batch_store_knowledge(entries)
         deleted = rag.delete_knowledge(subject_path=["Test", "Delete"], name="item")
         assert deleted is True
         results = rag.get_knowledge_detail(subject_path=["Test", "Delete"], name="item")
@@ -439,22 +439,22 @@ class TestExtKnowledgeRAGOperations:
     def test_get_knowledge_batch(self, real_agent_config):
         """Test getting multiple knowledge entries by paths."""
         rag = ExtKnowledgeRAG(agent_config=real_agent_config)
-        rag.store.batch_store_knowledge(
-            [
-                {
-                    "subject_path": ["A", "B"],
-                    "name": "item1",
-                    "search_text": "Item 1",
-                    "explanation": "First item",
-                },
-                {
-                    "subject_path": ["C", "D"],
-                    "name": "item2",
-                    "search_text": "Item 2",
-                    "explanation": "Second item",
-                },
-            ]
-        )
+        entries = [
+            {
+                "subject_path": ["A", "B"],
+                "name": "item1",
+                "search_text": "Item 1",
+                "explanation": "First item",
+            },
+            {
+                "subject_path": ["C", "D"],
+                "name": "item2",
+                "search_text": "Item 2",
+                "explanation": "Second item",
+            },
+        ]
+        rag._inject_write_fields(entries)
+        rag.store.batch_store_knowledge(entries)
         results = rag.get_knowledge_batch(
             paths=[
                 ["A", "B", "item1"],

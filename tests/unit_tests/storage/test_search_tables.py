@@ -32,8 +32,7 @@ def _make_mock_rag():
     rag = MagicMock()
     rag.schema_store = MagicMock()
     rag.value_store = MagicMock()
-    rag.schema_store._apply_scope_filter = lambda x: x
-    rag.value_store._apply_scope_filter = lambda x: x
+    rag._add_ds_filter = lambda x: x
 
     # Mock the search chain to return empty arrow tables
     empty_schema = pa.table(

@@ -768,7 +768,7 @@ class MetricsCompleter(DynamicAtReferenceCompleter):
         from datus.storage.metric.store import MetricStorage
         from datus.storage.registry import get_storage
 
-        storage = get_storage(MetricStorage, "metric", self.agent_config.current_namespace)
+        storage = get_storage(MetricStorage, "metric")
         data = storage.search_all_metrics()
 
         result = {}

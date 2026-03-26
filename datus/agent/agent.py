@@ -125,11 +125,6 @@ class Agent:
             # Initialize document storage
             self.storage_modules["document"] = True
 
-        # Check and initialize success story storage
-        if os.path.exists(os.path.join("storage", "success_story")):
-            # Initialize success story storage
-            self.storage_modules["success_story"] = True
-
         logger.info(f"Storage modules initialized: {list(self.storage_modules.keys())}")
 
     def create_workflow_runner(self, check_db: bool = True, run_id: Optional[str] = None) -> WorkflowRunner:
