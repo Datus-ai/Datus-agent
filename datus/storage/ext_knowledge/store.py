@@ -371,3 +371,8 @@ class ExtKnowledgeRAG:
             entries = self.store.search_all_knowledge(subject_path=path, extra_conditions=self._ds_conditions())
             results.extend(entries)
         return results
+
+    def batch_upsert_knowledge(self, knowledge_entries: List[Dict]) -> List[str]:
+        """Upsert multiple knowledge entries with datasource_id injection."""
+        self._inject_write_fields(knowledge_entries)
+        return self.store.batch_upsert_knowledge(knowledge_entries)

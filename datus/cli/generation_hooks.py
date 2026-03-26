@@ -1217,8 +1217,7 @@ class GenerationHooks(AgentHooks):
             dict: Sync result with success, error, and message fields
         """
         try:
-            from datus.storage.ext_knowledge.store import ExtKnowledgeStore
-            from datus.storage.registry import get_storage
+            from datus.storage.ext_knowledge.store import ExtKnowledgeRAG
 
             # Load YAML file - supports multiple documents
             with open(file_path, "r", encoding="utf-8") as f:
@@ -1227,8 +1226,8 @@ class GenerationHooks(AgentHooks):
             if not docs or all(doc is None for doc in docs):
                 return {"success": False, "error": "Empty YAML file or all documents are empty"}
 
-            # Get storage instance
-            knowledge_store = get_storage(ExtKnowledgeStore, "ext_knowledge")
+            # Get RAG instance (handles datasource_id injection)
+            knowledge_rag = ExtKnowledgeRAG(agent_config)
 
             # Collect all valid entries for batch upsert
             knowledge_entries = []
@@ -1272,7 +1271,7 @@ class GenerationHooks(AgentHooks):
                 return {"success": False, "error": "No valid knowledge entries found in YAML file"}
 
             # Batch upsert all entries (update if exists, insert if not)
-            upserted_ids = knowledge_store.batch_upsert_knowledge(knowledge_entries)
+            upserted_ids = knowledge_rag.batch_upsert_knowledge(knowledge_entries)
 
             # Build result message from actual upserted names returned by the store
             upserted_count = len(upserted_ids)

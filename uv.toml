@@ -1,0 +1,5 @@
+# Local development: use Aliyun mirror for faster downloads in CN
+# This file is gitignored — CI/Docker uses default PyPI
+[[index]]
+url = "http://mirrors.aliyun.com/pypi/simple"
+default = true

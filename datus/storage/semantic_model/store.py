@@ -170,10 +170,10 @@ class SemanticModelRAG:
             logger.warning("get_semantic_model called without table_name")
             return None
 
-        ds_cond = self._ds_condition()
+        base_conds = self._base_conditions()
 
         # Build filter conditions
-        table_conds = [eq("kind", "table"), eq("table_name", table_name), ds_cond]
+        table_conds = [eq("kind", "table"), eq("table_name", table_name)] + base_conds
         if catalog_name:
             table_conds.append(eq("catalog_name", catalog_name))
         if database_name:
@@ -186,13 +186,19 @@ class SemanticModelRAG:
         # Fallback 1: broad match
         if not table_objs and (catalog_name or database_name or schema_name):
             logger.debug(f"Semantic model not found for {table_name} with full filters, trying broad match.")
-            broad_conds = [eq("kind", "table"), eq("table_name", table_name), ds_cond]
+            broad_conds = [
+                eq("kind", "table"),
+                eq("table_name", table_name),
+            ] + base_conds
             table_objs = self.storage._search_all(where=And(broad_conds)).to_pylist()
 
         # Fallback 2: case-insensitive
         if not table_objs:
             if table_name.lower() != table_name:
-                lower_conds = [eq("kind", "table"), eq("table_name", table_name.lower()), ds_cond]
+                lower_conds = [
+                    eq("kind", "table"),
+                    eq("table_name", table_name.lower()),
+                ] + base_conds
                 table_objs = self.storage._search_all(where=And(lower_conds)).to_pylist()
 
         if not table_objs:
@@ -205,8 +211,7 @@ class SemanticModelRAG:
         children_conds = [
             eq("kind", "column"),
             eq("table_name", semantic_model.get("table_name", table_name)),
-            ds_cond,
-        ]
+        ] + base_conds
         if semantic_model.get("catalog_name"):
             children_conds.append(eq("catalog_name", semantic_model["catalog_name"]))
         if semantic_model.get("database_name"):
@@ -279,7 +284,7 @@ class SemanticModelRAG:
 
     def search_all(self, database_name: str = "", select_fields: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """Search for all table-level semantic model objects."""
-        conditions = [eq("kind", "table"), self._ds_condition()]
+        conditions = [eq("kind", "table")] + self._base_conditions()
         if database_name:
             conditions.append(eq("database_name", database_name))
 
@@ -289,7 +294,7 @@ class SemanticModelRAG:
     def get_size(self) -> int:
         """Get count of table-level semantic model objects (excluding columns)."""
         try:
-            return self.storage._count_rows(where=And([eq("kind", "table"), self._ds_condition()]))
+            return self.storage._count_rows(where=And([eq("kind", "table")] + self._base_conditions()))
         except Exception:
             return 0
 

@@ -40,10 +40,10 @@ _SUBJECT_NODES_TABLE = TableDefinition(
     ],
     indices=[
         IndexDef(name="idx_subject_parent_id", columns=["parent_id"]),
-        IndexDef(name="idx_subject_parent_name", columns=["parent_id", "name"], unique=True),
+        IndexDef(name="idx_subject_parent_name_ds", columns=["parent_id", "name", "datasource_id"], unique=True),
         IndexDef(name="idx_subject_datasource_id", columns=["datasource_id"]),
     ],
-    constraints=["UNIQUE(parent_id, name)"],
+    constraints=["UNIQUE(parent_id, name, datasource_id)"],
 )
 
 
@@ -1087,7 +1087,9 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
 
         return True
 
-    def update_entry(self, subject_path: List[str], name: str, update_values: Dict[str, Any]) -> bool:
+    def update_entry(
+        self, subject_path: List[str], name: str, update_values: Dict[str, Any], extra_conditions: Optional[List] = None
+    ) -> bool:
         """Update fields for a storage entry, excluding subject_node_id and name.
 
         This method allows updating any fields of an entry except subject_node_id and name.
@@ -1153,7 +1155,10 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
         self._ensure_table_ready()
         from datus_storage_base.conditions import and_, eq
 
-        where_condition = and_(eq(SUBJECT_ID_COLUMN_NAME, subject_node_id), eq(NAME_COLUMN_NAME, name.strip()))
+        conditions = [eq(SUBJECT_ID_COLUMN_NAME, subject_node_id), eq(NAME_COLUMN_NAME, name.strip())]
+        if extra_conditions:
+            conditions.extend(extra_conditions)
+        where_condition = and_(*conditions)
 
         # Check if entry exists
         count = self._count_rows(where_condition)
