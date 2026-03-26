@@ -116,8 +116,8 @@ class ClaudeModel(OpenAICompatibleModel):
     OAUTH_BETA_HEADERS = [
         "claude-code-20250219",
         "oauth-2025-04-20",
-        "fine-grained-tool-streaming-2025-05-14",
         "interleaved-thinking-2025-05-14",
+        "prompt-caching-scope-2026-01-05",
     ]
 
     # Claude Code client headers — required for subscription tokens to be accepted.
@@ -348,6 +348,7 @@ class ClaudeModel(OpenAICompatibleModel):
         max_turns: int = 10,
         func_tools: Optional[List[Any]] = None,
         action_history_manager: Optional[ActionHistoryManager] = None,
+        interrupt_controller=None,
         **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
         """Async generator: native Anthropic API with real-time tool call ActionHistory.
@@ -424,6 +425,11 @@ class ClaudeModel(OpenAICompatibleModel):
                 # Execute conversation loop
                 turn = -1
                 for turn in range(max_turns):
+                    if interrupt_controller and interrupt_controller.is_interrupted:
+                        from datus.cli.execution_state import ExecutionInterrupted
+
+                        raise ExecutionInterrupted("Interrupted by user")
+
                     logger.debug(f"Turn {turn + 1}/{max_turns}")
 
                     response = self._anthropic_messages_create(
@@ -452,6 +458,11 @@ class ClaudeModel(OpenAICompatibleModel):
 
                     for block in message:
                         if block.type == "tool_use":
+                            if interrupt_controller and interrupt_controller.is_interrupted:
+                                from datus.cli.execution_state import ExecutionInterrupted
+
+                                raise ExecutionInterrupted("Interrupted by user")
+
                             logger.debug(f"Executing tool: {block.name}")
                             args_str = json.dumps(block.input, ensure_ascii=False)[:80]
 
@@ -752,6 +763,7 @@ class ClaudeModel(OpenAICompatibleModel):
                 max_turns=max_turns,
                 func_tools=tools,
                 action_history_manager=action_history_manager,
+                interrupt_controller=kwargs.pop("interrupt_controller", None),
                 **kwargs,
             ):
                 yield action

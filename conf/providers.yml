@@ -129,7 +129,7 @@ providers:
   codex:
     type: codex
     auth_type: oauth
-    base_url: https://api.openai.com/v1
+    base_url: https://chatgpt.com/backend-api/codex
     default_model: codex-mini-latest
     models:
       - codex-mini-latest

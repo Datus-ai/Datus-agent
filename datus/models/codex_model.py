@@ -45,8 +45,27 @@ class CodexModel(LLMBaseModel):
         self.model_name = model_config.model
         self._base_url = model_config.base_url or CODEX_API_BASE_URL
         self.oauth_manager = OAuthManager()
+        self._config_api_key = self._resolve_config_api_key(model_config.api_key)
         self._client = None
         self._async_client = None
+
+    @staticmethod
+    def _resolve_config_api_key(api_key: str | None) -> str | None:
+        """Return the config api_key if it looks like a real token, else None."""
+        if not api_key or not api_key.strip():
+            return None
+        # Skip unresolved env-var placeholders like ${CODEX_OAUTH_TOKEN}
+        if api_key.startswith("${") and api_key.endswith("}"):
+            return None
+        if api_key.startswith("<MISSING:"):
+            return None
+        return api_key
+
+    def _get_access_token(self) -> str:
+        """Return a valid access token: config api_key first, then OAuthManager."""
+        if self._config_api_key:
+            return self._config_api_key
+        return self.oauth_manager.get_access_token()
 
     def _get_client(self):
         """Get sync OpenAI client, creating or refreshing token as needed."""
@@ -54,12 +73,12 @@ class CodexModel(LLMBaseModel):
             from openai import OpenAI
 
             self._client = OpenAI(
-                api_key=self.oauth_manager.get_access_token(),
+                api_key=self._get_access_token(),
                 base_url=self._base_url,
             )
         else:
             # Ensure token is current on cached client
-            self._client.api_key = self.oauth_manager.get_access_token()
+            self._client.api_key = self._get_access_token()
         return self._client
 
     def _get_async_client(self):
@@ -68,12 +87,12 @@ class CodexModel(LLMBaseModel):
             from openai import AsyncOpenAI
 
             self._async_client = AsyncOpenAI(
-                api_key=self.oauth_manager.get_access_token(),
+                api_key=self._get_access_token(),
                 base_url=self._base_url,
             )
         else:
             # Ensure token is current on cached client
-            self._async_client.api_key = self.oauth_manager.get_access_token()
+            self._async_client.api_key = self._get_access_token()
         return self._async_client
 
     def _get_responses_model(self):
@@ -84,8 +103,8 @@ class CodexModel(LLMBaseModel):
         return OpenAIResponsesModel(model=self.model_name, openai_client=async_client)
 
     def _refresh_client_token(self):
-        """Refresh the OAuth token on existing clients."""
-        token = self.oauth_manager.get_access_token()
+        """Refresh the token on existing clients."""
+        token = self._get_access_token()
         if self._client is not None:
             self._client.api_key = token
         if self._async_client is not None:
@@ -293,9 +312,12 @@ class CodexModel(LLMBaseModel):
                     ) from e
                 raise
 
+            usage_info = self._extract_usage_info(result)
+
             return {
                 "content": result.final_output,
                 "sql_contexts": extract_sql_contexts(result),
+                "usage": usage_info,
                 "model": self.model_name,
                 "turns_used": getattr(result, "turn_count", 0),
             }
@@ -455,6 +477,11 @@ class CodexModel(LLMBaseModel):
             except MaxTurnsExceeded as e:
                 raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns}) from e
             except Exception as e:
+                from datus.cli.execution_state import ExecutionInterrupted
+
+                if isinstance(e, ExecutionInterrupted):
+                    raise
+
                 from openai import AuthenticationError
 
                 if isinstance(e, AuthenticationError):
@@ -473,6 +500,7 @@ class CodexModel(LLMBaseModel):
             # Final summary after streaming completes
             has_final_output = hasattr(result, "final_output")
             final_output = result.final_output if has_final_output else None
+            usage_info = self._extract_usage_info(result)
             final_action = ActionHistory(
                 action_id=f"final_{uuid.uuid4().hex[:8]}",
                 role=ActionRole.ASSISTANT,
@@ -482,15 +510,38 @@ class CodexModel(LLMBaseModel):
                 output={
                     "raw_output": str(final_output) if final_output is not None else "",
                     "sql_contexts": extract_sql_contexts(result) if has_final_output else [],
+                    "usage": usage_info,
                 },
                 status=ActionStatus.SUCCESS,
             )
             action_history_manager.add_action(final_action)
             yield final_action
 
+    @staticmethod
+    def _extract_usage_info(result) -> dict:
+        """Extract usage info from Agent SDK result for token accounting."""
+        if not (hasattr(result, "context_wrapper") and hasattr(result.context_wrapper, "usage")):
+            return {}
+        usage = result.context_wrapper.usage
+        input_tokens = getattr(usage, "input_tokens", 0)
+        output_tokens = getattr(usage, "output_tokens", 0)
+        total_tokens = getattr(usage, "total_tokens", 0)
+        return {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+        }
+
     def token_count(self, prompt: str) -> int:
         """Estimate token count using a simple heuristic."""
         return len(prompt) // 4
+
+    def max_tokens(self) -> Optional[int]:
+        """Return the max output tokens for the current model."""
+        specs = _CODEX_MODEL_SPECS.get(self.model_name)
+        if specs:
+            return specs["max_tokens"]
+        return 16384  # default
 
     def context_length(self) -> Optional[int]:
         """Return the context length for the current model."""
