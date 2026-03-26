@@ -276,9 +276,9 @@ class SchemaWithValueRAG:
         return data
 
     def truncate(self) -> None:
-        """Drop both schema and value tables and reset state."""
-        self.schema_store.truncate()
-        self.value_store.truncate()
+        """Delete all schema metadata for this datasource."""
+        self.schema_store.truncate(datasource_id=self.datasource_id)
+        self.value_store.truncate(datasource_id=self.datasource_id)
 
     def store_batch(self, schemas: List[Dict[str, Any]], values: List[Dict[str, Any]]):
         if schemas:

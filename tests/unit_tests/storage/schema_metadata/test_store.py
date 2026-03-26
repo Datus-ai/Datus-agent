@@ -737,6 +737,6 @@ class TestSchemaWithValueRAGTruncate:
         assert rag.get_value_size() == 1
 
         rag.truncate()
-        # After truncate, tables are reset (will be recreated on next use)
-        assert rag.schema_store.table is None
-        assert rag.value_store.table is None
+        # After truncate, rows for this datasource are deleted (table still exists)
+        assert rag.get_schema_size() == 0
+        assert rag.get_value_size() == 0

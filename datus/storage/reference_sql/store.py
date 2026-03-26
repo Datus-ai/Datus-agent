@@ -234,8 +234,8 @@ class ReferenceSqlRAG:
         return data
 
     def truncate(self) -> None:
-        """Drop the reference_sql table and reset state."""
-        self.reference_sql_storage.truncate()
+        """Delete all reference SQL data for this datasource."""
+        self.reference_sql_storage.truncate(datasource_id=self.datasource_id)
 
     def store_batch(self, reference_sql_items: List[Dict[str, Any]]):
         """Store batch of reference SQL items."""

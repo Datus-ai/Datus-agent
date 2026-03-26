@@ -323,8 +323,8 @@ class MetricRAG:
         return data
 
     def truncate(self) -> None:
-        """Drop the metrics table and reset state."""
-        self.storage.truncate()
+        """Delete all metrics for this datasource."""
+        self.storage.truncate(datasource_id=self.datasource_id)
 
     def store_batch(self, metrics: List[Dict[str, Any]]):
         logger.info(f"store metrics: {metrics}")

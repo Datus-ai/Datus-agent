@@ -792,6 +792,7 @@ class AgentConfig:
         return os.path.join(self.rag_base_path, "document")
 
     def sub_agent_storage_path(self, sub_agent_name: str):
+        """Deprecated: sub-agents now use the shared global storage with datasource_id field isolation."""
         return os.path.join(self.rag_base_path, "sub_agents", sub_agent_name)
 
     def _is_file_based_vector_backend(self) -> bool:

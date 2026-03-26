@@ -192,12 +192,25 @@ class BaseEmbeddingStore(StorageBase):
                 message=f"Embedding model '{self.model.model_name}' initialization failed: {str(e)}",
             ) from e
 
-    def truncate(self) -> None:
-        """Drop the table and reset state. Table will be recreated on next use."""
-        with self._table_lock:
-            self.db.drop_table(self.table_name, ignore_missing=True)
-            self._shared.table = None
-            self._shared.initialized = False
+    def truncate(self, datasource_id: str = "") -> None:
+        """Delete data from the table.
+
+        Args:
+            datasource_id: If provided, only delete rows matching this datasource_id.
+                If empty, drop the entire table and reset state (admin operation).
+        """
+        if datasource_id:
+            # Scoped delete: remove only rows for this datasource
+            from datus_storage_base.conditions import eq
+
+            self._ensure_table_ready()
+            self._delete_rows(eq("datasource_id", datasource_id))
+        else:
+            # Full drop: destroy the table entirely
+            with self._table_lock:
+                self.db.drop_table(self.table_name, ignore_missing=True)
+                self._shared.table = None
+                self._shared.initialized = False
 
     def _ensure_table(self, schema: Optional[pa.Schema] = None):
         if self.db.table_exists(self.table_name):

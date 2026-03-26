@@ -338,8 +338,8 @@ class ExtKnowledgeRAG:
         return data
 
     def truncate(self) -> None:
-        """Drop the ext_knowledge table and reset state."""
-        self.store.truncate()
+        """Delete all ext_knowledge data for this datasource."""
+        self.store.truncate(datasource_id=self.datasource_id)
 
     def _parse_subject_path(self, subject_path) -> List[str]:
         if isinstance(subject_path, str):

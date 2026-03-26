@@ -356,7 +356,7 @@ class DocumentStore(BaseEmbeddingStore):
             # Drop the table via backend abstraction and reinitialize
             self.db.drop_table(self.table_name, ignore_missing=True)
             self.table = None
-            self._table_initialized = False
+            self._shared.initialized = False
             self._ensure_table_ready()
             deleted_count = count_before
 

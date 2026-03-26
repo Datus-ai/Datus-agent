@@ -150,8 +150,8 @@ class SemanticModelRAG:
         return data
 
     def truncate(self) -> None:
-        """Drop the semantic model table and reset state."""
-        self.storage.truncate()
+        """Delete all semantic model data for this datasource."""
+        self.storage.truncate(datasource_id=self.datasource_id)
 
     def get_semantic_model(
         self,
