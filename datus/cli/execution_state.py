@@ -70,6 +70,23 @@ class PendingInteraction:
     created_at: datetime = field(default_factory=datetime.now)
 
 
+def unpack_interaction_input(input_data: dict) -> tuple:
+    """Extract request fields from interaction input_data.
+
+    Works with the ``requests``-based format produced by ``InteractionBroker.request()``.
+
+    Returns:
+        (contents, choices_list, default_choices, allow_free_text, content_type)
+    """
+    reqs = input_data.get("requests", [])
+    contents = [r.get("content", "") for r in reqs]
+    choices_list = [r.get("choices", {}) for r in reqs]
+    default_choices = [r.get("default_choice", "") for r in reqs]
+    allow_free_text = any(r.get("allow_free_text", False) for r in reqs)
+    content_type = reqs[0].get("content_type", "markdown") if reqs else "markdown"
+    return contents, choices_list, default_choices, allow_free_text, content_type
+
+
 class InteractionCancelled(Exception):
     """Raised when interaction is cancelled."""
 
@@ -196,13 +213,6 @@ class InteractionBroker:
         if not requests:
             raise InteractionCancelled("No questions to ask (empty contents)")
 
-        # Extract lists for backward-compatible input_data
-        contents = [r.content for r in requests]
-        choices_list = [r.choices for r in requests]
-        default_choices = [r.default_choice for r in requests]
-        allow_free_text = any(r.allow_free_text for r in requests)
-        content_type = requests[0].content_type
-
         action_id = str(uuid.uuid4())
         loop = asyncio.get_running_loop()
         future = loop.create_future()
@@ -218,14 +228,14 @@ class InteractionBroker:
             self._pending[action_id] = pending
 
         # Build display content for messages field
-        if len(contents) == 1:
-            display_content = contents[0]
+        if len(requests) == 1:
+            display_content = requests[0].content
         else:
             lines = []
-            for i, (q, ch) in enumerate(zip(contents, choices_list), 1):
-                lines.append(f"**{i}. {q}**")
-                if ch:
-                    opts = " / ".join(ch.values())
+            for i, r in enumerate(requests, 1):
+                lines.append(f"**{i}. {r.content}**")
+                if r.choices:
+                    opts = " / ".join(r.choices.values())
                     lines.append(f"   Options: {opts}")
                 else:
                     lines.append("   _(free text)_")
@@ -233,14 +243,19 @@ class InteractionBroker:
             display_content = "\n".join(lines)
 
         # Auto-infer action_type
-        action_type = "request_batch" if len(contents) > 1 else "request_choice"
+        action_type = "request_batch" if len(requests) > 1 else "request_choice"
 
         input_data = {
-            "contents": contents,
-            "content_type": content_type,
-            "choices": choices_list,
-            "default_choices": default_choices,
-            "allow_free_text": allow_free_text,
+            "requests": [
+                {
+                    "content": r.content,
+                    "choices": r.choices,
+                    "default_choice": r.default_choice,
+                    "content_type": r.content_type,
+                    "allow_free_text": r.allow_free_text,
+                }
+                for r in requests
+            ],
         }
 
         action = ActionHistory(
@@ -373,9 +388,7 @@ async def auto_submit_interaction(broker: InteractionBroker, action: ActionHisto
     resolve pending interactions without user input.
     """
     input_data = action.input or {}
-    contents = input_data.get("contents", [])
-    choices_list = input_data.get("choices", [])
-    default_choices = input_data.get("default_choices", [])
+    contents, choices_list, default_choices, _, _ = unpack_interaction_input(input_data)
 
     answers = []
     for i in range(len(contents)):

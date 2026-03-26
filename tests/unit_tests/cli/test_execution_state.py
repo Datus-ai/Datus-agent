@@ -225,9 +225,11 @@ class TestInteractionBrokerRequest:
         assert action.role == ActionRole.INTERACTION
         assert action.status == ActionStatus.PROCESSING
         assert action.action_type == "request_choice"
-        assert action.input["contents"] == ["Pick one"]
-        assert action.input["choices"] == [{"a": "Option A", "b": "Option B"}]
-        assert action.input["default_choices"] == ["a"]
+        reqs = action.input["requests"]
+        assert len(reqs) == 1
+        assert reqs[0]["content"] == "Pick one"
+        assert reqs[0]["choices"] == {"a": "Option A", "b": "Option B"}
+        assert reqs[0]["default_choice"] == "a"
 
         # Submit response so the task completes
         action_id = action.action_id
@@ -309,7 +311,7 @@ class TestInteractionBrokerRequestShorthand:
         await asyncio.sleep(0.05)
 
         action = broker._output_queue.get_nowait()
-        assert action.input["contents"] == ["Yes?"]
+        assert action.input["requests"][0]["content"] == "Yes?"
 
         await broker.submit(action.action_id, ["y"])
         result, _ = await task
@@ -769,7 +771,8 @@ class TestInteractionBrokerRequestFailFast:
         await asyncio.sleep(0.05)
 
         action = broker._output_queue.get_nowait()
-        assert action.input["default_choices"] == ["", ""]
+        reqs = action.input["requests"]
+        assert [r["default_choice"] for r in reqs] == ["", ""]
 
         await broker.submit(action.action_id, ["a", "b"])
         await task
@@ -898,7 +901,7 @@ class TestAutoSubmitInteraction:
             status=ActionStatus.PROCESSING,
             action_type="request_choice",
             messages="",
-            input={"contents": [], "choices": [], "default_choices": []},
+            input={"requests": []},
             output=None,
         )
 

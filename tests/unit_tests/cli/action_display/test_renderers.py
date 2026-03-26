@@ -689,9 +689,9 @@ class TestRenderBatchInteractionRequest:
             ActionStatus.PROCESSING,
             action_type="request_choice",
             input_data={
-                "contents": ["Which DB?"],
-                "choices": [{"1": "MySQL", "2": "PG"}],
-                "content_type": "markdown",
+                "requests": [
+                    {"content": "Which DB?", "choices": {"1": "MySQL", "2": "PG"}, "content_type": "markdown"},
+                ],
             },
         )
         result = _renderer().render_interaction_request(action, verbose=False)
@@ -706,8 +706,10 @@ class TestRenderBatchInteractionRequest:
             ActionStatus.PROCESSING,
             action_type="request_batch",
             input_data={
-                "contents": ["Which DB?", "Time range?"],
-                "choices": [{"1": "MySQL", "2": "PG"}, {}],
+                "requests": [
+                    {"content": "Which DB?", "choices": {"1": "MySQL", "2": "PG"}},
+                    {"content": "Time range?", "choices": {}},
+                ],
             },
         )
         result = _renderer().render_interaction_request(action, verbose=False)
@@ -722,7 +724,7 @@ class TestRenderBatchInteractionRequest:
             ActionRole.INTERACTION,
             ActionStatus.PROCESSING,
             action_type="request_choice",
-            input_data={"contents": []},
+            input_data={"requests": []},
         )
         result = _renderer().render_interaction_request(action, verbose=False)
         text = _plain(result)
@@ -734,7 +736,7 @@ class TestRenderBatchInteractionRequest:
             ActionRole.INTERACTION,
             ActionStatus.PROCESSING,
             action_type="request_choice",
-            input_data={"contents": ["Legacy question"], "choices": [{}], "content_type": "markdown"},
+            input_data={"requests": [{"content": "Legacy question", "choices": {}, "content_type": "markdown"}]},
         )
         result = _renderer().render_interaction_request(action, verbose=False)
         text = _plain(result)
@@ -754,7 +756,7 @@ class TestRenderBatchInteractionSuccess:
             ActionRole.INTERACTION,
             ActionStatus.SUCCESS,
             action_type="request_batch",
-            input_data={"contents": ["Which DB?", "Time range?"]},
+            input_data={"requests": [{"content": "Which DB?"}, {"content": "Time range?"}]},
             output_data={"user_choice": json.dumps(["MySQL", "Last 7 days"])},
         )
         result = _renderer().render_interaction_success(action, verbose=False)
@@ -771,7 +773,7 @@ class TestRenderBatchInteractionSuccess:
             ActionRole.INTERACTION,
             ActionStatus.SUCCESS,
             action_type="request_batch",
-            input_data={"contents": ["Q1?", "Q2?"]},
+            input_data={"requests": [{"content": "Q1?"}, {"content": "Q2?"}]},
             output_data={"user_choice": "plain text"},
         )
         result = _renderer().render_interaction_success(action, verbose=False)
@@ -787,7 +789,7 @@ class TestRenderBatchInteractionSuccess:
             ActionRole.INTERACTION,
             ActionStatus.SUCCESS,
             action_type="request_batch",
-            input_data={"contents": ["Q1?", "Q2?"]},
+            input_data={"requests": [{"content": "Q1?"}, {"content": "Q2?"}]},
             output_data={"user_choice": json.dumps("just a string")},
         )
         result = _renderer().render_interaction_success(action, verbose=False)
@@ -803,7 +805,7 @@ class TestRenderBatchInteractionSuccess:
             ActionRole.INTERACTION,
             ActionStatus.SUCCESS,
             action_type="request_batch",
-            input_data={"contents": [long_q, "Q2?"]},
+            input_data={"requests": [{"content": long_q}, {"content": "Q2?"}]},
             output_data={"user_choice": json.dumps(["yes", "no"])},
         )
         result = _renderer().render_interaction_success(action, verbose=False)
@@ -816,7 +818,7 @@ class TestRenderBatchInteractionSuccess:
             ActionRole.INTERACTION,
             ActionStatus.SUCCESS,
             action_type="request_choice",
-            input_data={"contents": ["Sync?"]},
+            input_data={"requests": [{"content": "Sync?"}]},
             output_data={"user_choice": "y", "content": "Saved", "content_type": "markdown"},
         )
         result = _renderer().render_interaction_success(action, verbose=False)

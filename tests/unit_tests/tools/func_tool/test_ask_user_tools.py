@@ -293,9 +293,9 @@ class TestAskUserToolBatch:
         processing_actions = [a for a in actions if a.status == ActionStatus.PROCESSING]
         assert len(processing_actions) >= 1
         assert processing_actions[0].action_type == "request_batch"
-        # Check contents are in input
-        contents_in_input = processing_actions[0].input.get("contents", [])
-        assert len(contents_in_input) == 2
+        # Check requests are in input
+        reqs_in_input = processing_actions[0].input.get("requests", [])
+        assert len(reqs_in_input) == 2
 
 
 class TestAskUserToolEdgeCases:

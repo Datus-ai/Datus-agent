@@ -19,6 +19,7 @@ from rich.markup import escape as rich_escape
 from rich.syntax import Syntax
 from rich.text import Text
 
+from datus.cli.execution_state import unpack_interaction_input
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.utils.loggings import get_logger
 
@@ -538,13 +539,11 @@ class ActionRenderer:
     def render_interaction_request(self, action: ActionHistory, verbose: bool) -> List[Union[Text, Markdown, Syntax]]:
         """Render INTERACTION PROCESSING -- request content.
 
-        Reads ``contents`` (list) and ``choices`` (list of dicts) from
-        ``action.input``.  Single-question renders with the legacy header;
-        multiple questions render a numbered overview.
+        Reads ``requests`` from ``action.input``.  Single-question renders
+        with the legacy header; multiple questions render a numbered overview.
         """
         input_data = action.input or {}
-        contents = input_data.get("contents", [])
-        content_type = input_data.get("content_type", "text")
+        contents, _, _, _, content_type = unpack_interaction_input(input_data)
 
         result: List[Union[Text, Markdown, Syntax]] = []
 
@@ -577,12 +576,12 @@ class ActionRenderer:
     def render_interaction_success(self, action: ActionHistory, verbose: bool) -> List[Union[Text, Markdown, Syntax]]:
         """Render INTERACTION SUCCESS -- user choice + result content.
 
-        Reads ``contents`` from ``action.input`` to decide between single
+        Reads ``requests`` from ``action.input`` to decide between single
         and batch rendering.
         """
         input_data = action.input or {}
         output_data = action.output or {}
-        contents = input_data.get("contents", [])
+        contents, _, _, _, _ = unpack_interaction_input(input_data)
 
         if len(contents) > 1:
             return self._render_batch_success(contents, output_data)

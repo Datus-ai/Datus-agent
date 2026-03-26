@@ -24,7 +24,7 @@ from rich.table import Table
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
 from datus.cli._cli_utils import select_choice
 from datus.cli.action_display.display import ActionHistoryDisplay
-from datus.cli.execution_state import ExecutionInterrupted, auto_submit_interaction
+from datus.cli.execution_state import ExecutionInterrupted, auto_submit_interaction, unpack_interaction_input
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
 from datus.utils.loggings import get_logger
@@ -801,10 +801,7 @@ class ChatCommands:
 
             try:
                 input_data = action.input or {}
-                contents = input_data.get("contents", [])
-                choices_list = input_data.get("choices", [])
-                default_choices = input_data.get("default_choices", [])
-                allow_free_text = input_data.get("allow_free_text", False)
+                contents, choices_list, default_choices, allow_free_text, _ = unpack_interaction_input(input_data)
 
                 with esc_guard.paused():
                     if len(contents) > 1:

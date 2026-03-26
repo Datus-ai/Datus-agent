@@ -3698,10 +3698,10 @@ class TestMakeInputCollector:
         action = self._make_action(
             "request_batch",
             {
-                "contents": ["Q1?", "Q2?"],
-                "choices": [{}, {}],
-                "default_choices": ["", ""],
-                "allow_free_text": True,
+                "requests": [
+                    {"content": "Q1?", "choices": {}, "default_choice": "", "allow_free_text": True},
+                    {"content": "Q2?", "choices": {}, "default_choice": "", "allow_free_text": True},
+                ],
             },
         )
         result = collector(action, console)
@@ -3719,10 +3719,9 @@ class TestMakeInputCollector:
         action = self._make_action(
             "request_choice",
             {
-                "contents": ["Confirm?"],
-                "choices": [{"y": "Yes", "n": "No"}],
-                "default_choices": ["y"],
-                "allow_free_text": False,
+                "requests": [
+                    {"content": "Confirm?", "choices": {"y": "Yes", "n": "No"}, "default_choice": "y"},
+                ],
             },
         )
         result = collector(action, console)
@@ -3739,10 +3738,9 @@ class TestMakeInputCollector:
         action = self._make_action(
             "request_choice",
             {
-                "contents": ["Enter text"],
-                "choices": [{}],
-                "default_choices": [""],
-                "allow_free_text": True,
+                "requests": [
+                    {"content": "Enter text", "choices": {}, "default_choice": "", "allow_free_text": True},
+                ],
             },
         )
         result = collector(action, console)
@@ -3759,10 +3757,9 @@ class TestMakeInputCollector:
         action = self._make_action(
             "request_choice",
             {
-                "contents": ["Pick?"],
-                "choices": [{"a": "Option A"}],
-                "default_choices": ["a"],
-                "allow_free_text": True,
+                "requests": [
+                    {"content": "Pick?", "choices": {"a": "Option A"}, "default_choice": "a", "allow_free_text": True},
+                ],
             },
         )
         result = collector(action, console)
@@ -3786,6 +3783,9 @@ class TestMakeInputCollector:
         esc_guard.paused.return_value.__enter__ = MagicMock(side_effect=RuntimeError("boom"))
         esc_guard.paused.return_value.__exit__ = MagicMock()
         collector = chat_cmd._make_input_collector(esc_guard)
-        action = self._make_action("request_batch", {"contents": ["Q1?", "Q2?"], "choices": [{}, {}]})
+        action = self._make_action(
+            "request_batch",
+            {"requests": [{"content": "Q1?", "choices": {}}, {"content": "Q2?", "choices": {}}]},
+        )
         result = collector(action, console)
         assert result is None

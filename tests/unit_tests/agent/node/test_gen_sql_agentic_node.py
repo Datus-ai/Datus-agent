@@ -859,7 +859,7 @@ class TestEndToEndNodeHooksInteraction:
                 await asyncio.sleep(0.02)
                 if broker.has_pending:
                     action_id = list(broker._pending.keys())[0]
-                    await broker.submit(action_id, "y")  # Allow once
+                    await broker.submit(action_id, ["y"])  # Allow once
                     return
             pytest.fail("Timed out waiting for permission interaction")
 
@@ -921,7 +921,7 @@ class TestEndToEndNodeHooksInteraction:
                 await asyncio.sleep(0.02)
                 if broker.has_pending:
                     action_id = list(broker._pending.keys())[0]
-                    await broker.submit(action_id, "n")  # Deny
+                    await broker.submit(action_id, ["n"])  # Deny
                     return
 
         ui_task = asyncio.create_task(ui_deny())
@@ -989,7 +989,7 @@ class TestEndToEndNodeHooksInteraction:
                 if broker.has_pending:
                     interaction_count += 1
                     action_id = list(broker._pending.keys())[0]
-                    await broker.submit(action_id, "a")  # Always allow (session)
+                    await broker.submit(action_id, ["a"])  # Always allow (session)
                     return  # Only one interaction expected
 
         ui_task = asyncio.create_task(ui_session_approve())
@@ -1090,7 +1090,7 @@ class TestEndToEndNodeHooksInteraction:
                 await asyncio.sleep(0.02)
                 if broker.has_pending:
                     action_id = list(broker._pending.keys())[0]
-                    await broker.submit(action_id, "y")
+                    await broker.submit(action_id, ["y"])
                     return
 
         ui_task = asyncio.create_task(ui_approve_list_tables())
@@ -1185,7 +1185,7 @@ class TestEndToEndPlanModeHooksInteraction:
                 await asyncio.sleep(0.02)
                 if broker.has_pending:
                     action_id = list(broker._pending.keys())[0]
-                    await broker.submit(action_id, "1")  # Manual Confirm
+                    await broker.submit(action_id, ["1"])  # Manual Confirm
                     return
             pytest.fail("Timed out waiting for plan confirmation interaction")
 
@@ -1210,8 +1210,8 @@ class TestEndToEndPlanModeHooksInteraction:
         # Verify the PROCESSING interaction offered plan mode choices (1/2/3/4)
         processing = [a for a in actions if a.role == ActionRole.INTERACTION and a.status == ActionStatus.PROCESSING]
         assert len(processing) >= 1
-        choices_list = processing[0].input.get("choices", []) if isinstance(processing[0].input, dict) else []
-        choices = choices_list[0] if choices_list else {}
+        reqs = processing[0].input.get("requests", []) if isinstance(processing[0].input, dict) else []
+        choices = reqs[0].get("choices", {}) if reqs else {}
         assert "1" in choices  # Manual Confirm
         assert "2" in choices  # Auto Execute
         assert "4" in choices  # Cancel
@@ -1221,7 +1221,7 @@ class TestEndToEndPlanModeHooksInteraction:
         assert len(success) >= 1
         output = success[0].output
         assert isinstance(output, dict)
-        assert output.get("user_choice") == "1"
+        assert output.get("user_choice") == ["1"]
         assert "manual" in output.get("content", "").lower()
 
     @pytest.mark.asyncio
@@ -1274,7 +1274,7 @@ class TestEndToEndPlanModeHooksInteraction:
                 await asyncio.sleep(0.02)
                 if broker.has_pending:
                     action_id = list(broker._pending.keys())[0]
-                    await broker.submit(action_id, "2")  # Auto Execute
+                    await broker.submit(action_id, ["2"])  # Auto Execute
                     return
             pytest.fail("Timed out waiting for plan confirmation interaction")
 
@@ -1300,7 +1300,7 @@ class TestEndToEndPlanModeHooksInteraction:
         assert len(success) >= 1
         output = success[0].output
         assert isinstance(output, dict)
-        assert output.get("user_choice") == "2"
+        assert output.get("user_choice") == ["2"]
         assert "auto" in output.get("content", "").lower()
 
     @pytest.mark.asyncio
@@ -1351,7 +1351,7 @@ class TestEndToEndPlanModeHooksInteraction:
                 await asyncio.sleep(0.02)
                 if broker.has_pending:
                     action_id = list(broker._pending.keys())[0]
-                    await broker.submit(action_id, "4")  # Cancel
+                    await broker.submit(action_id, ["4"])  # Cancel
                     return
             pytest.fail("Timed out waiting for plan confirmation interaction")
 
@@ -1378,7 +1378,7 @@ class TestEndToEndPlanModeHooksInteraction:
         if success:
             output = success[0].output
             if isinstance(output, dict):
-                assert output.get("user_choice") == "4"
+                assert output.get("user_choice") == ["4"]
 
 
 # ===========================================================================
@@ -1506,7 +1506,7 @@ class TestEndToEndGenerationHooksInteraction:
                 await asyncio.sleep(0.02)
                 if broker.has_pending:
                     action_id = list(broker._pending.keys())[0]
-                    await broker.submit(action_id, "y")  # Yes - Save to KB
+                    await broker.submit(action_id, ["y"])  # Yes - Save to KB
                     return
             pytest.fail("Timed out waiting for generation sync interaction")
 
@@ -1536,8 +1536,8 @@ class TestEndToEndGenerationHooksInteraction:
         # The interaction content should reference the YAML file
         interaction_input = processing_interactions[0].input
         if isinstance(interaction_input, dict):
-            contents = interaction_input.get("contents", [])
-            content = contents[0] if contents else ""
+            reqs = interaction_input.get("requests", [])
+            content = reqs[0].get("content", "") if reqs else ""
             assert "Sync to Knowledge Base" in content or "yaml" in content.lower()
 
     @pytest.mark.asyncio
@@ -1613,7 +1613,7 @@ class TestEndToEndGenerationHooksInteraction:
                 await asyncio.sleep(0.02)
                 if broker.has_pending:
                     action_id = list(broker._pending.keys())[0]
-                    await broker.submit(action_id, "n")  # No - Keep file only
+                    await broker.submit(action_id, ["n"])  # No - Keep file only
                     return
             pytest.fail("Timed out waiting for generation sync interaction")
 

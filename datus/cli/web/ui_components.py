@@ -23,6 +23,7 @@ import structlog
 from pandas.core.dtypes.common import is_numeric_dtype
 
 from datus.cli.action_display.renderers import ActionContentGenerator
+from datus.cli.execution_state import unpack_interaction_input
 from datus.configuration.agent_config import AgentConfig
 from datus.models.base import LLMBaseModel
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
@@ -662,8 +663,8 @@ class UIComponents:
 
         with st.expander(f"Step {index}: ✓ User Interaction", expanded=True):
             # Render original request content
-            content = input_data.get("content", "")
-            content_type = input_data.get("content_type", "text")
+            contents, _, _, _, content_type = unpack_interaction_input(input_data)
+            content = contents[0] if contents else ""
             if content:
                 if content_type == "markdown":
                     st.markdown(content)
