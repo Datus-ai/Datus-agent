@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Quick test: verify Sonnet and Opus work with subscription token via ClaudeModel.
+"""Quick test: verify Claude subscription token behavior via ClaudeModel.
 
 Usage:
     export CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...
@@ -14,8 +14,9 @@ import sys
 
 # Models to test
 MODELS_TO_TEST = [
-    "claude-sonnet-4-20250514",
-    "claude-opus-4-20250514",
+    "claude-haiku-4-5",
+    "claude-sonnet-4-6",
+    "claude-opus-4-6",
 ]
 
 
@@ -99,7 +100,7 @@ def main():
         print(f"  {model:40s} {status}")
 
     if all(results.values()):
-        print("\n🎉 Both Sonnet and Opus work with subscription token!")
+        print("\n🎉 Haiku, Sonnet, and Opus all work with subscription token!")
     else:
         failed = [m for m, p in results.items() if not p]
         print(f"\n⚠️  Failed models: {', '.join(failed)}")

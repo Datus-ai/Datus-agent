@@ -110,14 +110,14 @@ class ClaudeModel(OpenAICompatibleModel):
     - Native Anthropic API (when use_native_api=True, enables prompt caching)
     """
 
-    # Beta headers required for OAuth subscription tokens (sk-ant-oat01-...)
-    # All four are required — without them, Anthropic API rejects OAuth tokens.
-    # Reference: OpenClaw PI_AI_OAUTH_ANTHROPIC_BETAS
+    # Beta headers aligned with OpenClaw's current Anthropic OAuth path.
+    # Keep this in sync with the OpenClaw PI_AI_OAUTH_ANTHROPIC_BETAS set when
+    # using Claude Code setup-tokens (sk-ant-oat01-...).
     OAUTH_BETA_HEADERS = [
         "claude-code-20250219",
         "oauth-2025-04-20",
+        "fine-grained-tool-streaming-2025-05-14",
         "interleaved-thinking-2025-05-14",
-        "prompt-caching-scope-2026-01-05",
     ]
 
     # Claude Code client headers — required for subscription tokens to be accepted.
@@ -129,6 +129,8 @@ class ClaudeModel(OpenAICompatibleModel):
         "x-app": "cli",
         "anthropic-dangerous-direct-browser-access": "true",
     }
+
+    OAUTH_SYSTEM_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
 
     def __init__(self, model_config: ModelConfig, **kwargs):
         # Initialize parent class (handles LiteLLM adapter, OpenAI client, etc.)
@@ -220,6 +222,32 @@ class ClaudeModel(OpenAICompatibleModel):
             }
         return kwargs
 
+    def _build_system_param(self, system_message: str = "") -> Any:
+        """Build Anthropic system param, injecting Claude Code identity for OAuth tokens."""
+        if self._is_oauth_token:
+            system_blocks: list[dict[str, str]] = [
+                {
+                    "type": "text",
+                    "text": self.OAUTH_SYSTEM_IDENTITY,
+                }
+            ]
+            if system_message:
+                system_blocks.append(
+                    {
+                        "type": "text",
+                        "text": system_message,
+                    }
+                )
+            return system_blocks
+
+        return system_message if system_message else anthropic.NOT_GIVEN
+
+    def _anthropic_messages_create(self, **kwargs):
+        """Call the correct Anthropic Messages endpoint for the current auth mode."""
+        if self._is_oauth_token:
+            return self.anthropic_client.beta.messages.create(**kwargs)
+        return self.anthropic_client.messages.create(**kwargs)
+
     def _diagnose_oauth_401(self, original_error: Exception) -> None:
         """Diagnose a 401 error for OAuth subscription tokens and raise a specific exception.
 
@@ -292,10 +320,10 @@ class ClaudeModel(OpenAICompatibleModel):
                 filtered_messages.append(msg)
 
         try:
-            response = self.anthropic_client.messages.create(
+            response = self._anthropic_messages_create(
                 model=self.model_name,
                 messages=filtered_messages,
-                system=system_message if system_message else anthropic.NOT_GIVEN,
+                system=self._build_system_param(system_message),
                 max_tokens=kwargs.get("max_tokens", 4096),
                 temperature=kwargs.get("temperature", 0.7),
             )
@@ -398,9 +426,9 @@ class ClaudeModel(OpenAICompatibleModel):
                 for turn in range(max_turns):
                     logger.debug(f"Turn {turn + 1}/{max_turns}")
 
-                    response = self.anthropic_client.messages.create(
+                    response = self._anthropic_messages_create(
                         model=self.model_name,
-                        system=instruction,
+                        system=self._build_system_param(instruction),
                         messages=wrap_prompt_cache(messages),
                         tools=tools,
                         max_tokens=kwargs.get("max_tokens", 20480),

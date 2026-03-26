@@ -432,9 +432,8 @@ class InteractiveInit:
     def _configure_claude_subscription(self, provider: str, provider_config: dict) -> bool:
         """Configure Claude with subscription plan (Pro/Max).
 
-        Auth routing by model:
-        - Haiku: subscription token (sk-ant-oat01-*) via direct API
-        - Sonnet/Opus: regular ANTHROPIC_API_KEY via standard API
+        Uses Claude Code setup-token (sk-ant-oat01-*) for supported Claude models
+        via Anthropic's beta Messages endpoint.
         """
         # Model selection
         models = provider_config.get("models", [])
@@ -449,22 +448,9 @@ class InteractiveInit:
         else:
             model_name = Prompt.ask("- Enter your model name", default=provider_config.get("default_model", "")).strip()
 
-        # Route auth by model: Haiku → subscription token, Sonnet/Opus → API key
-        is_haiku = "haiku" in model_name.lower()
-
-        if is_haiku:
-            api_key_value, auth_type = self._get_subscription_token()
-            if api_key_value is None:
-                return False
-        else:
-            self.console.print(
-                "  [dim]Sonnet/Opus requires an Anthropic API key (subscription tokens only work with Haiku)[/dim]"
-            )
-            api_key_value = getpass("- Enter your ANTHROPIC_API_KEY: ")
-            if not api_key_value.strip():
-                self.console.print("❌ API key cannot be empty")
-                return False
-            auth_type = "api_key"
+        api_key_value, auth_type = self._get_subscription_token()
+        if api_key_value is None:
+            return False
 
         # Store configuration
         self.config["agent"]["target"] = provider
@@ -485,7 +471,7 @@ class InteractiveInit:
             return True
         else:
             self.console.print(f"❌ LLM connectivity test failed: {error_msg}")
-            if is_haiku and ("401" in error_msg or "300011" in error_msg or "300035" in error_msg):
+            if "401" in error_msg or "300011" in error_msg or "300035" in error_msg:
                 self.console.print(
                     "   Token may be expired. Run 'claude setup-token' to refresh, then retry 'datus init'.\n"
                 )
