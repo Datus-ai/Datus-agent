@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
+from datus_storage_base.backend_config import StorageBackendConfig
+
 from datus.storage.base import BaseEmbeddingStore
 from datus.storage.embedding_models import get_embedding_model
 from datus.utils.loggings import get_logger
@@ -92,18 +94,54 @@ def get_subject_tree_store() -> "SubjectTreeStore":
     return _subject_tree_instance
 
 
-def preload_all_storages() -> None:
-    """Pre-load all storage singletons eagerly.
+def preload_all_storages(
+    data_dir: str = "",
+    config: Optional[StorageBackendConfig] = None,
+    **defaults: Any,
+) -> None:
+    """One-stop initialization: backends + defaults + all storage singletons.
 
-    Call after ``init_backends()`` and ``configure_storage_defaults()``
-    to avoid first-request initialization latency.
+    Combines ``init_backends()``, ``configure_storage_defaults()``, and
+    eager loading of every storage singleton into a single call.
 
-    Example (SaaS backend lifespan)::
+    Args:
+        data_dir: Root data directory (e.g. ``{home}/data``).
+            Passed to ``init_backends()``.
+        config: Storage backend configuration.
+            Controls which RDB (sqlite/postgresql) and vector (lance)
+            backends are used.  Defaults to sqlite + lance if omitted.
+        **defaults: Deployment-level defaults forwarded to
+            ``configure_storage_defaults()`` and then to every
+            storage constructor (e.g. ``table_prefix="tb_"``).
 
-        init_backends(data_dir="/data/workspace/data")
-        configure_storage_defaults(table_prefix="tb_")
-        preload_all_storages()
+    Example (SaaS — PostgreSQL + LanceDB)::
+
+        from datus_storage_base.backend_config import (
+            StorageBackendConfig, RdbBackendConfig, VectorBackendConfig,
+        )
+        preload_all_storages(
+            data_dir="/data/tenants/t1/workspaces/ws1/data",
+            config=StorageBackendConfig(
+                rdb=RdbBackendConfig(type="postgresql", params={...}),
+                vector=VectorBackendConfig(type="lance"),
+            ),
+            table_prefix="tb_",
+        )
+
+    Example (CLI — default sqlite + lance)::
+
+        preload_all_storages(data_dir="~/.datus/data")
     """
+    from datus.storage.backend_holder import init_backends
+
+    # 1. Initialize backends (vector DB + RDB connections)
+    init_backends(config=config, data_dir=data_dir)
+
+    # 2. Apply deployment-level defaults
+    if defaults:
+        configure_storage_defaults(**defaults)
+
+    # 3. Eagerly create all storage singletons
     from datus.storage.ext_knowledge.store import ExtKnowledgeStore
     from datus.storage.metric.store import MetricStorage
     from datus.storage.reference_sql.store import ReferenceSqlStorage
