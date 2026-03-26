@@ -227,29 +227,6 @@ agent:
       http_scheme: http  # optional: http or https
 ```
 
-## Multiple Database Connections
-
-You can configure multiple databases under the same namespace:
-
-```yaml
-agent:
-  namespace:
-    project:
-      source_db:
-        type: mysql
-        host: source-server
-        username: reader
-        password: password
-        database: source
-      target_db:
-        type: snowflake
-        account: your_account
-        username: writer
-        password: password
-        warehouse: compute_wh
-        database: target
-```
-
 ## Features by Adapter
 
 ### Common Features
