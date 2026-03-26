@@ -97,7 +97,7 @@ def _create_session_on_disk(session_id, messages=None):
     """Create a real session .db file on disk for testing cmd_resume/cmd_rewind.
 
     Uses get_path_manager().sessions_dir so the file is in the correct location
-    for SessionManager and SessionLoader to find.
+    for SessionManager to find.
 
     Args:
         session_id: The session ID (e.g. "chat_session_abc12345")
@@ -105,7 +105,7 @@ def _create_session_on_disk(session_id, messages=None):
     """
     from datus.utils.path_manager import get_path_manager
 
-    sessions_dir = str(get_path_manager().sessions_dir)
+    sessions_dir = os.path.join(str(get_path_manager().sessions_dir), "default")
     os.makedirs(sessions_dir, exist_ok=True)
     db_path = os.path.join(sessions_dir, f"{session_id}.db")
 
@@ -2350,7 +2350,7 @@ class TestCmdResumeWithSession:
         # Insert token usage > 50000 into turn_usage table
         from datus.utils.path_manager import get_path_manager
 
-        db_path = os.path.join(str(get_path_manager().sessions_dir), f"{session_id}.db")
+        db_path = os.path.join(str(get_path_manager().sessions_dir), "default", f"{session_id}.db")
         with sqlite3.connect(db_path) as conn:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS turn_usage ("
@@ -2466,10 +2466,10 @@ class TestCmdRewindWithSession:
         assert cmds.current_node.session_id != session_id
 
         # Verify the branched session only contains turns before the rewound turn
-        from datus.cli.web.session_loader import SessionLoader
+        from datus.models.session_manager import SessionManager
 
-        loader = SessionLoader()
-        new_messages = loader.get_session_messages(cmds.current_node.session_id)
+        sm = SessionManager()
+        new_messages = sm.get_session_messages(cmds.current_node.session_id)
         user_messages = [m["content"] for m in new_messages if m.get("role") == "user"]
         # Should contain only turn 1 user message, not turn 2
         assert "Question 1" in user_messages
@@ -2642,7 +2642,7 @@ class TestCmdRewindWithSession:
         # Create disk session with NO messages (only session record)
         from datus.utils.path_manager import get_path_manager
 
-        sessions_dir = str(get_path_manager().sessions_dir)
+        sessions_dir = os.path.join(str(get_path_manager().sessions_dir), "default")
         os.makedirs(sessions_dir, exist_ok=True)
         db_path = os.path.join(sessions_dir, f"{session_id}.db")
         with sqlite3.connect(db_path) as conn:
@@ -2735,10 +2735,10 @@ class TestResumeWithSqlMessages:
     """Tests for cmd_resume message rendering paths with SQL and actions."""
 
     def _create_session_with_sql_messages(self, session_id):
-        """Create a session with function_call messages that SessionLoader parses as SQL."""
+        """Create a session with function_call messages that SessionManager parses as SQL."""
         from datus.utils.path_manager import get_path_manager
 
-        sessions_dir = str(get_path_manager().sessions_dir)
+        sessions_dir = os.path.join(str(get_path_manager().sessions_dir), "default")
         os.makedirs(sessions_dir, exist_ok=True)
         db_path = os.path.join(sessions_dir, f"{session_id}.db")
 
@@ -2939,7 +2939,7 @@ class TestResumeInteractiveNoSessions:
         # Create an empty session (has session record but no messages)
         from datus.utils.path_manager import get_path_manager
 
-        sessions_dir = str(get_path_manager().sessions_dir)
+        sessions_dir = os.path.join(str(get_path_manager().sessions_dir), "default")
         os.makedirs(sessions_dir, exist_ok=True)
         session_id = "chat_session_empty01"
         db_path = os.path.join(sessions_dir, f"{session_id}.db")

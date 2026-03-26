@@ -24,12 +24,14 @@ import json
 import os
 import sqlite3
 import time
+import uuid
 from types import SimpleNamespace
 
 import pytest
 from agents.extensions.memory import AdvancedSQLiteSession
 
 from datus.models.session_manager import SessionManager
+from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.utils.path_manager import DatusPathManager
 
 # ---------------------------------------------------------------------------
@@ -110,7 +112,7 @@ class TestSessionManagerInit:
     def test_init_creates_session_dir(self, sm):
         """SessionManager creates the session directory on init."""
         assert os.path.isdir(sm.session_dir)
-        assert sm.session_dir.endswith("sessions")
+        assert sm.session_dir.endswith("default")
 
     def test_init_sessions_cache_is_empty(self, sm):
         """SessionManager starts with an empty session cache."""
@@ -981,11 +983,11 @@ class TestSessionManagerCustomDir:
     """Tests for SessionManager(session_dir=custom_path) - SaaS per-project isolation."""
 
     def test_custom_dir_is_used_instead_of_default(self, tmp_path):
-        """When session_dir is provided, it is used as the session directory."""
+        """When session_dir is provided, it is used as the session directory (with default scope)."""
         custom_dir = str(tmp_path / "my_project" / "sessions")
         manager = SessionManager(session_dir=custom_dir)
         try:
-            assert manager.session_dir == custom_dir
+            assert manager.session_dir == os.path.join(custom_dir, "default")
         finally:
             manager.close_all_sessions()
 
@@ -1062,15 +1064,15 @@ class TestSessionManagerCustomDir:
         assert sm_custom.session_exists(session_id) is True
 
     def test_saas_style_project_path(self, tmp_path):
-        """Simulates SaaS use: {home}/{project_id}/sessions as session_dir."""
+        """Simulates SaaS use: {home}/{project_id}/sessions as session_dir (with default scope)."""
         home = str(tmp_path)
         project_id = "proj-42"
         saas_session_dir = os.path.join(home, project_id, "sessions")
 
         manager = SessionManager(session_dir=saas_session_dir)
         try:
-            assert os.path.isdir(saas_session_dir)
-            assert manager.session_dir == saas_session_dir
+            assert os.path.isdir(manager.session_dir)
+            assert manager.session_dir == os.path.join(saas_session_dir, "default")
 
             # Create and verify a session
             manager.get_session("user-abc")
@@ -1079,11 +1081,12 @@ class TestSessionManagerCustomDir:
             manager.close_all_sessions()
 
     def test_none_session_dir_falls_back_to_default(self, real_agent_config):
-        """SessionManager(session_dir=None) uses the default path_manager sessions dir."""
+        """SessionManager(session_dir=None) uses the default path_manager sessions dir with default scope."""
         manager = SessionManager(session_dir=None)
         try:
-            # Default should end with 'sessions'
-            assert manager.session_dir.endswith("sessions")
+            # Default should end with 'default' scope under 'sessions'
+            assert manager.session_dir.endswith("default")
+            assert os.sep + "sessions" + os.sep in manager.session_dir
             assert os.path.isdir(manager.session_dir)
         finally:
             manager.close_all_sessions()
@@ -1097,6 +1100,12 @@ class TestSessionManagerCustomDir:
 
         sm_custom.delete_session(session_id)
         assert not os.path.isfile(db_path)
+        assert session_id not in sm_custom._sessions
+
+
+# ===========================================================================
+# TestSessionManagerPathManagerInjection
+# ===========================================================================
 
 
 class TestSessionManagerPathManagerInjection:
@@ -1104,7 +1113,7 @@ class TestSessionManagerPathManagerInjection:
         path_manager = DatusPathManager(tmp_path / "tenant_home")
         manager = SessionManager(path_manager=path_manager)
         try:
-            assert manager.session_dir == str(path_manager.sessions_dir)
+            assert manager.session_dir == os.path.join(str(path_manager.sessions_dir), "default")
             assert path_manager.sessions_dir.exists()
         finally:
             manager.close_all_sessions()
@@ -1114,7 +1123,7 @@ class TestSessionManagerPathManagerInjection:
         agent_config = SimpleNamespace(path_manager=path_manager)
         manager = SessionManager(agent_config=agent_config)
         try:
-            assert manager.session_dir == str(path_manager.sessions_dir)
+            assert manager.session_dir == os.path.join(str(path_manager.sessions_dir), "default")
             assert path_manager.sessions_dir.exists()
         finally:
             manager.close_all_sessions()
@@ -1123,6 +1132,285 @@ class TestSessionManagerPathManagerInjection:
         path_manager = DatusPathManager(tmp_path / "tenant_home")
         manager = SessionManager(session_dir="   ", path_manager=path_manager)
         try:
-            assert manager.session_dir == str(path_manager.sessions_dir)
+            assert manager.session_dir == os.path.join(str(path_manager.sessions_dir), "default")
+        finally:
+            manager.close_all_sessions()
+
+
+# ===========================================================================
+# TestGetSessionMessages (migrated from test_session_loader.py)
+# ===========================================================================
+
+
+class TestGetSessionMessages:
+    """Tests for SessionManager.get_session_messages (read-only session loading)."""
+
+    def test_invalid_session_id_path_traversal(self, sm):
+        """Path traversal session_id is rejected."""
+        messages = sm.get_session_messages("../../etc/passwd")
+        assert isinstance(messages, list)
+        assert len(messages) == 0
+
+    def test_invalid_session_id_special_chars(self, sm):
+        """Session IDs with special characters are rejected."""
+        messages = sm.get_session_messages("session;DROP TABLE")
+        assert isinstance(messages, list)
+        assert len(messages) == 0
+
+    def test_nonexistent_session(self, sm):
+        """Nonexistent session returns empty list without error."""
+        messages = sm.get_session_messages("nonexistent_session_99999")
+        assert isinstance(messages, list)
+        assert len(messages) == 0
+
+    def test_load_session_roundtrip(self, sm):
+        """Messages written to session DB can be read back by get_session_messages."""
+        session_id = f"test_roundtrip_{uuid.uuid4().hex[:8]}"
+        sm.get_session(session_id)
+        db_path = os.path.join(sm.session_dir, f"{session_id}.db")
+
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("INSERT OR IGNORE INTO agent_sessions (session_id) VALUES (?)", (session_id,))
+
+            user_msg = {"role": "user", "content": "How many customers are there?"}
+            conn.execute(
+                "INSERT INTO agent_messages (session_id, message_data, created_at) VALUES (?, ?, datetime('now'))",
+                (session_id, json.dumps(user_msg)),
+            )
+
+            assistant_msg = {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": json.dumps(
+                            {
+                                "sql": "SELECT COUNT(*) FROM customer",
+                                "output": "There are 30000 customers.",
+                            }
+                        ),
+                    }
+                ],
+            }
+            conn.execute(
+                "INSERT INTO agent_messages (session_id, message_data, created_at) "
+                "VALUES (?, ?, datetime('now', '+1 second'))",
+                (session_id, json.dumps(assistant_msg)),
+            )
+            conn.commit()
+
+        messages = sm.get_session_messages(session_id)
+        assert len(messages) >= 1, "Should have at least one message"
+
+        user_messages = [m for m in messages if m["role"] == "user"]
+        assert len(user_messages) == 1
+        assert user_messages[0]["content"] == "How many customers are there?"
+
+        assistant_messages = [m for m in messages if m["role"] == "assistant"]
+        assert len(assistant_messages) >= 1
+        assert assistant_messages[0].get("sql") == "SELECT COUNT(*) FROM customer"
+        assert assistant_messages[0]["content"] == "There are 30000 customers."
+
+
+# ===========================================================================
+# TestParseOutputFromAction (migrated from test_session_loader.py)
+# ===========================================================================
+
+
+class TestParseOutputFromAction:
+    """Tests for SessionManager._parse_final_output."""
+
+    def test_parse_final_output_with_sql(self):
+        """_parse_final_output extracts SQL from assistant action messages."""
+        action = ActionHistory(
+            action_id="test1",
+            role=ActionRole.ASSISTANT,
+            messages=json.dumps({"sql": "SELECT * FROM t", "output": "3 rows"}),
+            action_type="chat_response",
+            status=ActionStatus.SUCCESS,
+        )
+        group = {"role": "assistant", "content": "", "timestamp": "2025-01-01"}
+
+        result = SessionManager._parse_final_output([action], group)
+
+        assert result is not None
+        assert result.role == ActionRole.ASSISTANT
+        assert result.status == ActionStatus.SUCCESS
+        assert group["sql"] == "SELECT * FROM t"
+        assert group["content"] == "3 rows"
+
+    def test_parse_final_output_non_json_sets_content(self):
+        """_parse_final_output sets content to raw text for non-JSON messages."""
+        action = ActionHistory(
+            action_id="test2",
+            role=ActionRole.ASSISTANT,
+            messages="Just a plain text response",
+            action_type="chat_response",
+            status=ActionStatus.SUCCESS,
+        )
+        group = {"role": "assistant", "content": ""}
+
+        result = SessionManager._parse_final_output([action], group)
+        assert result is None
+        assert group["content"] == "Just a plain text response"
+
+    def test_parse_final_output_tool_role_only_returns_none(self):
+        """_parse_final_output returns None when only non-assistant actions exist."""
+        action = ActionHistory(
+            action_id="test3",
+            role=ActionRole.TOOL,
+            messages="tool output",
+            action_type="read_query",
+            status=ActionStatus.SUCCESS,
+        )
+        group = {"role": "assistant", "content": ""}
+
+        result = SessionManager._parse_final_output([action], group)
+        assert result is None
+        assert group["content"] == ""
+
+    def test_parse_final_output_finds_last_assistant(self):
+        """_parse_final_output searches backwards for the last assistant action."""
+        assistant_action = ActionHistory(
+            action_id="a1",
+            role=ActionRole.ASSISTANT,
+            messages=json.dumps({"sql": "SELECT 1", "output": "result"}),
+            action_type="thinking",
+            status=ActionStatus.SUCCESS,
+        )
+        tool_action = ActionHistory(
+            action_id="a2",
+            role=ActionRole.TOOL,
+            messages="tool output",
+            action_type="read_query",
+            status=ActionStatus.SUCCESS,
+        )
+        group = {"role": "assistant", "content": ""}
+
+        # Tool action is last, but assistant action should be found
+        result = SessionManager._parse_final_output([assistant_action, tool_action], group)
+        assert result is not None
+        assert group["sql"] == "SELECT 1"
+        assert group["content"] == "result"
+
+    def test_parse_final_output_empty_list(self):
+        """_parse_final_output returns None for empty action list."""
+        group = {"role": "assistant", "content": ""}
+
+        result = SessionManager._parse_final_output([], group)
+        assert result is None
+        assert group["content"] == ""
+
+    def test_parse_final_output_markdown_content(self):
+        """_parse_final_output preserves markdown text as content for chat agents."""
+        markdown = "## Analysis\n\nHere are the key findings:\n\n| Col | Val |\n|-----|-----|\n| A | 1 |"
+        action = ActionHistory(
+            action_id="md1",
+            role=ActionRole.ASSISTANT,
+            messages=markdown,
+            action_type="thinking",
+            status=ActionStatus.SUCCESS,
+        )
+        group = {"role": "assistant", "content": ""}
+
+        result = SessionManager._parse_final_output([action], group)
+        assert result is None
+        assert group["content"] == markdown
+
+
+# ===========================================================================
+# TestSessionManagerScope
+# ===========================================================================
+
+
+class TestSessionManagerScope:
+    """Tests for SessionManager scope parameter (session directory isolation)."""
+
+    def test_no_scope_defaults_to_default(self, tmp_path):
+        """Not passing scope results in session_dir ending with /default."""
+        manager = SessionManager(session_dir=str(tmp_path / "sessions"))
+        try:
+            assert manager.session_dir.endswith(os.sep + "default")
+            assert os.path.isdir(manager.session_dir)
+        finally:
+            manager.close_all_sessions()
+
+    def test_explicit_scope(self, tmp_path):
+        """Passing scope='myproj' results in session_dir ending with /myproj."""
+        manager = SessionManager(session_dir=str(tmp_path / "sessions"), scope="myproj")
+        try:
+            assert manager.session_dir.endswith(os.sep + "myproj")
+            assert os.path.isdir(manager.session_dir)
+        finally:
+            manager.close_all_sessions()
+
+    def test_scope_none_defaults_to_default(self, tmp_path):
+        """Passing scope=None explicitly uses 'default' as scope."""
+        manager = SessionManager(session_dir=str(tmp_path / "sessions"), scope=None)
+        try:
+            assert manager.session_dir.endswith(os.sep + "default")
+        finally:
+            manager.close_all_sessions()
+
+    def test_scope_empty_string_defaults_to_default(self, tmp_path):
+        """Passing scope='' uses 'default' as scope."""
+        manager = SessionManager(session_dir=str(tmp_path / "sessions"), scope="")
+        try:
+            assert manager.session_dir.endswith(os.sep + "default")
+        finally:
+            manager.close_all_sessions()
+
+    def test_scope_whitespace_only_defaults_to_default(self, tmp_path):
+        """Passing scope='  ' (whitespace only) uses 'default' as scope."""
+        manager = SessionManager(session_dir=str(tmp_path / "sessions"), scope="   ")
+        try:
+            assert manager.session_dir.endswith(os.sep + "default")
+        finally:
+            manager.close_all_sessions()
+
+    @pytest.mark.parametrize("bad_scope", ["../etc", "my proj", "a/b", "scope@1", "a.b", "scope!"])
+    def test_invalid_scope_raises_value_error(self, tmp_path, bad_scope):
+        """Scope values with special characters raise ValueError."""
+        with pytest.raises(ValueError, match="Invalid scope"):
+            SessionManager(session_dir=str(tmp_path / "sessions"), scope=bad_scope)
+
+    def test_scope_allows_alphanumeric_hyphen_underscore(self, tmp_path):
+        """Scope values with alphanumerics, hyphens, and underscores are accepted."""
+        for valid_scope in ["default", "my-project", "project_123", "ABC", "a1-b2_c3"]:
+            manager = SessionManager(session_dir=str(tmp_path / "sessions"), scope=valid_scope)
+            try:
+                assert manager.session_dir.endswith(os.sep + valid_scope)
+            finally:
+                manager.close_all_sessions()
+
+    def test_different_scopes_are_isolated(self, tmp_path):
+        """Sessions in different scopes do not see each other via list_sessions."""
+        base_dir = str(tmp_path / "sessions")
+        manager_a = SessionManager(session_dir=base_dir, scope="project-a")
+        manager_b = SessionManager(session_dir=base_dir, scope="project-b")
+
+        try:
+            manager_a.get_session("session-alpha")
+            manager_b.get_session("session-beta")
+
+            sessions_a = manager_a.list_sessions()
+            sessions_b = manager_b.list_sessions()
+
+            assert "session-alpha" in sessions_a
+            assert "session-beta" not in sessions_a
+            assert "session-beta" in sessions_b
+            assert "session-alpha" not in sessions_b
+        finally:
+            manager_a.close_all_sessions()
+            manager_b.close_all_sessions()
+
+    def test_scope_creates_subdirectory(self, tmp_path):
+        """Scope creates a subdirectory under the base session_dir."""
+        base_dir = str(tmp_path / "sessions")
+        manager = SessionManager(session_dir=base_dir, scope="myproj")
+        try:
+            expected = os.path.join(base_dir, "myproj")
+            assert manager.session_dir == expected
+            assert os.path.isdir(expected)
         finally:
             manager.close_all_sessions()

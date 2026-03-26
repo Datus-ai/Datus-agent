@@ -9,10 +9,14 @@ import os
 import re
 import sqlite3
 import uuid
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from datetime import datetime
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from agents.extensions.memory import AdvancedSQLiteSession
 
+from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+from datus.utils.json_utils import llm_result2json
 from datus.utils.loggings import get_logger
 from datus.utils.message_utils import extract_user_input
 
@@ -33,6 +37,7 @@ class SessionManager:
     def __init__(
         self,
         session_dir: Optional[str] = None,
+        scope: Optional[str] = None,
         *,
         path_manager: Optional["DatusPathManager"] = None,
         agent_config: Optional[Any] = None,
@@ -45,6 +50,10 @@ class SessionManager:
                 sessions are stored in this directory (used by SaaS backend for
                 per-project session isolation). When None, falls back to the
                 default {agent.home}/sessions path.
+            scope: Optional scope name for session directory isolation.
+                When provided, sessions are stored under {session_dir}/{scope}/.
+                When None or empty, defaults to "default".
+                Only alphanumerics, hyphens, and underscores are allowed.
         """
         if session_dir and str(session_dir).strip():
             self.session_dir = str(session_dir)
@@ -52,6 +61,15 @@ class SessionManager:
             from datus.utils.path_manager import get_path_manager
 
             self.session_dir = str(get_path_manager(path_manager=path_manager, agent_config=agent_config).sessions_dir)
+
+        # Apply scope subdirectory
+        resolved_scope = scope if scope and scope.strip() else "default"
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", resolved_scope):
+            raise ValueError(
+                f"Invalid scope: {resolved_scope!r}. "
+                "Scope may only contain alphanumerics, hyphens, and underscores."
+            )
+        self.session_dir = os.path.join(self.session_dir, resolved_scope)
         os.makedirs(self.session_dir, exist_ok=True)
         self._sessions: Dict[str, AdvancedSQLiteSession] = {}
 
@@ -507,6 +525,272 @@ class SessionManager:
             **file_info,
             **session_metadata,
         }
+
+    @staticmethod
+    def _parse_final_output(actions: List[ActionHistory], current_assistant_group: Dict) -> Optional[ActionHistory]:
+        """Try to parse sql/output from the last assistant action's messages and update assistant group.
+
+        Searches *actions* in reverse for the last ASSISTANT action and attempts
+        to extract structured JSON (sql/output).  When JSON extraction fails
+        (e.g. chat agent producing plain markdown), the raw text is used as
+        ``content`` so it can be rendered as markdown during resume.
+        """
+        # Find last assistant action (may not be the very last action)
+        last_assistant = None
+        for action in reversed(actions):
+            if action.role == ActionRole.ASSISTANT:
+                last_assistant = action
+                break
+
+        if not last_assistant or not last_assistant.messages:
+            return None
+
+        result_json = llm_result2json(last_assistant.messages)
+        if isinstance(result_json, str):
+            # Plain string output — use directly as content
+            current_assistant_group["content"] = result_json
+            return None
+        if isinstance(result_json, dict) and (
+            "sql" in result_json or "output" in result_json or "response" in result_json
+        ):
+            output = {}
+            if "sql" in result_json:
+                output["sql"] = result_json["sql"]
+            # Treat "response" as alias for "output" (prefer "response" if present)
+            content_value = result_json.get("response") or result_json.get("output", "")
+            output["response"] = content_value
+            current_assistant_group["content"] = content_value
+            current_assistant_group["sql"] = result_json.get("sql", "")
+            # Create final action
+            final_action = ActionHistory.create_action(
+                role=ActionRole.ASSISTANT,
+                action_type="chat_response",
+                messages="Chat interaction completed successfully",
+                input_data={},
+                output_data=output,
+                status=ActionStatus.SUCCESS,
+            )
+            return final_action
+
+        # Non-JSON output (e.g. chat agent markdown) — use raw text as content
+        current_assistant_group["content"] = last_assistant.messages
+        return None
+
+    def get_session_messages(self, session_id: str) -> List[Dict]:
+        """
+        Get all messages from a session stored in SQLite, aggregating consecutive assistant messages.
+
+        Args:
+            session_id: Session ID to load messages from
+
+        Returns:
+            List of message dictionaries with role, content, timestamp, SQL, and progress
+        """
+        messages = []
+
+        # Validate session_id to prevent path traversal
+        # Only allow alphanumeric, underscore, hyphen, and dot
+        if not re.match(r"^[A-Za-z0-9_.-]+$", session_id):
+            logger.warning(f"Invalid session_id format (potential path traversal): {session_id}")
+            return messages
+
+        # Build path with pathlib and resolve to absolute path
+        sessions_dir = Path(self.session_dir)
+        db_path = (sessions_dir / f"{session_id}.db").resolve()
+
+        # Ensure resolved path is within sessions directory
+        try:
+            db_path.relative_to(sessions_dir.resolve())
+        except ValueError:
+            logger.warning(f"Session path outside of sessions directory (path traversal attempt): {db_path}")
+            return messages
+
+        if not db_path.exists():
+            logger.warning(f"Session database not found: {db_path}")
+            return messages
+
+        try:
+            with sqlite3.connect(str(db_path)) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT message_data, created_at
+                    FROM agent_messages
+                    WHERE session_id = ?
+                    ORDER BY created_at
+                    """,
+                    (session_id,),
+                )
+
+                # Aggregate consecutive assistant messages
+                current_assistant_group = None
+                assistant_progress = []
+                current_actions = []  # Collect ActionHistory objects for detailed view
+
+                for message_data, created_at in cursor.fetchall():
+                    try:
+                        message_json = json.loads(message_data)
+                        role = message_json.get("role", "")
+                        msg_type = message_json.get("type", "")
+
+                        # Handle user messages
+                        if role == "user":
+                            # Before adding user message, flush any pending assistant group
+                            if current_assistant_group:
+                                final_action = self._parse_final_output(current_actions, current_assistant_group)
+                                if final_action:
+                                    current_actions.append(final_action)
+
+                                # Add collected actions and progress to the assistant group
+                                if current_actions:
+                                    current_assistant_group["actions"] = current_actions.copy()
+                                if assistant_progress:
+                                    current_assistant_group["progress_messages"] = assistant_progress.copy()
+
+                                messages.append(current_assistant_group)
+                                current_assistant_group = None
+                                assistant_progress = []
+                                current_actions = []
+
+                            # Add user message (extract original user input from structured content)
+                            content = extract_user_input(message_json.get("content", ""))
+                            messages.append({"role": "user", "content": content, "timestamp": created_at})
+                            continue
+
+                        # Handle function calls (tool calls)
+                        if msg_type == "function_call":
+                            tool_name = message_json.get("name", "unknown")
+                            arguments = message_json.get("arguments", "{}")
+
+                            # Initialize assistant group if needed
+                            if not current_assistant_group:
+                                current_assistant_group = {"role": "assistant", "content": "", "timestamp": created_at}
+
+                            # Parse arguments
+                            try:
+                                args_dict = json.loads(arguments) if arguments else {}
+                                args_str = str(args_dict)[:60]
+                                assistant_progress.append(f"✓ Tool call: {tool_name}({args_str})")
+                            except (json.JSONDecodeError, ValueError, TypeError):
+                                args_dict = {}
+                                assistant_progress.append(f"✓ Tool call: {tool_name}")
+
+                            # Create ActionHistory for tool call
+                            action = ActionHistory(
+                                action_id=str(uuid.uuid4()),
+                                role=ActionRole.TOOL,
+                                messages=f"Tool call: {tool_name}",
+                                action_type=tool_name,
+                                input={"function_name": tool_name, "arguments": arguments},
+                                output=None,  # Will be filled by next function_call_output
+                                status=ActionStatus.PROCESSING,
+                                start_time=datetime.fromisoformat(created_at) if created_at else datetime.now(),
+                            )
+                            current_actions.append(action)
+                            continue
+
+                        # Handle function outputs (tool results)
+                        if msg_type == "function_call_output":
+                            # Create a new SUCCESS action for the tool output
+                            if current_actions:
+                                last_action = current_actions[-1]
+
+                                # Extract output directly from message_json
+                                output_text = message_json.get("output", "")
+
+                                # Try to parse as Python literal (the output is stored as string repr of dict)
+                                output_data = {}
+                                if output_text:
+                                    try:
+                                        # Try ast.literal_eval first (safer than eval)
+                                        import ast
+
+                                        output_data = ast.literal_eval(output_text)
+                                    except (ValueError, SyntaxError):
+                                        # If that fails, try json.loads
+                                        try:
+                                            output_data = json.loads(output_text)
+                                        except json.JSONDecodeError:
+                                            # Last resort: store as string
+                                            output_data = {"result": output_text}
+
+                                # Create a new SUCCESS action instead of updating the PROCESSING one
+                                success_action = ActionHistory(
+                                    action_id=str(uuid.uuid4()),
+                                    role=ActionRole.TOOL,
+                                    messages=f"Tool result: {last_action.action_type}",
+                                    action_type=last_action.action_type,
+                                    input=last_action.input,
+                                    output=output_data,
+                                    status=ActionStatus.SUCCESS,
+                                    start_time=last_action.start_time,
+                                    end_time=datetime.fromisoformat(created_at) if created_at else datetime.now(),
+                                )
+                                current_actions.append(success_action)
+                            continue
+
+                        # Handle assistant messages (thinking and final output)
+                        if role == "assistant":
+                            # Assistant message - aggregate consecutive ones
+                            content_array = message_json.get("content", [])
+
+                            for item in content_array:
+                                if not isinstance(item, dict):
+                                    continue
+
+                                item_type = item.get("type", "")
+                                text = item.get("text", "")
+
+                                if item_type == "output_text" and text:
+                                    # Initialize assistant group if needed
+                                    if not current_assistant_group:
+                                        current_assistant_group = {
+                                            "role": "assistant",
+                                            "content": "",
+                                            "timestamp": created_at,
+                                        }
+
+                                    # Add to progress
+                                    assistant_progress.append(f"💭Thinking: {text}")
+
+                                    # Create ActionHistory for thinking (will parse sql/output on flush)
+                                    thinking_action = ActionHistory(
+                                        action_id=str(uuid.uuid4()),
+                                        role=ActionRole.ASSISTANT,
+                                        messages=text,
+                                        action_type="thinking",
+                                        input=None,
+                                        output=None,
+                                        status=ActionStatus.SUCCESS,
+                                        start_time=(
+                                            datetime.fromisoformat(created_at) if created_at else datetime.now()
+                                        ),
+                                        end_time=(datetime.fromisoformat(created_at) if created_at else datetime.now()),
+                                    )
+                                    current_actions.append(thinking_action)
+
+                    except (json.JSONDecodeError, TypeError) as e:
+                        logger.debug(f"Skipping malformed message: {e}")
+                        continue
+
+                # Flush any remaining assistant group
+                if current_assistant_group:
+                    final_action = self._parse_final_output(current_actions, current_assistant_group)
+                    if final_action:
+                        current_actions.append(final_action)
+
+                    if not current_assistant_group.get("content"):
+                        current_assistant_group["content"] = "Processing completed"
+                    if assistant_progress:
+                        current_assistant_group["progress_messages"] = assistant_progress
+                    if current_actions:
+                        current_assistant_group["actions"] = current_actions.copy()
+                    messages.append(current_assistant_group)
+
+        except Exception as e:
+            logger.exception(f"Failed to load session messages for {session_id}: {e}")
+
+        return messages
 
     def close_all_sessions(self) -> None:
         """Close all active sessions."""

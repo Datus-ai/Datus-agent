@@ -1067,10 +1067,7 @@ class ChatCommands:
             # Show conversation history with full formatting
             from rich.rule import Rule
 
-            from datus.cli.web.session_loader import SessionLoader
-
-            loader = SessionLoader(session_dir=self.cli.agent_config.session_dir)
-            messages = loader.get_session_messages(target_session_id)
+            messages = session_manager.get_session_messages(target_session_id)
             if messages:
                 self.console.print(f"\n[bold green]Session resumed![/] Showing {len(messages)} message(s):\n")
                 action_display = ActionHistoryDisplay(self.console)
@@ -1138,7 +1135,6 @@ class ChatCommands:
             The selected user message text, or None if cancelled/error.
         """
         from datus.cli._cli_utils import select_list
-        from datus.cli.web.session_loader import SessionLoader
         from datus.models.session_manager import SessionManager
 
         try:
@@ -1148,10 +1144,10 @@ class ChatCommands:
                 return
 
             source_session_id = self.current_node.session_id
+            session_manager = SessionManager(self.cli.agent_config.session_dir)
 
             # Load conversation history
-            loader = SessionLoader(session_dir=self.cli.agent_config.session_dir)
-            messages = loader.get_session_messages(source_session_id)
+            messages = session_manager.get_session_messages(source_session_id)
             if not messages:
                 self.console.print("[yellow]Current session has no messages.[/]")
                 return
@@ -1203,7 +1199,6 @@ class ChatCommands:
             rewind_user_message = user_turns[turn_num - 1].get("content", "")
 
             # Create the rewound session (keep everything BEFORE the selected turn)
-            session_manager = SessionManager(self.cli.agent_config.session_dir)
             if turn_num == 1:
                 # First turn selected — no prior messages, create a fresh session
                 node_name = self._extract_node_type_from_session_id(source_session_id)
@@ -1238,7 +1233,7 @@ class ChatCommands:
             # Show the rewound conversation
             from rich.rule import Rule
 
-            new_messages = loader.get_session_messages(new_session_id)
+            new_messages = session_manager.get_session_messages(new_session_id)
             if new_messages:
                 self.console.print(
                     f"\n[bold green]Rewound to before turn {turn_num}.[/] "
