@@ -29,17 +29,15 @@ agent:
     # Get your API key at https://openrouter.ai/keys
     openrouter:
       type: openrouter
-      vendor: openrouter
       base_url: https://openrouter.ai/api/v1
       api_key: ${OPENROUTER_API_KEY}
       model: anthropic/claude-sonnet-4  # any OpenRouter model: openai/gpt-4o, google/gemini-2.5-pro, etc.
 
     # Claude Subscription (Pro/Max plan via setup-token)
-    # Run 'claude setup-token' to get an OAuth token, then paste it below
-    # or set CLAUDE_CODE_OAUTH_TOKEN env var, or let it auto-detect from ~/.claude/.credentials.json
+    # Run 'claude setup-token' to get an OAuth token, then set CLAUDE_CODE_OAUTH_TOKEN env var,
+    # or let it auto-detect from ~/.claude/.credentials.json
     claude_subscription:
       type: claude
-      vendor: claude_subscription
       base_url: https://api.anthropic.com
       api_key: ${CLAUDE_CODE_OAUTH_TOKEN}
       model: claude-sonnet-4-20250514
@@ -49,22 +47,17 @@ agent:
     # Run `datus init` and select "codex" to complete OAuth login
     codex:
       type: codex
-      vendor: codex
       base_url: https://chatgpt.com/backend-api/codex
       api_key: ""
       model: gpt-5.3-codex
       auth_type: oauth
 
-    # Coding Plan - Alibaba (multi-model aggregation, one subscription covers multiple models)
-    # Note: Coding Plan endpoints may verify request headers (User-Agent, etc.)
-    # Use default_headers to set required headers for your endpoint.
+    # Coding Plan - Alibaba (multi-model aggregation via Anthropic-compatible endpoint)
     alibaba_coding:
       type: claude
       base_url: https://coding-intl.dashscope.aliyuncs.com/apps/anthropic
       api_key: ${DASHSCOPE_API_KEY}
       model: qwen3-coder-plus
-      # default_headers:
-      #   User-Agent: "your-tool-name/1.0"
 
     # Coding Plan - GLM
     glm_coding:

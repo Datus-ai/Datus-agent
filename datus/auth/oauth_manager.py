@@ -4,9 +4,7 @@
 
 """OAuth flow manager for OpenAI Codex authentication.
 
-Supports two authentication flows:
-- Browser PKCE flow (interactive environments)
-- Device Code flow (headless environments)
+Uses browser-based PKCE flow for interactive authentication.
 """
 
 import threading
@@ -22,10 +20,6 @@ from datus.auth.oauth_config import (
     AUTHORIZE_URL,
     CALLBACK_PORT,
     CLIENT_ID,
-    DEVICE_CODE_POLL_INTERVAL,
-    DEVICE_CODE_TIMEOUT,
-    DEVICE_CODE_URL,
-    DEVICE_TOKEN_URL,
     HTTP_TIMEOUT,
     REDIRECT_URI,
     SCOPES,
@@ -145,132 +139,6 @@ class OAuthManager:
         return tokens
 
     # ------------------------------------------------------------------
-    # Device Code flow
-    # ------------------------------------------------------------------
-
-    def login_device(self) -> dict:
-        """Authenticate via Device Code flow (headless environments).
-
-        Convenience wrapper that calls request_device_code() then poll_device_token().
-
-        Returns:
-            Token dictionary with access_token, refresh_token, etc.
-        """
-        self.request_device_code()
-        return self.poll_device_token()
-
-    def request_device_code(self) -> dict:
-        """Request a device code and user code from the auth server.
-
-        After calling this, display _device_verification_uri and _device_user_code
-        to the user, then call poll_device_token() to wait for completion.
-
-        Returns:
-            The raw device code response data.
-        """
-        try:
-            resp = httpx.post(
-                DEVICE_CODE_URL,
-                json={"client_id": CLIENT_ID},
-                headers={"Content-Type": "application/json"},
-                timeout=HTTP_TIMEOUT,
-            )
-            resp.raise_for_status()
-        except httpx.HTTPStatusError as e:
-            raise DatusException(
-                ErrorCode.OAUTH_AUTH_FAILED,
-                message_args={"error_detail": f"Device code request failed (HTTP {e.response.status_code})"},
-            ) from e
-        except httpx.TimeoutException as e:
-            raise DatusException(ErrorCode.OAUTH_TIMEOUT) from e
-        except httpx.RequestError as e:
-            raise DatusException(
-                ErrorCode.OAUTH_AUTH_FAILED,
-                message_args={"error_detail": f"Device code request failed (network error: {e})"},
-            ) from e
-        device_data = resp.json()
-
-        self._device_user_code = device_data.get("user_code")
-        # Codex server doesn't return verification_uri — it's constructed client-side
-        self._device_verification_uri = (
-            device_data.get("verification_uri")
-            or device_data.get("verification_url")
-            or device_data.get("verification_uri_complete")
-            or "https://auth.openai.com/codex/device"
-        )
-        self._device_auth_id = device_data.get("device_auth_id") or device_data.get("device_code")
-        self._device_poll_interval = int(device_data.get("interval", DEVICE_CODE_POLL_INTERVAL))
-
-        logger.info("Device code flow initiated. Visit the URL below to authenticate.")
-        logger.info("Verification URL: %s", self._device_verification_uri)
-        logger.debug("Device code response fields: %s", list(device_data.keys()))
-        logger.info("User code: %s", self._device_user_code)
-        return device_data
-
-    def poll_device_token(self) -> dict:
-        """Poll the auth server until the user completes device code authentication.
-
-        Must be called after request_device_code().
-
-        Returns:
-            Token dictionary with access_token, refresh_token, etc.
-        """
-        device_auth_id = self._device_auth_id
-        user_code = self._device_user_code
-        interval = self._device_poll_interval
-
-        deadline = time.monotonic() + DEVICE_CODE_TIMEOUT
-        while time.monotonic() < deadline:
-            time.sleep(interval)
-            try:
-                token_resp = httpx.post(
-                    DEVICE_TOKEN_URL,
-                    json={
-                        "device_auth_id": device_auth_id,
-                        "user_code": user_code,
-                    },
-                    headers={"Content-Type": "application/json"},
-                    timeout=HTTP_TIMEOUT,
-                )
-            except (httpx.TimeoutException, httpx.RequestError):
-                continue  # Retry on timeout or network error during polling
-            if token_resp.status_code == 200:
-                device_data = token_resp.json()
-                # Codex device code flow returns authorization_code + code_verifier,
-                # not access_token directly. Exchange them for real tokens.
-                auth_code = device_data.get("authorization_code")
-                verifier = device_data.get("code_verifier")
-                if auth_code and verifier:
-                    tokens = self._exchange_code(auth_code, verifier, redirect_uri=None)
-                else:
-                    tokens = device_data
-                self.token_storage.save(tokens)
-                logger.info("Device code OAuth login successful")
-                return tokens
-
-            # Codex server returns 403/404 while user hasn't completed auth yet
-            if token_resp.status_code in (403, 404):
-                continue
-
-            try:
-                error_body = token_resp.json()
-            except Exception as e:
-                raise DatusException(
-                    ErrorCode.OAUTH_AUTH_FAILED,
-                    message_args={"error_detail": f"Unexpected response (HTTP {token_resp.status_code})"},
-                ) from e
-            error_code = error_body.get("error", "")
-            if error_code == "authorization_pending":
-                continue
-            elif error_code == "slow_down":
-                interval = min(interval + 5, 30)
-                continue
-            else:
-                raise DatusException(ErrorCode.OAUTH_AUTH_FAILED, message_args={"error_detail": error_code})
-
-        raise DatusException(ErrorCode.OAUTH_TIMEOUT)
-
-    # ------------------------------------------------------------------
     # Token management
     # ------------------------------------------------------------------
 
@@ -361,16 +229,15 @@ class OAuthManager:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _exchange_code(self, code: str, code_verifier: str, redirect_uri: Optional[str] = REDIRECT_URI) -> dict:
+    def _exchange_code(self, code: str, code_verifier: str) -> dict:
         """Exchange an authorization code for tokens."""
         data = {
             "grant_type": "authorization_code",
             "client_id": CLIENT_ID,
             "code": code,
             "code_verifier": code_verifier,
+            "redirect_uri": REDIRECT_URI,
         }
-        if redirect_uri:
-            data["redirect_uri"] = redirect_uri
         try:
             resp = httpx.post(
                 TOKEN_URL,

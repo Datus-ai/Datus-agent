@@ -6,6 +6,7 @@
 
 import asyncio
 import json
+import threading
 import time
 from datetime import date, datetime
 from pathlib import Path
@@ -53,19 +54,23 @@ setup_tracing()
 
 # Module-level cache for model specs loaded from conf/providers.yml
 _MODEL_SPECS_CACHE: Optional[Dict[str, Dict[str, int]]] = None
+_MODEL_SPECS_LOCK = threading.Lock()
 
 
 def _load_model_specs() -> Dict[str, Dict[str, int]]:
-    """Load model specifications from conf/providers.yml (cached after first call)."""
+    """Load model specifications from conf/providers.yml (cached after first call, thread-safe)."""
     global _MODEL_SPECS_CACHE
-    if _MODEL_SPECS_CACHE is None:
-        try:
-            text = read_data_file_text("conf/providers.yml")
-            catalog = yaml.safe_load(text)
-            _MODEL_SPECS_CACHE = catalog.get("model_specs", {})
-        except Exception as e:
-            logger.warning(f"Failed to load model_specs from providers.yml, using empty specs: {e}")
-            _MODEL_SPECS_CACHE = {}
+    if _MODEL_SPECS_CACHE is not None:
+        return _MODEL_SPECS_CACHE
+    with _MODEL_SPECS_LOCK:
+        if _MODEL_SPECS_CACHE is None:
+            try:
+                text = read_data_file_text("conf/providers.yml")
+                catalog = yaml.safe_load(text)
+                _MODEL_SPECS_CACHE = catalog.get("model_specs", {})
+            except Exception as e:
+                logger.warning(f"Failed to load model_specs from providers.yml, using empty specs: {e}")
+                _MODEL_SPECS_CACHE = {}
     return _MODEL_SPECS_CACHE
 
 

@@ -58,7 +58,7 @@ class TokenStorage:
                     os.fsync(f.fileno())
                 os.replace(tmp_path, self.path)
                 os.chmod(self.path, 0o600)
-            except BaseException:
+            except Exception:
                 if os.path.exists(tmp_path):
                     os.remove(tmp_path)
                 raise

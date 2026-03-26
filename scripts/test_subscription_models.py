@@ -86,7 +86,7 @@ def test_via_claude_model(token: str):
 
 def main():
     token = get_token()
-    print(f"Token: {token[:25]}...")
+    print(f"Token: {token[:8]}...{token[-4:]}")
     print(f"Models: {', '.join(MODELS_TO_TEST)}")
 
     results = test_via_claude_model(token)

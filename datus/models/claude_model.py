@@ -16,6 +16,7 @@ import json
 import os
 import time
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
@@ -34,6 +35,20 @@ from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class _ToolResultPart:
+    """A single part of a tool result (matches MCP tool result format)."""
+
+    text: str
+
+
+@dataclass
+class _ToolResult:
+    """Lightweight stand-in for MCP CallToolResult (`.content[0].text`)."""
+
+    content: List[_ToolResultPart] = field(default_factory=list)
 
 
 def wrap_prompt_cache(messages):
@@ -437,9 +452,7 @@ class ClaudeModel(OpenAICompatibleModel):
                                     # Ensure result is a string (Anthropic API requires string content)
                                     result_str = result_val if isinstance(result_val, str) else json.dumps(result_val)
                                     # Wrap in object matching MCP tool result format
-                                    func_result = type(
-                                        "ToolResult", (), {"content": [type("Part", (), {"text": result_str})()]}
-                                    )()
+                                    func_result = _ToolResult(content=[_ToolResultPart(text=result_str)])
                                     tool_call_cache[block.id] = func_result
                                     tool_executed = True
                                 except Exception as e:

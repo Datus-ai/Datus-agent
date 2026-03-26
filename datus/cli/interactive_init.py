@@ -405,6 +405,7 @@ class InteractiveInit:
             self.console.print(f" ✅ Configuration saved to {config_path}")
             return True
         except Exception as e:
+            logger.error(f"Failed to save configuration: {e}")
             self.console.print(f" ❌ Failed to save configuration: {e}")
             return False
 
@@ -500,6 +501,7 @@ class InteractiveInit:
             oauth_mgr = OAuthManager()
             oauth_mgr.login_browser()
         except Exception as e:
+            logger.error(f"OAuth authentication failed: {e}")
             self.console.print(f"❌ OAuth authentication failed: {e}")
             return False
 
@@ -534,6 +536,7 @@ class InteractiveInit:
                 self.console.print("⚠️  OAuth login succeeded but model returned empty response")
                 connectivity_ok = False
         except Exception as e:
+            logger.warning(f"Codex connectivity test failed: {e}")
             self.console.print(f"⚠️  OAuth login succeeded but connectivity test failed: {e}")
             connectivity_ok = False
 
