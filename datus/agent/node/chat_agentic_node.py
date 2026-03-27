@@ -95,6 +95,9 @@ class ChatAgenticNode(AgenticNode):
         # SubAgent task delegation tool
         self.sub_agent_task_tool = None
 
+        # Scheduler tools
+        self.scheduler_tools = None
+
         # Plan mode attributes
         self.plan_mode_active = False
         self.plan_hooks = None
@@ -141,6 +144,7 @@ class ChatAgenticNode(AgenticNode):
         self._setup_skill_tools()
         self._setup_sub_agent_task_tool()
         self._setup_ask_user_tool()
+        self._setup_scheduler_tools()
         self._rebuild_tools()
         self._setup_platform_doc_tools()
 
@@ -164,6 +168,20 @@ class ChatAgenticNode(AgenticNode):
             logger.debug(f"Setup filesystem tools with root path: {root_path}")
         except Exception as e:
             logger.error(f"Failed to setup filesystem tools: {e}")
+
+    def _setup_scheduler_tools(self):
+        """Setup scheduler tools if schedulers are configured."""
+        if not getattr(self.agent_config, "schedulers_config", None):
+            return
+        try:
+            from datus.tools.func_tool.scheduler_tools import SchedulerTools
+
+            self.scheduler_tools = SchedulerTools(self.agent_config)
+            logger.debug("Setup scheduler tools for schedulers: %s", list(self.agent_config.schedulers_config.keys()))
+        except ImportError:
+            logger.debug("datus-scheduler-core not installed, skipping scheduler tools")
+        except Exception as exc:
+            logger.error("Failed to setup scheduler tools: %s", exc)
 
     def _setup_platform_doc_tools(self):
         """Setup platform documentation search tools."""
@@ -258,6 +276,8 @@ class ChatAgenticNode(AgenticNode):
                 self.tool_registry.register_tools("tools", self.ask_user_tool.available_tools())
             if self._platform_doc_tool:
                 self.tool_registry.register_tools("tools", self._platform_doc_tool.available_tools())
+            if self.scheduler_tools:
+                self.tool_registry.register_tools("scheduler_tools", self.scheduler_tools.available_tools())
 
             # 2. Create PermissionHooks sharing the same tool_registry instance
             broker = self._get_or_create_broker()
@@ -292,6 +312,8 @@ class ChatAgenticNode(AgenticNode):
             self.tools.extend(self.sub_agent_task_tool.available_tools())
         if self.ask_user_tool:
             self.tools.extend(self.ask_user_tool.available_tools())
+        if self.scheduler_tools:
+            self.tools.extend(self.scheduler_tools.available_tools())
 
     def _update_database_connection(self, database_name: str):
         """Update database connection to a different database."""

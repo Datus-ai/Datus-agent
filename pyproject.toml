@@ -82,6 +82,10 @@ dependencies = [
 [project.optional-dependencies]
 # Database connectors have been moved to separate adapter packages
 # See https://github.com/Datus-ai/Datus-adapters for available adapters
+scheduler = ["datus-airflow>=0.1.0"]
+
+[tool.uv.sources]
+datus-airflow = { path = "../datus-scheduler-adapters/datus-airflow" }
 
 [project.urls]
 Homepage = "https://datus.ai/"
