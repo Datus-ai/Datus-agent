@@ -321,11 +321,6 @@ class AgentConfig:
         else:
             self._init_dirs()
 
-        # Per-request context for storage (SaaS only).
-        # ALL fields are auto-filled on writes (insert/upsert).
-        # Only fields listed in configure_storage_defaults(scope_fields=[...]) are used as read filters.
-        # Example: {"workspace_id": "ws_abc", "creator_id": "user_123", "updator_id": "user_123"}
-        self.request_context: Dict[str, Any] = kwargs.get("request_context", {})
         self.workspace_root = None
         storage_config = kwargs.get("storage", {})
         # use default embedding model if not provided

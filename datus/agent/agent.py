@@ -11,15 +11,12 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, AsyncGenerator, Dict, Optional, Set
 
-from pydantic import ValidationError
-
 from datus.agent.workflow_runner import WorkflowRunner
 from datus.configuration.agent_config import AgentConfig, BenchmarkConfig
 from datus.models.base import LLMBaseModel
 
 # Import model implementations
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
-from datus.schemas.agent_models import SubAgentConfig
 from datus.schemas.batch_events import BatchEvent, BatchStage
 from datus.schemas.node_models import SqlTask
 from datus.storage.ext_knowledge.ext_knowledge_init import init_ext_knowledge, init_success_story_knowledge
@@ -35,11 +32,8 @@ from datus.storage.semantic_model.semantic_model_init import (
     init_success_story_semantic_model,
 )
 from datus.storage.semantic_model.store import SemanticModelRAG
-from datus.storage.sub_agent_kb_bootstrap import SUPPORTED_COMPONENTS as SUB_AGENT_COMPONENTS
-from datus.storage.sub_agent_kb_bootstrap import SubAgentBootstrapper
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.utils.benchmark_utils import load_benchmark_tasks
-from datus.utils.constants import SYS_SUB_AGENTS
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
@@ -200,62 +194,6 @@ class Agent:
         except Exception as e:
             logger.error(f"LLM model test failed: {str(e)}")
             return {"status": "error", "message": str(e)}
-
-    def _refresh_scoped_agents(self, component: str, kb_strategy: str):
-        """Rebuild scoped knowledge bases for sub-agents after global bootstrap."""
-        if component not in SUB_AGENT_COMPONENTS:
-            return
-        if kb_strategy not in {"overwrite", "incremental"}:
-            return
-
-        agent_nodes = getattr(self.global_config, "agentic_nodes", {}) or {}
-        if not agent_nodes:
-            return
-        current_namespace = self.global_config.current_namespace
-        for name, raw_config in agent_nodes.items():
-            if name in SYS_SUB_AGENTS:
-                continue
-            try:
-                sub_config = SubAgentConfig.model_validate(raw_config)
-            except ValidationError as exc:
-                logger.warning(f"Skipping sub-agent '{name}' due to invalid configuration: {exc}")
-                continue
-            if not sub_config.is_in_namespace(current_namespace):
-                logger.debug(
-                    f"Skipping sub-agent '{name}' for component '{component}' "
-                    f" because there is no corresponding scope context configured under namespace {current_namespace}"
-                )
-                continue
-
-            try:
-                bootstrapper = SubAgentBootstrapper(
-                    sub_agent=sub_config,
-                    agent_config=self.global_config,
-                )
-                logger.info(
-                    f"Running SubAgentBootstrapper for sub-agent '{name}' (component={component}, "
-                    f"strategy=overwrite, storage={bootstrapper.storage_path})"
-                )
-                result = bootstrapper.run([component], "overwrite")
-                if not result.should_bootstrap:
-                    reason = result.reason or "No scoped context provided"
-                    logger.info(f"SubAgentBootstrapper skipped for sub-agent '{name}': {reason}")
-                else:
-                    component_summaries = []
-                    for comp_result in result.results:
-                        summary = f"{comp_result.component}:{comp_result.status}"
-                        if comp_result.message:
-                            summary = f"{summary} ({comp_result.message})"
-                        component_summaries.append(summary)
-                    component_summaries_str = (
-                        ", ".join(component_summaries) if component_summaries else "no component results"
-                    )
-                    logger.info(
-                        f"Bootstrap finished for sub-agent '{name}' (storage={result.storage_path}): "
-                        f"{component_summaries_str}"
-                    )
-            except Exception as exc:
-                logger.warning(f"Failed to refresh scoped KB for sub-agent '{name}': {exc}")
 
     def _reset_reference_sql_stream_state(self) -> None:
         self._ref_sql_file_sql_counter = {}
@@ -452,7 +390,6 @@ class Agent:
                     f"schema_size={self.metadata_store.get_schema_size()}, "
                     f"value_size={self.metadata_store.get_value_size()}",
                 }
-                self._refresh_scoped_agents("metadata", kb_update_strategy)
                 return result
 
             elif component == "semantic_model":
@@ -500,7 +437,6 @@ class Agent:
                         "message": f"semantic_model bootstrap completed, semantic_object_count={temp_rag.get_size()}",
                         "error": error_message,
                     }
-                    self._refresh_scoped_agents("semantic_model", kb_update_strategy)
                 else:
                     result = {"status": "failed", "message": error_message}
                 return result
@@ -554,7 +490,6 @@ class Agent:
                         f"metrics_count={self.metrics_store.get_metrics_size()}",
                         "error": error_message,
                     }
-                    self._refresh_scoped_agents("metrics", kb_update_strategy)
                 else:
                     result = {"status": "failed", "message": error_message}
                 return result
@@ -596,7 +531,6 @@ class Agent:
                             "status": "failed",
                             "message": error_message,
                         }
-                self._refresh_scoped_agents("ext_knowledge", kb_update_strategy)
                 return {
                     "status": "success",
                     "message": f"ext_knowledge bootstrap completed, "
@@ -634,8 +568,6 @@ class Agent:
                     subject_tree=subject_tree,
                     emit=self._emit_reference_sql_event,
                 )
-                if isinstance(result, dict) and result.get("status") != "error":
-                    self._refresh_scoped_agents("reference_sql", kb_update_strategy)
                 return result
             results[component] = True
 

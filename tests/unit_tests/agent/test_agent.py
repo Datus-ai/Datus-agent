@@ -823,110 +823,6 @@ class TestEmitMetricsEvent:
 
 
 # ---------------------------------------------------------------------------
-# _refresh_scoped_agents
-# ---------------------------------------------------------------------------
-
-
-class TestRefreshScopedAgents:
-    def test_unsupported_component_skipped(self):
-        agent = _make_agent_ext()
-        # Should not raise, nothing happens
-        agent._refresh_scoped_agents("unsupported_component", "overwrite")
-
-    def test_invalid_strategy_skipped(self):
-        agent = _make_agent_ext()
-        agent._refresh_scoped_agents("metadata", "check")
-
-    def test_no_agentic_nodes_skipped(self):
-        agent = _make_agent_ext()
-        agent.global_config.agentic_nodes = {}
-        agent._refresh_scoped_agents("metadata", "overwrite")
-
-    def test_invalid_sub_agent_config_skipped(self):
-        from pydantic import ValidationError
-
-        agent = _make_agent_ext()
-        agent.global_config.agentic_nodes = {"bad_agent": {"invalid_field": "bad"}}
-        with patch(
-            "datus.agent.agent.SubAgentConfig.model_validate", side_effect=ValidationError.from_exception_data("", [])
-        ):
-            # Should not raise
-            try:
-                agent._refresh_scoped_agents("metadata", "overwrite")
-            except Exception:
-                pass  # ValidationError construction varies; key: no crash in agent
-
-    def test_system_sub_agent_skipped(self):
-        agent = _make_agent_ext()
-        with patch("datus.agent.agent.SYS_SUB_AGENTS", {"sys_agent"}):
-            agent.global_config.agentic_nodes = {"sys_agent": {}}
-            agent._refresh_scoped_agents("metadata", "overwrite")
-
-    def test_bootstrapper_called_for_valid_agent(self):
-        agent = _make_agent_ext()
-        mock_sub_config = MagicMock()
-        mock_sub_config.is_in_namespace.return_value = True
-
-        mock_result = MagicMock()
-        mock_result.should_bootstrap = False
-        mock_result.reason = "Already up to date"
-
-        mock_bootstrapper = MagicMock()
-        mock_bootstrapper.run.return_value = mock_result
-
-        with (
-            patch("datus.agent.agent.SYS_SUB_AGENTS", set()),
-            patch("datus.agent.agent.SubAgentConfig.model_validate", return_value=mock_sub_config),
-            patch("datus.agent.agent.SubAgentBootstrapper", return_value=mock_bootstrapper),
-        ):
-            agent.global_config.agentic_nodes = {"my_agent": {"some": "config"}}
-            agent._refresh_scoped_agents("metadata", "overwrite")
-
-        mock_bootstrapper.run.assert_called_once_with(["metadata"], "overwrite")
-
-    def test_bootstrapper_success_logged(self):
-        agent = _make_agent_ext()
-        mock_sub_config = MagicMock()
-        mock_sub_config.is_in_namespace.return_value = True
-
-        mock_comp_result = MagicMock()
-        mock_comp_result.component = "metadata"
-        mock_comp_result.status = "success"
-        mock_comp_result.message = "done"
-
-        mock_result = MagicMock()
-        mock_result.should_bootstrap = True
-        mock_result.results = [mock_comp_result]
-        mock_result.storage_path = "/tmp/storage"
-
-        mock_bootstrapper = MagicMock()
-        mock_bootstrapper.run.return_value = mock_result
-        mock_bootstrapper.storage_path = "/tmp/storage"
-
-        with (
-            patch("datus.agent.agent.SYS_SUB_AGENTS", set()),
-            patch("datus.agent.agent.SubAgentConfig.model_validate", return_value=mock_sub_config),
-            patch("datus.agent.agent.SubAgentBootstrapper", return_value=mock_bootstrapper),
-        ):
-            agent.global_config.agentic_nodes = {"my_agent": {"some": "config"}}
-            agent._refresh_scoped_agents("metadata", "overwrite")
-
-    def test_bootstrapper_exception_caught(self):
-        agent = _make_agent_ext()
-        mock_sub_config = MagicMock()
-        mock_sub_config.is_in_namespace.return_value = True
-
-        with (
-            patch("datus.agent.agent.SYS_SUB_AGENTS", set()),
-            patch("datus.agent.agent.SubAgentConfig.model_validate", return_value=mock_sub_config),
-            patch("datus.agent.agent.SubAgentBootstrapper", side_effect=RuntimeError("bootstrap fail")),
-        ):
-            agent.global_config.agentic_nodes = {"my_agent": {"some": "config"}}
-            # Should not propagate exception
-            agent._refresh_scoped_agents("metadata", "overwrite")
-
-
-# ---------------------------------------------------------------------------
 # bootstrap_kb — metadata branch
 # ---------------------------------------------------------------------------
 
@@ -964,7 +860,6 @@ class TestBootstrapKbMetadata:
             patch("datus.agent.agent.SchemaWithValueRAG", return_value=mock_store),
             patch("datus.agent.agent.init_local_schema"),
             patch.object(agent, "check_db", return_value={"status": "success"}),
-            patch.object(agent, "_refresh_scoped_agents"),
         ):
             result = agent.bootstrap_kb()
 
@@ -1009,7 +904,6 @@ class TestBootstrapKbMetadata:
         with (
             patch("datus.agent.agent.SchemaWithValueRAG", return_value=mock_store),
             patch("datus.agent.agent.init_snowflake_schema"),
-            patch.object(agent, "_refresh_scoped_agents"),
         ):
             result = agent.bootstrap_kb()
 
@@ -1028,7 +922,6 @@ class TestBootstrapKbMetadata:
             patch("datus.agent.agent.SchemaWithValueRAG", return_value=mock_store),
             patch("datus.agent.agent.init_dev_schema"),
             patch.object(agent, "check_db", return_value={"status": "success"}),
-            patch.object(agent, "_refresh_scoped_agents"),
         ):
             result = agent.bootstrap_kb()
 
@@ -1054,7 +947,6 @@ class TestBootstrapKbSemanticModel:
             patch("datus.agent.agent.SemanticModelRAG", return_value=mock_rag),
             patch("datus.agent.agent.init_success_story_semantic_model", return_value=(True, None)),
             patch("datus.agent.agent.get_path_manager", return_value=mock_path_manager),
-            patch.object(agent, "_refresh_scoped_agents"),
         ):
             result = agent.bootstrap_kb()
 
@@ -1109,7 +1001,6 @@ class TestBootstrapKbSemanticModel:
         with (
             patch("datus.agent.agent.SemanticModelRAG", return_value=mock_rag),
             patch("datus.agent.agent.init_semantic_yaml_semantic_model", return_value=(True, None)),
-            patch.object(agent, "_refresh_scoped_agents"),
         ):
             result = agent.bootstrap_kb()
 
@@ -1135,7 +1026,6 @@ class TestBootstrapKbMetrics:
             patch("datus.agent.agent.MetricRAG", return_value=mock_rag),
             patch("datus.agent.agent.init_success_story_metrics", return_value=(True, None, {})),
             patch("datus.agent.agent.get_path_manager", return_value=mock_path_manager),
-            patch.object(agent, "_refresh_scoped_agents"),
         ):
             result = agent.bootstrap_kb()
 
@@ -1151,7 +1041,6 @@ class TestBootstrapKbMetrics:
         with (
             patch("datus.agent.agent.MetricRAG", return_value=mock_rag),
             patch("datus.agent.agent.init_semantic_yaml_metrics", return_value=(True, None)),
-            patch.object(agent, "_refresh_scoped_agents"),
         ):
             result = agent.bootstrap_kb()
 
@@ -1194,7 +1083,6 @@ class TestBootstrapKbExtKnowledge:
             patch("datus.agent.agent.ExtKnowledgeRAG", return_value=mock_rag),
             patch("datus.agent.agent.init_ext_knowledge"),
             patch("datus.agent.agent.get_path_manager", return_value=mock_path_manager),
-            patch.object(agent, "_refresh_scoped_agents"),
         ):
             result = agent.bootstrap_kb()
 
@@ -1210,7 +1098,6 @@ class TestBootstrapKbExtKnowledge:
         with (
             patch("datus.agent.agent.ExtKnowledgeRAG", return_value=mock_rag),
             patch("datus.agent.agent.init_success_story_knowledge", return_value=(True, None)),
-            patch.object(agent, "_refresh_scoped_agents"),
         ):
             result = agent.bootstrap_kb()
 
@@ -1260,7 +1147,6 @@ class TestBootstrapKbReferenceSql:
                 return_value=mock_init_result,
                 create=True,
             ),
-            patch.object(agent, "_refresh_scoped_agents"),
         ):
             # Patch at the agent module level where it's imported
             import datus.agent.agent as agent_module

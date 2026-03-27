@@ -2,7 +2,6 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-import argparse
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from rich.syntax import Syntax
@@ -10,9 +9,7 @@ from rich.table import Table
 
 from datus.cli.sub_agent_wizard import run_wizard
 from datus.schemas.agent_models import SubAgentConfig
-from datus.storage.sub_agent_kb_bootstrap import SUPPORTED_COMPONENTS
 from datus.utils.constants import SYS_SUB_AGENTS
-from datus.utils.json_utils import to_pretty_str
 from datus.utils.loggings import get_logger
 from datus.utils.sub_agent_manager import SubAgentManager
 
@@ -83,21 +80,14 @@ class SubAgentCommands:
                 )
                 return
             self._cmd_update_agent(cmd_args[0])
-        elif command == "bootstrap":
-            self._cmd_bootstrap(cmd_args)
-
         else:
             self._show_help()
 
     def _show_help(self):
-        self.cli_instance.console.print("Usage: .subagent [add|list|remove|update|bootstrap] [args]", style="bold cyan")
+        self.cli_instance.console.print("Usage: .subagent [add|list|remove|update] [args]", style="bold cyan")
         self.cli_instance.console.print(" - [bold]add[/]: Launch the interactive wizard to add a new agent.")
         self.cli_instance.console.print(" - [bold]list[/]: List all configured sub-agents.")
         self.cli_instance.console.print(" - [bold]remove <agent_name>[/]: Remove a configured sub-agent.")
-        self.cli_instance.console.print(
-            " - [bold]bootstrap <agent_name>[/]: Build scoped knowledge base "
-            "[dim](--components metadata,metrics,reference_sql --plan to simulate)[/]"
-        )
 
     def _cmd_add_agent(self):
         """Handles the .subagent add command by launching the wizard."""
@@ -114,39 +104,6 @@ class SubAgentCommands:
             self.cli_instance.console.print("[bold red]Error:[/] Agent not found.")
             return
         self._do_update_agent(existing, original_name=sub_agent_name)
-
-    def _cmd_bootstrap(self, args: List[str]):
-        parser = argparse.ArgumentParser(
-            prog=".subagent bootstrap",
-            description="Bootstrap scoped knowledge base for a sub-agent.",
-        )
-        parser.add_argument("name", help="Sub-agent name")
-        parser.add_argument(
-            "--components",
-            default=",".join(SUPPORTED_COMPONENTS),
-            help=f"Comma-separated components to build ({', '.join(SUPPORTED_COMPONENTS)})",
-        )
-        parser.add_argument(
-            "--plan",
-            action="store_true",
-            help="Simulate bootstrap and display planned records without writing.",
-        )
-        try:
-            parsed = parser.parse_args(args)
-        except SystemExit:
-            return
-
-        components = self._normalize_components(parsed.components)
-        if components is None:
-            return
-
-        existing = self.sub_agent_manager.get_agent(parsed.name)
-        if existing is None:
-            self.cli_instance.console.print(f"[bold red]Error:[/] Agent '[cyan]{parsed.name}[/]' not found.")
-            return
-
-        config = SubAgentConfig.model_validate(existing)
-        self._execute_bootstrap(config, components, parsed.plan)
 
     def _list_agents(self):
         """Lists all configured sub-agents from agent.yml."""
@@ -188,78 +145,6 @@ class SubAgentCommands:
             )
 
         self.cli_instance.console.print(table)
-
-    def _normalize_components(self, value: Optional[str]) -> Optional[List[str]]:
-        if not value:
-            return list(SUPPORTED_COMPONENTS)
-        components = [part.strip().lower() for part in value.split(",") if part.strip()]
-        if not components:
-            return list(SUPPORTED_COMPONENTS)
-        invalid = [comp for comp in components if comp not in SUPPORTED_COMPONENTS]
-        if invalid:
-            self.cli_instance.console.print(
-                f"[bold red]Unsupported components:[/] {', '.join(invalid)}\n"
-                f"Supported components: {', '.join(SUPPORTED_COMPONENTS)}"
-            )
-            return None
-        return components
-
-    def _execute_bootstrap(
-        self,
-        config: SubAgentConfig,
-        components: Optional[List[str]],
-        plan: bool,
-    ):
-        selected_components = components or list(SUPPORTED_COMPONENTS)
-        strategy = "plan" if plan else "overwrite"
-        result = self.sub_agent_manager.bootstrap_agent(
-            config,
-            components=selected_components,
-            strategy=strategy,
-        )
-        self._render_bootstrap_report(result)
-
-        if strategy != "plan" and any(r.status == "success" for r in result.results):
-            try:
-                self.sub_agent_manager.save_agent(config, previous_name=config.system_prompt)
-            except Exception as exc:
-                self.cli_instance.console.print(f"[bold red]Failed to persist scoped KB path:[/] {exc}")
-                logger.error("Failed to persist scoped KB for '%s': %s", config.system_prompt, exc)
-            else:
-                self._refresh_agent_config()
-
-        return result
-
-    def _render_bootstrap_report(self, result):
-        table = Table(title="Scoped KB Bootstrap Summary", show_header=True)
-        table.add_column("Component", style="cyan", no_wrap=True)
-        table.add_column("Status", style="magenta")
-        table.add_column("Message", style="white", overflow="fold")
-        status_styles = {"success": "green", "error": "red", "skipped": "yellow", "plan": "cyan"}
-
-        for component_result in result.results:
-            color = status_styles.get(component_result.status, "white")
-            status_label = component_result.status.upper()
-            table.add_row(
-                component_result.component,
-                f"[{color}]{status_label}[/]",
-                component_result.message,
-            )
-
-        self.cli_instance.console.print(table)
-        path_prefix = "Simulated scoped directory" if result.strategy == "plan" else "Scoped directory"
-        self.cli_instance.console.print(f"{path_prefix}: [cyan]{result.storage_path}[/]")
-
-        for component_result in result.results:
-            if not component_result.details:
-                continue
-            if result.strategy != "plan" and component_result.status == "success":
-                missing = component_result.details.get("missing")
-                invalid = component_result.details.get("invalid")
-                if not missing and not invalid:
-                    continue
-            pretty = to_pretty_str(component_result.details)
-            self.cli_instance.console.print(Syntax(pretty, "json"))
 
     @staticmethod
     def _format_scoped_context(value: Any) -> Union[str, Syntax]:
@@ -363,12 +248,3 @@ class SubAgentCommands:
         self.cli_instance.console.print(
             f"[bold green]Sub-agent {agent_name} {'created' if not data else 'modified'} successfully.[/]"
         )
-
-        if result.has_scoped_context() and kb_action != "cleared":
-            if result.scoped_kb_path:
-                self.cli_instance.console.print(
-                    f"[bold green]Scoped KB exists at {result.scoped_kb_path}, will be rebuilt.[/]"
-                )
-
-            with self.cli_instance.console.status("[bold green]Building scoped KB...[/]"):
-                self._execute_bootstrap(result, None, plan=False)

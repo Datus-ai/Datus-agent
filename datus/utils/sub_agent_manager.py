@@ -4,25 +4,19 @@
 
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, Optional
 
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import ConfigurationManager
 from datus.prompts.prompt_manager import PromptManager, prompt_manager
 from datus.schemas.agent_models import SubAgentConfig
-from datus.storage.sub_agent_kb_bootstrap import BootstrapResult, SubAgentBootstrapper, SubAgentBootstrapStrategy
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
 
 class SubAgentManager:
-    """Encapsulates sub-agent configuration and prompt management operations.
-
-    Since sub-agents now query the shared global storage via WHERE filters,
-    there is no separate KB directory to manage.  Bootstrap only performs
-    validation (plan mode).
-    """
+    """Encapsulates sub-agent configuration and prompt management operations."""
 
     def __init__(
         self,
@@ -87,8 +81,6 @@ class SubAgentManager:
         agents[config.system_prompt] = config.as_payload(self._namespace)
 
         self._configuration_manager.update_item("agentic_nodes", agents, delete_old_key=True)
-        # Keep in-memory agent_config in sync so that subsequent bootstrap
-        # can locate the sub-agent via storage_instance().
         self._agent_config.agentic_nodes = agents
 
         prompt_path = self._write_prompt_template(config)
@@ -109,28 +101,6 @@ class SubAgentManager:
             logger.error("Failed to remove agent '%s': %s", agent_name, exc)
             raise
         return True
-
-    def bootstrap_agent(
-        self,
-        config: SubAgentConfig,
-        *,
-        components: Optional[Sequence[str]] = None,
-        strategy: SubAgentBootstrapStrategy = "plan",
-    ) -> BootstrapResult:
-        """Run plan-only validation for the sub-agent's scoped context."""
-        bootstrapper = self._build_bootstrapper(config)
-        selected = list(components) if components else None
-        return bootstrapper.run(selected, strategy)
-
-    def clear_scoped_kb(self, config: Optional[SubAgentConfig]):
-        """No-op: sub-agents no longer have separate KB directories."""
-        pass
-
-    def _build_bootstrapper(
-        self,
-        config: SubAgentConfig,
-    ) -> SubAgentBootstrapper:
-        return SubAgentBootstrapper(sub_agent=config, agent_config=self._agent_config, check_exists=False)
 
     def _write_prompt_template(self, config: SubAgentConfig) -> str:
         # Select source template based on node_class

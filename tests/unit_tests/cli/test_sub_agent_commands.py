@@ -90,11 +90,6 @@ class TestCmdRouting:
         cmds.cmd("update myagent")
         cmds._cmd_update_agent.assert_called_once_with("myagent")
 
-    def test_bootstrap_routes(self, cmds):
-        cmds._cmd_bootstrap = MagicMock()
-        cmds.cmd("bootstrap myagent")
-        cmds._cmd_bootstrap.assert_called_once_with(["myagent"])
-
     def test_unknown_command_shows_help(self, cmds):
         cmds._show_help = MagicMock()
         cmds.cmd("unknown_xyz")
@@ -109,7 +104,7 @@ class TestCmdRouting:
 class TestShowHelp:
     def test_show_help_prints(self, cmds):
         cmds._show_help()
-        assert cmds.cli_instance.console.print.call_count >= 3
+        assert cmds.cli_instance.console.print.call_count >= 2
 
 
 # ---------------------------------------------------------------------------
@@ -169,34 +164,6 @@ class TestCmdUpdateAgent:
         cmds._do_update_agent = MagicMock()
         cmds._cmd_update_agent("my_agent")
         cmds._do_update_agent.assert_called_once_with(existing, original_name="my_agent")
-
-
-# ---------------------------------------------------------------------------
-# Tests: _normalize_components
-# ---------------------------------------------------------------------------
-
-
-class TestNormalizeComponents:
-    def test_empty_string_returns_all(self, cmds):
-        result = cmds._normalize_components("")
-        assert result is not None
-        assert len(result) > 0
-
-    def test_none_returns_all(self, cmds):
-        result = cmds._normalize_components(None)
-        assert result is not None
-
-    def test_valid_component(self, cmds):
-        from datus.storage.sub_agent_kb_bootstrap import SUPPORTED_COMPONENTS
-
-        first = list(SUPPORTED_COMPONENTS)[0]
-        result = cmds._normalize_components(first)
-        assert result == [first]
-
-    def test_invalid_component_prints_error_returns_none(self, cmds):
-        result = cmds._normalize_components("invalid_xyz")
-        assert result is None
-        cmds.cli_instance.console.print.assert_called()
 
 
 # ---------------------------------------------------------------------------
@@ -289,36 +256,3 @@ class TestRefreshAgentConfig:
         cmds._sub_agent_manager.list_agents.side_effect = RuntimeError("oops")
         # Should not raise (defensive)
         cmds._refresh_agent_config()
-
-
-# ---------------------------------------------------------------------------
-# Tests: _cmd_bootstrap
-# ---------------------------------------------------------------------------
-
-
-class TestCmdBootstrap:
-    def test_bootstrap_missing_agent(self, cmds):
-        cmds._sub_agent_manager.get_agent.return_value = None
-        cmds._cmd_bootstrap(["nonexistent"])
-        calls = [str(c) for c in cmds.cli_instance.console.print.call_args_list]
-        assert any("not found" in c for c in calls)
-
-    def test_bootstrap_invalid_component(self, cmds):
-        cmds._sub_agent_manager.get_agent.return_value = _make_sub_agent_config("myagent")
-        cmds._cmd_bootstrap(["myagent", "--components", "invalid_xyz"])
-        calls = [str(c) for c in cmds.cli_instance.console.print.call_args_list]
-        assert any("Unsupported" in c for c in calls)
-
-    def test_bootstrap_plan_mode(self, cmds):
-        from datus.schemas.agent_models import SubAgentConfig
-        from datus.storage.sub_agent_kb_bootstrap import SUPPORTED_COMPONENTS
-
-        list(SUPPORTED_COMPONENTS)[0]
-        existing = {"system_prompt": "myagent", "rules": []}
-        cmds._sub_agent_manager.get_agent.return_value = existing
-        cmds._execute_bootstrap = MagicMock()
-        with patch.object(SubAgentConfig, "model_validate", return_value=_make_sub_agent_config("myagent")):
-            cmds._cmd_bootstrap(["myagent", "--plan"])
-        cmds._execute_bootstrap.assert_called_once()
-        _, kwargs = cmds._execute_bootstrap.call_args
-        assert kwargs.get("plan") is True or cmds._execute_bootstrap.call_args[0][2] is True

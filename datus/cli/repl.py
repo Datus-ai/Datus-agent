@@ -102,11 +102,17 @@ class DatusCLI:
         history_file.parent.mkdir(parents=True, exist_ok=True)
         self.history = FileHistory(str(history_file))
         self.session: PromptSession | None = None
+
+        # Initialize available subagents early (needed by autocomplete)
+        self.available_subagents = set(SYS_SUB_AGENTS)
+        if hasattr(self.agent_config, "agentic_nodes") and self.agent_config.agentic_nodes:
+            self.available_subagents.update(name for name in self.agent_config.agentic_nodes.keys() if name != "chat")
+
         self.at_completer: AtReferenceCompleter
         if self.interactive:
             self._init_prompt_session()
         else:
-            self.at_completer = AtReferenceCompleter(self.agent_config)
+            self.at_completer = AtReferenceCompleter(self.agent_config, available_subagents=self.available_subagents)
 
         # Last executed SQL and result
         self.last_sql = None
@@ -125,11 +131,6 @@ class DatusCLI:
             current_schema=getattr(args, "schema", ""),
         )
         self.db_manager = db_manager_instance(self.agent_config.namespaces)
-
-        # Initialize available subagents from agentic_nodes (excluding 'chat') and include built-in subagents
-        self.available_subagents = set(SYS_SUB_AGENTS)
-        if hasattr(self.agent_config, "agentic_nodes") and self.agent_config.agentic_nodes:
-            self.available_subagents.update(name for name in self.agent_config.agentic_nodes.keys() if name != "chat")
 
         # Initialize command handlers after cli_context is created
         self.agent_commands = AgentCommands(self, self.cli_context)
@@ -319,7 +320,9 @@ class DatusCLI:
         from datus.cli.autocomplete import SQLCompleter
 
         sql_completer = SQLCompleter()
-        self.at_completer = AtReferenceCompleter(self.agent_config)  # Router completer
+        self.at_completer = AtReferenceCompleter(
+            self.agent_config, available_subagents=self.available_subagents
+        )  # Router completer
         self.subagent_completer = SubagentCompleter(self.agent_config)  # Subagent completer
 
         # Use merge_completers to combine completers

@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 from typing import Any, Dict
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -91,14 +91,6 @@ def test_remove_agent_removes_config(tmp_path):
 
     assert removed is True
     assert "cleanup_agent" not in manager.list_agents()
-
-
-def test_clear_scoped_kb_is_noop(tmp_path):
-    """clear_scoped_kb is now a no-op since sub-agents use global storage."""
-    manager, _, _ = _build_manager(tmp_path)
-    config = SubAgentConfig(system_prompt="test_agent", scoped_context=ScopedContext(tables="orders"))
-    # Should not raise
-    manager.clear_scoped_kb(config)
 
 
 def test_sub_agent_config_with_ext_knowledge(tmp_path):
@@ -416,56 +408,3 @@ class TestWritePromptTemplate:
         manager._prompt_manager.copy_to = MagicMock(side_effect=IOError("write failed"))
         with pytest.raises(IOError):
             manager._write_prompt_template(config)
-
-
-# ---------------------------------------------------------------------------
-# bootstrap_agent
-# ---------------------------------------------------------------------------
-
-
-class TestBootstrapAgent:
-    def test_bootstrap_calls_bootstrapper_run(self, tmp_path):
-        manager, _, _ = _build_managerExtended(tmp_path)
-        config = SubAgentConfig(system_prompt="boot_agent", scoped_context=ScopedContext(tables="t"))
-        mock_result = MagicMock()
-        mock_bootstrapper = MagicMock()
-        mock_bootstrapper.run.return_value = mock_result
-        with patch.object(manager, "_build_bootstrapper", return_value=mock_bootstrapper):
-            result = manager.bootstrap_agent(config)
-        mock_bootstrapper.run.assert_called_once_with(None, "plan")
-        assert result is mock_result
-
-    def test_bootstrap_with_components(self, tmp_path):
-        manager, _, _ = _build_managerExtended(tmp_path)
-        config = SubAgentConfig(system_prompt="agent", scoped_context=ScopedContext(tables="t"))
-        mock_bootstrapper = MagicMock()
-        with patch.object(manager, "_build_bootstrapper", return_value=mock_bootstrapper):
-            manager.bootstrap_agent(config, components=["schema", "sql"])
-        mock_bootstrapper.run.assert_called_once_with(["schema", "sql"], "plan")
-
-    def test_bootstrap_with_strategy(self, tmp_path):
-        manager, _, _ = _build_managerExtended(tmp_path)
-        config = SubAgentConfig(system_prompt="agent", scoped_context=ScopedContext(tables="t"))
-        mock_bootstrapper = MagicMock()
-        with patch.object(manager, "_build_bootstrapper", return_value=mock_bootstrapper):
-            manager.bootstrap_agent(config, strategy="build")
-        mock_bootstrapper.run.assert_called_once_with(None, "build")
-
-
-# ---------------------------------------------------------------------------
-# clear_scoped_kb
-# ---------------------------------------------------------------------------
-
-
-class TestClearScopedKb:
-    def test_is_noop(self, tmp_path):
-        manager, _, _ = _build_managerExtended(tmp_path)
-        config = SubAgentConfig(system_prompt="agent", scoped_context=ScopedContext(tables="t"))
-        # Should complete without error and return None
-        result = manager.clear_scoped_kb(config)
-        assert result is None
-
-    def test_noop_with_none(self, tmp_path):
-        manager, _, _ = _build_managerExtended(tmp_path)
-        result = manager.clear_scoped_kb(None)
-        assert result is None

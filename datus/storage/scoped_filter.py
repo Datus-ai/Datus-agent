@@ -153,7 +153,7 @@ def _value_condition(field: str, value: str) -> Node:
 def _table_condition_for_token(token: str, dialect: str = "") -> Optional[Node]:
     """Parse a single table identifier token into a LanceDB condition.
 
-    Reuses the same right-aligned field mapping logic from SubAgentBootstrapper.
+    Uses right-aligned field mapping based on the dialect's supported fields.
     """
     parts = [p.strip() for p in token.split(".") if p.strip()]
     if not parts:

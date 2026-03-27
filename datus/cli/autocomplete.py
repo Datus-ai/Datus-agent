@@ -447,12 +447,22 @@ class DynamicAtReferenceCompleter(Completer):
         self.max_level = 0
         self.max_completions = max_completions
         self.quote_leaf = quote_leaf
+        self._loaded = False
 
     def clear(self):
         self._data = {}
-        self.max_level = 0
+        self.flatten_data = {}
+        self._loaded = False
+        # Note: max_level is NOT reset — it will be re-set by load_data() on next lazy load.
+        # Resetting it here would cause get_completions() to bail out before load_data() runs.
+
+    def _ensure_loaded(self):
+        if not self._loaded:
+            self._data = self.load_data()
+            self._loaded = True
 
     def fuzzy_match(self, text: str) -> List[str]:
+        self._ensure_loaded()
         text = text.strip().lower()
         if not text:
             return []
@@ -470,10 +480,10 @@ class DynamicAtReferenceCompleter(Completer):
 
     def reload_data(self):
         self._data = self.load_data()
+        self._loaded = True
 
     def get_data(self):
-        if not self._data:
-            self._data = self.load_data()
+        self._ensure_loaded()
         return self._data
 
     def _format_leaf_for_completion(self, leaf: str) -> str:
@@ -568,15 +578,16 @@ def insert_into_dict(data: Dict, keys: List[str], value: str) -> None:
 class TableCompleter(DynamicAtReferenceCompleter):
     """Dynamic completer specifically for tables and metrics"""
 
-    def __init__(self, agent_config: AgentConfig, sqlite_show_db: bool = False):
+    def __init__(self, agent_config: AgentConfig, sqlite_show_db: bool = False, sub_agent_name: str = ""):
         super().__init__()
         self.agent_config = agent_config
         self.sqlite_show_db = sqlite_show_db
+        self.sub_agent_name = sub_agent_name
 
     def load_data(self) -> Union[List[str], Dict[str, Any]]:
         from datus.storage.schema_metadata.store import SchemaWithValueRAG
 
-        storage = SchemaWithValueRAG(self.agent_config)
+        storage = SchemaWithValueRAG(self.agent_config, sub_agent_name=self.sub_agent_name or None)
         try:
             schema_table = storage.search_all_schemas(
                 # database_name=self.agent_config.current_database,
@@ -759,18 +770,19 @@ def insert_into_dict_with_dict(data: Dict, keys: List[str], leaf_key: str, value
 class MetricsCompleter(DynamicAtReferenceCompleter):
     """Dynamic completer specifically for tables and metrics"""
 
-    def __init__(self, agent_config: AgentConfig):
+    def __init__(self, agent_config: AgentConfig, sub_agent_name: str = ""):
         super().__init__(quote_leaf=True)
         self.agent_config = agent_config
-        self.max_level = 4
+        self.sub_agent_name = sub_agent_name
 
     def load_data(self) -> Union[List[str], Dict[str, Any]]:
         from datus.storage.metric.store import MetricRAG
 
-        rag = MetricRAG(self.agent_config)
+        rag = MetricRAG(self.agent_config, sub_agent_name=self.sub_agent_name or None)
         data = rag.search_all_metrics()
 
         result = {}
+        max_depth = 0
         for metric in data:
             subject_path = metric.get("subject_path", [])
             name = metric.get("name", "unknown")
@@ -779,6 +791,7 @@ class MetricsCompleter(DynamicAtReferenceCompleter):
             # Build nested dict using subject_path
             if subject_path:
                 insert_into_dict_with_dict(result, subject_path, name, description)
+                max_depth = max(max_depth, len(subject_path) + 1)
 
             # Flatten key uses "/" separator
             flatten_key = "/".join(subject_path + [name]) if subject_path else name
@@ -786,22 +799,23 @@ class MetricsCompleter(DynamicAtReferenceCompleter):
                 "name": name,
                 "description": description,
             }
+        self.max_level = max_depth or 4
         return result
 
 
 class ReferenceSqlCompleter(DynamicAtReferenceCompleter):
-    def __init__(self, agent_config: AgentConfig):
+    def __init__(self, agent_config: AgentConfig, sub_agent_name: str = ""):
         super().__init__(quote_leaf=True)
         self.agent_config = agent_config
+        self.sub_agent_name = sub_agent_name
 
     def load_data(self) -> Union[List[str], Dict[str, Any]]:
-        self.max_level = 4
-
         from datus.storage.reference_sql.store import ReferenceSqlRAG
 
-        storage = ReferenceSqlRAG(self.agent_config)
+        storage = ReferenceSqlRAG(self.agent_config, sub_agent_name=self.sub_agent_name or None)
         search_data = storage.search_all_reference_sql()
         result = {}
+        max_depth = 0
         for item in search_data:
             subject_path = item.get("subject_path", [])
             name = item["name"]
@@ -809,6 +823,7 @@ class ReferenceSqlCompleter(DynamicAtReferenceCompleter):
             # Build nested dict using subject_path
             if subject_path:
                 insert_into_dict_with_dict(result, subject_path, name, item["summary"])
+                max_depth = max(max_depth, len(subject_path) + 1)
 
             # Flatten key uses "/" separator
             flatten_key = "/".join(subject_path + [name]) if subject_path else name
@@ -819,18 +834,22 @@ class ReferenceSqlCompleter(DynamicAtReferenceCompleter):
                 "tags": item["tags"],
                 "sql": item["sql"],
             }
+        self.max_level = max_depth or 4
         return result
 
 
 class AtReferenceCompleter(Completer):
     """Router completer: dispatch to different completers based on type"""
 
-    def __init__(self, agent_config: AgentConfig):
+    def __init__(self, agent_config: AgentConfig, sub_agent_name: str = "", available_subagents: set = None):
         # Initialize specialized completers
+        self.agent_config = agent_config
+        self._sub_agent_name = sub_agent_name
+        self._available_subagents = available_subagents or set()
         self.parser = AtReferenceParser()
-        self.table_completer = TableCompleter(agent_config)
-        self.metric_completer = MetricsCompleter(agent_config)
-        self.sql_completer = ReferenceSqlCompleter(agent_config)
+        self.table_completer = TableCompleter(agent_config, sub_agent_name=sub_agent_name)
+        self.metric_completer = MetricsCompleter(agent_config, sub_agent_name=sub_agent_name)
+        self.sql_completer = ReferenceSqlCompleter(agent_config, sub_agent_name=sub_agent_name)
 
         # Get workspace_root from chat node configuration or storage configuration
         workspace_root = None
@@ -838,11 +857,8 @@ class AtReferenceCompleter(Completer):
             chat_node = agent_config.nodes["chat"]
             if hasattr(chat_node, "input") and chat_node.input and hasattr(chat_node.input, "workspace_root"):
                 workspace_root = chat_node.input.workspace_root
-
-        # Also check storage configuration for workspace_root
         if not workspace_root and hasattr(agent_config, "workspace_root"):
             workspace_root = agent_config.workspace_root
-
         if not workspace_root:
             workspace_root = "."
         self.workspace_root = workspace_root
@@ -872,6 +888,23 @@ class AtReferenceCompleter(Completer):
 
         self.at_parser = AtReferenceParser()
 
+    def set_sub_agent(self, sub_agent_name: str = "") -> None:
+        """Switch sub-agent context for all completers.
+
+        When set, completions are filtered to the sub-agent's scoped_context.
+        Pass empty string to reset to the full datasource scope.
+        """
+        if sub_agent_name == self._sub_agent_name:
+            return
+        self._sub_agent_name = sub_agent_name
+        self.table_completer.sub_agent_name = sub_agent_name
+        self.metric_completer.sub_agent_name = sub_agent_name
+        self.sql_completer.sub_agent_name = sub_agent_name
+        # Force reload on next completion
+        self.table_completer.clear()
+        self.metric_completer.clear()
+        self.sql_completer.clear()
+
     def reload_data(self):
         self.table_completer.reload_data()
         self.metric_completer.reload_data()
@@ -900,9 +933,40 @@ class AtReferenceCompleter(Completer):
                     sqls.append(ReferenceSql.from_dict(self.sql_completer.flatten_data[key]))
         return (tables, metrics, sqls)
 
+    def _detect_sub_agent_from_input(self, text: str) -> str:
+        """Detect sub-agent name from input line prefix like '/sub_agent_name ...'.
+
+        Only returns sub-agents that are configured for the current namespace.
+        """
+        if not text.startswith("/") or not self._available_subagents:
+            return ""
+        # Extract first token after /
+        stripped = text[1:]  # remove leading /
+        space_pos = stripped.find(" ")
+        if space_pos == -1:
+            return ""
+        first_token = stripped[:space_pos]
+        if first_token not in self._available_subagents:
+            return ""
+        # Verify sub-agent is in current namespace
+        from datus.schemas.agent_models import SubAgentConfig
+
+        raw_config = self.agent_config.sub_agent_config(first_token)
+        if raw_config:
+            sub_config = SubAgentConfig.model_validate(raw_config)
+            if sub_config.has_scoped_context() and not sub_config.is_in_namespace(self.agent_config.current_namespace):
+                return ""
+        return first_token
+
     def get_completions(self, document, complete_event) -> Iterable[Completion]:
         if not document.text.startswith("/"):
             return
+
+        # Dynamically switch sub-agent context based on input prefix
+        detected = self._detect_sub_agent_from_input(document.text)
+        if detected != self._sub_agent_name:
+            self.set_sub_agent(detected)
+
         text = document.text_before_cursor
         at_pos = text.rfind("@")
 
