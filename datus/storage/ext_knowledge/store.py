@@ -332,9 +332,9 @@ class ExtKnowledgeRAG:
 
     def _inject_write_fields(self, data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         for row in data:
-            row.setdefault("datasource_id", self.datasource_id)
-            row.setdefault("creator_id", self.creator_id)
-            row.setdefault("updator_id", self.updator_id)
+            row["datasource_id"] = self.datasource_id
+            row["creator_id"] = self.creator_id
+            row["updator_id"] = self.updator_id
         return data
 
     def truncate(self) -> None:
@@ -350,9 +350,11 @@ class ExtKnowledgeRAG:
             raise ValueError(f"subject_path must be string or list, got {type(subject_path)}")
 
     def get_knowledge_size(self):
-        from datus_storage_base.conditions import eq
+        from datus_storage_base.conditions import and_
 
-        return self.store._count_rows(where=eq("datasource_id", self.datasource_id))
+        conditions = self._ds_conditions()
+        where = conditions[0] if len(conditions) == 1 else and_(*conditions)
+        return self.store._count_rows(where=where)
 
     def query_knowledge(
         self,

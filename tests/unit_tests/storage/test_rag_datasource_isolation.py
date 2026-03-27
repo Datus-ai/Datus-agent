@@ -125,8 +125,8 @@ class TestRAGWriteInjection:
         assert data[0]["creator_id"] == "alice"
         assert data[0]["updator_id"] == "bob"
 
-    def test_inject_write_fields_does_not_overwrite_existing(self, real_agent_config):
-        """Pre-existing field values are not overwritten (setdefault semantics)."""
+    def test_inject_write_fields_force_sets_existing(self, real_agent_config):
+        """Pre-existing field values are always overwritten (force-set semantics)."""
         rag = MetricRAG(
             real_agent_config,
             datasource_id="inject_ds",
@@ -135,9 +135,8 @@ class TestRAGWriteInjection:
         )
         data = [dict(_make_metric("preexist"), datasource_id="already_set", creator_id="original")]
         rag._inject_write_fields(data)
-        assert data[0]["datasource_id"] == "already_set"
-        assert data[0]["creator_id"] == "original"
-        # updator_id was not preset, so it should be filled with default
+        assert data[0]["datasource_id"] == "inject_ds"
+        assert data[0]["creator_id"] == "system"
         assert data[0]["updator_id"] == "system"
 
     def test_inject_write_fields_multiple_rows(self, real_agent_config):

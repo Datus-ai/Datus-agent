@@ -317,9 +317,9 @@ class MetricRAG:
     def _inject_write_fields(self, data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Inject datasource_id/creator_id/updator_id into write data."""
         for row in data:
-            row.setdefault("datasource_id", self.datasource_id)
-            row.setdefault("creator_id", self.creator_id)
-            row.setdefault("updator_id", self.updator_id)
+            row["datasource_id"] = self.datasource_id
+            row["creator_id"] = self.creator_id
+            row["updator_id"] = self.updator_id
         return data
 
     def truncate(self) -> None:
@@ -353,9 +353,11 @@ class MetricRAG:
         self.storage.create_indices()
 
     def get_metrics_size(self):
-        from datus_storage_base.conditions import eq
+        from datus_storage_base.conditions import and_
 
-        return self.storage._count_rows(where=eq("datasource_id", self.datasource_id))
+        conditions = self._ds_conditions()
+        where = conditions[0] if len(conditions) == 1 else and_(*conditions)
+        return self.storage._count_rows(where=where)
 
     def search_metrics(
         self, query_text: str, subject_path: Optional[List[str]] = None, top_n: int = 5

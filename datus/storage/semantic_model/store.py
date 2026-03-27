@@ -144,9 +144,9 @@ class SemanticModelRAG:
 
     def _inject_write_fields(self, data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         for row in data:
-            row.setdefault("datasource_id", self.datasource_id)
-            row.setdefault("creator_id", self.creator_id)
-            row.setdefault("updator_id", self.updator_id)
+            row["datasource_id"] = self.datasource_id
+            row["creator_id"] = self.creator_id
+            row["updator_id"] = self.updator_id
         return data
 
     def truncate(self) -> None:

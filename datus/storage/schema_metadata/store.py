@@ -270,9 +270,9 @@ class SchemaWithValueRAG:
 
     def _inject_write_fields(self, data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         for row in data:
-            row.setdefault("datasource_id", self.datasource_id)
-            row.setdefault("creator_id", self.creator_id)
-            row.setdefault("updator_id", self.updator_id)
+            row["datasource_id"] = self.datasource_id
+            row["creator_id"] = self.creator_id
+            row["updator_id"] = self.updator_id
         return data
 
     def truncate(self) -> None:
@@ -308,10 +308,10 @@ class SchemaWithValueRAG:
         self.value_store.create_indices()
 
     def get_schema_size(self):
-        return self.schema_store._count_rows(where=eq("datasource_id", self.datasource_id))
+        return self.schema_store._count_rows(where=self._add_ds_filter(None))
 
     def get_value_size(self):
-        return self.value_store._count_rows(where=eq("datasource_id", self.datasource_id))
+        return self.value_store._count_rows(where=self._add_ds_filter(None))
 
     def search_similar(
         self,

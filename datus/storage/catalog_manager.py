@@ -35,18 +35,9 @@ class CatalogUpdater:
         return self.semantic_model_storage
 
     def _get_all_storages(self) -> List[SemanticModelStorage]:
-        """Get main storage and all sub-agent storages."""
-        storages = [self.semantic_model_storage]
-        for _, value in self._agent_config.agentic_nodes.items():
-            sub_agent_config = SubAgentConfig.model_validate(value)
-            if (
-                sub_agent_config.is_in_namespace(self._agent_config.current_namespace)
-                and sub_agent_config.has_scoped_context()
-            ):
-                sub_storage = self._sub_agent_storage(sub_agent_config)
-                if sub_storage:
-                    storages.append(sub_storage)
-        return storages
+        """Get all storages for updates. All sub-agents share the same singleton storage,
+        so returning it once is sufficient to avoid duplicate updates."""
+        return [self.semantic_model_storage]
 
     def _parse_json_field(self, value: Any) -> Optional[List[Dict[str, Any]]]:
         """Parse JSON string or return list directly."""

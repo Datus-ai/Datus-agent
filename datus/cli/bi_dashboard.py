@@ -562,20 +562,6 @@ class BiDashboardCommands:
             self.console.log(f"[bold green]{log_prefix} saved.")
         except Exception as exc:
             self.console.log(f"[bold yellow] {log_prefix} persist failed:[/] {exc}")
-        else:
-            result = sub_agent_manager.bootstrap_agent(
-                sub_agent, components=["metadata", "semantic_model", "metrics", "reference_sql"]
-            )
-            if not result.should_bootstrap:
-                self.console.log(f"[bold yellow]{log_prefix} bootstrap skipped: {result.reason}[/]")
-                return
-
-            errors = [r for r in result.results if r.status == "error"]
-            if errors:
-                for err in errors:
-                    self.console.log(f"[bold red]{log_prefix} bootstrap [{err.component}] error: {err.message}[/]")
-            else:
-                self.console.log(f"[bold green]{log_prefix} bootstrapped.")
 
     def _refresh_agent_config(self, manager: SubAgentManager) -> None:
         try:

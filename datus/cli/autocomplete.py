@@ -911,6 +911,9 @@ class AtReferenceCompleter(Completer):
         self.sql_completer.reload_data()
 
     def parse_at_context(self, user_input: str) -> Tuple[List[TableSchema], List[Metric], List[ReferenceSql]]:
+        self.table_completer._ensure_loaded()
+        self.metric_completer._ensure_loaded()
+        self.sql_completer._ensure_loaded()
         user_input = user_input.strip()
         if not user_input:
             return ([], [], [])

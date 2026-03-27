@@ -88,6 +88,7 @@ class SubAgentCommands:
         self.cli_instance.console.print(" - [bold]add[/]: Launch the interactive wizard to add a new agent.")
         self.cli_instance.console.print(" - [bold]list[/]: List all configured sub-agents.")
         self.cli_instance.console.print(" - [bold]remove <agent_name>[/]: Remove a configured sub-agent.")
+        self.cli_instance.console.print(" - [bold]update <agent_name>[/]: Update an existing sub-agent.")
 
     def _cmd_add_agent(self):
         """Handles the .subagent add command by launching the wizard."""
