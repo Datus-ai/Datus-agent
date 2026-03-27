@@ -463,14 +463,10 @@ class InteractiveInit:
             "auth_type": auth_type,
         }
 
-        # Test LLM connectivity (token is set temporarily for the test)
+        # Test LLM connectivity
         self.console.print("→ Testing LLM connectivity...")
         success, error_msg = self._test_llm_connectivity()
         if success:
-            # Clear the token from config so runtime always reads from
-            # ~/.claude/.credentials.json or CLAUDE_CODE_OAUTH_TOKEN env var.
-            # This avoids stale tokens after `claude setup-token` rotation.
-            self.config["agent"]["models"][provider]["api_key"] = ""
             self.console.print(" ✅ Claude subscription model test successful\n")
             return True
         else:

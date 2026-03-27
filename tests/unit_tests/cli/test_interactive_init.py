@@ -671,3 +671,58 @@ class TestConfigureCodexOAuth:
                 result = init._configure_codex_oauth("codex", provider_config)
 
             assert result is False
+
+
+class TestConfigureClaudeSubscription:
+    """Tests for the Claude subscription configuration flow."""
+
+    def test_claude_subscription_success_keeps_token_in_config(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            init = InteractiveInit(user_home=tmpdir)
+
+            provider_config = {
+                "type": "claude",
+                "base_url": "https://api.anthropic.com",
+                "default_model": "claude-sonnet-4-6",
+                "models": ["claude-sonnet-4-6"],
+                "auth_type": "subscription",
+            }
+
+            with (
+                patch("datus.cli.interactive_init.select_choice", return_value="claude-sonnet-4-6"),
+                patch.object(init, "_get_subscription_token", return_value=("sk-ant-oat01-test-token", "subscription")),
+                patch.object(init, "_test_llm_connectivity", return_value=(True, "")),
+                patch.object(init, "console"),
+            ):
+                result = init._configure_claude_subscription("claude_subscription", provider_config)
+
+            assert result is True
+            assert init.config["agent"]["target"] == "claude_subscription"
+            model_cfg = init.config["agent"]["models"]["claude_subscription"]
+            assert model_cfg["type"] == "claude"
+            assert model_cfg["auth_type"] == "subscription"
+            assert model_cfg["api_key"] == "sk-ant-oat01-test-token"
+
+    def test_claude_subscription_failure_preserves_token_for_retry(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            init = InteractiveInit(user_home=tmpdir)
+
+            provider_config = {
+                "type": "claude",
+                "base_url": "https://api.anthropic.com",
+                "default_model": "claude-sonnet-4-6",
+                "models": ["claude-sonnet-4-6"],
+                "auth_type": "subscription",
+            }
+
+            with (
+                patch("datus.cli.interactive_init.select_choice", return_value="claude-sonnet-4-6"),
+                patch.object(init, "_get_subscription_token", return_value=("sk-ant-oat01-test-token", "subscription")),
+                patch.object(init, "_test_llm_connectivity", return_value=(False, "401 unauthorized")),
+                patch.object(init, "console"),
+            ):
+                result = init._configure_claude_subscription("claude_subscription", provider_config)
+
+            assert result is False
+            model_cfg = init.config["agent"]["models"]["claude_subscription"]
+            assert model_cfg["api_key"] == "sk-ant-oat01-test-token"
