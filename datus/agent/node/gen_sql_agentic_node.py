@@ -331,6 +331,42 @@ class GenSQLAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup filesystem tools: {e}")
 
+    def _setup_bi_tools(self):
+        """Setup BI tools from configuration."""
+        try:
+            from datus_bi_core import adaptor_registry
+            from datus_bi_core.models import AuthParam
+
+            from datus.tools.func_tool.bi_func_tools import BIFuncTool
+        except ImportError:
+            logger.debug("datus_bi_core not installed, bi_tools not available")
+            return None
+
+        platform = self.node_config.get("bi_platform", "superset")
+        dashboard_cfg = {}
+        if self.agent_config and hasattr(self.agent_config, "dashboard_config"):
+            dashboard_cfg = self.agent_config.dashboard_config.get(platform, {})
+        elif self.agent_config and hasattr(self.agent_config, "raw_config"):
+            dashboard_section = (self.agent_config.raw_config or {}).get("dashboard", {})
+            dashboard_cfg = dashboard_section.get(platform, {})
+
+        adaptor_cls = adaptor_registry.get(platform)
+        if not adaptor_cls:
+            logger.warning(f"BI adaptor '{platform}' not registered; install datus-bi-{platform}")
+            return None
+
+        extra = dashboard_cfg.get("extra", {})
+        api_url = extra.get("api_url", "")
+        auth_params = AuthParam(
+            username=dashboard_cfg.get("username"),
+            password=dashboard_cfg.get("password"),
+            api_key=dashboard_cfg.get("api_key"),
+            extra=extra,
+        )
+        dialect = getattr(self.agent_config, "dialect", "postgresql") if self.agent_config else "postgresql"
+        adaptor = adaptor_cls(api_base_url=api_url, auth_params=auth_params, dialect=dialect)
+        return BIFuncTool(adaptor)
+
     def _setup_tool_pattern(self, pattern: str):
         """Setup tools based on pattern."""
         try:
@@ -349,6 +385,10 @@ class GenSQLAgenticNode(AgenticNode):
                     self._setup_filesystem_tools()
                 elif base_type == "platform_doc_tools":
                     self._setup_platform_doc_tools()
+                elif base_type == "bi_tools":
+                    bi_tool_instance = self._setup_bi_tools()
+                    if bi_tool_instance:
+                        self.tools.extend(bi_tool_instance.available_tools())
                 else:
                     logger.warning(f"Unknown tool type: {base_type}")
 
@@ -365,6 +405,10 @@ class GenSQLAgenticNode(AgenticNode):
                 self._setup_filesystem_tools()
             elif pattern == "platform_doc_tools":
                 self._setup_platform_doc_tools()
+            elif pattern == "bi_tools":
+                bi_tool_instance = self._setup_bi_tools()
+                if bi_tool_instance:
+                    self.tools.extend(bi_tool_instance.available_tools())
 
             # Handle specific method patterns (e.g., "db_tools.list_tables")
             elif "." in pattern:

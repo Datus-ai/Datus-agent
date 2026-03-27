@@ -279,6 +279,8 @@ class DashboardConfig:
     password: str = ""
     api_key: str = ""
     extra: Optional[Dict[str, Any]] = field(default_factory=dict, init=True)
+    # Optional write database for write_query: {uri: "postgresql+psycopg2://...", schema: "public"}
+    write_db: Optional[Dict[str, Any]] = field(default=None, init=True)
 
 
 logger = get_logger(__name__)
@@ -953,12 +955,17 @@ class AgentConfig:
             username = resolve_env(str(username_raw)) if username_raw else ""
             password = resolve_env(str(password_raw)) if password_raw else ""
             api_key = resolve_env(str(api_key_raw)) if api_key_raw else ""
+            write_db_raw = auth_params.get("write_db")
+            write_db = None
+            if isinstance(write_db_raw, dict):
+                write_db = {k: resolve_env(str(v)) if isinstance(v, str) else v for k, v in write_db_raw.items()}
             self.dashboard_config[platform] = DashboardConfig(
                 platform=platform,
                 username=username,
                 password=password,
                 api_key=api_key,
                 extra=auth_params.get("extra", {}),
+                write_db=write_db,
             )
 
 

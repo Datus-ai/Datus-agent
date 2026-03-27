@@ -24,6 +24,9 @@ classifiers = [
 ]
 dependencies = [
     "datus-db-core>=0.1.1",
+    "datus-bi-core>=0.1.0",
+    "datus-bi-superset>=0.1.0",
+    "datus-bi-grafana>=0.1.0",
     "datus-storage-base==0.1.2rc2",
     "python-dotenv==1.0.0",
     "pandas==2.1.4",
@@ -219,3 +222,8 @@ exclude_lines = [
 ]
 show_missing = true
 precision = 2
+
+[tool.uv.sources]
+datus-bi-core = { path = "../datus-bi-adapters/datus-bi-core", editable = true }
+datus-bi-superset = { path = "../datus-bi-adapters/datus-bi-superset", editable = true }
+datus-bi-grafana = { path = "../datus-bi-adapters/datus-bi-grafana", editable = true }

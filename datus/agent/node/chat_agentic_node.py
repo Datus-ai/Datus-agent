@@ -21,6 +21,7 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager, Ac
 from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool, PlatformDocSearchTool
+from datus.tools.func_tool.bi_func_tools import BIFuncTool
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
 from datus.tools.mcp_tools import MCPServer
@@ -91,6 +92,7 @@ class ChatAgenticNode(AgenticNode):
 
         # Initialize tool attributes BEFORE calling parent constructor
         self.db_func_tool: Optional[DBFuncTool] = None
+        self.bi_func_tool: Optional[BIFuncTool] = None
         self.context_search_tools: Optional[ContextSearchTools] = None
         self.date_parsing_tools: Optional[DateParsingTools] = None
         self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
@@ -149,6 +151,7 @@ class ChatAgenticNode(AgenticNode):
         self.db_func_tool = DBFuncTool(conn, agent_config=self.agent_config)
         self.context_search_tools = ContextSearchTools(self.agent_config)
         self.reference_template_tools = ReferenceTemplateTools(self.agent_config, db_func_tool=self.db_func_tool)
+        self._setup_bi_tools()
         self._setup_date_parsing_tools()
         self._setup_filesystem_tools()
         self._setup_skill_tools()
@@ -162,6 +165,49 @@ class ChatAgenticNode(AgenticNode):
 
         # Setup permission hooks after all tools are initialized
         self._setup_permission_hooks()
+
+    def _setup_bi_tools(self):
+        """Setup BI tools if bi_platform is configured for this agentic node."""
+        try:
+            node_config = self.node_config or {}
+            bi_platform = node_config.get("bi_platform")
+            if not bi_platform:
+                return
+
+            dash_cfg = getattr(self.agent_config, "dashboard_config", {}).get(bi_platform)
+            if not dash_cfg:
+                logger.warning(f"bi_platform '{bi_platform}' configured but no dashboard config found")
+                return
+
+            from datus_bi_core import AuthParam, adaptor_registry
+
+            adaptor_cls = adaptor_registry.get(bi_platform)
+            if not adaptor_cls:
+                logger.warning(f"No BI adaptor registered for platform '{bi_platform}'")
+                return
+
+            api_url = (dash_cfg.extra or {}).get("api_url", "")
+            auth_params = AuthParam(
+                username=dash_cfg.username,
+                password=dash_cfg.password,
+                api_key=dash_cfg.api_key,
+                extra=dash_cfg.extra or {},
+            )
+            dialect = self.agent_config.dialect if self.agent_config else ""
+            adaptor = adaptor_cls(api_base_url=api_url, auth_params=auth_params, dialect=dialect)
+            write_db_uri = ""
+            write_db_schema = ""
+            if dash_cfg.write_db:
+                write_db_uri = dash_cfg.write_db.get("uri", "")
+                write_db_schema = dash_cfg.write_db.get("schema", "")
+            self.bi_func_tool = BIFuncTool(adaptor, write_db_uri=write_db_uri, write_db_schema=write_db_schema)
+            # Attach source read connector so write_query can read from the namespace DB
+            if self.db_func_tool and hasattr(self.db_func_tool, "connector"):
+                self.bi_func_tool._read_connector = self.db_func_tool.connector
+            self.tools.extend(self.bi_func_tool.available_tools())
+            logger.info(f"BI tools initialized for platform '{bi_platform}'")
+        except Exception as e:
+            logger.error(f"Failed to setup BI tools: {e}")
 
     def _setup_date_parsing_tools(self):
         """Setup date parsing tools."""
@@ -270,6 +316,8 @@ class ChatAgenticNode(AgenticNode):
             # 1. Populate the node-level tool_registry
             if self.db_func_tool:
                 self.tool_registry.register_tools("db_tools", self.db_func_tool.available_tools())
+            if self.bi_func_tool:
+                self.tool_registry.register_tools("bi_tools", self.bi_func_tool.available_tools())
             if self.context_search_tools:
                 self.tool_registry.register_tools("context_search_tools", self.context_search_tools.available_tools())
             if self.reference_template_tools:
@@ -310,6 +358,8 @@ class ChatAgenticNode(AgenticNode):
         self.tools = []
         if self.db_func_tool:
             self.tools.extend(self.db_func_tool.available_tools())
+        if self.bi_func_tool:
+            self.tools.extend(self.bi_func_tool.available_tools())
         if self.context_search_tools:
             self.tools.extend(self.context_search_tools.available_tools())
         if self.reference_template_tools:
