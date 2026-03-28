@@ -162,7 +162,8 @@ class LanceVectorTable(VectorTable):
         """Prepend ``datasource_id`` condition to an already-compiled WHERE string."""
         if self._isolation != IsolationType.LOGICAL or not self._datasource_id:
             return compiled
-        ds_cond = f"{DATASOURCE_ID_COLUMN} = '{self._datasource_id}'"
+        escaped_id = self._datasource_id.replace("'", "''")
+        ds_cond = f"{DATASOURCE_ID_COLUMN} = '{escaped_id}'"
         if compiled:
             return f"{ds_cond} AND ({compiled})"
         return ds_cond
@@ -175,7 +176,11 @@ class LanceVectorTable(VectorTable):
 
     def merge_insert(self, data: pd.DataFrame, on_column: str) -> None:
         data = self._inject_datasource_df(data)
-        self._table.merge_insert(on_column).when_matched_update_all().when_not_matched_insert_all().execute(data)
+        if self._isolation == IsolationType.LOGICAL and self._datasource_id:
+            on = [DATASOURCE_ID_COLUMN, on_column]
+        else:
+            on = on_column
+        self._table.merge_insert(on).when_matched_update_all().when_not_matched_insert_all().execute(data)
 
     def delete(self, where: WhereExpr) -> None:
         compiled = self._ds_where(build_where(where))

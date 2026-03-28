@@ -479,6 +479,7 @@ class DynamicAtReferenceCompleter(Completer):
         raise NotImplementedError()
 
     def reload_data(self):
+        self.flatten_data = {}
         self._data = self.load_data()
         self._loaded = True
 
