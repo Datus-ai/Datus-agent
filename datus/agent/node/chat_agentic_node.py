@@ -171,13 +171,13 @@ class ChatAgenticNode(AgenticNode):
 
     def _setup_scheduler_tools(self):
         """Setup scheduler tools if schedulers are configured."""
-        if not getattr(self.agent_config, "schedulers_config", None):
+        if not getattr(self.agent_config, "scheduler_config", None):
             return
         try:
             from datus.tools.func_tool.scheduler_tools import SchedulerTools
 
             self.scheduler_tools = SchedulerTools(self.agent_config)
-            logger.debug("Setup scheduler tools for schedulers: %s", list(self.agent_config.schedulers_config.keys()))
+            logger.debug("Setup scheduler tools for scheduler: %s", self.agent_config.scheduler_config.get("name", ""))
         except ImportError:
             logger.debug("datus-scheduler-core not installed, skipping scheduler tools")
         except Exception as exc:

@@ -9,32 +9,48 @@ with zero network access and zero pre-built data.
 """
 
 import json
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from datus.tools.func_tool.scheduler_tools import SchedulerTools
+from datus.tools.func_tool.scheduler_tools import (
+    SchedulerTools,
+    _build_connection_url,
+    _redact_url,
+)
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 
-def _make_agent_config(schedulers_config=None):
+def _make_agent_config(scheduler_config=None, namespaces=None):
     cfg = MagicMock()
-    cfg.schedulers_config = schedulers_config or {
-        "airflow_local": {
-            "type": "airflow",
-            "api_base_url": "http://localhost:8080/api/v1",
-            "username": "admin",
-            "password": "admin123",
-            "dags_folder": "/tmp/dags",
-        }
+    cfg.scheduler_config = scheduler_config or {
+        "name": "airflow_local",
+        "type": "airflow",
+        "api_base_url": "http://localhost:8080/api/v1",
+        "username": "admin",
+        "password": "admin123",
+        "dags_folder": "/tmp/dags",
     }
+    cfg.namespaces = namespaces
     return cfg
 
 
-def _make_scheduled_job(job_id="spark_pi_test"):
-    from unittest.mock import MagicMock
+def _make_db_config(
+    db_type="starrocks", host="127.0.0.1", port="9030", username="admin", password="pass@123", database="mydb"
+):
+    db_cfg = MagicMock()
+    db_cfg.type = db_type
+    db_cfg.host = host
+    db_cfg.port = port
+    db_cfg.username = username
+    db_cfg.password = password
+    db_cfg.database = database
+    return db_cfg
 
+
+def _make_scheduled_job(job_id="spark_pi_test"):
     job = MagicMock()
     job.job_id = job_id
     job.job_name = job_id
@@ -56,11 +72,18 @@ def _make_job_run(run_id="manual__2025-01-01"):
 # ── DAG template tests ─────────────────────────────────────────────────────
 
 
+try:
+    from datus_scheduler_airflow.dag_template import render_spark_dag_source
+
+    _HAS_SCHEDULER_AIRFLOW = True
+except ImportError:
+    _HAS_SCHEDULER_AIRFLOW = False
+
+
+@pytest.mark.skipif(not _HAS_SCHEDULER_AIRFLOW, reason="datus-scheduler-airflow not installed")
 class TestRenderSparkDagSource:
     def test_renders_valid_python(self):
         """Generated DAG source must compile without errors."""
-        from datus_airflow.dag_template import render_spark_dag_source
-
         source = render_spark_dag_source(
             dag_id="test_spark_pi",
             job_name="test_spark_pi",
@@ -70,21 +93,16 @@ class TestRenderSparkDagSource:
 
     def test_embeds_spark_script(self):
         """The spark_script content must appear in the rendered source."""
-        from datus_airflow.dag_template import render_spark_dag_source
-
         script = "print('[Datus] Pi test')"
         source = render_spark_dag_source(
             dag_id="test_embed",
             job_name="test_embed",
             spark_script=script,
         )
-        # The script is JSON-serialised inside the source
         assert json.dumps(script) in source
 
     def test_embeds_spark_master(self):
         """Custom spark_master must appear in the rendered source."""
-        from datus_airflow.dag_template import render_spark_dag_source
-
         source = render_spark_dag_source(
             dag_id="test_master",
             job_name="test_master",
@@ -95,8 +113,6 @@ class TestRenderSparkDagSource:
 
     def test_default_spark_master(self):
         """Default spark master should be local[*]."""
-        from datus_airflow.dag_template import render_spark_dag_source
-
         source = render_spark_dag_source(
             dag_id="test_default",
             job_name="test_default",
@@ -106,8 +122,6 @@ class TestRenderSparkDagSource:
 
     def test_schedule_embedded(self):
         """Cron schedule must appear in the rendered source."""
-        from datus_airflow.dag_template import render_spark_dag_source
-
         source = render_spark_dag_source(
             dag_id="test_schedule",
             job_name="test_schedule",
@@ -115,78 +129,6 @@ class TestRenderSparkDagSource:
             schedule="0 8 * * *",
         )
         assert "0 8 * * *" in source
-
-
-# ── SchedulerTools.submit_spark_job ───────────────────────────────────────
-
-
-class TestSubmitSparkJob:
-    def test_submit_success(self, tmp_path):
-        """submit_spark_job returns job_id on success."""
-        script_file = tmp_path / "pi.py"
-        script_file.write_text('print("pi")')
-
-        mock_job = _make_scheduled_job("spark_pi_test")
-        mock_adapter = MagicMock()
-        mock_adapter.submit_job.return_value = mock_job
-
-        tools = SchedulerTools(_make_agent_config())
-
-        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
-            result = tools.submit_spark_job(
-                scheduler_name="airflow_local",
-                job_name="spark_pi_test",
-                spark_script_path=str(script_file),
-            )
-
-        assert result.success == 1
-        assert result.result["job_id"] == "spark_pi_test"
-        assert result.result["status"] == "active"
-
-    def test_submit_missing_script_file(self, tmp_path):
-        """submit_spark_job returns error when script path does not exist."""
-        tools = SchedulerTools(_make_agent_config())
-        result = tools.submit_spark_job(
-            scheduler_name="airflow_local",
-            job_name="spark_pi_test",
-            spark_script_path=str(tmp_path / "nonexistent.py"),
-        )
-        assert result.success == 0
-        assert "not found" in (result.error or "").lower()
-
-    def test_submit_unknown_scheduler(self, tmp_path):
-        """submit_spark_job returns error when scheduler name not in config."""
-        script_file = tmp_path / "pi.py"
-        script_file.write_text("pass")
-
-        tools = SchedulerTools(_make_agent_config())
-        result = tools.submit_spark_job(
-            scheduler_name="nonexistent_scheduler",
-            job_name="spark_pi_test",
-            spark_script_path=str(script_file),
-        )
-        assert result.success == 0
-        assert "nonexistent_scheduler" in (result.error or "")
-
-    def test_submit_adapter_exception(self, tmp_path):
-        """submit_spark_job returns error when adapter raises."""
-        script_file = tmp_path / "pi.py"
-        script_file.write_text("pass")
-
-        mock_adapter = MagicMock()
-        mock_adapter.submit_job.side_effect = Exception("connection refused")
-
-        tools = SchedulerTools(_make_agent_config())
-
-        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
-            result = tools.submit_spark_job(
-                scheduler_name="airflow_local",
-                job_name="spark_pi_test",
-                spark_script_path=str(script_file),
-            )
-
-        assert result.success == 0
-        assert "connection refused" in (result.error or "")
 
 
 # ── SchedulerTools.trigger_scheduler_job ─────────────────────────────────
@@ -202,7 +144,7 @@ class TestTriggerSchedulerJob:
         tools = SchedulerTools(_make_agent_config())
 
         with patch.object(tools, "_get_adapter", return_value=mock_adapter):
-            result = tools.trigger_scheduler_job("airflow_local", "spark_pi_test")
+            result = tools.trigger_scheduler_job("spark_pi_test")
 
         assert result.success == 1
         assert result.result["run_id"] == "manual__2025-01-01"
@@ -215,7 +157,7 @@ class TestTriggerSchedulerJob:
         tools = SchedulerTools(_make_agent_config())
 
         with patch.object(tools, "_get_adapter", return_value=mock_adapter):
-            result = tools.trigger_scheduler_job("airflow_local", "missing_dag")
+            result = tools.trigger_scheduler_job("missing_dag")
 
         assert result.success == 0
         assert "dag not found" in (result.error or "")
@@ -233,7 +175,7 @@ class TestGetSchedulerJob:
         tools = SchedulerTools(_make_agent_config())
 
         with patch.object(tools, "_get_adapter", return_value=mock_adapter):
-            result = tools.get_scheduler_job("airflow_local", "spark_pi_test")
+            result = tools.get_scheduler_job("spark_pi_test")
 
         assert result.success == 1
         assert result.result["found"] is True
@@ -247,7 +189,7 @@ class TestGetSchedulerJob:
         tools = SchedulerTools(_make_agent_config())
 
         with patch.object(tools, "_get_adapter", return_value=mock_adapter):
-            result = tools.get_scheduler_job("airflow_local", "ghost_dag")
+            result = tools.get_scheduler_job("ghost_dag")
 
         assert result.success == 1
         assert result.result["found"] is False
@@ -265,7 +207,7 @@ class TestListSchedulerJobs:
         tools = SchedulerTools(_make_agent_config())
 
         with patch.object(tools, "_get_adapter", return_value=mock_adapter):
-            result = tools.list_scheduler_jobs("airflow_local", limit=10)
+            result = tools.list_scheduler_jobs(limit=10)
 
         assert result.success == 1
         assert result.result["total"] == 2
@@ -279,7 +221,7 @@ class TestAdapterSparkBranch:
     def test_submit_job_spark_calls_render_spark(self):
         """adapter.submit_job with job_type='spark' uses render_spark_dag_source."""
         try:
-            from datus_airflow.adapter import AirflowSchedulerAdapter
+            from datus_scheduler_airflow.adapter import AirflowSchedulerAdapter
             from datus_scheduler_core.config import AirflowConfig
             from datus_scheduler_core.models import SchedulerJobPayload
         except ImportError:
@@ -334,3 +276,448 @@ class TestAdapterSparkBranch:
         assert job.job_id == "test_spark"
         assert "DatusSparkJob" in written_source["source"]
         assert "_run_spark_script" in written_source["source"]
+
+
+# ── _build_connection_url ────────────────────────────────────────────────
+
+
+class TestBuildConnectionUrl:
+    def test_starrocks_url(self):
+        db_cfg = _make_db_config(db_type="starrocks")
+        url = _build_connection_url(db_cfg)
+        assert url.startswith("mysql+pymysql://")
+        assert "127.0.0.1:9030/mydb" in url
+
+    def test_postgresql_url(self):
+        db_cfg = _make_db_config(db_type="postgresql", port="5432")
+        url = _build_connection_url(db_cfg)
+        assert url.startswith("postgresql+psycopg2://")
+
+    def test_unknown_dialect_fallback(self):
+        db_cfg = _make_db_config(db_type="oracle")
+        url = _build_connection_url(db_cfg)
+        assert url.startswith("oracle://")
+
+    def test_password_url_encoded(self):
+        db_cfg = _make_db_config(password="p@ss:word/123")
+        url = _build_connection_url(db_cfg)
+        assert "p%40ss%3Aword%2F123" in url
+
+    def test_username_url_encoded(self):
+        db_cfg = _make_db_config(username="user@domain")
+        url = _build_connection_url(db_cfg)
+        assert "user%40domain" in url
+
+    def test_empty_password(self):
+        db_cfg = _make_db_config(password="")
+        url = _build_connection_url(db_cfg)
+        assert ":@" in url
+
+    def test_empty_host_raises(self):
+        db_cfg = _make_db_config(host="")
+        with pytest.raises(ValueError, match="Incomplete DB config"):
+            _build_connection_url(db_cfg)
+
+    def test_empty_port_raises(self):
+        db_cfg = _make_db_config(port="")
+        with pytest.raises(ValueError, match="Incomplete DB config"):
+            _build_connection_url(db_cfg)
+
+    def test_empty_database_raises(self):
+        db_cfg = _make_db_config(database="")
+        with pytest.raises(ValueError, match="Incomplete DB config"):
+            _build_connection_url(db_cfg)
+
+
+# ── _redact_url ──────────────────────────────────────────────────────────
+
+
+class TestRedactUrl:
+    def test_redacts_password(self):
+        url = "mysql+pymysql://admin:secret123@host:3306/db"
+        assert _redact_url(url) == "mysql+pymysql://admin:***@host:3306/db"
+
+    def test_redacts_encoded_password(self):
+        url = "mysql+pymysql://admin:p%40ss@host:3306/db"
+        assert _redact_url(url) == "mysql+pymysql://admin:***@host:3306/db"
+
+    def test_malformed_url_returns_redacted(self):
+        assert _redact_url("not-a-url") == "<redacted URL>"
+
+
+# ── SchedulerTools.submit_sql_job ────────────────────────────────────────
+
+
+class TestSubmitSqlJob:
+    def test_submit_success_with_connection_url(self, tmp_path):
+        sql_file = tmp_path / "query.sql"
+        sql_file.write_text("SELECT 1")
+
+        mock_job = _make_scheduled_job("sql_job_1")
+        mock_adapter = MagicMock()
+        mock_adapter.submit_job.return_value = mock_job
+
+        tools = SchedulerTools(_make_agent_config())
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.submit_sql_job(
+                job_name="sql_job_1",
+                sql_file_path=str(sql_file),
+                connection_url="mysql+pymysql://user:pass@host:3306/db",
+            )
+
+        assert result.success == 1
+        assert result.result["job_id"] == "sql_job_1"
+
+    def test_submit_success_with_namespace(self, tmp_path):
+        sql_file = tmp_path / "query.sql"
+        sql_file.write_text("SELECT 1")
+
+        mock_job = _make_scheduled_job("sql_job_ns")
+        mock_adapter = MagicMock()
+        mock_adapter.submit_job.return_value = mock_job
+
+        db_cfg = _make_db_config()
+        namespaces = {"starrocks": {"default": db_cfg}}
+        tools = SchedulerTools(_make_agent_config(namespaces=namespaces))
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.submit_sql_job(
+                job_name="sql_job_ns",
+                sql_file_path=str(sql_file),
+                namespace="starrocks",
+            )
+
+        assert result.success == 1
+
+    def test_missing_sql_file(self, tmp_path):
+        tools = SchedulerTools(_make_agent_config())
+        result = tools.submit_sql_job(
+            job_name="test",
+            sql_file_path=str(tmp_path / "nonexistent.sql"),
+            connection_url="mysql://x:y@h:3306/db",
+        )
+        assert result.success == 0
+        assert "not found" in (result.error or "").lower()
+
+    def test_empty_sql_file(self, tmp_path):
+        sql_file = tmp_path / "empty.sql"
+        sql_file.write_text("   ")
+        tools = SchedulerTools(_make_agent_config())
+        result = tools.submit_sql_job(
+            job_name="test",
+            sql_file_path=str(sql_file),
+            connection_url="mysql://x:y@h:3306/db",
+        )
+        assert result.success == 0
+        assert "empty" in (result.error or "").lower()
+
+    def test_no_namespace_no_url_returns_error(self, tmp_path):
+        sql_file = tmp_path / "query.sql"
+        sql_file.write_text("SELECT 1")
+        tools = SchedulerTools(_make_agent_config())
+        result = tools.submit_sql_job(
+            job_name="test",
+            sql_file_path=str(sql_file),
+        )
+        assert result.success == 0
+        assert "namespace" in (result.error or "").lower()
+
+    def test_namespace_not_found(self, tmp_path):
+        sql_file = tmp_path / "query.sql"
+        sql_file.write_text("SELECT 1")
+        tools = SchedulerTools(_make_agent_config(namespaces={"other_ns": {}}))
+        result = tools.submit_sql_job(
+            job_name="test",
+            sql_file_path=str(sql_file),
+            namespace="missing_ns",
+        )
+        assert result.success == 0
+        assert "missing_ns" in (result.error or "")
+
+
+# ── SchedulerTools.submit_sparksql_job ───────────────────────────────────
+
+
+class TestSubmitSparksqlJob:
+    def test_submit_success(self, tmp_path):
+        sql_file = tmp_path / "sparksql.sql"
+        sql_file.write_text("SELECT * FROM t")
+
+        mock_job = _make_scheduled_job("sparksql_1")
+        mock_adapter = MagicMock()
+        mock_adapter.submit_job.return_value = mock_job
+
+        tools = SchedulerTools(_make_agent_config())
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.submit_sparksql_job(
+                job_name="sparksql_1",
+                sql_file_path=str(sql_file),
+            )
+
+        assert result.success == 1
+        assert result.result["job_id"] == "sparksql_1"
+
+    def test_missing_sql_file(self, tmp_path):
+        tools = SchedulerTools(_make_agent_config())
+        result = tools.submit_sparksql_job(
+            job_name="test",
+            sql_file_path=str(tmp_path / "missing.sql"),
+        )
+        assert result.success == 0
+        assert "not found" in (result.error or "").lower()
+
+    def test_adapter_exception(self, tmp_path):
+        sql_file = tmp_path / "sparksql.sql"
+        sql_file.write_text("SELECT 1")
+
+        mock_adapter = MagicMock()
+        mock_adapter.submit_job.side_effect = Exception("timeout")
+
+        tools = SchedulerTools(_make_agent_config())
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.submit_sparksql_job(
+                job_name="test",
+                sql_file_path=str(sql_file),
+            )
+
+        assert result.success == 0
+        assert "timeout" in (result.error or "")
+
+
+# ── SchedulerTools.pause_job ─────────────────────────────────────────────
+
+
+class TestPauseJob:
+    def test_pause_success(self):
+        mock_adapter = MagicMock()
+        tools = SchedulerTools(_make_agent_config())
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.pause_job("my_dag")
+
+        assert result.success == 1
+        assert result.result["status"] == "paused"
+        mock_adapter.pause_job.assert_called_once_with("my_dag")
+
+    def test_pause_adapter_exception(self):
+        mock_adapter = MagicMock()
+        mock_adapter.pause_job.side_effect = Exception("not found")
+        tools = SchedulerTools(_make_agent_config())
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.pause_job("missing")
+
+        assert result.success == 0
+        assert "not found" in (result.error or "")
+
+
+# ── SchedulerTools.resume_job ────────────────────────────────────────────
+
+
+class TestResumeJob:
+    def test_resume_success(self):
+        mock_adapter = MagicMock()
+        tools = SchedulerTools(_make_agent_config())
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.resume_job("my_dag")
+
+        assert result.success == 1
+        assert result.result["status"] == "active"
+        mock_adapter.resume_job.assert_called_once_with("my_dag")
+
+    def test_resume_adapter_exception(self):
+        mock_adapter = MagicMock()
+        mock_adapter.resume_job.side_effect = Exception("forbidden")
+        tools = SchedulerTools(_make_agent_config())
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.resume_job("my_dag")
+
+        assert result.success == 0
+        assert "forbidden" in (result.error or "")
+
+
+# ── SchedulerTools.delete_job ────────────────────────────────────────────
+
+
+class TestDeleteJob:
+    def test_delete_success(self):
+        mock_adapter = MagicMock()
+        tools = SchedulerTools(_make_agent_config())
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.delete_job("old_dag")
+
+        assert result.success == 1
+        assert result.result["status"] == "deleted"
+        mock_adapter.delete_job.assert_called_once_with("old_dag")
+
+    def test_delete_adapter_exception(self):
+        mock_adapter = MagicMock()
+        mock_adapter.delete_job.side_effect = Exception("permission denied")
+        tools = SchedulerTools(_make_agent_config())
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.delete_job("old_dag")
+
+        assert result.success == 0
+        assert "permission denied" in (result.error or "")
+
+
+# ── SchedulerTools.update_job ────────────────────────────────────────────
+
+
+class TestUpdateJob:
+    def test_update_success_with_url(self, tmp_path):
+        sql_file = tmp_path / "updated.sql"
+        sql_file.write_text("SELECT 2")
+
+        mock_job = _make_scheduled_job("dag_to_update")
+        mock_adapter = MagicMock()
+        mock_adapter.update_job.return_value = mock_job
+
+        tools = SchedulerTools(_make_agent_config())
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.update_job(
+                job_id="dag_to_update",
+                sql_file_path=str(sql_file),
+                connection_url="mysql+pymysql://u:p@h:3306/db",
+            )
+
+        assert result.success == 1
+        assert result.result["job_id"] == "dag_to_update"
+
+    def test_update_missing_sql_file(self, tmp_path):
+        tools = SchedulerTools(_make_agent_config())
+        result = tools.update_job(
+            job_id="dag_x",
+            sql_file_path=str(tmp_path / "gone.sql"),
+            connection_url="mysql://u:p@h:3306/db",
+        )
+        assert result.success == 0
+        assert "not found" in (result.error or "").lower()
+
+    def test_update_no_namespace_no_url(self, tmp_path):
+        sql_file = tmp_path / "updated.sql"
+        sql_file.write_text("SELECT 2")
+        tools = SchedulerTools(_make_agent_config())
+        result = tools.update_job(
+            job_id="dag_x",
+            sql_file_path=str(sql_file),
+        )
+        assert result.success == 0
+        assert "namespace" in (result.error or "").lower()
+
+    def test_update_with_namespace(self, tmp_path):
+        sql_file = tmp_path / "updated.sql"
+        sql_file.write_text("SELECT 2")
+
+        mock_job = _make_scheduled_job("dag_ns_update")
+        mock_adapter = MagicMock()
+        mock_adapter.update_job.return_value = mock_job
+
+        db_cfg = _make_db_config()
+        namespaces = {"starrocks": {"default": db_cfg}}
+        tools = SchedulerTools(_make_agent_config(namespaces=namespaces))
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.update_job(
+                job_id="dag_ns_update",
+                sql_file_path=str(sql_file),
+                namespace="starrocks",
+            )
+
+        assert result.success == 1
+
+
+# ── SchedulerTools.list_job_runs ─────────────────────────────────────────
+
+
+class TestListJobRuns:
+    def test_list_runs_success(self):
+        mock_run = MagicMock()
+        mock_run.run_id = "run_001"
+        mock_run.status.value = "success"
+        mock_run.started_at = datetime(2025, 1, 1, 8, 0, 0, tzinfo=timezone.utc)
+        mock_run.ended_at = datetime(2025, 1, 1, 8, 5, 0, tzinfo=timezone.utc)
+
+        mock_adapter = MagicMock()
+        mock_adapter.list_job_runs.return_value = [mock_run]
+
+        tools = SchedulerTools(_make_agent_config())
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.list_job_runs("my_dag", limit=5)
+
+        assert result.success == 1
+        assert result.result["total"] == 1
+        run = result.result["runs"][0]
+        assert run["run_id"] == "run_001"
+        assert run["started_at"] == "2025-01-01T08:00:00+00:00"
+        assert run["ended_at"] == "2025-01-01T08:05:00+00:00"
+
+    def test_list_runs_string_timestamps(self):
+        """Runs with string timestamps should pass through as-is."""
+        mock_run = MagicMock()
+        mock_run.run_id = "run_002"
+        mock_run.status.value = "running"
+        mock_run.started_at = "2025-01-01T08:00:00Z"
+        mock_run.ended_at = None
+
+        mock_adapter = MagicMock()
+        mock_adapter.list_job_runs.return_value = [mock_run]
+
+        tools = SchedulerTools(_make_agent_config())
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.list_job_runs("my_dag")
+
+        assert result.success == 1
+        run = result.result["runs"][0]
+        assert run["started_at"] == "2025-01-01T08:00:00Z"
+        assert run["ended_at"] is None
+
+    def test_list_runs_adapter_exception(self):
+        mock_adapter = MagicMock()
+        mock_adapter.list_job_runs.side_effect = Exception("api error")
+        tools = SchedulerTools(_make_agent_config())
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.list_job_runs("my_dag")
+
+        assert result.success == 0
+        assert "api error" in (result.error or "")
+
+
+# ── SchedulerTools.get_run_log ───────────────────────────────────────────
+
+
+class TestGetRunLog:
+    def test_get_log_success(self):
+        mock_adapter = MagicMock()
+        mock_adapter.get_run_log.return_value = "[Datus] Running SQL: SELECT 1\n[Datus] SQL completed. rows=1"
+
+        tools = SchedulerTools(_make_agent_config())
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.get_run_log("my_dag", "run_001")
+
+        assert result.success == 1
+        assert "SELECT 1" in result.result["log"]
+        assert result.result["run_id"] == "run_001"
+
+    def test_get_log_adapter_exception(self):
+        mock_adapter = MagicMock()
+        mock_adapter.get_run_log.side_effect = Exception("run not found")
+        tools = SchedulerTools(_make_agent_config())
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.get_run_log("my_dag", "bad_run")
+
+        assert result.success == 0
+        assert "run not found" in (result.error or "")

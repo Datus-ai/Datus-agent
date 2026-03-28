@@ -6,6 +6,7 @@
 
 from pathlib import Path
 from typing import List, Optional
+from urllib.parse import quote_plus
 
 from agents import Tool
 
@@ -15,12 +16,43 @@ from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
+# Map Datus DB types to SQLAlchemy dialects
+_DIALECT_MAP = {
+    "starrocks": "mysql+pymysql",
+    "mysql": "mysql+pymysql",
+    "postgresql": "postgresql+psycopg2",
+    "postgres": "postgresql+psycopg2",
+}
+
+
+def _build_connection_url(db_config) -> str:
+    """Build a SQLAlchemy connection URL from a DbConfig."""
+    if not db_config.host or not db_config.port or not db_config.database:
+        raise ValueError(
+            f"Incomplete DB config: host={db_config.host!r}, port={db_config.port!r}, database={db_config.database!r}"
+        )
+    dialect = _DIALECT_MAP.get(db_config.type, db_config.type)
+    username = quote_plus(str(db_config.username)) if db_config.username else ""
+    password = quote_plus(str(db_config.password)) if db_config.password else ""
+    return f"{dialect}://{username}:{password}@{db_config.host}:{db_config.port}/{db_config.database}"
+
+
+def _redact_url(url: str) -> str:
+    """Replace password portion of a SQLAlchemy URL with '***'."""
+    try:
+        # Pattern: dialect://user:password@host:port/db
+        at_idx = url.index("@")
+        scheme_end = url.index("://") + 3
+        colon_idx = url.index(":", scheme_end)
+        return url[: colon_idx + 1] + "***" + url[at_idx:]
+    except ValueError:
+        return "<redacted URL>"
+
 
 class SchedulerTools(BaseTool):
-    """Function tools for interacting with configured scheduler platforms (e.g. Airflow).
+    """Function tools for interacting with the configured scheduler platform (e.g. Airflow).
 
-    Requires ``schedulers:`` section in ``agent.yml``.  Each entry maps a logical
-    name (e.g. ``airflow_local``) to an adapter config dict.
+    Requires a ``scheduler:`` section in ``agent.yml`` with the adapter config.
     """
 
     def __init__(self, agent_config, **kwargs):
@@ -29,8 +61,8 @@ class SchedulerTools(BaseTool):
 
     # ── Adapter factory ────────────────────────────────────────────────────
 
-    def _get_adapter(self, scheduler_name: str):
-        """Lazily create a scheduler adapter for the named configuration."""
+    def _get_adapter(self):
+        """Lazily create a scheduler adapter from the configured scheduler."""
         try:
             from datus_scheduler_core.registry import SchedulerAdapterRegistry
         except ImportError as exc:
@@ -39,41 +71,139 @@ class SchedulerTools(BaseTool):
                 "Install it with: pip install datus-scheduler-core"
             ) from exc
 
-        schedulers_config = getattr(self.agent_config, "schedulers_config", {}) or {}
-        raw_config = schedulers_config.get(scheduler_name)
-        if not raw_config:
-            raise ValueError(
-                f"Scheduler '{scheduler_name}' not found in agent.yml schedulers configuration. "
-                f"Available: {list(schedulers_config.keys())}"
-            )
+        scheduler_config = getattr(self.agent_config, "scheduler_config", {}) or {}
+        if not scheduler_config:
+            raise ValueError("No scheduler configured in agent.yml. Add a 'scheduler:' section.")
 
-        config = dict(raw_config)
-        config["name"] = scheduler_name
+        config = dict(scheduler_config)
         platform = config.get("type", "airflow")
         return SchedulerAdapterRegistry.create_adapter(platform=platform, config=config)
 
     # ── Tool methods ───────────────────────────────────────────────────────
 
-    def submit_spark_job(
+    def submit_sql_job(
         self,
-        scheduler_name: str,
         job_name: str,
-        spark_script_path: str,
+        sql_file_path: str,
+        namespace: Optional[str] = None,
+        connection_url: Optional[str] = None,
+        schedule: Optional[str] = None,
+        description: Optional[str] = None,
+    ) -> FuncToolResult:
+        """Submit a SQL file as a scheduled job, executed via SQLAlchemy against the target database.
+
+        The SQL is executed by the scheduler worker using SQLAlchemy.  You must provide
+        either ``namespace`` (to auto-derive the connection URL from agent.yml) or
+        an explicit ``connection_url``.
+
+        Args:
+            job_name:        Human-readable job name; used to derive the DAG/job ID.
+            sql_file_path:   Local path to the .sql file.
+            namespace:       Namespace name from agent.yml to derive the DB connection.
+            connection_url:  Explicit SQLAlchemy connection URL (overrides namespace).
+            schedule:        Cron expression, e.g. '0 8 * * *'.  None = manual trigger only.
+            description:     Optional human-readable description for the DAG.
+
+        Returns:
+            FuncToolResult with result containing job_id and status.
+        """
+        try:
+            from datus_scheduler_core.models import SchedulerJobPayload
+        except ImportError as exc:
+            return FuncToolResult(success=0, error=f"datus-scheduler-core not installed: {exc}")
+
+        # Read SQL file
+        try:
+            sql_path = Path(sql_file_path).expanduser()
+            if not sql_path.exists():
+                return FuncToolResult(success=0, error=f"SQL file not found: {sql_file_path}")
+            sql_content = sql_path.read_text(encoding="utf-8").strip()
+            if not sql_content:
+                return FuncToolResult(success=0, error=f"SQL file is empty: {sql_file_path}")
+        except Exception as exc:
+            return FuncToolResult(success=0, error=f"Failed to read SQL file '{sql_file_path}': {exc}")
+
+        # Resolve connection URL
+        url = connection_url
+        if not url:
+            if not namespace:
+                return FuncToolResult(
+                    success=0,
+                    error="Either 'namespace' or 'connection_url' must be provided for submit_sql_job.",
+                )
+            namespaces = getattr(self.agent_config, "namespaces", None) or {}
+            db_configs = namespaces.get(namespace)
+            if not db_configs:
+                available = list(namespaces.keys())
+                return FuncToolResult(
+                    success=0,
+                    error=f"Namespace '{namespace}' not found. Available: {available}",
+                )
+            # Use the first db config in the namespace
+            db_config = list(db_configs.values())[0]
+            try:
+                url = _build_connection_url(db_config)
+            except Exception as exc:
+                return FuncToolResult(
+                    success=0, error=f"Failed to build connection URL from namespace '{namespace}': {exc}"
+                )
+
+        # Submit
+        try:
+            adapter = self._get_adapter()
+        except (ImportError, ValueError) as exc:
+            return FuncToolResult(success=0, error=str(exc))
+
+        try:
+            payload = SchedulerJobPayload(
+                job_name=job_name,
+                sql=sql_content,
+                db_connection={"url": url},
+                schedule=schedule,
+                description=description,
+            )
+            job = adapter.submit_job(payload)
+            return FuncToolResult(
+                success=1,
+                result={
+                    "job_id": job.job_id,
+                    "job_name": job.job_name,
+                    "status": job.status.value,
+                    "scheduler": job.platform,
+                    "platform": job.platform,
+                },
+            )
+        except Exception as exc:
+            error_msg = str(exc)
+            if url and url in error_msg:
+                error_msg = error_msg.replace(url, _redact_url(url))
+            logger.error("submit_sql_job failed: %s", error_msg)
+            return FuncToolResult(success=0, error=error_msg)
+        finally:
+            try:
+                adapter.close()
+            except Exception as close_exc:
+                logger.debug("adapter.close() failed: %s", close_exc)
+
+    def submit_sparksql_job(
+        self,
+        job_name: str,
+        sql_file_path: str,
         spark_master: Optional[str] = None,
         schedule: Optional[str] = None,
         description: Optional[str] = None,
     ) -> FuncToolResult:
-        """Submit a PySpark script as a scheduled DAG to the specified scheduler.
+        """Submit a SparkSQL file as a scheduled job.
+
+        Use this after generating SparkSQL and writing it to a .sql file.
+        The SQL is executed via SparkSession.sql() by the scheduler worker.
 
         Args:
-            scheduler_name:    Scheduler instance name from agent.yml (e.g. 'airflow_local').
-            job_name:          Human-readable job name; used to derive the DAG/job ID.
-            spark_script_path: Local path to the PySpark script file.  The file content is
-                               embedded into the DAG at submission time — the path is not
-                               referenced at runtime.
-            spark_master:      Spark master URL (default: 'local[*]').
-            schedule:          Cron expression, e.g. '0 8 * * *'.  None = manual trigger only.
-            description:       Optional human-readable description for the DAG.
+            job_name:        Human-readable job name; used to derive the DAG/job ID.
+            sql_file_path:   Local path to the .sql file containing SparkSQL.
+            spark_master:    Spark master URL (default: 'local[*]').
+            schedule:        Cron expression, e.g. '0 8 * * *'.  None = manual trigger only.
+            description:     Optional human-readable description for the DAG.
 
         Returns:
             FuncToolResult with result containing job_id and status.
@@ -84,15 +214,17 @@ class SchedulerTools(BaseTool):
             return FuncToolResult(success=0, error=f"datus-scheduler-core not installed: {exc}")
 
         try:
-            script_path = Path(spark_script_path).expanduser()
-            if not script_path.exists():
-                return FuncToolResult(success=0, error=f"Spark script not found: {spark_script_path}")
-            spark_script = script_path.read_text(encoding="utf-8")
+            sql_path = Path(sql_file_path).expanduser()
+            if not sql_path.exists():
+                return FuncToolResult(success=0, error=f"SQL file not found: {sql_file_path}")
+            sql_content = sql_path.read_text(encoding="utf-8").strip()
+            if not sql_content:
+                return FuncToolResult(success=0, error=f"SQL file is empty: {sql_file_path}")
         except Exception as exc:
-            return FuncToolResult(success=0, error=f"Failed to read spark script '{spark_script_path}': {exc}")
+            return FuncToolResult(success=0, error=f"Failed to read SQL file '{sql_file_path}': {exc}")
 
         try:
-            adapter = self._get_adapter(scheduler_name)
+            adapter = self._get_adapter()
         except (ImportError, ValueError) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
@@ -102,8 +234,8 @@ class SchedulerTools(BaseTool):
                 schedule=schedule,
                 description=description,
                 extra={
-                    "job_type": "spark",
-                    "spark_script": spark_script,
+                    "job_type": "sparksql",
+                    "sparksql": sql_content,
                     "spark_master": spark_master or "local[*]",
                 },
             )
@@ -114,35 +246,33 @@ class SchedulerTools(BaseTool):
                     "job_id": job.job_id,
                     "job_name": job.job_name,
                     "status": job.status.value,
-                    "scheduler": scheduler_name,
+                    "scheduler": job.platform,
                     "platform": job.platform,
                 },
             )
         except Exception as exc:
-            logger.error("submit_spark_job failed: %s", exc)
+            logger.error("submit_sparksql_job failed: %s", exc)
             return FuncToolResult(success=0, error=str(exc))
         finally:
             try:
                 adapter.close()
-            except Exception:
-                pass
+            except Exception as close_exc:
+                logger.debug("adapter.close() failed: %s", close_exc)
 
     def trigger_scheduler_job(
         self,
-        scheduler_name: str,
         job_id: str,
     ) -> FuncToolResult:
         """Trigger an immediate run of an existing scheduled job.
 
         Args:
-            scheduler_name: Scheduler instance name from agent.yml.
-            job_id:         The job/DAG identifier to trigger.
+            job_id: The job/DAG identifier to trigger.
 
         Returns:
             FuncToolResult with result containing run_id and status.
         """
         try:
-            adapter = self._get_adapter(scheduler_name)
+            adapter = self._get_adapter()
         except (ImportError, ValueError) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
@@ -162,25 +292,23 @@ class SchedulerTools(BaseTool):
         finally:
             try:
                 adapter.close()
-            except Exception:
-                pass
+            except Exception as close_exc:
+                logger.debug("adapter.close() failed: %s", close_exc)
 
     def get_scheduler_job(
         self,
-        scheduler_name: str,
         job_id: str,
     ) -> FuncToolResult:
         """Get the current status and metadata of a scheduled job.
 
         Args:
-            scheduler_name: Scheduler instance name from agent.yml.
-            job_id:         The job/DAG identifier to query.
+            job_id: The job/DAG identifier to query.
 
         Returns:
             FuncToolResult with result containing job details, or found=False if not found.
         """
         try:
-            adapter = self._get_adapter(scheduler_name)
+            adapter = self._get_adapter()
         except (ImportError, ValueError) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
@@ -206,25 +334,23 @@ class SchedulerTools(BaseTool):
         finally:
             try:
                 adapter.close()
-            except Exception:
-                pass
+            except Exception as close_exc:
+                logger.debug("adapter.close() failed: %s", close_exc)
 
     def list_scheduler_jobs(
         self,
-        scheduler_name: str,
         limit: int = 20,
     ) -> FuncToolResult:
-        """List all scheduled jobs on the specified scheduler.
+        """List all scheduled jobs on the configured scheduler.
 
         Args:
-            scheduler_name: Scheduler instance name from agent.yml.
-            limit:          Maximum number of jobs to return (default 20).
+            limit: Maximum number of jobs to return (default 20).
 
         Returns:
             FuncToolResult with result containing a list of job summaries.
         """
         try:
-            adapter = self._get_adapter(scheduler_name)
+            adapter = self._get_adapter()
         except (ImportError, ValueError) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
@@ -251,17 +377,298 @@ class SchedulerTools(BaseTool):
         finally:
             try:
                 adapter.close()
-            except Exception:
-                pass
+            except Exception as close_exc:
+                logger.debug("adapter.close() failed: %s", close_exc)
+
+    def pause_job(
+        self,
+        job_id: str,
+    ) -> FuncToolResult:
+        """Pause a scheduled job so it will not be triggered by the scheduler.
+
+        Args:
+            job_id: The job/DAG identifier to pause.
+
+        Returns:
+            FuncToolResult indicating success or failure.
+        """
+        try:
+            adapter = self._get_adapter()
+        except (ImportError, ValueError) as exc:
+            return FuncToolResult(success=0, error=str(exc))
+
+        try:
+            adapter.pause_job(job_id)
+            return FuncToolResult(success=1, result={"job_id": job_id, "status": "paused"})
+        except Exception as exc:
+            logger.error("pause_job failed: %s", exc)
+            return FuncToolResult(success=0, error=str(exc))
+        finally:
+            try:
+                adapter.close()
+            except Exception as close_exc:
+                logger.debug("adapter.close() failed: %s", close_exc)
+
+    def resume_job(
+        self,
+        job_id: str,
+    ) -> FuncToolResult:
+        """Resume a paused job so the scheduler will trigger it again.
+
+        Args:
+            job_id: The job/DAG identifier to resume.
+
+        Returns:
+            FuncToolResult indicating success or failure.
+        """
+        try:
+            adapter = self._get_adapter()
+        except (ImportError, ValueError) as exc:
+            return FuncToolResult(success=0, error=str(exc))
+
+        try:
+            adapter.resume_job(job_id)
+            return FuncToolResult(success=1, result={"job_id": job_id, "status": "active"})
+        except Exception as exc:
+            logger.error("resume_job failed: %s", exc)
+            return FuncToolResult(success=0, error=str(exc))
+        finally:
+            try:
+                adapter.close()
+            except Exception as close_exc:
+                logger.debug("adapter.close() failed: %s", close_exc)
+
+    def delete_job(
+        self,
+        job_id: str,
+    ) -> FuncToolResult:
+        """Delete a scheduled job permanently. Removes the DAG file and metadata.
+
+        Args:
+            job_id: The job/DAG identifier to delete.
+
+        Returns:
+            FuncToolResult indicating success or failure.
+        """
+        try:
+            adapter = self._get_adapter()
+        except (ImportError, ValueError) as exc:
+            return FuncToolResult(success=0, error=str(exc))
+
+        try:
+            adapter.delete_job(job_id)
+            return FuncToolResult(success=1, result={"job_id": job_id, "status": "deleted"})
+        except Exception as exc:
+            logger.error("delete_job failed: %s", exc)
+            return FuncToolResult(success=0, error=str(exc))
+        finally:
+            try:
+                adapter.close()
+            except Exception as close_exc:
+                logger.debug("adapter.close() failed: %s", close_exc)
+
+    def update_job(
+        self,
+        job_id: str,
+        sql_file_path: str,
+        namespace: Optional[str] = None,
+        connection_url: Optional[str] = None,
+        schedule: Optional[str] = None,
+        description: Optional[str] = None,
+    ) -> FuncToolResult:
+        """Update an existing scheduled SQL job with new SQL or configuration.
+
+        Re-renders the job definition with updated content.  The scheduler reloads
+        it automatically.
+
+        Args:
+            job_id:         The existing job/DAG identifier to update.
+            sql_file_path:  Local path to the new .sql file.
+            namespace:      Namespace name from agent.yml to derive the DB connection.
+            connection_url: Explicit SQLAlchemy connection URL (overrides namespace).
+            schedule:       Cron expression, e.g. '0 8 * * *'.  None = manual trigger only.
+            description:    Optional human-readable description.
+
+        Returns:
+            FuncToolResult with result containing updated job details.
+        """
+        try:
+            from datus_scheduler_core.models import SchedulerJobPayload
+        except ImportError as exc:
+            return FuncToolResult(success=0, error=f"datus-scheduler-core not installed: {exc}")
+
+        # Read SQL file
+        try:
+            sql_path = Path(sql_file_path).expanduser()
+            if not sql_path.exists():
+                return FuncToolResult(success=0, error=f"SQL file not found: {sql_file_path}")
+            sql_content = sql_path.read_text(encoding="utf-8").strip()
+            if not sql_content:
+                return FuncToolResult(success=0, error=f"SQL file is empty: {sql_file_path}")
+        except Exception as exc:
+            return FuncToolResult(success=0, error=f"Failed to read SQL file '{sql_file_path}': {exc}")
+
+        # Resolve connection URL
+        url = connection_url
+        if not url:
+            if not namespace:
+                return FuncToolResult(
+                    success=0,
+                    error="Either 'namespace' or 'connection_url' must be provided for update_job.",
+                )
+            namespaces = getattr(self.agent_config, "namespaces", None) or {}
+            db_configs = namespaces.get(namespace)
+            if not db_configs:
+                available = list(namespaces.keys())
+                return FuncToolResult(
+                    success=0,
+                    error=f"Namespace '{namespace}' not found. Available: {available}",
+                )
+            db_config = list(db_configs.values())[0]
+            try:
+                url = _build_connection_url(db_config)
+            except Exception as exc:
+                return FuncToolResult(
+                    success=0, error=f"Failed to build connection URL from namespace '{namespace}': {exc}"
+                )
+
+        try:
+            adapter = self._get_adapter()
+        except (ImportError, ValueError) as exc:
+            return FuncToolResult(success=0, error=str(exc))
+
+        try:
+            payload = SchedulerJobPayload(
+                job_name=job_id,
+                sql=sql_content,
+                db_connection={"url": url},
+                schedule=schedule,
+                description=description,
+            )
+            job = adapter.update_job(job_id, payload)
+            return FuncToolResult(
+                success=1,
+                result={
+                    "job_id": job.job_id,
+                    "job_name": job.job_name,
+                    "status": job.status.value,
+                    "scheduler": job.platform,
+                    "platform": job.platform,
+                },
+            )
+        except Exception as exc:
+            error_msg = str(exc)
+            if url and url in error_msg:
+                error_msg = error_msg.replace(url, _redact_url(url))
+            logger.error("update_job failed: %s", error_msg)
+            return FuncToolResult(success=0, error=error_msg)
+        finally:
+            try:
+                adapter.close()
+            except Exception as close_exc:
+                logger.debug("adapter.close() failed: %s", close_exc)
+
+    def list_job_runs(
+        self,
+        job_id: str,
+        limit: int = 10,
+    ) -> FuncToolResult:
+        """List recent runs of a scheduled job, showing status and timing.
+
+        Args:
+            job_id: The job/DAG identifier to query.
+            limit:          Maximum number of runs to return (default 10).
+
+        Returns:
+            FuncToolResult with result containing a list of run summaries.
+        """
+        try:
+            adapter = self._get_adapter()
+        except (ImportError, ValueError) as exc:
+            return FuncToolResult(success=0, error=str(exc))
+
+        try:
+            runs = adapter.list_job_runs(job_id, limit=limit)
+            return FuncToolResult(
+                success=1,
+                result={
+                    "job_id": job_id,
+                    "total": len(runs),
+                    "runs": [
+                        {
+                            "run_id": r.run_id,
+                            "status": r.status.value,
+                            "started_at": r.started_at.isoformat()
+                            if hasattr(r.started_at, "isoformat")
+                            else r.started_at,
+                            "ended_at": r.ended_at.isoformat() if hasattr(r.ended_at, "isoformat") else r.ended_at,
+                        }
+                        for r in runs
+                    ],
+                },
+            )
+        except Exception as exc:
+            logger.error("list_job_runs failed: %s", exc)
+            return FuncToolResult(success=0, error=str(exc))
+        finally:
+            try:
+                adapter.close()
+            except Exception as close_exc:
+                logger.debug("adapter.close() failed: %s", close_exc)
+
+    def get_run_log(
+        self,
+        job_id: str,
+        run_id: str,
+    ) -> FuncToolResult:
+        """Get the execution log of a specific job run.
+
+        Args:
+            job_id:  The job/DAG identifier.
+            run_id:  The run identifier (from list_job_runs or trigger_scheduler_job).
+
+        Returns:
+            FuncToolResult with result containing the log text.
+        """
+        try:
+            adapter = self._get_adapter()
+        except (ImportError, ValueError) as exc:
+            return FuncToolResult(success=0, error=str(exc))
+
+        try:
+            log_text = adapter.get_run_log(job_id, run_id)
+            return FuncToolResult(
+                success=1,
+                result={
+                    "job_id": job_id,
+                    "run_id": run_id,
+                    "log": log_text,
+                },
+            )
+        except Exception as exc:
+            logger.error("get_run_log failed: %s", exc)
+            return FuncToolResult(success=0, error=str(exc))
+        finally:
+            try:
+                adapter.close()
+            except Exception as close_exc:
+                logger.debug("adapter.close() failed: %s", close_exc)
 
     # ── Tool registration ──────────────────────────────────────────────────
 
     def available_tools(self) -> List[Tool]:
         """Return all scheduler tool functions as FunctionTool objects."""
         methods = [
-            self.submit_spark_job,
+            self.submit_sql_job,
+            self.submit_sparksql_job,
             self.trigger_scheduler_job,
+            self.pause_job,
+            self.resume_job,
+            self.delete_job,
+            self.update_job,
             self.get_scheduler_job,
             self.list_scheduler_jobs,
+            self.list_job_runs,
+            self.get_run_log,
         ]
         return [trans_to_function_tool(m) for m in methods]

@@ -12,7 +12,11 @@ from datus.tools.func_tool.gen_semantic_model_tools import GenSemanticModelTools
 from datus.tools.func_tool.generation_tools import GenerationTools
 from datus.tools.func_tool.plan_tools import PlanTool, SessionTodoStorage
 from datus.tools.func_tool.platform_doc_search import PlatformDocSearchTool
-from datus.tools.func_tool.scheduler_tools import SchedulerTools
+
+try:
+    from datus.tools.func_tool.scheduler_tools import SchedulerTools
+except ImportError:
+    SchedulerTools = None
 from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.tools.func_tool.sub_agent_task_tool import SubAgentTaskTool
 

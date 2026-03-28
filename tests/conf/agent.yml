@@ -225,12 +225,12 @@ agent:
       extra:
         provider: db
 
-  schedulers:
-    airflow_local:
-      type: airflow
-      api_base_url: http://localhost:8080/api/v1
-      username: admin
-      password: admin123
-      dags_folder: /Users/kangxue/work/datus/datus-scheduler-adapters/datus-airflow/dags
-      dag_discovery_timeout: 60
-      dag_discovery_poll_interval: 5
+  scheduler:
+    name: airflow_local
+    type: airflow
+    api_base_url: http://localhost:8080/api/v1
+    username: admin
+    password: admin123
+    dags_folder: /tmp/dags
+    dag_discovery_timeout: 60
+    dag_discovery_poll_interval: 5
