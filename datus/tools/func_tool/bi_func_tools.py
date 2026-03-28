@@ -6,14 +6,18 @@
 
 from __future__ import annotations
 
-import logging
+import re
 from typing import Any, List
 
 from agents import Tool
 
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.utils.loggings import get_logger
 
-logger = logging.getLogger(__name__)
+_VALID_TABLE_NAME = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]{0,62}$")
+_VALID_IF_EXISTS = {"replace", "append", "fail"}
+
+logger = get_logger(__name__)
 
 
 class BIFuncTool:
@@ -25,14 +29,18 @@ class BIFuncTool:
     - DashboardWriteMixin: create_dashboard, update_dashboard
     - ChartWriteMixin: create_chart, update_chart, add_chart_to_dashboard
     - DatasetWriteMixin: create_dataset, list_bi_databases
-    - write_db_uri set: write_query (execute SQL on source DB and write result to dashboard DB)
+    - dataset_db_uri set: write_query (execute SQL on source DB and write result to dashboard DB)
     """
 
-    def __init__(self, adaptor: Any, write_db_uri: str = "", write_db_schema: str = "") -> None:
+    def __init__(
+        self, adaptor: Any, dataset_db_uri: str = "", dataset_db_schema: str = "", read_connector: Any = None
+    ) -> None:
         self.adaptor = adaptor
-        self._write_db_uri = write_db_uri
-        self._write_db_schema = write_db_schema
+        self._dataset_db_uri = dataset_db_uri
+        self._dataset_db_schema = dataset_db_schema
+        self._read_connector = read_connector
         self._write_engine = None  # lazy-initialized
+        self._dataset_db_id = None  # lazy-resolved from BI platform
 
     # ------------------------------------------------------------------ #
     # Read operations (available on all adaptors)
@@ -100,14 +108,25 @@ class BIFuncTool:
             from datus_bi_core.models import DashboardSpec
 
             existing = self.adaptor.get_dashboard_info(dashboard_id)
+            if existing is None:
+                return FuncToolResult(success=0, error=f"Dashboard {dashboard_id} not found")
             spec = DashboardSpec(
-                title=title or (existing.name if existing else ""),
-                description=description or (existing.description or "" if existing else ""),
+                title=title or existing.name,
+                description=description or (existing.description or ""),
             )
             result = self.adaptor.update_dashboard(dashboard_id, spec)
             return FuncToolResult(result=result.model_dump())
         except Exception as exc:
             logger.warning(f"update_dashboard failed: {exc}")
+            return FuncToolResult(success=0, error=str(exc))
+
+    def delete_dashboard(self, dashboard_id: str) -> FuncToolResult:
+        """Delete a dashboard by its ID."""
+        try:
+            success = self.adaptor.delete_dashboard(dashboard_id)
+            return FuncToolResult(result={"deleted": success, "dashboard_id": dashboard_id})
+        except Exception as exc:
+            logger.warning(f"delete_dashboard failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
     # ------------------------------------------------------------------ #
@@ -118,7 +137,6 @@ class BIFuncTool:
         self,
         chart_type: str,
         title: str,
-        sql: str = "",
         dataset_id: str = "",
         x_axis: str = "",
         metrics: str = "",
@@ -127,16 +145,18 @@ class BIFuncTool:
         description: str = "",
     ) -> FuncToolResult:
         """
-        Create a new chart/panel.
+        Create a new chart/panel. Requires a dataset — create one first with create_dataset().
 
         Args:
             chart_type: Type of chart: bar, line, pie, table, big_number, scatter
             title: Chart title
-            sql: SQL query for virtual dataset (use either sql or dataset_id)
-            dataset_id: Existing dataset ID to use (use either sql or dataset_id)
-            x_axis: Field name for x-axis or time column
-            metrics: Comma-separated list of metric field names (e.g., "revenue,count")
-            dimensions: Comma-separated list of dimension/groupby fields
+            dataset_id: (Required) Dataset ID from create_dataset()
+            x_axis: Column name for x-axis or time column (for line/bar charts)
+            metrics: Comma-separated metric expressions. Supported formats:
+                     - "column_name" → defaults to SUM(column_name)
+                     - "AVG(column_name)", "MAX(column_name)", "MIN(column_name)", "COUNT(column_name)"
+                     Examples: "revenue,count" or "AVG(activity_count)" or "MAX(price),MIN(price)"
+            dimensions: Comma-separated list of dimension/groupby column names
             dashboard_id: (Grafana: required) Dashboard ID to add the chart to
             description: Chart description
         """
@@ -146,12 +166,16 @@ class BIFuncTool:
             metrics_list = [m.strip() for m in metrics.split(",") if m.strip()] if metrics else None
             dims_list = [d.strip() for d in dimensions.split(",") if d.strip()] if dimensions else None
             ds_id = int(dataset_id) if dataset_id.strip().isdigit() else None
+            if not ds_id:
+                return FuncToolResult(
+                    success=0,
+                    error="dataset_id is required. Create a dataset first with create_dataset(), then use its ID here.",
+                )
             spec = ChartSpec(
                 chart_type=chart_type,
                 title=title,
                 description=description,
                 dataset_id=ds_id,
-                sql=sql or None,
                 x_axis=x_axis or None,
                 metrics=metrics_list,
                 dimensions=dims_list,
@@ -179,9 +203,11 @@ class BIFuncTool:
 
             metrics_list = [m.strip() for m in metrics.split(",") if m.strip()] if metrics else None
             existing = self.adaptor.get_chart(chart_id)
+            if existing is None:
+                return FuncToolResult(success=0, error=f"Chart {chart_id} not found")
             spec = ChartSpec(
-                chart_type=chart_type or (existing.chart_type if existing else "bar"),
-                title=title or (existing.name if existing else ""),
+                chart_type=chart_type or existing.chart_type,
+                title=title or existing.name,
                 description=description,
                 sql=sql or None,
                 x_axis=x_axis or None,
@@ -202,6 +228,15 @@ class BIFuncTool:
             logger.warning(f"add_chart_to_dashboard failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
+    def delete_chart(self, chart_id: str) -> FuncToolResult:
+        """Delete a chart by its ID."""
+        try:
+            success = self.adaptor.delete_chart(chart_id)
+            return FuncToolResult(result={"deleted": success, "chart_id": chart_id})
+        except Exception as exc:
+            logger.warning(f"delete_chart failed: {exc}")
+            return FuncToolResult(success=0, error=str(exc))
+
     # ------------------------------------------------------------------ #
     # Dataset write operations (DatasetWriteMixin)
     # ------------------------------------------------------------------ #
@@ -219,6 +254,11 @@ class BIFuncTool:
             sql: Optional SELECT query for virtual datasets. Leave empty to register an existing physical table.
             description: Optional description
         """
+        if not database_id or not database_id.strip().isdigit():
+            return FuncToolResult(
+                success=0,
+                error="database_id must be a numeric ID. Use list_bi_databases() to find available database IDs.",
+            )
         try:
             from datus_bi_core.models import DatasetSpec
 
@@ -236,6 +276,15 @@ class BIFuncTool:
             return FuncToolResult(result=results)
         except Exception as exc:
             logger.warning(f"list_bi_databases failed: {exc}")
+            return FuncToolResult(success=0, error=str(exc))
+
+    def delete_dataset(self, dataset_id: str) -> FuncToolResult:
+        """Delete a dataset by its ID."""
+        try:
+            success = self.adaptor.delete_dataset(dataset_id)
+            return FuncToolResult(result={"deleted": success, "dataset_id": dataset_id})
+        except Exception as exc:
+            logger.warning(f"delete_dataset failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
     # ------------------------------------------------------------------ #
@@ -261,39 +310,76 @@ class BIFuncTool:
             if_exists: What to do if the table already exists: "replace" (default),
                        "append", or "fail".
         """
-        if not self._write_db_uri:
-            return FuncToolResult(success=0, error="write_db is not configured for this BI platform")
+        if not self._dataset_db_uri:
+            return FuncToolResult(success=0, error="dataset_db is not configured for this BI platform")
+        if not _VALID_TABLE_NAME.match(table_name):
+            return FuncToolResult(success=0, error="Invalid table_name: must match [a-zA-Z_][a-zA-Z0-9_]{0,62}")
+        if if_exists not in _VALID_IF_EXISTS:
+            return FuncToolResult(success=0, error=f"if_exists must be one of: {sorted(_VALID_IF_EXISTS)}")
+        sql_stripped = sql.strip().upper()
+        if not (sql_stripped.startswith("SELECT") or sql_stripped.startswith("WITH")):
+            return FuncToolResult(success=0, error="Only SELECT/WITH queries are allowed in write_query")
         try:
-            # Check read connector before initialising the write engine (avoids unnecessary driver imports)
-            read_connector = getattr(self, "_read_connector", None)
-            if read_connector is None:
+            if self._read_connector is None:
                 return FuncToolResult(success=0, error="No source database connector available for write_query")
 
             from sqlalchemy import create_engine
 
-            # Lazy-init write engine
             if self._write_engine is None:
-                self._write_engine = create_engine(self._write_db_uri)
+                self._write_engine = create_engine(self._dataset_db_uri)
 
-            result = read_connector.execute_query(sql, result_format="pandas")
+            result = self._read_connector.execute_query(sql, result_format="pandas")
             if not result.success:
                 return FuncToolResult(success=0, error=result.error)
 
             df = result.sql_return
-            schema = self._write_db_schema or None
+            schema = self._dataset_db_schema or None
             df.to_sql(table_name, self._write_engine, schema=schema, if_exists=if_exists, index=False)
             rows = len(df)
-            return FuncToolResult(
-                result={
-                    "table_name": table_name,
-                    "rows_written": rows,
-                    "schema": schema,
-                    "if_exists": if_exists,
-                }
-            )
+            result_data = {
+                "table_name": table_name,
+                "rows_written": rows,
+                "schema": schema,
+                "if_exists": if_exists,
+            }
+            database_id = self._resolve_dataset_db_id()
+            if database_id is not None:
+                result_data["database_id"] = database_id
+            return FuncToolResult(result=result_data)
         except Exception as exc:
             logger.warning(f"write_query failed: {exc}")
-            return FuncToolResult(success=0, error=str(exc))
+            return FuncToolResult(success=0, error=f"write_query failed for table '{table_name}': {exc}")
+
+    def _resolve_dataset_db_id(self) -> Any:
+        """Look up the BI platform database ID that matches dataset_db by name.
+
+        The database must be pre-registered in the BI platform (e.g. via Superset UI
+        or admin scripts). This method only performs a lookup — it does not register.
+        """
+        if self._dataset_db_id is not None:
+            return self._dataset_db_id
+        try:
+            from sqlalchemy.engine.url import make_url
+
+            target_url = make_url(self._dataset_db_uri)
+            target_db_name = target_url.database or ""
+            if not target_db_name:
+                return None
+
+            databases = self.adaptor.list_bi_databases()
+            for db in databases:
+                name = db.get("name", "") if isinstance(db, dict) else getattr(db, "name", "")
+                if name == target_db_name:
+                    db_id = db.get("id") if isinstance(db, dict) else getattr(db, "id", None)
+                    self._dataset_db_id = db_id
+                    return db_id
+
+            logger.warning(
+                f"Database '{target_db_name}' not found in BI platform. Please register it in the BI platform first."
+            )
+        except Exception as exc:
+            logger.debug(f"Could not resolve dataset_db_id: {exc}")
+        return None
 
     # ------------------------------------------------------------------ #
     # Dynamic tool registration
@@ -327,13 +413,13 @@ class BIFuncTool:
             methods.insert(0, self.list_dashboards)
 
         if has_dash_write:
-            methods += [self.create_dashboard, self.update_dashboard]
+            methods += [self.create_dashboard, self.update_dashboard, self.delete_dashboard]
         if has_chart_write:
-            methods += [self.create_chart, self.update_chart, self.add_chart_to_dashboard]
+            methods += [self.create_chart, self.update_chart, self.add_chart_to_dashboard, self.delete_chart]
         if has_dataset_write:
-            methods += [self.create_dataset, self.list_bi_databases]
+            methods += [self.create_dataset, self.list_bi_databases, self.delete_dataset]
 
-        if self._write_db_uri:
+        if self._dataset_db_uri:
             methods.append(self.write_query)
 
         return [trans_to_function_tool(m) for m in methods]

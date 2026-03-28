@@ -507,6 +507,7 @@ class AgenticNode(Node):
             "adapter_type",
             "sql_file_threshold",
             "sql_preview_lines",
+            "bi_platform",
         ]
         for attr in direct_attributes:
             # Handle both dict and object access patterns

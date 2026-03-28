@@ -540,7 +540,7 @@ if "bi_tools" in tool_names:
     dashboard_cfg = agent_config.dashboard_config.get(platform)
     adaptor_cls = adaptor_registry.get(platform)
     adaptor = adaptor_cls(
-        api_base_url=dashboard_cfg.extra.get("api_url", ""),
+        api_base_url=dashboard_cfg.api_url,
         auth_params=AuthParam(
             username=dashboard_cfg.username,
             password=dashboard_cfg.password,
@@ -558,15 +558,14 @@ if "bi_tools" in tool_names:
 ```yaml
 dashboard:
   superset:
+    api_url: http://localhost:8088
     username: admin
     password: admin
     extra:
       provider: db
-      api_url: http://localhost:8088
   grafana:
+    api_url: http://localhost:3000
     api_key: ${GRAFANA_API_KEY}
-    extra:
-      api_url: http://localhost:3000
 
 agentic_nodes:
   bi_agent:

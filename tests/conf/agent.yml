@@ -220,6 +220,7 @@ agent:
 
   dashboard:
     superset:
+      api_url: http://localhost:8088
       username: admin
       password: admin
       extra:

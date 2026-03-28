@@ -49,6 +49,12 @@ If the request is ambiguous or missing key parameters, call `ask_user` FIRST to 
   3. `web_search_document` — fallback to web search when local docs do not cover the topic
 {% endif -%}
 
+{% if rules|length > 0 %}
+Rules — follow these exactly:
+{% for rule in rules %}
+- {{ rule }}
+{% endfor %}
+{% endif %}
 Guidelines:
 
 - **Clarify before acting**: When the user's request is ambiguous or missing key information, call `ask_user` to clarify before proceeding. Do NOT guess or assume defaults.

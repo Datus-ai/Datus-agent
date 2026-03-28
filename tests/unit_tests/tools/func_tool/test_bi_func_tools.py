@@ -77,6 +77,9 @@ class MockDatasetWriteMixin:
     def update_dataset(self, dataset_id, spec):
         return _DatasetInfo(id=dataset_id, name=spec.name, dialect="postgresql")
 
+    def delete_dataset(self, dataset_id):
+        return True
+
     def list_bi_databases(self):
         return [{"id": 1, "name": "PostgreSQL"}]
 
@@ -162,6 +165,10 @@ class TestBIFuncToolAvailableTools:
             assert "add_chart_to_dashboard" in tool_names
             assert "create_dataset" in tool_names
             assert "list_bi_databases" in tool_names
+            # Delete tools
+            assert "delete_dashboard" in tool_names
+            assert "delete_chart" in tool_names
+            assert "delete_dataset" in tool_names
 
     def test_read_only_adaptor_limited_tools(self):
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
@@ -237,6 +244,71 @@ class TestBIFuncToolWriteOps:
         assert result.success == 1
         assert result.result[0]["name"] == "PostgreSQL"
 
+    def test_delete_dashboard(self):
+        tool = self._make_tool()
+        result = tool.delete_dashboard("10")
+        assert result.success == 1
+        assert result.result["deleted"] is True
+        assert result.result["dashboard_id"] == "10"
+
+    def test_delete_chart(self):
+        tool = self._make_tool()
+        result = tool.delete_chart("5")
+        assert result.success == 1
+        assert result.result["deleted"] is True
+        assert result.result["chart_id"] == "5"
+
+    def test_delete_dataset(self):
+        tool = self._make_tool()
+        result = tool.delete_dataset("3")
+        assert result.success == 1
+        assert result.result["deleted"] is True
+        assert result.result["dataset_id"] == "3"
+
+    def test_update_dashboard_not_found(self):
+        tool = self._make_tool()
+        tool.adaptor.get_dashboard_info = lambda dashboard_id: None
+        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock, "datus_bi_core.models": _bi_core_mock.models}):
+            result = tool.update_dashboard("999", title="New Title")
+        assert result.success == 0
+        assert "not found" in result.error
+
+    def test_update_chart_not_found(self):
+        tool = self._make_tool()
+        tool.adaptor.get_chart = lambda chart_id, **kwargs: None
+        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock, "datus_bi_core.models": _bi_core_mock.models}):
+            result = tool.update_chart("999", title="New Title")
+        assert result.success == 0
+        assert "not found" in result.error
+
+    def test_create_chart_rejects_zero_dataset_id(self):
+        tool = self._make_tool()
+        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock, "datus_bi_core.models": _bi_core_mock.models}):
+            result = tool.create_chart(chart_type="bar", title="Test", dataset_id="0")
+        assert result.success == 0
+        assert "dataset_id" in result.error.lower()
+
+    def test_create_chart_rejects_empty_dataset_id(self):
+        tool = self._make_tool()
+        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock, "datus_bi_core.models": _bi_core_mock.models}):
+            result = tool.create_chart(chart_type="bar", title="Test", dataset_id="")
+        assert result.success == 0
+        assert "dataset_id" in result.error.lower()
+
+    def test_create_dataset_rejects_non_numeric_database_id(self):
+        tool = self._make_tool()
+        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock, "datus_bi_core.models": _bi_core_mock.models}):
+            result = tool.create_dataset(name="test", database_id="abc")
+        assert result.success == 0
+        assert "database_id" in result.error.lower()
+
+    def test_create_dataset_rejects_empty_database_id(self):
+        tool = self._make_tool()
+        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock, "datus_bi_core.models": _bi_core_mock.models}):
+            result = tool.create_dataset(name="test", database_id="")
+        assert result.success == 0
+        assert "database_id" in result.error.lower()
+
     def test_error_handling(self):
         tool = self._make_tool()
         tool.adaptor.list_dashboards = lambda **kwargs: (_ for _ in ()).throw(RuntimeError("connection failed"))
@@ -248,36 +320,54 @@ class TestBIFuncToolWriteOps:
 class TestBIFuncToolWriteQuery:
     """Tests for write_query: source DB → dashboard DB materialisation."""
 
-    def _make_tool_with_write_db(self):
+    def _make_tool_with_dataset_db(self):
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
             from datus.tools.func_tool.bi_func_tools import BIFuncTool
 
             return BIFuncTool(
                 FullMockAdaptor(),
-                write_db_uri="postgresql+psycopg2://superset:superset@localhost:5432/superset",
-                write_db_schema="public",
+                dataset_db_uri="postgresql+psycopg2://superset:superset@localhost:5432/superset",
+                dataset_db_schema="public",
             )
 
-    def test_write_query_no_write_db_uri_returns_error(self):
+    def test_write_query_no_dataset_db_uri_returns_error(self):
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
             from datus.tools.func_tool.bi_func_tools import BIFuncTool
 
             tool = BIFuncTool(FullMockAdaptor())
             result = tool.write_query("SELECT 1", "my_table")
         assert result.success == 0
-        assert "write_db" in result.error
+        assert "dataset_db" in result.error
 
     def test_write_query_no_read_connector_returns_error(self):
-        tool = self._make_tool_with_write_db()
+        tool = self._make_tool_with_dataset_db()
         # No _read_connector set
         result = tool.write_query("SELECT 1", "my_table")
         assert result.success == 0
         assert "connector" in result.error.lower()
 
+    def test_write_query_rejects_non_select_sql(self):
+        tool = self._make_tool_with_dataset_db()
+        result = tool.write_query("DROP TABLE users", "my_table")
+        assert result.success == 0
+        assert "SELECT" in result.error
+
+    def test_write_query_rejects_invalid_table_name(self):
+        tool = self._make_tool_with_dataset_db()
+        result = tool.write_query("SELECT 1", "123-bad-name!")
+        assert result.success == 0
+        assert "table_name" in result.error.lower()
+
+    def test_write_query_rejects_invalid_if_exists(self):
+        tool = self._make_tool_with_dataset_db()
+        result = tool.write_query("SELECT 1", "my_table", if_exists="drop")
+        assert result.success == 0
+        assert "if_exists" in result.error
+
     def test_write_query_success(self):
         import pandas as pd
 
-        tool = self._make_tool_with_write_db()
+        tool = self._make_tool_with_dataset_db()
 
         # Build a fake ExecuteSQLResult
         mock_execute_result = MagicMock()
@@ -302,7 +392,7 @@ class TestBIFuncToolWriteQuery:
         mock_connector.execute_query.assert_called_once_with("SELECT col FROM t", result_format="pandas")
 
     def test_write_query_connector_failure_propagates(self):
-        tool = self._make_tool_with_write_db()
+        tool = self._make_tool_with_dataset_db()
 
         mock_execute_result = MagicMock()
         mock_execute_result.success = False
@@ -317,14 +407,14 @@ class TestBIFuncToolWriteQuery:
         assert result.success == 0
         assert "Table not found" in result.error
 
-    def test_write_query_appears_in_available_tools_when_write_db_set(self):
-        tool = self._make_tool_with_write_db()
+    def test_write_query_appears_in_available_tools_when_dataset_db_set(self):
+        tool = self._make_tool_with_dataset_db()
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
             tools = tool.available_tools()
         tool_names = {t.name for t in tools}
         assert "write_query" in tool_names
 
-    def test_write_query_absent_from_tools_when_no_write_db(self):
+    def test_write_query_absent_from_tools_when_no_dataset_db(self):
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
             from datus.tools.func_tool.bi_func_tools import BIFuncTool
 

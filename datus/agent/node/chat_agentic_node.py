@@ -186,26 +186,45 @@ class ChatAgenticNode(AgenticNode):
                 logger.warning(f"No BI adaptor registered for platform '{bi_platform}'")
                 return
 
-            api_url = (dash_cfg.extra or {}).get("api_url", "")
+            api_url = dash_cfg.api_url
             auth_params = AuthParam(
                 username=dash_cfg.username,
                 password=dash_cfg.password,
                 api_key=dash_cfg.api_key,
                 extra=dash_cfg.extra or {},
             )
-            dialect = self.agent_config.dialect if self.agent_config else ""
+            # Derive dialect from dataset_db config, not from the source database type.
+            dialect = ""
+            if dash_cfg.dataset_db:
+                dialect = dash_cfg.dataset_db.get("dialect", "")
+                if not dialect:
+                    ds_uri = dash_cfg.dataset_db.get("uri", "")
+                    if ds_uri:
+                        try:
+                            from sqlalchemy.engine.url import make_url
+
+                            dialect = make_url(ds_uri).get_backend_name()
+                        except Exception:
+                            pass
             adaptor = adaptor_cls(api_base_url=api_url, auth_params=auth_params, dialect=dialect)
-            write_db_uri = ""
-            write_db_schema = ""
-            if dash_cfg.write_db:
-                write_db_uri = dash_cfg.write_db.get("uri", "")
-                write_db_schema = dash_cfg.write_db.get("schema", "")
-            self.bi_func_tool = BIFuncTool(adaptor, write_db_uri=write_db_uri, write_db_schema=write_db_schema)
-            # Attach source read connector so write_query can read from the namespace DB
+            dataset_db_uri = ""
+            dataset_db_schema = ""
+            if dash_cfg.dataset_db:
+                dataset_db_uri = dash_cfg.dataset_db.get("uri", "")
+                dataset_db_schema = dash_cfg.dataset_db.get("schema", "")
+            read_connector = None
             if self.db_func_tool and hasattr(self.db_func_tool, "connector"):
-                self.bi_func_tool._read_connector = self.db_func_tool.connector
+                read_connector = self.db_func_tool.connector
+            self.bi_func_tool = BIFuncTool(
+                adaptor,
+                dataset_db_uri=dataset_db_uri,
+                dataset_db_schema=dataset_db_schema,
+                read_connector=read_connector,
+            )
             self.tools.extend(self.bi_func_tool.available_tools())
             logger.info(f"BI tools initialized for platform '{bi_platform}'")
+        except ImportError as e:
+            logger.warning(f"BI adaptor package not installed for '{bi_platform}': {e}")
         except Exception as e:
             logger.error(f"Failed to setup BI tools: {e}")
 
@@ -382,6 +401,8 @@ class ChatAgenticNode(AgenticNode):
         db_manager = db_manager_instance(self.agent_config.namespaces)
         conn = db_manager.get_conn(self.agent_config.current_database, database_name)
         self.db_func_tool = DBFuncTool(conn, agent_config=self.agent_config)
+        if self.bi_func_tool and self.db_func_tool and hasattr(self.db_func_tool, "connector"):
+            self.bi_func_tool._read_connector = self.db_func_tool.connector  # update connector after namespace switch
         self._rebuild_tools()
 
     # ── Permission Helpers ──────────────────────────────────────────────
