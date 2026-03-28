@@ -16,9 +16,11 @@ NO MOCK EXCEPT LLM.
 from prompt_toolkit.document import Document
 
 from datus.cli.autocomplete import (
+    AtReferenceCompleter,
     AtReferenceParser,
     CustomPygmentsStyle,
     CustomSqlLexer,
+    DynamicAtReferenceCompleter,
     SQLCompleter,
     SubagentCompleter,
     insert_into_dict,
@@ -398,3 +400,183 @@ class TestCustomLexerAndStyle:
         # Should contain @Table pattern
         patterns = [str(p[0]) for p in CustomSqlLexer.tokens["root"]]
         assert any("Table" in p for p in patterns)
+
+
+# ---------------------------------------------------------------------------
+# DynamicAtReferenceCompleter (base class) tests
+# ---------------------------------------------------------------------------
+
+
+class _StubCompleter(DynamicAtReferenceCompleter):
+    """Concrete subclass for testing the abstract DynamicAtReferenceCompleter."""
+
+    def __init__(self, data=None, **kwargs):
+        super().__init__(**kwargs)
+        self._stub_data = data or {}
+
+    def load_data(self):
+        # Populate flatten_data so fuzzy_match works
+        if isinstance(self._stub_data, dict):
+            for key in self._stub_data:
+                self.flatten_data[key] = self._stub_data[key]
+        self.max_level = 2
+        return self._stub_data
+
+
+class TestDynamicAtReferenceCompleterInit:
+    def test_init_defaults(self):
+        c = _StubCompleter()
+        assert c._data == {}
+        assert c.flatten_data == {}
+        assert c._loaded is False
+        assert c.max_completions == 10
+
+    def test_init_custom_max_completions(self):
+        c = _StubCompleter(max_completions=5)
+        assert c.max_completions == 5
+
+
+class TestDynamicAtReferenceCompleterClear:
+    def test_clear_resets_state(self):
+        c = _StubCompleter(data={"key": "val"})
+        c._ensure_loaded()
+        assert c._loaded is True
+        assert len(c.flatten_data) > 0
+
+        c.clear()
+        assert c._data == {}
+        assert c.flatten_data == {}
+        assert c._loaded is False
+
+
+class TestDynamicAtReferenceCompleterEnsureLoaded:
+    def test_ensure_loaded_loads_once(self):
+        c = _StubCompleter(data={"a": 1})
+        c._ensure_loaded()
+        assert c._loaded is True
+        assert c._data == {"a": 1}
+
+    def test_ensure_loaded_idempotent(self):
+        call_count = 0
+        original_load = _StubCompleter.load_data
+
+        def counting_load(self):
+            nonlocal call_count
+            call_count += 1
+            return original_load(self)
+
+        c = _StubCompleter(data={"a": 1})
+        c.load_data = lambda: counting_load(c)
+        c._ensure_loaded()
+        c._ensure_loaded()
+        assert call_count == 1
+
+
+class TestDynamicAtReferenceCompleterReloadData:
+    def test_reload_clears_flatten_data(self):
+        c = _StubCompleter(data={"old_key": "old_val"})
+        c._ensure_loaded()
+        assert "old_key" in c.flatten_data
+
+        # Change stub data and reload
+        c._stub_data = {"new_key": "new_val"}
+        c.reload_data()
+        assert "old_key" not in c.flatten_data
+        assert "new_key" in c.flatten_data
+        assert c._loaded is True
+
+
+class TestDynamicAtReferenceCompleterGetData:
+    def test_get_data_lazy_loads(self):
+        c = _StubCompleter(data={"x": 1})
+        assert c._loaded is False
+        result = c.get_data()
+        assert c._loaded is True
+        assert result == {"x": 1}
+
+
+class TestDynamicAtReferenceCompleterFuzzyMatch:
+    def test_fuzzy_match_finds_substring(self):
+        c = _StubCompleter(data={"Finance/Revenue": {}, "Marketing/Budget": {}})
+        c._ensure_loaded()
+        results = c.fuzzy_match("rev")
+        assert "Finance/Revenue" in results
+
+    def test_fuzzy_match_empty_text(self):
+        c = _StubCompleter(data={"Finance/Revenue": {}})
+        c._ensure_loaded()
+        results = c.fuzzy_match("")
+        assert results == []
+
+    def test_fuzzy_match_limits_to_5(self):
+        data = {f"item_{i}": {} for i in range(20)}
+        c = _StubCompleter(data=data)
+        c._ensure_loaded()
+        results = c.fuzzy_match("item")
+        assert len(results) == 5
+
+
+# ---------------------------------------------------------------------------
+# AtReferenceCompleter: set_sub_agent, parse_at_context, _detect_sub_agent
+# ---------------------------------------------------------------------------
+
+
+class TestAtReferenceCompleterSetSubAgent:
+    def test_set_sub_agent_changes_context(self, real_agent_config):
+        completer = AtReferenceCompleter(real_agent_config)
+        completer.set_sub_agent("gensql")
+        assert completer._sub_agent_name == "gensql"
+        assert completer.table_completer.sub_agent_name == "gensql"
+        assert completer.metric_completer.sub_agent_name == "gensql"
+        assert completer.sql_completer.sub_agent_name == "gensql"
+
+    def test_set_sub_agent_noop_same_name(self, real_agent_config):
+        completer = AtReferenceCompleter(real_agent_config, sub_agent_name="gensql")
+        # Should not clear completers if same name
+        completer.table_completer._loaded = True
+        completer.set_sub_agent("gensql")
+        assert completer.table_completer._loaded is True  # not cleared
+
+    def test_set_sub_agent_clears_completers(self, real_agent_config):
+        completer = AtReferenceCompleter(real_agent_config)
+        completer.table_completer._loaded = True
+        completer.set_sub_agent("gensql")
+        assert completer.table_completer._loaded is False
+
+
+class TestAtReferenceCompleterDetectSubAgent:
+    def test_no_slash_returns_empty(self, real_agent_config):
+        completer = AtReferenceCompleter(real_agent_config, available_subagents={"gensql", "compare"})
+        assert completer._detect_sub_agent_from_input("hello world") == ""
+
+    def test_slash_with_known_subagent(self, real_agent_config):
+        completer = AtReferenceCompleter(real_agent_config, available_subagents={"gensql", "compare"})
+        result = completer._detect_sub_agent_from_input("/gensql @Table users")
+        assert result == "gensql"
+
+    def test_slash_with_unknown_subagent(self, real_agent_config):
+        completer = AtReferenceCompleter(real_agent_config, available_subagents={"gensql"})
+        assert completer._detect_sub_agent_from_input("/unknown @Table users") == ""
+
+    def test_slash_without_space(self, real_agent_config):
+        completer = AtReferenceCompleter(real_agent_config, available_subagents={"gensql"})
+        assert completer._detect_sub_agent_from_input("/gensql") == ""
+
+    def test_empty_subagents_returns_empty(self, real_agent_config):
+        completer = AtReferenceCompleter(real_agent_config, available_subagents=set())
+        assert completer._detect_sub_agent_from_input("/gensql @Table users") == ""
+
+
+class TestAtReferenceCompleterParseAtContext:
+    def test_parse_empty_input(self, real_agent_config):
+        completer = AtReferenceCompleter(real_agent_config)
+        tables, metrics, sqls = completer.parse_at_context("")
+        assert tables == []
+        assert metrics == []
+        assert sqls == []
+
+    def test_parse_triggers_ensure_loaded(self, real_agent_config):
+        completer = AtReferenceCompleter(real_agent_config)
+        assert completer.table_completer._loaded is False
+        completer.parse_at_context("@Table users")
+        assert completer.table_completer._loaded is True
