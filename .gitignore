@@ -1,8 +1,5 @@
 .DS_Store
 /.env
-query.py
-STORAGE_SCHEMA_EXPLORATION.md
-storage改造2.0.md
 /.venv
 /.idea
 /.vscode
