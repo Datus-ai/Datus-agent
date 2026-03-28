@@ -240,49 +240,39 @@ class SchemaWithValueRAG:
         agent_config: AgentConfig,
         sub_agent_name: Optional[str] = None,
         datasource_id: Optional[str] = None,
-        creator_id: str = "datus_agent",
-        updator_id: str = "datus_agent",
     ):
         from datus.storage.rag_scope import _build_sub_agent_filter
         from datus.storage.registry import get_storage
 
-        self.schema_store = get_storage(SchemaStorage, "database")
-        self.value_store = get_storage(SchemaValueStorage, "database")
         self.datasource_id = datasource_id or agent_config.current_namespace
-        self.creator_id = creator_id
-        self.updator_id = updator_id
+        self.schema_store = get_storage(SchemaStorage, "database", namespace=self.datasource_id)
+        self.value_store = get_storage(SchemaValueStorage, "database", namespace=self.datasource_id)
         self._sub_agent_filter = _build_sub_agent_filter(agent_config, sub_agent_name, self.schema_store, "tables")
 
     def _ds_conditions(self) -> list:
-        """Build datasource_id + sub-agent filter conditions."""
-        conditions = [eq("datasource_id", self.datasource_id)]
+        """Build sub-agent filter conditions (datasource_id handled by backend)."""
+        conditions = []
         if self._sub_agent_filter:
             conditions.append(self._sub_agent_filter)
         return conditions
 
     def _add_ds_filter(self, where: WhereExpr) -> WhereExpr:
-        """Add datasource_id + sub-agent filter to existing where clause."""
+        """Add sub-agent filter to existing where clause."""
         conditions = self._ds_conditions()
+        if not conditions:
+            return where
         ds_filter = conditions[0] if len(conditions) == 1 else and_(*conditions)
         if where is None:
             return ds_filter
         return and_(where, ds_filter)
 
-    def _inject_write_fields(self, data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        for row in data:
-            row["datasource_id"] = self.datasource_id
-            row["creator_id"] = self.creator_id
-            row["updator_id"] = self.updator_id
-        return data
-
     def truncate(self) -> None:
         """Delete all schema metadata for this datasource."""
-        self.schema_store.truncate(datasource_id=self.datasource_id)
-        self.value_store.truncate(datasource_id=self.datasource_id)
+        self.schema_store.truncate_scoped()
+        self.value_store.truncate_scoped()
 
     def store_batch(self, schemas: List[Dict[str, Any]], values: List[Dict[str, Any]]):
         if schemas:
-            self._inject_write_fields(schemas)
             self.schema_store.store_batch(schemas)
 
         if len(values) == 0:
@@ -297,7 +287,6 @@ class SchemaWithValueRAG:
                 sample_rows = json2csv(sample_rows)
             item["sample_rows"] = sample_rows
             final_values.append(item)
-        self._inject_write_fields(final_values)
         self.value_store.store_batch(final_values)
 
         logger.debug(f"Batch stored {len(schemas)} schemas, {len(final_values)} values")

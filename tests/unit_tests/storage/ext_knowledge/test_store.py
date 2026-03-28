@@ -396,7 +396,7 @@ class TestExtKnowledgeRAGOperations:
                 "explanation": "The yearly cost of borrowing",
             },
         ]
-        rag._inject_write_fields(entries)
+        rag._inject_datasource_id(entries)
         rag.store.batch_store_knowledge(entries)
         results = rag.query_knowledge(query_text="banking rate", top_n=5)
         assert len(results) >= 1
@@ -412,7 +412,7 @@ class TestExtKnowledgeRAGOperations:
                 "explanation": "Subset of AI focused on learning from data",
             },
         ]
-        rag._inject_write_fields(entries)
+        rag._inject_datasource_id(entries)
         rag.store.batch_store_knowledge(entries)
         results = rag.get_knowledge_detail(subject_path=["Tech", "AI"], name="ML")
         assert len(results) == 1
@@ -429,7 +429,7 @@ class TestExtKnowledgeRAGOperations:
                 "explanation": "will be deleted",
             },
         ]
-        rag._inject_write_fields(entries)
+        rag._inject_datasource_id(entries)
         rag.store.batch_store_knowledge(entries)
         deleted = rag.delete_knowledge(subject_path=["Test", "Delete"], name="item")
         assert deleted is True
@@ -453,7 +453,7 @@ class TestExtKnowledgeRAGOperations:
                 "explanation": "Second item",
             },
         ]
-        rag._inject_write_fields(entries)
+        rag._inject_datasource_id(entries)
         rag.store.batch_store_knowledge(entries)
         results = rag.get_knowledge_batch(
             paths=[

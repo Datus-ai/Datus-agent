@@ -81,6 +81,13 @@ def _get_rdb_backend() -> BaseRdbBackend:
                 cfg = _ensure_config()
                 rdb_config = dict(cfg.rdb.params)
                 rdb_config["data_dir"] = _data_dir
+                rdb_config["isolation"] = getattr(cfg, "isolation", None)
+                if rdb_config["isolation"] is None:
+                    rdb_config["isolation"] = "physical"
+                elif hasattr(rdb_config["isolation"], "value"):
+                    rdb_config["isolation"] = rdb_config["isolation"].value
+                else:
+                    rdb_config["isolation"] = "physical"
                 _rdb_backend = RdbRegistry.create_backend(cfg.rdb.type, rdb_config)
                 _rdb_initialized = True
                 logger.debug(f"RDB backend initialized: {cfg.rdb.type}")
@@ -101,6 +108,11 @@ def get_vector_backend():
                 logger.debug(f"Initializing vector backend: type={cfg.vector.type}")
                 vector_config = dict(cfg.vector.params)
                 vector_config["data_dir"] = _data_dir
+                _isolation = getattr(cfg, "isolation", None)
+                if hasattr(_isolation, "value"):
+                    vector_config["isolation"] = _isolation.value
+                else:
+                    vector_config["isolation"] = _isolation or "physical"
                 _vector_backend = VectorRegistry.create_backend(cfg.vector.type, vector_config)
                 _vector_initialized = True
                 logger.debug(f"Vector backend initialized: {cfg.vector.type}")
@@ -124,9 +136,13 @@ def create_vector_connection(namespace: str = "") -> VectorDatabase:
     Main storage uses the unified ``datus_db`` directory (default).
     Pass an explicit *namespace* to create an isolated database for
     special stores (e.g. ``docstore__snowflake`` for document stores).
+
+    When no *namespace* is given, the global ``_namespace`` is used so that
+    the backend can apply ``IsolationType.LOGICAL`` filtering automatically.
     """
     backend = get_vector_backend()
-    return backend.connect(namespace=namespace)
+    ns = namespace if namespace else _namespace
+    return backend.connect(namespace=ns)
 
 
 def reset_backends() -> None:

@@ -92,29 +92,16 @@ class BaseEmbeddingStore(StorageBase):
         # Append extra fields to schema if provided
         if schema is not None and extra_fields:
             schema = pa.schema(list(schema) + extra_fields)
-        # Hardcoded standard fields for multi-tenant isolation and audit
-        _standard_fields = [
-            pa.field("datasource_id", pa.string()),
-            pa.field("creator_id", pa.string()),
-            pa.field("updator_id", pa.string()),
-        ]
+        # Ensure datasource_id field exists for subject-tree-based stores
+        # (needed for RDB subject tree lookups even in PHYSICAL isolation mode)
         if schema is not None:
             existing_names = {f.name for f in schema}
-            new_fields = [f for f in _standard_fields if f.name not in existing_names]
-            if new_fields:
-                schema = pa.schema(list(schema) + new_fields)
+            if "datasource_id" not in existing_names:
+                schema = pa.schema(list(schema) + [pa.field("datasource_id", pa.string())])
         self._schema = schema
         self._unique_columns = unique_columns
-        # Ensure default values for standard audit fields
-        merged_defaults = {"creator_id": "datus_agent", "updator_id": "datus_agent"}
-        if default_values:
-            merged_defaults.update(default_values)
-        self._default_values: Dict[str, Any] = merged_defaults
-        # Ensure datasource_id is always indexed for fast filtering
-        _indices = list(scope_indices or [])
-        if "datasource_id" not in _indices:
-            _indices.append("datasource_id")
-        self._scope_indices: List[str] = _indices
+        self._default_values: Dict[str, Any] = dict(default_values) if default_values else {}
+        self._scope_indices: List[str] = list(scope_indices or [])
         # Delay table initialization until first use.
         self._shared = _SharedTableState()
         self._table_lock = Lock()
@@ -192,25 +179,27 @@ class BaseEmbeddingStore(StorageBase):
                 message=f"Embedding model '{self.model.model_name}' initialization failed: {str(e)}",
             ) from e
 
-    def truncate(self, datasource_id: str = "") -> None:
-        """Delete data from the table.
+    def truncate(self) -> None:
+        """Drop the entire table and reset state (admin operation)."""
+        with self._table_lock:
+            self.db.drop_table(self.table_name, ignore_missing=True)
+            self._shared.table = None
+            self._shared.initialized = False
 
-        Args:
-            datasource_id: If provided, only delete rows matching this datasource_id.
-                If empty, drop the entire table and reset state (admin operation).
+    def truncate_scoped(self) -> None:
+        """Delete all rows visible to the current connection.
+
+        In ``IsolationType.LOGICAL`` mode the backend automatically scopes
+        the delete to the current ``datasource_id``.  In ``PHYSICAL`` mode
+        this drops the entire table (equivalent to ``truncate()``).
         """
-        if datasource_id:
-            # Scoped delete: remove only rows for this datasource
-            from datus_storage_base.conditions import eq
-
-            self._ensure_table_ready()
-            self._delete_rows(eq("datasource_id", datasource_id))
+        self._ensure_table_ready()
+        if hasattr(self.table, "_isolation") and hasattr(self.table, "_datasource_id") and self.table._datasource_id:
+            # LOGICAL mode — delete scoped rows via backend's _ds_where()
+            self.table.delete(None)
         else:
-            # Full drop: destroy the table entirely
-            with self._table_lock:
-                self.db.drop_table(self.table_name, ignore_missing=True)
-                self._shared.table = None
-                self._shared.initialized = False
+            # PHYSICAL mode — drop the whole table
+            self.truncate()
 
     def _ensure_table(self, schema: Optional[pa.Schema] = None):
         if self.db.table_exists(self.table_name):

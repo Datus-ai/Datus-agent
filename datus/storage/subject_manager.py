@@ -11,8 +11,6 @@ cross-datasource interference in multi-tenant setups.
 
 from typing import Any, Dict, List, Optional
 
-from datus_storage_base.conditions import eq
-
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.ext_knowledge import ExtKnowledgeStore
 from datus.storage.metric import MetricStorage
@@ -29,13 +27,17 @@ class SubjectUpdater:
     def __init__(self, agent_config: AgentConfig, datasource_id: Optional[str] = None):
         self._agent_config = agent_config
         self.datasource_id = datasource_id or agent_config.current_namespace
-        self.metrics_storage: MetricStorage = get_storage(MetricStorage, "metric")
-        self.reference_sql_storage: ReferenceSqlStorage = get_storage(ReferenceSqlStorage, "reference_sql")
-        self.ext_knowledge_storage: ExtKnowledgeStore = get_storage(ExtKnowledgeStore, "ext_knowledge")
+        self.metrics_storage: MetricStorage = get_storage(MetricStorage, "metric", namespace=self.datasource_id)
+        self.reference_sql_storage: ReferenceSqlStorage = get_storage(
+            ReferenceSqlStorage, "reference_sql", namespace=self.datasource_id
+        )
+        self.ext_knowledge_storage: ExtKnowledgeStore = get_storage(
+            ExtKnowledgeStore, "ext_knowledge", namespace=self.datasource_id
+        )
 
     def _ds_conditions(self) -> List:
-        """Build datasource_id filter conditions."""
-        return [eq("datasource_id", self.datasource_id)]
+        """Build filter conditions (datasource_id handled by backend)."""
+        return []
 
     def update_metrics_detail(self, subject_path: List[str], name: str, update_values: Dict[str, Any]):
         if not update_values:

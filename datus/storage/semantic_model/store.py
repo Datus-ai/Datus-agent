@@ -123,35 +123,26 @@ class SemanticModelRAG:
         agent_config: "AgentConfig",
         sub_agent_name: Optional[str] = None,
         datasource_id: Optional[str] = None,
-        creator_id: str = "datus_agent",
-        updator_id: str = "datus_agent",
     ):
         from datus.storage.rag_scope import _build_sub_agent_filter
         from datus.storage.registry import get_storage
 
-        self.storage: SemanticModelStorage = get_storage(SemanticModelStorage, "semantic_model")
         self.datasource_id = datasource_id or agent_config.current_namespace
-        self.creator_id = creator_id
-        self.updator_id = updator_id
+        self.storage: SemanticModelStorage = get_storage(
+            SemanticModelStorage, "semantic_model", namespace=self.datasource_id
+        )
         self._sub_agent_filter = _build_sub_agent_filter(agent_config, sub_agent_name, self.storage, "tables")
 
     def _ds_conditions(self) -> list:
-        """Build datasource_id + sub-agent filter conditions."""
-        conditions = [eq("datasource_id", self.datasource_id)]
+        """Build sub-agent filter conditions (datasource_id handled by backend)."""
+        conditions = []
         if self._sub_agent_filter:
             conditions.append(self._sub_agent_filter)
         return conditions
 
-    def _inject_write_fields(self, data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        for row in data:
-            row["datasource_id"] = self.datasource_id
-            row["creator_id"] = self.creator_id
-            row["updator_id"] = self.updator_id
-        return data
-
     def truncate(self) -> None:
         """Delete all semantic model data for this datasource."""
-        self.storage.truncate(datasource_id=self.datasource_id)
+        self.storage.truncate_scoped()
 
     def get_semantic_model(
         self,
@@ -296,12 +287,10 @@ class SemanticModelRAG:
 
     def store_batch(self, objects: List[Dict[str, Any]]):
         """Store a batch of semantic model objects."""
-        self._inject_write_fields(objects)
         self.storage.store_batch(objects)
 
     def upsert_batch(self, objects: List[Dict[str, Any]]):
         """Upsert a batch of semantic model objects (update if id exists, insert if not)."""
-        self._inject_write_fields(objects)
         self.storage.upsert_batch(objects, on_column="id")
 
     def create_indices(self):

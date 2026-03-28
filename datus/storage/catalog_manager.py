@@ -28,7 +28,7 @@ class CatalogUpdater:
     def __init__(self, agent_config: AgentConfig, datasource_id: Optional[str] = None):
         self._agent_config = agent_config
         self.datasource_id = datasource_id or agent_config.current_namespace
-        self.semantic_model_storage = get_storage(SemanticModelStorage, "semantic_model")
+        self.semantic_model_storage = get_storage(SemanticModelStorage, "semantic_model", namespace=self.datasource_id)
 
     def _sub_agent_storage(self, sub_agent_config: SubAgentConfig) -> SemanticModelStorage | None:
         # Sub-agent scoping is handled at the condition level, not via scoped views
@@ -62,8 +62,6 @@ class CatalogUpdater:
 
         storages = self._get_all_storages()
 
-        ds_cond = eq("datasource_id", self.datasource_id)
-
         # 1. Update table-level record (description)
         if "description" in update_values:
             table_where = And(
@@ -74,7 +72,6 @@ class CatalogUpdater:
                     eq("schema_name", schema_name),
                     eq("table_name", table_name),
                     eq("name", semantic_model_name),
-                    ds_cond,
                 ]
             )
             table_update = {"description": update_values["description"]}
@@ -167,7 +164,6 @@ class CatalogUpdater:
                     eq("schema_name", schema_name),
                     eq("table_name", table_name),
                     eq("name", col_name),
-                    eq("datasource_id", self.datasource_id),
                 ]
             )
 

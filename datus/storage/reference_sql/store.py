@@ -204,49 +204,42 @@ class ReferenceSqlRAG:
         agent_config: AgentConfig,
         sub_agent_name: Optional[str] = None,
         datasource_id: Optional[str] = None,
-        creator_id: str = "datus_agent",
-        updator_id: str = "datus_agent",
     ):
         from datus.storage.rag_scope import _build_sub_agent_filter
         from datus.storage.registry import get_storage
 
-        self.reference_sql_storage = get_storage(ReferenceSqlStorage, "reference_sql")
         self.datasource_id = datasource_id or agent_config.current_namespace
-        self.creator_id = creator_id
-        self.updator_id = updator_id
+        self.reference_sql_storage = get_storage(ReferenceSqlStorage, "reference_sql", namespace=self.datasource_id)
         self._sub_agent_filter = _build_sub_agent_filter(
             agent_config, sub_agent_name, self.reference_sql_storage, "sqls"
         )
 
     def _ds_conditions(self) -> List:
-        from datus_storage_base.conditions import eq
-
-        conditions = [eq("datasource_id", self.datasource_id)]
+        """Build sub-agent filter conditions (datasource_id handled by backend)."""
+        conditions = []
         if self._sub_agent_filter:
             conditions.append(self._sub_agent_filter)
         return conditions
 
-    def _inject_write_fields(self, data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _inject_datasource_id(self, data: List[Dict[str, Any]]) -> None:
+        """Inject datasource_id for RDB-backed subject tree lookups."""
         for row in data:
-            row["datasource_id"] = self.datasource_id
-            row["creator_id"] = self.creator_id
-            row["updator_id"] = self.updator_id
-        return data
+            row.setdefault("datasource_id", self.datasource_id)
 
     def truncate(self) -> None:
         """Delete all reference SQL data for this datasource."""
-        self.reference_sql_storage.truncate(datasource_id=self.datasource_id)
+        self.reference_sql_storage.truncate_scoped()
 
     def store_batch(self, reference_sql_items: List[Dict[str, Any]]):
         """Store batch of reference SQL items."""
         logger.info(f"store reference SQL items: {len(reference_sql_items)} items")
-        self._inject_write_fields(reference_sql_items)
+        self._inject_datasource_id(reference_sql_items)
         self.reference_sql_storage.batch_store_sql(reference_sql_items)
 
     def upsert_batch(self, reference_sql_items: List[Dict[str, Any]]):
         """Upsert batch of reference SQL items (update if id exists, insert if not)."""
         logger.info(f"upsert reference SQL items: {len(reference_sql_items)} items")
-        self._inject_write_fields(reference_sql_items)
+        self._inject_datasource_id(reference_sql_items)
         self.reference_sql_storage.batch_upsert_sql(reference_sql_items)
 
     def search_all_reference_sql(

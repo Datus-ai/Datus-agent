@@ -12,6 +12,17 @@ import lancedb
 import pandas as pd
 import pyarrow as pa
 from datus_storage_base.conditions import WhereExpr, build_where
+
+try:
+    from datus_storage_base.backend_config import DATASOURCE_ID_COLUMN, IsolationType
+except ImportError:
+    from enum import Enum
+
+    class IsolationType(str, Enum):  # type: ignore[no-redef]
+        PHYSICAL = "physical"
+        LOGICAL = "logical"
+
+    DATASOURCE_ID_COLUMN = "datasource_id"
 from datus_storage_base.vector.base import BaseVectorBackend, EmbeddingFunction, VectorDatabase, VectorTable
 from lancedb.db import DBConnection
 from lancedb.embeddings import EmbeddingFunctionConfig
@@ -119,26 +130,60 @@ def _wrap_embedding(model: EmbeddingFunction) -> TextEmbeddingFunction:
 
 
 class LanceVectorTable(VectorTable):
-    """LanceDB implementation of VectorTable wrapping a ``lancedb.Table``."""
+    """LanceDB implementation of VectorTable wrapping a ``lancedb.Table``.
 
-    def __init__(self, lance_table: LanceTable) -> None:
+    When *isolation* is ``LOGICAL`` and a *datasource_id* is provided, every
+    write auto-injects the ``datasource_id`` column and every read/mutation
+    auto-prepends a ``datasource_id = '<value>'`` filter.
+    """
+
+    def __init__(
+        self,
+        lance_table: LanceTable,
+        isolation: IsolationType = IsolationType.PHYSICAL,
+        datasource_id: Optional[str] = None,
+    ) -> None:
         self._table = lance_table
+        self._isolation = isolation
+        self._datasource_id = datasource_id
+
+    # -- Logical-isolation helpers --
+
+    def _inject_datasource_df(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Add ``datasource_id`` column to *df* for logical isolation."""
+        if self._isolation != IsolationType.LOGICAL or not self._datasource_id:
+            return df
+        if DATASOURCE_ID_COLUMN not in df.columns:
+            df = df.copy()
+        df[DATASOURCE_ID_COLUMN] = self._datasource_id
+        return df
+
+    def _ds_where(self, compiled: Optional[str] = None) -> Optional[str]:
+        """Prepend ``datasource_id`` condition to an already-compiled WHERE string."""
+        if self._isolation != IsolationType.LOGICAL or not self._datasource_id:
+            return compiled
+        ds_cond = f"{DATASOURCE_ID_COLUMN} = '{self._datasource_id}'"
+        if compiled:
+            return f"{ds_cond} AND ({compiled})"
+        return ds_cond
 
     # -- Write operations --
 
     def add(self, data: pd.DataFrame) -> None:
+        data = self._inject_datasource_df(data)
         self._table.add(data)
 
     def merge_insert(self, data: pd.DataFrame, on_column: str) -> None:
+        data = self._inject_datasource_df(data)
         self._table.merge_insert(on_column).when_matched_update_all().when_not_matched_insert_all().execute(data)
 
     def delete(self, where: WhereExpr) -> None:
-        compiled = build_where(where)
+        compiled = self._ds_where(build_where(where))
         if compiled:
             self._table.delete(compiled)
 
     def update(self, where: WhereExpr, values: Dict[str, Any]) -> None:
-        compiled = build_where(where)
+        compiled = self._ds_where(build_where(where))
         if not compiled:
             raise DatusException(
                 ErrorCode.STORAGE_FAILED,
@@ -156,7 +201,7 @@ class LanceVectorTable(VectorTable):
         where: WhereExpr = None,
         select_fields: Optional[List[str]] = None,
     ) -> pa.Table:
-        compiled = build_where(where)
+        compiled = self._ds_where(build_where(where))
         query_builder = self._table.search(query=query_text, query_type="vector", vector_column_name=vector_column)
         query_builder = self._fill_query(query_builder, select_fields, compiled)
         return query_builder.limit(top_n).to_arrow()
@@ -169,7 +214,7 @@ class LanceVectorTable(VectorTable):
         where: WhereExpr = None,
         select_fields: Optional[List[str]] = None,
     ) -> pa.Table:
-        compiled = build_where(where)
+        compiled = self._ds_where(build_where(where))
         query_builder = self._table.search(
             query=query_text, query_type="hybrid", vector_column_name=vector_source_column
         )
@@ -183,7 +228,7 @@ class LanceVectorTable(VectorTable):
         select_fields: Optional[List[str]] = None,
         limit: Optional[int] = None,
     ) -> pa.Table:
-        compiled = build_where(where)
+        compiled = self._ds_where(build_where(where))
         query_builder = self._table.search()
         if compiled:
             query_builder = query_builder.where(compiled)
@@ -194,7 +239,7 @@ class LanceVectorTable(VectorTable):
         return query_builder.limit(limit).to_arrow()
 
     def count_rows(self, where: WhereExpr = None) -> int:
-        compiled = build_where(where)
+        compiled = self._ds_where(build_where(where))
         if compiled:
             return self._table.count_rows(compiled)
         return self._table.count_rows()
@@ -239,10 +284,33 @@ class LanceVectorTable(VectorTable):
 
 
 class LanceVectorDatabase(VectorDatabase):
-    """LanceDB implementation of VectorDatabase wrapping a ``lancedb.DBConnection``."""
+    """LanceDB implementation of VectorDatabase wrapping a ``lancedb.DBConnection``.
 
-    def __init__(self, db_connection: DBConnection) -> None:
+    When *isolation* is ``LOGICAL``, the ``datasource_id`` column is
+    auto-injected into new table schemas and propagated to every
+    ``LanceVectorTable`` for transparent read/write scoping.
+    """
+
+    def __init__(
+        self,
+        db_connection: DBConnection,
+        isolation: IsolationType = IsolationType.PHYSICAL,
+        datasource_id: Optional[str] = None,
+    ) -> None:
         self._db = db_connection
+        self._isolation = isolation
+        self._datasource_id = datasource_id
+
+    def _make_table(self, raw_table: LanceTable) -> LanceVectorTable:
+        return LanceVectorTable(raw_table, isolation=self._isolation, datasource_id=self._datasource_id)
+
+    def _inject_datasource_schema(self, schema: Optional[pa.Schema]) -> Optional[pa.Schema]:
+        """Add ``datasource_id`` field to *schema* when using logical isolation."""
+        if self._isolation != IsolationType.LOGICAL or schema is None:
+            return schema
+        if DATASOURCE_ID_COLUMN not in [f.name for f in schema]:
+            schema = pa.schema(list(schema) + [pa.field(DATASOURCE_ID_COLUMN, pa.string())])
+        return schema
 
     def table_exists(self, table_name: str) -> bool:
         try:
@@ -264,6 +332,7 @@ class LanceVectorDatabase(VectorDatabase):
         exist_ok: bool = True,
         unique_columns: Optional[List[str]] = None,
     ) -> LanceVectorTable:
+        schema = self._inject_datasource_schema(schema)
         kwargs: Dict[str, Any] = {"exist_ok": exist_ok}
         if schema is not None:
             kwargs["schema"] = schema
@@ -277,7 +346,7 @@ class LanceVectorDatabase(VectorDatabase):
                 )
             ]
         raw_table = self._db.create_table(table_name, **kwargs)
-        return LanceVectorTable(raw_table)
+        return self._make_table(raw_table)
 
     def open_table(
         self,
@@ -289,7 +358,7 @@ class LanceVectorDatabase(VectorDatabase):
         # LanceDB persists embedding config in Arrow schema metadata,
         # so the embedding_function parameter is intentionally ignored here.
         raw_table = self._db.open_table(table_name)
-        return LanceVectorTable(raw_table)
+        return self._make_table(raw_table)
 
     def drop_table(self, table_name: str, ignore_missing: bool = False) -> None:
         self._db.drop_table(table_name, ignore_missing=ignore_missing)
@@ -332,12 +401,21 @@ class LanceVectorBackend(BaseVectorBackend):
 
     def initialize(self, config: Dict[str, Any]) -> None:
         self._data_dir = config.get("data_dir", "")
+        self._isolation = IsolationType(config.get("isolation", IsolationType.PHYSICAL.value))
 
     def connect(self, namespace: str = "") -> LanceVectorDatabase:
-        db_name = namespace if namespace else "datus_db"
-        db_path = os.path.join(self._data_dir, db_name)
-        raw_db = lancedb.connect(db_path)
-        return LanceVectorDatabase(raw_db)
+        if self._isolation == IsolationType.LOGICAL:
+            # All namespaces share the same "datus_db" directory;
+            # namespace becomes the datasource_id for column-level filtering.
+            db_path = os.path.join(self._data_dir, "datus_db")
+            raw_db = lancedb.connect(db_path)
+            return LanceVectorDatabase(raw_db, isolation=self._isolation, datasource_id=namespace)
+        else:
+            # PHYSICAL: each namespace gets its own directory (default behavior).
+            db_name = namespace if namespace else "datus_db"
+            db_path = os.path.join(self._data_dir, db_name)
+            raw_db = lancedb.connect(db_path)
+            return LanceVectorDatabase(raw_db)
 
     def close(self) -> None:
         pass  # LanceDB connections are lightweight

@@ -88,13 +88,11 @@ class TestExtraFields:
             embedding_model=_FakeEmbeddingModel(),
             schema=schema,
         )
-        # Standard fields (datasource_id, creator_id, updator_id) are always appended
+        # datasource_id is auto-appended for subject tree compatibility
         schema_names = {f.name for f in store._schema}
         assert "id" in schema_names
         assert "text" in schema_names
         assert "datasource_id" in schema_names
-        assert "creator_id" in schema_names
-        assert "updator_id" in schema_names
 
     def test_extra_fields_are_appended(self):
         schema = _base_schema()
@@ -134,11 +132,10 @@ class TestExtraFields:
             schema=schema,
             extra_fields=[],
         )
-        # Empty list for extra_fields still results in standard fields being appended
+        # Empty list for extra_fields keeps original schema unchanged
         schema_names = {f.name for f in store._schema}
         assert "id" in schema_names
         assert "text" in schema_names
-        assert "datasource_id" in schema_names
 
 
 class TestDefaultValues:
@@ -150,8 +147,8 @@ class TestDefaultValues:
             embedding_model=_FakeEmbeddingModel(),
             schema=_base_schema(),
         )
-        # Standard audit defaults are always present
-        assert store._default_values == {"creator_id": "datus_agent", "updator_id": "datus_agent"}
+        # No defaults when none provided (audit fields handled by backend)
+        assert store._default_values == {}
 
     def test_default_values_stored(self):
         defaults = {"workspace_id": "ws_123", "created_by": "user_1"}
@@ -161,11 +158,9 @@ class TestDefaultValues:
             schema=_base_schema(),
             default_values=defaults,
         )
-        # Standard audit defaults are merged with provided defaults
+        # Only provided defaults are stored (no auto audit fields)
         assert store._default_values["workspace_id"] == "ws_123"
         assert store._default_values["created_by"] == "user_1"
-        assert store._default_values["creator_id"] == "datus_agent"
-        assert store._default_values["updator_id"] == "datus_agent"
 
     def test_apply_default_values_fills_missing(self):
         store = BaseEmbeddingStore(
@@ -197,10 +192,9 @@ class TestDefaultValues:
         )
         data = [{"id": "1"}]
         result = store._apply_default_values(data)
-        # Standard audit defaults are always applied
+        # No defaults applied when none configured
         assert result[0]["id"] == "1"
-        assert result[0]["creator_id"] == "datus_agent"
-        assert result[0]["updator_id"] == "datus_agent"
+        assert "creator_id" not in result[0]
 
     def test_apply_default_values_multiple_rows(self):
         store = BaseEmbeddingStore(
@@ -236,5 +230,3 @@ class TestCombinedFeatures:
         assert store.table_name == "tb_metrics"
         assert "workspace_id" in [f.name for f in store._schema]
         assert store._default_values["workspace_id"] == "ws_123"
-        assert store._default_values["creator_id"] == "datus_agent"
-        assert store._default_values["updator_id"] == "datus_agent"

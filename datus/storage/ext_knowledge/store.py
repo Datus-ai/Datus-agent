@@ -310,36 +310,29 @@ class ExtKnowledgeRAG:
         agent_config: AgentConfig,
         sub_agent_name: Optional[str] = None,
         datasource_id: Optional[str] = None,
-        creator_id: str = "datus_agent",
-        updator_id: str = "datus_agent",
     ):
         from datus.storage.rag_scope import _build_sub_agent_filter
         from datus.storage.registry import get_storage
 
-        self.store = get_storage(ExtKnowledgeStore, "ext_knowledge")
         self.datasource_id = datasource_id or agent_config.current_namespace
-        self.creator_id = creator_id
-        self.updator_id = updator_id
+        self.store = get_storage(ExtKnowledgeStore, "ext_knowledge", namespace=self.datasource_id)
         self._sub_agent_filter = _build_sub_agent_filter(agent_config, sub_agent_name, self.store, "ext_knowledge")
 
     def _ds_conditions(self) -> List:
-        from datus_storage_base.conditions import eq
-
-        conditions = [eq("datasource_id", self.datasource_id)]
+        """Build sub-agent filter conditions (datasource_id handled by backend)."""
+        conditions = []
         if self._sub_agent_filter:
             conditions.append(self._sub_agent_filter)
         return conditions
 
-    def _inject_write_fields(self, data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _inject_datasource_id(self, data: List[Dict[str, Any]]) -> None:
+        """Inject datasource_id for RDB-backed subject tree lookups."""
         for row in data:
-            row["datasource_id"] = self.datasource_id
-            row["creator_id"] = self.creator_id
-            row["updator_id"] = self.updator_id
-        return data
+            row.setdefault("datasource_id", self.datasource_id)
 
     def truncate(self) -> None:
         """Delete all ext_knowledge data for this datasource."""
-        self.store.truncate(datasource_id=self.datasource_id)
+        self.store.truncate_scoped()
 
     def _parse_subject_path(self, subject_path) -> List[str]:
         if isinstance(subject_path, str):
@@ -394,6 +387,6 @@ class ExtKnowledgeRAG:
         return results
 
     def batch_upsert_knowledge(self, knowledge_entries: List[Dict]) -> List[str]:
-        """Upsert multiple knowledge entries with datasource_id injection."""
-        self._inject_write_fields(knowledge_entries)
+        """Upsert multiple knowledge entries."""
+        self._inject_datasource_id(knowledge_entries)
         return self.store.batch_upsert_knowledge(knowledge_entries)

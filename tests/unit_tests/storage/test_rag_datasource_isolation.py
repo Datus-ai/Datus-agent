@@ -2,14 +2,17 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""Tests for datasource_id isolation and write field injection across all RAG classes.
+"""Tests for datasource_id isolation across RAG classes.
 
-Covers:
-- _inject_write_fields adds datasource_id/creator_id/updator_id to write data
-- Reads from one RAG instance do not see data written by another with a different datasource_id
+In Storage 3.0, datasource_id isolation is handled at the backend level:
+- PHYSICAL mode (tests): each namespace gets its own directory → natural isolation
+- LOGICAL mode (SaaS): backend auto-injects datasource_id column for filtering
+
+These tests verify that RAG instances with different datasource_ids
+see isolated data via per-namespace storage instances.
 """
 
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 import pyarrow as pa
 
@@ -90,104 +93,16 @@ def _make_reference_sql(suffix: str = "a") -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# TestRAGWriteInjection
-# ---------------------------------------------------------------------------
-
-
-class TestRAGWriteInjection:
-    """Tests that _inject_write_fields correctly injects datasource_id/creator_id/updator_id."""
-
-    def test_inject_write_fields_adds_datasource_id(self, real_agent_config):
-        """store_batch via MetricRAG injects datasource_id into data rows."""
-        rag = MetricRAG(real_agent_config, datasource_id="inject_test_ds")
-        data = [_make_metric("inject")]
-        rag._inject_write_fields(data)
-        assert data[0]["datasource_id"] == "inject_test_ds"
-
-    def test_inject_write_fields_default_creator_and_updator(self, real_agent_config):
-        """Default creator_id and updator_id are 'datus_agent'."""
-        rag = MetricRAG(real_agent_config, datasource_id="inject_ds")
-        data = [_make_metric("defaults")]
-        rag._inject_write_fields(data)
-        assert data[0]["creator_id"] == "datus_agent"
-        assert data[0]["updator_id"] == "datus_agent"
-
-    def test_inject_write_fields_custom_creator_updator(self, real_agent_config):
-        """Custom creator_id/updator_id are stored."""
-        rag = MetricRAG(
-            real_agent_config,
-            datasource_id="inject_ds",
-            creator_id="alice",
-            updator_id="bob",
-        )
-        data = [_make_metric("custom")]
-        rag._inject_write_fields(data)
-        assert data[0]["creator_id"] == "alice"
-        assert data[0]["updator_id"] == "bob"
-
-    def test_inject_write_fields_force_sets_existing(self, real_agent_config):
-        """Pre-existing field values are always overwritten (force-set semantics)."""
-        rag = MetricRAG(
-            real_agent_config,
-            datasource_id="inject_ds",
-            creator_id="system",
-            updator_id="system",
-        )
-        data = [dict(_make_metric("preexist"), datasource_id="already_set", creator_id="original")]
-        rag._inject_write_fields(data)
-        assert data[0]["datasource_id"] == "inject_ds"
-        assert data[0]["creator_id"] == "system"
-        assert data[0]["updator_id"] == "system"
-
-    def test_inject_write_fields_multiple_rows(self, real_agent_config):
-        """All rows in a batch get datasource_id injected."""
-        rag = MetricRAG(real_agent_config, datasource_id="batch_ds")
-        data = [_make_metric("r1"), _make_metric("r2"), _make_metric("r3")]
-        rag._inject_write_fields(data)
-        for row in data:
-            assert row["datasource_id"] == "batch_ds"
-
-    # --- Injection via SemanticModelRAG ---
-
-    def test_semantic_model_rag_inject_fields(self, real_agent_config):
-        """SemanticModelRAG._inject_write_fields adds all three fields."""
-        rag = SemanticModelRAG(real_agent_config, datasource_id="sm_ds", creator_id="sm_user", updator_id="sm_bot")
-        data = [_make_table_object("inj")]
-        rag._inject_write_fields(data)
-        assert data[0]["datasource_id"] == "sm_ds"
-        assert data[0]["creator_id"] == "sm_user"
-        assert data[0]["updator_id"] == "sm_bot"
-
-    # --- Injection via ReferenceSqlRAG ---
-
-    def test_reference_sql_rag_inject_fields(self, real_agent_config):
-        """ReferenceSqlRAG._inject_write_fields adds all three fields."""
-        rag = ReferenceSqlRAG(real_agent_config, datasource_id="sql_ds", creator_id="etl", updator_id="pipeline")
-        data = [_make_reference_sql("inj")]
-        rag._inject_write_fields(data)
-        assert data[0]["datasource_id"] == "sql_ds"
-        assert data[0]["creator_id"] == "etl"
-        assert data[0]["updator_id"] == "pipeline"
-
-    # --- Injection via ExtKnowledgeRAG ---
-
-    def test_ext_knowledge_rag_inject_fields(self, real_agent_config):
-        """ExtKnowledgeRAG._inject_write_fields adds all three fields."""
-        rag = ExtKnowledgeRAG(real_agent_config, datasource_id="ek_ds", creator_id="admin", updator_id="admin")
-        data = [_make_knowledge("inj")]
-        rag._inject_write_fields(data)
-        assert data[0]["datasource_id"] == "ek_ds"
-        assert data[0]["creator_id"] == "admin"
-        assert data[0]["updator_id"] == "admin"
-
-
-# ---------------------------------------------------------------------------
 # TestRAGDatasourceIsolation
 # ---------------------------------------------------------------------------
 
 
 class TestRAGDatasourceIsolation:
-    """Core isolation tests: data written with datasource_id A is not visible to datasource_id B."""
+    """Core isolation tests: data written with datasource_id A is not visible to datasource_id B.
+
+    In PHYSICAL mode (used by tests), each namespace gets a separate LanceDB
+    directory, so isolation is achieved via separate storage instances.
+    """
 
     # -----------------------------------------------------------------------
     # SemanticModelRAG
@@ -206,9 +121,6 @@ class TestRAGDatasourceIsolation:
 
         assert len(results_a) == 2
         assert len(results_b) == 1
-        # Make sure ds_a rows don't bleed into ds_b
-        assert all(r["datasource_id"] == "ds_a" for r in results_a)
-        assert all(r["datasource_id"] == "ds_b" for r in results_b)
 
     def test_semantic_model_get_size_isolates_by_datasource(self, real_agent_config):
         """get_size() counts only rows for the RAG's own datasource_id."""
@@ -267,8 +179,6 @@ class TestRAGDatasourceIsolation:
 
         assert len(results_a) == 2
         assert len(results_b) == 1
-        assert all(r["datasource_id"] == "metric_ds_a" for r in results_a)
-        assert all(r["datasource_id"] == "metric_ds_b" for r in results_b)
 
     def test_metric_get_metrics_size_isolates_by_datasource(self, real_agent_config):
         """get_metrics_size() counts only rows for the RAG's own datasource_id."""
@@ -306,11 +216,6 @@ class TestRAGDatasourceIsolation:
     # ExtKnowledgeRAG
     # -----------------------------------------------------------------------
 
-    def _write_knowledge(self, rag: ExtKnowledgeRAG, entries: List[Dict[str, Any]]):
-        """Helper: inject write fields and write via underlying store."""
-        rag._inject_write_fields(entries)
-        rag.store.batch_store_knowledge(entries)
-
     def test_ext_knowledge_query_isolates_by_datasource(self, real_agent_config):
         """query_knowledge() only returns rows for the RAG's own datasource_id."""
         rag_a = ExtKnowledgeRAG(real_agent_config, datasource_id="ek_ds_a")
@@ -319,16 +224,14 @@ class TestRAGDatasourceIsolation:
         entries_a = [_make_knowledge("ek_a1"), _make_knowledge("ek_a2")]
         entries_b = [_make_knowledge("ek_b1")]
 
-        self._write_knowledge(rag_a, entries_a)
-        self._write_knowledge(rag_b, entries_b)
+        rag_a.store.batch_store_knowledge(entries_a)
+        rag_b.store.batch_store_knowledge(entries_b)
 
         results_a = rag_a.query_knowledge(top_n=10)
         results_b = rag_b.query_knowledge(top_n=10)
 
         assert len(results_a) == 2
         assert len(results_b) == 1
-        assert all(r["datasource_id"] == "ek_ds_a" for r in results_a)
-        assert all(r["datasource_id"] == "ek_ds_b" for r in results_b)
 
     def test_ext_knowledge_get_size_isolates_by_datasource(self, real_agent_config):
         """get_knowledge_size() counts only rows for the RAG's own datasource_id."""
@@ -338,8 +241,8 @@ class TestRAGDatasourceIsolation:
         entries_a = [_make_knowledge("eksize_a1"), _make_knowledge("eksize_a2")]
         entries_b = [_make_knowledge("eksize_b1")]
 
-        self._write_knowledge(rag_a, entries_a)
-        self._write_knowledge(rag_b, entries_b)
+        rag_a.store.batch_store_knowledge(entries_a)
+        rag_b.store.batch_store_knowledge(entries_b)
 
         assert rag_a.get_knowledge_size() == 2
         assert rag_b.get_knowledge_size() == 1
@@ -349,7 +252,7 @@ class TestRAGDatasourceIsolation:
         rag_writer = ExtKnowledgeRAG(real_agent_config, datasource_id="ek_writer_ds")
         rag_empty = ExtKnowledgeRAG(real_agent_config, datasource_id="ek_empty_ds")
 
-        self._write_knowledge(rag_writer, [_make_knowledge("ek_w")])
+        rag_writer.store.batch_store_knowledge([_make_knowledge("ek_w")])
 
         assert rag_empty.get_knowledge_size() == 0
         assert rag_empty.query_knowledge(top_n=10) == []
@@ -371,8 +274,6 @@ class TestRAGDatasourceIsolation:
 
         assert len(results_a) == 2
         assert len(results_b) == 1
-        assert all(r["datasource_id"] == "rsql_ds_a" for r in results_a)
-        assert all(r["datasource_id"] == "rsql_ds_b" for r in results_b)
 
     def test_reference_sql_get_size_isolates_by_datasource(self, real_agent_config):
         """get_reference_sql_size() counts only rows for the RAG's own datasource_id."""
