@@ -214,6 +214,48 @@ class TestDefaultValues:
         assert result[1]["tenant"] == "t1"
 
 
+class TestTruncateScoped:
+    """Tests for truncate_scoped() behavior in PHYSICAL vs LOGICAL mode."""
+
+    def test_truncate_scoped_physical_drops_table(self):
+        """In PHYSICAL mode, truncate_scoped() drops the entire table."""
+        from unittest.mock import MagicMock
+
+        store = BaseEmbeddingStore(
+            table_name="test",
+            embedding_model=_FakeEmbeddingModel(),
+            schema=_base_schema(),
+        )
+        # Simulate initialized table without LOGICAL isolation
+        mock_table = MagicMock(spec=["delete", "count_rows"])
+        store._shared.table = mock_table
+        store._shared.initialized = True
+        store.db = MagicMock()
+
+        store.truncate_scoped()
+        # Should drop the table (truncate behavior)
+        store.db.drop_table.assert_called_once()
+
+    def test_truncate_scoped_logical_deletes_scoped(self):
+        """In LOGICAL mode, truncate_scoped() calls table.delete(None) for scoped delete."""
+        from unittest.mock import MagicMock
+
+        store = BaseEmbeddingStore(
+            table_name="test",
+            embedding_model=_FakeEmbeddingModel(),
+            schema=_base_schema(),
+        )
+        # Simulate a LOGICAL-mode table
+        mock_table = MagicMock()
+        mock_table._isolation = "logical"
+        mock_table._datasource_id = "tenant_1"
+        store._shared.table = mock_table
+        store._shared.initialized = True
+
+        store.truncate_scoped()
+        mock_table.delete.assert_called_once_with(None)
+
+
 class TestCombinedFeatures:
     """Test that table_prefix, extra_fields, and default_values work together."""
 
