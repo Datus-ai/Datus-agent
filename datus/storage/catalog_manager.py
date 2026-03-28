@@ -12,7 +12,6 @@ from typing import Any, Dict, List, Optional
 from datus_storage_base.conditions import And, eq
 
 from datus.configuration.agent_config import AgentConfig
-from datus.schemas.agent_models import SubAgentConfig
 from datus.storage.registry import get_storage
 from datus.storage.semantic_model.store import SemanticModelStorage
 from datus.utils.loggings import get_logger
@@ -27,12 +26,8 @@ class CatalogUpdater:
 
     def __init__(self, agent_config: AgentConfig, datasource_id: Optional[str] = None):
         self._agent_config = agent_config
-        self.datasource_id = datasource_id or agent_config.current_namespace
+        self.datasource_id = datasource_id or agent_config.current_namespace or ""
         self.semantic_model_storage = get_storage(SemanticModelStorage, "semantic_model", namespace=self.datasource_id)
-
-    def _sub_agent_storage(self, sub_agent_config: SubAgentConfig) -> SemanticModelStorage | None:
-        # Sub-agent scoping is handled at the condition level, not via scoped views
-        return self.semantic_model_storage
 
     def _get_all_storages(self) -> List[SemanticModelStorage]:
         """Get all storages for updates. All sub-agents share the same singleton storage,
