@@ -141,9 +141,11 @@ class SqliteRdbTable(RdbTable):
 class SqliteRdbDatabase(RdbDatabase):
     """SQLite implementation of database-level handle."""
 
-    def __init__(self, db_file: str) -> None:
+    def __init__(self, db_file: str, isolation: str = "physical", datasource_id: str = "") -> None:
         self._db_file = db_file
         self._local = threading.local()
+        self._isolation = isolation
+        self._datasource_id = datasource_id
         os.makedirs(os.path.dirname(self._db_file) or ".", exist_ok=True)
 
     # ========== Internal helpers ==========
@@ -229,6 +231,8 @@ class SqliteRdbDatabase(RdbDatabase):
         ddl_statements = self._generate_ddl(table_def)
         try:
             with self._auto_conn() as conn:
+                # Migrate missing columns on existing tables before running DDL
+                self._migrate_missing_columns(conn, table_def)
                 for stmt in ddl_statements:
                     conn.execute(stmt)
         except DatusException:
@@ -241,6 +245,19 @@ class SqliteRdbDatabase(RdbDatabase):
                 message=f"Failed to create table '{table_def.table_name}'. Please create it manually:\n\n{ddl_text}",
             ) from e
         return SqliteRdbTable(self, table_def.table_name)
+
+    @staticmethod
+    def _migrate_missing_columns(conn, table_def: TableDefinition) -> None:
+        """Add columns that exist in the definition but not in the live table."""
+        cursor = conn.execute(f"PRAGMA table_info({table_def.table_name})")
+        existing_cols = {row[1] for row in cursor.fetchall()}
+        if not existing_cols:
+            return  # table doesn't exist yet — CREATE TABLE will handle it
+        for col in table_def.columns:
+            if col.name not in existing_cols:
+                col_ddl = _sqlite_col_ddl(col)
+                conn.execute(f"ALTER TABLE {table_def.table_name} ADD COLUMN {col_ddl}")
+                logger.info(f"Migrated: ALTER TABLE {table_def.table_name} ADD COLUMN {col_ddl}")
 
     @contextmanager
     def transaction(self) -> Iterator[None]:
@@ -259,10 +276,27 @@ class SqliteRdbDatabase(RdbDatabase):
     def close(self) -> None:
         pass  # SQLite connections are opened/closed per operation
 
+    # ========== Logical isolation helpers ==========
+
+    def _inject_datasource_record(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Inject datasource_id into record dict for LOGICAL mode."""
+        if self._isolation == "logical" and self._datasource_id:
+            data.setdefault("datasource_id", self._datasource_id)
+        return data
+
+    def _inject_datasource_where(self, where: Optional[WhereClause]) -> Optional[WhereClause]:
+        """Prepend datasource_id condition to WHERE clause for LOGICAL mode."""
+        if self._isolation != "logical" or not self._datasource_id:
+            return where
+        ds_cond = ("datasource_id", WhereOp.EQ, self._datasource_id)
+        conditions = _normalize_where(where) if where else []
+        return [ds_cond] + list(conditions)
+
     # ========== Internal CRUD (called by SqliteRdbTable) ==========
 
     def _insert(self, table: str, record: Any) -> int:
         data = {k: v for k, v in dataclasses.asdict(record).items() if v is not None}
+        data = self._inject_datasource_record(data)
         columns = list(data.keys())
         placeholders = ", ".join(["?"] * len(columns))
         col_names = ", ".join(columns)
@@ -284,6 +318,7 @@ class SqliteRdbDatabase(RdbDatabase):
         columns: Optional[List[str]] = None,
         order_by: Optional[List[str]] = None,
     ) -> List[T]:
+        where = self._inject_datasource_where(where)
         col_str = ", ".join(columns) if columns else "*"
         where_sql, params = self._build_where(where)
         order_sql = self._build_order_by(order_by)
@@ -296,6 +331,7 @@ class SqliteRdbDatabase(RdbDatabase):
     def _update(self, table: str, data: Dict[str, Any], where: Optional[WhereClause] = None) -> int:
         if not data:
             return 0
+        where = self._inject_datasource_where(where)
         set_parts = [f"{col} = ?" for col in data.keys()]
         set_sql = ", ".join(set_parts)
         where_sql, where_params = self._build_where(where)
@@ -311,6 +347,7 @@ class SqliteRdbDatabase(RdbDatabase):
             raise IntegrityError(str(e)) from e
 
     def _delete(self, table: str, where: Optional[WhereClause] = None) -> int:
+        where = self._inject_datasource_where(where)
         where_sql, params = self._build_where(where)
         sql = f"DELETE FROM {table}{where_sql}"
         with self._auto_conn() as conn:
@@ -319,6 +356,7 @@ class SqliteRdbDatabase(RdbDatabase):
 
     def _upsert(self, table: str, record: Any, conflict_columns: List[str]) -> None:
         data = {k: v for k, v in dataclasses.asdict(record).items() if v is not None}
+        data = self._inject_datasource_record(data)
         columns = list(data.keys())
         placeholders = ", ".join(["?"] * len(columns))
         col_names = ", ".join(columns)
@@ -346,15 +384,23 @@ class SqliteRdbBackend(BaseRdbBackend):
 
     def __init__(self):
         self._data_dir: str = ""
+        self._isolation: str = "physical"
 
     def initialize(self, config: Dict[str, Any]) -> None:
         self._data_dir = config.get("data_dir", "")
+        self._isolation = config.get("isolation", "physical")
 
     def connect(self, namespace: str, store_db_name: str) -> SqliteRdbDatabase:
         safe_store = _safe_path_segment(store_db_name, "store_db_name")
-        base_path = os.path.join(self._data_dir, "datus_db")
+        if self._isolation == "logical":
+            # LOGICAL: all namespaces share datus_db/, isolation via datasource_id column
+            base_path = os.path.join(self._data_dir, "datus_db")
+        else:
+            # PHYSICAL: each namespace gets its own directory
+            db_name = f"datus_db_{namespace}" if namespace else "datus_db"
+            base_path = os.path.join(self._data_dir, db_name)
         db_file = os.path.join(base_path, f"{safe_store}.db")
-        return SqliteRdbDatabase(db_file)
+        return SqliteRdbDatabase(db_file, isolation=self._isolation, datasource_id=namespace)
 
     def close(self) -> None:
         pass  # SQLite connections are opened/closed per operation

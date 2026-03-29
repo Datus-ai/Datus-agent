@@ -416,8 +416,8 @@ class LanceVectorBackend(BaseVectorBackend):
             raw_db = lancedb.connect(db_path)
             return LanceVectorDatabase(raw_db, isolation=self._isolation, datasource_id=namespace)
         else:
-            # PHYSICAL: each namespace gets its own directory (default behavior).
-            db_name = namespace if namespace else "datus_db"
+            # PHYSICAL: each namespace gets its own directory with datus_db_ prefix.
+            db_name = f"datus_db_{namespace}" if namespace else "datus_db"
             db_path = os.path.join(self._data_dir, db_name)
             raw_db = lancedb.connect(db_path)
             return LanceVectorDatabase(raw_db)

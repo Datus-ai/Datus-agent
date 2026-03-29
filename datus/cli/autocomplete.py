@@ -453,8 +453,7 @@ class DynamicAtReferenceCompleter(Completer):
         self._data = {}
         self.flatten_data = {}
         self._loaded = False
-        # Note: max_level is NOT reset — it will be re-set by load_data() on next lazy load.
-        # Resetting it here would cause get_completions() to bail out before load_data() runs.
+        self.max_level = 0
 
     def _ensure_loaded(self):
         if not self._loaded:
@@ -781,7 +780,6 @@ class MetricsCompleter(DynamicAtReferenceCompleter):
 
         rag = MetricRAG(self.agent_config, sub_agent_name=self.sub_agent_name or None)
         data = rag.search_all_metrics()
-
         result = {}
         max_depth = 0
         for metric in data:

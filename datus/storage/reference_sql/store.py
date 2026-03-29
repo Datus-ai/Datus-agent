@@ -122,7 +122,6 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
         top_n: Optional[int] = 5,
         selected_fields: Optional[List[str]] = None,
         extra_conditions: Optional[List] = None,
-        datasource_id: str = "",
     ) -> List[Dict[str, Any]]:
         """Search reference SQL by query text with optional subject path filtering.
 
@@ -142,7 +141,6 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
             top_n=top_n,
             selected_fields=selected_fields,
             additional_conditions=extra_conditions,
-            datasource_id=datasource_id,
         )
 
     def search_all_reference_sql(
@@ -150,7 +148,6 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
         subject_path: Optional[List[str]] = None,
         select_fields: Optional[List[str]] = None,
         extra_conditions: Optional[List] = None,
-        datasource_id: str = "",
     ) -> List[Dict[str, Any]]:
         """Search all reference SQL entries with optional subject path filtering.
 
@@ -166,7 +163,6 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
             subject_path=subject_path,
             selected_fields=select_fields,
             additional_conditions=extra_conditions,
-            datasource_id=datasource_id,
         )
 
     def delete_reference_sql(
@@ -190,7 +186,7 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
                 name='daily_sales_query'
             )
         """
-        return self.delete_entry(subject_path, name, extra_conditions=extra_conditions, datasource_id=datasource_id)
+        return self.delete_entry(subject_path, name, extra_conditions=extra_conditions)
 
 
 class ReferenceSqlRAG:
@@ -221,11 +217,6 @@ class ReferenceSqlRAG:
             conditions.append(self._sub_agent_filter)
         return conditions
 
-    def _inject_datasource_id(self, data: List[Dict[str, Any]]) -> None:
-        """Inject datasource_id for RDB-backed subject tree lookups."""
-        for row in data:
-            row.setdefault("datasource_id", self.datasource_id)
-
     def truncate(self) -> None:
         """Delete all reference SQL data for this datasource."""
         self.reference_sql_storage.truncate_scoped()
@@ -233,13 +224,11 @@ class ReferenceSqlRAG:
     def store_batch(self, reference_sql_items: List[Dict[str, Any]]):
         """Store batch of reference SQL items."""
         logger.info(f"store reference SQL items: {len(reference_sql_items)} items")
-        self._inject_datasource_id(reference_sql_items)
         self.reference_sql_storage.batch_store_sql(reference_sql_items)
 
     def upsert_batch(self, reference_sql_items: List[Dict[str, Any]]):
         """Upsert batch of reference SQL items (update if id exists, insert if not)."""
         logger.info(f"upsert reference SQL items: {len(reference_sql_items)} items")
-        self._inject_datasource_id(reference_sql_items)
         self.reference_sql_storage.batch_upsert_sql(reference_sql_items)
 
     def search_all_reference_sql(
@@ -251,7 +240,6 @@ class ReferenceSqlRAG:
             subject_path,
             select_fields=select_fields,
             extra_conditions=self._ds_conditions(),
-            datasource_id=self.datasource_id,
         )
 
     def after_init(self):
@@ -262,6 +250,8 @@ class ReferenceSqlRAG:
         from datus_storage_base.conditions import and_
 
         conditions = self._ds_conditions()
+        if not conditions:
+            return self.reference_sql_storage._count_rows()
         where = conditions[0] if len(conditions) == 1 else and_(*conditions)
         return self.reference_sql_storage._count_rows(where=where)
 
@@ -278,7 +268,6 @@ class ReferenceSqlRAG:
             top_n=top_n,
             selected_fields=selected_fields,
             extra_conditions=self._ds_conditions(),
-            datasource_id=self.datasource_id,
         )
 
     def get_reference_sql_detail(
@@ -292,10 +281,11 @@ class ReferenceSqlRAG:
             full_path,
             select_fields=selected_fields,
             extra_conditions=self._ds_conditions(),
-            datasource_id=self.datasource_id,
         )
 
     def delete_reference_sql(self, subject_path: List[str], name: str) -> bool:
         return self.reference_sql_storage.delete_reference_sql(
-            subject_path, name, extra_conditions=self._ds_conditions(), datasource_id=self.datasource_id
+            subject_path,
+            name,
+            extra_conditions=self._ds_conditions(),
         )

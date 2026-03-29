@@ -58,7 +58,7 @@ class StorageBase:
 
     def _get_current_timestamp(self) -> str:
         """Get current timestamp in ISO format."""
-        return datetime.utcnow().isoformat()
+        return datetime.now().isoformat()
 
 
 class BaseEmbeddingStore(StorageBase):

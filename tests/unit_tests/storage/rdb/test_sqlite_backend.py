@@ -34,7 +34,9 @@ class _Item:
 def database(tmp_path):
     """Create an initialized SqliteRdbDatabase."""
     db_file = os.path.join(str(tmp_path), "test.db")
-    return SqliteRdbDatabase(db_file)
+    return SqliteRdbDatabase(
+        db_file,
+    )
 
 
 @pytest.fixture
@@ -57,7 +59,9 @@ class TestSqliteRdbDatabaseInit:
     def test_initialize_creates_directory(self, tmp_path):
         """SqliteRdbDatabase creates the parent directory for the db file."""
         db_file = os.path.join(str(tmp_path / "subdir"), "test.db")
-        db = SqliteRdbDatabase(db_file)
+        db = SqliteRdbDatabase(
+            db_file,
+        )
         assert os.path.isdir(str(tmp_path / "subdir"))
         assert db.db_file.endswith("test.db")
 

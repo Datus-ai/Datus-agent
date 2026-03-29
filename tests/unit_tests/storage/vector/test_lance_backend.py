@@ -523,7 +523,7 @@ class TestLanceVectorBackendLogicalIsolation:
             assert db._datasource_id == "tenant_a"
 
     def test_connect_physical_uses_namespace_as_dir(self):
-        """connect() in PHYSICAL mode uses namespace as directory name."""
+        """connect() in PHYSICAL mode uses datus_db_{namespace} as directory name."""
         import unittest.mock
 
         backend = LanceVectorBackend()
@@ -531,7 +531,7 @@ class TestLanceVectorBackendLogicalIsolation:
         with unittest.mock.patch("datus.storage.vector.lance_backend.lancedb") as mock_lancedb:
             mock_lancedb.connect.return_value = MagicMock()
             db = backend.connect(namespace="tenant_a")
-            mock_lancedb.connect.assert_called_once_with("/tmp/test/tenant_a")
+            mock_lancedb.connect.assert_called_once_with("/tmp/test/datus_db_tenant_a")
             assert db._datasource_id is None
 
 

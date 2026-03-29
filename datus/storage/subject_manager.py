@@ -63,15 +63,21 @@ class SubjectUpdater:
 
     def delete_metric(self, subject_path: List[str], name: str) -> Dict[str, Any]:
         return self.metrics_storage.delete_metric(
-            subject_path, name, extra_conditions=self._ds_conditions(), datasource_id=self.datasource_id
+            subject_path,
+            name,
+            extra_conditions=self._ds_conditions(),
         )
 
     def delete_reference_sql(self, subject_path: List[str], name: str) -> bool:
         return self.reference_sql_storage.delete_reference_sql(
-            subject_path, name, extra_conditions=self._ds_conditions(), datasource_id=self.datasource_id
+            subject_path,
+            name,
+            extra_conditions=self._ds_conditions(),
         )
 
     def delete_ext_knowledge(self, subject_path: List[str], name: str) -> bool:
         return self.ext_knowledge_storage.delete_knowledge(
-            subject_path, name, extra_conditions=self._ds_conditions(), datasource_id=self.datasource_id
+            subject_path,
+            name,
+            extra_conditions=self._ds_conditions(),
         )

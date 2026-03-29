@@ -35,8 +35,6 @@ _SUBJECT_NODES_TABLE = TableDefinition(
         ColumnDef(name="created_at", col_type="TEXT", nullable=False),
         ColumnDef(name="updated_at", col_type="TEXT", nullable=False),
         ColumnDef(name="datasource_id", col_type="TEXT", default=""),
-        ColumnDef(name="creator_id", col_type="TEXT", default="datus_agent"),
-        ColumnDef(name="updator_id", col_type="TEXT", default="datus_agent"),
     ],
     indices=[
         IndexDef(name="idx_subject_parent_id", columns=["parent_id"]),
@@ -58,8 +56,6 @@ class SubjectNodeRecord:
     created_at: str = ""
     updated_at: str = ""
     datasource_id: str = ""
-    creator_id: str = "datus_agent"
-    updator_id: str = "datus_agent"
 
 
 def _node_to_dict(record: SubjectNodeRecord) -> Dict[str, Any]:
@@ -72,8 +68,6 @@ def _node_to_dict(record: SubjectNodeRecord) -> Dict[str, Any]:
         "created_at": record.created_at,
         "updated_at": record.updated_at,
         "datasource_id": record.datasource_id,
-        "creator_id": record.creator_id,
-        "updator_id": record.updator_id,
     }
 
 
@@ -83,14 +77,16 @@ class SubjectTreeStore:
     Implements adjacency list model for tree structure.
     """
 
-    def __init__(self):
+    def __init__(self, namespace: str = ""):
         """Initialize SubjectTreeStore.
+
+        Args:
+            namespace: Namespace for RDB path isolation.  In PHYSICAL mode
+                each namespace gets its own SQLite file; in LOGICAL mode
+                all share one file.
 
         Reads ``table_prefix``, ``extra_fields``, and ``scope_indices`` from
         the storage registry defaults (set via ``configure_storage_defaults()``).
-        This ensures SaaS deployments get prefixed table names
-        (e.g. ``tb_subject_nodes``), multi-tenant columns (e.g. ``workspace_id``),
-        and auto-filled default values on writes.
         """
         from datus.storage.backend_holder import create_rdb_for_store
         from datus.storage.registry import get_storage_defaults
@@ -119,7 +115,7 @@ class SubjectTreeStore:
                 if idx_name not in existing_idx_names:
                     table_def.indices = table_def.indices + [IndexDef(name=idx_name, columns=[col])]
 
-        self._rdb = create_rdb_for_store("subject_tree")
+        self._rdb = create_rdb_for_store("subject_tree", namespace=namespace)
         self._table = self._rdb.ensure_table(table_def)
         self._migrate_null_parents()
 
@@ -134,16 +130,13 @@ class SubjectTreeStore:
 
     # ========== CRUD Operations ==========
 
-    def create_node(
-        self, parent_id: Optional[int], name: str, description: str = "", datasource_id: str = ""
-    ) -> Dict[str, Any]:
+    def create_node(self, parent_id: Optional[int], name: str, description: str = "") -> Dict[str, Any]:
         """Create a new subject node.
 
         Args:
             parent_id: Parent node ID (None for root nodes)
             name: Node name (must be unique under same parent)
             description: Optional description
-            datasource_id: Datasource identifier for tenant isolation
 
         Returns:
             Created node dict with all fields
@@ -161,7 +154,7 @@ class SubjectTreeStore:
             if not parent:
                 raise ValueError(f"Parent node {parent_id} not found")
 
-        existing_node = self._find_child_by_name(parent_id, name, datasource_id=datasource_id)
+        existing_node = self._find_child_by_name(parent_id, name)
         if existing_node:
             raise ValueError(f"Node with name '{name}' already exists under parent {parent_id}")
 
@@ -175,7 +168,6 @@ class SubjectTreeStore:
                 description=description,
                 created_at=now,
                 updated_at=now,
-                datasource_id=datasource_id,
             )
             node_id = self._table.insert(record)
 
@@ -203,14 +195,13 @@ class SubjectTreeStore:
             return _node_to_dict(rows[0])
         return None
 
-    def get_node_by_path(self, path: List[str], datasource_id: str = "") -> Optional[Dict[str, Any]]:
+    def get_node_by_path(self, path: List[str]) -> Optional[Dict[str, Any]]:
         """Get node by path components.
 
         Traverses the tree by following the path components.
 
         Args:
             path: Path components (e.g., ['Finance', 'Revenue', 'Q1'])
-            datasource_id: Datasource identifier for tenant isolation
 
         Returns:
             Node dict or None if not found
@@ -221,7 +212,7 @@ class SubjectTreeStore:
         parent_id = None
 
         for component in path:
-            node = self._find_child_by_name(parent_id, component, datasource_id=datasource_id)
+            node = self._find_child_by_name(parent_id, component)
             if not node:
                 return None
             parent_id = node["node_id"]
@@ -310,12 +301,10 @@ class SubjectTreeStore:
 
     # ========== Tree Traversal ==========
 
-    def get_children(self, parent_id: Optional[int], datasource_id: str = "") -> List[Dict[str, Any]]:
+    def get_children(self, parent_id: Optional[int]) -> List[Dict[str, Any]]:
         """Get direct children of a node."""
         db_parent_id = ROOT_PARENT_ID if parent_id is None else parent_id
         where = {"parent_id": db_parent_id}
-        if datasource_id:
-            where["datasource_id"] = datasource_id
         rows = self._table.query(
             SubjectNodeRecord,
             where=where,
@@ -323,23 +312,22 @@ class SubjectTreeStore:
         )
         return [_node_to_dict(row) for row in rows]
 
-    def get_descendants(self, node_id: int, datasource_id: str = "") -> List[Dict[str, Any]]:
+    def get_descendants(self, node_id: int) -> List[Dict[str, Any]]:
         """Get all descendants (recursive) of a node.
 
         Args:
             node_id: Root node ID
-            datasource_id: Datasource identifier for tenant isolation
 
         Returns:
             List of all descendant nodes (depth-first order)
         """
         descendants = []
-        children = self.get_children(node_id, datasource_id=datasource_id)
+        children = self.get_children(node_id)
 
         for child in children:
             descendants.append(child)
             # Recursively get grandchildren
-            descendants.extend(self.get_descendants(child["node_id"], datasource_id=datasource_id))
+            descendants.extend(self.get_descendants(child["node_id"]))
 
         return descendants
 
@@ -365,15 +353,12 @@ class SubjectTreeStore:
 
         return ancestors
 
-    def get_matched_children_id(
-        self, subject_path: List[str] = None, descendant: bool = True, datasource_id: str = ""
-    ) -> Optional[List[int]]:
+    def get_matched_children_id(self, subject_path: List[str] = None, descendant: bool = True) -> Optional[List[int]]:
         """Get all node IDs for a subject path including its descendants.
 
         Args:
             subject_path: Subject hierarchy path (e.g., ['Finance', 'Revenue'])
             descendant: collect all child nodes
-            datasource_id: Datasource identifier for tenant isolation
 
         Returns:
             List of node IDs including the target path and all its descendants,
@@ -382,7 +367,7 @@ class SubjectTreeStore:
         if not subject_path:
             subject_path = ["*"]
 
-        tree = self.get_tree_structure(datasource_id=datasource_id)
+        tree = self.get_tree_structure()
         result: List[int] = []
 
         def collect_all(node: Dict):
@@ -432,12 +417,11 @@ class SubjectTreeStore:
 
     # ========== Tree Building ==========
 
-    def get_tree_structure(self, root_id: Optional[int] = None, datasource_id: str = "") -> Dict[str, Any]:
+    def get_tree_structure(self, root_id: Optional[int] = None) -> Dict[str, Any]:
         """Build nested tree structure with node_id, name, and children.
 
         Args:
             root_id: Root node ID (None for entire forest)
-            datasource_id: Datasource identifier for tenant isolation
 
         Returns:
             Nested dict structure where each node has node_id, name, and children.
@@ -454,7 +438,7 @@ class SubjectTreeStore:
         roots = []
         if root_id is None:
             # Get all root nodes
-            roots = self.get_children(None, datasource_id=datasource_id)
+            roots = self.get_children(None)
             if not roots:
                 return {}
         else:
@@ -505,7 +489,7 @@ class SubjectTreeStore:
 
         return {"node_id": node["node_id"], "name": node["name"], "children": child_dict}
 
-    def find_or_create_path(self, path_components: List[str], datasource_id: str = "") -> int:
+    def find_or_create_path(self, path_components: List[str]) -> int:
         """Find or create nodes along a path.
 
         Handles race conditions in parallel writes: if create_node raises
@@ -514,7 +498,6 @@ class SubjectTreeStore:
         Args:
             path_components: List of node names from root to leaf
                            Example: ['Finance', 'Revenue', 'Q1']
-            datasource_id: Datasource identifier for tenant isolation
 
         Returns:
             Leaf node ID (last component)
@@ -534,7 +517,7 @@ class SubjectTreeStore:
 
         for component in path_components:
             # Try to find existing node
-            node = self._find_child_by_name(parent_id, component, datasource_id=datasource_id)
+            node = self._find_child_by_name(parent_id, component)
 
             if node:
                 # Node exists, continue
@@ -542,14 +525,12 @@ class SubjectTreeStore:
             else:
                 # Create new node, handle race condition with parallel writes
                 try:
-                    created = self.create_node(
-                        parent_id=parent_id, name=component, description="", datasource_id=datasource_id
-                    )
+                    created = self.create_node(parent_id=parent_id, name=component, description="")
                     parent_id = created["node_id"]
                 except ValueError:
                     # Race condition: another thread/process created the node between
                     # our _find_child_by_name check and create_node call
-                    existing_node = self._find_child_by_name(parent_id, component, datasource_id=datasource_id)
+                    existing_node = self._find_child_by_name(parent_id, component)
                     if existing_node:
                         parent_id = existing_node["node_id"]
                     else:
@@ -557,18 +538,15 @@ class SubjectTreeStore:
 
         return parent_id
 
-    def _find_child_by_name(
-        self, parent_id: Optional[int], name: str, datasource_id: str = ""
-    ) -> Optional[Dict[str, Any]]:
+    def _find_child_by_name(self, parent_id: Optional[int], name: str) -> Optional[Dict[str, Any]]:
         """Find a child node by name under a specific parent."""
         db_parent_id = ROOT_PARENT_ID if parent_id is None else parent_id
         where = {"parent_id": db_parent_id, "name": name}
-        if datasource_id:
-            where["datasource_id"] = datasource_id
         rows = self._table.query(
             SubjectNodeRecord,
             where=where,
         )
+        print("$$$$ FIND SUBJECT NODE RECORDS FROM", where)
         if rows:
             return _node_to_dict(rows[0])
         return None
@@ -708,10 +686,11 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
             **kwargs,
         )
 
-        # Get singleton SubjectTreeStore from registry
+        # Get per-namespace SubjectTreeStore from registry
+        from datus.storage.backend_holder import get_current_namespace
         from datus.storage.registry import get_subject_tree_store
 
-        self.subject_tree = get_subject_tree_store()
+        self.subject_tree = get_subject_tree_store(namespace=get_current_namespace())
 
     def batch_store(
         self,
@@ -737,8 +716,7 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
 
             # Find or create the subject tree path to get node_id
             try:
-                datasource_id = item.get("datasource_id", "")
-                subject_node_id = self.subject_tree.find_or_create_path(subject_path, datasource_id=datasource_id)
+                subject_node_id = self.subject_tree.find_or_create_path(subject_path)
 
                 # Create new item dict without subject_path field and with subject_node_id
                 processed_item = item.copy()
@@ -786,8 +764,7 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
 
             # Find or create the subject tree path to get node_id
             try:
-                datasource_id = item.get("datasource_id", "")
-                subject_node_id = self.subject_tree.find_or_create_path(subject_path, datasource_id=datasource_id)
+                subject_node_id = self.subject_tree.find_or_create_path(subject_path)
 
                 # Create new item dict without subject_path field and with subject_node_id
                 processed_item = item.copy()
@@ -817,7 +794,6 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
         selected_fields: Optional[List[str]] = None,
         name_field: Optional[str] = "name",
         additional_conditions: Optional[List] = None,
-        datasource_id: str = "",
     ) -> List[Dict[str, Any]]:
         """Generic search with subject filtering supporting both exact path and parent+name patterns.
 
@@ -847,9 +823,7 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
             # Convert path to include all descendant node_ids if provided
             if path:
                 # Get all node IDs including the path and its descendants
-                node_ids = self.subject_tree.get_matched_children_id(
-                    path, False if name else True, datasource_id=datasource_id
-                )
+                node_ids = self.subject_tree.get_matched_children_id(path, False if name else True)
                 if node_ids:
                     subject_condition = in_(SUBJECT_ID_COLUMN_NAME, node_ids)
                     conditions.append(subject_condition)
@@ -1227,9 +1201,7 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
             logger.error(f"Failed to fetch entries by node_id={node_id}: {e}")
             return []
 
-    def delete_entry(
-        self, subject_path: List[str], name: str, extra_conditions: Optional[List] = None, datasource_id: str = ""
-    ) -> bool:
+    def delete_entry(self, subject_path: List[str], name: str, extra_conditions: Optional[List] = None) -> bool:
         """Delete entry by subject_path and name from vector store.
 
         This is a generic method for deleting entries from storage using
@@ -1239,8 +1211,7 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
         Args:
             subject_path: Subject hierarchy path (e.g., ['Finance', 'Revenue'])
             name: Name of the entry to delete
-            extra_conditions: Additional filter conditions (e.g., datasource_id filter)
-            datasource_id: Datasource identifier for tenant isolation
+            extra_conditions: Additional filter conditions
 
         Returns:
             True if deleted successfully, False if entry not found
@@ -1257,7 +1228,7 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
         name = name.strip()
 
         # Find subject_node_id from subject_path
-        subject_node = self.subject_tree.get_node_by_path(subject_path, datasource_id=datasource_id)
+        subject_node = self.subject_tree.get_node_by_path(subject_path)
         if not subject_node:
             logger.warning(f"Subject path not found: {'/'.join(subject_path)}")
             return False

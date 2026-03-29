@@ -215,7 +215,6 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
         select_fields: Optional[List[str]] = None,
         top_n: Optional[int] = 5,
         extra_conditions: Optional[List] = None,
-        datasource_id: str = "",
     ) -> List[Dict[str, Any]]:
         """Search for similar knowledge entries.
 
@@ -237,14 +236,12 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
             top_n=top_n,
             name_field="name",
             additional_conditions=extra_conditions,
-            datasource_id=datasource_id,
         )
 
     def search_all_knowledge(
         self,
         subject_path: Optional[List[str]] = None,
         extra_conditions: Optional[List] = None,
-        datasource_id: str = "",
     ) -> List[Dict[str, Any]]:
         """Get all knowledge entries with optional filtering.
 
@@ -261,7 +258,6 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
             subject_path=subject_path,
             top_n=None,
             extra_conditions=extra_conditions,
-            datasource_id=datasource_id,
         )
 
     def after_init(self):
@@ -282,7 +278,7 @@ class ExtKnowledgeStore(BaseSubjectEmbeddingStore):
         Returns:
             True if deleted successfully, False if entry not found
         """
-        return self.delete_entry(subject_path, name, extra_conditions=extra_conditions, datasource_id=datasource_id)
+        return self.delete_entry(subject_path, name, extra_conditions=extra_conditions)
 
 
 def gen_subject_item_id(subject_path: List[str], name: str) -> str:
@@ -325,11 +321,6 @@ class ExtKnowledgeRAG:
             conditions.append(self._sub_agent_filter)
         return conditions
 
-    def _inject_datasource_id(self, data: List[Dict[str, Any]]) -> None:
-        """Inject datasource_id for RDB-backed subject tree lookups."""
-        for row in data:
-            row.setdefault("datasource_id", self.datasource_id)
-
     def truncate(self) -> None:
         """Delete all ext_knowledge data for this datasource."""
         self.store.truncate_scoped()
@@ -346,6 +337,8 @@ class ExtKnowledgeRAG:
         from datus_storage_base.conditions import and_
 
         conditions = self._ds_conditions()
+        if not conditions:
+            return self.store._count_rows()
         where = conditions[0] if len(conditions) == 1 else and_(*conditions)
         return self.store._count_rows(where=where)
 
@@ -360,19 +353,21 @@ class ExtKnowledgeRAG:
             subject_path=subject_path,
             top_n=top_n,
             extra_conditions=self._ds_conditions(),
-            datasource_id=self.datasource_id,
         )
 
     def get_knowledge_detail(self, subject_path: List[str], name: str) -> List[Dict[str, Any]]:
         full_path = subject_path.copy()
         full_path.append(name)
         return self.store.search_all_knowledge(
-            subject_path=full_path, extra_conditions=self._ds_conditions(), datasource_id=self.datasource_id
+            subject_path=full_path,
+            extra_conditions=self._ds_conditions(),
         )
 
     def delete_knowledge(self, subject_path: List[str], name: str) -> bool:
         return self.store.delete_knowledge(
-            subject_path, name, extra_conditions=self._ds_conditions(), datasource_id=self.datasource_id
+            subject_path,
+            name,
+            extra_conditions=self._ds_conditions(),
         )
 
     def get_knowledge_batch(self, paths: List[List[str]]) -> List[Dict[str, Any]]:
@@ -381,12 +376,12 @@ class ExtKnowledgeRAG:
             if not path:
                 continue
             entries = self.store.search_all_knowledge(
-                subject_path=path, extra_conditions=self._ds_conditions(), datasource_id=self.datasource_id
+                subject_path=path,
+                extra_conditions=self._ds_conditions(),
             )
             results.extend(entries)
         return results
 
     def batch_upsert_knowledge(self, knowledge_entries: List[Dict]) -> List[str]:
         """Upsert multiple knowledge entries."""
-        self._inject_datasource_id(knowledge_entries)
         return self.store.batch_upsert_knowledge(knowledge_entries)

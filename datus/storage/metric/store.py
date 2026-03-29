@@ -117,7 +117,6 @@ class MetricStorage(BaseSubjectEmbeddingStore):
         select_fields: Optional[List[str]] = None,
         top_n: Optional[int] = None,
         extra_conditions: Optional[List] = None,
-        datasource_id: str = "",
     ) -> List[Dict[str, Any]]:
         """Search metrics with semantic model and subject filtering."""
         # Build additional conditions for semantic model filtering
@@ -135,7 +134,6 @@ class MetricStorage(BaseSubjectEmbeddingStore):
             name_field="name",
             additional_conditions=additional_conditions if additional_conditions else None,
             selected_fields=select_fields,
-            datasource_id=datasource_id,
         )
 
     def search_all_metrics(
@@ -144,7 +142,6 @@ class MetricStorage(BaseSubjectEmbeddingStore):
         subject_path: Optional[List[str]] = None,
         select_fields: Optional[List[str]] = None,
         extra_conditions: Optional[List] = None,
-        datasource_id: str = "",
     ) -> List[Dict[str, Any]]:
         """Search all metrics with optional semantic model and subject filtering."""
         return self._search_metrics_internal(
@@ -152,7 +149,6 @@ class MetricStorage(BaseSubjectEmbeddingStore):
             subject_path=subject_path,
             select_fields=select_fields,
             extra_conditions=extra_conditions,
-            datasource_id=datasource_id,
         )
 
     def search_metrics(
@@ -162,7 +158,6 @@ class MetricStorage(BaseSubjectEmbeddingStore):
         subject_path: Optional[List[str]] = None,
         top_n: int = 5,
         extra_conditions: Optional[List] = None,
-        datasource_id: str = "",
     ) -> List[Dict[str, Any]]:
         """Search metrics by query text with optional semantic model and subject filtering."""
         return self._search_metrics_internal(
@@ -171,7 +166,6 @@ class MetricStorage(BaseSubjectEmbeddingStore):
             subject_path=subject_path,
             top_n=top_n,
             extra_conditions=extra_conditions,
-            datasource_id=datasource_id,
         )
 
     def search_all(
@@ -190,7 +184,6 @@ class MetricStorage(BaseSubjectEmbeddingStore):
         subject_path: List[str],
         name: str,
         extra_conditions: Optional[List] = None,
-        datasource_id: str = "",
     ) -> Dict[str, Any]:
         """Delete metric by subject_path and name.
 
@@ -214,14 +207,13 @@ class MetricStorage(BaseSubjectEmbeddingStore):
             subject_path=full_path,
             select_fields=["name", "yaml_path"],
             extra_conditions=extra_conditions,
-            datasource_id=datasource_id,
         )
 
         # Collect all unique yaml_paths from matching metrics
         yaml_paths = list({m.get("yaml_path") for m in metrics if m.get("yaml_path")})
 
         # Delete from vector store using base class method
-        deleted = self.delete_entry(subject_path, name, extra_conditions=extra_conditions, datasource_id=datasource_id)
+        deleted = self.delete_entry(subject_path, name, extra_conditions=extra_conditions)
 
         if not deleted:
             return {
@@ -308,24 +300,17 @@ class MetricRAG:
             conditions.append(self._sub_agent_filter)
         return conditions
 
-    def _inject_datasource_id(self, data: List[Dict[str, Any]]) -> None:
-        """Inject datasource_id for RDB-backed subject tree lookups."""
-        for row in data:
-            row.setdefault("datasource_id", self.datasource_id)
-
     def truncate(self) -> None:
         """Delete all metrics for this datasource."""
         self.storage.truncate_scoped()
 
     def store_batch(self, metrics: List[Dict[str, Any]]):
         logger.info(f"store metrics: {metrics}")
-        self._inject_datasource_id(metrics)
         self.storage.batch_store_metrics(metrics)
 
     def upsert_batch(self, metrics: List[Dict[str, Any]]):
         """Upsert metrics (update if id exists, insert if not)."""
         logger.info(f"upsert metrics: {metrics}")
-        self._inject_datasource_id(metrics)
         self.storage.batch_upsert_metrics(metrics)
 
     def search_all_metrics(
@@ -337,7 +322,6 @@ class MetricRAG:
             subject_path=subject_path,
             select_fields=select_fields,
             extra_conditions=self._ds_conditions(),
-            datasource_id=self.datasource_id,
         )
 
     def after_init(self):
@@ -347,6 +331,8 @@ class MetricRAG:
         from datus_storage_base.conditions import and_
 
         conditions = self._ds_conditions()
+        if not conditions:
+            return self.storage._count_rows()
         where = conditions[0] if len(conditions) == 1 else and_(*conditions)
         return self.storage._count_rows(where=where)
 
@@ -359,7 +345,6 @@ class MetricRAG:
             subject_path=subject_path,
             top_n=top_n,
             extra_conditions=self._ds_conditions(),
-            datasource_id=self.datasource_id,
         )
 
     def get_metrics_detail(self, subject_path: List[str], name: str) -> List[Dict[str, Any]]:
@@ -367,7 +352,8 @@ class MetricRAG:
         full_path = subject_path.copy()
         full_path.append(name)
         return self.storage.search_all_metrics(
-            subject_path=full_path, extra_conditions=self._ds_conditions(), datasource_id=self.datasource_id
+            subject_path=full_path,
+            extra_conditions=self._ds_conditions(),
         )
 
     def create_indices(self):
@@ -377,5 +363,7 @@ class MetricRAG:
     def delete_metric(self, subject_path: List[str], name: str) -> Dict[str, Any]:
         """Delete metric by subject_path and name."""
         return self.storage.delete_metric(
-            subject_path, name, extra_conditions=self._ds_conditions(), datasource_id=self.datasource_id
+            subject_path,
+            name,
+            extra_conditions=self._ds_conditions(),
         )

@@ -27,7 +27,6 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-_subject_tree_instance: Optional[Any] = None
 
 # Factory registry: maps factory name → factory callable for lru_cache lookup
 _factory_registry: Dict[str, Callable[..., BaseEmbeddingStore]] = {}
@@ -64,8 +63,15 @@ def get_storage_defaults() -> Dict[str, Any]:
 
 
 @lru_cache(maxsize=128)
-def _get_storage_cached(factory_name: str, embedding_model_conf_name: str, namespace: str) -> BaseEmbeddingStore:
-    """LRU-cached storage creation keyed by ``(factory_name, embedding_model_conf_name, namespace)``."""
+def _get_storage_cached(
+    factory_name: str, embedding_model_conf_name: str, cache_key: str, namespace: str
+) -> BaseEmbeddingStore:
+    """LRU-cached storage creation.
+
+    *cache_key* determines cache identity:
+    - PHYSICAL mode: ``cache_key == namespace`` → per-namespace instance
+    - LOGICAL mode: ``cache_key == "__logical__"`` → global singleton
+    """
     factory = _factory_registry[factory_name]
     kwargs = dict(_storage_defaults)
     if namespace:
@@ -81,34 +87,46 @@ def get_storage(
     embedding_model_conf_name: str,
     namespace: str = "",
 ) -> BaseEmbeddingStore:
-    """Return a storage instance keyed by ``(factory_name, namespace)``.
+    """Return a storage instance.
 
-    Each *namespace* (i.e. datasource_id) gets its own storage instance with
-    its own ``VectorDatabase`` connection so the backend can apply
-    ``IsolationType.LOGICAL`` scoping automatically.
+    - PHYSICAL mode: per-namespace instance (each gets own db directory)
+    - LOGICAL mode: global singleton (shared db, isolation via datasource_id)
 
     Uses an LRU cache (maxsize=128) so that inactive namespaces are evicted.
     Global defaults set via ``configure_storage_defaults()`` are automatically
     forwarded to the factory constructor.
     """
+    from datus.storage.backend_holder import get_isolation_type
+
     _factory_registry[factory.__name__] = factory
-    return _get_storage_cached(factory.__name__, embedding_model_conf_name, namespace)
+    if get_isolation_type() == "logical":
+        cache_key = "__logical__"
+    else:
+        cache_key = namespace
+    return _get_storage_cached(factory.__name__, embedding_model_conf_name, cache_key, namespace)
 
 
-def get_subject_tree_store() -> "SubjectTreeStore":
-    """Return the global singleton SubjectTreeStore.
-
-    SubjectTreeStore is RDB-backed (not embedding-based), so it has its own
-    cache separate from the vector storage registry.
-    """
-    global _subject_tree_instance
-    if _subject_tree_instance is not None:
-        return _subject_tree_instance
-
+@lru_cache(maxsize=128)
+def _get_subject_tree_cached(cache_key: str, namespace: str) -> "SubjectTreeStore":
+    """LRU-cached SubjectTreeStore creation."""
     from datus.storage.subject_tree.store import SubjectTreeStore
 
-    _subject_tree_instance = SubjectTreeStore()
-    return _subject_tree_instance
+    return SubjectTreeStore(namespace=namespace)
+
+
+def get_subject_tree_store(namespace: str = "") -> "SubjectTreeStore":
+    """Return a SubjectTreeStore instance (LRU-cached).
+
+    - PHYSICAL mode: per-namespace instance (each gets own SQLite file)
+    - LOGICAL mode: global singleton (all share one file)
+    """
+    from datus.storage.backend_holder import get_isolation_type
+
+    if get_isolation_type() == "logical":
+        cache_key = "__logical__"
+    else:
+        cache_key = namespace
+    return _get_subject_tree_cached(cache_key, namespace)
 
 
 def preload_all_storages(
@@ -174,7 +192,7 @@ def preload_all_storages(
     get_storage(MetricStorage, "metric", namespace=namespace)
     get_storage(ReferenceSqlStorage, "reference_sql", namespace=namespace)
     get_storage(ExtKnowledgeStore, "ext_knowledge", namespace=namespace)
-    get_subject_tree_store()
+    get_subject_tree_store(namespace=namespace)
     logger.info("All storage singletons pre-loaded")
 
 
@@ -183,10 +201,9 @@ def clear_storage_registry() -> None:
 
     Does NOT clear ``_storage_defaults``.
     """
-    global _subject_tree_instance
     _get_storage_cached.cache_clear()
     _factory_registry.clear()
-    _subject_tree_instance = None
+    _get_subject_tree_cached.cache_clear()
 
     from datus.storage.backend_holder import reset_backends
 

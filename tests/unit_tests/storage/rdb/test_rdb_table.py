@@ -26,7 +26,9 @@ class _Item:
 def database(tmp_path):
     """Create an initialized SqliteRdbDatabase."""
     db_file = os.path.join(str(tmp_path), "test.db")
-    return SqliteRdbDatabase(db_file)
+    return SqliteRdbDatabase(
+        db_file,
+    )
 
 
 @pytest.fixture

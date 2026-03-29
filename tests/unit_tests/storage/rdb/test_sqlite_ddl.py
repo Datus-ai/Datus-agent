@@ -87,7 +87,9 @@ class TestSqliteGenerateDdl:
     def backend(self, tmp_path):
         import os
 
-        return SqliteRdbDatabase(os.path.join(str(tmp_path), "ddl_test.db"))
+        return SqliteRdbDatabase(
+            os.path.join(str(tmp_path), "ddl_test.db"),
+        )
 
     def test_create_table_with_constraints(self, backend):
         """Table with constraints includes them in DDL."""

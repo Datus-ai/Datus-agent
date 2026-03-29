@@ -109,9 +109,7 @@ class TestDeleteMetric:
         updater = _build_updater()
         updater.metrics_storage.delete_metric.return_value = {"success": True, "message": "deleted"}
         result = updater.delete_metric(["Finance"], "old_metric")
-        updater.metrics_storage.delete_metric.assert_called_once_with(
-            ["Finance"], "old_metric", extra_conditions=ANY, datasource_id=ANY
-        )
+        updater.metrics_storage.delete_metric.assert_called_once_with(["Finance"], "old_metric", extra_conditions=ANY)
         assert result == {"success": True, "message": "deleted"}
 
 
@@ -130,7 +128,7 @@ class TestDeleteReferenceSql:
         updater.reference_sql_storage.delete_reference_sql.return_value = True
         result = updater.delete_reference_sql(["Analytics", "Reports"], "old_query")
         updater.reference_sql_storage.delete_reference_sql.assert_called_once_with(
-            ["Analytics", "Reports"], "old_query", extra_conditions=ANY, datasource_id=ANY
+            ["Analytics", "Reports"], "old_query", extra_conditions=ANY
         )
         assert result is True
 
@@ -158,7 +156,7 @@ class TestDeleteExtKnowledge:
         updater.ext_knowledge_storage.delete_knowledge.return_value = True
         result = updater.delete_ext_knowledge(["Business", "Terms"], "old_term")
         updater.ext_knowledge_storage.delete_knowledge.assert_called_once_with(
-            ["Business", "Terms"], "old_term", extra_conditions=ANY, datasource_id=ANY
+            ["Business", "Terms"], "old_term", extra_conditions=ANY
         )
         assert result is True
 

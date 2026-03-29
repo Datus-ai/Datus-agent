@@ -861,12 +861,7 @@ class TestSubjectTreeStore:
 
 
 class TestSubjectTreeDatasourceFields:
-    """Tests for datasource_id, creator_id, and updator_id columns on SubjectTreeStore."""
-
-    @pytest.fixture
-    def store(self):
-        """Create a fresh SubjectTreeStore for each test."""
-        return SubjectTreeStore()
+    """Tests for datasource_id column on SubjectTreeStore."""
 
     def test_datasource_id_column_exists(self):
         """datasource_id field is present on created nodes."""
@@ -874,63 +869,6 @@ class TestSubjectTreeDatasourceFields:
         node = store.create_node(None, "Finance")
         assert "datasource_id" in node
 
-    def test_creator_id_default_value(self):
-        """creator_id defaults to 'datus_agent' when not explicitly set."""
-        store = SubjectTreeStore()
-        node = store.create_node(None, "Finance")
-        assert node["creator_id"] == "datus_agent"
 
-    def test_updator_id_default_value(self):
-        """updator_id defaults to 'datus_agent' when not explicitly set."""
-        store = SubjectTreeStore()
-        node = store.create_node(None, "Finance")
-        assert node["updator_id"] == "datus_agent"
-
-
-# ========== Datasource Isolation Tests ==========
-
-
-class TestSubjectTreeDatasourceIsolation:
-    """Tests for per-datasource isolation via datasource_id parameter."""
-
-    def test_different_datasources_see_own_data(self):
-        """Nodes created under ds_a are invisible to ds_b and vice versa."""
-        store = SubjectTreeStore()
-
-        # Create node under datasource ds_a
-        store.create_node(None, "NodeA", datasource_id="ds_a")
-
-        # Create node under datasource ds_b
-        store.create_node(None, "NodeB", datasource_id="ds_b")
-
-        # ds_a should see NodeA but not NodeB
-        children_a = store.get_children(None, datasource_id="ds_a")
-        names_a = {n["name"] for n in children_a}
-        assert "NodeA" in names_a
-        assert "NodeB" not in names_a
-
-        # ds_b should see NodeB but not NodeA
-        children_b = store.get_children(None, datasource_id="ds_b")
-        names_b = {n["name"] for n in children_b}
-        assert "NodeB" in names_b
-        assert "NodeA" not in names_b
-
-    def test_datasource_id_stored_on_node(self):
-        """Nodes created with datasource_id carry the value."""
-        store = SubjectTreeStore()
-        node = store.create_node(None, "Finance", datasource_id="ds_x")
-        assert node["datasource_id"] == "ds_x"
-
-    def test_no_datasource_id_sees_all_data(self):
-        """Without a datasource_id filter, all nodes are visible."""
-        store = SubjectTreeStore()
-
-        # Create nodes for two different datasources
-        store.create_node(None, "NodeOne", datasource_id="ds_1")
-        store.create_node(None, "NodeTwo", datasource_id="ds_2")
-
-        # No datasource_id → no filter → both visible
-        all_children = store.get_children(None)
-        names = {n["name"] for n in all_children}
-        assert "NodeOne" in names
-        assert "NodeTwo" in names
+# Datasource isolation is now handled at the RDB layer (SqliteRdbDatabase).
+# See tests/unit_tests/storage/rdb/ for isolation tests.
