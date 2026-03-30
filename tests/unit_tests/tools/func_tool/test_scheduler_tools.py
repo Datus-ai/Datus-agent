@@ -586,6 +586,7 @@ class TestUpdateJob:
             result = tools.update_job(
                 job_id="dag_to_update",
                 sql_file_path=str(sql_file),
+                job_name="DAG To Update",
                 connection_url="mysql+pymysql://u:p@h:3306/db",
             )
 
@@ -597,6 +598,7 @@ class TestUpdateJob:
         result = tools.update_job(
             job_id="dag_x",
             sql_file_path=str(tmp_path / "gone.sql"),
+            job_name="DAG X",
             connection_url="mysql://u:p@h:3306/db",
         )
         assert result.success == 0
@@ -609,9 +611,96 @@ class TestUpdateJob:
         result = tools.update_job(
             job_id="dag_x",
             sql_file_path=str(sql_file),
+            job_name="DAG X",
+            job_type="sql",
         )
         assert result.success == 0
         assert "namespace" in (result.error or "").lower()
+
+    def test_update_invalid_job_type(self, tmp_path):
+        sql_file = tmp_path / "updated.sql"
+        sql_file.write_text("SELECT 2")
+        tools = SchedulerTools(_make_agent_config())
+        result = tools.update_job(
+            job_id="dag_x",
+            sql_file_path=str(sql_file),
+            job_name="DAG X",
+            job_type="pyspark",
+        )
+        assert result.success == 0
+        assert "Unsupported job_type" in (result.error or "")
+
+    def test_update_sparksql_success(self, tmp_path):
+        sql_file = tmp_path / "spark_updated.sql"
+        sql_file.write_text("SELECT * FROM t")
+
+        mock_job = _make_scheduled_job("dag_sparksql_update")
+        mock_adapter = MagicMock()
+        mock_adapter.update_job.return_value = mock_job
+
+        tools = SchedulerTools(_make_agent_config())
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.update_job(
+                job_id="dag_sparksql_update",
+                sql_file_path=str(sql_file),
+                job_name="SparkSQL Update Job",
+                job_type="sparksql",
+                spark_master="spark://localhost:7077",
+            )
+
+        assert result.success == 1
+        assert result.result["job_id"] == "dag_sparksql_update"
+        # Verify adapter was called with sparksql payload
+        call_args = mock_adapter.update_job.call_args
+        payload = call_args[0][1]
+        assert payload.extra["job_type"] == "sparksql"
+        assert payload.extra["sparksql"] == "SELECT * FROM t"
+        assert payload.extra["spark_master"] == "spark://localhost:7077"
+
+    def test_update_sparksql_default_master(self, tmp_path):
+        sql_file = tmp_path / "spark_updated.sql"
+        sql_file.write_text("SELECT 1")
+
+        mock_job = _make_scheduled_job("dag_sparksql_default")
+        mock_adapter = MagicMock()
+        mock_adapter.update_job.return_value = mock_job
+
+        tools = SchedulerTools(_make_agent_config())
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.update_job(
+                job_id="dag_sparksql_default",
+                sql_file_path=str(sql_file),
+                job_name="SparkSQL Default Job",
+                job_type="sparksql",
+            )
+
+        assert result.success == 1
+        call_args = mock_adapter.update_job.call_args
+        payload = call_args[0][1]
+        assert payload.extra["spark_master"] == "local[*]"
+
+    def test_update_sparksql_no_db_connection_needed(self, tmp_path):
+        """SparkSQL update should succeed without namespace or connection_url."""
+        sql_file = tmp_path / "spark.sql"
+        sql_file.write_text("SELECT 1")
+
+        mock_job = _make_scheduled_job("dag_spark_no_db")
+        mock_adapter = MagicMock()
+        mock_adapter.update_job.return_value = mock_job
+
+        tools = SchedulerTools(_make_agent_config())
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.update_job(
+                job_id="dag_spark_no_db",
+                sql_file_path=str(sql_file),
+                job_name="Spark No DB Job",
+                job_type="sparksql",
+            )
+
+        assert result.success == 1
 
     def test_update_with_namespace(self, tmp_path):
         sql_file = tmp_path / "updated.sql"
@@ -629,6 +718,7 @@ class TestUpdateJob:
             result = tools.update_job(
                 job_id="dag_ns_update",
                 sql_file_path=str(sql_file),
+                job_name="DAG NS Update",
                 namespace="starrocks",
             )
 

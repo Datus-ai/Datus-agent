@@ -471,27 +471,36 @@ class SchedulerTools(BaseTool):
         self,
         job_id: str,
         sql_file_path: str,
+        job_name: str,
+        job_type: str = "sql",
         namespace: Optional[str] = None,
         connection_url: Optional[str] = None,
+        spark_master: Optional[str] = None,
         schedule: Optional[str] = None,
         description: Optional[str] = None,
     ) -> FuncToolResult:
-        """Update an existing scheduled SQL job with new SQL or configuration.
+        """Update an existing scheduled job with new SQL or configuration.
 
         Re-renders the job definition with updated content.  The scheduler reloads
-        it automatically.
+        it automatically.  Supports both SQL and SparkSQL job types.
 
         Args:
             job_id:         The existing job/DAG identifier to update.
             sql_file_path:  Local path to the new .sql file.
-            namespace:      Namespace name from agent.yml to derive the DB connection.
-            connection_url: Explicit SQLAlchemy connection URL (overrides namespace).
+            job_name:       Human-readable job name (used for rendering the job definition).
+            job_type:       'sql' (default) or 'sparksql'.
+            namespace:      Namespace name from agent.yml to derive the DB connection (sql only).
+            connection_url: Explicit SQLAlchemy connection URL, overrides namespace (sql only).
+            spark_master:   Spark master URL, default 'local[*]' (sparksql only).
             schedule:       Cron expression, e.g. '0 8 * * *'.  None = manual trigger only.
             description:    Optional human-readable description.
 
         Returns:
             FuncToolResult with result containing updated job details.
         """
+        if job_type not in ("sql", "sparksql"):
+            return FuncToolResult(success=0, error=f"Unsupported job_type '{job_type}'. Use 'sql' or 'sparksql'.")
+
         try:
             from datus_scheduler_core.models import SchedulerJobPayload
         except ImportError as exc:
@@ -508,29 +517,31 @@ class SchedulerTools(BaseTool):
         except Exception as exc:
             return FuncToolResult(success=0, error=f"Failed to read SQL file '{sql_file_path}': {exc}")
 
-        # Resolve connection URL
-        url = connection_url
-        if not url:
-            if not namespace:
-                return FuncToolResult(
-                    success=0,
-                    error="Either 'namespace' or 'connection_url' must be provided for update_job.",
-                )
-            namespaces = getattr(self.agent_config, "namespaces", None) or {}
-            db_configs = namespaces.get(namespace)
-            if not db_configs:
-                available = list(namespaces.keys())
-                return FuncToolResult(
-                    success=0,
-                    error=f"Namespace '{namespace}' not found. Available: {available}",
-                )
-            db_config = list(db_configs.values())[0]
-            try:
-                url = _build_connection_url(db_config)
-            except Exception as exc:
-                return FuncToolResult(
-                    success=0, error=f"Failed to build connection URL from namespace '{namespace}': {exc}"
-                )
+        # Build payload based on job_type
+        url = None
+        if job_type == "sql":
+            url = connection_url
+            if not url:
+                if not namespace:
+                    return FuncToolResult(
+                        success=0,
+                        error="Either 'namespace' or 'connection_url' must be provided for sql job_type.",
+                    )
+                namespaces = getattr(self.agent_config, "namespaces", None) or {}
+                db_configs = namespaces.get(namespace)
+                if not db_configs:
+                    available = list(namespaces.keys())
+                    return FuncToolResult(
+                        success=0,
+                        error=f"Namespace '{namespace}' not found. Available: {available}",
+                    )
+                db_config = list(db_configs.values())[0]
+                try:
+                    url = _build_connection_url(db_config)
+                except Exception as exc:
+                    return FuncToolResult(
+                        success=0, error=f"Failed to build connection URL from namespace '{namespace}': {exc}"
+                    )
 
         try:
             adapter = self._get_adapter()
@@ -538,13 +549,25 @@ class SchedulerTools(BaseTool):
             return FuncToolResult(success=0, error=str(exc))
 
         try:
-            payload = SchedulerJobPayload(
-                job_name=job_id,
-                sql=sql_content,
-                db_connection={"url": url},
-                schedule=schedule,
-                description=description,
-            )
+            if job_type == "sparksql":
+                payload = SchedulerJobPayload(
+                    job_name=job_name,
+                    schedule=schedule,
+                    description=description,
+                    extra={
+                        "job_type": "sparksql",
+                        "sparksql": sql_content,
+                        "spark_master": spark_master or "local[*]",
+                    },
+                )
+            else:
+                payload = SchedulerJobPayload(
+                    job_name=job_name,
+                    sql=sql_content,
+                    db_connection={"url": url},
+                    schedule=schedule,
+                    description=description,
+                )
             job = adapter.update_job(job_id, payload)
             return FuncToolResult(
                 success=1,
