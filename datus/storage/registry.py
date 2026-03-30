@@ -82,7 +82,12 @@ def _get_storage_cached(
 
         kwargs["db"] = create_vector_connection(namespace=namespace)
 
-    return factory(get_embedding_model(embedding_model_conf_name), **kwargs)
+    store = factory(get_embedding_model(embedding_model_conf_name), **kwargs)
+    from datus.storage.subject_tree.store import BaseSubjectEmbeddingStore
+
+    if isinstance(store, BaseSubjectEmbeddingStore):
+        store.subject_tree = _get_subject_tree_cached(cache_key, namespace)
+    return store
 
 
 def get_storage(

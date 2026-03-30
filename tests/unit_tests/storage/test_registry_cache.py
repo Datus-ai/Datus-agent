@@ -4,7 +4,7 @@
 
 """Tests for storage registry LRU cache, preload, and backend_holder isolation config."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 from datus.storage.base import BaseEmbeddingStore
 
@@ -80,6 +80,31 @@ class TestGetStorageLRUCache:
 
             clear_storage_registry()
             assert _get_storage_cached.cache_info().currsize == 0
+
+    def test_subject_store_rebinds_subject_tree_by_requested_namespace(self, reset_global_singletons):
+        """Subject stores created via get_storage() must bind the registry namespace tree."""
+        from datus.storage.metric.store import MetricStorage
+        from datus.storage.registry import get_storage
+
+        init_tree = MagicMock(name="init_tree")
+        registry_tree = MagicMock(name="registry_tree")
+
+        def _mock_subject_tree(cache_key, namespace):
+            if namespace == "requested_ns":
+                return registry_tree
+            return init_tree
+
+        with (
+            patch("datus.storage.registry.get_embedding_model", return_value=_FakeEmbeddingModel()),
+            patch("datus.storage.registry._get_subject_tree_cached", side_effect=_mock_subject_tree) as mock_tree,
+            patch("datus.storage.backend_holder.get_current_namespace", return_value="global_ns"),
+            patch("datus.storage.backend_holder.get_vector_backend") as mock_backend,
+        ):
+            mock_backend.return_value = MagicMock()
+            store = get_storage(MetricStorage, "metric", namespace="requested_ns")
+
+        assert store.subject_tree is registry_tree
+        assert call("requested_ns", "requested_ns") in mock_tree.call_args_list
 
 
 class TestPreloadAllStorages:
