@@ -627,7 +627,6 @@ class TestNode:
         # Take first test case from the list
         _current_namespace = agent_config.current_namespace
         try:
-            agent_config.current_namespace = "duckdb"
             for case in search_metrics_input:
                 input_data = SearchMetricsInput(**case["input"])
                 node = Node.new_instance(
@@ -647,8 +646,6 @@ class TestNode:
         except Exception as e:
             logger.error(f"Search metrics node test failed: {str(e)}")
             raise
-        finally:
-            agent_config.current_namespace = _current_namespace
 
     def test_compare_node(self, agent_config: AgentConfig, function_tools: List[Tool], mock_llm_create):
         """Test compare node with mock LLM and california_schools data"""
