@@ -4,6 +4,8 @@
 
 """Unit tests for datus/utils/memory_loader.py"""
 
+from unittest.mock import patch
+
 from datus.utils.memory_loader import (
     MEMORY_BASE_DIR,
     MEMORY_FILENAME,
@@ -44,6 +46,9 @@ class TestHasMemory:
     def test_explore_no_memory(self):
         assert has_memory("explore") is False
 
+    def test_compare_no_memory(self):
+        assert has_memory("compare") is False
+
 
 class TestLoadMemoryContext:
     """Tests for load_memory_context()."""
@@ -73,10 +78,11 @@ class TestLoadMemoryContext:
         result = load_memory_context(str(tmp_path), "chat")
         result_lines = result.splitlines()
 
-        # Should have 200 original lines + blank line + truncation notice = 202
+        # Should have 200 original lines + empty line + truncation notice = 202
         assert len(result_lines) == MEMORY_LINE_LIMIT + 2
         assert "truncated" in result_lines[-1]
         assert f"line {MEMORY_LINE_LIMIT - 1}" in result
+        # line 200 should NOT be present (0-indexed, so line_200 is the 201st)
         assert f"line {MEMORY_LINE_LIMIT}" not in result
 
     def test_exact_limit_not_truncated(self, tmp_path):
@@ -107,6 +113,26 @@ class TestLoadMemoryContext:
 
         result = load_memory_context(str(tmp_path), "my_agent")
         assert "Custom Agent Memory" in result
+
+    def test_os_error_returns_empty(self, tmp_path):
+        memory_dir = tmp_path / MEMORY_BASE_DIR / "chat"
+        memory_dir.mkdir(parents=True)
+        memory_file = memory_dir / MEMORY_FILENAME
+        memory_file.write_text("content", encoding="utf-8")
+
+        with patch("pathlib.Path.open", side_effect=OSError("Permission denied")):
+            result = load_memory_context(str(tmp_path), "chat")
+        assert result == ""
+
+    def test_unicode_error_returns_empty(self, tmp_path):
+        memory_dir = tmp_path / MEMORY_BASE_DIR / "chat"
+        memory_dir.mkdir(parents=True)
+        memory_file = memory_dir / MEMORY_FILENAME
+        memory_file.write_bytes(b"\xff\xfe invalid utf-8 \x80\x81")
+
+        result = load_memory_context(str(tmp_path), "chat")
+        # Should return empty string or partial content, not raise
+        assert isinstance(result, str)
 
 
 class TestGetMemoryDir:

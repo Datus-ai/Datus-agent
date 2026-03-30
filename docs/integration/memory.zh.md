@@ -17,7 +17,7 @@ Auto Memory 是 Datus-agent 的持久化记忆系统，使 Agent 能够跨对话
 
 记忆文件存储在工作目录的 `.datus/memory/` 下，每个 Agent 拥有独立的子目录：
 
-```
+```text
 {workspace_root}/
 └── .datus/
     └── memory/
@@ -76,7 +76,7 @@ Auto Memory 是 Datus-agent 的持久化记忆系统，使 Agent 能够跨对话
 
 直接用自然语言告诉 Agent：
 
-```
+```text
 > 记住我偏好使用 DuckDB
 > 记住项目使用 snake_case 命名规范
 > 记住报表输出格式默认用 Markdown
@@ -86,7 +86,7 @@ Agent 会将信息写入 `MEMORY.md`，下次对话自动生效。
 
 ### 让 Agent 忘记信息
 
-```
+```text
 > 忘记我对 DuckDB 的偏好
 > 不要再记住命名规范的事
 ```
@@ -97,7 +97,7 @@ Agent 会找到并删除对应的记忆条目。
 
 当 Agent 基于记忆给出错误回答时，直接更正即可：
 
-```
+```text
 > 不对，我们项目用的是 PostgreSQL，不是 DuckDB
 ```
 
@@ -113,7 +113,7 @@ cat {workspace_root}/.datus/memory/chat/MEMORY.md
 
 也可以让 Agent 读取：
 
-```
+```text
 > 读一下你当前的记忆文件
 ```
 
@@ -150,7 +150,7 @@ Auto Memory **无需显式配置**，符合条件的 Agent 自动启用。
 
 例如，当 `workspace_root` 设置为 `~/my_project` 时，chat agent 的记忆文件位于：
 
-```
+```text
 ~/my_project/.datus/memory/chat/MEMORY.md
 ```
 

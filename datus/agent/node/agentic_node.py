@@ -239,21 +239,24 @@ class AgenticNode(Node):
         if not has_memory(node_name):
             return base_prompt
 
-        workspace_root = self._resolve_workspace_root()
+        try:
+            workspace_root = self._resolve_workspace_root()
 
-        memory_content = load_memory_context(workspace_root, node_name)
-        memory_dir = get_memory_dir(workspace_root, node_name)
+            memory_content = load_memory_context(workspace_root, node_name)
+            memory_dir = get_memory_dir(workspace_root, node_name)
 
-        memory_section = prompt_manager.render_template(
-            template_name="memory_context",
-            version=None,
-            has_memory=True,
-            memory_content=memory_content,
-            memory_dir=memory_dir,
-        )
+            memory_section = prompt_manager.render_template(
+                template_name="memory_context",
+                version=None,
+                has_memory=True,
+                memory_content=memory_content,
+                memory_dir=memory_dir,
+            )
 
-        if memory_section.strip():
-            base_prompt = base_prompt + "\n\n" + memory_section
+            if memory_section.strip():
+                base_prompt = base_prompt + "\n\n" + memory_section
+        except Exception as e:
+            logger.warning(f"Failed to inject memory context for node '{node_name}': {e}")
         return base_prompt
 
     def _generate_session_id(self) -> str:

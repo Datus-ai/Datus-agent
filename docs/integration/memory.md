@@ -17,7 +17,7 @@ When users interact with the agent, the agent can recognize valuable information
 
 Memory files are stored under `.datus/memory/` in the workspace, with each agent having its own subdirectory:
 
-```
+```text
 {workspace_root}/
 └── .datus/
     └── memory/
@@ -76,7 +76,7 @@ Only interactive, user-facing agents have memory. Built-in system subagents that
 
 Use natural language:
 
-```
+```text
 > Remember that I prefer DuckDB
 > Remember the project uses snake_case naming convention
 > Remember the default report format is Markdown
@@ -86,7 +86,7 @@ The agent will write the information to `MEMORY.md`, and it will take effect in 
 
 ### Ask the Agent to Forget
 
-```
+```text
 > Forget my DuckDB preference
 > Stop remembering the naming convention
 ```
@@ -97,7 +97,7 @@ The agent will find and remove the corresponding memory entry.
 
 When the agent gives a wrong answer based on memory, simply correct it:
 
-```
+```text
 > That's wrong, our project uses PostgreSQL, not DuckDB
 ```
 
@@ -113,7 +113,7 @@ cat {workspace_root}/.datus/memory/chat/MEMORY.md
 
 Or ask the agent:
 
-```
+```text
 > Read your current memory file
 ```
 
@@ -150,7 +150,7 @@ The memory directory location follows the `workspace_root` setting:
 
 For example, when `workspace_root` is set to `~/my_project`, the chat agent's memory file is at:
 
-```
+```text
 ~/my_project/.datus/memory/chat/MEMORY.md
 ```
 
