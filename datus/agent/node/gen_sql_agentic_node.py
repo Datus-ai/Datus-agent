@@ -249,6 +249,10 @@ class GenSQLAgenticNode(AgenticNode):
         for pattern in tool_patterns:
             self._setup_tool_pattern(pattern)
 
+        # Ensure filesystem tools are always available (required for memory and file operations)
+        if not self.filesystem_func_tool:
+            self._setup_filesystem_tools()
+
         logger.debug(f"Setup {len(self.tools)} tools: {[tool.name for tool in self.tools]}")
 
     def _setup_platform_doc_tools(self):

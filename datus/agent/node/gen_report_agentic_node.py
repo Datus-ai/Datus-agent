@@ -18,7 +18,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.gen_report_agentic_node_models import GenReportNodeInput, GenReportNodeResult
 from datus.tools.db_tools.db_manager import db_manager_instance
-from datus.tools.func_tool import ContextSearchTools, DBFuncTool
+from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool
 from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.utils.loggings import get_logger
 from datus.utils.message_utils import MessagePart, build_structured_content
@@ -85,6 +85,7 @@ class GenReportAgenticNode(AgenticNode):
         self.db_func_tool: Optional[DBFuncTool] = None
         self.semantic_tools: Optional[SemanticTools] = None
         self.context_search_tools: Optional[ContextSearchTools] = None
+        self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
 
         # Call parent constructor with all required Node parameters
         super().__init__(
@@ -137,6 +138,10 @@ class GenReportAgenticNode(AgenticNode):
         for pattern in tool_patterns:
             self._setup_tool_pattern(pattern)
 
+        # Ensure filesystem tools are always available (required for memory and file operations)
+        if not self.filesystem_func_tool:
+            self._setup_filesystem_tools()
+
         logger.info(f"Setup {len(self.tools)} tools: {[tool.name for tool in self.tools]}")
 
     def _setup_tool_pattern(self, pattern: str):
@@ -161,6 +166,8 @@ class GenReportAgenticNode(AgenticNode):
                     self._setup_db_tools()
                 elif base_type == "context_search_tools":
                     self._setup_context_search_tools()
+                elif base_type == "filesystem_tools":
+                    self._setup_filesystem_tools()
                 else:
                     logger.warning(f"Unknown tool type: {base_type}")
 
@@ -171,6 +178,8 @@ class GenReportAgenticNode(AgenticNode):
                 self._setup_db_tools()
             elif pattern == "context_search_tools":
                 self._setup_context_search_tools()
+            elif pattern == "filesystem_tools":
+                self._setup_filesystem_tools()
 
             # Handle specific method patterns (e.g., "db_tools.describe_table")
             elif "." in pattern:
@@ -224,6 +233,16 @@ class GenReportAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup context search tools: {e}")
 
+    def _setup_filesystem_tools(self):
+        """Setup filesystem tools."""
+        try:
+            root_path = self._resolve_workspace_root()
+            self.filesystem_func_tool = FilesystemFuncTool(root_path=root_path)
+            self.tools.extend(self.filesystem_func_tool.available_tools())
+            logger.debug(f"Setup filesystem tools with root path: {root_path}")
+        except Exception as e:
+            logger.error(f"Failed to setup filesystem tools: {e}")
+
     def _setup_specific_tool_method(self, tool_type: str, method_name: str):
         """Setup a specific tool method."""
         try:
@@ -252,6 +271,11 @@ class GenReportAgenticNode(AgenticNode):
                         self.agent_config, sub_agent_name=self.node_config.get("system_prompt")
                     )
                 tool_instance = self.context_search_tools
+            elif tool_type == "filesystem_tools":
+                if not self.filesystem_func_tool:
+                    root_path = self._resolve_workspace_root()
+                    self.filesystem_func_tool = FilesystemFuncTool(root_path=root_path)
+                tool_instance = self.filesystem_func_tool
             else:
                 logger.warning(f"Unknown tool type: {tool_type}")
                 return
