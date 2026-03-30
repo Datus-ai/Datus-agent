@@ -2,13 +2,13 @@
     input_text: Calculate the cancellation rate by transaction type (Quick Buy or Not Quick Buy)
     matching_rate: slow
     sql_task:
-        id: test_task
-        database_type: duckdb
-        task: Calculate the cancellation rate by transaction type
-        catalog_name: duckdb
-        database_name: mf_demo
-        schema_name: ""
-        layer1: duckdb
-        layer2: mf_demo
-        domain: RGM_voice
+      id: test_task
+      database_type: duckdb
+      task: Calculate the cancellation rate by transaction type
+      catalog_name: ""
+      database_name: duckdb
+      schema_name: "mf_demo"
+      layer1: duckdb
+      layer2: mf_demo
+      domain: RGM_voice
     database_type: duckdb

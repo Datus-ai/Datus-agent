@@ -170,7 +170,7 @@ agent:
     local_duckdb:
       type: duckdb
       name: ssb
-      uri: tests/data/ssb.duckdb
+      uri: sample_data/duckdb-demo.duckdb
     ssb_sqlite:
       type: sqlite
       name: SSB

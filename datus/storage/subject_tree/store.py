@@ -546,7 +546,6 @@ class SubjectTreeStore:
             SubjectNodeRecord,
             where=where,
         )
-        print("$$$$ FIND SUBJECT NODE RECORDS FROM", where)
         if rows:
             return _node_to_dict(rows[0])
         return None
