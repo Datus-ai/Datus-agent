@@ -206,16 +206,16 @@ class AgenticNode(Node):
 
     def _finalize_system_prompt(self, base_prompt: str) -> str:
         """
-        Finalize system prompt by injecting skill context and ensuring skill tools.
+        Finalize system prompt by injecting skill context, memory context, and ensuring skill tools.
 
         All subclasses should call this at the end of their _get_system_prompt() override
-        to ensure skills are properly injected regardless of how the template is rendered.
+        to ensure skills and memory are properly injected regardless of how the template is rendered.
 
         Args:
             base_prompt: The rendered template prompt
 
         Returns:
-            Prompt with skills XML appended (if skill_func_tool is active)
+            Prompt with skills XML and memory context appended
         """
         # Ensure skill tools are in self.tools (lazy injection after subclass setup_tools()).
         self._ensure_skill_tools_in_tools()
@@ -226,6 +226,34 @@ class AgenticNode(Node):
             if skills_xml:
                 base_prompt = base_prompt + "\n\n" + skills_xml
 
+        # Inject memory context for eligible nodes.
+        base_prompt = self._inject_memory_context(base_prompt)
+
+        return base_prompt
+
+    def _inject_memory_context(self, base_prompt: str) -> str:
+        """Inject memory context into system prompt if this node has memory enabled."""
+        from datus.utils.memory_loader import get_memory_dir, has_memory, load_memory_context
+
+        node_name = self.get_node_name()
+        if not has_memory(node_name):
+            return base_prompt
+
+        workspace_root = self._resolve_workspace_root()
+
+        memory_content = load_memory_context(workspace_root, node_name)
+        memory_dir = get_memory_dir(workspace_root, node_name)
+
+        memory_section = prompt_manager.render_template(
+            template_name="memory_context",
+            version=None,
+            has_memory=True,
+            memory_content=memory_content,
+            memory_dir=memory_dir,
+        )
+
+        if memory_section.strip():
+            base_prompt = base_prompt + "\n\n" + memory_section
         return base_prompt
 
     def _generate_session_id(self) -> str:

@@ -145,8 +145,8 @@ def create_test_node(node_id, mock_agent_config):
 class TestFinalizeSystemPrompt:
     """Test suite for _finalize_system_prompt method."""
 
-    def test_no_skill_func_tool_returns_prompt_unchanged(self, mock_agent_config):
-        """When skill_func_tool is None, returns base_prompt as-is."""
+    def test_no_skill_func_tool_returns_prompt_unchanged(self, mock_agent_config, monkeypatch):
+        """When skill_func_tool is None, returns base_prompt as-is (memory injection mocked out)."""
         node = MinimalAgenticNode(
             node_id="test1",
             description="Test node",
@@ -154,6 +154,7 @@ class TestFinalizeSystemPrompt:
             agent_config=mock_agent_config,
         )
         node.skill_func_tool = None
+        monkeypatch.setattr(node, "_inject_memory_context", lambda p: p)
 
         base_prompt = "This is the base system prompt."
         result = node._finalize_system_prompt(base_prompt)
@@ -181,8 +182,10 @@ class TestFinalizeSystemPrompt:
         assert "<available_skills>" in result
         assert "sql-analysis" in result
 
-    def test_with_skill_func_tool_empty_xml_returns_prompt_unchanged(self, mock_agent_config, skill_manager):
-        """When skills context returns empty string, prompt unchanged."""
+    def test_with_skill_func_tool_empty_xml_returns_prompt_unchanged(
+        self, mock_agent_config, skill_manager, monkeypatch
+    ):
+        """When skills context returns empty string, prompt unchanged (memory injection mocked out)."""
         # Configure node with pattern that matches no skills
         mock_agent_config.agentic_nodes = {"test_node": {"skills": "nonexistent-*"}}
 
@@ -194,6 +197,7 @@ class TestFinalizeSystemPrompt:
         )
         node.skill_manager = skill_manager
         node.skill_func_tool = SkillFuncTool(manager=skill_manager, node_name="test_node")
+        monkeypatch.setattr(node, "_inject_memory_context", lambda p: p)
 
         base_prompt = "This is the base system prompt."
         result = node._finalize_system_prompt(base_prompt)

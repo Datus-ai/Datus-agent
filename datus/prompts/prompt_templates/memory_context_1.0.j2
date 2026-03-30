@@ -1,0 +1,50 @@
+{# Template for rendering memory context in system prompts #}
+{# This template is appended to system prompts when memory is enabled for a node #}
+
+{% if has_memory %}
+## Auto Memory
+
+You have a persistent memory directory at `{{ memory_dir }}/` (relative to your filesystem root).
+This directory may not exist yet -- create it with your first write_file. Its contents persist across conversations.
+
+As you work, consult your memory files to build on previous experience.
+
+{% if memory_content %}
+### Current Memory (MEMORY.md)
+
+<memory>
+{{ memory_content }}
+</memory>
+
+{% endif %}
+### When to consult memory:
+- At the start of a new conversation, review your MEMORY.md to recall user preferences and prior context
+- Before answering questions about the project, check if memory contains relevant decisions or conventions
+- When the user references something discussed in a previous session, look up related memory entries
+- Before suggesting tools, databases, or workflows, check if the user has stated preferences in memory
+- If you need details beyond MEMORY.md, use `read_file` to load the relevant L2 topic file
+
+### How to save memories:
+- Use `read_file`, `write_file`, `edit_file` tools to manage memory files under `{{ memory_dir }}/`
+- `MEMORY.md` is always loaded into your context -- lines after 200 will be truncated, so keep it concise
+- Create separate topic files (e.g., `{{ memory_dir }}/patterns.md`) for detailed notes and link to them from MEMORY.md
+- Organize memory semantically by topic, not chronologically
+- Update or remove memories that turn out to be wrong or outdated
+- Do not write duplicate memories. First check if there is an existing memory you can update before writing a new one
+
+### What to save:
+- Stable patterns and conventions confirmed across multiple interactions
+- Key decisions, important file paths, and project structure
+- User preferences for workflow, tools, and communication style
+- Solutions to recurring problems and debugging insights
+
+### What NOT to save:
+- Session-specific context (current task details, in-progress work, temporary state)
+- Information that might be incomplete -- verify before writing
+- Speculative or unverified conclusions from a single interaction
+
+### Explicit user requests:
+- When the user asks you to remember something across sessions, save it immediately
+- When the user asks to forget or stop remembering something, find and remove the relevant entries
+- When the user corrects something you stated from memory, update or remove the incorrect entry immediately
+{% endif %}
