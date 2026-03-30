@@ -10,8 +10,10 @@ from urllib.parse import quote_plus
 
 from agents import Tool
 
+from datus.configuration.agent_config import AgentConfig
 from datus.tools import BaseTool
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -55,7 +57,10 @@ class SchedulerTools(BaseTool):
     Requires a ``scheduler:`` section in ``agent.yml`` with the adapter config.
     """
 
-    def __init__(self, agent_config, **kwargs):
+    tool_name = "scheduler_tools"
+    tool_description = "Tools for submitting and managing scheduled jobs via Airflow"
+
+    def __init__(self, agent_config: AgentConfig, **kwargs):
         super().__init__(**kwargs)
         self.agent_config = agent_config
 
@@ -66,14 +71,19 @@ class SchedulerTools(BaseTool):
         try:
             from datus_scheduler_core.registry import SchedulerAdapterRegistry
         except ImportError as exc:
-            raise ImportError(
-                "datus-scheduler-core is required for scheduler tools. "
-                "Install it with: pip install datus-scheduler-core"
+            raise DatusException(
+                ErrorCode.COMMON_MISSING_DEPENDENCY,
+                message_args={},
+                message="datus-scheduler-core is required for scheduler tools. "
+                "Install it with: pip install datus-scheduler-core",
             ) from exc
 
         scheduler_config = getattr(self.agent_config, "scheduler_config", {}) or {}
         if not scheduler_config:
-            raise ValueError("No scheduler configured in agent.yml. Add a 'scheduler:' section.")
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message_args={"config_error": "No scheduler configured in agent.yml. Add a 'scheduler:' section."},
+            )
 
         config = dict(scheduler_config)
         platform = config.get("type", "airflow")
@@ -151,7 +161,7 @@ class SchedulerTools(BaseTool):
         # Submit
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError) as exc:
+        except (ImportError, ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:
@@ -225,7 +235,7 @@ class SchedulerTools(BaseTool):
 
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError) as exc:
+        except (ImportError, ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:
@@ -273,7 +283,7 @@ class SchedulerTools(BaseTool):
         """
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError) as exc:
+        except (ImportError, ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:
@@ -309,7 +319,7 @@ class SchedulerTools(BaseTool):
         """
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError) as exc:
+        except (ImportError, ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:
@@ -351,7 +361,7 @@ class SchedulerTools(BaseTool):
         """
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError) as exc:
+        except (ImportError, ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:
@@ -394,7 +404,7 @@ class SchedulerTools(BaseTool):
         """
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError) as exc:
+        except (ImportError, ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:
@@ -423,7 +433,7 @@ class SchedulerTools(BaseTool):
         """
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError) as exc:
+        except (ImportError, ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:
@@ -452,7 +462,7 @@ class SchedulerTools(BaseTool):
         """
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError) as exc:
+        except (ImportError, ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:
@@ -545,7 +555,7 @@ class SchedulerTools(BaseTool):
 
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError) as exc:
+        except (ImportError, ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:
@@ -607,7 +617,7 @@ class SchedulerTools(BaseTool):
         """
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError) as exc:
+        except (ImportError, ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:
@@ -655,7 +665,7 @@ class SchedulerTools(BaseTool):
         """
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError) as exc:
+        except (ImportError, ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:

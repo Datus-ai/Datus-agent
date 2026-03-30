@@ -339,8 +339,8 @@ agent:
     name: airflow_local
     type: airflow
     api_base_url: http://localhost:8080/api/v1
-    username: admin
-    password: admin123
+    username: ${AIRFLOW_USERNAME}
+    password: ${AIRFLOW_PASSWORD}
     dags_folder: /path/to/airflow/dags
     dag_discovery_timeout: 60
     dag_discovery_poll_interval: 5
