@@ -773,7 +773,14 @@ class AgentConfig:
         return self.models[name]
 
     def rag_storage_path(self) -> str:
-        return rag_storage_path(self.rag_base_path)
+        isolation = "physical"
+        if hasattr(self, "_backend_config") and self._backend_config:
+            iso = getattr(self._backend_config, "isolation", None)
+            if hasattr(iso, "value"):
+                isolation = iso.value
+            elif iso:
+                isolation = str(iso)
+        return rag_storage_path(self.rag_base_path, self.current_namespace, isolation=isolation)
 
     def document_storage_path(self, platform: str) -> str:
         """Per-platform document storage path (namespace-independent).
@@ -857,8 +864,11 @@ class AgentConfig:
             )
 
 
-def rag_storage_path(rag_base_path: str = "data") -> str:
-    return os.path.join(rag_base_path, "datus_db")
+def rag_storage_path(rag_base_path: str = "data", namespace: str = "", isolation: str = "physical") -> str:
+    if isolation == "logical":
+        return os.path.join(rag_base_path, "datus_db")
+    db_name = f"datus_db_{namespace}" if namespace else "datus_db"
+    return os.path.join(rag_base_path, db_name)
 
 
 def resolve_env(value: str) -> str:
