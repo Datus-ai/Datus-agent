@@ -249,22 +249,22 @@ class SchemaWithValueRAG:
         self.value_store = get_storage(SchemaValueStorage, "database", namespace=self.datasource_id)
         self._sub_agent_filter = _build_sub_agent_filter(agent_config, sub_agent_name, self.schema_store, "tables")
 
-    def _ds_conditions(self) -> list:
+    def _sub_agent_conditions(self) -> list:
         """Build sub-agent filter conditions (datasource_id handled by backend)."""
         conditions = []
         if self._sub_agent_filter:
             conditions.append(self._sub_agent_filter)
         return conditions
 
-    def _add_ds_filter(self, where: WhereExpr) -> WhereExpr:
+    def _add_sub_agent_filter(self, where: WhereExpr) -> WhereExpr:
         """Add sub-agent filter to existing where clause."""
-        conditions = self._ds_conditions()
+        conditions = self._sub_agent_conditions()
         if not conditions:
             return where
-        ds_filter = conditions[0] if len(conditions) == 1 else and_(*conditions)
+        sub_agent_filter = conditions[0] if len(conditions) == 1 else and_(*conditions)
         if where is None:
-            return ds_filter
-        return and_(where, ds_filter)
+            return sub_agent_filter
+        return and_(where, sub_agent_filter)
 
     def truncate(self) -> None:
         """Delete all schema metadata for this datasource."""
@@ -297,10 +297,10 @@ class SchemaWithValueRAG:
         self.value_store.create_indices()
 
     def get_schema_size(self):
-        return self.schema_store._count_rows(where=self._add_ds_filter(None))
+        return self.schema_store._count_rows(where=self._add_sub_agent_filter(None))
 
     def get_value_size(self):
-        return self.value_store._count_rows(where=self._add_ds_filter(None))
+        return self.value_store._count_rows(where=self._add_sub_agent_filter(None))
 
     def search_similar(
         self,
@@ -318,7 +318,7 @@ class SchemaWithValueRAG:
             schema_name=schema_name,
             table_type=table_type,
         )
-        where = self._add_ds_filter(where)
+        where = self._add_sub_agent_filter(where)
         schema_results = self.schema_store.do_search_similar(
             query_text,
             top_n=top_n,
@@ -342,7 +342,7 @@ class SchemaWithValueRAG:
             catalog_name=catalog_name,
             database_name=database_name,
             schema_name=schema_name,
-            extra_where=self._add_ds_filter(None),
+            extra_where=self._add_sub_agent_filter(None),
         )
 
     def search_all_schemas(
@@ -360,7 +360,7 @@ class SchemaWithValueRAG:
             schema_name=schema_name,
             table_type=table_type,
         )
-        where = self._add_ds_filter(where)
+        where = self._add_sub_agent_filter(where)
         return self.schema_store._search_all(where=where, select_fields=select_fields)
 
     def search_all_value(
@@ -373,7 +373,7 @@ class SchemaWithValueRAG:
             schema_name=schema_name,
             table_type=table_type,
         )
-        where = self._add_ds_filter(where)
+        where = self._add_sub_agent_filter(where)
         return self.value_store._search_all(where=where)
 
     def search_tables(
@@ -460,8 +460,8 @@ class SchemaWithValueRAG:
             combined_condition = None
 
         # Apply datasource_id + sub-agent scope filter
-        schema_condition = self._add_ds_filter(combined_condition)
-        value_condition = self._add_ds_filter(combined_condition)
+        schema_condition = self._add_sub_agent_filter(combined_condition)
+        value_condition = self._add_sub_agent_filter(combined_condition)
 
         schema_fields = [
             "identifier",

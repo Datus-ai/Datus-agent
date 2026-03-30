@@ -293,7 +293,7 @@ class MetricRAG:
         self.storage: MetricStorage = get_storage(MetricStorage, "metric", namespace=self.datasource_id)
         self._sub_agent_filter = _build_sub_agent_filter(agent_config, sub_agent_name, self.storage, "metrics")
 
-    def _ds_conditions(self) -> List:
+    def _sub_agent_conditions(self) -> List:
         """Build sub-agent filter conditions (datasource_id handled by backend)."""
         conditions = []
         if self._sub_agent_filter:
@@ -321,7 +321,7 @@ class MetricRAG:
         return self.storage.search_all_metrics(
             subject_path=subject_path,
             select_fields=select_fields,
-            extra_conditions=self._ds_conditions(),
+            extra_conditions=self._sub_agent_conditions(),
         )
 
     def after_init(self):
@@ -330,7 +330,7 @@ class MetricRAG:
     def get_metrics_size(self):
         from datus_storage_base.conditions import and_
 
-        conditions = self._ds_conditions()
+        conditions = self._sub_agent_conditions()
         if not conditions:
             return self.storage._count_rows()
         where = conditions[0] if len(conditions) == 1 else and_(*conditions)
@@ -344,7 +344,7 @@ class MetricRAG:
             query_text=query_text,
             subject_path=subject_path,
             top_n=top_n,
-            extra_conditions=self._ds_conditions(),
+            extra_conditions=self._sub_agent_conditions(),
         )
 
     def get_metrics_detail(self, subject_path: List[str], name: str) -> List[Dict[str, Any]]:
@@ -353,7 +353,7 @@ class MetricRAG:
         full_path.append(name)
         return self.storage.search_all_metrics(
             subject_path=full_path,
-            extra_conditions=self._ds_conditions(),
+            extra_conditions=self._sub_agent_conditions(),
         )
 
     def create_indices(self):
@@ -365,5 +365,5 @@ class MetricRAG:
         return self.storage.delete_metric(
             subject_path,
             name,
-            extra_conditions=self._ds_conditions(),
+            extra_conditions=self._sub_agent_conditions(),
         )

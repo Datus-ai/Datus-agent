@@ -314,7 +314,7 @@ class ExtKnowledgeRAG:
         self.store = get_storage(ExtKnowledgeStore, "ext_knowledge", namespace=self.datasource_id)
         self._sub_agent_filter = _build_sub_agent_filter(agent_config, sub_agent_name, self.store, "ext_knowledge")
 
-    def _ds_conditions(self) -> List:
+    def _sub_agent_conditions(self) -> List:
         """Build sub-agent filter conditions (datasource_id handled by backend)."""
         conditions = []
         if self._sub_agent_filter:
@@ -336,7 +336,7 @@ class ExtKnowledgeRAG:
     def get_knowledge_size(self):
         from datus_storage_base.conditions import and_
 
-        conditions = self._ds_conditions()
+        conditions = self._sub_agent_conditions()
         if not conditions:
             return self.store._count_rows()
         where = conditions[0] if len(conditions) == 1 else and_(*conditions)
@@ -352,7 +352,7 @@ class ExtKnowledgeRAG:
             query_text=query_text,
             subject_path=subject_path,
             top_n=top_n,
-            extra_conditions=self._ds_conditions(),
+            extra_conditions=self._sub_agent_conditions(),
         )
 
     def get_knowledge_detail(self, subject_path: List[str], name: str) -> List[Dict[str, Any]]:
@@ -360,14 +360,14 @@ class ExtKnowledgeRAG:
         full_path.append(name)
         return self.store.search_all_knowledge(
             subject_path=full_path,
-            extra_conditions=self._ds_conditions(),
+            extra_conditions=self._sub_agent_conditions(),
         )
 
     def delete_knowledge(self, subject_path: List[str], name: str) -> bool:
         return self.store.delete_knowledge(
             subject_path,
             name,
-            extra_conditions=self._ds_conditions(),
+            extra_conditions=self._sub_agent_conditions(),
         )
 
     def get_knowledge_batch(self, paths: List[List[str]]) -> List[Dict[str, Any]]:
@@ -377,7 +377,7 @@ class ExtKnowledgeRAG:
                 continue
             entries = self.store.search_all_knowledge(
                 subject_path=path,
-                extra_conditions=self._ds_conditions(),
+                extra_conditions=self._sub_agent_conditions(),
             )
             results.extend(entries)
         return results

@@ -35,49 +35,29 @@ class SubjectUpdater:
             ExtKnowledgeStore, "ext_knowledge", namespace=self.datasource_id
         )
 
-    def _ds_conditions(self) -> List:
-        """Build filter conditions (datasource_id handled by backend)."""
-        return []
-
     def update_metrics_detail(self, subject_path: List[str], name: str, update_values: Dict[str, Any]):
         if not update_values:
             return
-        self.metrics_storage.update_entry(subject_path, name, update_values, extra_conditions=self._ds_conditions())
+        self.metrics_storage.update_entry(subject_path, name, update_values)
         logger.debug("Updated the metrics details in the main space successfully")
 
     def update_historical_sql(self, subject_path: List[str], name: str, update_values: Dict[str, Any]):
         if not update_values:
             return
-        self.reference_sql_storage.update_entry(
-            subject_path, name, update_values, extra_conditions=self._ds_conditions()
-        )
+        self.reference_sql_storage.update_entry(subject_path, name, update_values)
         logger.debug("Updated the reference SQL details in the main space successfully")
 
     def update_ext_knowledge(self, subject_path: List[str], name: str, update_values: Dict[str, Any]):
         if not update_values:
             return
-        self.ext_knowledge_storage.update_entry(
-            subject_path, name, update_values, extra_conditions=self._ds_conditions()
-        )
+        self.ext_knowledge_storage.update_entry(subject_path, name, update_values)
         logger.debug("Updated the ext_knowledge details in the main space successfully")
 
     def delete_metric(self, subject_path: List[str], name: str) -> Dict[str, Any]:
-        return self.metrics_storage.delete_metric(
-            subject_path,
-            name,
-            extra_conditions=self._ds_conditions(),
-        )
+        return self.metrics_storage.delete_metric(subject_path, name)
 
     def delete_reference_sql(self, subject_path: List[str], name: str) -> bool:
-        return self.reference_sql_storage.delete_reference_sql(
-            subject_path,
-            name,
-            extra_conditions=self._ds_conditions(),
-        )
+        return self.reference_sql_storage.delete_reference_sql(subject_path, name)
 
     def delete_ext_knowledge(self, subject_path: List[str], name: str) -> bool:
-        return self.ext_knowledge_storage.delete_knowledge(
-            subject_path,
-            name,
-            extra_conditions=self._ds_conditions(),
-        )
+        return self.ext_knowledge_storage.delete_knowledge(subject_path, name)

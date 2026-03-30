@@ -4,7 +4,7 @@
 
 """Unit tests for datus.storage.subject_manager."""
 
-from unittest.mock import ANY, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -41,7 +41,7 @@ class TestUpdateMetricsDetail:
         updater = _build_updater()
         updater.update_metrics_detail(["Finance", "Revenue"], "dau", {"description": "daily active users"})
         updater.metrics_storage.update_entry.assert_called_once_with(
-            ["Finance", "Revenue"], "dau", {"description": "daily active users"}, extra_conditions=ANY
+            ["Finance", "Revenue"], "dau", {"description": "daily active users"}
         )
 
 
@@ -66,7 +66,7 @@ class TestUpdateHistoricalSql:
         updater = _build_updater()
         updater.update_historical_sql(["Analytics"], "query_1", {"sql": "SELECT 1"})
         updater.reference_sql_storage.update_entry.assert_called_once_with(
-            ["Analytics"], "query_1", {"sql": "SELECT 1"}, extra_conditions=ANY
+            ["Analytics"], "query_1", {"sql": "SELECT 1"}
         )
 
 
@@ -91,7 +91,7 @@ class TestUpdateExtKnowledge:
         updater = _build_updater()
         updater.update_ext_knowledge(["Business", "Terms"], "glossary", {"content": "new content"})
         updater.ext_knowledge_storage.update_entry.assert_called_once_with(
-            ["Business", "Terms"], "glossary", {"content": "new content"}, extra_conditions=ANY
+            ["Business", "Terms"], "glossary", {"content": "new content"}
         )
 
 
@@ -109,7 +109,7 @@ class TestDeleteMetric:
         updater = _build_updater()
         updater.metrics_storage.delete_metric.return_value = {"success": True, "message": "deleted"}
         result = updater.delete_metric(["Finance"], "old_metric")
-        updater.metrics_storage.delete_metric.assert_called_once_with(["Finance"], "old_metric", extra_conditions=ANY)
+        updater.metrics_storage.delete_metric.assert_called_once_with(["Finance"], "old_metric")
         assert result == {"success": True, "message": "deleted"}
 
 
@@ -128,7 +128,7 @@ class TestDeleteReferenceSql:
         updater.reference_sql_storage.delete_reference_sql.return_value = True
         result = updater.delete_reference_sql(["Analytics", "Reports"], "old_query")
         updater.reference_sql_storage.delete_reference_sql.assert_called_once_with(
-            ["Analytics", "Reports"], "old_query", extra_conditions=ANY
+            ["Analytics", "Reports"], "old_query"
         )
         assert result is True
 
@@ -155,9 +155,7 @@ class TestDeleteExtKnowledge:
         updater = _build_updater()
         updater.ext_knowledge_storage.delete_knowledge.return_value = True
         result = updater.delete_ext_knowledge(["Business", "Terms"], "old_term")
-        updater.ext_knowledge_storage.delete_knowledge.assert_called_once_with(
-            ["Business", "Terms"], "old_term", extra_conditions=ANY
-        )
+        updater.ext_knowledge_storage.delete_knowledge.assert_called_once_with(["Business", "Terms"], "old_term")
         assert result is True
 
     @pytest.mark.ci

@@ -210,7 +210,7 @@ class ReferenceSqlRAG:
             agent_config, sub_agent_name, self.reference_sql_storage, "sqls"
         )
 
-    def _ds_conditions(self) -> List:
+    def _sub_agent_conditions(self) -> List:
         """Build sub-agent filter conditions (datasource_id handled by backend)."""
         conditions = []
         if self._sub_agent_filter:
@@ -239,7 +239,7 @@ class ReferenceSqlRAG:
         return self.reference_sql_storage.search_all_reference_sql(
             subject_path,
             select_fields=select_fields,
-            extra_conditions=self._ds_conditions(),
+            extra_conditions=self._sub_agent_conditions(),
         )
 
     def after_init(self):
@@ -249,7 +249,7 @@ class ReferenceSqlRAG:
     def get_reference_sql_size(self):
         from datus_storage_base.conditions import and_
 
-        conditions = self._ds_conditions()
+        conditions = self._sub_agent_conditions()
         if not conditions:
             return self.reference_sql_storage._count_rows()
         where = conditions[0] if len(conditions) == 1 else and_(*conditions)
@@ -267,7 +267,7 @@ class ReferenceSqlRAG:
             subject_path=subject_path,
             top_n=top_n,
             selected_fields=selected_fields,
-            extra_conditions=self._ds_conditions(),
+            extra_conditions=self._sub_agent_conditions(),
         )
 
     def get_reference_sql_detail(
@@ -280,12 +280,12 @@ class ReferenceSqlRAG:
         return self.reference_sql_storage.search_all_reference_sql(
             full_path,
             select_fields=selected_fields,
-            extra_conditions=self._ds_conditions(),
+            extra_conditions=self._sub_agent_conditions(),
         )
 
     def delete_reference_sql(self, subject_path: List[str], name: str) -> bool:
         return self.reference_sql_storage.delete_reference_sql(
             subject_path,
             name,
-            extra_conditions=self._ds_conditions(),
+            extra_conditions=self._sub_agent_conditions(),
         )
