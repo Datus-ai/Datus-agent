@@ -33,7 +33,7 @@ from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
 from datus.utils.resource_utils import read_data_file_text
-from datus.utils.traceable_utils import optional_traceable, setup_tracing
+from datus.utils.traceable_utils import setup_tracing
 
 logger = get_logger(__name__)
 
@@ -269,7 +269,6 @@ class OpenAICompatibleModel(LLMBaseModel):
                 logger.error(f"Unexpected error in {operation_name}: {str(e)}")
                 raise
 
-    @optional_traceable(name="openai_compatible_generate", run_type="chain")
     def generate(self, prompt: Any, enable_thinking: bool | None = None, **kwargs) -> str:
         """
         Generate a response from the model with error handling and retry logic.

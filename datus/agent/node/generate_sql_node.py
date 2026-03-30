@@ -16,7 +16,6 @@ from datus.schemas.node_models import GenerateSQLInput, GenerateSQLResult, SQLCo
 from datus.storage.schema_metadata import SchemaWithValueRAG
 from datus.utils.loggings import get_logger
 from datus.utils.time_utils import get_default_current_date
-from datus.utils.traceable_utils import optional_traceable
 
 logger = get_logger(__name__)
 
@@ -234,7 +233,6 @@ class GenerateSQLNode(Node):
             raise
 
 
-@optional_traceable()
 def generate_sql(model: LLMBaseModel, input_data: GenerateSQLInput) -> GenerateSQLResult:
     """Generate SQL query using the provided model."""
     if not isinstance(input_data, GenerateSQLInput):

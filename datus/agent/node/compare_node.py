@@ -13,13 +13,11 @@ from datus.schemas.compare_node_models import CompareInput, CompareResult
 from datus.schemas.node_models import SQLContext
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
-from datus.utils.traceable_utils import optional_traceable
 
 logger = get_logger(__name__)
 
 
 class CompareNode(Node):
-    @optional_traceable()
     def execute(self):
         self.result = self._execute_compare()
 

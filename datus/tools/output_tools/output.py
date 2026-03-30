@@ -15,7 +15,6 @@ from datus.prompts.output_checking import gen_prompt
 from datus.schemas.node_models import OutputInput, OutputResult
 from datus.tools.base import BaseTool
 from datus.utils.loggings import get_logger
-from datus.utils.traceable_utils import optional_traceable
 
 logger = get_logger(__name__)
 
@@ -93,7 +92,6 @@ class OutputTool(BaseTool):
                 sql_result=input_data.sql_result,
             )
 
-    @optional_traceable()
     def check_sql(
         self,
         input_data: OutputInput,

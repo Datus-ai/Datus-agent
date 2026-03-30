@@ -24,7 +24,6 @@ from datus.tools.db_tools import connector_registry
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 from datus.utils.path_manager import get_path_manager
-from datus.utils.traceable_utils import optional_traceable
 
 logger = get_logger(__name__)
 
@@ -52,7 +51,6 @@ class GenerationHooks(AgentHooks):
     async def on_start(self, context, agent) -> None:
         pass
 
-    @optional_traceable(name="on_tool_end", run_type="chain")
     async def on_tool_end(self, context, agent, tool, result) -> None:
         """Handle generation tool completion."""
         tool_name = getattr(tool, "name", getattr(tool, "__name__", str(tool)))
