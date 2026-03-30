@@ -333,6 +333,17 @@ agent:
       password: admin
       extra: # Special configurations for different platforms
         provider: db
+  # Scheduler configuration for submitting and managing SQL/SparkSQL jobs
+  # Requires datus-scheduler-core and a platform adapter (e.g. datus-scheduler-airflow)
+  scheduler:
+    name: airflow_local
+    type: airflow
+    api_base_url: http://localhost:8080/api/v1
+    username: admin
+    password: admin123
+    dags_folder: /path/to/airflow/dags
+    dag_discovery_timeout: 60
+    dag_discovery_poll_interval: 5
   # Platform documentation (namespace-independent, stored at {home}/data/document/{platform}/)
   # Each key under 'document' is either a reserved global setting (e.g. tavily_api_key)
   #
