@@ -9,10 +9,26 @@ with zero network access and zero pre-built data.
 """
 
 import json
+import sys
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+# Mock datus_scheduler_core if not installed (CI has no external scheduler deps)
+if "datus_scheduler_core" not in sys.modules:
+
+    class _MockPayload:
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+
+    _mock_core = MagicMock()
+    _mock_core.models.SchedulerJobPayload = _MockPayload
+    sys.modules["datus_scheduler_core"] = _mock_core
+    sys.modules["datus_scheduler_core.models"] = _mock_core.models
+    sys.modules["datus_scheduler_core.registry"] = _mock_core.registry
+    sys.modules["datus_scheduler_core.config"] = _mock_core.config
 
 from datus.tools.func_tool.scheduler_tools import (
     SchedulerTools,
