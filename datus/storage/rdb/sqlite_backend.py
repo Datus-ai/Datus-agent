@@ -280,9 +280,9 @@ class SqliteRdbDatabase(RdbDatabase):
     # ========== Logical isolation helpers ==========
 
     def _inject_datasource_record(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Inject datasource_id into record dict for LOGICAL mode."""
+        """Force-set datasource_id into record dict for LOGICAL mode."""
         if self._isolation == "logical" and self._datasource_id:
-            data.setdefault("datasource_id", self._datasource_id)
+            data["datasource_id"] = self._datasource_id
         return data
 
     def _inject_datasource_where(self, where: Optional[WhereClause]) -> Optional[WhereClause]:
