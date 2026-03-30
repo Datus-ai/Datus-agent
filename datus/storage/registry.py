@@ -13,6 +13,7 @@ level via ``IsolationType.LOGICAL`` (datasource_id column) or ``PHYSICAL``
 
 from __future__ import annotations
 
+import threading
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+_registry_lock = threading.Lock()
 
 # Factory registry: maps factory name → factory callable for lru_cache lookup
 _factory_registry: Dict[str, Callable[..., BaseEmbeddingStore]] = {}
@@ -72,7 +74,8 @@ def _get_storage_cached(
     - PHYSICAL mode: ``cache_key == namespace`` → per-namespace instance
     - LOGICAL mode: ``cache_key == "__logical__"`` → global singleton
     """
-    factory = _factory_registry[factory_name]
+    with _registry_lock:
+        factory = _factory_registry[factory_name]
     kwargs = dict(_storage_defaults)
     if namespace:
         from datus.storage.backend_holder import create_vector_connection
@@ -98,7 +101,8 @@ def get_storage(
     """
     from datus.storage.backend_holder import get_isolation_type
 
-    _factory_registry[factory.__name__] = factory
+    with _registry_lock:
+        _factory_registry[factory.__name__] = factory
     if get_isolation_type() == "logical":
         cache_key = "__logical__"
     else:
@@ -202,7 +206,8 @@ def clear_storage_registry() -> None:
     Does NOT clear ``_storage_defaults``.
     """
     _get_storage_cached.cache_clear()
-    _factory_registry.clear()
+    with _registry_lock:
+        _factory_registry.clear()
     _get_subject_tree_cached.cache_clear()
 
     from datus.storage.backend_holder import reset_backends
