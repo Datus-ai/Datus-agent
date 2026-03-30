@@ -41,14 +41,17 @@ from datus.tools.func_tool.scheduler_tools import (
 
 def _make_agent_config(scheduler_config=None, namespaces=None):
     cfg = MagicMock()
-    cfg.scheduler_config = scheduler_config or {
-        "name": "airflow_local",
-        "type": "airflow",
-        "api_base_url": "http://localhost:8080/api/v1",
-        "username": "admin",
-        "password": "admin123",
-        "dags_folder": "/tmp/dags",
-    }
+    if scheduler_config is None:
+        cfg.scheduler_config = {
+            "name": "airflow_local",
+            "type": "airflow",
+            "api_base_url": "http://localhost:8080/api/v1",
+            "username": "admin",
+            "password": "admin123",
+            "dags_folder": "/tmp/dags",
+        }
+    else:
+        cfg.scheduler_config = scheduler_config
     cfg.namespaces = namespaces
     return cfg
 
@@ -83,6 +86,297 @@ def _make_job_run(run_id="manual__2025-01-01"):
     run.job_id = "spark_pi_test"
     run.status.value = "running"
     return run
+
+
+# ── SchedulerTools._get_adapter ─────────────────────────────────────────────
+
+
+class TestGetAdapter:
+    def test_no_scheduler_config_raises(self):
+        tools = SchedulerTools(_make_agent_config(scheduler_config={}))
+        with pytest.raises(ValueError, match="No scheduler configured"):
+            tools._get_adapter()
+
+    def test_success_with_mocked_registry(self):
+        mock_adapter = MagicMock()
+        tools = SchedulerTools(_make_agent_config())
+        with patch(
+            "datus.tools.func_tool.scheduler_tools.SchedulerAdapterRegistry",
+            create=True,
+        ):
+            # The import happens inside _get_adapter; patch sys.modules so it resolves
+            mock_registry = MagicMock()
+            mock_registry.create_adapter.return_value = mock_adapter
+            with patch.dict(
+                "sys.modules",
+                {"datus_scheduler_core.registry": MagicMock(SchedulerAdapterRegistry=mock_registry)},
+            ):
+                adapter = tools._get_adapter()
+        assert adapter is mock_adapter
+
+
+# ── SchedulerTools.available_tools ─────────────────────────────────────────
+
+
+class TestAvailableTools:
+    def test_returns_tool_list(self):
+        tools = SchedulerTools(_make_agent_config())
+        result = tools.available_tools()
+        assert isinstance(result, list)
+        assert len(result) == 11
+
+
+# ── adapter.close() error handling ─────────────────────────────────────────
+
+
+class TestAdapterCloseError:
+    def test_trigger_close_exception_still_returns(self):
+        """adapter.close() failure should not affect the result."""
+        mock_run = _make_job_run()
+        mock_adapter = MagicMock()
+        mock_adapter.trigger_job.return_value = mock_run
+        mock_adapter.close.side_effect = Exception("close failed")
+
+        tools = SchedulerTools(_make_agent_config())
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.trigger_scheduler_job("dag_1")
+
+        assert result.success == 1
+
+    def test_get_job_close_exception_still_returns(self):
+        mock_adapter = MagicMock()
+        mock_adapter.get_job.return_value = _make_scheduled_job()
+        mock_adapter.close.side_effect = Exception("close failed")
+
+        tools = SchedulerTools(_make_agent_config())
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.get_scheduler_job("dag_1")
+
+        assert result.success == 1
+
+    def test_list_jobs_close_exception_still_returns(self):
+        mock_adapter = MagicMock()
+        mock_adapter.list_jobs.return_value = []
+        mock_adapter.close.side_effect = Exception("close failed")
+
+        tools = SchedulerTools(_make_agent_config())
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.list_scheduler_jobs()
+
+        assert result.success == 1
+
+    def test_submit_sql_close_exception_still_returns(self, tmp_path):
+        sql_file = tmp_path / "q.sql"
+        sql_file.write_text("SELECT 1")
+
+        mock_job = _make_scheduled_job("j1")
+        mock_adapter = MagicMock()
+        mock_adapter.submit_job.return_value = mock_job
+        mock_adapter.close.side_effect = Exception("close failed")
+
+        tools = SchedulerTools(_make_agent_config())
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.submit_sql_job(
+                job_name="j1", sql_file_path=str(sql_file), connection_url="mysql://u:p@h:3306/db"
+            )
+
+        assert result.success == 1
+
+    def test_submit_sparksql_close_exception_still_returns(self, tmp_path):
+        sql_file = tmp_path / "q.sql"
+        sql_file.write_text("SELECT 1")
+
+        mock_job = _make_scheduled_job("j1")
+        mock_adapter = MagicMock()
+        mock_adapter.submit_job.return_value = mock_job
+        mock_adapter.close.side_effect = Exception("close failed")
+
+        tools = SchedulerTools(_make_agent_config())
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.submit_sparksql_job(job_name="j1", sql_file_path=str(sql_file))
+
+        assert result.success == 1
+
+    def test_pause_close_exception_still_returns(self):
+        mock_adapter = MagicMock()
+        mock_adapter.close.side_effect = Exception("close failed")
+
+        tools = SchedulerTools(_make_agent_config())
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.pause_job("dag_1")
+
+        assert result.success == 1
+
+    def test_resume_close_exception_still_returns(self):
+        mock_adapter = MagicMock()
+        mock_adapter.close.side_effect = Exception("close failed")
+
+        tools = SchedulerTools(_make_agent_config())
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.resume_job("dag_1")
+
+        assert result.success == 1
+
+    def test_delete_close_exception_still_returns(self):
+        mock_adapter = MagicMock()
+        mock_adapter.close.side_effect = Exception("close failed")
+
+        tools = SchedulerTools(_make_agent_config())
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.delete_job("dag_1")
+
+        assert result.success == 1
+
+    def test_update_close_exception_still_returns(self, tmp_path):
+        sql_file = tmp_path / "q.sql"
+        sql_file.write_text("SELECT 1")
+
+        mock_job = _make_scheduled_job("j1")
+        mock_adapter = MagicMock()
+        mock_adapter.update_job.return_value = mock_job
+        mock_adapter.close.side_effect = Exception("close failed")
+
+        tools = SchedulerTools(_make_agent_config())
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.update_job(
+                job_id="j1", sql_file_path=str(sql_file), job_name="J1", connection_url="mysql://u:p@h:3306/db"
+            )
+
+        assert result.success == 1
+
+    def test_list_runs_close_exception_still_returns(self):
+        mock_adapter = MagicMock()
+        mock_adapter.list_job_runs.return_value = []
+        mock_adapter.close.side_effect = Exception("close failed")
+
+        tools = SchedulerTools(_make_agent_config())
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.list_job_runs("dag_1")
+
+        assert result.success == 1
+
+    def test_get_run_log_close_exception_still_returns(self):
+        mock_adapter = MagicMock()
+        mock_adapter.get_run_log.return_value = "log text"
+        mock_adapter.close.side_effect = Exception("close failed")
+
+        tools = SchedulerTools(_make_agent_config())
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.get_run_log("dag_1", "run_1")
+
+        assert result.success == 1
+
+
+# ── submit/update error with URL redaction ─────────────────────────────────
+
+
+class TestErrorUrlRedaction:
+    def test_submit_sql_redacts_url_in_error(self, tmp_path):
+        sql_file = tmp_path / "q.sql"
+        sql_file.write_text("SELECT 1")
+        url = "mysql+pymysql://admin:secret@host:3306/db"
+
+        mock_adapter = MagicMock()
+        mock_adapter.submit_job.side_effect = Exception(f"Connection failed: {url}")
+        mock_adapter.close.return_value = None
+
+        tools = SchedulerTools(_make_agent_config())
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.submit_sql_job(job_name="j1", sql_file_path=str(sql_file), connection_url=url)
+
+        assert result.success == 0
+        assert "secret" not in (result.error or "")
+        assert "***" in (result.error or "")
+
+    def test_update_sql_redacts_url_in_error(self, tmp_path):
+        sql_file = tmp_path / "q.sql"
+        sql_file.write_text("SELECT 1")
+        url = "mysql+pymysql://admin:secret@host:3306/db"
+
+        mock_adapter = MagicMock()
+        mock_adapter.update_job.side_effect = Exception(f"Connection failed: {url}")
+        mock_adapter.close.return_value = None
+
+        tools = SchedulerTools(_make_agent_config())
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.update_job(job_id="j1", sql_file_path=str(sql_file), job_name="J1", connection_url=url)
+
+        assert result.success == 0
+        assert "secret" not in (result.error or "")
+        assert "***" in (result.error or "")
+
+
+# ── _get_adapter error paths in tool methods ───────────────────────────────
+
+
+class TestAdapterCreationErrors:
+    def test_submit_sql_no_scheduler_config(self, tmp_path):
+        sql_file = tmp_path / "q.sql"
+        sql_file.write_text("SELECT 1")
+        tools = SchedulerTools(_make_agent_config(scheduler_config={}))
+        result = tools.submit_sql_job(
+            job_name="j1", sql_file_path=str(sql_file), connection_url="mysql://u:p@h:3306/db"
+        )
+        assert result.success == 0
+        assert "scheduler" in (result.error or "").lower()
+
+    def test_submit_sparksql_no_scheduler_config(self, tmp_path):
+        sql_file = tmp_path / "q.sql"
+        sql_file.write_text("SELECT 1")
+        tools = SchedulerTools(_make_agent_config(scheduler_config={}))
+        result = tools.submit_sparksql_job(job_name="j1", sql_file_path=str(sql_file))
+        assert result.success == 0
+        assert "scheduler" in (result.error or "").lower()
+
+    def test_update_no_scheduler_config(self, tmp_path):
+        sql_file = tmp_path / "q.sql"
+        sql_file.write_text("SELECT 1")
+        tools = SchedulerTools(_make_agent_config(scheduler_config={}))
+        result = tools.update_job(
+            job_id="j1", sql_file_path=str(sql_file), job_name="J1", connection_url="mysql://u:p@h:3306/db"
+        )
+        assert result.success == 0
+        assert "scheduler" in (result.error or "").lower()
+
+    def test_trigger_no_scheduler_config(self):
+        tools = SchedulerTools(_make_agent_config(scheduler_config={}))
+        result = tools.trigger_scheduler_job("dag_1")
+        assert result.success == 0
+
+    def test_get_job_no_scheduler_config(self):
+        tools = SchedulerTools(_make_agent_config(scheduler_config={}))
+        result = tools.get_scheduler_job("dag_1")
+        assert result.success == 0
+
+    def test_list_jobs_no_scheduler_config(self):
+        tools = SchedulerTools(_make_agent_config(scheduler_config={}))
+        result = tools.list_scheduler_jobs()
+        assert result.success == 0
+
+    def test_pause_no_scheduler_config(self):
+        tools = SchedulerTools(_make_agent_config(scheduler_config={}))
+        result = tools.pause_job("dag_1")
+        assert result.success == 0
+
+    def test_resume_no_scheduler_config(self):
+        tools = SchedulerTools(_make_agent_config(scheduler_config={}))
+        result = tools.resume_job("dag_1")
+        assert result.success == 0
+
+    def test_delete_no_scheduler_config(self):
+        tools = SchedulerTools(_make_agent_config(scheduler_config={}))
+        result = tools.delete_job("dag_1")
+        assert result.success == 0
+
+    def test_list_runs_no_scheduler_config(self):
+        tools = SchedulerTools(_make_agent_config(scheduler_config={}))
+        result = tools.list_job_runs("dag_1")
+        assert result.success == 0
+
+    def test_get_run_log_no_scheduler_config(self):
+        tools = SchedulerTools(_make_agent_config(scheduler_config={}))
+        result = tools.get_run_log("dag_1", "run_1")
+        assert result.success == 0
 
 
 # ── DAG template tests ─────────────────────────────────────────────────────
