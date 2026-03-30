@@ -6,7 +6,6 @@
 
 from pathlib import Path
 from typing import List, Optional
-from urllib.parse import quote_plus
 
 from agents import Tool
 
@@ -17,38 +16,6 @@ from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
-
-# Map Datus DB types to SQLAlchemy dialects
-_DIALECT_MAP = {
-    "starrocks": "mysql+pymysql",
-    "mysql": "mysql+pymysql",
-    "postgresql": "postgresql+psycopg2",
-    "postgres": "postgresql+psycopg2",
-}
-
-
-def _build_connection_url(db_config) -> str:
-    """Build a SQLAlchemy connection URL from a DbConfig."""
-    if not db_config.host or not db_config.port or not db_config.database:
-        raise ValueError(
-            f"Incomplete DB config: host={db_config.host!r}, port={db_config.port!r}, database={db_config.database!r}"
-        )
-    dialect = _DIALECT_MAP.get(db_config.type, db_config.type)
-    username = quote_plus(str(db_config.username)) if db_config.username else ""
-    password = quote_plus(str(db_config.password)) if db_config.password else ""
-    return f"{dialect}://{username}:{password}@{db_config.host}:{db_config.port}/{db_config.database}"
-
-
-def _redact_url(url: str) -> str:
-    """Replace password portion of a SQLAlchemy URL with '***'."""
-    try:
-        # Pattern: dialect://user:password@host:port/db
-        at_idx = url.index("@")
-        scheme_end = url.index("://") + 3
-        colon_idx = url.index(":", scheme_end)
-        return url[: colon_idx + 1] + "***" + url[at_idx:]
-    except ValueError:
-        return "<redacted URL>"
 
 
 class SchedulerTools(BaseTool):
@@ -95,22 +62,20 @@ class SchedulerTools(BaseTool):
         self,
         job_name: str,
         sql_file_path: str,
-        namespace: Optional[str] = None,
-        connection_url: Optional[str] = None,
+        conn_id: str,
         schedule: Optional[str] = None,
         description: Optional[str] = None,
     ) -> FuncToolResult:
-        """Submit a SQL file as a scheduled job, executed via SQLAlchemy against the target database.
+        """Submit a SQL file as a scheduled job.
 
-        The SQL is executed by the scheduler worker using SQLAlchemy.  You must provide
-        either ``namespace`` (to auto-derive the connection URL from agent.yml) or
-        an explicit ``connection_url``.
+        The scheduler worker executes the SQL using the database connection
+        referenced by ``conn_id``.  The connection is managed by the scheduler
+        platform (e.g. Airflow Connections) and resolved at runtime.
 
         Args:
             job_name:        Human-readable job name; used to derive the DAG/job ID.
             sql_file_path:   Local path to the .sql file.
-            namespace:       Namespace name from agent.yml to derive the DB connection.
-            connection_url:  Explicit SQLAlchemy connection URL (overrides namespace).
+            conn_id:         Scheduler connection ID (e.g. Airflow Connection ID).
             schedule:        Cron expression, e.g. '0 8 * * *'.  None = manual trigger only.
             description:     Optional human-readable description for the DAG.
 
@@ -133,31 +98,6 @@ class SchedulerTools(BaseTool):
         except Exception as exc:
             return FuncToolResult(success=0, error=f"Failed to read SQL file '{sql_file_path}': {exc}")
 
-        # Resolve connection URL
-        url = connection_url
-        if not url:
-            if not namespace:
-                return FuncToolResult(
-                    success=0,
-                    error="Either 'namespace' or 'connection_url' must be provided for submit_sql_job.",
-                )
-            namespaces = getattr(self.agent_config, "namespaces", None) or {}
-            db_configs = namespaces.get(namespace)
-            if not db_configs:
-                available = list(namespaces.keys())
-                return FuncToolResult(
-                    success=0,
-                    error=f"Namespace '{namespace}' not found. Available: {available}",
-                )
-            # Use the first db config in the namespace
-            db_config = list(db_configs.values())[0]
-            try:
-                url = _build_connection_url(db_config)
-            except Exception as exc:
-                return FuncToolResult(
-                    success=0, error=f"Failed to build connection URL from namespace '{namespace}': {exc}"
-                )
-
         # Submit
         try:
             adapter = self._get_adapter()
@@ -168,7 +108,7 @@ class SchedulerTools(BaseTool):
             payload = SchedulerJobPayload(
                 job_name=job_name,
                 sql=sql_content,
-                db_connection={"url": url},
+                db_connection={"conn_id": conn_id},
                 schedule=schedule,
                 description=description,
             )
@@ -184,11 +124,8 @@ class SchedulerTools(BaseTool):
                 },
             )
         except Exception as exc:
-            error_msg = str(exc)
-            if url and url in error_msg:
-                error_msg = error_msg.replace(url, _redact_url(url))
-            logger.error("submit_sql_job failed: %s", error_msg)
-            return FuncToolResult(success=0, error=error_msg)
+            logger.error("submit_sql_job failed: %s", exc)
+            return FuncToolResult(success=0, error=str(exc))
         finally:
             try:
                 adapter.close()
@@ -483,8 +420,7 @@ class SchedulerTools(BaseTool):
         sql_file_path: str,
         job_name: str,
         job_type: str = "sql",
-        namespace: Optional[str] = None,
-        connection_url: Optional[str] = None,
+        conn_id: Optional[str] = None,
         spark_master: Optional[str] = None,
         schedule: Optional[str] = None,
         description: Optional[str] = None,
@@ -494,13 +430,15 @@ class SchedulerTools(BaseTool):
         Re-renders the job definition with updated content.  The scheduler reloads
         it automatically.  Supports both SQL and SparkSQL job types.
 
+        For SQL jobs, ``conn_id`` is required — it references the scheduler-managed
+        connection (e.g. Airflow Connection ID) resolved at runtime.
+
         Args:
             job_id:         The existing job/DAG identifier to update.
             sql_file_path:  Local path to the new .sql file.
             job_name:       Human-readable job name (used for rendering the job definition).
             job_type:       'sql' (default) or 'sparksql'.
-            namespace:      Namespace name from agent.yml to derive the DB connection (sql only).
-            connection_url: Explicit SQLAlchemy connection URL, overrides namespace (sql only).
+            conn_id:        Scheduler connection ID (e.g. Airflow Connection ID). Required for sql jobs.
             spark_master:   Spark master URL, default 'local[*]' (sparksql only).
             schedule:       Cron expression, e.g. '0 8 * * *'.  None = manual trigger only.
             description:    Optional human-readable description.
@@ -527,31 +465,13 @@ class SchedulerTools(BaseTool):
         except Exception as exc:
             return FuncToolResult(success=0, error=f"Failed to read SQL file '{sql_file_path}': {exc}")
 
-        # Build payload based on job_type
-        url = None
-        if job_type == "sql":
-            url = connection_url
-            if not url:
-                if not namespace:
-                    return FuncToolResult(
-                        success=0,
-                        error="Either 'namespace' or 'connection_url' must be provided for sql job_type.",
-                    )
-                namespaces = getattr(self.agent_config, "namespaces", None) or {}
-                db_configs = namespaces.get(namespace)
-                if not db_configs:
-                    available = list(namespaces.keys())
-                    return FuncToolResult(
-                        success=0,
-                        error=f"Namespace '{namespace}' not found. Available: {available}",
-                    )
-                db_config = list(db_configs.values())[0]
-                try:
-                    url = _build_connection_url(db_config)
-                except Exception as exc:
-                    return FuncToolResult(
-                        success=0, error=f"Failed to build connection URL from namespace '{namespace}': {exc}"
-                    )
+        # Validate conn_id for sql jobs
+        if job_type == "sql" and not conn_id:
+            return FuncToolResult(
+                success=0,
+                error="'conn_id' is required for sql job_type. "
+                "Set it to the Airflow Connection ID for the target database.",
+            )
 
         try:
             adapter = self._get_adapter()
@@ -574,7 +494,7 @@ class SchedulerTools(BaseTool):
                 payload = SchedulerJobPayload(
                     job_name=job_name,
                     sql=sql_content,
-                    db_connection={"url": url},
+                    db_connection={"conn_id": conn_id},
                     schedule=schedule,
                     description=description,
                 )
@@ -590,11 +510,8 @@ class SchedulerTools(BaseTool):
                 },
             )
         except Exception as exc:
-            error_msg = str(exc)
-            if url and url in error_msg:
-                error_msg = error_msg.replace(url, _redact_url(url))
-            logger.error("update_job failed: %s", error_msg)
-            return FuncToolResult(success=0, error=error_msg)
+            logger.error("update_job failed: %s", exc)
+            return FuncToolResult(success=0, error=str(exc))
         finally:
             try:
                 adapter.close()
@@ -687,7 +604,47 @@ class SchedulerTools(BaseTool):
             except Exception as close_exc:
                 logger.debug("adapter.close() failed: %s", close_exc)
 
+    def list_scheduler_connections(self) -> FuncToolResult:
+        """List available scheduler connection IDs (conn_id) and their descriptions.
+
+        Returns the connections configured in the ``scheduler.connections`` section
+        of agent.yml.  Use the returned conn_id values when calling submit_sql_job
+        or update_job.
+
+        Returns:
+            FuncToolResult with result containing a list of {conn_id, description}.
+        """
+        scheduler_config = getattr(self.agent_config, "scheduler_config", {}) or {}
+        connections = scheduler_config.get("connections", {})
+        if not connections:
+            return FuncToolResult(
+                success=1,
+                result={
+                    "total": 0,
+                    "connections": [],
+                    "hint": "No connections configured in agent.yml. "
+                    "Check Airflow (Admin > Connections) for available connections.",
+                },
+            )
+        conn_list = [{"conn_id": k, "description": v} for k, v in connections.items()]
+        return FuncToolResult(
+            success=1,
+            result={
+                "total": len(conn_list),
+                "connections": conn_list,
+            },
+        )
+
     # ── Tool registration ──────────────────────────────────────────────────
+
+    def _connections_description(self) -> str:
+        """Build a suffix describing available conn_ids from scheduler config."""
+        scheduler_config = getattr(self.agent_config, "scheduler_config", {}) or {}
+        connections = scheduler_config.get("connections", {})
+        if not connections:
+            return ""
+        items = ", ".join(f"'{k}' ({v})" for k, v in connections.items())
+        return f"\n\nAvailable conn_id values: {items}"
 
     def available_tools(self) -> List[Tool]:
         """Return all scheduler tool functions as FunctionTool objects."""
@@ -701,7 +658,18 @@ class SchedulerTools(BaseTool):
             self.update_job,
             self.get_scheduler_job,
             self.list_scheduler_jobs,
+            self.list_scheduler_connections,
             self.list_job_runs,
             self.get_run_log,
         ]
-        return [trans_to_function_tool(m) for m in methods]
+        tools = [trans_to_function_tool(m) for m in methods]
+
+        # Inject available conn_ids into tool descriptions so the LLM knows
+        # which connections are available without an extra tool call.
+        conn_suffix = self._connections_description()
+        if conn_suffix:
+            for tool in tools:
+                if tool.name in ("submit_sql_job", "update_job"):
+                    tool.description += conn_suffix
+
+        return tools

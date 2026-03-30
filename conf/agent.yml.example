@@ -344,6 +344,12 @@ agent:
     dags_folder: /path/to/airflow/dags
     dag_discovery_timeout: 60
     dag_discovery_poll_interval: 5
+    # Available Airflow Connection IDs for scheduled jobs.
+    # Create these connections in Airflow (Admin > Connections) first,
+    # then list them here so the agent knows which conn_id to use.
+    connections:
+      starrocks_default: "StarRocks production database"
+      # pg_analytics: "PostgreSQL analytics warehouse"
   # Platform documentation (namespace-independent, stored at {home}/data/document/{platform}/)
   # Each key under 'document' is either a reserved global setting (e.g. tavily_api_key)
   #

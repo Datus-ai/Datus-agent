@@ -30,16 +30,12 @@ if "datus_scheduler_core" not in sys.modules:
     sys.modules["datus_scheduler_core.registry"] = _mock_core.registry
     sys.modules["datus_scheduler_core.config"] = _mock_core.config
 
-from datus.tools.func_tool.scheduler_tools import (
-    SchedulerTools,
-    _build_connection_url,
-    _redact_url,
-)
+from datus.tools.func_tool.scheduler_tools import SchedulerTools
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 
-def _make_agent_config(scheduler_config=None, namespaces=None):
+def _make_agent_config(scheduler_config=None):
     cfg = MagicMock()
     if scheduler_config is None:
         cfg.scheduler_config = {
@@ -52,21 +48,7 @@ def _make_agent_config(scheduler_config=None, namespaces=None):
         }
     else:
         cfg.scheduler_config = scheduler_config
-    cfg.namespaces = namespaces
     return cfg
-
-
-def _make_db_config(
-    db_type="starrocks", host="127.0.0.1", port="9030", username="admin", password="pass@123", database="mydb"
-):
-    db_cfg = MagicMock()
-    db_cfg.type = db_type
-    db_cfg.host = host
-    db_cfg.port = port
-    db_cfg.username = username
-    db_cfg.password = password
-    db_cfg.database = database
-    return db_cfg
 
 
 def _make_scheduled_job(job_id="spark_pi_test"):
@@ -181,9 +163,7 @@ class TestAdapterCloseError:
 
         tools = SchedulerTools(_make_agent_config())
         with patch.object(tools, "_get_adapter", return_value=mock_adapter):
-            result = tools.submit_sql_job(
-                job_name="j1", sql_file_path=str(sql_file), connection_url="mysql://u:p@h:3306/db"
-            )
+            result = tools.submit_sql_job(job_name="j1", sql_file_path=str(sql_file), conn_id="my_conn")
 
         assert result.success == 1
 
@@ -243,9 +223,7 @@ class TestAdapterCloseError:
 
         tools = SchedulerTools(_make_agent_config())
         with patch.object(tools, "_get_adapter", return_value=mock_adapter):
-            result = tools.update_job(
-                job_id="j1", sql_file_path=str(sql_file), job_name="J1", connection_url="mysql://u:p@h:3306/db"
-            )
+            result = tools.update_job(job_id="j1", sql_file_path=str(sql_file), job_name="J1", conn_id="my_conn")
 
         assert result.success == 1
 
@@ -272,45 +250,6 @@ class TestAdapterCloseError:
         assert result.success == 1
 
 
-# ── submit/update error with URL redaction ─────────────────────────────────
-
-
-class TestErrorUrlRedaction:
-    def test_submit_sql_redacts_url_in_error(self, tmp_path):
-        sql_file = tmp_path / "q.sql"
-        sql_file.write_text("SELECT 1")
-        url = "mysql+pymysql://admin:secret@host:3306/db"
-
-        mock_adapter = MagicMock()
-        mock_adapter.submit_job.side_effect = Exception(f"Connection failed: {url}")
-        mock_adapter.close.return_value = None
-
-        tools = SchedulerTools(_make_agent_config())
-        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
-            result = tools.submit_sql_job(job_name="j1", sql_file_path=str(sql_file), connection_url=url)
-
-        assert result.success == 0
-        assert "secret" not in (result.error or "")
-        assert "***" in (result.error or "")
-
-    def test_update_sql_redacts_url_in_error(self, tmp_path):
-        sql_file = tmp_path / "q.sql"
-        sql_file.write_text("SELECT 1")
-        url = "mysql+pymysql://admin:secret@host:3306/db"
-
-        mock_adapter = MagicMock()
-        mock_adapter.update_job.side_effect = Exception(f"Connection failed: {url}")
-        mock_adapter.close.return_value = None
-
-        tools = SchedulerTools(_make_agent_config())
-        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
-            result = tools.update_job(job_id="j1", sql_file_path=str(sql_file), job_name="J1", connection_url=url)
-
-        assert result.success == 0
-        assert "secret" not in (result.error or "")
-        assert "***" in (result.error or "")
-
-
 # ── _get_adapter error paths in tool methods ───────────────────────────────
 
 
@@ -319,9 +258,7 @@ class TestAdapterCreationErrors:
         sql_file = tmp_path / "q.sql"
         sql_file.write_text("SELECT 1")
         tools = SchedulerTools(_make_agent_config(scheduler_config={}))
-        result = tools.submit_sql_job(
-            job_name="j1", sql_file_path=str(sql_file), connection_url="mysql://u:p@h:3306/db"
-        )
+        result = tools.submit_sql_job(job_name="j1", sql_file_path=str(sql_file), conn_id="my_conn")
         assert result.success == 0
         assert "scheduler" in (result.error or "").lower()
 
@@ -337,9 +274,7 @@ class TestAdapterCreationErrors:
         sql_file = tmp_path / "q.sql"
         sql_file.write_text("SELECT 1")
         tools = SchedulerTools(_make_agent_config(scheduler_config={}))
-        result = tools.update_job(
-            job_id="j1", sql_file_path=str(sql_file), job_name="J1", connection_url="mysql://u:p@h:3306/db"
-        )
+        result = tools.update_job(job_id="j1", sql_file_path=str(sql_file), job_name="J1", conn_id="my_conn")
         assert result.success == 0
         assert "scheduler" in (result.error or "").lower()
 
@@ -593,78 +528,11 @@ class TestAdapterSparkBranch:
         assert "_run_spark_script" in written_source["source"]
 
 
-# ── _build_connection_url ────────────────────────────────────────────────
-
-
-class TestBuildConnectionUrl:
-    def test_starrocks_url(self):
-        db_cfg = _make_db_config(db_type="starrocks")
-        url = _build_connection_url(db_cfg)
-        assert url.startswith("mysql+pymysql://")
-        assert "127.0.0.1:9030/mydb" in url
-
-    def test_postgresql_url(self):
-        db_cfg = _make_db_config(db_type="postgresql", port="5432")
-        url = _build_connection_url(db_cfg)
-        assert url.startswith("postgresql+psycopg2://")
-
-    def test_unknown_dialect_fallback(self):
-        db_cfg = _make_db_config(db_type="oracle")
-        url = _build_connection_url(db_cfg)
-        assert url.startswith("oracle://")
-
-    def test_password_url_encoded(self):
-        db_cfg = _make_db_config(password="p@ss:word/123")
-        url = _build_connection_url(db_cfg)
-        assert "p%40ss%3Aword%2F123" in url
-
-    def test_username_url_encoded(self):
-        db_cfg = _make_db_config(username="user@domain")
-        url = _build_connection_url(db_cfg)
-        assert "user%40domain" in url
-
-    def test_empty_password(self):
-        db_cfg = _make_db_config(password="")
-        url = _build_connection_url(db_cfg)
-        assert ":@" in url
-
-    def test_empty_host_raises(self):
-        db_cfg = _make_db_config(host="")
-        with pytest.raises(ValueError, match="Incomplete DB config"):
-            _build_connection_url(db_cfg)
-
-    def test_empty_port_raises(self):
-        db_cfg = _make_db_config(port="")
-        with pytest.raises(ValueError, match="Incomplete DB config"):
-            _build_connection_url(db_cfg)
-
-    def test_empty_database_raises(self):
-        db_cfg = _make_db_config(database="")
-        with pytest.raises(ValueError, match="Incomplete DB config"):
-            _build_connection_url(db_cfg)
-
-
-# ── _redact_url ──────────────────────────────────────────────────────────
-
-
-class TestRedactUrl:
-    def test_redacts_password(self):
-        url = "mysql+pymysql://admin:secret123@host:3306/db"
-        assert _redact_url(url) == "mysql+pymysql://admin:***@host:3306/db"
-
-    def test_redacts_encoded_password(self):
-        url = "mysql+pymysql://admin:p%40ss@host:3306/db"
-        assert _redact_url(url) == "mysql+pymysql://admin:***@host:3306/db"
-
-    def test_malformed_url_returns_redacted(self):
-        assert _redact_url("not-a-url") == "<redacted URL>"
-
-
 # ── SchedulerTools.submit_sql_job ────────────────────────────────────────
 
 
 class TestSubmitSqlJob:
-    def test_submit_success_with_connection_url(self, tmp_path):
+    def test_submit_success_with_conn_id(self, tmp_path):
         sql_file = tmp_path / "query.sql"
         sql_file.write_text("SELECT 1")
 
@@ -678,39 +546,20 @@ class TestSubmitSqlJob:
             result = tools.submit_sql_job(
                 job_name="sql_job_1",
                 sql_file_path=str(sql_file),
-                connection_url="mysql+pymysql://user:pass@host:3306/db",
+                conn_id="starrocks_default",
             )
 
         assert result.success == 1
         assert result.result["job_id"] == "sql_job_1"
-
-    def test_submit_success_with_namespace(self, tmp_path):
-        sql_file = tmp_path / "query.sql"
-        sql_file.write_text("SELECT 1")
-
-        mock_job = _make_scheduled_job("sql_job_ns")
-        mock_adapter = MagicMock()
-        mock_adapter.submit_job.return_value = mock_job
-
-        db_cfg = _make_db_config()
-        namespaces = {"starrocks": {"default": db_cfg}}
-        tools = SchedulerTools(_make_agent_config(namespaces=namespaces))
-
-        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
-            result = tools.submit_sql_job(
-                job_name="sql_job_ns",
-                sql_file_path=str(sql_file),
-                namespace="starrocks",
-            )
-
-        assert result.success == 1
+        payload = mock_adapter.submit_job.call_args[0][0]
+        assert payload.db_connection == {"conn_id": "starrocks_default"}
 
     def test_missing_sql_file(self, tmp_path):
         tools = SchedulerTools(_make_agent_config())
         result = tools.submit_sql_job(
             job_name="test",
             sql_file_path=str(tmp_path / "nonexistent.sql"),
-            connection_url="mysql://x:y@h:3306/db",
+            conn_id="my_conn",
         )
         assert result.success == 0
         assert "not found" in (result.error or "").lower()
@@ -722,33 +571,25 @@ class TestSubmitSqlJob:
         result = tools.submit_sql_job(
             job_name="test",
             sql_file_path=str(sql_file),
-            connection_url="mysql://x:y@h:3306/db",
+            conn_id="my_conn",
         )
         assert result.success == 0
         assert "empty" in (result.error or "").lower()
 
-    def test_no_namespace_no_url_returns_error(self, tmp_path):
+    def test_adapter_exception(self, tmp_path):
         sql_file = tmp_path / "query.sql"
         sql_file.write_text("SELECT 1")
-        tools = SchedulerTools(_make_agent_config())
-        result = tools.submit_sql_job(
-            job_name="test",
-            sql_file_path=str(sql_file),
-        )
-        assert result.success == 0
-        assert "namespace" in (result.error or "").lower()
 
-    def test_namespace_not_found(self, tmp_path):
-        sql_file = tmp_path / "query.sql"
-        sql_file.write_text("SELECT 1")
-        tools = SchedulerTools(_make_agent_config(namespaces={"other_ns": {}}))
-        result = tools.submit_sql_job(
-            job_name="test",
-            sql_file_path=str(sql_file),
-            namespace="missing_ns",
-        )
+        mock_adapter = MagicMock()
+        mock_adapter.submit_job.side_effect = Exception("Connection failed")
+        mock_adapter.close.return_value = None
+
+        tools = SchedulerTools(_make_agent_config())
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.submit_sql_job(job_name="j1", sql_file_path=str(sql_file), conn_id="my_conn")
+
         assert result.success == 0
-        assert "missing_ns" in (result.error or "")
+        assert "Connection failed" in (result.error or "")
 
 
 # ── SchedulerTools.submit_sparksql_job ───────────────────────────────────
@@ -887,7 +728,7 @@ class TestDeleteJob:
 
 
 class TestUpdateJob:
-    def test_update_success_with_url(self, tmp_path):
+    def test_update_success_with_conn_id(self, tmp_path):
         sql_file = tmp_path / "updated.sql"
         sql_file.write_text("SELECT 2")
 
@@ -902,11 +743,13 @@ class TestUpdateJob:
                 job_id="dag_to_update",
                 sql_file_path=str(sql_file),
                 job_name="DAG To Update",
-                connection_url="mysql+pymysql://u:p@h:3306/db",
+                conn_id="starrocks_default",
             )
 
         assert result.success == 1
         assert result.result["job_id"] == "dag_to_update"
+        payload = mock_adapter.update_job.call_args[0][1]
+        assert payload.db_connection == {"conn_id": "starrocks_default"}
 
     def test_update_missing_sql_file(self, tmp_path):
         tools = SchedulerTools(_make_agent_config())
@@ -914,12 +757,12 @@ class TestUpdateJob:
             job_id="dag_x",
             sql_file_path=str(tmp_path / "gone.sql"),
             job_name="DAG X",
-            connection_url="mysql://u:p@h:3306/db",
+            conn_id="my_conn",
         )
         assert result.success == 0
         assert "not found" in (result.error or "").lower()
 
-    def test_update_no_namespace_no_url(self, tmp_path):
+    def test_update_no_conn_id_returns_error(self, tmp_path):
         sql_file = tmp_path / "updated.sql"
         sql_file.write_text("SELECT 2")
         tools = SchedulerTools(_make_agent_config())
@@ -930,7 +773,7 @@ class TestUpdateJob:
             job_type="sql",
         )
         assert result.success == 0
-        assert "namespace" in (result.error or "").lower()
+        assert "conn_id" in (result.error or "").lower()
 
     def test_update_invalid_job_type(self, tmp_path):
         sql_file = tmp_path / "updated.sql"
@@ -996,8 +839,8 @@ class TestUpdateJob:
         payload = call_args[0][1]
         assert payload.extra["spark_master"] == "local[*]"
 
-    def test_update_sparksql_no_db_connection_needed(self, tmp_path):
-        """SparkSQL update should succeed without namespace or connection_url."""
+    def test_update_sparksql_no_conn_id_needed(self, tmp_path):
+        """SparkSQL update should succeed without conn_id."""
         sql_file = tmp_path / "spark.sql"
         sql_file.write_text("SELECT 1")
 
@@ -1017,27 +860,83 @@ class TestUpdateJob:
 
         assert result.success == 1
 
-    def test_update_with_namespace(self, tmp_path):
+    def test_update_adapter_exception(self, tmp_path):
         sql_file = tmp_path / "updated.sql"
         sql_file.write_text("SELECT 2")
 
-        mock_job = _make_scheduled_job("dag_ns_update")
         mock_adapter = MagicMock()
-        mock_adapter.update_job.return_value = mock_job
+        mock_adapter.update_job.side_effect = Exception("update failed")
+        mock_adapter.close.return_value = None
 
-        db_cfg = _make_db_config()
-        namespaces = {"starrocks": {"default": db_cfg}}
-        tools = SchedulerTools(_make_agent_config(namespaces=namespaces))
-
+        tools = SchedulerTools(_make_agent_config())
         with patch.object(tools, "_get_adapter", return_value=mock_adapter):
-            result = tools.update_job(
-                job_id="dag_ns_update",
-                sql_file_path=str(sql_file),
-                job_name="DAG NS Update",
-                namespace="starrocks",
-            )
+            result = tools.update_job(job_id="j1", sql_file_path=str(sql_file), job_name="J1", conn_id="my_conn")
+
+        assert result.success == 0
+        assert "update failed" in (result.error or "")
+
+
+# ── SchedulerTools.list_scheduler_connections ─────────────────────────────
+
+
+class TestListSchedulerConnections:
+    def test_returns_configured_connections(self):
+        cfg = _make_agent_config()
+        cfg.scheduler_config["connections"] = {
+            "starrocks_default": "StarRocks ac_manage",
+            "pg_conn": "PostgreSQL test DB",
+        }
+        tools = SchedulerTools(cfg)
+        result = tools.list_scheduler_connections()
 
         assert result.success == 1
+        assert result.result["total"] == 2
+        conn_ids = [c["conn_id"] for c in result.result["connections"]]
+        assert "starrocks_default" in conn_ids
+        assert "pg_conn" in conn_ids
+
+    def test_empty_connections(self):
+        cfg = _make_agent_config()
+        # No connections key
+        tools = SchedulerTools(cfg)
+        result = tools.list_scheduler_connections()
+
+        assert result.success == 1
+        assert result.result["total"] == 0
+        assert "hint" in result.result
+
+    def test_no_scheduler_config(self):
+        cfg = _make_agent_config(scheduler_config={})
+        tools = SchedulerTools(cfg)
+        result = tools.list_scheduler_connections()
+
+        assert result.success == 1
+        assert result.result["total"] == 0
+
+
+# ── available_tools: conn_id injection into description ──────────────────
+
+
+class TestConnIdDescriptionInjection:
+    def test_connections_injected_into_submit_and_update(self):
+        cfg = _make_agent_config()
+        cfg.scheduler_config["connections"] = {"sr_default": "StarRocks DB"}
+        tools = SchedulerTools(cfg)
+        tool_list = tools.available_tools()
+        tool_map = {t.name: t for t in tool_list}
+
+        assert "sr_default" in tool_map["submit_sql_job"].description
+        assert "sr_default" in tool_map["update_job"].description
+        # Other tools should NOT have the suffix
+        assert "sr_default" not in tool_map["pause_job"].description
+
+    def test_no_connections_no_injection(self):
+        cfg = _make_agent_config()
+        tools = SchedulerTools(cfg)
+        tool_list = tools.available_tools()
+        tool_map = {t.name: t for t in tool_list}
+
+        assert "Available conn_id" not in tool_map["submit_sql_job"].description
 
 
 # ── SchedulerTools.list_job_runs ─────────────────────────────────────────
