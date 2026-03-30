@@ -289,6 +289,86 @@ class TestSqliteRdbDatabaseEdgeCases:
         assert "bad;;table" in str(exc_info.value)
 
 
+class TestMigrateMissingColumns:
+    """Tests for _migrate_missing_columns auto-migration."""
+
+    def test_adds_missing_column(self, tmp_path):
+        """Adds a column that exists in definition but not in the live table."""
+        db_file = os.path.join(str(tmp_path), "migrate.db")
+        db = SqliteRdbDatabase(db_file)
+
+        # Create table with only 2 columns
+        old_def = TableDefinition(
+            table_name="items",
+            columns=[
+                ColumnDef(name="id", col_type="INTEGER", primary_key=True, autoincrement=True),
+                ColumnDef(name="name", col_type="TEXT"),
+            ],
+        )
+        db.ensure_table(old_def)
+
+        # Now ensure_table with an extra column — should auto-migrate
+        new_def = TableDefinition(
+            table_name="items",
+            columns=[
+                ColumnDef(name="id", col_type="INTEGER", primary_key=True, autoincrement=True),
+                ColumnDef(name="name", col_type="TEXT"),
+                ColumnDef(name="description", col_type="TEXT", default=""),
+            ],
+        )
+        table = db.ensure_table(new_def)
+
+        # Verify the new column works
+        @dataclass
+        class _ExtItem:
+            name: str = ""
+            description: str = ""
+            id: int = None
+
+        table.insert(_ExtItem(name="test", description="added"))
+        rows = table.query(_ExtItem, where={"name": "test"})
+        assert len(rows) == 1
+        assert rows[0].description == "added"
+
+    def test_already_up_to_date_is_noop(self, tmp_path):
+        """No ALTER TABLE when all columns already exist."""
+        db_file = os.path.join(str(tmp_path), "noop.db")
+        db = SqliteRdbDatabase(db_file)
+
+        table_def = TableDefinition(
+            table_name="items",
+            columns=[
+                ColumnDef(name="id", col_type="INTEGER", primary_key=True, autoincrement=True),
+                ColumnDef(name="name", col_type="TEXT"),
+                ColumnDef(name="value", col_type="TEXT"),
+            ],
+        )
+        db.ensure_table(table_def)
+        # Second call — no migration needed, no error
+        table = db.ensure_table(table_def)
+        table.insert(_Item(name="ok", value="v1"))
+        assert len(table.query(_Item)) == 1
+
+    def test_ensure_table_idempotent(self, tmp_path):
+        """Calling ensure_table multiple times with same definition is safe."""
+        db_file = os.path.join(str(tmp_path), "idempotent.db")
+        db = SqliteRdbDatabase(db_file)
+
+        table_def = TableDefinition(
+            table_name="items",
+            columns=[
+                ColumnDef(name="id", col_type="INTEGER", primary_key=True, autoincrement=True),
+                ColumnDef(name="name", col_type="TEXT"),
+                ColumnDef(name="value", col_type="TEXT"),
+            ],
+        )
+        db.ensure_table(table_def)
+        db.ensure_table(table_def)
+        table = db.ensure_table(table_def)
+        table.insert(_Item(name="test", value="v1"))
+        assert len(table.query(_Item)) == 1
+
+
 class TestSqliteRdbBackendConnect:
     """Tests for SqliteRdbBackend lifecycle and connect()."""
 
