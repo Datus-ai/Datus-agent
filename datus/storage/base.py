@@ -193,8 +193,10 @@ class BaseEmbeddingStore(StorageBase):
         the delete to the current ``datasource_id``.  In ``PHYSICAL`` mode
         this drops the entire table (equivalent to ``truncate()``).
         """
+        from datus.storage.backend_holder import get_isolation_type
+
         self._ensure_table_ready()
-        if hasattr(self.table, "_isolation") and hasattr(self.table, "_datasource_id") and self.table._datasource_id:
+        if get_isolation_type() == "logical":
             # LOGICAL mode — delete scoped rows via backend's _ds_where()
             self.table.delete(None)
         else:

@@ -238,22 +238,20 @@ class TestTruncateScoped:
 
     def test_truncate_scoped_logical_deletes_scoped(self):
         """In LOGICAL mode, truncate_scoped() calls table.delete(None) for scoped delete."""
-        from unittest.mock import MagicMock
+        from unittest.mock import MagicMock, patch
 
         store = BaseEmbeddingStore(
             table_name="test",
             embedding_model=_FakeEmbeddingModel(),
             schema=_base_schema(),
         )
-        # Simulate a LOGICAL-mode table
         mock_table = MagicMock()
-        mock_table._isolation = "logical"
-        mock_table._datasource_id = "tenant_1"
         store._shared.table = mock_table
         store._shared.initialized = True
 
-        store.truncate_scoped()
-        mock_table.delete.assert_called_once_with(None)
+        with patch("datus.storage.backend_holder.get_isolation_type", return_value="logical"):
+            store.truncate_scoped()
+            mock_table.delete.assert_called_once_with(None)
 
 
 class TestCombinedFeatures:

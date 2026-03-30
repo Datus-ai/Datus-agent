@@ -249,15 +249,16 @@ class SqliteRdbDatabase(RdbDatabase):
     @staticmethod
     def _migrate_missing_columns(conn, table_def: TableDefinition) -> None:
         """Add columns that exist in the definition but not in the live table."""
-        cursor = conn.execute(f"PRAGMA table_info({table_def.table_name})")
+        safe_table = _safe_ident(table_def.table_name)
+        cursor = conn.execute(f"PRAGMA table_info({safe_table})")
         existing_cols = {row[1] for row in cursor.fetchall()}
         if not existing_cols:
             return  # table doesn't exist yet — CREATE TABLE will handle it
         for col in table_def.columns:
             if col.name not in existing_cols:
                 col_ddl = _sqlite_col_ddl(col)
-                conn.execute(f"ALTER TABLE {table_def.table_name} ADD COLUMN {col_ddl}")
-                logger.info(f"Migrated: ALTER TABLE {table_def.table_name} ADD COLUMN {col_ddl}")
+                conn.execute(f"ALTER TABLE {safe_table} ADD COLUMN {col_ddl}")
+                logger.info(f"Migrated: ALTER TABLE {safe_table} ADD COLUMN {col_ddl}")
 
     @contextmanager
     def transaction(self) -> Iterator[None]:

@@ -153,8 +153,7 @@ class LanceVectorTable(VectorTable):
         """Add ``datasource_id`` column to *df* for logical isolation."""
         if self._isolation != IsolationType.LOGICAL or not self._datasource_id:
             return df
-        if DATASOURCE_ID_COLUMN not in df.columns:
-            df = df.copy()
+        df = df.copy()
         df[DATASOURCE_ID_COLUMN] = self._datasource_id
         return df
 
@@ -304,6 +303,8 @@ class LanceVectorDatabase(VectorDatabase):
     ) -> None:
         self._db = db_connection
         self._isolation = isolation
+        if datasource_id:
+            _safe_path_segment(datasource_id, "datasource_id")
         self._datasource_id = datasource_id
 
     def _make_table(self, raw_table: LanceTable) -> LanceVectorTable:
