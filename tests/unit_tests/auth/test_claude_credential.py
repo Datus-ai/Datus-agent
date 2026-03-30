@@ -20,26 +20,30 @@ from datus.utils.exceptions import DatusException, ErrorCode
 class TestGetClaudeSubscriptionToken:
     def test_returns_config_api_key(self):
         """Priority 1: config api_key takes precedence."""
-        result = get_claude_subscription_token(api_key_from_config="sk-ant-oat01-config-token")
-        assert result == "sk-ant-oat01-config-token"
+        token, source = get_claude_subscription_token(api_key_from_config="sk-ant-oat01-config-token")
+        assert token == "sk-ant-oat01-config-token"
+        assert "config" in source
 
     def test_ignores_empty_config_key(self):
         """Empty string config key should be skipped."""
         with patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-env-token"}):
-            result = get_claude_subscription_token(api_key_from_config="")
-            assert result == "sk-ant-oat01-env-token"
+            token, source = get_claude_subscription_token(api_key_from_config="")
+            assert token == "sk-ant-oat01-env-token"
+            assert "CLAUDE_CODE_OAUTH_TOKEN" in source
 
     def test_ignores_whitespace_config_key(self):
         """Whitespace-only config key should be skipped."""
         with patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-env-token"}):
-            result = get_claude_subscription_token(api_key_from_config="   ")
-            assert result == "sk-ant-oat01-env-token"
+            token, source = get_claude_subscription_token(api_key_from_config="   ")
+            assert token == "sk-ant-oat01-env-token"
+            assert "CLAUDE_CODE_OAUTH_TOKEN" in source
 
     def test_returns_env_var(self):
         """Priority 2: CLAUDE_CODE_OAUTH_TOKEN env var."""
         with patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-env-token"}):
-            result = get_claude_subscription_token(api_key_from_config=None)
-            assert result == "sk-ant-oat01-env-token"
+            token, source = get_claude_subscription_token(api_key_from_config=None)
+            assert token == "sk-ant-oat01-env-token"
+            assert "CLAUDE_CODE_OAUTH_TOKEN" in source
 
     def test_reads_credentials_file(self, tmp_path):
         """Priority 3: ~/.claude/.credentials.json."""
@@ -55,8 +59,9 @@ class TestGetClaudeSubscriptionToken:
             patch.dict("os.environ", {}, clear=True),
             patch("datus.auth.claude_credential.Path.home", return_value=tmp_path),
         ):
-            result = get_claude_subscription_token(api_key_from_config=None)
-            assert result == "sk-ant-oat01-file-token"
+            token, source = get_claude_subscription_token(api_key_from_config=None)
+            assert token == "sk-ant-oat01-file-token"
+            assert ".credentials.json" in source
 
     def test_raises_when_not_found(self, tmp_path):
         """Raises DatusException when no token source is available."""
@@ -110,14 +115,16 @@ class TestGetClaudeSubscriptionToken:
             patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-env"}),
             patch("datus.auth.claude_credential.Path.home", return_value=tmp_path),
         ):
-            result = get_claude_subscription_token(api_key_from_config="sk-ant-oat01-config")
-            assert result == "sk-ant-oat01-config"
+            token, source = get_claude_subscription_token(api_key_from_config="sk-ant-oat01-config")
+            assert token == "sk-ant-oat01-config"
+            assert "config" in source
 
     def test_ignores_missing_placeholder(self):
         """<MISSING:...> placeholder from resolve_env should be skipped."""
         with patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-real-token"}):
-            result = get_claude_subscription_token(api_key_from_config="<MISSING:CLAUDE_CODE_OAUTH_TOKEN>")
-            assert result == "sk-ant-oat01-real-token"
+            token, source = get_claude_subscription_token(api_key_from_config="<MISSING:CLAUDE_CODE_OAUTH_TOKEN>")
+            assert token == "sk-ant-oat01-real-token"
+            assert "CLAUDE_CODE_OAUTH_TOKEN" in source
 
     def test_missing_placeholder_without_fallback_raises(self, tmp_path):
         """<MISSING:...> placeholder with no env/file raises DatusException."""
@@ -166,8 +173,9 @@ class TestGetClaudeSubscriptionToken:
             patch.dict("os.environ", {}, clear=True),
             patch("datus.auth.claude_credential.Path.home", return_value=tmp_path),
         ):
-            result = get_claude_subscription_token(api_key_from_config=None)
-            assert result == "sk-ant-oat01-valid"
+            token, source = get_claude_subscription_token(api_key_from_config=None)
+            assert token == "sk-ant-oat01-valid"
+            assert ".credentials.json" in source
 
     def test_returns_token_without_expiry_field(self, tmp_path):
         """Token without expiresAt field should still be returned (no expiry check)."""
@@ -183,14 +191,16 @@ class TestGetClaudeSubscriptionToken:
             patch.dict("os.environ", {}, clear=True),
             patch("datus.auth.claude_credential.Path.home", return_value=tmp_path),
         ):
-            result = get_claude_subscription_token(api_key_from_config=None)
-            assert result == "sk-ant-oat01-no-expiry"
+            token, source = get_claude_subscription_token(api_key_from_config=None)
+            assert token == "sk-ant-oat01-no-expiry"
+            assert ".credentials.json" in source
 
     def test_ignores_unresolved_env_placeholder(self):
         """${VAR} placeholder (unresolved env substitution) should be skipped."""
         with patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-real-token"}):
-            result = get_claude_subscription_token(api_key_from_config="${CLAUDE_CODE_OAUTH_TOKEN}")
-            assert result == "sk-ant-oat01-real-token"
+            token, source = get_claude_subscription_token(api_key_from_config="${CLAUDE_CODE_OAUTH_TOKEN}")
+            assert token == "sk-ant-oat01-real-token"
+            assert "CLAUDE_CODE_OAUTH_TOKEN" in source
 
     def test_unresolved_env_placeholder_without_fallback_raises(self, tmp_path):
         """${VAR} placeholder with no env/file raises DatusException."""
@@ -216,5 +226,6 @@ class TestGetClaudeSubscriptionToken:
             patch.dict("os.environ", {"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-env"}),
             patch("datus.auth.claude_credential.Path.home", return_value=tmp_path),
         ):
-            result = get_claude_subscription_token(api_key_from_config=None)
-            assert result == "sk-ant-oat01-env"
+            token, source = get_claude_subscription_token(api_key_from_config=None)
+            assert token == "sk-ant-oat01-env"
+            assert "CLAUDE_CODE_OAUTH_TOKEN" in source

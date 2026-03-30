@@ -410,7 +410,7 @@ class TestClaudeModelSubscriptionAuth:
             patch("anthropic.Anthropic"),
             patch(
                 "datus.auth.claude_credential.get_claude_subscription_token",
-                return_value="sk-ant-oat01-sub-token",
+                return_value=("sk-ant-oat01-sub-token", "config (agent.yml)"),
             ) as mock_resolver,
         ):
             mock_adapter = MagicMock()
@@ -434,7 +434,7 @@ class TestClaudeModelSubscriptionAuth:
             patch("anthropic.Anthropic"),
             patch(
                 "datus.auth.claude_credential.get_claude_subscription_token",
-                return_value="sk-ant-oat01-from-env",
+                return_value=("sk-ant-oat01-from-env", "env CLAUDE_CODE_OAUTH_TOKEN"),
             ),
         ):
             mock_adapter = MagicMock()

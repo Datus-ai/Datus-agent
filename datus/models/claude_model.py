@@ -154,7 +154,8 @@ class ClaudeModel(OpenAICompatibleModel):
         if self.model_config.auth_type == "subscription":
             from datus.auth.claude_credential import get_claude_subscription_token
 
-            return get_claude_subscription_token(self.model_config.api_key)
+            token, _source = get_claude_subscription_token(self.model_config.api_key)
+            return token
         api_key = self.model_config.api_key or os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
             raise DatusException(ErrorCode.MODEL_AUTHENTICATION_ERROR)

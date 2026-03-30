@@ -489,8 +489,8 @@ class InteractiveInit:
         try:
             from datus.auth.claude_credential import get_claude_subscription_token
 
-            token = get_claude_subscription_token()
-            self.console.print("  ✅ Subscription token detected")
+            token, source = get_claude_subscription_token()
+            self.console.print(f"  ✅ Subscription token detected (from {source})")
             return token, "subscription"
         except Exception:
             self.console.print("  [yellow]⚠️  Could not auto-detect subscription token[/yellow]")
