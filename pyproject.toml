@@ -24,7 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "datus-db-core>=0.1.1",
-    "datus-storage-base==0.1.2rc1",
+    "datus-storage-base==0.1.2rc2",
     "python-dotenv==1.0.0",
     "pandas==2.1.4",
     "sqlalchemy==2.0.23",
