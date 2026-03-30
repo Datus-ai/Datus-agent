@@ -44,11 +44,13 @@ class TestGetCurrentTimestamp:
         assert re.match(pattern, ts), f"Timestamp '{ts}' does not match ISO-8601 pattern"
 
     def test_get_current_timestamp_is_recent(self, tmp_path):
-        """Returned timestamp should be within a few seconds of now."""
+        """Returned timestamp should be within a few seconds of now (UTC)."""
+        from datetime import timezone
+
         base = StorageBase()
-        before = datetime.utcnow()
+        before = datetime.now(timezone.utc)
         ts = base._get_current_timestamp()
-        after = datetime.utcnow()
+        after = datetime.now(timezone.utc)
         parsed = datetime.fromisoformat(ts)
         assert before <= parsed <= after
 

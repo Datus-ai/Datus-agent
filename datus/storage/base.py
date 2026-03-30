@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from threading import Lock
 from typing import Any, Dict, List, Optional, Union
 
@@ -57,8 +57,8 @@ class StorageBase:
             self.db = create_vector_connection()
 
     def _get_current_timestamp(self) -> str:
-        """Get current timestamp in ISO format."""
-        return datetime.now().isoformat()
+        """Get current timestamp in ISO format (UTC)."""
+        return datetime.now(timezone.utc).isoformat()
 
 
 class BaseEmbeddingStore(StorageBase):
