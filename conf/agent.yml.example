@@ -305,6 +305,11 @@ agent:
       - reflect
       config: multi/agent3.yaml
 
+  skills:
+    directories:
+      - ~/.datus/skills
+      - ./skills
+
   agentic_nodes:
     gen_semantic_model:
       model: anthropic
@@ -312,6 +317,7 @@ agent:
     gen_metrics:
       model: anthropic
       max_turns: 40
+      skills: "define-metric"
 
     gen_sql_summary:
       model: deepseek_v3
