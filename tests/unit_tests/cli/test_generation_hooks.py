@@ -867,3 +867,122 @@ class TestParseSubjectTreeFromTags:
         tags = [42, None, "subject_tree: Finance/Revenue"]
         result = GenerationHooks._parse_subject_tree_from_tags(tags)
         assert result == ["Finance", "Revenue"]
+
+
+# ---------------------------------------------------------------------------
+# Tests: _sync_semantic_to_db — boolean coercion
+# ---------------------------------------------------------------------------
+
+
+class TestSyncSemanticToDbBooleanCoercion:
+    """Verify that YAML fields like create_metric and is_partition are coerced to bool.
+
+    Root cause: YAML values like ``1.0`` or ``1`` are not Python bools.
+    When table-kind rows and column-kind rows share a DataFrame, missing
+    fields become NaN → pandas promotes bool columns to float64 →
+    PostgreSQL rejects ``double precision`` for a ``boolean`` column.
+    """
+
+    @staticmethod
+    def _build_yaml(create_metric_value, is_partition_value):
+        import yaml
+
+        doc = {
+            "data_source": {
+                "name": "test_table",
+                "description": "Test table",
+                "sql_table": "db.test_table",
+                "measures": [
+                    {
+                        "name": "total_amount",
+                        "description": "Total amount",
+                        "agg": "SUM",
+                        "expr": "amount",
+                        "create_metric": create_metric_value,
+                    }
+                ],
+                "dimensions": [
+                    {
+                        "name": "created_at",
+                        "type": "TIME",
+                        "description": "Creation time",
+                        "expr": "created_at",
+                        "type_params": {
+                            "is_primary": True,
+                            "time_granularity": "DAY",
+                        },
+                        "is_partition": is_partition_value,
+                    }
+                ],
+            }
+        }
+        return yaml.safe_dump(doc, allow_unicode=True)
+
+    @pytest.mark.parametrize(
+        "create_metric_val,is_partition_val",
+        [
+            (1.0, 1.0),
+            (1, 1),
+            (True, True),
+            ("yes", "yes"),
+        ],
+    )
+    def test_boolean_fields_are_coerced(self, agent_config, create_metric_val, is_partition_val, tmp_path):
+        yaml_content = self._build_yaml(create_metric_val, is_partition_val)
+        yaml_file = tmp_path / "test_semantic.yml"
+        yaml_file.write_text(yaml_content)
+
+        # Configure agent_config mock to have required db_config attributes
+        db_config = MagicMock()
+        db_config.catalog = ""
+        db_config.database = "test_db"
+        db_config.schema = "public"
+        db_config.db_type = "postgresql"
+        agent_config.current_db_config.return_value = db_config
+        agent_config.namespaces = ["test_ns"]
+
+        captured_semantic = []
+        captured_metric = []
+
+        def fake_upsert_semantic(objects):
+            captured_semantic.extend(objects)
+
+        def fake_upsert_metric(objects):
+            captured_metric.extend(objects)
+
+        mock_semantic_rag = MagicMock()
+        mock_semantic_rag.upsert_batch = fake_upsert_semantic
+        mock_metric_rag = MagicMock()
+        mock_metric_rag.upsert_batch = fake_upsert_metric
+
+        with (
+            patch("datus.cli.generation_hooks.SemanticModelRAG", return_value=mock_semantic_rag),
+            patch("datus.cli.generation_hooks.MetricRAG", return_value=mock_metric_rag),
+        ):
+            result = GenerationHooks._sync_semantic_to_db(
+                file_path=str(yaml_file),
+                agent_config=agent_config,
+            )
+
+        assert result["success"], f"Sync failed: {result.get('error')}"
+
+        # Find the measure row (has create_metric) and dimension row (has is_partition)
+        measure_rows = [o for o in captured_semantic if o.get("agg") == "SUM"]
+        dim_rows = [o for o in captured_semantic if o.get("is_dimension") is True]
+
+        assert len(measure_rows) == 1, f"Expected 1 measure row, got {len(measure_rows)}"
+        assert len(dim_rows) == 1, f"Expected 1 dimension row, got {len(dim_rows)}"
+
+        # Core assertion: create_metric must be Python bool, not float/int/str
+        assert measure_rows[0]["create_metric"] is True
+        assert type(measure_rows[0]["create_metric"]) is bool
+
+        # Core assertion: is_partition must be Python bool
+        assert dim_rows[0]["is_partition"] is True
+        assert type(dim_rows[0]["is_partition"]) is bool
+
+        # Also verify table-kind row has bool defaults (not NaN)
+        table_rows = [o for o in captured_semantic if o.get("is_dimension") is False and o.get("is_measure") is False]
+        assert len(table_rows) >= 1
+        assert type(table_rows[0]["create_metric"]) is bool
+        assert type(table_rows[0]["is_partition"]) is bool

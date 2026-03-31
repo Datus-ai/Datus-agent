@@ -861,11 +861,21 @@ class GenerationHooks(AgentHooks):
                     "database_name": database_name,
                     "schema_name": schema_name,
                     "semantic_model_name": table_name,
-                    # Required boolean fields
+                    # Required boolean fields — must match column objects to prevent
+                    # pandas NaN→float64 promotion when table and column rows share a DataFrame
                     "is_dimension": False,
                     "is_measure": False,
                     "is_entity_key": False,
                     "is_deprecated": False,
+                    # Column-level fields (defaults for table-kind rows)
+                    "expr": "",
+                    "column_type": "",
+                    "agg": "",
+                    "create_metric": False,
+                    "agg_time_dimension": "",
+                    "is_partition": False,
+                    "time_granularity": "",
+                    "entity": "",
                 }
                 semantic_objects.append(table_obj)
                 synced_items.append(f"table:{table_name}")
@@ -913,10 +923,10 @@ class GenerationHooks(AgentHooks):
                         ),  # CATEGORICAL/TIME for dims, PRIMARY/FOREIGN etc for idents
                         # Measure specific (empty for non-measures)
                         "agg": col_def.get("agg", "") if is_meas else "",
-                        "create_metric": col_def.get("create_metric", False) if is_meas else False,
+                        "create_metric": bool(col_def.get("create_metric", False)) if is_meas else False,
                         "agg_time_dimension": col_def.get("agg_time_dimension", "") if is_meas else "",
                         # Dimension specific (empty/false for non-dimensions)
-                        "is_partition": col_def.get("is_partition", False) if is_dim else False,
+                        "is_partition": bool(col_def.get("is_partition", False)) if is_dim else False,
                         "time_granularity": time_granularity,
                         # Identifier specific (empty for non-identifiers)
                         "entity": col_def.get("entity", "") if is_ent else "",
