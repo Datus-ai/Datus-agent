@@ -9,12 +9,12 @@ from pathlib import Path
 
 import pytest
 
-from datus.utils.path_manager import DatusPathManager, get_path_manager, reset_path_manager
+from datus.utils.path_manager import DatusPathManager, get_path_manager, reset_path_manager, set_default_datus_home
 
 
 @pytest.fixture(autouse=True)
-def reset_singleton():
-    """Reset the global path manager before and after every test."""
+def reset_defaults():
+    """Reset path-manager defaults before and after every test."""
     reset_path_manager()
     yield
     reset_path_manager()
@@ -237,30 +237,38 @@ class TestEnsureDirs:
         assert pm.conf_dir.exists()
 
 
-class TestGetPathManagerSingleton:
-    """Tests for the get_path_manager singleton."""
+class TestGetPathManager:
+    """Tests for the get_path_manager factory."""
 
     def test_returns_instance(self):
         pm = get_path_manager()
         assert isinstance(pm, DatusPathManager)
 
-    def test_same_instance_on_repeated_calls(self):
+    def test_repeated_calls_return_fresh_instances(self):
         pm1 = get_path_manager()
         pm2 = get_path_manager()
-        assert pm1 is pm2
-
-    def test_reset_allows_new_instance(self, tmp_path):
-        pm1 = get_path_manager()
-        reset_path_manager()
-        pm2 = get_path_manager(datus_home=tmp_path)
         assert pm1 is not pm2
+        assert pm1.datus_home == pm2.datus_home
 
-    def test_thread_safe_initialization(self):
-        """Multiple threads calling get_path_manager get the same instance."""
+    def test_explicit_home_is_respected(self, tmp_path):
+        pm = get_path_manager(datus_home=tmp_path)
+        assert pm.datus_home == tmp_path.resolve()
+
+    def test_process_default_home_is_used(self, tmp_path):
+        set_default_datus_home(tmp_path)
+        pm = get_path_manager()
+        assert pm.datus_home == tmp_path.resolve()
+
+    def test_factory_is_safe_to_call_from_multiple_threads(self):
+        """Multiple threads can resolve path managers without raising."""
         instances = []
+        errors = []
 
         def fetch():
-            instances.append(get_path_manager())
+            try:
+                instances.append(get_path_manager())
+            except Exception as e:
+                errors.append(e)
 
         threads = [threading.Thread(target=fetch) for _ in range(10)]
         for t in threads:
@@ -268,21 +276,21 @@ class TestGetPathManagerSingleton:
         for t in threads:
             t.join()
 
-        first = instances[0]
-        assert all(inst is first for inst in instances)
+        assert not errors
+        assert len(instances) == 10
 
 
 class TestResetPathManager:
     """Tests for reset_path_manager."""
 
-    def test_reset_clears_singleton(self):
-        get_path_manager()
+    def test_reset_clears_process_default_home(self, tmp_path):
+        set_default_datus_home(tmp_path)
         reset_path_manager()
         from datus.utils import path_manager
 
-        assert path_manager._path_manager is None
+        assert path_manager._default_datus_home is None
 
-    def test_reset_is_thread_safe(self):
+    def test_reset_is_safe_from_multiple_threads(self):
         """reset_path_manager can be called from multiple threads without error."""
         errors = []
 

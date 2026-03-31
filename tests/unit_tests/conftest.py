@@ -37,6 +37,9 @@ def reset_global_singletons():
 
     autouse=False -- use explicitly when needed.
     """
+    from datus.utils.path_manager import reset_path_manager
+
+    reset_path_manager()
     yield
 
     # Reset db_manager factory (if set)
@@ -49,8 +52,8 @@ def reset_global_singletons():
 
     clear_storage_registry()
 
-    # Note: Do NOT reset path_manager here -- AgentConfig.__init__ calls
-    # path_manager.update_home() which keeps it in sync.
+    # Clear the process-wide default home used by implicit path-manager callers.
+    reset_path_manager()
 
 
 # ---------------------------------------------------------------------------

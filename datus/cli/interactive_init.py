@@ -886,10 +886,7 @@ def do_init_sql_and_log_result(
             finally:
                 db.close()
             # Also clear sql_summaries/{namespace} directory (YAML files)
-            from datus.utils.path_manager import get_path_manager
-
-            path_manager = get_path_manager(datus_home=agent_config.home)
-            sql_summary_dir = path_manager.sql_summary_path(agent_config.current_namespace)
+            sql_summary_dir = agent_config.path_manager.sql_summary_path(agent_config.current_namespace)
             if sql_summary_dir.exists() and not safe_rmtree(sql_summary_dir, "SQL summary directory", force=force):
                 console.print("[yellow]Cancelled by user[/yellow]")
                 return False, None

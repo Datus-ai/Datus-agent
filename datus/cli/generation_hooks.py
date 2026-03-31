@@ -23,7 +23,6 @@ from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.db_tools import connector_registry
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
-from datus.utils.path_manager import get_path_manager
 
 logger = get_logger(__name__)
 
@@ -122,9 +121,7 @@ class GenerationHooks(AgentHooks):
 
             # Convert relative paths to absolute paths
             if self.agent_config:
-                base_dir = str(
-                    get_path_manager(self.agent_config.home).semantic_model_path(self.agent_config.current_namespace)
-                )
+                base_dir = str(self.agent_config.path_manager.semantic_model_path(self.agent_config.current_namespace))
                 if metric_file and not os.path.isabs(metric_file):
                     metric_file = os.path.join(base_dir, metric_file)
                 if semantic_model_file and not os.path.isabs(semantic_model_file):

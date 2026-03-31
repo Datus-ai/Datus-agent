@@ -25,11 +25,12 @@ from datus.utils.loggings import configure_logging, get_logger
 logger = get_logger(__name__)
 
 
-def _default_paths() -> Tuple[Path, Path]:
+def _default_paths(config_path: str = "") -> Tuple[Path, Path]:
     """Return default pid and log file paths."""
-    from datus.utils.path_manager import get_path_manager
+    from datus.configuration.agent_config_loader import get_agent_home
+    from datus.utils.path_manager import DatusPathManager
 
-    path_manager = get_path_manager()
+    path_manager = DatusPathManager(get_agent_home(config_path))
     pid_file = path_manager.pid_file_path("datus-agent-api")
     log_file = Path("logs") / "datus-agent-api.log"  # Use logs/ directory like other modules
     return pid_file, log_file
@@ -231,7 +232,7 @@ def main():
     args = parser.parse_args()
 
     # Resolve defaults for pid/log
-    default_pid, default_log = _default_paths()
+    default_pid, default_log = _default_paths(args.config or "")
     pid_file = Path(args.pid_file) if args.pid_file else default_pid
     log_file = Path(args.daemon_log_file) if args.daemon_log_file else default_log
 

@@ -632,7 +632,7 @@ class TestDBManagerFactory:
 
 
 class TestAgentConfigSkipInitDirs:
-    """Tests for AgentConfig(skip_init_dirs=True) — SaaS mode that avoids global singleton mutation."""
+    """Tests for AgentConfig(skip_init_dirs=True) — SaaS mode without implicit global path-manager use."""
 
     def _make_config(self, tmp_path, skip_init_dirs=False):
         """Helper to create a minimal AgentConfig."""
@@ -671,10 +671,11 @@ class TestAgentConfigSkipInitDirs:
         assert config.benchmark_configs == {}
 
     def test_skip_init_dirs_does_not_call_path_manager(self, tmp_path):
-        """With skip_init_dirs=True, path_manager.update_home() is never called."""
+        """With skip_init_dirs=True, legacy global path-manager helpers are not used."""
         with patch("datus.utils.path_manager.get_path_manager") as mock_pm:
-            self._make_config(tmp_path, skip_init_dirs=True)
-            mock_pm.return_value.update_home.assert_not_called()
+            config = self._make_config(tmp_path, skip_init_dirs=True)
+            mock_pm.assert_not_called()
+            assert config.path_manager.datus_home == (tmp_path / "saas_home").resolve()
 
     def test_skip_init_dirs_does_not_call_init_embedding_models(self, tmp_path):
         """With skip_init_dirs=True, init_embedding_models() is not called."""

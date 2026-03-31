@@ -22,7 +22,6 @@ from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.generation_tools import GenerationTools
 from datus.utils.loggings import get_logger
 from datus.utils.message_utils import MessagePart, build_structured_content
-from datus.utils.path_manager import get_path_manager
 
 logger = get_logger(__name__)
 
@@ -70,8 +69,7 @@ class SqlSummaryAgenticNode(AgenticNode):
             if isinstance(agentic_node_config, dict):
                 self.max_turns = agentic_node_config.get("max_turns", 30)
 
-        path_manager = get_path_manager()
-        self.sql_summary_dir = str(path_manager.sql_summary_path(agent_config.current_namespace))
+        self.sql_summary_dir = str(agent_config.path_manager.sql_summary_path(agent_config.current_namespace))
 
         from datus.configuration.node_type import NodeType
 

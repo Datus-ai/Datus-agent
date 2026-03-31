@@ -12,7 +12,6 @@ from datus.cli.interactive_init import parse_subject_tree
 from datus.configuration.agent_config_loader import configuration_manager, load_agent_config
 from datus.schemas.agent_models import SubAgentConfig
 from datus.utils.loggings import get_logger, print_rich_exception
-from datus.utils.path_manager import get_path_manager
 from datus.utils.sub_agent_manager import SubAgentManager
 
 logger = get_logger(__name__)
@@ -45,8 +44,7 @@ class BenchmarkTutorial:
             )
             return False
         agent_config = load_agent_config(config=self.config_path)
-        path_manager = get_path_manager(datus_home=agent_config.home)
-        self.benchmark_path = path_manager.benchmark_dir
+        self.benchmark_path = agent_config.path_manager.benchmark_dir
         if (
             self.namespace_name not in agent_config.benchmark_configs
             or self.namespace_name not in agent_config.namespaces

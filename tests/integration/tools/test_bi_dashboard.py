@@ -426,9 +426,7 @@ class TestE2EIntegration:
                 test_result["reference_sql_rows"] = total_reference_sql_rows
 
                 # Verify file artifacts
-                from datus.utils.path_manager import get_path_manager
-
-                sql_dir = get_path_manager(agent_config.home).dashboard_path() / platform
+                sql_dir = agent_config.path_manager.dashboard_path() / platform
                 sql_files = list(sql_dir.glob("*.sql"))
                 assert len(sql_files) > 0, "SQL files should exist"
                 csv_files = list(sql_dir.glob("*.csv"))

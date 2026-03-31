@@ -37,7 +37,6 @@ from datus.utils.benchmark_utils import load_benchmark_tasks
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
-from datus.utils.path_manager import get_path_manager
 from datus.utils.path_utils import safe_rmtree
 from datus.utils.time_utils import format_duration_human
 from datus.utils.traceable_utils import optional_traceable
@@ -397,8 +396,9 @@ class Agent:
                     # Only clear semantic_models/{namespace} directory when NOT using --from_adapter
                     # because MetricFlow adapter needs to read YAML files from this directory
                     if not (hasattr(self.args, "from_adapter") and self.args.from_adapter):
-                        path_manager = get_path_manager(datus_home=self.global_config.home)
-                        semantic_yaml_dir = path_manager.semantic_model_path(self.global_config.current_namespace)
+                        semantic_yaml_dir = self.global_config.path_manager.semantic_model_path(
+                            self.global_config.current_namespace
+                        )
                         force = self._force_delete
                         if semantic_yaml_dir.exists() and not safe_rmtree(
                             semantic_yaml_dir, "semantic YAML directory", force=force
@@ -446,8 +446,9 @@ class Agent:
                     # Only clear semantic_models/{namespace} directory when NOT using --from_adapter
                     # because MetricFlow adapter needs to read YAML files from this directory
                     if not (hasattr(self.args, "from_adapter") and self.args.from_adapter):
-                        path_manager = get_path_manager(datus_home=self.global_config.home)
-                        semantic_yaml_dir = path_manager.semantic_model_path(self.global_config.current_namespace)
+                        semantic_yaml_dir = self.global_config.path_manager.semantic_model_path(
+                            self.global_config.current_namespace
+                        )
                         force = self._force_delete
                         if semantic_yaml_dir.exists() and not safe_rmtree(
                             semantic_yaml_dir, "semantic YAML directory", force=force
@@ -496,8 +497,9 @@ class Agent:
             elif component == "ext_knowledge":
                 if kb_update_strategy == "overwrite":
                     # Also clear ext_knowledge/{namespace} directory
-                    path_manager = get_path_manager(datus_home=self.global_config.home)
-                    ext_knowledge_dir = path_manager.ext_knowledge_path(self.global_config.current_namespace)
+                    ext_knowledge_dir = self.global_config.path_manager.ext_knowledge_path(
+                        self.global_config.current_namespace
+                    )
                     force = self._force_delete
                     if ext_knowledge_dir.exists() and not safe_rmtree(
                         ext_knowledge_dir, "external knowledge directory", force=force
@@ -539,8 +541,9 @@ class Agent:
             elif component == "reference_sql":
                 if kb_update_strategy == "overwrite":
                     # Also clear sql_summaries/{namespace} directory (YAML files)
-                    path_manager = get_path_manager(datus_home=self.global_config.home)
-                    sql_summary_dir = path_manager.sql_summary_path(self.global_config.current_namespace)
+                    sql_summary_dir = self.global_config.path_manager.sql_summary_path(
+                        self.global_config.current_namespace
+                    )
                     force = self._force_delete
                     if sql_summary_dir.exists() and not safe_rmtree(
                         sql_summary_dir, "SQL summary directory", force=force

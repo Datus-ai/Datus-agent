@@ -33,7 +33,6 @@ from datus.tools.func_tool.generation_tools import GenerationTools
 from datus.utils.benchmark_utils import ComparisonOutcome, TableComparator
 from datus.utils.loggings import get_logger
 from datus.utils.message_utils import MessagePart, build_structured_content
-from datus.utils.path_manager import get_path_manager
 
 logger = get_logger(__name__)
 
@@ -105,8 +104,7 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
         self._last_verification_result: Optional[VerifyResult] = None
         self._verification_attempt_count: int = 0
 
-        path_manager = get_path_manager()
-        self.ext_knowledge_dir = str(path_manager.ext_knowledge_path(agent_config.current_namespace))
+        self.ext_knowledge_dir = str(agent_config.path_manager.ext_knowledge_path(agent_config.current_namespace))
 
         from datus.configuration.node_type import NodeType
 

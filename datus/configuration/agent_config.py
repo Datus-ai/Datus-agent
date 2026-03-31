@@ -263,8 +263,9 @@ class AgentConfig:
         """
         Initialize the global config from yaml file
         """
-        # Initialize home directory and update path_manager
+        # Resolve home early so dependent helpers can use a stable path manager.
         self.home = kwargs.get("home", "~/.datus")
+        self._set_path_manager(self.home)
         models_raw = kwargs["models"]
         self.target = kwargs["target"]
         self.models = {name: load_model_config(cfg) for name, cfg in models_raw.items()}
@@ -310,11 +311,11 @@ class AgentConfig:
         self.namespaces: Dict[str, Dict[str, DbConfig]] = {}
         self._init_namespace_config(kwargs.get("namespace", {}))
 
-        # SaaS mode: skip _init_dirs() to avoid mutating the global path_manager singleton,
-        # which causes cross-tenant contamination under concurrent requests.
+        # SaaS mode: skip _init_dirs() because callers want only derived paths here,
+        # not full local directory / backend initialization.
         self._skip_init_dirs = kwargs.get("skip_init_dirs", False)
         if self._skip_init_dirs:
-            home_path = Path(self.home).expanduser().resolve()
+            home_path = self.path_manager.datus_home
             self.rag_base_path = str(home_path / "data")
             self._save_dir = ""
             self._trajectory_dir = ""
@@ -600,11 +601,8 @@ class AgentConfig:
     def _init_dirs(
         self,
     ):
-        """Initialize or update path manager with configured home directory."""
-        from datus.utils.path_manager import get_path_manager
-
-        path_manager = get_path_manager()
-        path_manager.update_home(self.home)
+        """Initialize directory-derived paths from the current home."""
+        path_manager = self.path_manager
         logger.info(f"Using datus home directory: {path_manager.datus_home}")
         # Save directory is now fixed at {agent.home}/save
         self._save_dir = str(path_manager.save_dir)
@@ -612,9 +610,7 @@ class AgentConfig:
         self._trajectory_dir = str(path_manager.trajectory_dir)
 
         # Use fixed path from path_manager: {home}/data
-        from datus.utils.path_manager import get_path_manager
-
-        self.rag_base_path = str(get_path_manager().data_dir)
+        self.rag_base_path = str(path_manager.data_dir)
 
         self._init_benchmark_configs()
         self.session_dir = str(path_manager.sessions_dir)
@@ -667,6 +663,7 @@ class AgentConfig:
     def override_by_args(self, **kwargs):
         if home := kwargs.get("home"):
             self.home = home
+            self._set_path_manager(self.home)
             self._init_dirs()
         # storage_path parameter has been deprecated - data path is now fixed at {home}/data
         if "storage_path" in kwargs and kwargs["storage_path"] is not None:
@@ -730,12 +727,16 @@ class AgentConfig:
 
         config = self.benchmark_config(name)
         # Return fixed path: {agent.home}/benchmark/{name}
-        from datus.utils.path_manager import get_path_manager
-
         if os.path.isabs(config.benchmark_path):
             return config.benchmark_path
 
-        return str(get_path_manager().benchmark_dir / config.benchmark_path)
+        return str(self.path_manager.benchmark_dir / config.benchmark_path)
+
+    def _set_path_manager(self, home: str) -> None:
+        from datus.utils.path_manager import DatusPathManager, set_default_datus_home
+
+        self.path_manager = DatusPathManager(home)
+        set_default_datus_home(str(self.path_manager.datus_home))
 
     def _current_db_config(self) -> Dict[str, DbConfig]:
         if not self._current_namespace:

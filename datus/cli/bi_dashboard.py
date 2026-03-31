@@ -40,7 +40,6 @@ from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.utils.constants import SYS_SUB_AGENTS
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
-from datus.utils.path_manager import get_path_manager
 from datus.utils.reference_paths import quote_path_segment
 from datus.utils.sql_utils import metadata_identifier, parse_table_name_parts
 from datus.utils.stream_output import StreamOutputManager
@@ -732,7 +731,7 @@ class BiDashboardCommands:
         return ref_sqls
 
     def _ensure_file_name(self, platform: str, dashboard: DashboardInfo, suffix: str = ".sql") -> Path:
-        sql_root = get_path_manager(self.agent_config.home).dashboard_path() / platform
+        sql_root = self.agent_config.path_manager.dashboard_path() / platform
         file_name = self._build_sql_file_name(platform, dashboard)
         sql_root.mkdir(parents=True, exist_ok=True)
         return sql_root / f"{file_name}{suffix}"
@@ -850,7 +849,7 @@ class BiDashboardCommands:
         metrics = set()
         if files := metrics_result.get("semantic_models", []):
             # Get base directory for semantic models
-            base_dir = get_path_manager(self.agent_config.home).semantic_model_path(self.agent_config.current_namespace)
+            base_dir = self.agent_config.path_manager.semantic_model_path(self.agent_config.current_namespace)
             for file in files:
                 # Convert relative path to absolute path if needed
                 file_path = file if Path(file).is_absolute() else base_dir / file

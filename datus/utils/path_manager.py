@@ -9,9 +9,10 @@ This module provides a unified interface for managing all paths related to the
 .datus directory structure. The home directory is determined from agent.yml config.
 """
 
-import threading
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
+
+PathLike = Union[str, Path]
 
 
 class DatusPathManager:
@@ -28,28 +29,33 @@ class DatusPathManager:
         >>> sessions_dir = pm.sessions_dir
     """
 
-    def __init__(self, datus_home: Optional[str] = None):
+    def __init__(self, datus_home: Optional[PathLike] = None):
         """
         Initialize the path manager.
 
         Args:
             datus_home: Custom .datus root directory. If None, defaults to ~/.datus
         """
-        if datus_home:
-            self._datus_home = Path(datus_home).expanduser().resolve()
-        else:
-            self._datus_home = Path.home() / ".datus"
+        self._datus_home = self.resolve_home(datus_home)
 
-    def update_home(self, new_home: str) -> None:
+    @staticmethod
+    def resolve_home(datus_home: Optional[PathLike] = None) -> Path:
+        """Resolve a configured home path or fall back to ``~/.datus``."""
+        if datus_home:
+            return Path(datus_home).expanduser().resolve()
+        return (Path.home() / ".datus").resolve()
+
+    def update_home(self, new_home: PathLike) -> None:
         """
         Update the datus home directory.
 
-        This is called after loading agent config to apply the configured home path.
+        Deprecated compatibility helper.
+        Prefer creating a new ``DatusPathManager(new_home)`` and passing it explicitly.
 
         Args:
             new_home: New home directory path (can include ~)
         """
-        self._datus_home = Path(new_home).expanduser().resolve()
+        self._datus_home = self.resolve_home(new_home)
 
     @property
     def datus_home(self) -> Path:
@@ -355,43 +361,39 @@ class DatusPathManager:
         copy_data_file(resource_path="prompts/prompt_templates", target_dir=self.template_dir, replace=False)
 
 
-# Global singleton instance and lock for thread-safe initialization
-_path_manager: Optional[DatusPathManager] = None
-_path_manager_lock = threading.Lock()
+# Process-wide default home for legacy call sites that do not receive ``AgentConfig``.
+# This keeps prompt/session/logging helpers aligned with the currently active CLI/Web mode
+# without relying on a mutable global path-manager singleton.
+_default_datus_home: Optional[str] = None
 
 
-def get_path_manager(datus_home: Optional[Path] = None) -> DatusPathManager:
+def set_default_datus_home(home: Optional[PathLike]) -> None:
+    """Set or clear the process-wide default home used by ``get_path_manager()``."""
+    global _default_datus_home
+    _default_datus_home = str(DatusPathManager.resolve_home(home)) if home else None
+
+
+def get_path_manager(datus_home: Optional[PathLike] = None) -> DatusPathManager:
     """
-    Get the global path manager instance (thread-safe singleton).
+    Get a path manager instance.
 
-    Uses double-checked locking to ensure thread-safe initialization
-    without holding the lock on every access.
+    Resolution order:
+    1. Explicit ``datus_home`` argument
+    2. Process-wide default home set via ``set_default_datus_home()``
+    3. ``~/.datus``
 
     Args:
-        datus_home: Optional custom .datus root directory. Only used on first call.
+        datus_home: Optional custom .datus root directory.
 
     Returns:
         DatusPathManager instance
     """
-    global _path_manager
-
-    # First check (without lock) - fast path for already initialized instance
-    if _path_manager is None:
-        # Acquire lock for initialization
-        with _path_manager_lock:
-            # Second check (with lock) - ensure another thread didn't initialize
-            if _path_manager is None:
-                _path_manager = DatusPathManager(datus_home)
-
-    return _path_manager
+    resolved_home = datus_home if datus_home is not None else _default_datus_home
+    return DatusPathManager(str(resolved_home) if resolved_home is not None else None)
 
 
 def reset_path_manager() -> None:
     """
-    Reset the global path manager instance. Primarily for testing.
-
-    Thread-safe: Acquires lock before resetting to prevent race conditions.
+    Reset process-wide path-manager defaults. Primarily for testing.
     """
-    global _path_manager
-    with _path_manager_lock:
-        _path_manager = None
+    set_default_datus_home(None)

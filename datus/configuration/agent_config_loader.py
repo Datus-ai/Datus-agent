@@ -213,3 +213,19 @@ def load_agent_config(reload: bool = False, **kwargs) -> AgentConfig:
         agent_config.current_database = current_configs[list(current_configs.keys())[0]].logic_name
 
     return agent_config
+
+
+def get_agent_home(config_file: str = "") -> str:
+    """Read ``agent.home`` from config without instantiating ``AgentConfig``."""
+    config_path = parse_config_path(config_file)
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+    except yaml.YAMLError as e:
+        logger.warning(f"Error parsing YAML file while reading agent.home: {e}")
+        return "~/.datus"
+    except OSError as e:
+        logger.warning(f"Error reading config file while reading agent.home: {e}")
+        return "~/.datus"
+
+    return raw.get("agent", {}).get("home", "~/.datus")

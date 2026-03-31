@@ -658,9 +658,7 @@ class AgentCommands:
             "Enter file type (json/csv/sql/all)", default="all", choices=["json", "csv", "sql", "all"]
         )
 
-        from datus.utils.path_manager import get_path_manager
-
-        default_save_dir = str(get_path_manager().save_dir)
+        default_save_dir = str(self.cli.agent_config.path_manager.save_dir)
         target_dir = self.cli.prompt_input("Enter save directory (optional)", default=default_save_dir)
         from datetime import datetime
 

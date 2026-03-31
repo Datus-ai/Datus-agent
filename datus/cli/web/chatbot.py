@@ -30,13 +30,14 @@ import structlog
 # Import Datus components to reuse
 from datus.cli.repl import DatusCLI
 from datus.cli.web.chat_executor import ChatExecutor
-from datus.cli.web.config_manager import ConfigManager
+from datus.cli.web.config_manager import ConfigManager, get_home_from_config
 from datus.cli.web.session_loader import SessionLoader
 from datus.cli.web.ui_components import UIComponents
 from datus.models.session_manager import SessionManager
 from datus.schemas.action_history import ActionHistory
 from datus.schemas.node_models import ExecuteSQLResult
 from datus.utils.loggings import configure_logging, setup_web_chatbot_logging
+from datus.utils.path_manager import set_default_datus_home
 
 
 def _run_async(coro):
@@ -1180,6 +1181,9 @@ def main():  # pragma: no cover
             subagent_name = sys.argv[i + 1]
         elif arg == "--debug":
             debug = True
+
+    # Align implicit helpers (logging/session storage/prompt templates) with the configured home.
+    set_default_datus_home(get_home_from_config(config_path))
 
     # Initialize logging once per process
     initialize_logging(debug=debug)

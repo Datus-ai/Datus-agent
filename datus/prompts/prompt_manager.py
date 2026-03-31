@@ -13,7 +13,7 @@ No configuration file needed - versions are determined by scanning files.
 import re
 import shutil
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from jinja2 import Environment, FileSystemLoader, Template
 
@@ -34,23 +34,29 @@ class PromptManager:
         Configure agent.home in agent.yml to change the root directory.
         """
         self.default_templates_dir = Path(__file__).parent / "prompt_templates"
-        self._env = None
+        self._env_cache: Dict[str, Environment] = {}
 
     @property
     def user_templates_dir(self) -> Path:
-        """Get user templates directory from path_manager (dynamic)."""
+        """Get user templates directory from the current configured home."""
         from datus.utils.path_manager import get_path_manager
 
         return get_path_manager().template_dir
 
     def _get_env(self) -> Environment:
-        """Get Jinja2 environment with multi-directory search path."""
-        if self._env is None:
-            # Search user directory first, then fallback to default directory
-            search_paths = [str(self.user_templates_dir), str(self.default_templates_dir)]
-            self._env = Environment(loader=FileSystemLoader(search_paths), trim_blocks=True, lstrip_blocks=True)
+        """Get Jinja2 environment with multi-directory search path.
+
+        Cached per ``user_templates_dir`` so different homes (SaaS tenants)
+        get separate Jinja2 environments without re-creating on every call.
+        """
+        cache_key = str(self.user_templates_dir)
+        env = self._env_cache.get(cache_key)
+        if env is None:
+            search_paths = [cache_key, str(self.default_templates_dir)]
+            env = Environment(loader=FileSystemLoader(search_paths), trim_blocks=True, lstrip_blocks=True)
+            self._env_cache[cache_key] = env
             logger.debug(f"Template search paths: {search_paths}")
-        return self._env
+        return env
 
     def _get_template_path(self, template_name: str, version: Optional[str] = None) -> Path:
         """

@@ -19,9 +19,18 @@ from typing import Any, Dict, List
 import structlog
 
 from datus.cli.repl import DatusCLI
-from datus.configuration.agent_config_loader import parse_config_path
+from datus.configuration.agent_config_loader import get_agent_home, parse_config_path
 
 logger = structlog.get_logger("web_chatbot.config")
+
+
+def get_home_from_config(config_path: str) -> str:
+    """Read agent.home from config, defaulting to ``~/.datus``."""
+    try:
+        return get_agent_home(config_path)
+    except Exception as e:
+        logger.warning(f"Failed to read home from config: {e}")
+        return "~/.datus"
 
 
 def get_available_namespaces(config_path: str = "") -> List[str]:
@@ -81,15 +90,9 @@ def get_storage_path_from_config(config_path: str) -> str:
     Get storage path from configuration.
     """
     try:
-        config = _load_config_cached(config_path)
-        # Get home from config, default to ~/.datus
-        home = config.get("agent", {}).get("home", "~/.datus")
-        from datus.utils.path_manager import get_path_manager
+        from datus.utils.path_manager import DatusPathManager
 
-        # Update path manager with configured home and return data_dir
-        pm = get_path_manager()
-        pm.update_home(home)
-        return str(pm.data_dir)
+        return str(DatusPathManager(get_home_from_config(config_path)).data_dir)
     except Exception as e:
         logger.warning(f"Failed to read storage path from config: {e}")
         # Fallback to default

@@ -89,16 +89,14 @@ class DatusCLI:
         # Plan mode support
         self.plan_mode_active = False
 
-        # Load agent config first to initialize path_manager with correct home directory
+        # Load agent config first so path-dependent helpers use the configured home.
         self.agent_config = load_agent_config(**vars(self.args))
         self.configuration_manager = configuration_manager()
 
         if args.history_file:
             history_file = Path(args.history_file).expanduser().resolve()
         else:
-            from datus.utils.path_manager import get_path_manager
-
-            history_file = get_path_manager().history_file_path()
+            history_file = self.agent_config.path_manager.history_file_path()
         history_file.parent.mkdir(parents=True, exist_ok=True)
         self.history = FileHistory(str(history_file))
         self.session: PromptSession | None = None

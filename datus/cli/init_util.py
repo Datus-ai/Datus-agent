@@ -10,7 +10,6 @@ from rich.console import Console
 
 from datus.configuration.agent_config import AgentConfig
 from datus.utils.loggings import get_logger, print_rich_exception
-from datus.utils.path_manager import get_path_manager
 from datus.utils.path_utils import safe_rmtree
 
 logger = get_logger(__name__)
@@ -204,8 +203,7 @@ def init_semantic_model(
             finally:
                 db.close()
             # Also clear semantic_models/{namespace} directory (YAML files)
-            path_manager = get_path_manager(datus_home=agent_config.home)
-            semantic_yaml_dir = path_manager.semantic_model_path(agent_config.current_namespace)
+            semantic_yaml_dir = agent_config.path_manager.semantic_model_path(agent_config.current_namespace)
             if semantic_yaml_dir.exists() and not safe_rmtree(
                 semantic_yaml_dir, "semantic YAML directory", force=force
             ):
