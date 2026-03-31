@@ -498,3 +498,105 @@ class TestAskUserToolEdgeCases:
         assert result.success == 1
         answers = json.loads(result.result)
         assert answers[0]["answer"] == "PostgreSQL"
+
+
+class TestAskUserToolMultiSelect:
+    """Tests for multi_select answer resolution."""
+
+    @pytest.mark.asyncio
+    async def test_single_question_multi_select_list_keys(self, broker, tool):
+        """Single question with multi_select: JSON array of keys is resolved to display values."""
+
+        async def simulate_user():
+            for _ in range(50):
+                if broker.has_pending:
+                    pending = list(broker._pending.values())[0]
+                    # Simulate _collect_multi_choice: returns json.dumps(["1", "3"])
+                    await broker.submit(pending.action_id, json.dumps(["1", "3"]))
+                    return
+                await asyncio.sleep(0.01)
+
+        task = asyncio.create_task(simulate_user())
+        result = await tool.ask_user(
+            questions=[{"question": "Select DBs?", "options": ["MySQL", "PostgreSQL", "SQLite"], "multi_select": True}]
+        )
+        await task
+
+        assert result.success == 1
+        answers = json.loads(result.result)
+        assert len(answers) == 1
+        # Keys "1" and "3" resolve to "MySQL" and "SQLite"
+        assert answers[0]["answer"] == ["MySQL", "SQLite"]
+
+    @pytest.mark.asyncio
+    async def test_single_question_multi_select_empty(self, broker, tool):
+        """Single question with multi_select: empty selection returns empty list."""
+
+        async def simulate_user():
+            for _ in range(50):
+                if broker.has_pending:
+                    pending = list(broker._pending.values())[0]
+                    await broker.submit(pending.action_id, json.dumps([]))
+                    return
+                await asyncio.sleep(0.01)
+
+        task = asyncio.create_task(simulate_user())
+        result = await tool.ask_user(
+            questions=[{"question": "Select DBs?", "options": ["MySQL", "PostgreSQL"], "multi_select": True}]
+        )
+        await task
+
+        assert result.success == 1
+        answers = json.loads(result.result)
+        assert answers[0]["answer"] == []
+
+    @pytest.mark.asyncio
+    async def test_batch_multi_select_with_single_select(self, broker, tool):
+        """Batch: mix of multi_select and single_select questions."""
+
+        async def simulate_user():
+            for _ in range(50):
+                if broker.has_pending:
+                    pending = list(broker._pending.values())[0]
+                    # Q1 multi-select: list of keys; Q2 single-select: key string
+                    await broker.submit(pending.action_id, json.dumps([["1", "2"], "2"]))
+                    return
+                await asyncio.sleep(0.01)
+
+        task = asyncio.create_task(simulate_user())
+        result = await tool.ask_user(
+            questions=[
+                {"question": "Select DBs?", "options": ["MySQL", "PostgreSQL", "SQLite"], "multi_select": True},
+                {"question": "Primary?", "options": ["MySQL", "PostgreSQL", "SQLite"]},
+            ]
+        )
+        await task
+
+        assert result.success == 1
+        answers = json.loads(result.result)
+        assert len(answers) == 2
+        assert answers[0]["answer"] == ["MySQL", "PostgreSQL"]
+        assert answers[1]["answer"] == "PostgreSQL"
+
+    @pytest.mark.asyncio
+    async def test_single_question_multi_select_comma_string_fallback(self, broker, tool):
+        """Single question multi_select with comma-separated string fallback."""
+
+        async def simulate_user():
+            for _ in range(50):
+                if broker.has_pending:
+                    pending = list(broker._pending.values())[0]
+                    # Plain text with comma-separated keys (non-JSON)
+                    await broker.submit(pending.action_id, "1, 3")
+                    return
+                await asyncio.sleep(0.01)
+
+        task = asyncio.create_task(simulate_user())
+        result = await tool.ask_user(
+            questions=[{"question": "Select DBs?", "options": ["MySQL", "PostgreSQL", "SQLite"], "multi_select": True}]
+        )
+        await task
+
+        assert result.success == 1
+        answers = json.loads(result.result)
+        assert answers[0]["answer"] == ["MySQL", "SQLite"]

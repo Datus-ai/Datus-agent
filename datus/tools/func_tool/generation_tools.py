@@ -224,6 +224,18 @@ class GenerationTools:
             # Auto-sync to Knowledge Base
             sync_result = self._sync_metric_to_db(abs_metric, abs_semantic, metric_sqls)
 
+            if not sync_result.get("success"):
+                return FuncToolResult(
+                    success=0,
+                    error=f"Metric file written but KB sync failed: {sync_result.get('error', 'unknown')}",
+                    result={
+                        "metric_file": metric_file,
+                        "semantic_model_file": semantic_model_file,
+                        "metric_sqls": metric_sqls,
+                        "sync": sync_result,
+                    },
+                )
+
             return FuncToolResult(
                 result={
                     "message": "Metric generation completed and synced to Knowledge Base",
@@ -271,9 +283,14 @@ class GenerationTools:
                     metric_docs = list(yaml.safe_load_all(f))
 
                 combined_docs = semantic_docs + metric_docs
-                temp_file = semantic_model_file + ".combined.tmp"
+                import tempfile
 
+                fd, temp_file = tempfile.mkstemp(
+                    suffix=".combined.tmp",
+                    dir=os.path.dirname(semantic_model_file),
+                )
                 try:
+                    os.close(fd)
                     with open(temp_file, "w", encoding="utf-8") as f:
                         yaml.safe_dump_all(combined_docs, f, allow_unicode=True, sort_keys=False)
 

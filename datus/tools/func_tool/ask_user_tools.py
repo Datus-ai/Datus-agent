@@ -167,6 +167,10 @@ class AskUserTool:
             # Parse the JSON response from the collector
             try:
                 answers = json.loads(choice)
+                # For single-question: json.loads returns the raw answer directly
+                # (e.g. multi-select list ["1","3"]), wrap to match batch format [answer_for_q1]
+                if len(validated) == 1 and not (isinstance(answers, list) and len(answers) == len(validated)):
+                    answers = [answers]
             except (json.JSONDecodeError, TypeError):
                 if len(validated) == 1:
                     answers = [choice]

@@ -295,7 +295,7 @@ class FilesystemFuncTool(BaseTool):
             logger.error(f"Error editing file {path}: {str(e)}")
             return FuncToolResult(success=0, error=str(e))
 
-    def create_directory(self, path: str = "") -> FuncToolResult:
+    def create_directory(self, path: str) -> FuncToolResult:
         """
         Create a new directory or ensure it exists.
 
