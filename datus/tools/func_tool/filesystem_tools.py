@@ -104,7 +104,7 @@ class FilesystemFuncTool(BaseTool):
         Read the contents of a file.
 
         Args:
-            path: The path of the file to read
+            path: Relative path within the workspace directory. Do NOT use absolute paths.
 
         Returns:
             dict: A dictionary with the execution result, containing these keys:
@@ -188,7 +188,7 @@ class FilesystemFuncTool(BaseTool):
         Create a new file or overwrite an existing file.
 
         Args:
-            path: The path of the file to write
+            path: Relative path within the workspace directory. Do NOT use absolute paths.
             content: The content to write to the file
             file_type: Type of file being written (e.g., "reference_sql", "semantic_model").
                        Used by hooks for special handling.
@@ -224,7 +224,7 @@ class FilesystemFuncTool(BaseTool):
         Make selective edits to a file.
 
         Args:
-            path: The path of the file to edit
+            path: Relative path within the workspace directory. Do NOT use absolute paths.
             edits: List of edit operations. Each edit must be an object (not a string) with two properties
                    Example: [{"oldText": "text to find", "newText": "text to replace"}]
         Returns:
@@ -295,12 +295,12 @@ class FilesystemFuncTool(BaseTool):
             logger.error(f"Error editing file {path}: {str(e)}")
             return FuncToolResult(success=0, error=str(e))
 
-    def create_directory(self, path: str) -> FuncToolResult:
+    def create_directory(self, path: str = "") -> FuncToolResult:
         """
         Create a new directory or ensure it exists.
 
         Args:
-            path: The path of the directory to create
+            path: Relative path within the workspace directory. Do NOT use absolute paths.
 
         Returns:
             dict: A dictionary with the execution result, containing these keys:

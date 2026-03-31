@@ -43,14 +43,14 @@ class TestGenMetricsAgentic:
 
         logger.info(f"Node initialized with {len(node.tools)} tools: {tool_names}")
 
-    def test_interactive_mode_has_hooks(self, nightly_agent_config):
-        """N6-02: Interactive mode initializes hooks."""
+    def test_interactive_mode_no_hooks(self, nightly_agent_config):
+        """N6-02: Interactive mode no longer uses hooks (sync moved into tool)."""
         node = GenMetricsAgenticNode(
             agent_config=nightly_agent_config,
             execution_mode="interactive",
         )
 
-        assert node.hooks is not None, "Interactive mode should have hooks"
+        assert not hasattr(node, "hooks"), "gen_metrics no longer uses hooks"
 
     @pytest.mark.asyncio
     async def test_execute_stream_generates_metric(self, nightly_agent_config):

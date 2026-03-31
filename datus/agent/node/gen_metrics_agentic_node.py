@@ -14,7 +14,6 @@ from typing import AsyncGenerator, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.cli.execution_state import ExecutionInterrupted
-from datus.cli.generation_hooks import GenerationHooks
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SemanticNodeResult
@@ -89,14 +88,12 @@ class GenMetricsAgenticNode(AgenticNode):
         self.metrics_rag = MetricRAG(agent_config)
 
         # Setup tools
+        self.db_func_tool = None
+        self.gen_semantic_model_tools = None
         self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
         self.generation_tools: Optional[GenerationTools] = None
         self.ask_user_tool = None
-        self.hooks = None
         self.setup_tools()
-
-        # Debug: log hooks status after setup
-        logger.info(f"Hooks after setup: {self.hooks} (type: {type(self.hooks)})")
 
     def get_node_name(self) -> str:
         """
@@ -114,7 +111,9 @@ class GenMetricsAgenticNode(AgenticNode):
 
         self.tools = []
 
-        # Setup generation_tools.*, filesystem_tools.*, semantic_tools.*
+        # Setup db_tools.*, gen_semantic_model_tools.*, generation_tools.*, filesystem_tools.*, semantic_tools.*
+        self._setup_db_tools()
+        self._setup_gen_semantic_model_tools()
         self._setup_generation_tools()
         self._setup_filesystem_tools()
         self._setup_semantic_tools()
@@ -122,10 +121,6 @@ class GenMetricsAgenticNode(AgenticNode):
             self._setup_ask_user_tool()
 
         logger.info(f"Setup {len(self.tools)} tools for {self.NODE_NAME}: {[tool.name for tool in self.tools]}")
-
-        # Setup hooks (only in interactive mode)
-        if self.execution_mode == "interactive":
-            self._setup_hooks()
 
     def _setup_filesystem_tools(self):
         """Setup filesystem tools."""
@@ -188,14 +183,39 @@ class GenMetricsAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup semantic tools: {e}")
 
-    def _setup_hooks(self):
-        """Setup hooks for interactive mode."""
+    def _setup_db_tools(self):
+        """Setup database tools for schema introspection."""
         try:
-            broker = self._get_or_create_broker()
-            self.hooks = GenerationHooks(broker=broker, agent_config=self.agent_config)
-            logger.info("Setup hooks: generation_hooks")
+            from datus.tools.db_tools.db_manager import db_manager_instance
+            from datus.tools.func_tool import DBFuncTool
+
+            db_manager = db_manager_instance(self.agent_config.namespaces)
+            conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
+            self.db_func_tool = DBFuncTool(
+                conn,
+                agent_config=self.agent_config,
+            )
+            self.tools.extend(self.db_func_tool.available_tools())
+            logger.debug("Added database tools from DBFuncTool")
         except Exception as e:
-            logger.error(f"Failed to setup generation_hooks: {e}")
+            logger.error(f"Failed to setup database tools: {e}")
+
+    def _setup_gen_semantic_model_tools(self):
+        """Setup semantic model generation tools (table relationships, column usage patterns)."""
+        try:
+            if not self.db_func_tool:
+                logger.warning("DBFuncTool not initialized, skipping gen_semantic_model_tools setup")
+                return
+
+            from datus.tools.func_tool.gen_semantic_model_tools import GenSemanticModelTools
+
+            self.gen_semantic_model_tools = GenSemanticModelTools(self.db_func_tool)
+            self.tools.extend(self.gen_semantic_model_tools.available_tools())
+            logger.debug(
+                "Added gen_semantic_model tools: analyze_table_relationships, get_multiple_tables_ddl, analyze_column_usage_patterns"
+            )
+        except Exception as e:
+            logger.error(f"Failed to setup gen_semantic_model tools: {e}")
 
     def _get_existing_subject_trees(self) -> list:
         """
@@ -380,7 +400,7 @@ class GenMetricsAgenticNode(AgenticNode):
 
             logger.debug(f"Tools available : {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
             logger.debug(f"MCP servers available : {len(self.mcp_servers)} servers - {list(self.mcp_servers.keys())}")
-            logger.info(f"Passing hooks to model: {self.hooks} (type: {type(self.hooks)})")
+            logger.debug(f"Tools: {len(self.tools)}, MCP: {len(self.mcp_servers)}")
 
             # Initialize response collection variables
             response_content = ""
@@ -397,7 +417,7 @@ class GenMetricsAgenticNode(AgenticNode):
                 max_turns=self.max_turns,
                 session=session,
                 action_history_manager=action_history_manager,
-                hooks=self.hooks if self.execution_mode == "interactive" else None,
+                hooks=None,
                 interrupt_controller=self.interrupt_controller,
             ):
                 yield stream_action
@@ -449,24 +469,6 @@ class GenMetricsAgenticNode(AgenticNode):
                                     break
                                 else:
                                     logger.warning(f"no usage token found in this action {action.messages}")
-
-            # Auto-save to database in workflow mode
-            if self.execution_mode == "workflow" and metric_file:
-                try:
-                    # Extract metric_sqls from end_metric_generation tool call results
-                    metric_sqls = self._extract_metric_sqls_from_actions(action_history_manager)
-
-                    self._save_to_db(
-                        semantic_model_file=semantic_model_file,
-                        metric_file=metric_file,
-                        catalog=user_input.catalog,
-                        database=user_input.database,
-                        db_schema=user_input.db_schema,
-                        metric_sqls=metric_sqls,
-                    )
-                    logger.info(f"Auto-saved to database: semantic_model={semantic_model_file}, metric={metric_file}")
-                except Exception as e:
-                    logger.error(f"Failed to auto-save to database: {e}")
 
             # Create final result
             result = SemanticNodeResult(
@@ -590,149 +592,3 @@ class GenMetricsAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Unexpected error extracting metric_file: {e}", exc_info=True)
             return None, None, None
-
-    def _extract_metric_sqls_from_actions(self, action_history_manager) -> dict:
-        """
-        Extract metric_sqls from end_metric_generation tool call results.
-
-        Args:
-            action_history_manager: Action history manager containing tool call results
-
-        Returns:
-            Dictionary mapping metric names to their generated SQL
-        """
-        metric_sqls = {}
-        try:
-            actions = action_history_manager.get_actions()
-            for action in actions:
-                # Look for tool call results
-                if action.role == "tool" and action.output:
-                    output = action.output
-                    # Check if this is end_metric_generation result
-                    if isinstance(output, dict):
-                        # Handle nested structure: output -> raw_output -> result
-                        raw_output = output.get("raw_output", {})
-                        if isinstance(raw_output, dict):
-                            result = raw_output.get("result", {})
-                        else:
-                            result = output.get("result", {})
-
-                        if isinstance(result, dict) and "metric_sqls" in result:
-                            sqls = result.get("metric_sqls", {})
-                            if isinstance(sqls, dict):
-                                metric_sqls.update(sqls)
-                                logger.info(f"Extracted metric_sqls from tool result: {list(sqls.keys())}")
-
-            if not metric_sqls:
-                logger.warning("No metric_sqls found in action history")
-        except Exception as e:
-            logger.error(f"Error extracting metric_sqls from actions: {e}", exc_info=True)
-
-        return metric_sqls
-
-    def _save_to_db(
-        self,
-        semantic_model_file: Optional[str] = None,
-        metric_file: Optional[str] = None,
-        catalog=None,
-        database=None,
-        db_schema=None,
-        metric_sqls: dict = None,
-    ):
-        """
-        Save generated metrics to database (synchronous).
-
-        Args:
-            semantic_model_file: Optional name/path of the semantic model file
-            metric_file: Name of the metric file (e.g., "sales_metrics.yaml")
-            catalog: Optional catalog override
-            database: Optional database override
-            db_schema: Optional schema override
-            metric_sqls: Optional dict mapping metric names to their generated SQL
-        """
-        try:
-            import os
-
-            import yaml
-
-            if not metric_file:
-                logger.warning("No metric file provided for saving to database")
-                return
-
-            # Construct full path for metric file
-            metric_full_path = os.path.join(self.metrics_dir, metric_file)
-
-            if not os.path.exists(metric_full_path):
-                logger.warning(f"Metrics file not found: {metric_full_path}")
-                return
-
-            # If semantic_model_file is provided, combine them before syncing
-            if semantic_model_file:
-                semantic_full_path = os.path.join(self.metrics_dir, semantic_model_file)
-
-                if os.path.exists(semantic_full_path):
-                    logger.info("Combining semantic model and metric files for sync")
-
-                    # Load both YAML files
-                    with open(semantic_full_path, "r", encoding="utf-8") as f:
-                        semantic_docs = list(yaml.safe_load_all(f))
-                    with open(metric_full_path, "r", encoding="utf-8") as f:
-                        metric_docs = list(yaml.safe_load_all(f))
-
-                    # Create a temporary combined YAML content
-                    combined_docs = semantic_docs + metric_docs
-                    temp_file = semantic_full_path + ".combined.tmp"
-
-                    try:
-                        # Write combined YAML to temp file
-                        with open(temp_file, "w", encoding="utf-8") as f:
-                            yaml.safe_dump_all(combined_docs, f, allow_unicode=True, sort_keys=False)
-
-                        # Sync the combined file - only sync metrics, not semantic objects
-                        # (semantic model should already be synced separately)
-                        result = GenerationHooks._sync_semantic_to_db(
-                            temp_file,
-                            self.agent_config,
-                            catalog=catalog,
-                            database=database,
-                            schema=db_schema,
-                            include_semantic_objects=False,
-                            include_metrics=True,
-                            metric_sqls=metric_sqls,
-                            original_yaml_path=metric_full_path,
-                        )
-                    finally:
-                        # Clean up temp file
-                        if os.path.exists(temp_file):
-                            os.remove(temp_file)
-                else:
-                    logger.warning(f"Semantic model file not found: {semantic_full_path}, syncing metric only")
-                    # Fall back to syncing metric file alone
-                    result = GenerationHooks._sync_semantic_to_db(
-                        metric_full_path,
-                        self.agent_config,
-                        catalog=catalog,
-                        database=database,
-                        schema=db_schema,
-                        metric_sqls=metric_sqls,
-                    )
-            else:
-                # No semantic model file provided, sync metric file alone
-                result = GenerationHooks._sync_semantic_to_db(
-                    metric_full_path,
-                    self.agent_config,
-                    catalog=catalog,
-                    database=database,
-                    schema=db_schema,
-                    metric_sqls=metric_sqls,
-                )
-
-            if result.get("success"):
-                logger.info(f"Successfully saved to database: {result.get('message')}")
-            else:
-                error = result.get("error", "Unknown error")
-                logger.error(f"Failed to save to database: {error}")
-
-        except Exception as e:
-            logger.error(f"Error saving to database: {e}", exc_info=True)
-            raise

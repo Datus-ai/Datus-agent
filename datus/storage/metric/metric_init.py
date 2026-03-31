@@ -97,6 +97,7 @@ async def init_success_story_metrics_async(
         catalog=current_db_config.catalog,
         database=current_db_config.database,
         db_schema=current_db_config.schema,
+        prompt_version="1.1",
     )
 
     metrics_node = GenMetricsAgenticNode(

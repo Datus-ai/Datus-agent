@@ -33,6 +33,12 @@ class QuestionItem(BaseModel):
         "even when options are provided, so do NOT include an 'Other' or 'Custom' option. "
         "If omitted, the user provides free-text input.",
     )
+    multi_select: bool = Field(
+        default=False,
+        description="When True, the user can select multiple options (checkbox-style). "
+        "The answer will be a list of selected option texts. "
+        "Only meaningful when options are provided.",
+    )
 
 
 class AskUserTool:
@@ -103,9 +109,11 @@ class AskUserTool:
             if isinstance(q, QuestionItem):
                 q_text = q.question
                 options = q.options
+                multi_select = q.multi_select
             elif isinstance(q, dict):
                 q_text = q.get("question", "")
                 options = q.get("options")
+                multi_select = q.get("multi_select", False)
             else:
                 return FuncToolResult(success=0, error=f"questions[{i}] must be a dict")
 
@@ -129,11 +137,18 @@ class AskUserTool:
                     return FuncToolResult(success=0, error=f"questions[{i}].options must be non-empty strings")
             # Convert List[str] → Dict[str, str] for broker choices format
             choices_dict = {str(j): opt for j, opt in enumerate(options, 1)} if options else None
-            validated.append({"question": str(q_text).strip(), "choices": choices_dict})
+            validated.append(
+                {
+                    "question": str(q_text).strip(),
+                    "choices": choices_dict,
+                    "multi_select": bool(multi_select) if options else False,
+                }
+            )
 
         # --- pass to broker ---
         contents = [q["question"] for q in validated]
         choices = [q["choices"] or {} for q in validated]
+        multi_selects = [q["multi_select"] for q in validated]
 
         try:
             choice, callback = await self._broker.request(
@@ -141,6 +156,7 @@ class AskUserTool:
                 choices=choices,
                 default_choices=[""] * len(validated),
                 allow_free_text=True,
+                multi_selects=multi_selects,
             )
 
             # Reject None response (collector failure)
@@ -173,7 +189,15 @@ class AskUserTool:
 
             # Resolve choice keys to display values (e.g. "2" → "PostgreSQL")
             for i, q in enumerate(validated):
-                if q["choices"] and str(answers[i]) in q["choices"]:
+                if q["multi_select"] and q["choices"]:
+                    # Multi-select: answers[i] is a list of keys (e.g. ["1", "3"])
+                    if isinstance(answers[i], list):
+                        answers[i] = [q["choices"].get(str(k), str(k)) for k in answers[i]]
+                    elif isinstance(answers[i], str):
+                        # Fallback: comma-separated keys from free-text
+                        keys = [k.strip() for k in answers[i].split(",") if k.strip()]
+                        answers[i] = [q["choices"].get(k, k) for k in keys]
+                elif q["choices"] and str(answers[i]) in q["choices"]:
                     answers[i] = q["choices"][str(answers[i])]
 
             # Build structured result

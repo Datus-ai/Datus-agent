@@ -123,6 +123,132 @@ def select_choice(
         return default
 
 
+def select_multi_choice(
+    console: Console,
+    choices: Dict[str, str],
+    default_selected: Optional[List[str]] = None,
+    allow_free_text: bool = False,
+) -> List[str]:
+    """Interactive multi-select with arrow-key navigation and Space to toggle.
+
+    Uses prompt_toolkit Application for proper terminal handling.
+    Up/Down arrows to navigate, Space to toggle, ``a`` to toggle all,
+    Enter to confirm selection.
+    When ``allow_free_text`` is True, a "Type custom answer..." entry is appended;
+    choosing it (or pressing ``/``) opens the multiline input prompt.
+
+    Args:
+        console: Rich Console (used for fallback output on error)
+        choices: Ordered dict of {key: display_text}
+        default_selected: List of keys that should be pre-selected
+        allow_free_text: When True, append a free-text option and allow ``/`` shortcut.
+
+    Returns:
+        List of selected choice keys, or a single-element list with user's free-text input.
+        Empty list if nothing is selected.
+    """
+    try:
+        from prompt_toolkit import Application
+        from prompt_toolkit.key_binding import KeyBindings
+        from prompt_toolkit.layout import Layout
+        from prompt_toolkit.layout.containers import Window
+        from prompt_toolkit.layout.controls import FormattedTextControl
+
+        display_choices = dict(choices)
+        if allow_free_text:
+            display_choices[_FREE_TEXT_SENTINEL] = "Type custom answer..."
+
+        keys = list(display_choices.keys())
+        cursor = [0]
+        checked = set(default_selected or [])
+
+        kb = KeyBindings()
+
+        @kb.add("up")
+        def _move_up(event):
+            cursor[0] = (cursor[0] - 1) % len(keys)
+
+        @kb.add("down")
+        def _move_down(event):
+            cursor[0] = (cursor[0] + 1) % len(keys)
+
+        @kb.add("space")
+        def _toggle(event):
+            key = keys[cursor[0]]
+            if key == _FREE_TEXT_SENTINEL:
+                return
+            if key in checked:
+                checked.discard(key)
+            else:
+                checked.add(key)
+
+        @kb.add("a")
+        def _toggle_all(event):
+            real_keys = [k for k in keys if k != _FREE_TEXT_SENTINEL]
+            if len(checked) == len(real_keys):
+                checked.clear()
+            else:
+                checked.update(real_keys)
+
+        @kb.add("enter")
+        def _confirm(event):
+            event.app.exit(result=list(checked))
+
+        @kb.add("c-c")
+        def _cancel(event):
+            event.app.exit(result=[])
+
+        if allow_free_text:
+
+            @kb.add("/")
+            def _free_text_shortcut(event):
+                event.app.exit(result=[_FREE_TEXT_SENTINEL])
+
+        def _get_formatted_text():
+            lines = []
+            for i, (key, display) in enumerate(display_choices.items()):
+                is_cur = i == cursor[0]
+                if key == _FREE_TEXT_SENTINEL:
+                    label = f"  [/] {display}"
+                    if is_cur:
+                        lines.append(("ansicyan bold", f"  \u2192{label}\n"))
+                    else:
+                        lines.append(("", f"    {label}\n"))
+                else:
+                    mark = "\u2713" if key in checked else " "
+                    label = f"  [{mark}] {display}"
+                    if is_cur:
+                        lines.append(("ansicyan bold", f"  \u2192{label}\n"))
+                    else:
+                        lines.append(("", f"    {label}\n"))
+            lines.append(("ansibrightblack", "  [Space] toggle  [a] all  [Enter] confirm\n"))
+            return lines
+
+        app = Application(
+            layout=Layout(Window(FormattedTextControl(_get_formatted_text))),
+            key_bindings=kb,
+            full_screen=False,
+        )
+
+        result = app.run()
+
+        if allow_free_text and result == [_FREE_TEXT_SENTINEL]:
+            console.print()
+            console.print("[dim](Paste supported. Enter to submit)[/]")
+            text = prompt_input(console, message="Your input", multiline=True)
+            return [text] if text else []
+
+        return result
+
+    except (KeyboardInterrupt, EOFError):
+        console.print("\n[yellow]Input cancelled[/]")
+        return []
+    except Exception as e:
+        logger.error(f"Interactive multi-select error: {e}")
+        console.print(f"[bold red]Multi-select error:[/] {str(e)}")
+        return []
+
+
 def select_list(
     console: Console,
     items: List[List[str]],

@@ -52,7 +52,7 @@ class TestGenMetricsAgenticNodeInit:
         assert node.get_node_name() == "gen_metrics"
         assert node.id == "gen_metrics_node"
         assert node.execution_mode == "workflow"
-        assert node.hooks is None  # No hooks in workflow mode
+        assert not hasattr(node, "hooks")  # hooks removed from gen_metrics
 
     def test_metrics_has_tools(self, real_agent_config, mock_llm_create):
         """Test that the node has filesystem and generation tools."""
@@ -220,7 +220,7 @@ class TestGenMetricsAgenticNodeExecution:
             execution_mode="workflow",
         )
 
-        assert node.hooks is None
+        assert not hasattr(node, "hooks")  # hooks removed from gen_metrics
         assert node.execution_mode == "workflow"
 
         node.input = SemanticNodeInput(user_message="Generate metrics")
@@ -399,6 +399,100 @@ def _make_node(real_agent_config, mock_llm_create, execution_mode="workflow"):
 
 
 # ---------------------------------------------------------------------------
+# TestSetupDbTools
+# ---------------------------------------------------------------------------
+
+
+class TestSetupDbTools:
+    """Tests for _setup_db_tools() method."""
+
+    def test_db_tools_added_when_available(self, real_agent_config, mock_llm_create):
+        """When db_manager can connect, DB tools should be in node.tools."""
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+
+        node = GenMetricsAgenticNode(
+            agent_config=real_agent_config,
+            execution_mode="workflow",
+        )
+
+        tool_names = [tool.name for tool in node.tools]
+        # SQLite connector provides these tools via DBFuncTool
+        assert "describe_table" in tool_names, f"Missing describe_table, got: {tool_names}"
+        assert "list_tables" in tool_names, f"Missing list_tables, got: {tool_names}"
+        assert node.db_func_tool is not None
+
+    def test_db_tools_failure_does_not_break_init(self, real_agent_config, mock_llm_create):
+        """When db_manager raises, node still initializes with other tools."""
+        from unittest.mock import patch as _patch
+
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+
+        with _patch(
+            "datus.tools.db_tools.db_manager.db_manager_instance",
+            side_effect=RuntimeError("no connection"),
+        ):
+            node = GenMetricsAgenticNode(
+                agent_config=real_agent_config,
+                execution_mode="workflow",
+            )
+
+        tool_names = [tool.name for tool in node.tools]
+        # DB tools should be absent, but filesystem/generation tools still present
+        assert "describe_table" not in tool_names
+        assert "read_file" in tool_names
+        assert "check_semantic_object_exists" in tool_names
+        assert node.db_func_tool is None
+
+
+# ---------------------------------------------------------------------------
+# TestSetupGenSemanticModelTools
+# ---------------------------------------------------------------------------
+
+
+class TestSetupGenSemanticModelTools:
+    """Tests for _setup_gen_semantic_model_tools() method."""
+
+    def test_gen_semantic_model_tools_added_when_db_available(self, real_agent_config, mock_llm_create):
+        """When db_func_tool is initialized, gen_semantic_model_tools should be mounted."""
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+
+        node = GenMetricsAgenticNode(
+            agent_config=real_agent_config,
+            execution_mode="workflow",
+        )
+
+        tool_names = [tool.name for tool in node.tools]
+        assert "analyze_table_relationships" in tool_names, f"Missing analyze_table_relationships, got: {tool_names}"
+        assert "get_multiple_tables_ddl" in tool_names, f"Missing get_multiple_tables_ddl, got: {tool_names}"
+        assert "analyze_column_usage_patterns" in tool_names, (
+            f"Missing analyze_column_usage_patterns, got: {tool_names}"
+        )
+        assert node.gen_semantic_model_tools is not None
+
+    def test_gen_semantic_model_tools_skipped_when_no_db(self, real_agent_config, mock_llm_create):
+        """When db_func_tool fails to init, gen_semantic_model_tools is None but node still works."""
+        from unittest.mock import patch as _patch
+
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+
+        with _patch(
+            "datus.tools.db_tools.db_manager.db_manager_instance",
+            side_effect=RuntimeError("no connection"),
+        ):
+            node = GenMetricsAgenticNode(
+                agent_config=real_agent_config,
+                execution_mode="workflow",
+            )
+
+        tool_names = [tool.name for tool in node.tools]
+        assert "analyze_table_relationships" not in tool_names
+        assert node.gen_semantic_model_tools is None
+        # Other tools still present
+        assert "read_file" in tool_names
+        assert "check_semantic_object_exists" in tool_names
+
+
+# ---------------------------------------------------------------------------
 # TestExtractMetricAndOutputFromResponse
 # ---------------------------------------------------------------------------
 
@@ -456,39 +550,6 @@ class TestExtractMetricAndOutputFromResponse:
 # ---------------------------------------------------------------------------
 # TestExtractMetricSqlsFromActions
 # ---------------------------------------------------------------------------
-
-
-class TestExtractMetricSqlsFromActions:
-    def test_extracts_metric_sqls(self, real_agent_config, mock_llm_create):
-        node = _make_node(real_agent_config, mock_llm_create)
-        from datus.schemas.action_history import ActionHistory
-
-        action = MagicMock(spec=ActionHistory)
-        action.role = "tool"
-        action.output = {"raw_output": {"result": {"metric_sqls": {"revenue": "SELECT SUM(revenue) FROM sales"}}}}
-
-        manager = MagicMock()
-        manager.get_actions.return_value = [action]
-
-        sqls = node._extract_metric_sqls_from_actions(manager)
-        assert "revenue" in sqls
-        assert sqls["revenue"] == "SELECT SUM(revenue) FROM sales"
-
-    def test_returns_empty_when_no_tool_actions(self, real_agent_config, mock_llm_create):
-        node = _make_node(real_agent_config, mock_llm_create)
-        manager = MagicMock()
-        manager.get_actions.return_value = []
-
-        sqls = node._extract_metric_sqls_from_actions(manager)
-        assert sqls == {}
-
-    def test_returns_empty_on_exception(self, real_agent_config, mock_llm_create):
-        node = _make_node(real_agent_config, mock_llm_create)
-        manager = MagicMock()
-        manager.get_actions.side_effect = RuntimeError("error")
-
-        sqls = node._extract_metric_sqls_from_actions(manager)
-        assert sqls == {}
 
 
 # ---------------------------------------------------------------------------

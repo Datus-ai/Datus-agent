@@ -83,7 +83,7 @@ class InteractionBroker:
 
         choice, callback = await broker.request(
             contents=["Sync to Knowledge Base?"],
-            choices=[{"y": "Yes - Save to KB", "n": "No - Keep file only"}],
+            choices=[{"y": "Accept - Sync to KB", "n": "Reject - Delete file"}],
             default_choices=["y"],
         )
 
@@ -165,6 +165,7 @@ class InteractionBroker:
         default_choices: Optional[List[str]] = None,
         content_type: str = "markdown",
         allow_free_text: bool = False,
+        multi_selects: Optional[List[bool]] = None,
     ) -> Tuple[str, Callable[[str, str], Awaitable[None]]]:
         """
         Request user input with choices. Blocks until user responds.
@@ -175,6 +176,7 @@ class InteractionBroker:
             default_choices: Default choice key per question. Defaults to ``[""]``.
             content_type: How to render the content (markdown, sql, yaml, text).
             allow_free_text: When True, accept values outside choices.
+            multi_selects: Per-question flag for multi-select mode. Defaults to all False.
 
         Returns:
             Tuple of (choice, callback):
@@ -229,12 +231,16 @@ class InteractionBroker:
         # Auto-infer action_type
         action_type = "request_batch" if len(contents) > 1 else "request_choice"
 
+        if multi_selects is None:
+            multi_selects = [False] * len(contents)
+
         input_data = {
             "contents": contents,
             "content_type": content_type,
             "choices": choices_list,
             "default_choices": default_choices,
             "allow_free_text": allow_free_text,
+            "multi_selects": multi_selects,
         }
 
         action = ActionHistory(

@@ -277,3 +277,74 @@ class TestCreateSelectionPrompt:
 
         call_kwargs = mock_pm.render_template.call_args[1]
         assert call_kwargs["version"] == "v2"
+
+
+# ---------------------------------------------------------------------------
+# TestGenMetricsV12TemplateSmokeTest
+# ---------------------------------------------------------------------------
+
+
+class TestGenMetricsV12Template:
+    """Smoke tests for gen_metrics_system_1.2.j2 template."""
+
+    def test_v12_template_renders_without_error(self):
+        """v1.2 template renders with minimal context and produces non-empty output."""
+        from datus.prompts.prompt_manager import PromptManager
+
+        pm = PromptManager()
+        # Use only the default_templates_dir (no user templates needed)
+        from jinja2 import Environment, FileSystemLoader
+
+        env = Environment(
+            loader=FileSystemLoader([str(pm.default_templates_dir)]),
+            trim_blocks=True,
+            lstrip_blocks=True,
+        )
+        template = env.get_template("gen_metrics_system_1.2.j2")
+
+        result = template.render(
+            native_tools=["read_file", "write_file", "end_metric_generation"],
+            mcp_tools=[],
+            has_ask_user_tool=True,
+            semantic_model_dir="/tmp/test_models",
+            has_subject_tree=False,
+            subject_tree=[],
+            existing_subject_trees=[],
+        )
+
+        assert len(result) > 100, "Template should render substantial content"
+        assert "metric" in result.lower()
+
+    def test_v12_template_mentions_skill(self):
+        """v1.2 template should reference skills and define-metric."""
+        from datus.prompts.prompt_manager import PromptManager
+
+        pm = PromptManager()
+        from jinja2 import Environment, FileSystemLoader
+
+        env = Environment(
+            loader=FileSystemLoader([str(pm.default_templates_dir)]),
+            trim_blocks=True,
+            lstrip_blocks=True,
+        )
+        template = env.get_template("gen_metrics_system_1.2.j2")
+
+        result = template.render(
+            native_tools=[],
+            mcp_tools=[],
+            has_ask_user_tool=False,
+            semantic_model_dir="/tmp/models",
+            has_subject_tree=False,
+            subject_tree=[],
+            existing_subject_trees=[],
+        )
+
+        assert "available_skills" in result or "load_skill" in result or "define-metric" in result
+
+    def test_v12_is_latest_version(self):
+        """PromptManager.get_latest_version returns '1.2' for gen_metrics."""
+        from datus.prompts.prompt_manager import PromptManager
+
+        pm = PromptManager()
+        latest = pm.get_latest_version("gen_metrics_system")
+        assert latest == "1.2", f"Expected latest version '1.2', got '{latest}'"

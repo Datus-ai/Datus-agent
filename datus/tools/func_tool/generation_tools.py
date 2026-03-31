@@ -3,8 +3,10 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 # -*- coding: utf-8 -*-
-from typing import Dict, List
+import os
+from typing import Dict, List, Optional
 
+import yaml
 from agents import Tool
 from datus_storage_base.conditions import And, eq
 
@@ -13,6 +15,7 @@ from datus.storage.metric.store import MetricRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.loggings import get_logger
+from datus.utils.path_manager import get_path_manager
 
 logger = get_logger(__name__)
 
@@ -174,10 +177,10 @@ class GenerationTools:
         self, metric_file: str, semantic_model_file: str = "", metric_sqls_json: str = ""
     ) -> FuncToolResult:
         """
-        Complete metric generation process.
+        Complete metric generation process and automatically sync to Knowledge Base.
 
         Call this tool when you have finished generating a metric YAML file.
-        This tool triggers user confirmation workflow for syncing to vector store.
+        This tool automatically syncs the metric to the vector store (no user confirmation needed).
 
         Args:
             metric_file: Absolute path to the generated metric YAML file (required)
@@ -188,7 +191,7 @@ class GenerationTools:
                               Example: '{"revenue_total": "SELECT SUM(revenue) FROM orders GROUP BY date"}'
 
         Returns:
-            dict: Result containing confirmation message, file paths, and metric SQLs
+            dict: Result containing confirmation message, file paths, metric SQLs, and sync status
         """
         import json
 
@@ -207,18 +210,102 @@ class GenerationTools:
                 f"metric_sqls={metric_sqls}"
             )
 
+            # Resolve absolute paths
+            base_dir = str(
+                get_path_manager(self.agent_config.home).semantic_model_path(self.agent_config.current_namespace)
+            )
+            abs_metric = os.path.join(base_dir, metric_file) if not os.path.isabs(metric_file) else metric_file
+            abs_semantic = (
+                os.path.join(base_dir, semantic_model_file)
+                if semantic_model_file and not os.path.isabs(semantic_model_file)
+                else semantic_model_file
+            )
+
+            # Auto-sync to Knowledge Base
+            sync_result = self._sync_metric_to_db(abs_metric, abs_semantic, metric_sqls)
+
             return FuncToolResult(
                 result={
-                    "message": "Metric generation completed",
+                    "message": "Metric generation completed and synced to Knowledge Base",
                     "metric_file": metric_file,
                     "semantic_model_file": semantic_model_file,
                     "metric_sqls": metric_sqls,
+                    "sync": sync_result,
                 }
             )
 
         except Exception as e:
             logger.error(f"Error completing metric generation: {e}")
             return FuncToolResult(success=0, error=f"Failed to complete generation: {str(e)}")
+
+    def _sync_metric_to_db(
+        self,
+        metric_file: str,
+        semantic_model_file: Optional[str] = None,
+        metric_sqls: Optional[Dict[str, str]] = None,
+    ) -> dict:
+        """
+        Sync metric (and optionally semantic model) to Knowledge Base.
+
+        Reuses GenerationHooks._sync_semantic_to_db() static method.
+
+        Args:
+            metric_file: Absolute path to metric YAML file
+            semantic_model_file: Optional absolute path to semantic model YAML file
+            metric_sqls: Optional dict mapping metric names to generated SQL
+
+        Returns:
+            dict with sync result (success, message, or error)
+        """
+        from datus.cli.generation_hooks import GenerationHooks
+
+        try:
+            if not os.path.exists(metric_file):
+                return {"success": False, "error": f"Metric file not found: {metric_file}"}
+
+            if semantic_model_file and os.path.exists(semantic_model_file):
+                # Combine semantic model + metric into a temp file for sync
+                with open(semantic_model_file, "r", encoding="utf-8") as f:
+                    semantic_docs = list(yaml.safe_load_all(f))
+                with open(metric_file, "r", encoding="utf-8") as f:
+                    metric_docs = list(yaml.safe_load_all(f))
+
+                combined_docs = semantic_docs + metric_docs
+                temp_file = semantic_model_file + ".combined.tmp"
+
+                try:
+                    with open(temp_file, "w", encoding="utf-8") as f:
+                        yaml.safe_dump_all(combined_docs, f, allow_unicode=True, sort_keys=False)
+
+                    result = GenerationHooks._sync_semantic_to_db(
+                        temp_file,
+                        self.agent_config,
+                        include_semantic_objects=False,
+                        include_metrics=True,
+                        metric_sqls=metric_sqls,
+                        original_yaml_path=metric_file,
+                    )
+                finally:
+                    if os.path.exists(temp_file):
+                        os.remove(temp_file)
+            else:
+                # Sync metric file alone
+                result = GenerationHooks._sync_semantic_to_db(
+                    metric_file,
+                    self.agent_config,
+                    metric_sqls=metric_sqls,
+                )
+
+            if result.get("success"):
+                logger.info(f"Successfully synced metric to KB: {result.get('message')}")
+            else:
+                logger.error(f"Failed to sync metric to KB: {result.get('error')}")
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Error syncing metric to KB: {e}", exc_info=True)
+            return {"success": False, "error": str(e)}
 
     def generate_sql_summary_id(self, sql_query: str, comment: str = "") -> FuncToolResult:
         """

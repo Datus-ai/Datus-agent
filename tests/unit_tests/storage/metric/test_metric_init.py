@@ -157,6 +157,48 @@ class TestInitSuccessStoryMetricsAsync:
         assert "emit" in param_names
         assert "extra_instructions" in param_names
 
+    @pytest.mark.asyncio
+    async def test_batch_flow_pins_prompt_version_1_1(self):
+        """Batch flow must pin prompt_version='1.1' to avoid using v1.2 interactive prompt."""
+        from unittest.mock import patch
+
+        from datus.schemas.action_history import ActionStatus
+        from datus.storage.metric.metric_init import init_success_story_metrics_async
+
+        captured_input = {}
+
+        mock_node = MagicMock()
+
+        async def fake_execute_stream(action_manager):
+            captured_input["input"] = mock_node.input
+            action = MagicMock()
+            action.status = ActionStatus.SUCCESS
+            action.output = {"response": "done"}
+            action.messages = "ok"
+            yield action
+
+        mock_node.execute_stream = fake_execute_stream
+
+        mock_config = MagicMock()
+        mock_config.current_db_config.return_value = MagicMock(catalog="", database="test_db", schema="")
+
+        import pandas as pd
+
+        with (
+            patch("datus.storage.metric.metric_init.extract_tables_from_sql_list", return_value=[]),
+            patch("datus.storage.metric.metric_init.GenMetricsAgenticNode", return_value=mock_node),
+            patch("datus.storage.metric.metric_init.pd.read_csv") as mock_read_csv,
+        ):
+            mock_read_csv.return_value = pd.DataFrame([{"question": "Revenue?", "sql": "SELECT SUM(a) FROM t"}])
+            success, error, result = await init_success_story_metrics_async(
+                agent_config=mock_config,
+                success_story="dummy.csv",
+            )
+
+        assert success is True
+        node_input = captured_input["input"]
+        assert node_input.prompt_version == "1.1", f"Expected '1.1', got '{node_input.prompt_version}'"
+
 
 # ---------------------------------------------------------------------------
 # init_success_story_metrics sync wrapper - new signature

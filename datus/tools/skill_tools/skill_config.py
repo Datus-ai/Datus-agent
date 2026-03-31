@@ -121,7 +121,6 @@ class SkillMetadata(BaseModel):
     # Invocation control
     disable_model_invocation: bool = Field(default=False, description="If true, only user can invoke via /skill-name")
     user_invocable: bool = Field(default=True, description="If false, hidden from menu, only model invokes")
-
     # Subagent execution
     context: Optional[str] = Field(default=None, description="'fork' to run in isolated subagent")
     agent: Optional[str] = Field(default=None, description="Subagent type when context=fork")

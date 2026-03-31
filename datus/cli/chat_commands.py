@@ -634,6 +634,27 @@ class ChatCommands:
                 return ""
             return result or default_key
 
+        def _collect_multi_choice(console, choices, allow_free_text):
+            """Collect multiple choices via checkbox-style selector."""
+            from datus.cli._cli_utils import select_multi_choice
+
+            if not choices:
+                console.print()
+                console.print("[dim](Paste supported. Enter to submit)[/]")
+                return self.cli.prompt_input(message="Your input", multiline=True) or ""
+
+            selected_keys = select_multi_choice(
+                console,
+                choices=choices,
+                allow_free_text=allow_free_text,
+            )
+            if selected_keys:
+                selected_display = [choices.get(k, k) for k in selected_keys]
+                console.print(f"[dim]Selected: {', '.join(selected_display)}[/]")
+            else:
+                console.print("[yellow]No items selected.[/]")
+            return json.dumps(selected_keys, ensure_ascii=False)
+
         def collect(action: ActionHistory, console) -> Optional[str]:
 
             try:
@@ -642,14 +663,19 @@ class ChatCommands:
                 choices_list = input_data.get("choices", [])
                 default_choices = input_data.get("default_choices", [])
                 allow_free_text = input_data.get("allow_free_text", False)
+                multi_selects = input_data.get("multi_selects", [])
 
                 with esc_guard.paused():
                     if len(contents) > 1:
-                        return self._collect_batch(console, contents, choices_list)
+                        return self._collect_batch(console, contents, choices_list, multi_selects)
 
                     # --- single question ---
                     ch = choices_list[0] if choices_list else {}
                     default = default_choices[0] if default_choices else ""
+                    is_multi = multi_selects[0] if multi_selects else False
+
+                    if is_multi and ch:
+                        return _collect_multi_choice(console, ch, allow_free_text)
                     return _collect_single_choice(console, ch, default, allow_free_text)
             except Exception as e:
                 logger.error(f"Error collecting interaction input: {e}")
@@ -657,7 +683,9 @@ class ChatCommands:
 
         return collect
 
-    def _collect_batch(self, console, contents: list, choices_list: list) -> Optional[str]:
+    def _collect_batch(
+        self, console, contents: list, choices_list: list, multi_selects: Optional[list] = None
+    ) -> Optional[str]:
         """Collect answers for a batch of questions.
 
         Steps through each question, showing progress (e.g. [1/3]),
@@ -670,21 +698,42 @@ class ChatCommands:
 
         answers = []
         total = len(contents)
+        if multi_selects is None:
+            multi_selects = []
 
         for idx, q_text in enumerate(contents):
             ch = choices_list[idx] if idx < len(choices_list) else {}
+            is_multi = multi_selects[idx] if idx < len(multi_selects) else False
 
             # Show progress header
             if total > 1:
                 if answers:
                     prev_q = contents[idx - 1]
                     short_q = prev_q[:50] + "..." if len(prev_q) > 50 else prev_q
-                    console.print(f"  [green]\u2705[/green] [dim]{short_q} \u2192 {answers[-1]}[/dim]")
+                    prev_display = str(answers[-1])
+                    if len(prev_display) > 60:
+                        prev_display = prev_display[:60] + "..."
+                    console.print(f"  [green]\u2705[/green] [dim]{short_q} \u2192 {prev_display}[/dim]")
                 console.print(f"\n  [bold bright_cyan][{idx + 1}/{total}][/bold bright_cyan] {q_text}")
             if not ch:
                 console.print()
                 console.print("[dim](Paste supported. Enter to submit)[/]")
                 answer = self.cli.prompt_input(message="Your input", multiline=True) or ""
+            elif is_multi:
+                from datus.cli._cli_utils import select_multi_choice
+
+                selected_keys = select_multi_choice(
+                    console,
+                    choices=ch,
+                    allow_free_text=True,
+                )
+                if selected_keys:
+                    selected_display = [ch.get(k, k) for k in selected_keys]
+                    console.print(f"[dim]Selected: {', '.join(selected_display)}[/]")
+                    answer = selected_keys
+                else:
+                    console.print("[yellow]No items selected.[/]")
+                    answer = []
             else:
                 default_key = next(iter(ch.keys()))
                 result = select_choice(

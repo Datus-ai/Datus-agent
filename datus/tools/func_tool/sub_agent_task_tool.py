@@ -92,9 +92,11 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "Returns JSON with {response, semantic_models (list of file paths), tokens_used}."
     ),
     "gen_metrics": (
-        "Extract core business metrics from SQL queries and generate MetricFlow metric definitions. "
-        "Use when asked to create metrics, KPIs, or business measures from SQL. "
-        "Prompt MUST contain one or more complete SQL queries for analysis. "
+        "Define and generate MetricFlow metric definitions. "
+        "Two input modes: "
+        "(1) SQL-based: provide SQL queries for metric extraction. "
+        "(2) Natural language: describe the business metric or calculation rules, "
+        "the agent will guide through interactive Q&A to define the metric. "
         "Returns JSON with {response, tokens_used}."
     ),
     "gen_sql_summary": (
@@ -351,6 +353,12 @@ class SubAgentTaskTool:
         correctly resolves the pending futures.
         """
         node.interaction_broker = broker
+
+        # Update broker reference on ask_user_tool that was already initialised
+        # with the node's original (now stale) broker.
+        ask_user_tool = getattr(node, "ask_user_tool", None)
+        if ask_user_tool is not None and hasattr(ask_user_tool, "_broker"):
+            ask_user_tool._broker = broker
 
         # Update broker references on hooks that were already initialised
         # with the node's original (now stale) broker.

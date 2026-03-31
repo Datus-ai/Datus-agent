@@ -9,7 +9,6 @@ All external dependencies are mocked. Tests cover:
 - Initialization
 - on_tool_end routing
 - _extract_filepaths_from_result
-- _extract_metric_generation_result
 - _process_single_file (file not found, empty, already processed, happy path)
 - _handle_sql_summary_result
 - _is_sql_summary_tool_call / _is_ext_knowledge_tool_call
@@ -91,13 +90,6 @@ class TestOnToolEnd:
         await hooks.on_tool_end(MagicMock(), MagicMock(), tool, "result")
         hooks._handle_end_semantic_model_generation.assert_awaited_once_with("result")
 
-    async def test_routes_end_metric_generation(self, hooks):
-        hooks._handle_end_metric_generation = AsyncMock()
-        tool = MagicMock()
-        tool.name = "end_metric_generation"
-        await hooks.on_tool_end(MagicMock(), MagicMock(), tool, "result")
-        hooks._handle_end_metric_generation.assert_awaited_once_with("result")
-
     async def test_routes_write_file_sql_summary(self, hooks):
         hooks._handle_sql_summary_result = AsyncMock()
         hooks._is_sql_summary_tool_call = MagicMock(return_value=True)
@@ -117,12 +109,10 @@ class TestOnToolEnd:
 
     async def test_unrelated_tool_does_nothing(self, hooks):
         hooks._handle_end_semantic_model_generation = AsyncMock()
-        hooks._handle_end_metric_generation = AsyncMock()
         tool = MagicMock()
         tool.name = "some_other_tool"
         await hooks.on_tool_end(MagicMock(), MagicMock(), tool, "result")
         hooks._handle_end_semantic_model_generation.assert_not_called()
-        hooks._handle_end_metric_generation.assert_not_called()
 
     async def test_tool_name_via_dunder_name(self, hooks):
         """Handles tools that use __name__ instead of .name attribute."""
@@ -184,39 +174,6 @@ class TestExtractFilepaths:
         result = {"result": {"semantic_model_files": []}}
         paths = hooks._extract_filepaths_from_result(result)
         assert paths == []
-
-
-# ---------------------------------------------------------------------------
-# Tests: _extract_metric_generation_result
-# ---------------------------------------------------------------------------
-
-
-class TestExtractMetricGenerationResult:
-    def test_from_dict(self, hooks):
-        result = {
-            "result": {
-                "metric_file": "/m/metric.yaml",
-                "semantic_model_file": "/s/sem.yaml",
-                "metric_sqls": {"revenue": "SELECT SUM(amount) FROM orders"},
-            }
-        }
-        mf, smf, sqls = hooks._extract_metric_generation_result(result)
-        assert mf == "/m/metric.yaml"
-        assert smf == "/s/sem.yaml"
-        assert sqls == {"revenue": "SELECT SUM(amount) FROM orders"}
-
-    def test_from_object(self, hooks):
-        r = MagicMock()
-        r.result = {"metric_file": "/m.yaml", "semantic_model_file": "", "metric_sqls": {}}
-        r.success = True
-        mf, smf, sqls = hooks._extract_metric_generation_result(r)
-        assert mf == "/m.yaml"
-
-    def test_invalid_result_returns_empty(self, hooks):
-        mf, smf, sqls = hooks._extract_metric_generation_result("not a dict or obj")
-        assert mf == ""
-        assert smf == ""
-        assert sqls == {}
 
 
 # ---------------------------------------------------------------------------
@@ -310,49 +267,6 @@ class TestHandleEndSemanticModelGeneration:
         hooks._process_single_file = AsyncMock(side_effect=GenerationCancelledException)
         result = {"result": {"semantic_model_files": ["/a.yaml"]}}
         await hooks._handle_end_semantic_model_generation(result)  # should not raise
-
-
-# ---------------------------------------------------------------------------
-# Tests: _handle_end_metric_generation
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-class TestHandleEndMetricGeneration:
-    async def test_no_metric_file_returns_early(self, hooks):
-        hooks._process_single_file = AsyncMock()
-        result = {"result": {"metric_file": "", "semantic_model_file": "", "metric_sqls": {}}}
-        await hooks._handle_end_metric_generation(result)
-        hooks._process_single_file.assert_not_called()
-
-    async def test_with_metric_no_semantic(self, hooks):
-        hooks._process_single_file = AsyncMock()
-        result = {
-            "result": {
-                "metric_file": "/m.yaml",
-                "semantic_model_file": "",
-                "metric_sqls": {},
-            }
-        }
-        await hooks._handle_end_metric_generation(result)
-        hooks._process_single_file.assert_awaited_once()
-
-    async def test_with_metric_and_semantic(self, hooks):
-        hooks._process_metric_with_semantic_model = AsyncMock()
-        result = {
-            "result": {
-                "metric_file": "/m.yaml",
-                "semantic_model_file": "/s.yaml",
-                "metric_sqls": {},
-            }
-        }
-        await hooks._handle_end_metric_generation(result)
-        hooks._process_metric_with_semantic_model.assert_awaited_once()
-
-    async def test_cancelled_exception_absorbed(self, hooks):
-        hooks._process_single_file = AsyncMock(side_effect=GenerationCancelledException)
-        result = {"result": {"metric_file": "/m.yaml", "semantic_model_file": "", "metric_sqls": {}}}
-        await hooks._handle_end_metric_generation(result)  # should not raise
 
 
 @pytest.fixture
@@ -636,50 +550,6 @@ class TestGetSyncConfirmation:
         )
         # Should not raise
         callback.assert_awaited_once()
-
-
-# ---------------------------------------------------------------------------
-# Tests: _get_sync_confirmation_for_pair
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-class TestGetSyncConfirmationForPair:
-    async def test_choice_yes_calls_sync_pair(self, hooks):
-        callback = AsyncMock()
-        hooks.broker.request = AsyncMock(return_value=("y", callback))
-        hooks._sync_semantic_and_metric = AsyncMock(return_value="PairSynced!")
-
-        await hooks._get_sync_confirmation_for_pair(
-            semantic_model_file="/tmp/sem.yaml",
-            metric_file="/tmp/met.yaml",
-        )
-
-        hooks._sync_semantic_and_metric.assert_awaited_once()
-        callback.assert_awaited_once()
-
-    async def test_choice_no_calls_callback_with_file_names(self, hooks):
-        callback = AsyncMock()
-        hooks.broker.request = AsyncMock(return_value=("n", callback))
-
-        await hooks._get_sync_confirmation_for_pair(
-            semantic_model_file="/tmp/sem.yaml",
-            metric_file="/tmp/met.yaml",
-        )
-
-        callback.assert_awaited_once()
-        args = callback.call_args[0][0]
-        assert "/tmp/sem.yaml" in args
-        assert "/tmp/met.yaml" in args
-
-    async def test_interaction_cancelled_raises(self, hooks):
-        hooks.broker.request = AsyncMock(side_effect=InteractionCancelled())
-
-        with pytest.raises(GenerationCancelledException):
-            await hooks._get_sync_confirmation_for_pair(
-                semantic_model_file="/tmp/sem.yaml",
-                metric_file="/tmp/met.yaml",
-            )
 
 
 # ---------------------------------------------------------------------------
