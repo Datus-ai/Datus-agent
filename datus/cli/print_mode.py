@@ -196,18 +196,13 @@ class PrintModeRunner:
         return None
 
     def _validate_and_resolve_session(self):
-        """Validate session exists and derive the correct subagent from session_id."""
+        """Validate session exists or create a new one with the given session_id."""
         from datus.models.session_manager import SessionManager
 
         session_manager = SessionManager(session_dir=self.agent_config.session_dir)
         if not session_manager.session_exists(self.session_id):
-            raise SystemExit(f"Error: session '{self.session_id}' not found or has no data.")
-
-        # Derive subagent from session_id format: {node_name}_session_{uuid}
-        if "_session_" in self.session_id:
-            node_name = self.session_id.rsplit("_session_", 1)[0]
-            if node_name != "chat":
-                self.subagent_name = node_name
+            logger.info("Session '%s' not found, will create a new session with this id.", self.session_id)
+            return
 
     def _write_payload(self, payload: MessagePayload):
         sys.stdout.write(payload.model_dump_json() + "\n")
