@@ -18,12 +18,13 @@ when prompting users for permission confirmation.
 import asyncio
 import json
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, List, Optional, Tuple
 
 from agents.lifecycle import AgentHooks
 
 from datus.cli.execution_state import InteractionBroker, InteractionCancelled
 from datus.tools.permission.permission_config import PermissionLevel
+from datus.tools.registry.tool_registry import ToolRegistry
 
 if TYPE_CHECKING:
     from datus.tools.permission.permission_manager import PermissionManager
@@ -118,7 +119,7 @@ class PermissionHooks(AgentHooks):
         broker: InteractionBroker,
         permission_manager: "PermissionManager",
         node_name: str,
-        tool_registry: Optional[Dict[str, str]] = None,
+        tool_registry: Optional[ToolRegistry] = None,
     ):
         """Initialize the permission hooks.
 
@@ -126,28 +127,23 @@ class PermissionHooks(AgentHooks):
             broker: InteractionBroker for async user interactions
             permission_manager: PermissionManager for checking permissions
             node_name: Name of the current agentic node (e.g., "chat")
-            tool_registry: Optional pre-populated tool_name -> category mapping
+            tool_registry: Optional shared ToolRegistry instance
         """
         self.broker = broker
         self.permission_manager = permission_manager
         self.node_name = node_name
         # Tool registry: tool_name -> category
-        # Populated by AgenticNode.setup_tools via register_tools()
-        self.tool_registry: Dict[str, str] = tool_registry or {}
+        # Shared with AgenticNode; populated via register_tools()
+        self.tool_registry: ToolRegistry = tool_registry if tool_registry is not None else ToolRegistry()
 
     def register_tools(self, category: str, tools: List[Any]) -> None:
-        """Register tools with their category.
-
-        Called by AgenticNode.setup_tools to populate the tool registry.
+        """Register tools with their category (delegates to ToolRegistry).
 
         Args:
             category: Tool category (e.g., "db_tools", "skills")
             tools: List of Tool objects with .name attribute
         """
-        for tool in tools:
-            tool_name = getattr(tool, "name", str(tool))
-            self.tool_registry[tool_name] = category
-            logger.debug(f"Registered tool '{tool_name}' with category '{category}'")
+        self.tool_registry.register_tools(category, tools)
 
     async def on_tool_start(self, context, agent, tool) -> None:
         """Intercept ALL tool calls for permission checking.
@@ -248,8 +244,8 @@ class PermissionHooks(AgentHooks):
                 return (f"mcp.{server}", method)
 
         # 3. Check tool registry (Native Tools registered via register_tools())
-        if tool_name in self.tool_registry:
-            category = self.tool_registry[tool_name]
+        category = self.tool_registry.get(tool_name)
+        if category is not None:
             return (category, tool_name)
 
         # 4. Default: unknown category

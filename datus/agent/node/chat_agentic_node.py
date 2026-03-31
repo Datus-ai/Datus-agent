@@ -233,30 +233,30 @@ class ChatAgenticNode(AgenticNode):
             return
 
         try:
-            broker = self._get_or_create_broker()
+            # 1. Populate the node-level tool_registry
+            if self.db_func_tool:
+                self.tool_registry.register_tools("db_tools", self.db_func_tool.available_tools())
+            if self.context_search_tools:
+                self.tool_registry.register_tools("context_search_tools", self.context_search_tools.available_tools())
+            if self.date_parsing_tools:
+                self.tool_registry.register_tools("date_parsing_tools", self.date_parsing_tools.available_tools())
+            if self.filesystem_func_tool:
+                self.tool_registry.register_tools("filesystem_tools", self.filesystem_func_tool.available_tools())
+            if self.skill_func_tool:
+                self.tool_registry.register_tools("skills", self.skill_func_tool.available_tools())
+            if self.sub_agent_task_tool:
+                self.tool_registry.register_tools("sub_agent_tools", self.sub_agent_task_tool.available_tools())
 
+            # 2. Create PermissionHooks sharing the same tool_registry instance
+            broker = self._get_or_create_broker()
             self.permission_hooks = PermissionHooks(
                 broker=broker,
                 permission_manager=self.permission_manager,
                 node_name=self.get_node_name(),
+                tool_registry=self.tool_registry,
             )
 
-            if self.db_func_tool:
-                self.permission_hooks.register_tools("db_tools", self.db_func_tool.available_tools())
-            if self.context_search_tools:
-                self.permission_hooks.register_tools(
-                    "context_search_tools", self.context_search_tools.available_tools()
-                )
-            if self.date_parsing_tools:
-                self.permission_hooks.register_tools("date_parsing_tools", self.date_parsing_tools.available_tools())
-            if self.filesystem_func_tool:
-                self.permission_hooks.register_tools("filesystem_tools", self.filesystem_func_tool.available_tools())
-            if self.skill_func_tool:
-                self.permission_hooks.register_tools("skills", self.skill_func_tool.available_tools())
-            if self.sub_agent_task_tool:
-                self.permission_hooks.register_tools("sub_agent_tools", self.sub_agent_task_tool.available_tools())
-
-            logger.debug(f"Permission hooks setup with {len(self.permission_hooks.tool_registry)} registered tools")
+            logger.debug(f"Permission hooks setup with {len(self.tool_registry)} registered tools")
         except Exception as e:
             logger.error(f"Failed to setup permission hooks: {e}")
             self.permission_hooks = None

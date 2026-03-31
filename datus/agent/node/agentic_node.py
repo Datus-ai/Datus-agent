@@ -90,6 +90,16 @@ class AgenticNode(Node):
 
         self.action_bus = ActionBus()
 
+        # Proxy tool channel - used in print mode with --proxy_tools
+        from datus.tools.proxy.tool_result_channel import ToolResultChannel
+
+        self.tool_channel = ToolResultChannel()
+
+        # Shared tool_name -> category registry (used by PermissionHooks & proxy_tool)
+        from datus.tools.registry.tool_registry import ToolRegistry
+
+        self.tool_registry = ToolRegistry()
+
         # Parse node configuration from agent.yml (available to all agentic nodes)
         self.node_config = self._parse_node_config(agent_config, self.get_node_name())
 

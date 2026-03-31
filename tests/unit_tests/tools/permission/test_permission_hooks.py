@@ -94,6 +94,8 @@ class TestPermissionHooks:
 
     def test_initialization(self, mock_broker):
         """Test PermissionHooks initialization."""
+        from datus.tools.registry.tool_registry import ToolRegistry
+
         manager = PermissionManager()
         hooks = PermissionHooks(
             broker=mock_broker,
@@ -104,7 +106,8 @@ class TestPermissionHooks:
         assert hooks.broker == mock_broker
         assert hooks.permission_manager == manager
         assert hooks.node_name == "chat"
-        assert hooks.tool_registry == {}
+        assert isinstance(hooks.tool_registry, ToolRegistry)
+        assert len(hooks.tool_registry) == 0
 
     def test_register_tools(self, mock_broker):
         """Test registering tools with their category."""
@@ -119,8 +122,8 @@ class TestPermissionHooks:
 
         hooks.register_tools("db_tools", [tool1, tool2])
 
-        assert hooks.tool_registry["execute_sql"] == "db_tools"
-        assert hooks.tool_registry["list_tables"] == "db_tools"
+        assert hooks.tool_registry.get("execute_sql") == "db_tools"
+        assert hooks.tool_registry.get("list_tables") == "db_tools"
 
     def test_get_category_and_pattern_native_tool(self, mock_broker):
         """Test category detection for native tools."""
@@ -363,7 +366,7 @@ class TestPermissionHooksIntegration:
 
         # Verify all registered
         assert len(hooks.tool_registry) == 4
-        assert hooks.tool_registry["execute_sql"] == "db_tools"
-        assert hooks.tool_registry["list_tables"] == "db_tools"
-        assert hooks.tool_registry["load_skill"] == "skills"
-        assert hooks.tool_registry["read_file"] == "filesystem_tools"
+        assert hooks.tool_registry.get("execute_sql") == "db_tools"
+        assert hooks.tool_registry.get("list_tables") == "db_tools"
+        assert hooks.tool_registry.get("load_skill") == "skills"
+        assert hooks.tool_registry.get("read_file") == "filesystem_tools"

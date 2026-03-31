@@ -85,7 +85,9 @@ class TestArgumentParser:
 class TestApplicationRun:
     def test_run_no_namespace_prints_help(self):
         app = Application()
-        mock_args = SimpleNamespace(debug=False, namespace=None, print_mode=None, web=False, resume=None)
+        mock_args = SimpleNamespace(
+            debug=False, namespace=None, print_mode=None, web=False, resume=None, proxy_tools=None
+        )
         with (
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
             patch("datus.cli.main.configure_logging"),
@@ -96,7 +98,9 @@ class TestApplicationRun:
 
     def test_resume_without_print_mode_errors(self):
         app = Application()
-        mock_args = SimpleNamespace(debug=False, namespace="ns1", print_mode=None, web=False, resume="sess_123")
+        mock_args = SimpleNamespace(
+            debug=False, namespace="ns1", print_mode=None, web=False, resume="sess_123", proxy_tools=None
+        )
         with (
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
             patch("datus.cli.main.configure_logging"),
@@ -106,7 +110,9 @@ class TestApplicationRun:
 
     def test_run_print_mode(self):
         app = Application()
-        mock_args = SimpleNamespace(debug=False, namespace="ns1", print_mode="hello world", web=False, resume=None)
+        mock_args = SimpleNamespace(
+            debug=False, namespace="ns1", print_mode="hello world", web=False, resume=None, proxy_tools=None
+        )
         mock_runner = MagicMock()
         with (
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
@@ -119,7 +125,9 @@ class TestApplicationRun:
 
     def test_run_interactive_mode(self):
         app = Application()
-        mock_args = SimpleNamespace(debug=False, namespace="ns1", print_mode=None, web=False, resume=None)
+        mock_args = SimpleNamespace(
+            debug=False, namespace="ns1", print_mode=None, web=False, resume=None, proxy_tools=None
+        )
         mock_cli = MagicMock()
         with (
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
@@ -132,7 +140,9 @@ class TestApplicationRun:
 
     def test_run_web_mode(self):
         app = Application()
-        mock_args = SimpleNamespace(debug=False, namespace="ns1", print_mode=None, web=True, resume=None)
+        mock_args = SimpleNamespace(
+            debug=False, namespace="ns1", print_mode=None, web=True, resume=None, proxy_tools=None
+        )
         with (
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
             patch("datus.cli.main.configure_logging"),
