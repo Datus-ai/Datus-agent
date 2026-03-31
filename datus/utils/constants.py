@@ -41,6 +41,11 @@ class EmbeddingProvider(str, Enum):
     SENTENCE_TRANSFORMERS = "sentence-transformers"
     FASTEMBED = "fastembed"
     HUGGINGFACE = "huggingface"
+    LITELLM = "litellm"
+
+
+# AWS Bedrock model prefix used for provider detection
+BEDROCK_MODEL_PREFIX = "bedrock/"
 
 
 # System sub-agents that are built-in and not user-configurable
