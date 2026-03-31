@@ -31,6 +31,7 @@ from datus.models.mcp_utils import multiple_mcp_servers
 from datus.models.openai_compatible import OpenAICompatibleModel
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
+from datus.utils.constants import BEDROCK_MODEL_PREFIX
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -151,6 +152,8 @@ class ClaudeModel(OpenAICompatibleModel):
 
     def _get_api_key(self) -> str:
         """Get Anthropic API key from config or environment."""
+        if self.model_config.model.startswith(BEDROCK_MODEL_PREFIX):
+            return ""
         if self.model_config.auth_type == "subscription":
             from datus.auth.claude_credential import get_claude_subscription_token
 
@@ -163,10 +166,16 @@ class ClaudeModel(OpenAICompatibleModel):
 
     def _get_base_url(self) -> Optional[str]:
         """Get Anthropic base URL from config."""
+        if self.model_config.model.startswith(BEDROCK_MODEL_PREFIX):
+            return None
         return self.model_config.base_url or "https://api.anthropic.com"
 
     def _init_anthropic_client(self):
         """Initialize native Anthropic client for prompt caching and native API support."""
+        if self.model_config.model.startswith(BEDROCK_MODEL_PREFIX):
+            self.anthropic_client = None
+            return
+
         # Optional proxy configuration
         proxy_url = os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY")
         self.proxy_client = None
@@ -245,6 +254,12 @@ class ClaudeModel(OpenAICompatibleModel):
 
     def _anthropic_messages_create(self, **kwargs):
         """Call the correct Anthropic Messages endpoint for the current auth mode."""
+        if self.anthropic_client is None:
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message="Native Anthropic API is not available for Bedrock models. "
+                "Set use_native_api=false or use a direct Anthropic API key.",
+            )
         if self._is_oauth_token:
             return self.anthropic_client.beta.messages.create(**kwargs)
         return self.anthropic_client.messages.create(**kwargs)
