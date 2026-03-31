@@ -1198,3 +1198,91 @@ class TestGenerateWithMcpToolRouting:
         passed_args = call_args[1]["arguments"]
         assert passed_args == {"query": "SELECT 1"}
         assert passed_args is not original_input  # must be a different object
+
+
+# ---------------------------------------------------------------------------
+# Bedrock model support
+# ---------------------------------------------------------------------------
+
+
+def _make_bedrock_claude_model(model_config=None):
+    """Create ClaudeModel for Bedrock with all external dependencies mocked.
+
+    Unlike _make_claude_model, this does NOT overwrite anthropic_client after
+    construction, so the Bedrock path (anthropic_client = None) is preserved.
+    """
+    if model_config is None:
+        model_config = _make_model_config(model="bedrock/us.anthropic.claude-opus-4-6-v1", api_key="bedrock-iam")
+
+    mock_litellm_adapter = MagicMock()
+    mock_litellm_adapter.litellm_model_name = "bedrock/us.anthropic.claude-opus-4-6-v1"
+    mock_litellm_adapter.provider = "bedrock"
+    mock_litellm_adapter.is_thinking_model = False
+    mock_litellm_adapter.get_agents_sdk_model.return_value = MagicMock()
+
+    with (
+        patch("datus.models.openai_compatible.setup_tracing"),
+        patch("datus.models.openai_compatible.LiteLLMAdapter", return_value=mock_litellm_adapter),
+        patch("anthropic.Anthropic") as mock_anthropic_cls,
+        patch("langsmith.wrappers.wrap_anthropic", side_effect=lambda c: c),
+        patch(
+            "os.environ.get",
+            side_effect=lambda key, default=None: "" if key == "ANTHROPIC_API_KEY" else default,
+        ),
+    ):
+        model = ClaudeModel(model_config)
+        model.litellm_adapter = mock_litellm_adapter
+        # Do NOT overwrite anthropic_client — Bedrock sets it to None
+        # Verify Anthropic() was never called for Bedrock models
+        mock_anthropic_cls.assert_not_called()
+        return model
+
+
+class TestBedrockSupport:
+    """Tests for AWS Bedrock model support in ClaudeModel."""
+
+    def test_bedrock_api_key_returns_empty(self):
+        """Bedrock models should return empty API key (uses IAM auth)."""
+        config = _make_model_config(model="bedrock/us.anthropic.claude-opus-4-6-v1", api_key="bedrock-iam")
+        model = _make_bedrock_claude_model(config)
+        assert model._get_api_key() == ""
+
+    def test_bedrock_base_url_returns_none(self):
+        """Bedrock models should return None base URL (LiteLLM handles endpoint)."""
+        config = _make_model_config(model="bedrock/us.anthropic.claude-opus-4-6-v1", api_key="bedrock-iam")
+        model = _make_bedrock_claude_model(config)
+        assert model._get_base_url() is None
+
+    def test_bedrock_anthropic_client_is_none(self):
+        """Bedrock models should not initialize native Anthropic client."""
+        config = _make_model_config(model="bedrock/us.anthropic.claude-opus-4-6-v1", api_key="bedrock-iam")
+        model = _make_bedrock_claude_model(config)
+        assert model.anthropic_client is None
+
+    def test_bedrock_converse_model_prefix(self):
+        """Bedrock converse models (bedrock/converse/...) should also be detected."""
+        config = _make_model_config(model="bedrock/converse/us.anthropic.claude-sonnet-4-20250514-v1:0", api_key="iam")
+        model = _make_bedrock_claude_model(config)
+        assert model._get_api_key() == ""
+        assert model._get_base_url() is None
+        assert model.anthropic_client is None
+
+    def test_non_bedrock_model_not_affected(self):
+        """Non-Bedrock models should behave normally."""
+        config = _make_model_config(model="claude-sonnet-4-20250514", api_key="sk-ant-test-key-123")
+        model = _make_claude_model(config)
+        # Non-bedrock should have a real API key
+        assert model._get_api_key() == "sk-ant-test-key-123"
+        # Non-bedrock should have a base URL
+        assert model._get_base_url() is not None
+        # Non-bedrock should have an anthropic client
+        assert model.anthropic_client is not None
+
+    def test_bedrock_native_api_raises_on_messages_create(self):
+        """Calling _anthropic_messages_create on Bedrock model should raise DatusException."""
+        from datus.utils.exceptions import DatusException
+
+        config = _make_model_config(model="bedrock/us.anthropic.claude-opus-4-6-v1", api_key="bedrock-iam")
+        model = _make_bedrock_claude_model(config)
+        with pytest.raises(DatusException):
+            model._anthropic_messages_create(model="test", messages=[], max_tokens=100)

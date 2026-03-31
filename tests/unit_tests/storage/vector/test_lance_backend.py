@@ -576,6 +576,20 @@ class TestWrapEmbedding:
         assert isinstance(adapter, _LanceOpenAIAdapter)
         assert adapter.name == "text-embedding-3-small"
 
+    def test_wrap_litellm(self):
+        """LiteLLMEmbeddings should be wrapped in _LanceLiteLLMAdapter."""
+        from datus.storage.embedding_litellm import LiteLLMEmbeddings
+        from datus.storage.vector.lance_backend import _LanceLiteLLMAdapter, _wrap_embedding
+
+        model = LiteLLMEmbeddings(name="bedrock/amazon.titan-embed-text-v2:0", dim=1024)
+        adapter = _wrap_embedding(model)
+
+        assert isinstance(adapter, _LanceLiteLLMAdapter)
+        assert adapter.name == "bedrock/amazon.titan-embed-text-v2:0"
+        assert adapter.dim == 1024
+        # Verify the original model is injected as _impl
+        assert adapter._impl is model
+
     def test_wrap_passthrough_lance_embedding(self):
         """_wrap_embedding returns LanceDB EmbeddingFunction as-is."""
         from lancedb.embeddings.base import TextEmbeddingFunction
