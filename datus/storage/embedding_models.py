@@ -191,6 +191,18 @@ class EmbeddingModel:
             # check if the model is initialized
             self._model.generate_embeddings(["foo"])
             logger.debug(f"Model {self.registry_name}/{self.model_name} initialized successfully")
+
+        elif self.registry_name == EmbeddingProvider.LITELLM:
+            logger.debug(f"Initializing model {self.registry_name}/{self.model_name}")
+            from datus.storage.embedding_litellm import LiteLLMEmbeddings
+
+            self._model = LiteLLMEmbeddings.create(
+                name=self.model_name,
+                dim=self._dim_size,
+            )
+            # Verify the model works
+            self._model.generate_embeddings(["foo"])
+            logger.debug(f"Model {self.registry_name}/{self.model_name} initialized successfully")
         else:
             raise DatusException(
                 ErrorCode.MODEL_EMBEDDING_ERROR,

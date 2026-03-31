@@ -93,6 +93,28 @@ class _LanceOpenAIAdapter(TextEmbeddingFunction):
         return self._impl
 
 
+@register("litellm")
+class _LanceLiteLLMAdapter(TextEmbeddingFunction):
+    """LanceDB adapter for LiteLLM embedding models (Bedrock, etc.)."""
+
+    name: str = "text-embedding-ada-002"
+    dim: Optional[int] = None
+
+    def ndims(self):
+        return self._get_impl().ndims()
+
+    def generate_embeddings(self, texts, *args, **kwargs):
+        return self._get_impl().generate_embeddings(texts)
+
+    def _get_impl(self):
+        if not hasattr(self, "_impl") or self._impl is None:
+            from datus.storage.embedding_litellm import LiteLLMEmbeddings
+
+            impl = LiteLLMEmbeddings.create(name=self.name, dim=self.dim)
+            object.__setattr__(self, "_impl", impl)
+        return self._impl
+
+
 # ---------------------------------------------------------------------------
 # Embedding wrapping helper
 # ---------------------------------------------------------------------------
@@ -108,10 +130,16 @@ def _wrap_embedding(model: EmbeddingFunction) -> TextEmbeddingFunction:
     if isinstance(model, LanceDBEmbeddingFunction):
         return model
 
+    from datus.storage.embedding_litellm import LiteLLMEmbeddings
     from datus.storage.fastembed_embeddings import FastEmbedEmbeddings
 
     if isinstance(model, FastEmbedEmbeddings):
         adapter = _LanceFastEmbedAdapter(name=model.name, batch_size=model.batch_size)
+    elif isinstance(model, LiteLLMEmbeddings):
+        adapter = _LanceLiteLLMAdapter(
+            name=model.name,
+            dim=model.dim,
+        )
     else:
         adapter = _LanceOpenAIAdapter(
             name=getattr(model, "name", ""),
