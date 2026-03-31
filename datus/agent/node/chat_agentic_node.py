@@ -383,7 +383,7 @@ class ChatAgenticNode(AgenticNode):
         try:
             from datus.tools.mcp_tools.mcp_manager import MCPManager
 
-            mcp_manager = MCPManager()
+            mcp_manager = MCPManager(agent_config=self.agent_config)
             server_config = mcp_manager.get_server_config(server_name)
 
             if not server_config:

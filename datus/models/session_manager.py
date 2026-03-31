@@ -9,7 +9,7 @@ import os
 import re
 import sqlite3
 import uuid
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from agents.extensions.memory import AdvancedSQLiteSession
 
@@ -17,6 +17,9 @@ from datus.utils.loggings import get_logger
 from datus.utils.message_utils import extract_user_input
 
 logger = get_logger(__name__)
+
+if TYPE_CHECKING:
+    from datus.utils.path_manager import DatusPathManager
 
 
 class SessionManager:
@@ -27,7 +30,13 @@ class SessionManager:
     but exposes a simple external interface that hides the complexity.
     """
 
-    def __init__(self, session_dir: Optional[str] = None):
+    def __init__(
+        self,
+        session_dir: Optional[str] = None,
+        *,
+        path_manager: Optional["DatusPathManager"] = None,
+        agent_config: Optional[Any] = None,
+    ):
         """
         Initialize the session manager.
 
@@ -42,7 +51,7 @@ class SessionManager:
         else:
             from datus.utils.path_manager import get_path_manager
 
-            self.session_dir = str(get_path_manager().sessions_dir)
+            self.session_dir = str(get_path_manager(path_manager=path_manager, agent_config=agent_config).sessions_dir)
         os.makedirs(self.session_dir, exist_ok=True)
         self._sessions: Dict[str, AdvancedSQLiteSession] = {}
 

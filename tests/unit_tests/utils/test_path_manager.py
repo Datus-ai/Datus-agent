@@ -6,10 +6,12 @@
 
 import threading
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
-from datus.utils.path_manager import DatusPathManager, get_path_manager, reset_path_manager, set_default_datus_home
+from datus.utils.path_manager import DatusPathManager, get_path_manager, reset_path_manager, set_current_path_manager
 
 
 @pytest.fixture(autouse=True)
@@ -236,6 +238,17 @@ class TestEnsureDirs:
         pm.ensure_dirs("conf")
         assert pm.conf_dir.exists()
 
+    def test_ensure_templates_creates_template_dir_and_copies_defaults(self, pm):
+        with patch("datus.utils.resource_utils.copy_data_file") as mock_copy:
+            pm.ensure_templates()
+
+        assert pm.template_dir.exists()
+        mock_copy.assert_called_once_with(
+            resource_path="prompts/prompt_templates",
+            target_dir=pm.template_dir,
+            replace=False,
+        )
+
 
 class TestGetPathManager:
     """Tests for the get_path_manager factory."""
@@ -254,10 +267,44 @@ class TestGetPathManager:
         pm = get_path_manager(datus_home=tmp_path)
         assert pm.datus_home == tmp_path.resolve()
 
-    def test_process_default_home_is_used(self, tmp_path):
-        set_default_datus_home(tmp_path)
+    def test_context_local_home_is_used(self, tmp_path):
+        set_current_path_manager(tmp_path)
         pm = get_path_manager()
         assert pm.datus_home == tmp_path.resolve()
+
+    def test_set_current_path_manager_accepts_path_manager_instance(self, tmp_path):
+        current = DatusPathManager(tmp_path / "tenant_home")
+        set_current_path_manager(current)
+        pm = get_path_manager()
+        assert pm.datus_home == current.datus_home
+
+    def test_set_current_path_manager_accepts_agent_config(self, tmp_path):
+        agent_config = SimpleNamespace(path_manager=DatusPathManager(tmp_path / "agent_home"))
+        set_current_path_manager(agent_config=agent_config)
+        pm = get_path_manager()
+        assert pm.datus_home == agent_config.path_manager.datus_home
+
+    def test_path_manager_argument_has_highest_precedence(self, tmp_path):
+        explicit_pm = DatusPathManager(tmp_path / "explicit_home")
+        agent_config = SimpleNamespace(path_manager=DatusPathManager(tmp_path / "agent_home"))
+        set_current_path_manager(tmp_path / "context_home")
+
+        pm = get_path_manager(
+            datus_home=tmp_path / "arg_home",
+            path_manager=explicit_pm,
+            agent_config=agent_config,
+        )
+
+        assert pm is explicit_pm
+
+    def test_agent_config_has_precedence_over_explicit_home_and_context(self, tmp_path):
+        agent_pm = DatusPathManager(tmp_path / "agent_home")
+        agent_config = SimpleNamespace(path_manager=agent_pm)
+        set_current_path_manager(tmp_path / "context_home")
+
+        pm = get_path_manager(datus_home=tmp_path / "arg_home", agent_config=agent_config)
+
+        assert pm is agent_pm
 
     def test_factory_is_safe_to_call_from_multiple_threads(self):
         """Multiple threads can resolve path managers without raising."""
@@ -283,12 +330,12 @@ class TestGetPathManager:
 class TestResetPathManager:
     """Tests for reset_path_manager."""
 
-    def test_reset_clears_process_default_home(self, tmp_path):
-        set_default_datus_home(tmp_path)
+    def test_reset_clears_context_local_home(self, tmp_path):
+        set_current_path_manager(tmp_path)
         reset_path_manager()
         from datus.utils import path_manager
 
-        assert path_manager._default_datus_home is None
+        assert path_manager._current_datus_home.get() is None
 
     def test_reset_is_safe_from_multiple_threads(self):
         """reset_path_manager can be called from multiple threads without error."""
@@ -307,3 +354,13 @@ class TestResetPathManager:
             t.join()
 
         assert errors == []
+
+    def test_reset_with_token_restores_previous_context(self, tmp_path):
+        outer_token = set_current_path_manager(tmp_path / "outer_home")
+        inner_token = set_current_path_manager(tmp_path / "inner_home")
+
+        reset_path_manager(inner_token)
+        assert get_path_manager().datus_home == (tmp_path / "outer_home").resolve()
+
+        reset_path_manager(outer_token)
+        assert get_path_manager().datus_home == (Path.home() / ".datus").resolve()

@@ -1,10 +1,13 @@
 import logging
+import os
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from datus.utils.loggings import configure_logging, get_log_manager, get_logger, log_context
+from datus.utils.path_manager import DatusPathManager
 
 
 @pytest.fixture(scope="module")
@@ -224,6 +227,18 @@ class TestDynamicLogManager:
                 mgr = DynamicLogManager(log_dir=str(tmp_path / "pm_logs"))
         assert mgr is not None
 
+    def test_init_non_source_env_uses_agent_config_path_manager(self, tmp_path):
+        import datus.utils.loggings as loggings_module
+        from datus.utils.loggings import DynamicLogManager
+
+        path_manager = DatusPathManager(tmp_path / "tenant_home")
+        agent_config = SimpleNamespace(path_manager=path_manager)
+
+        with patch.object(loggings_module, "_is_source_environment", return_value=False):
+            mgr = DynamicLogManager(agent_config=agent_config)
+
+        assert Path(mgr.log_dir) == path_manager.logs_dir
+
 
 class TestGetLogManager:
     """Tests for get_log_manager (lines 150-155)."""
@@ -244,6 +259,20 @@ class TestGetLogManager:
             with patch.object(loggings_module, "_is_source_environment", return_value=True):
                 mgr = loggings_module.get_log_manager()
             assert mgr is not None
+        finally:
+            loggings_module._log_manager = original
+
+    def test_creates_instance_with_agent_config(self, tmp_path):
+        import datus.utils.loggings as loggings_module
+
+        original = loggings_module._log_manager
+        path_manager = DatusPathManager(tmp_path / "tenant_home")
+        agent_config = SimpleNamespace(path_manager=path_manager)
+        try:
+            loggings_module._log_manager = None
+            with patch.object(loggings_module, "_is_source_environment", return_value=False):
+                mgr = loggings_module.get_log_manager(agent_config=agent_config)
+            assert Path(mgr.log_dir) == path_manager.logs_dir
         finally:
             loggings_module._log_manager = original
 
@@ -293,6 +322,17 @@ class TestConfigureLogging:
             mgr = loggings_module.configure_logging()
         assert mgr is not None
 
+    def test_configure_logging_non_source_env_uses_agent_config_path_manager(self, tmp_path):
+        import datus.utils.loggings as loggings_module
+
+        path_manager = DatusPathManager(tmp_path / "tenant_home")
+        agent_config = SimpleNamespace(path_manager=path_manager)
+
+        with patch.object(loggings_module, "_is_source_environment", return_value=False):
+            mgr = loggings_module.configure_logging(agent_config=agent_config, console_output=False)
+
+        assert Path(mgr.log_dir) == path_manager.logs_dir
+
 
 class TestAddExcInfo:
     """Tests for add_exc_info processor (line 202-206)."""
@@ -335,6 +375,16 @@ class TestAddCodeLocation:
         finally:
             loggings_module.fileno = original
 
+    def test_extract_stack_failure_is_printed_and_suppressed(self):
+        import datus.utils.loggings as loggings_module
+
+        with patch.object(loggings_module.traceback, "extract_stack", side_effect=RuntimeError("boom")):
+            with patch("builtins.print") as mock_print:
+                result = loggings_module.add_code_location(None, "debug", {})
+
+        assert result == {}
+        mock_print.assert_called_once_with("boom")
+
 
 class TestGetCurrentLogFile:
     """Tests for _get_current_log_file (lines 332-356)."""
@@ -360,6 +410,25 @@ class TestGetCurrentLogFile:
             assert result is None
         finally:
             loggings_module._log_manager = original
+
+    def test_falls_back_to_latest_log_file_in_logs_dir(self, tmp_path):
+        import datus.utils.loggings as loggings_module
+
+        logs_dir = tmp_path / "logs"
+        logs_dir.mkdir()
+        older = logs_dir / "agent.2025-01-01.log"
+        newer = logs_dir / "agent.2025-01-02.log"
+        older.write_text("old", encoding="utf-8")
+        newer.write_text("new", encoding="utf-8")
+        os.utime(older, (1, 1))
+        os.utime(newer, (2, 2))
+
+        with patch("datus.utils.loggings.get_log_manager", side_effect=RuntimeError("no manager")):
+            with patch("datus.utils.path_manager.get_path_manager") as mock_pm:
+                mock_pm.return_value.logs_dir = logs_dir
+                result = loggings_module._get_current_log_file()
+
+        assert result == newer.resolve()
 
 
 class TestPrintRichException:
@@ -423,6 +492,19 @@ class TestSetupWebChatbotLogging:
         with patch.object(loggings_module, "_is_source_environment", return_value=True):
             result = loggings_module.setup_web_chatbot_logging()
         assert result is not None
+
+    def test_non_source_env_uses_agent_config_path_manager(self, tmp_path):
+        import datus.utils.loggings as loggings_module
+
+        path_manager = DatusPathManager(tmp_path / "tenant_home")
+        agent_config = SimpleNamespace(path_manager=path_manager)
+
+        with patch.object(loggings_module, "_is_source_environment", return_value=False):
+            result = loggings_module.setup_web_chatbot_logging(agent_config=agent_config)
+
+        assert result is not None
+        assert path_manager.logs_dir.exists()
+        assert any(path_manager.logs_dir.glob("web_chatbot.*.log"))
 
 
 class TestAdaptiveRenderer:

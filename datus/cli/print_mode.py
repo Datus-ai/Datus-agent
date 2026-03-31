@@ -115,7 +115,7 @@ class PrintModeRunner:
         """Validate session exists and derive the correct subagent from session_id."""
         from datus.models.session_manager import SessionManager
 
-        session_manager = SessionManager()
+        session_manager = SessionManager(session_dir=self.agent_config.session_dir)
         if not session_manager.session_exists(self.session_id):
             raise SystemExit(f"Error: session '{self.session_id}' not found or has no data.")
 

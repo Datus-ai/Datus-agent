@@ -52,7 +52,7 @@ def reset_global_singletons():
 
     clear_storage_registry()
 
-    # Clear the process-wide default home used by implicit path-manager callers.
+    # Clear the context-local home used by implicit path-manager callers.
     reset_path_manager()
 
 

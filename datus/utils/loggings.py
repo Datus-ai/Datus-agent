@@ -10,7 +10,7 @@ import traceback
 from contextlib import contextmanager
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
-from typing import Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal, Optional
 
 import structlog
 from rich.console import Console
@@ -19,6 +19,9 @@ fileno = False
 
 # Global log manager
 _log_manager = None
+
+if TYPE_CHECKING:
+    from datus.utils.path_manager import DatusPathManager
 
 
 def _is_source_environment() -> bool:
@@ -45,7 +48,7 @@ def _is_source_environment() -> bool:
 class DynamicLogManager:
     """Dynamic log manager that supports switching log output targets at runtime"""
 
-    def __init__(self, debug=False, log_dir=None):
+    def __init__(self, debug=False, log_dir=None, path_manager=None, agent_config=None):
         self.debug = debug
         # Auto-detect log directory if not specified
         if log_dir is None:
@@ -54,7 +57,7 @@ class DynamicLogManager:
             else:
                 from datus.utils.path_manager import get_path_manager
 
-                log_dir = str(get_path_manager().logs_dir)
+                log_dir = str(get_path_manager(path_manager=path_manager, agent_config=agent_config).logs_dir)
         # Expand user directory and convert to absolute path
         self.log_dir = os.path.abspath(os.path.expanduser(log_dir))
         self.root_logger = logging.getLogger()
@@ -147,15 +150,24 @@ class DynamicLogManager:
                 self.root_logger.handlers = original_handlers
 
 
-def get_log_manager() -> DynamicLogManager:
+def get_log_manager(
+    *, path_manager: Optional["DatusPathManager"] = None, agent_config: Optional[Any] = None
+) -> DynamicLogManager:
     """Get global log manager"""
     global _log_manager
     if _log_manager is None:
-        _log_manager = DynamicLogManager()
+        _log_manager = DynamicLogManager(path_manager=path_manager, agent_config=agent_config)
     return _log_manager
 
 
-def configure_logging(debug=False, log_dir=None, console_output=True) -> DynamicLogManager:
+def configure_logging(
+    debug=False,
+    log_dir=None,
+    console_output=True,
+    *,
+    path_manager: Optional["DatusPathManager"] = None,
+    agent_config: Optional[Any] = None,
+) -> DynamicLogManager:
     """Configure logging with the specified debug level.
     Args:
         debug: If True, set log level to DEBUG
@@ -177,11 +189,16 @@ def configure_logging(debug=False, log_dir=None, console_output=True) -> Dynamic
         else:
             from datus.utils.path_manager import get_path_manager
 
-            log_dir = str(get_path_manager().logs_dir)
+            log_dir = str(get_path_manager(path_manager=path_manager, agent_config=agent_config).logs_dir)
 
     # Create or get log manager with specified parameters
     global _log_manager
-    _log_manager = DynamicLogManager(debug=debug, log_dir=log_dir)
+    _log_manager = DynamicLogManager(
+        debug=debug,
+        log_dir=log_dir,
+        path_manager=path_manager,
+        agent_config=agent_config,
+    )
 
     # Configure LiteLLM logger to output to file only (not console)
     # This prevents noisy "LiteLLM completion() model=..." messages from appearing in console
@@ -225,7 +242,13 @@ def get_logger(name: str) -> structlog.BoundLogger:
     return structlog.get_logger(name)
 
 
-def setup_web_chatbot_logging(debug=False, log_dir=None):
+def setup_web_chatbot_logging(
+    debug=False,
+    log_dir=None,
+    *,
+    path_manager: Optional["DatusPathManager"] = None,
+    agent_config: Optional[Any] = None,
+):
     """Setup simplified logging for web chatbot using same format as agent.log
 
     Args:
@@ -244,7 +267,7 @@ def setup_web_chatbot_logging(debug=False, log_dir=None):
         else:
             from datus.utils.path_manager import get_path_manager
 
-            log_dir = str(get_path_manager().logs_dir)
+            log_dir = str(get_path_manager(path_manager=path_manager, agent_config=agent_config).logs_dir)
 
     # Expand user directory and convert to absolute path
     log_dir = os.path.abspath(os.path.expanduser(log_dir))

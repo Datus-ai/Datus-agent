@@ -37,7 +37,7 @@ from datus.models.session_manager import SessionManager
 from datus.schemas.action_history import ActionHistory
 from datus.schemas.node_models import ExecuteSQLResult
 from datus.utils.loggings import configure_logging, setup_web_chatbot_logging
-from datus.utils.path_manager import set_default_datus_home
+from datus.utils.path_manager import set_current_path_manager
 
 
 def _run_async(coro):
@@ -1183,7 +1183,7 @@ def main():  # pragma: no cover
             debug = True
 
     # Align implicit helpers (logging/session storage/prompt templates) with the configured home.
-    set_default_datus_home(get_home_from_config(config_path))
+    set_current_path_manager(get_home_from_config(config_path))
 
     # Initialize logging once per process
     initialize_logging(debug=debug)

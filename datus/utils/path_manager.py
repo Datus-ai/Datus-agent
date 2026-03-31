@@ -9,8 +9,9 @@ This module provides a unified interface for managing all paths related to the
 .datus directory structure. The home directory is determined from agent.yml config.
 """
 
+from contextvars import ContextVar, Token
 from pathlib import Path
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 PathLike = Union[str, Path]
 
@@ -361,39 +362,78 @@ class DatusPathManager:
         copy_data_file(resource_path="prompts/prompt_templates", target_dir=self.template_dir, replace=False)
 
 
-# Process-wide default home for legacy call sites that do not receive ``AgentConfig``.
-# This keeps prompt/session/logging helpers aligned with the currently active CLI/Web mode
-# without relying on a mutable global path-manager singleton.
-_default_datus_home: Optional[str] = None
+# Context-local home for legacy helpers that do not receive ``AgentConfig`` directly.
+# Unlike the previous process-wide fallback, this does not leak across threads/tasks.
+_current_datus_home: ContextVar[Optional[str]] = ContextVar("datus_current_datus_home", default=None)
 
 
-def set_default_datus_home(home: Optional[PathLike]) -> None:
-    """Set or clear the process-wide default home used by ``get_path_manager()``."""
-    global _default_datus_home
-    _default_datus_home = str(DatusPathManager.resolve_home(home)) if home else None
+def set_current_path_manager(
+    path_manager: Optional[Union["DatusPathManager", PathLike]] = None,
+    *,
+    agent_config: Optional[Any] = None,
+) -> Token:
+    """Set the current context-local home used by ``get_path_manager()``.
+
+    The value is stored as a resolved home path, so ``get_path_manager()`` still
+    returns fresh ``DatusPathManager`` instances for implicit callers.
+    """
+    if path_manager is None and agent_config is not None:
+        path_manager = getattr(agent_config, "path_manager", None)
+
+    if isinstance(path_manager, DatusPathManager):
+        resolved_home = str(path_manager.datus_home)
+    elif path_manager:
+        resolved_home = str(DatusPathManager.resolve_home(path_manager))
+    else:
+        resolved_home = None
+
+    return _current_datus_home.set(resolved_home)
 
 
-def get_path_manager(datus_home: Optional[PathLike] = None) -> DatusPathManager:
+def get_path_manager(
+    datus_home: Optional[PathLike] = None,
+    *,
+    path_manager: Optional["DatusPathManager"] = None,
+    agent_config: Optional[Any] = None,
+) -> DatusPathManager:
     """
     Get a path manager instance.
 
     Resolution order:
-    1. Explicit ``datus_home`` argument
-    2. Process-wide default home set via ``set_default_datus_home()``
-    3. ``~/.datus``
+    1. Explicit ``path_manager`` argument
+    2. Explicit ``agent_config.path_manager``
+    3. Explicit ``datus_home`` argument
+    4. Context-local home set via ``set_current_path_manager()``
+    5. ``~/.datus``
 
     Args:
         datus_home: Optional custom .datus root directory.
+        path_manager: Optional explicit path manager instance to reuse.
+        agent_config: Optional config object exposing ``path_manager``.
 
     Returns:
         DatusPathManager instance
     """
-    resolved_home = datus_home if datus_home is not None else _default_datus_home
-    return DatusPathManager(str(resolved_home) if resolved_home is not None else None)
+    if path_manager is not None:
+        return path_manager
+
+    if agent_config is not None:
+        config_path_manager = getattr(agent_config, "path_manager", None)
+        if config_path_manager is not None:
+            return config_path_manager
+
+    if datus_home is not None:
+        return DatusPathManager(datus_home)
+
+    current_home = _current_datus_home.get()
+    return DatusPathManager(current_home)
 
 
-def reset_path_manager() -> None:
+def reset_path_manager(token: Optional[Token] = None) -> None:
     """
-    Reset process-wide path-manager defaults. Primarily for testing.
+    Reset context-local path-manager defaults. Primarily for testing.
     """
-    set_default_datus_home(None)
+    if token is not None:
+        _current_datus_home.reset(token)
+        return
+    _current_datus_home.set(None)

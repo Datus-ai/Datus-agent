@@ -13,7 +13,7 @@ No configuration file needed - versions are determined by scanning files.
 import re
 import shutil
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from jinja2 import Environment, FileSystemLoader, Template
 
@@ -21,11 +21,19 @@ from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
+if TYPE_CHECKING:
+    from datus.utils.path_manager import DatusPathManager
+
 
 class PromptManager:
     """Manages file-based versioned prompt templates with Jinja2 rendering support."""
 
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        path_manager: Optional["DatusPathManager"] = None,
+        agent_config: Optional[Any] = None,
+    ):
         """
         Initialize the prompt manager.
 
@@ -35,13 +43,15 @@ class PromptManager:
         """
         self.default_templates_dir = Path(__file__).parent / "prompt_templates"
         self._env_cache: Dict[str, Environment] = {}
+        self._path_manager = path_manager
+        self._agent_config = agent_config
 
     @property
     def user_templates_dir(self) -> Path:
         """Get user templates directory from the current configured home."""
         from datus.utils.path_manager import get_path_manager
 
-        return get_path_manager().template_dir
+        return get_path_manager(path_manager=self._path_manager, agent_config=self._agent_config).template_dir
 
     def _get_env(self) -> Environment:
         """Get Jinja2 environment with multi-directory search path.

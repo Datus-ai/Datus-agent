@@ -5,6 +5,7 @@
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -77,6 +78,29 @@ class TestValidateServerExists:
         assert valid is False
         assert "not found" in msg
         assert cfg is None
+
+
+class TestMCPManagerInit:
+    def test_init_uses_explicit_path_manager(self, tmp_path):
+        config_file = tmp_path / "conf" / ".mcp.json"
+        path_manager = MagicMock()
+        path_manager.mcp_config_path.return_value = config_file
+
+        manager = MCPManager(path_manager=path_manager)
+
+        path_manager.ensure_dirs.assert_called_once_with("conf")
+        assert manager.config_path == config_file
+
+    def test_init_uses_agent_config_path_manager(self, tmp_path):
+        config_file = tmp_path / "conf" / ".mcp.json"
+        path_manager = MagicMock()
+        path_manager.mcp_config_path.return_value = config_file
+        agent_config = SimpleNamespace(path_manager=path_manager)
+
+        manager = MCPManager(agent_config=agent_config)
+
+        path_manager.ensure_dirs.assert_called_once_with("conf")
+        assert manager.config_path == config_file
 
 
 # ---------------------------------------------------------------------------

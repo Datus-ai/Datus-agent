@@ -733,10 +733,10 @@ class AgentConfig:
         return str(self.path_manager.benchmark_dir / config.benchmark_path)
 
     def _set_path_manager(self, home: str) -> None:
-        from datus.utils.path_manager import DatusPathManager, set_default_datus_home
+        from datus.utils.path_manager import DatusPathManager, set_current_path_manager
 
         self.path_manager = DatusPathManager(home)
-        set_default_datus_home(str(self.path_manager.datus_home))
+        set_current_path_manager(self.path_manager)
 
     def _current_db_config(self) -> Dict[str, DbConfig]:
         if not self._current_namespace:

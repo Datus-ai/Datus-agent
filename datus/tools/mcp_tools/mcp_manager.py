@@ -13,7 +13,7 @@ and status monitoring.
 import asyncio
 import json
 import threading
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from agents import Agent, RunContextWrapper, Usage
 from agents.mcp import MCPServerStdioParams
@@ -31,6 +31,9 @@ from datus.tools.mcp_tools.mcp_server import SilentMCPServerStdio
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+if TYPE_CHECKING:
+    from datus.utils.path_manager import DatusPathManager
 
 
 def create_static_tool_filter(
@@ -78,7 +81,12 @@ class MCPManager:
     - Fixed at {agent.home}/conf/.mcp.json (default: ~/.datus/conf/.mcp.json)
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        path_manager: Optional["DatusPathManager"] = None,
+        agent_config: Optional[Any] = None,
+    ):
         """
         Initialize the MCP manager.
 
@@ -88,9 +96,9 @@ class MCPManager:
         """
         from datus.utils.path_manager import get_path_manager
 
-        path_manager = get_path_manager()
-        path_manager.ensure_dirs("conf")
-        self.config_path = path_manager.mcp_config_path()
+        resolved_path_manager = get_path_manager(path_manager=path_manager, agent_config=agent_config)
+        resolved_path_manager.ensure_dirs("conf")
+        self.config_path = resolved_path_manager.mcp_config_path()
 
         self.config: MCPConfig = MCPConfig()
         self._lock = threading.Lock()

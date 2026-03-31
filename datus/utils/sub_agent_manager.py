@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import ConfigurationManager
-from datus.prompts.prompt_manager import PromptManager, prompt_manager
+from datus.prompts.prompt_manager import PromptManager
 from datus.schemas.agent_models import SubAgentConfig
 from datus.utils.loggings import get_logger
 
@@ -25,7 +25,7 @@ class SubAgentManager:
         agent_config: AgentConfig,
     ):
         self._configuration_manager = configuration_manager
-        self._prompt_manager: PromptManager = prompt_manager
+        self._prompt_manager: PromptManager = PromptManager(agent_config=agent_config)
         self._namespace = namespace
         self._agent_config = agent_config
 
