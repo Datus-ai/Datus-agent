@@ -162,12 +162,10 @@ class TestBenchmarkTutorialEnsureConfig:
         mock_agent_config.home = str(tmp_path)
         mock_agent_config.benchmark_configs = {"california_schools": {}}
         mock_agent_config.namespaces = {"california_schools": {}}
-
-        mock_path_manager = MagicMock()
-        mock_path_manager.benchmark_dir = tmp_path / "benchmark"
+        mock_agent_config.path_manager = MagicMock()
+        mock_agent_config.path_manager.benchmark_dir = tmp_path / "benchmark"
 
         monkeypatch.setattr(tutorial_module, "load_agent_config", lambda config: mock_agent_config)
-        monkeypatch.setattr(tutorial_module, "get_path_manager", lambda datus_home: mock_path_manager)
 
         tutorial = BenchmarkTutorial(config_path=str(config_file))
 
@@ -184,14 +182,12 @@ class TestBenchmarkTutorialEnsureConfig:
         mock_agent_config.home = str(tmp_path)
         mock_agent_config.benchmark_configs = {}
         mock_agent_config.namespaces = {}
-
-        mock_path_manager = MagicMock()
-        mock_path_manager.benchmark_dir = tmp_path / "benchmark"
+        mock_agent_config.path_manager = MagicMock()
+        mock_agent_config.path_manager.benchmark_dir = tmp_path / "benchmark"
 
         mock_config_manager = MagicMock()
 
         monkeypatch.setattr(tutorial_module, "load_agent_config", lambda config: mock_agent_config)
-        monkeypatch.setattr(tutorial_module, "get_path_manager", lambda datus_home: mock_path_manager)
         # Mock the configuration_manager in the agent_config_loader module where it's imported from
         monkeypatch.setattr(
             "datus.configuration.agent_config_loader.configuration_manager",
@@ -367,14 +363,12 @@ class TestBenchmarkTutorialRun:
         mock_agent_config.home = str(tmp_path)
         mock_agent_config.benchmark_configs = {"california_schools": {}}
         mock_agent_config.namespaces = {"california_schools": {}}
-
-        mock_path_manager = MagicMock()
         benchmark_path = tmp_path / "benchmark"
         benchmark_path.mkdir()
-        mock_path_manager.benchmark_dir = benchmark_path
+        mock_agent_config.path_manager = MagicMock()
+        mock_agent_config.path_manager.benchmark_dir = benchmark_path
 
         monkeypatch.setattr(tutorial_module, "load_agent_config", lambda config=None, reload=False: mock_agent_config)
-        monkeypatch.setattr(tutorial_module, "get_path_manager", lambda datus_home: mock_path_manager)
 
         # Mock all the initialization functions
         mock_copy_data_file = MagicMock()

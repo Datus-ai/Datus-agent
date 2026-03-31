@@ -563,6 +563,10 @@ def _make_agent_config_ext(namespace="test_ns"):
     cfg.agentic_nodes = {}
     cfg.rag_storage_path.return_value = "/tmp/storage"
     cfg.get_save_run_dir.return_value = "/tmp/output/run1"
+    cfg.path_manager = MagicMock()
+    cfg.path_manager.semantic_model_path.return_value = MagicMock(exists=MagicMock(return_value=False))
+    cfg.path_manager.ext_knowledge_path.return_value = MagicMock(exists=MagicMock(return_value=False))
+    cfg.path_manager.sql_summary_path.return_value = MagicMock(exists=MagicMock(return_value=False))
     cfg.document_configs = {}
     cfg.benchmark_config.return_value = MagicMock(
         question_id_key="task_id",
@@ -940,13 +944,10 @@ class TestBootstrapKbSemanticModel:
 
         mock_rag = MagicMock()
         mock_rag.get_size.return_value = 5
-        mock_path_manager = MagicMock()
-        mock_path_manager.semantic_model_path.return_value = MagicMock(exists=MagicMock(return_value=False))
 
         with (
             patch("datus.agent.agent.SemanticModelRAG", return_value=mock_rag),
             patch("datus.agent.agent.init_success_story_semantic_model", return_value=(True, None)),
-            patch("datus.agent.agent.get_path_manager", return_value=mock_path_manager),
         ):
             result = agent.bootstrap_kb()
 
@@ -957,13 +958,10 @@ class TestBootstrapKbSemanticModel:
         agent = _make_agent_ext(args=args)
 
         mock_rag = MagicMock()
-        mock_path_manager = MagicMock()
-        mock_path_manager.semantic_model_path.return_value = MagicMock(exists=MagicMock(return_value=False))
 
         with (
             patch("datus.agent.agent.SemanticModelRAG", return_value=mock_rag),
             patch("datus.agent.agent.init_success_story_semantic_model", return_value=(False, "error msg")),
-            patch("datus.agent.agent.get_path_manager", return_value=mock_path_manager),
         ):
             result = agent.bootstrap_kb()
 
@@ -977,12 +975,10 @@ class TestBootstrapKbSemanticModel:
         mock_dir = MagicMock()
         mock_dir.exists.return_value = True
 
-        mock_path_manager = MagicMock()
-        mock_path_manager.semantic_model_path.return_value = mock_dir
+        agent.global_config.path_manager.semantic_model_path.return_value = mock_dir
 
         with (
             patch("datus.agent.agent.SemanticModelRAG", return_value=mock_rag),
-            patch("datus.agent.agent.get_path_manager", return_value=mock_path_manager),
             patch("datus.agent.agent.safe_rmtree", return_value=False),
         ):
             result = agent.bootstrap_kb()
@@ -1019,13 +1015,10 @@ class TestBootstrapKbMetrics:
 
         mock_rag = MagicMock()
         mock_rag.get_metrics_size.return_value = 10
-        mock_path_manager = MagicMock()
-        mock_path_manager.semantic_model_path.return_value = MagicMock(exists=MagicMock(return_value=False))
 
         with (
             patch("datus.agent.agent.MetricRAG", return_value=mock_rag),
             patch("datus.agent.agent.init_success_story_metrics", return_value=(True, None, {})),
-            patch("datus.agent.agent.get_path_manager", return_value=mock_path_manager),
         ):
             result = agent.bootstrap_kb()
 
@@ -1051,13 +1044,10 @@ class TestBootstrapKbMetrics:
         agent = _make_agent_ext(args=args)
 
         mock_rag = MagicMock()
-        mock_path_manager = MagicMock()
-        mock_path_manager.semantic_model_path.return_value = MagicMock(exists=MagicMock(return_value=False))
 
         with (
             patch("datus.agent.agent.MetricRAG", return_value=mock_rag),
             patch("datus.agent.agent.init_success_story_metrics", return_value=(False, "fail msg", {})),
-            patch("datus.agent.agent.get_path_manager", return_value=mock_path_manager),
         ):
             result = agent.bootstrap_kb()
 
@@ -1076,13 +1066,10 @@ class TestBootstrapKbExtKnowledge:
 
         mock_rag = MagicMock()
         mock_rag.store.table_size.return_value = 15
-        mock_path_manager = MagicMock()
-        mock_path_manager.ext_knowledge_path.return_value = MagicMock(exists=MagicMock(return_value=False))
 
         with (
             patch("datus.agent.agent.ExtKnowledgeRAG", return_value=mock_rag),
             patch("datus.agent.agent.init_ext_knowledge"),
-            patch("datus.agent.agent.get_path_manager", return_value=mock_path_manager),
         ):
             result = agent.bootstrap_kb()
 
@@ -1134,13 +1121,9 @@ class TestBootstrapKbReferenceSql:
         agent = _make_agent_ext(args=args)
 
         mock_rag = MagicMock()
-        mock_path_manager = MagicMock()
-        mock_path_manager.sql_summary_path.return_value = MagicMock(exists=MagicMock(return_value=False))
-
         mock_init_result = {"status": "success", "count": 5}
 
         with (
-            patch("datus.agent.agent.get_path_manager", return_value=mock_path_manager),
             patch("datus.storage.reference_sql.ReferenceSqlRAG", MagicMock(return_value=mock_rag), create=True),
             patch(
                 "datus.storage.reference_sql.reference_sql_init.init_reference_sql",
@@ -1158,13 +1141,11 @@ class TestBootstrapKbReferenceSql:
                 pass
 
         # Test cancelled case (simpler to test)
-        mock_path_manager2 = MagicMock()
         sql_dir_mock = MagicMock()
         sql_dir_mock.exists.return_value = True
-        mock_path_manager2.sql_summary_path.return_value = sql_dir_mock
+        agent.global_config.path_manager.sql_summary_path.return_value = sql_dir_mock
 
         with (
-            patch("datus.agent.agent.get_path_manager", return_value=mock_path_manager2),
             patch("datus.agent.agent.safe_rmtree", return_value=False),
         ):
             result2 = agent.bootstrap_kb()

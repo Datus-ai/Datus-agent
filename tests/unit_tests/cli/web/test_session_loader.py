@@ -47,13 +47,12 @@ class TestSessionLoader:
         assert isinstance(messages, list)
         assert len(messages) == 0
 
-    def test_load_session_roundtrip(self, session_loader):
+    def test_load_session_roundtrip(self, tmp_path):
         """Messages written to session DB can be read back by SessionLoader."""
-        from datus.utils.path_manager import get_path_manager
-
         session_id = f"test_roundtrip_{uuid.uuid4().hex[:8]}"
-        sessions_dir = get_path_manager().sessions_dir
+        sessions_dir = tmp_path / "sessions"
         sessions_dir.mkdir(parents=True, exist_ok=True)
+        session_loader = SessionLoader(session_dir=str(sessions_dir))
         db_path = sessions_dir / f"{session_id}.db"
 
         try:

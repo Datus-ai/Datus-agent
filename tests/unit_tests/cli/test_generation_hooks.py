@@ -18,6 +18,7 @@ All external dependencies are mocked. Tests cover:
 import json
 import os
 import tempfile
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -43,13 +44,14 @@ def agent_config():
     cfg.home = "/tmp/datus_test"
     cfg.current_namespace = "test_ns"
     cfg.db_type = "sqlite"
+    cfg.path_manager = MagicMock()
+    cfg.path_manager.semantic_model_path.return_value = Path("/tmp/datus_test/semantic_models/test_ns")
     return cfg
 
 
 @pytest.fixture
 def hooks(broker, agent_config):
-    with patch("datus.cli.generation_hooks.get_path_manager"):
-        return GenerationHooks(broker=broker, agent_config=agent_config)
+    return GenerationHooks(broker=broker, agent_config=agent_config)
 
 
 # ---------------------------------------------------------------------------
@@ -344,8 +346,7 @@ class TestHandleEndMetricGeneration:
                 "metric_sqls": {},
             }
         }
-        with patch("datus.cli.generation_hooks.get_path_manager"):
-            await hooks._handle_end_metric_generation(result)
+        await hooks._handle_end_metric_generation(result)
         hooks._process_metric_with_semantic_model.assert_awaited_once()
 
     async def test_cancelled_exception_absorbed(self, hooks):

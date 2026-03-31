@@ -386,15 +386,15 @@ class TestCmdSave:
         # Patch everything external that cmd_save calls
         mock_path_manager = MagicMock()
         mock_path_manager.save_dir = "/tmp/save"
+        agent_commands.cli.agent_config.path_manager = mock_path_manager
         mock_output_result = MagicMock()
         mock_output_result.output = "/tmp/save/output.json"
 
-        with patch("datus.utils.path_manager.get_path_manager", return_value=mock_path_manager):
-            with patch("datus.cli.agent_commands.OutputTool") as mock_output_cls:
-                mock_output_tool = MagicMock()
-                mock_output_tool.execute.return_value = mock_output_result
-                mock_output_cls.return_value = mock_output_tool
-                agent_commands.cmd_save("")
+        with patch("datus.cli.agent_commands.OutputTool") as mock_output_cls:
+            mock_output_tool = MagicMock()
+            mock_output_tool.execute.return_value = mock_output_result
+            mock_output_cls.return_value = mock_output_tool
+            agent_commands.cmd_save("")
 
         # Verify the "No previous result" error was NOT printed (context exists)
         output = agent_commands.console.file.getvalue()
