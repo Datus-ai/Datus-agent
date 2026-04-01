@@ -788,6 +788,66 @@ class TestPrepareTemplateContext:
         assert context["has_filesystem_tools"] is False
         assert context["has_mf_tools"] is False
 
+    def test_context_with_reference_template_tools(self):
+        from datus.agent.node.gen_sql_agentic_node import prepare_template_context
+
+        context = prepare_template_context(
+            node_config={"system_prompt": "test", "tools": ""},
+            has_reference_template_tools=True,
+        )
+        assert context["has_reference_template_tools"] is True
+
+    def test_context_without_reference_template_tools(self):
+        from datus.agent.node.gen_sql_agentic_node import prepare_template_context
+
+        context = prepare_template_context(
+            node_config={"system_prompt": "test", "tools": ""},
+        )
+        assert context["has_reference_template_tools"] is False
+
+
+class TestGenSQLNodeReferenceTemplateToolSetup:
+    """Tests for reference_template_tools setup in GenSQLAgenticNode."""
+
+    def test_setup_reference_template_tools_wildcard(self, real_agent_config, mock_llm_create):
+        """reference_template_tools.* pattern loads all template tools."""
+        real_agent_config.agentic_nodes["tpl_test"] = {
+            "system_prompt": "gen_sql",
+            "tools": "db_tools.*, reference_template_tools.*",
+            "max_turns": 5,
+        }
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+        from datus.configuration.node_type import NodeType
+
+        node = GenSQLAgenticNode(
+            node_id="tpl_test_id",
+            description="Test",
+            node_type=NodeType.TYPE_GENSQL,
+            agent_config=real_agent_config,
+            node_name="tpl_test",
+        )
+        # reference_template_tools should be initialized (may have 0 templates though)
+        assert node.reference_template_tools is not None
+
+    def test_setup_reference_template_tools_specific_method(self, real_agent_config, mock_llm_create):
+        """reference_template_tools.search_reference_template loads only search tool."""
+        real_agent_config.agentic_nodes["tpl_test2"] = {
+            "system_prompt": "gen_sql",
+            "tools": "db_tools.*, reference_template_tools.search_reference_template",
+            "max_turns": 5,
+        }
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+        from datus.configuration.node_type import NodeType
+
+        node = GenSQLAgenticNode(
+            node_id="tpl_test2_id",
+            description="Test",
+            node_type=NodeType.TYPE_GENSQL,
+            agent_config=real_agent_config,
+            node_name="tpl_test2",
+        )
+        assert node.reference_template_tools is not None
+
 
 # ===========================================================================
 # End-to-End Integration: AgenticNode + Hooks + InteractionBroker

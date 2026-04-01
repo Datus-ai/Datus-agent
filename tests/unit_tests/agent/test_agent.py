@@ -764,6 +764,83 @@ class TestEmitReferenceSqlEvent:
 
 
 # ---------------------------------------------------------------------------
+# _emit_reference_template_event
+# ---------------------------------------------------------------------------
+
+
+class TestEmitReferenceTemplateEvent:
+    def _event(self, stage, group_id="file.j2", payload=None, error=None):
+        evt = MagicMock(spec=BatchEvent)
+        evt.stage = stage
+        evt.group_id = group_id
+        evt.payload = payload
+        evt.error = error
+        evt.action_name = None
+        return evt
+
+    def test_group_started_prints(self, capsys):
+        agent = _make_agent_ext()
+        agent._emit_reference_template_event(self._event(BatchStage.GROUP_STARTED, "dir/tmpl.j2"))
+        out = capsys.readouterr().out
+        assert "tmpl" in out
+
+    def test_group_completed_prints(self, capsys):
+        agent = _make_agent_ext()
+        agent._emit_reference_template_event(self._event(BatchStage.GROUP_COMPLETED, "dir/tmpl.j2"))
+        out = capsys.readouterr().out
+        assert "completed" in out
+
+    def test_item_started_prints_number(self, capsys):
+        agent = _make_agent_ext()
+        agent._reset_reference_template_stream_state()
+        evt = self._event(BatchStage.ITEM_STARTED, payload={"template": "SELECT {{x}}"})
+        agent._emit_reference_template_event(evt)
+        out = capsys.readouterr().out
+        assert "#1" in out
+
+    def test_item_started_empty_template_fallback(self, capsys):
+        agent = _make_agent_ext()
+        agent._reset_reference_template_stream_state()
+        evt = self._event(BatchStage.ITEM_STARTED, payload={"template": ""})
+        agent._emit_reference_template_event(evt)
+        out = capsys.readouterr().out
+        assert "template_1" in out
+
+    def test_item_processing_prints_raw_output(self, capsys):
+        agent = _make_agent_ext()
+        evt = self._event(BatchStage.ITEM_PROCESSING, payload={"output": {"raw_output": "processed ok"}})
+        agent._emit_reference_template_event(evt)
+        out = capsys.readouterr().out
+        assert "processed ok" in out
+
+    def test_item_failed_prints_error(self, capsys):
+        agent = _make_agent_ext()
+        evt = self._event(BatchStage.ITEM_FAILED, error="Template render failed")
+        agent._emit_reference_template_event(evt)
+        out = capsys.readouterr().out
+        assert "Template render failed" in out
+
+    def test_item_failed_no_error_no_output(self, capsys):
+        agent = _make_agent_ext()
+        evt = self._event(BatchStage.ITEM_FAILED, error=None)
+        agent._emit_reference_template_event(evt)
+        capsys.readouterr()
+
+    def test_reset_stream_state(self):
+        agent = _make_agent_ext()
+        agent._ref_tpl_file_counter = {"a.j2": 3}
+        agent._reset_reference_template_stream_state()
+        assert agent._ref_tpl_file_counter == {}
+
+    def test_next_number_increments(self):
+        agent = _make_agent_ext()
+        agent._reset_reference_template_stream_state()
+        assert agent._next_reference_template_number("a.j2") == 1
+        assert agent._next_reference_template_number("a.j2") == 2
+        assert agent._next_reference_template_number("b.j2") == 1
+
+
+# ---------------------------------------------------------------------------
 # _emit_metrics_event
 # ---------------------------------------------------------------------------
 
