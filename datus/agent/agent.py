@@ -76,6 +76,7 @@ class Agent:
         self.metadata_store = None
         self.metrics_store = None
         self._ref_sql_file_sql_counter: Dict[str, int] = {}
+        self._ref_tpl_file_counter: Dict[str, int] = {}
         self._metrics_row_stage_seen: Dict[str, Set[str]] = {}
         self._print_lock = threading.Lock()
         self._check_storage_modules()
@@ -617,9 +618,6 @@ class Agent:
                 return result
             elif component == "reference_template":
                 if kb_update_strategy == "overwrite":
-                    sql_summary_dir = self.global_config.path_manager.sql_summary_path(
-                        self.global_config.current_namespace
-                    )
                     self.global_config.save_storage_config("reference_template")
                 else:
                     self.global_config.check_init_storage_config("reference_template")

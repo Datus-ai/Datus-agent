@@ -1,4 +1,4 @@
-SELECT `Free Meal Count (Ages 5-17)` / `Enrollment (Ages 5-17)` AS free_rate
+SELECT `Free Meal Count (Ages 5-17)` / NULLIF(`Enrollment (Ages 5-17)`, 0) AS free_rate
 FROM frpm
 WHERE `Educational Option Type` = '{{school_type}}'
   AND `Free Meal Count (Ages 5-17)` / `Enrollment (Ages 5-17)` IS NOT NULL

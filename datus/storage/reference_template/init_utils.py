@@ -6,6 +6,7 @@ import hashlib
 from typing import Set
 
 from datus.storage.reference_template.store import ReferenceTemplateRAG
+from datus.utils.exceptions import DatusException, ErrorCode
 
 
 def gen_reference_template_id(template: str) -> str:
@@ -15,6 +16,12 @@ def gen_reference_template_id(template: str) -> str:
 
 def exists_reference_templates(storage: ReferenceTemplateRAG, build_mode: str = "overwrite") -> Set[str]:
     """Get existing reference template IDs based on build mode."""
+    valid_modes = {"overwrite", "incremental"}
+    if build_mode not in valid_modes:
+        raise DatusException(
+            ErrorCode.COMMON_FIELD_INVALID,
+            message_args={"field_name": "build_mode", "except_values": valid_modes, "your_value": build_mode},
+        )
     existing_ids = set()
     if build_mode == "overwrite":
         return existing_ids

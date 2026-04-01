@@ -509,7 +509,7 @@ class ContextSearchTools:
 def _fill_subject_tree(
     enriched_tree: Dict[str, Any],
     entries: List[Dict[str, Any]],
-    entry_type: Literal["metrics", "reference_sql", "knowledge"],
+    entry_type: Literal["metrics", "reference_sql", "knowledge", "reference_template"],
 ):
     for item in entries:
         subject_path = item.get("subject_path")

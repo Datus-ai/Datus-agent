@@ -112,7 +112,7 @@ Semicolons inside Jinja2 block structures (`{% if %}`, `{% for %}`, etc.) are no
 
 ### Format Requirements
 
-1. **Semicolon Delimiter**: Each template in a multi-template file must end with `;`
+1. **Semicolon Delimiter**: Templates in a multi-template file must be separated by `;`
 2. **Valid Jinja2**: Templates must pass Jinja2 syntax validation
 3. **SQL Content**: Templates should produce valid SQL when rendered
 

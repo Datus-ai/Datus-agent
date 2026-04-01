@@ -20,6 +20,7 @@ from datus.storage.reference_template.template_file_processor import (
     process_template_items,
     validate_template,
 )
+from datus.utils.exceptions import DatusException
 
 
 class TestExtractTemplateParameters:
@@ -379,20 +380,20 @@ class TestProcessTemplateFiles:
 
     def test_no_template_files_raises(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            with pytest.raises(ValueError, match="No template files"):
+            with pytest.raises(DatusException):
                 process_template_files(tmpdir)
 
     def test_nonexistent_directory_raises(self):
-        with pytest.raises(ValueError, match="not found"):
+        with pytest.raises(DatusException):
             process_template_files("/nonexistent/path")
 
     def test_non_j2_file_raises(self):
-        """A file with non-.j2 extension should raise ValueError."""
+        """A file with non-.j2 extension should raise DatusException."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".sql", delete=False) as f:
             f.write("SELECT 1")
             f.flush()
             try:
-                with pytest.raises(ValueError, match="No template files"):
+                with pytest.raises(DatusException):
                     process_template_files(f.name)
             finally:
                 os.unlink(f.name)
@@ -411,7 +412,8 @@ class TestProcessTemplateFiles:
 
 
 class TestLogInvalidEntries:
-    def test_log_invalid_entries(self):
+    def test_log_invalid_entries(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         entries = [
             {
                 "filepath": "/tmp/bad.j2",
@@ -422,14 +424,15 @@ class TestLogInvalidEntries:
             }
         ]
         log_invalid_entries(entries)
-        assert os.path.exists("template_processing_errors.log")
-        with open("template_processing_errors.log") as f:
+        log_file = tmp_path / "template_processing_errors.log"
+        assert log_file.exists()
+        with open(log_file) as f:
             content = f.read()
         assert "syntax error" in content
         assert "/tmp/bad.j2" in content
-        os.unlink("template_processing_errors.log")
 
-    def test_log_without_line_number(self):
+    def test_log_without_line_number(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         entries = [
             {
                 "filepath": "/tmp/bad.j2",
@@ -439,8 +442,7 @@ class TestLogInvalidEntries:
             }
         ]
         log_invalid_entries(entries)
-        assert os.path.exists("template_processing_errors.log")
-        os.unlink("template_processing_errors.log")
+        assert (tmp_path / "template_processing_errors.log").exists()
 
 
 class TestJinjaBlockTags:

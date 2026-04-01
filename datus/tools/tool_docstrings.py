@@ -336,7 +336,7 @@ Example:
 
 Note:
     Returns up to 1000 items per layer. If you need full details including
-    SQL queries, use get_metrics() or get_reference_sql() instead.
+    SQL queries, use get_metrics() or get_sql_history() instead.
 """
 
 GET_METRICS_DOC = """

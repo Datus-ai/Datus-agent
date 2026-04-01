@@ -9,6 +9,7 @@ import pyarrow as pa
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.base import EmbeddingModel
 from datus.storage.subject_tree.store import BaseSubjectEmbeddingStore, base_schema_columns
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -109,7 +110,7 @@ class ReferenceTemplateStorage(BaseSubjectEmbeddingStore):
         for item in template_items:
             subject_path = item.get("subject_path")
             if not subject_path:
-                raise ValueError("subject_path is required in template item data")
+                raise DatusException(ErrorCode.COMMON_FIELD_REQUIRED, message_args={"field_name": "subject_path"})
 
         self.batch_upsert(template_items, on_column="id")
 

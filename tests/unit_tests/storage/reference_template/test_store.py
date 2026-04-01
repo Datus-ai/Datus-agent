@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from datus.storage.reference_template.store import ReferenceTemplateRAG, ReferenceTemplateStorage
+from datus.utils.exceptions import DatusException
 
 
 class TestReferenceTemplateStorage:
@@ -103,7 +104,7 @@ class TestReferenceTemplateStorage:
         storage.batch_upsert = MagicMock()
 
         items = [{"id": "abc", "template": "SELECT 1"}]
-        with pytest.raises(ValueError, match="subject_path is required"):
+        with pytest.raises(DatusException):
             storage.batch_upsert_templates(items)
 
     @patch("datus.storage.reference_template.store.BaseSubjectEmbeddingStore.__init__", return_value=None)

@@ -25,9 +25,8 @@ SAMPLE_TEMPLATE_DIR = str(PROJECT_ROOT / "sample_data" / "california_schools" / 
 # Nightly: Full bootstrap → tools pipeline
 # ============================================================================
 
-pytestmark = pytest.mark.nightly
 
-
+@pytest.mark.nightly
 class TestReferenceTemplateBootstrap:
     """Nightly: Bootstrap J2 template files into vector DB via LLM summary generation."""
 
@@ -183,8 +182,11 @@ class TestReferenceTemplateToolsNightly:
             # Error should mention which params are missing
             assert "requires parameters" in render_result.error or "Missing" in render_result.error
             assert "retry" in render_result.error.lower()
+        else:
+            pytest.skip("No template with >1 parameter found to test missing params scenario")
 
 
+@pytest.mark.nightly
 class TestSubjectTreeIncludesTemplates:
     """Nightly: Verify reference_template appears in the subject tree."""
 
@@ -210,6 +212,7 @@ class TestSubjectTreeIncludesTemplates:
         )
 
 
+@pytest.mark.nightly
 class TestNodeToolWiring:
     """Nightly: Verify reference_template_tools can be wired into agentic nodes."""
 
@@ -279,6 +282,8 @@ class TestReferenceTemplateToolsCI:
     def test_get_returns_template_with_params(self, tpl_tools):
         """get_reference_template should return template content and parameters."""
         search_result = tpl_tools.search_reference_template("school")
+        assert search_result.success == 1, f"Search failed: {search_result.error}"
+        assert len(search_result.result) > 0, "Search returned no results"
         first = search_result.result[0]
         get_result = tpl_tools.get_reference_template(first["subject_path"], first["name"])
         assert get_result.success == 1
@@ -288,6 +293,8 @@ class TestReferenceTemplateToolsCI:
     def test_render_produces_sql(self, tpl_tools):
         """render_reference_template should produce SQL without Jinja2 placeholders."""
         search_result = tpl_tools.search_reference_template("school")
+        assert search_result.success == 1, f"Search failed: {search_result.error}"
+        assert len(search_result.result) > 0, "Search returned no results"
         first = search_result.result[0]
         params = json.loads(first.get("parameters", "[]"))
         render_params = {p["name"]: "test_value" for p in params}

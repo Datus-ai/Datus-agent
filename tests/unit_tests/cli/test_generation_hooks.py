@@ -763,9 +763,7 @@ class TestSyncReferenceTemplateToDb:
 
         with (
             patch("datus.storage.reference_template.store.ReferenceTemplateRAG") as mock_rag_cls,
-            patch(
-                "datus.storage.reference_template.init_utils.exists_reference_templates", return_value=set()
-            ),
+            patch("datus.storage.reference_template.init_utils.exists_reference_templates", return_value=set()),
         ):
             mock_rag = mock_rag_cls.return_value
             mock_rag.upsert_batch = MagicMock()

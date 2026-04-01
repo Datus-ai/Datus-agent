@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Tuple
 import jinja2
 import jinja2.meta
 
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -317,7 +318,10 @@ def process_template_files(template_dir: str) -> Tuple[List[Dict[str, Any]], Lis
         Tuple of (valid_items, invalid_items)
     """
     if not os.path.exists(template_dir):
-        raise ValueError(f"Template directory not found: {template_dir}")
+        raise DatusException(
+            ErrorCode.COMMON_FILE_NOT_FOUND,
+            message_args={"config_name": "Template directory", "file_name": template_dir},
+        )
 
     template_dir_path = Path(template_dir).expanduser().resolve()
     if template_dir_path.is_dir():
@@ -330,7 +334,10 @@ def process_template_files(template_dir: str) -> Tuple[List[Dict[str, Any]], Lis
         template_files = []
 
     if not template_files:
-        raise ValueError(f"No template files (*.j2, *.jinja2) found in directory: {template_dir}")
+        raise DatusException(
+            ErrorCode.COMMON_FILE_NOT_FOUND,
+            message_args={"config_name": "Template files (*.j2, *.jinja2)", "file_name": template_dir},
+        )
 
     logger.info(f"Found {len(template_files)} template files to process")
 
