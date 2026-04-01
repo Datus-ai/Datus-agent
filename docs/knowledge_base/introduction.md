@@ -43,7 +43,15 @@ The Datus Agent Knowledge Base is a multi-modal intelligence system that transfo
 - **Capabilities**: Find queries by intent, get similar queries, learn patterns
 - **Use**: Knowledge sharing, optimization through examples, team onboarding
 
-### 5. [External Knowledge](ext_knowledge.md)
+### 5. [Reference Template](reference_template.md)
+
+**Purpose**: Manage parameterized SQL templates for stable, repeatable query generation.
+
+- **Stores**: Jinja2 templates, parameter definitions, LLM summaries, subject tree classification
+- **Capabilities**: Search templates by intent, retrieve with parameter metadata, server-side rendering
+- **Use**: Stable SQL output for production scenarios, parameterized report queries, template-based SQL generation
+
+### 6. [External Knowledge](ext_knowledge.md)
 
 **Purpose**: Process and index domain-specific business knowledge for intelligent search.
 
@@ -51,7 +59,7 @@ The Datus Agent Knowledge Base is a multi-modal intelligence system that transfo
 - **Capabilities**: Semantic search for business terms, context enrichment, term resolution
 - **Use**: Agent context enhancement, terminology standardization, knowledge onboarding
 
-### 6. [Platform Documentation](platform_doc.md)
+### 7. [Platform Documentation](platform_doc.md)
 
 **Purpose**: Provide authoritative platform documentation for SQL generation and validation.
 

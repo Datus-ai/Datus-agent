@@ -20,5 +20,10 @@ pid_met=$!
 wait $pid_ref || exit 1
 wait $pid_met || exit 1
 
-# Phase 3: Build ext_knowledge (depends on reference_sql + metrics as context)
-uv run python -m datus.main bootstrap-kb --config tests/conf/agent.yml --namespace bird_school --kb_update_strategy overwrite --components ext_knowledge --success_story sample_data/california_schools/success_story.csv --subject_tree "california_schools/Students_K-12/Free_Rate,california_schools/Education/Location" --yes
+# Phase 3: Build ext_knowledge and reference_template in parallel (independent)
+uv run python -m datus.main bootstrap-kb --config tests/conf/agent.yml --namespace bird_school --kb_update_strategy overwrite --components ext_knowledge --success_story sample_data/california_schools/success_story.csv --subject_tree "california_schools/Students_K-12/Free_Rate,california_schools/Education/Location" --yes &
+pid_ext=$!
+uv run python -m datus.main bootstrap-kb --config tests/conf/agent.yml --namespace bird_school --components reference_template --template_dir sample_data/california_schools/reference_template --subject_tree "california_schools/Free_Rate/Query,california_schools/Charter/Zip,california_schools/SAT_Score/Phone,california_schools/Enrollment/Summary" --kb_update_strategy overwrite --yes &
+pid_tpl=$!
+wait $pid_ext || exit 1
+wait $pid_tpl || exit 1

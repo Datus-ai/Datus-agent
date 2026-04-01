@@ -12,6 +12,7 @@ from datus.schemas.agent_models import SubAgentConfig
 from datus.storage.ext_knowledge.store import ExtKnowledgeRAG
 from datus.storage.metric.store import MetricRAG
 from datus.storage.reference_sql.store import ReferenceSqlRAG
+from datus.storage.reference_template.store import ReferenceTemplateRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.func_tool.base import FuncToolResult, normalize_null, trans_to_function_tool
 from datus.utils.loggings import get_logger
@@ -29,6 +30,9 @@ _NAME_GET_SQL = "context_search_tools.get_reference_sql"
 _NAME_SEMANTIC = "context_search_tools.search_semantic_objects"
 _NAME_KNOWLEDGE = "context_search_tools.search_knowledge"
 _NAME_GET_KNOWLEDGE = "context_search_tools.get_knowledge"
+_NAME_TEMPLATE_SEARCH = "reference_template_tools.search_reference_template"
+_NAME_TEMPLATE_GET = "reference_template_tools.get_reference_template"
+_NAME_TEMPLATE_RENDER = "reference_template_tools.render_reference_template"
 
 
 @mcp_tool_class(
@@ -77,6 +81,7 @@ class ContextSearchTools:
         self.semantic_rag = SemanticModelRAG(agent_config, sub_agent_name)
         self.reference_sql_store = ReferenceSqlRAG(agent_config, sub_agent_name)
         self.ext_knowledge_rag = ExtKnowledgeRAG(agent_config, sub_agent_name)
+        self.reference_template_store = ReferenceTemplateRAG(agent_config, sub_agent_name)
 
         # Initialize SubjectTreeStore for domain hierarchy
         self.subject_tree = self.metric_rag.storage.subject_tree
@@ -89,6 +94,7 @@ class ContextSearchTools:
         self.has_reference_sql = self.reference_sql_store.get_reference_sql_size() > 0
         self.has_semantic_objects = self.semantic_rag.get_size() > 0
         self.has_knowledge = self.ext_knowledge_rag.get_knowledge_size() > 0
+        self.has_reference_templates = self.reference_template_store.get_reference_template_size() > 0
 
     def _show_metrics(self):
         return self.has_metrics and (
@@ -115,6 +121,16 @@ class ContextSearchTools:
             or _NAME_LIST_SUBJECT_TREE in self.sub_agent_config.tool_list
             or _NAME_KNOWLEDGE in self.sub_agent_config.tool_list
             or _NAME_GET_KNOWLEDGE in self.sub_agent_config.tool_list
+        )
+
+    def _show_template(self):
+        return self.has_reference_templates and (
+            not self.sub_agent_config
+            or _NAME in self.sub_agent_config.tool_list
+            or _NAME_LIST_SUBJECT_TREE in self.sub_agent_config.tool_list
+            or _NAME_TEMPLATE_SEARCH in self.sub_agent_config.tool_list
+            or _NAME_TEMPLATE_GET in self.sub_agent_config.tool_list
+            or _NAME_TEMPLATE_RENDER in self.sub_agent_config.tool_list
         )
 
     def _show_semantic_objects(self):
@@ -157,8 +173,15 @@ class ContextSearchTools:
         if self._show_knowledge():
             if not has_subject_tree:
                 tools.append(trans_to_function_tool(self.list_subject_tree))
+                has_subject_tree = True
             tools.append(trans_to_function_tool(self.search_knowledge))
             tools.append(trans_to_function_tool(self.get_knowledge))
+
+        if self._show_template():
+            if not has_subject_tree:
+                tools.append(trans_to_function_tool(self.list_subject_tree))
+            # Note: reference_template tools are registered via ReferenceTemplateTools class,
+            # but we ensure list_subject_tree is available for navigation
 
         return tools
 
@@ -192,11 +215,13 @@ class ContextSearchTools:
             metrics_entries = self._collect_metrics_entries()
             sql_entries = self._collect_sql_entries()
             knowledge_entries = self._collect_knowledge_entries()
+            template_entries = self._collect_template_entries()
             enriched_tree = {}
 
             _fill_subject_tree(enriched_tree, metrics_entries, "metrics")
             _fill_subject_tree(enriched_tree, sql_entries, "reference_sql")
             _fill_subject_tree(enriched_tree, knowledge_entries, "knowledge")
+            _fill_subject_tree(enriched_tree, template_entries, "reference_template")
 
             _normalize_subject_tree(enriched_tree)
 
@@ -236,6 +261,15 @@ class ContextSearchTools:
             return knowledge
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.warning("Failed to collect ext knowledge: %s", exc)
+            return []
+
+    def _collect_template_entries(self) -> List[Dict[str, Any]]:
+        if not self._show_template():
+            return []
+        try:
+            return self.reference_template_store.search_all_reference_templates(select_fields=["name"])
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning("Failed to collect reference template taxonomy: %s", exc)
             return []
 
     @mcp_tool(availability_check="has_metrics")
@@ -490,7 +524,7 @@ def _fill_subject_tree(
 
 def _normalize_subject_tree(enriched_tree: Dict[str, Any]) -> Dict[str, Any]:
     for key, value in enriched_tree.items():
-        if key in ("metrics", "reference_sql", "knowledge"):
+        if key in ("metrics", "reference_sql", "knowledge", "reference_template"):
             if isinstance(value, set):
                 enriched_tree[key] = sorted(value)
         elif isinstance(value, dict):

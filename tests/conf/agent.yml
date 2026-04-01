@@ -159,6 +159,15 @@ agent:
             pattern: "admin-*"
             permission: allow
       agent_description: "Agent with all skills and admin override"
+    school_template:
+      model: deepseek
+      system_prompt: gen_sql
+      prompt_language: en
+      tools: db_tools.*, reference_template_tools.*
+      rules:
+        - Always search reference templates first before writing SQL
+        - Use render_reference_template with appropriate parameters to generate final SQL
+      agent_description: "SQL agent using reference templates for stable SQL output"
   schema_linking_rate: medium
 
   # Benchmark data is stored at {agent.home}/benchmark/{name}

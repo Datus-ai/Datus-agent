@@ -22,6 +22,7 @@ from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool, PlatformDocSearchTool
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
+from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
 from datus.tools.mcp_tools import MCPServer
 from datus.tools.permission.permission_hooks import CompositeHooks, PermissionHooks
 from datus.tools.permission.permission_manager import PermissionManager
@@ -89,6 +90,7 @@ class ChatAgenticNode(AgenticNode):
         self.date_parsing_tools: Optional[DateParsingTools] = None
         self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
         self._platform_doc_tool: Optional[PlatformDocSearchTool] = None
+        self.reference_template_tools: Optional[ReferenceTemplateTools] = None
 
         # SubAgent task delegation tool
         self.sub_agent_task_tool = None
@@ -133,6 +135,7 @@ class ChatAgenticNode(AgenticNode):
         conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
         self.db_func_tool = DBFuncTool(conn, agent_config=self.agent_config)
         self.context_search_tools = ContextSearchTools(self.agent_config)
+        self.reference_template_tools = ReferenceTemplateTools(self.agent_config)
         self._setup_date_parsing_tools()
         self._setup_filesystem_tools()
         self._setup_skill_tools()
@@ -247,6 +250,10 @@ class ChatAgenticNode(AgenticNode):
                 self.permission_hooks.register_tools(
                     "context_search_tools", self.context_search_tools.available_tools()
                 )
+            if self.reference_template_tools:
+                self.permission_hooks.register_tools(
+                    "reference_template_tools", self.reference_template_tools.available_tools()
+                )
             if self.date_parsing_tools:
                 self.permission_hooks.register_tools("date_parsing_tools", self.date_parsing_tools.available_tools())
             if self.filesystem_func_tool:
@@ -268,6 +275,8 @@ class ChatAgenticNode(AgenticNode):
             self.tools.extend(self.db_func_tool.available_tools())
         if self.context_search_tools:
             self.tools.extend(self.context_search_tools.available_tools())
+        if self.reference_template_tools:
+            self.tools.extend(self.reference_template_tools.available_tools())
         if self.date_parsing_tools:
             self.tools.extend(self.date_parsing_tools.available_tools())
         if self.filesystem_func_tool:
@@ -418,6 +427,7 @@ class ChatAgenticNode(AgenticNode):
             has_filesystem_tools=bool(self.filesystem_func_tool),
             has_mf_tools=any("metricflow" in k for k in self.mcp_servers.keys()),
             has_context_search_tools=bool(self.context_search_tools),
+            has_reference_template_tools=bool(self.reference_template_tools),
             has_parsing_tools=bool(self.date_parsing_tools),
             has_platform_doc_tools=bool(self._platform_doc_tool),
             agent_config=self.agent_config,

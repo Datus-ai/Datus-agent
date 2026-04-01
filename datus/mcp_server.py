@@ -88,6 +88,7 @@ from datus.configuration.agent_config_loader import configuration_manager, load_
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.context_search import ContextSearchTools
 from datus.tools.func_tool.database import DBFuncTool
+from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
 from datus.utils.loggings import configure_logging, get_logger
 
 # Re-export for external use
@@ -114,6 +115,7 @@ from datus.utils.mcp_decorators import get_tool_registry  # noqa: E402
 # These imports trigger the @mcp_tool_class decorators, registering tools automatically
 assert DBFuncTool  # Ensure imported and decorator ran
 assert ContextSearchTools  # Ensure imported and decorator ran
+assert ReferenceTemplateTools  # Ensure imported and decorator ran
 
 
 # ============================================================================
@@ -153,6 +155,14 @@ class ToolContext:
     @property
     def has_context_tools(self) -> bool:
         return self.context_tool is not None
+
+    @property
+    def reference_template_tool(self) -> Optional[ReferenceTemplateTools]:
+        return self.tools.get("reference_template_tool")
+
+    @property
+    def has_reference_template_tools(self) -> bool:
+        return self.reference_template_tool is not None
 
     def close(self):
         """Release resources held by this context."""
@@ -899,6 +909,10 @@ class DatusMCPServer:
     @property
     def context_tool(self) -> Optional[ContextSearchTools]:
         return self.tools.get("context_tool")
+
+    @property
+    def reference_template_tool(self) -> Optional[ReferenceTemplateTools]:
+        return self.tools.get("reference_template_tool")
 
     def close(self):
         """

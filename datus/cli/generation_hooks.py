@@ -1205,6 +1205,82 @@ class GenerationHooks(AgentHooks):
             return {"success": False, "error": str(e)}
 
     @staticmethod
+    def _sync_reference_template_to_db(
+        file_path: str, agent_config: AgentConfig, build_mode: str = "incremental"
+    ) -> dict:
+        """
+        Sync reference template YAML file to Knowledge Base.
+        """
+        try:
+            from datus.storage.reference_template.init_utils import (
+                exists_reference_templates,
+                gen_reference_template_id,
+            )
+            from datus.storage.reference_template.store import ReferenceTemplateRAG
+
+            with open(file_path, "r", encoding="utf-8") as f:
+                doc = yaml.safe_load(f)
+
+            if isinstance(doc, dict) and "sql" in doc:
+                reference_template_data = doc
+            else:
+                return {"success": False, "error": "No reference_template data found in YAML file"}
+
+            # The template content is stored in the "sql" field by SqlSummaryAgenticNode
+            template_content = reference_template_data.get("sql", "")
+            comment = reference_template_data.get("comment", "")
+            item_id = reference_template_data.get("id", "")
+
+            if not item_id or item_id == "auto_generated":
+                item_id = gen_reference_template_id(template_content)
+                reference_template_data["id"] = item_id
+
+            storage = ReferenceTemplateRAG(agent_config)
+            existing_ids = exists_reference_templates(storage, build_mode=build_mode)
+
+            if item_id in existing_ids:
+                logger.info(f"Reference template {item_id} already exists in Knowledge Base, skipping")
+                return {
+                    "success": True,
+                    "message": f"Reference template '{reference_template_data.get('name', '')}' already exists, skipped",
+                }
+
+            subject_path = []
+            subject_tree_str = reference_template_data.get("subject_tree", "")
+            if subject_tree_str:
+                parts = subject_tree_str.split("/")
+                subject_path = [part.strip() for part in parts if part.strip()]
+
+            # Extract parameters from template content
+            import json
+
+            from datus.storage.reference_template.template_file_processor import extract_template_parameters
+
+            parameters = extract_template_parameters(template_content)
+
+            reference_template_dict = {
+                "id": item_id,
+                "name": reference_template_data.get("name", ""),
+                "template": template_content,
+                "parameters": json.dumps(parameters),
+                "comment": comment,
+                "summary": reference_template_data.get("summary", ""),
+                "search_text": reference_template_data.get("search_text", ""),
+                "filepath": file_path,
+                "subject_path": subject_path,
+                "tags": reference_template_data.get("tags", ""),
+            }
+
+            storage.upsert_batch([reference_template_dict])
+
+            logger.info(f"Successfully synced reference template {item_id} to Knowledge Base")
+            return {"success": True, "message": f"Synced reference template: {reference_template_dict['name']}"}
+
+        except Exception as e:
+            logger.error(f"Error syncing reference template to DB: {e}", exc_info=True)
+            return {"success": False, "error": str(e)}
+
+    @staticmethod
     def _sync_ext_knowledge_to_db(file_path: str, agent_config: AgentConfig, build_mode: str = "incremental") -> dict:
         """
         Sync external knowledge YAML file to Knowledge Base using upsert.

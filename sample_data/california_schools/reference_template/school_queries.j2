@@ -1,0 +1,10 @@
+SELECT T2.Zip
+FROM frpm AS T1
+INNER JOIN schools AS T2 ON T1.CDSCode = T2.CDSCode
+WHERE T1.`District Name` = '{{district_name}}'
+  AND T1.`Charter School (Y/N)` = 1;
+SELECT T1.Phone
+FROM schools AS T1
+INNER JOIN satscores AS T2 ON T1.CDSCode = T2.cds
+WHERE T1.County = '{{county}}'
+  AND T2.NumTstTakr < {{max_test_takers}}

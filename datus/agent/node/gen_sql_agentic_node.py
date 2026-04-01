@@ -23,6 +23,7 @@ from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool, PlatformDocSearchTool
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
+from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
 from datus.tools.mcp_tools import MCPServer
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
@@ -92,6 +93,7 @@ class GenSQLAgenticNode(AgenticNode):
         self.date_parsing_tools: Optional[DateParsingTools] = None
         self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
         self._platform_doc_tool: Optional[PlatformDocSearchTool] = None
+        self.reference_template_tools: Optional[ReferenceTemplateTools] = None
 
         # Initialize plan mode attributes
         self.plan_mode_active = False
@@ -216,6 +218,8 @@ class GenSQLAgenticNode(AgenticNode):
             self.tools.extend(self.db_func_tool.available_tools())
         if self.context_search_tools:
             self.tools.extend(self.context_search_tools.available_tools())
+        if self.reference_template_tools:
+            self.tools.extend(self.reference_template_tools.available_tools())
         if self.date_parsing_tools:
             self.tools.extend(self.date_parsing_tools.available_tools())
         if self.filesystem_func_tool:
@@ -276,6 +280,16 @@ class GenSQLAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup context search tools: {e}")
 
+    def _setup_reference_template_tools(self):
+        """Setup reference template tools."""
+        try:
+            self.reference_template_tools = ReferenceTemplateTools(
+                self.agent_config, sub_agent_name=self.node_config.get("system_prompt")
+            )
+            self.tools.extend(self.reference_template_tools.available_tools())
+        except Exception as e:
+            logger.error(f"Failed to setup reference template tools: {e}")
+
     def _setup_date_parsing_tools(self):
         """Setup date parsing tools."""
         try:
@@ -304,6 +318,8 @@ class GenSQLAgenticNode(AgenticNode):
                     self._setup_db_tools()
                 elif base_type == "context_search_tools":
                     self._setup_context_search_tools()
+                elif base_type == "reference_template_tools":
+                    self._setup_reference_template_tools()
                 elif base_type == "date_parsing_tools":
                     self._setup_date_parsing_tools()
                 elif base_type == "filesystem_tools":
@@ -318,6 +334,8 @@ class GenSQLAgenticNode(AgenticNode):
                 self._setup_db_tools()
             elif pattern == "context_search_tools":
                 self._setup_context_search_tools()
+            elif pattern == "reference_template_tools":
+                self._setup_reference_template_tools()
             elif pattern == "date_parsing_tools":
                 self._setup_date_parsing_tools()
             elif pattern == "filesystem_tools":
@@ -366,6 +384,12 @@ class GenSQLAgenticNode(AgenticNode):
                 if not self._platform_doc_tool:
                     self._platform_doc_tool = PlatformDocSearchTool(self.agent_config)
                 tool_instance = self._platform_doc_tool
+            elif tool_type == "reference_template_tools":
+                if not self.reference_template_tools:
+                    self.reference_template_tools = ReferenceTemplateTools(
+                        self.agent_config, sub_agent_name=self.node_config.get("system_prompt")
+                    )
+                tool_instance = self.reference_template_tools
             else:
                 logger.warning(f"Unknown tool type: {tool_type}")
                 return
@@ -490,6 +514,7 @@ class GenSQLAgenticNode(AgenticNode):
             has_filesystem_tools=bool(self.filesystem_func_tool),
             has_mf_tools=any("metricflow" in k for k in self.mcp_servers.keys()),
             has_context_search_tools=bool(self.context_search_tools),
+            has_reference_template_tools=bool(self.reference_template_tools),
             has_parsing_tools=bool(self.date_parsing_tools),
             has_platform_doc_tools=bool(self._platform_doc_tool),
             agent_config=self.agent_config,
@@ -1050,6 +1075,7 @@ def prepare_template_context(
     has_filesystem_tools: bool = True,
     has_mf_tools: bool = True,
     has_context_search_tools: bool = True,
+    has_reference_template_tools: bool = False,
     has_parsing_tools: bool = True,
     has_platform_doc_tools: bool = False,
     agent_config: Optional[AgentConfig] = None,
@@ -1064,6 +1090,7 @@ def prepare_template_context(
         has_filesystem_tools: Whether filesystem tools are available
         has_mf_tools: Whether MetricFlow MCP tools are available
         has_context_search_tools: Whether context search tools are available
+        has_reference_template_tools: Whether reference template tools are available
         has_parsing_tools: Whether date parsing tools are available
         has_platform_doc_tools: Whether platform documentation search tools are available
         agent_config: Agent configuration
@@ -1077,6 +1104,7 @@ def prepare_template_context(
         "has_filesystem_tools": has_filesystem_tools,
         "has_mf_tools": has_mf_tools,
         "has_context_search_tools": has_context_search_tools,
+        "has_reference_template_tools": has_reference_template_tools,
         "has_parsing_tools": has_parsing_tools,
         "has_platform_doc_tools": has_platform_doc_tools,
     }

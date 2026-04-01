@@ -21,7 +21,7 @@ With Datus, data engineers shift from writing repetitive SQL to building reusabl
 
 The heart of Datus is its **[Context Engine](knowledge_base/introduction.md)**, which combines human expertise with AI capabilities:
 
-- Automatically captures [metadata](knowledge_base/metadata.md), [semantic models](knowledge_base/semantic_model.md), [metrics](knowledge_base/metrics.md), [reference SQL](knowledge_base/reference_sql.md), documents, and success stories
+- Automatically captures [metadata](knowledge_base/metadata.md), [semantic models](knowledge_base/semantic_model.md), [metrics](knowledge_base/metrics.md), [reference SQL](knowledge_base/reference_sql.md), [reference templates](knowledge_base/reference_template.md), documents, and success stories
 - Supports human-in-the-loop curation and refinement
 - Powers both subagents and workflows with rich, domain-specific context
 

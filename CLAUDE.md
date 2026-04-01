@@ -167,6 +167,7 @@ Create intermediate `__init__.py` files when adding tests to new subdirectories.
 | `datus/mcp_server.py` | test_mcp_server.py, integration/tools/test_mcp_server.py |
 | `datus/storage/` | unit_tests/test_storage_*.py, unit_tests/test_subject_tree_store.py, test_storage.py |
 | `datus/storage/schema_metadata/` | test_schema_recall_*.py, test_llm_recall.py |
+| `datus/storage/reference_template/` | unit_tests/storage/reference_template/test_*.py, integration/tools/test_reference_template.py |
 | `datus/storage/document/` | test_doc_search.py, integration/test_integration_platform_doc.py |
 | `datus/utils/sql_utils.py` | unit_tests/test_sql_utils.py |
 | `datus/utils/json_utils.py` | unit_tests/test_json_utils.py |
@@ -180,4 +181,5 @@ Create intermediate `__init__.py` files when adding tests to new subdirectories.
 - **New LLM adaptors** → register in `regression/test_regression_llm.py`
 - **New CLI commands** → test in `test_cli_commands.py`
 - **New MCP tools** → test in `test_mcp_server.py`
+- **New reference template files** → integration test in `integration/tools/test_reference_template.py`
 - **New connectors** → tests following `test_connector_duckdb.py`

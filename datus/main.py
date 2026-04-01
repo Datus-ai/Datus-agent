@@ -114,6 +114,7 @@ def create_parser() -> argparse.ArgumentParser:
             "table_lineage",
             "ext_knowledge",
             "reference_sql",
+            "reference_template",
         ],
         default=["metadata"],
         help="Knowledge base components to initialize",
@@ -165,6 +166,9 @@ def create_parser() -> argparse.ArgumentParser:
     bootstrap_parser.add_argument("--ext_knowledge", type=str, help="Path to external knowledge CSV file")
     bootstrap_parser.add_argument(
         "--sql_dir", type=str, help="Directory containing SQL files for reference_sql component"
+    )
+    bootstrap_parser.add_argument(
+        "--template_dir", type=str, help="Directory containing J2 template files for reference_template component"
     )
     bootstrap_parser.add_argument(
         "--validate-only",

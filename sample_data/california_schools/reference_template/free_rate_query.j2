@@ -1,0 +1,6 @@
+SELECT `Free Meal Count (Ages 5-17)` / `Enrollment (Ages 5-17)` AS free_rate
+FROM frpm
+WHERE `Educational Option Type` = '{{school_type}}'
+  AND `Free Meal Count (Ages 5-17)` / `Enrollment (Ages 5-17)` IS NOT NULL
+ORDER BY free_rate {{sort_order}}
+LIMIT {{limit}}
