@@ -14,7 +14,7 @@ class TestReferenceTemplateStorage:
     def test_init(self, mock_super):
         embedding_model = MagicMock()
         embedding_model.dim_size = 128
-        storage = ReferenceTemplateStorage(embedding_model)
+        ReferenceTemplateStorage(embedding_model)
         mock_super.assert_called_once()
         call_kwargs = mock_super.call_args
         assert call_kwargs.kwargs["table_name"] == "reference_template"

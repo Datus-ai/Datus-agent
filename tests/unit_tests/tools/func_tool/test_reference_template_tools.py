@@ -149,9 +149,7 @@ class TestRenderReferenceTemplate:
         assert "not found" in result.error.lower()
 
     def test_render_empty_template(self, tools, mock_rag):
-        mock_rag.get_reference_template_detail.return_value = [
-            {"name": "empty", "template": "", "parameters": "[]"}
-        ]
+        mock_rag.get_reference_template_detail.return_value = [{"name": "empty", "template": "", "parameters": "[]"}]
         result = tools.render_reference_template(["Sales"], "empty", "{}")
         assert result.success == 0
         assert "empty" in result.error.lower()

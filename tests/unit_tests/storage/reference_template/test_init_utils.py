@@ -4,7 +4,7 @@
 
 from unittest.mock import MagicMock
 
-from datus.storage.reference_template.init_utils import gen_reference_template_id, exists_reference_templates
+from datus.storage.reference_template.init_utils import exists_reference_templates, gen_reference_template_id
 
 
 class TestGenReferenceTemplateId:

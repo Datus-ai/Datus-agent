@@ -211,8 +211,7 @@ class TestParseTemplateBlocks:
 
     def test_multi_template_file_with_semicolons(self):
         content = (
-            "SELECT * FROM table1 WHERE dt > {{start_date}};\n"
-            "SELECT count(*) FROM table2 WHERE region = {{region}}"
+            "SELECT * FROM table1 WHERE dt > {{start_date}};\nSELECT count(*) FROM table2 WHERE region = {{region}}"
         )
         with tempfile.NamedTemporaryFile(mode="w", suffix=".j2", delete=False) as f:
             f.write(content)
@@ -226,13 +225,7 @@ class TestParseTemplateBlocks:
                 os.unlink(f.name)
 
     def test_template_with_jinja_block(self):
-        content = (
-            "SELECT dt, col1\n"
-            "FROM table1\n"
-            "{% if has_filter %}\n"
-            "WHERE region = {{region}}\n"
-            "{% endif %}"
-        )
+        content = "SELECT dt, col1\nFROM table1\n{% if has_filter %}\nWHERE region = {{region}}\n{% endif %}"
         with tempfile.NamedTemporaryFile(mode="w", suffix=".j2", delete=False) as f:
             f.write(content)
             f.flush()
