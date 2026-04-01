@@ -197,6 +197,7 @@ class TestResolveNodeType:
                 NodeType.TYPE_EXT_KNOWLEDGE,
                 NodeType.TYPE_SEMANTIC,
                 NodeType.TYPE_SQL_SUMMARY,
+                NodeType.TYPE_GEN_TABLE,
             )
 
 
@@ -831,6 +832,11 @@ class TestResolveNodeTypeBuiltIn:
         assert node_type == NodeType.TYPE_EXT_KNOWLEDGE
         assert node_name == "gen_ext_knowledge"
 
+    def test_gen_table(self, task_tool):
+        node_type, node_name = task_tool._resolve_node_type("gen_table")
+        assert node_type == NodeType.TYPE_GEN_TABLE
+        assert node_name == "gen_table"
+
 
 # ── Built-in subagent: _create_builtin_node ────────────────────────
 
@@ -867,6 +873,14 @@ class TestCreateBuiltinNode:
         task_tool._create_builtin_node("gen_ext_knowledge")
         mock_init.assert_called_once_with(
             node_name="gen_ext_knowledge",
+            agent_config=task_tool.agent_config,
+            execution_mode="interactive",
+        )
+
+    @patch("datus.agent.node.gen_table_agentic_node.GenTableAgenticNode.__init__", return_value=None)
+    def test_gen_table(self, mock_init, task_tool):
+        task_tool._create_builtin_node("gen_table")
+        mock_init.assert_called_once_with(
             agent_config=task_tool.agent_config,
             execution_mode="interactive",
         )
@@ -925,6 +939,16 @@ class TestBuildNodeInputBuiltIn:
         result = task_tool._build_node_input(mock_node, "What is total revenue by region?")
         assert isinstance(result, ExtKnowledgeNodeInput)
         assert result.user_message == "What is total revenue by region?"
+
+    def test_gen_table_node_input(self, task_tool):
+        from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
+        from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
+
+        mock_node = Mock(spec=GenTableAgenticNode)
+        result = task_tool._build_node_input(mock_node, "Create wide table from orders and customers")
+        assert isinstance(result, SemanticNodeInput)
+        assert result.user_message == "Create wide table from orders and customers"
+        assert result.database == "test_db"
 
 
 # ── Built-in subagent: _build_task_description ─────────────────────

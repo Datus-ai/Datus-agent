@@ -1053,6 +1053,61 @@ class DBFuncTool:
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 
+    # Regex matching allowed DDL statement prefixes
+    _ALLOWED_DDL_RE = __import__("re").compile(
+        r"^\s*(CREATE\s+(TABLE|VIEW|OR\s+REPLACE)"
+        r"|ALTER\s+TABLE"
+        r"|DROP\s+(TABLE|VIEW)(\s+IF\s+EXISTS)?)\b",
+        __import__("re").IGNORECASE,
+    )
+
+    def execute_ddl(self, sql: str) -> FuncToolResult:
+        """
+        Execute a DDL SQL statement (CREATE TABLE AS SELECT, ALTER TABLE, etc.).
+
+        CAUTION: This modifies the database. Only use when explicitly instructed.
+        Supported statements: CREATE TABLE, CREATE TABLE AS SELECT (CTAS),
+        ALTER TABLE, DROP TABLE, CREATE VIEW, DROP VIEW.
+
+        Args:
+            sql: DDL SQL statement to execute
+
+        Returns:
+            Execution result with success status
+        """
+        from datus.utils.sql_utils import strip_sql_comments
+
+        # Validate: strip comments, reject multi-statement SQL
+        cleaned = strip_sql_comments(sql).strip().rstrip(";").strip()
+        if not cleaned:
+            return FuncToolResult(success=0, error="Empty SQL statement")
+
+        if ";" in cleaned:
+            return FuncToolResult(
+                success=0,
+                error="Multi-statement SQL is not allowed. Please submit one DDL statement at a time.",
+            )
+
+        # Validate: only allow DDL statement types
+        if not self._ALLOWED_DDL_RE.match(cleaned):
+            return FuncToolResult(
+                success=0,
+                error="Only DDL statements are allowed (CREATE TABLE/VIEW, ALTER TABLE, DROP TABLE/VIEW). "
+                "DML statements (INSERT, UPDATE, DELETE, SELECT) are not permitted.",
+            )
+
+        connector = self._get_connector()
+        if not hasattr(connector, "execute_ddl"):
+            return FuncToolResult(success=0, error="Current database connector does not support DDL operations")
+        try:
+            result = connector.execute_ddl(sql)
+            if result.success:
+                return FuncToolResult(result={"message": "DDL executed successfully", "sql": sql})
+            else:
+                return FuncToolResult(success=0, error=result.error)
+        except Exception as e:
+            return FuncToolResult(success=0, error=f"DDL execution failed: {str(e)}")
+
 
 def db_function_tool_instance(
     agent_config: AgentConfig, database_name: str = "", sub_agent_name: Optional[str] = None

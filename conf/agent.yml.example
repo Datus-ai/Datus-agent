@@ -322,6 +322,11 @@ agent:
     gen_sql_summary:
       model: deepseek_v3
       max_turns: 30
+
+    gen_table:
+      model: anthropic
+      max_turns: 20
+      skills: "gen-table"
   dashboard:
     superset:
       username: admin

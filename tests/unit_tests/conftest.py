@@ -165,6 +165,11 @@ def real_agent_config(tmp_path, reset_global_singletons):
                 "system_prompt": "explore",
                 "max_turns": 15,
             },
+            "gen_table": {
+                "system_prompt": "gen_table",
+                "tools": "db_tools.*",
+                "max_turns": 10,
+            },
         },
     }
 

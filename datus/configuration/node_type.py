@@ -58,6 +58,7 @@ class NodeType:
     TYPE_GEN_REPORT = "gen_report"  # For generic report generation
     TYPE_EXT_KNOWLEDGE = "ext_knowledge"  # For external knowledge generation
     TYPE_EXPLORE = "explore"  # For read-only data exploration and context gathering
+    TYPE_GEN_TABLE = "gen_table"  # For wide table generation from JOIN SQL
 
     ACTION_TYPES = [
         TYPE_SCHEMA_LINKING,
@@ -77,6 +78,7 @@ class NodeType:
         TYPE_GEN_REPORT,
         TYPE_EXT_KNOWLEDGE,
         TYPE_EXPLORE,
+        TYPE_GEN_TABLE,
     ]
 
     NODE_TYPE_DESCRIPTIONS = {
@@ -103,6 +105,7 @@ class NodeType:
         TYPE_GEN_REPORT: "Generic report generation with semantic and database tools",
         TYPE_EXT_KNOWLEDGE: "External knowledge generation with conversational AI",
         TYPE_EXPLORE: "Read-only data exploration and context gathering",
+        TYPE_GEN_TABLE: "Wide table generation from JOIN SQL with CTAS",
     }
 
     @classmethod
@@ -154,6 +157,8 @@ class NodeType:
             input_data_cls = ExtKnowledgeNodeInput
         elif node_type == NodeType.TYPE_EXPLORE:
             input_data_cls = ExploreNodeInput
+        elif node_type == NodeType.TYPE_GEN_TABLE:
+            input_data_cls = SemanticNodeInput
         else:
             raise NotImplementedError(f"node_type {node_type} not implemented")
 

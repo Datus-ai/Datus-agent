@@ -127,6 +127,13 @@ class Node(ABC):
             from datus.agent.node.explore_agentic_node import ExploreAgenticNode
 
             return ExploreAgenticNode(node_id, description, node_type, input_data, agent_config, tools, node_name)
+        elif node_type == NodeType.TYPE_GEN_TABLE:
+            from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
+
+            node = GenTableAgenticNode(agent_config=agent_config, execution_mode="workflow")
+            if input_data is not None:
+                node.input = input_data
+            return node
         else:
             raise ValueError(f"Invalid node type: {node_type}")
 
