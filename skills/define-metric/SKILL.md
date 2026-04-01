@@ -51,7 +51,12 @@ If the user skips, proceed to Step 1c using only table structure and the user's 
 ### Batch Mode: Step 1-batch
 
 **Step 1-batch-a: Parse SQL queries**
-- The input may contain multiple SQL queries — either pasted directly or as CSV content (with `question` + `sql` columns) already included in the prompt by the parent agent
+- The input may contain multiple SQL queries in various forms:
+  - **Direct paste**: multiple SQL statements in the prompt
+  - **File path**: user provides a path — call `read_file` to load it, then parse by file type:
+    - `.sql`: split by `;` or blank-line separators to extract individual statements
+    - `.csv` / `.tsv`: identify the SQL column by header name (common names: `sql`, `query`, `SQL`, `statement`) or by content heuristic (column values contain SQL keywords like `SELECT`, `FROM`, `GROUP BY`). The description/question column is any remaining text column. If column roles are ambiguous, call `ask_user` to confirm which column is SQL.
+    - Other formats: call `ask_user` to clarify the file structure before proceeding
 - Parse all SQL queries from the input
 - Call `describe_table` for each unique table found in the SQL queries
 
