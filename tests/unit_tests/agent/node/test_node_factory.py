@@ -106,6 +106,12 @@ class TestCreateInteractiveNode:
         mock_init.assert_called_once()
         assert mock_init.call_args[1]["node_name"] == "custom_agent"
 
+    @patch("datus.agent.node.gen_table_agentic_node.GenTableAgenticNode.__init__", return_value=None)
+    def test_gen_table(self, mock_init):
+        config = _mock_agent_config()
+        create_interactive_node("gen_table", config)
+        mock_init.assert_called_once_with(agent_config=config, execution_mode="interactive")
+
     @patch("datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode.__init__", return_value=None)
     def test_default_subagent_is_gensql(self, mock_init):
         config = _mock_agent_config()
@@ -180,6 +186,15 @@ class TestCreateNodeInput:
         assert result.catalog == "cat"
         assert result.database == "db"
         assert result.db_schema == "sch"
+
+    def test_gen_table_node_input(self):
+        from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
+
+        node = MagicMock(spec=GenTableAgenticNode)
+        result = create_node_input("create table", node, catalog="cat", database="db")
+        assert result.user_message == "create table"
+        assert result.catalog == "cat"
+        assert result.database == "db"
 
     def test_gen_report_node_input(self):
         from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode

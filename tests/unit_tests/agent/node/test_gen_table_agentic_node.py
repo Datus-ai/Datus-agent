@@ -295,3 +295,59 @@ class TestPrepareTemplateContextGenTable:
         context = node._prepare_template_context(user_input)
 
         assert "execute_ddl" in context["native_tools"]
+
+
+# ---------------------------------------------------------------------------
+# NodeType and Node Factory Tests
+# ---------------------------------------------------------------------------
+
+
+class TestGenTableNodeType:
+    """Tests for NodeType integration with gen_table."""
+
+    def test_type_input_gen_table(self):
+        """NodeType.type_input should handle TYPE_GEN_TABLE and return SemanticNodeInput."""
+        from datus.configuration.node_type import NodeType
+
+        inp = NodeType.type_input(
+            NodeType.TYPE_GEN_TABLE,
+            {"user_message": "create wide table"},
+        )
+        assert isinstance(inp, SemanticNodeInput)
+        assert inp.user_message == "create wide table"
+
+    def test_node_factory_creates_gen_table(self, real_agent_config, mock_llm_create):
+        """Node.new_instance should create GenTableAgenticNode for TYPE_GEN_TABLE."""
+        from datus.agent.node import Node
+        from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
+        from datus.configuration.node_type import NodeType
+
+        node = Node.new_instance(
+            node_id="test_gen_table",
+            description="Test gen_table factory",
+            node_type=NodeType.TYPE_GEN_TABLE,
+            input_data=None,
+            agent_config=real_agent_config,
+            tools=[],
+        )
+        assert isinstance(node, GenTableAgenticNode)
+        assert node.execution_mode == "workflow"
+
+    def test_node_factory_with_input_data(self, real_agent_config, mock_llm_create):
+        """Node.new_instance should set input when input_data is provided."""
+        from datus.agent.node import Node
+        from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
+        from datus.configuration.node_type import NodeType
+
+        input_data = SemanticNodeInput(user_message="test input")
+        node = Node.new_instance(
+            node_id="test_gen_table",
+            description="Test gen_table factory",
+            node_type=NodeType.TYPE_GEN_TABLE,
+            input_data=input_data,
+            agent_config=real_agent_config,
+            tools=[],
+        )
+        assert isinstance(node, GenTableAgenticNode)
+        assert node.input is not None
+        assert node.input.user_message == "test input"
