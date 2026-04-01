@@ -20,6 +20,7 @@ from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, Semant
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import DBFuncTool
 from datus.tools.func_tool.base import trans_to_function_tool
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.message_utils import MessagePart, build_structured_content
 
@@ -66,7 +67,6 @@ class GenTableAgenticNode(AgenticNode):
 
         self.db_func_tool: Optional[DBFuncTool] = None
         self.ask_user_tool = None
-        self.hooks = None
         self.setup_tools()
 
     def get_node_name(self) -> str:
@@ -151,7 +151,7 @@ class GenTableAgenticNode(AgenticNode):
             action_history_manager = ActionHistoryManager()
 
         if self.input is None:
-            raise ValueError("Input not set. Set self.input before calling execute_stream.")
+            raise DatusException(ErrorCode.COMMON_FIELD_REQUIRED, message_args={"field_name": "input"})
 
         user_input = self.input
 
@@ -209,7 +209,7 @@ class GenTableAgenticNode(AgenticNode):
                 max_turns=user_input.max_turns if user_input.max_turns else self.max_turns,
                 session=session,
                 action_history_manager=action_history_manager,
-                hooks=self.hooks if self.execution_mode == "interactive" else None,
+                hooks=None,
                 interrupt_controller=self.interrupt_controller,
             ):
                 yield stream_action

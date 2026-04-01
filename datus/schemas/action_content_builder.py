@@ -115,8 +115,11 @@ def build_interaction_content(action: ActionHistory) -> List[MessageContent]:
     """Build content for user interaction event (PROCESSING status)."""
     input_data = action.input if isinstance(action.input, dict) else {}
 
-    content = input_data.get("content", "")
-    choices = input_data.get("choices", {})
+    # InteractionBroker sends "contents" (list) and "choices" (list of dicts)
+    contents = input_data.get("contents", [])
+    content = contents[0] if contents else input_data.get("content", "")
+    choices_list = input_data.get("choices", [])
+    choices = choices_list[0] if isinstance(choices_list, list) and choices_list else choices_list
 
     options = None
     if choices and isinstance(choices, dict):

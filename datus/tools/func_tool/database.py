@@ -4,6 +4,7 @@
 
 # -*- coding: utf-8 -*-
 import os
+import re
 from collections import OrderedDict
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
@@ -1054,11 +1055,11 @@ class DBFuncTool:
             return FuncToolResult(success=0, error=str(e))
 
     # Regex matching allowed DDL statement prefixes
-    _ALLOWED_DDL_RE = __import__("re").compile(
-        r"^\s*(CREATE\s+(TABLE|VIEW|OR\s+REPLACE)"
+    _ALLOWED_DDL_RE = re.compile(
+        r"^\s*(CREATE\s+(?:OR\s+REPLACE\s+)?(?:TABLE|VIEW)"
         r"|ALTER\s+TABLE"
-        r"|DROP\s+(TABLE|VIEW)(\s+IF\s+EXISTS)?)\b",
-        __import__("re").IGNORECASE,
+        r"|DROP\s+(?:TABLE|VIEW)(?:\s+IF\s+EXISTS)?)\b",
+        re.IGNORECASE,
     )
 
     def execute_ddl(self, sql: str) -> FuncToolResult:
@@ -1100,9 +1101,9 @@ class DBFuncTool:
         if not hasattr(connector, "execute_ddl"):
             return FuncToolResult(success=0, error="Current database connector does not support DDL operations")
         try:
-            result = connector.execute_ddl(sql)
+            result = connector.execute_ddl(cleaned)
             if result.success:
-                return FuncToolResult(result={"message": "DDL executed successfully", "sql": sql})
+                return FuncToolResult(result={"message": "DDL executed successfully", "sql": cleaned})
             else:
                 return FuncToolResult(success=0, error=result.error)
         except Exception as e:

@@ -105,7 +105,6 @@ class TestGenTableAgenticNodeInit:
         from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
 
         node = GenTableAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        assert node.hooks is None
         assert node.execution_mode == "workflow"
 
     def test_interactive_mode(self, real_agent_config, mock_llm_create):
@@ -195,7 +194,9 @@ class TestGenTableAgenticNodeExecution:
         node.input = None
 
         action_manager = ActionHistoryManager()
-        with pytest.raises(ValueError, match="Input not set"):
+        from datus.utils.exceptions import DatusException
+
+        with pytest.raises(DatusException):
             async for _ in node.execute_stream(action_manager):
                 pass
 

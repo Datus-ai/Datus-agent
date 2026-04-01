@@ -176,6 +176,8 @@ class TestExecuteDDLStatementValidation:
             "DELETE FROM users",
             "TRUNCATE TABLE users",
             "GRANT ALL ON users TO public",
+            "CREATE OR REPLACE FUNCTION test() RETURNS void",
+            "CREATE PROCEDURE test() BEGIN END",
         ],
     )
     def test_rejected_non_ddl_statements(self, sql):
