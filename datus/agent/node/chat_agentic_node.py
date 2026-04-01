@@ -427,7 +427,9 @@ class ChatAgenticNode(AgenticNode):
             has_filesystem_tools=bool(self.filesystem_func_tool),
             has_mf_tools=any("metricflow" in k for k in self.mcp_servers.keys()),
             has_context_search_tools=bool(self.context_search_tools),
-            has_reference_template_tools=bool(self.reference_template_tools),
+            has_reference_template_tools=bool(
+                self.reference_template_tools and self.reference_template_tools.has_reference_templates
+            ),
             has_parsing_tools=bool(self.date_parsing_tools),
             has_platform_doc_tools=bool(self._platform_doc_tool),
             agent_config=self.agent_config,

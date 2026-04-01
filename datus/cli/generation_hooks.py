@@ -566,6 +566,11 @@ class GenerationHooks(AgentHooks):
                     None, GenerationHooks._sync_ext_knowledge_to_db, file_path, self.agent_config, "incremental"
                 )
                 item_type = "external knowledge"
+            elif yaml_type == "reference_template":
+                result = await loop.run_in_executor(
+                    None, GenerationHooks._sync_reference_template_to_db, file_path, self.agent_config
+                )
+                item_type = "reference template"
             else:
                 return f"**Error:** Invalid yaml_type: {yaml_type}\n\nYAML saved to file: `{file_path}`"
 

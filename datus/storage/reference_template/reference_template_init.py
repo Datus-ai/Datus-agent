@@ -134,6 +134,21 @@ async def process_template_item(
                     item["tags"] = doc["tags"]
         except Exception as e:
             logger.warning(f"Failed to open summary file for {file_path}: {e}")
+            return None
+
+        # Validate required metadata before treating as success
+        if (
+            not item.get("name")
+            or not item.get("summary")
+            or not item.get("search_text")
+            or not item.get("subject_tree")
+        ):
+            logger.warning(
+                f"Incomplete template summary metadata in {file_path}, "
+                f"missing: {[k for k in ('name', 'summary', 'search_text', 'subject_tree') if not item.get(k)]}"
+            )
+            return None
+
         return sql_summary_file
 
     except Exception as e:

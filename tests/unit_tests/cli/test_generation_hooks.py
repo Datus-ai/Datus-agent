@@ -724,6 +724,14 @@ class TestSyncToStorage:
             result = await hooks._sync_to_storage("/tmp/file.yaml", "ext_knowledge")
         assert "Successfully synced" in result
 
+    async def test_reference_template_type_calls_sync(self, hooks):
+        mock_result = {"success": True, "message": "Template synced"}
+        with patch(
+            "datus.cli.generation_hooks.GenerationHooks._sync_reference_template_to_db", return_value=mock_result
+        ):
+            result = await hooks._sync_to_storage("/tmp/file.yaml", "reference_template")
+        assert "Successfully synced" in result
+
     async def test_exception_returns_error_string(self, hooks):
         with patch(
             "datus.cli.generation_hooks.GenerationHooks._sync_semantic_to_db",

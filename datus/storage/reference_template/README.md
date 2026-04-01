@@ -4,7 +4,7 @@ This module handles the storage, processing, and analysis of parameterized Jinja
 
 ## Data Flow
 
-```
+```text
 Template Files → File Processor → LLM Analysis → Storage
       ↓                ↓               ↓            ↓
   Split blocks     Validation      Metadata      Vector DB
