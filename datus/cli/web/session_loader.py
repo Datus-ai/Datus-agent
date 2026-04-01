@@ -233,9 +233,10 @@ class SessionLoader:
                                             # Last resort: store as string
                                             output_data = {"result": output_text}
 
-                                # Create a new SUCCESS action, reuse original call_id
+                                # Create a new SUCCESS action, prefix with "complete_" like openai_compatible.py
+                                call_id = message_json.get("call_id", last_action.action_id)
                                 success_action = ActionHistory(
-                                    action_id=message_json.get("call_id", last_action.action_id),
+                                    action_id="complete_" + call_id,
                                     role=ActionRole.TOOL,
                                     messages=f"Tool result: {last_action.action_type}",
                                     action_type=last_action.action_type,
