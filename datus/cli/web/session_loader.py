@@ -14,7 +14,6 @@ Handles loading chat sessions from SQLite database, including:
 import json
 import re
 import sqlite3
-import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -195,9 +194,9 @@ class SessionLoader:
                                 args_dict = {}
                                 assistant_progress.append(f"✓ Tool call: {tool_name}")
 
-                            # Create ActionHistory for tool call
+                            # Create ActionHistory for tool call (use original call_id from SDK)
                             action = ActionHistory(
-                                action_id=str(uuid.uuid4()),
+                                action_id=message_json.get("call_id", ""),
                                 role=ActionRole.TOOL,
                                 messages=f"Tool call: {tool_name}",
                                 action_type=tool_name,
@@ -234,9 +233,9 @@ class SessionLoader:
                                             # Last resort: store as string
                                             output_data = {"result": output_text}
 
-                                # Create a new SUCCESS action instead of updating the PROCESSING one
+                                # Create a new SUCCESS action, reuse original call_id
                                 success_action = ActionHistory(
-                                    action_id=str(uuid.uuid4()),
+                                    action_id=message_json.get("call_id", last_action.action_id),
                                     role=ActionRole.TOOL,
                                     messages=f"Tool result: {last_action.action_type}",
                                     action_type=last_action.action_type,
@@ -273,9 +272,12 @@ class SessionLoader:
                                     # Add to progress
                                     assistant_progress.append(f"💭Thinking: {text}")
 
-                                    # Create ActionHistory for thinking (will parse sql/output on flush)
+                                    # Create ActionHistory for thinking (use response_id from provider)
+                                    response_id = message_json.get("provider_data", {}).get(
+                                        "response_id", message_json.get("id", "")
+                                    )
                                     thinking_action = ActionHistory(
-                                        action_id=str(uuid.uuid4()),
+                                        action_id=response_id,
                                         role=ActionRole.ASSISTANT,
                                         messages=text,
                                         action_type="thinking",
