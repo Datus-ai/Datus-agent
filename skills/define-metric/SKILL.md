@@ -11,9 +11,24 @@ disable_model_invocation: false
 
 Guide the user through interactive metric definition using natural language business descriptions.
 
+## Phase 0: Discovery — Scan Existing Assets
+
+Before anything else, call `list_metrics()` to get all metrics already in the knowledge base. Note their names, types, and associated measures. Use this throughout the remaining phases to:
+- **Skip redundant work** — don't recreate metrics that already exist
+- **Reuse existing measures** — reference measures from existing models instead of creating duplicates
+- **Detect conflicts** — warn the user if a proposed metric name collides with an existing one
+- **Enable derived/ratio metrics** — know which metrics can serve as building blocks for more complex definitions
+
 ## Phase 1: Understand Intent (MANDATORY ask_user)
 
-Analyze the user's request, inspect the table structure, then **ALWAYS call `ask_user`** to confirm before proceeding.
+Analyze the user's request, then **ALWAYS call `ask_user`** to confirm before proceeding. This phase supports two input modes:
+
+### Input Mode Detection
+
+- **Single mode**: User describes one metric or provides one SQL → follow Step 1a–1d below
+- **Batch mode**: User provides multiple SQL queries (pasted directly, or a CSV file path containing `question` + `sql` columns) → follow Step 1-batch below
+
+### Single Mode: Step 1a–1d
 
 **Step 1a: Inspect the table** — Call `describe_table(table_name)` to understand the columns and types. Optionally call `read_query` to sample data.
 
@@ -24,15 +39,46 @@ If the user provides SQL, parse it to extract:
 - Aggregation functions + columns (e.g., `SUM(amount)` → candidate measure `total_amount`, `COUNT(*)` → candidate measure `record_count`)
 - GROUP BY columns → recommended dimensions
 - WHERE conditions → potential metric constraints
-- Use these patterns as the primary source for metric candidates
 
-If the provided SQL contains no aggregation patterns (no SUM, COUNT, AVG, MAX, MIN, etc. — e.g., it's a simple SELECT or detail query), inform the user:
-> "The SQL you provided doesn't contain aggregation patterns (SUM, COUNT, AVG, etc.), so it can't be used as a reference for metric definition. I'll proceed based on the table structure and your description instead."
-Then proceed as if no SQL was provided.
+If the provided SQL contains no aggregation patterns (no SUM, COUNT, AVG, MAX, MIN, etc.), inform the user and proceed as if no SQL was provided.
 
 If the user skips, proceed to Step 1c using only table structure and the user's description.
 
-**Step 1c: Propose metric candidates** — Based on the table structure, reference SQL (if provided), and user's request, identify potential metric scenarios:
+**Step 1c: Propose metric candidates** — Based on the table structure, reference SQL (if provided), and user's request, identify potential metric scenarios. See "Metric type detection rules" below.
+
+**Step 1d: MUST call `ask_user`** to confirm — present proposed metrics with `multi_select: true` (see Step 1-batch-d for format).
+
+### Batch Mode: Step 1-batch
+
+**Step 1-batch-a: Parse SQL queries**
+- The input may contain multiple SQL queries — either pasted directly or as CSV content (with `question` + `sql` columns) already included in the prompt by the parent agent
+- Parse all SQL queries from the input
+- Call `describe_table` for each unique table found in the SQL queries
+
+**Step 1-batch-b: Extract and deduplicate aggregation patterns**
+
+Scan ALL SQL queries and extract every aggregation pattern (`SUM(col)`, `COUNT(*)`, `AVG(col)`, etc.). Then **strictly deduplicate** to identify only **core base metrics**:
+
+1. **Group by (aggregation_function, column)** — e.g., all `SUM(amount)` across different queries map to ONE candidate metric `total_amount`
+2. **Discard detail queries** — SQL without any aggregation (pure SELECT/JOIN) is not a metric source; skip silently
+3. **Discard filtered variants** — `SUM(amount) WHERE status='paid'` and `SUM(amount) WHERE region='US'` are NOT separate metrics; they are filters on the same core metric `total_amount`. Only propose the unfiltered base metric.
+4. **Do NOT generate derived metrics** — ratio, expression, or cumulative metrics should NOT be auto-proposed from batch SQL. Only propose them if the user explicitly describes them (e.g., "conversion rate", "average order value"). The goal is the minimal set of reusable base measures.
+5. **Cross-reference with Phase 0** — remove any candidate that already exists in the knowledge base
+
+**Step 1-batch-c: Core metric principle**
+
+From N SQL queries, propose at most a **small set of core metrics** (typically fewer than N). Ask yourself for each candidate:
+- Is this a **unique aggregation** not covered by another candidate? If not, skip.
+- Is this a **base metric** (simple aggregation on a column) or a **derivative** (ratio, expression combining other metrics)? Only propose base metrics by default.
+- Would a business user recognize this as a **standalone KPI**? If it's just an intermediate calculation, skip.
+
+**Step 1-batch-d: MUST call `ask_user`** to confirm with the user:
+- Present the deduplicated core metrics as **options** with `multi_select: true`
+- Example: `ask_user(questions=[{"question": "I analyzed N SQL queries and identified the following core metrics. Select which ones to generate:", "options": ["total_revenue - SUM(amount) on orders", "order_count - COUNT on orders", ...], "multi_select": true}])`
+- Clearly show how many SQL queries were analyzed and how many core metrics were extracted
+- If the user wants additional derived/ratio metrics beyond the core set, they can request them after the base metrics are created
+
+### Metric type detection rules
 
 1. **Simple counting + filter**: "How many completed orders" → `measure_proxy` with `constraint`
 2. **Aggregation + filter**: "Total revenue from premium customers" → `measure_proxy` with `constraint`
@@ -41,21 +87,12 @@ If the user skips, proceed to Step 1c using only table structure and the user's 
 5. **Cumulative**: "Running total of revenue", "MTD sales", "Year-to-date signups" → `cumulative` type
 6. **Conversion**: "Signup-to-purchase conversion", "Trial-to-paid funnel" → `conversion` type
 
-**Detection rules:**
-- Keywords "running total", "MTD", "YTD", "cumulative", "to-date" → cumulative metric
-- Keywords "conversion", "funnel", "from X to Y" → conversion metric
-- Keywords "rate", "ratio", "percentage of", "share of" → ratio metric
-- Keywords "per", "divided by", "average ... per" → derived/expr metric
-- If the description sounds like a detail query ("list all...", "show me the..."), inform the user this is better suited for SQL generation (`gen_sql`), not metric definition.
-
-**Step 1d: MUST call `ask_user`** to confirm with the user:
-- Present the proposed metrics as **options** with `multi_select: true`, so the user can select multiple metrics using checkboxes (Space to toggle, Enter to confirm)
-- Example: `ask_user(questions=[{"question": "Select metrics to generate", "options": ["total_orders - COUNT", "total_revenue - SUM(amount)", ...], "multi_select": true}])`
-- In the same or a follow-up `ask_user` call, ask for any missing information:
-  - What is the business meaning?
-  - What is the calculation logic (numerator/denominator for ratios)?
-  - For cumulative: What is the accumulation window (7 days, 1 month, unbounded)?
-  - For conversion: What are the base and conversion events? What is the conversion window?
+Detection keywords:
+- "running total", "MTD", "YTD", "cumulative", "to-date" → cumulative
+- "conversion", "funnel", "from X to Y" → conversion
+- "rate", "ratio", "percentage of", "share of" → ratio
+- "per", "divided by", "average ... per" → derived/expr
+- "list all...", "show me the..." → not a metric, better suited for `gen_sql`
 
 **IMPORTANT**: Do NOT proceed to Phase 2 without user confirmation from `ask_user`.
 
@@ -119,13 +156,51 @@ If the semantic model is missing, use the analysis tools to build a high-quality
 
 4. Save with `write_file` (use relative path like `{table_name}.yml`) → `validate_semantic` (MUST pass before continuing) → `end_semantic_model_generation`
 
-### 2c. Multi-Table Entity Modeling
+### 2c. Multi-Table / JOIN SQL Modeling
 
-When the metric spans multiple tables:
-- Each table gets its own `data_source` in the semantic model
+When the metric involves multiple tables (detected from JOIN in SQL or user description), choose the modeling strategy based on SQL complexity:
+
+**Strategy A: Identifier-based JOIN (default — use when possible)**
+
+Use when: simple equi-JOIN between 2-3 tables via foreign keys, ≤ 2 JOIN hops.
+
+- Each table gets its own `data_source` with `sql_table`
 - Tables are linked via matching `identifiers` (same `name`, one PRIMARY, one FOREIGN)
 - Use `analyze_table_relationships` results to set up correct identifier linkages
 - Example: `orders.customer_id` (FOREIGN) links to `customers.customer_id` (PRIMARY) — both identifiers share `name: customer`
+- MetricFlow engine automatically resolves the JOIN path at query time
+
+**Strategy B: `sql_query` pre-joined data source (complex cases)**
+
+Use when: non-equi JOINs, > 2 hop joins, subqueries, LATERAL/CROSS joins, complex ON conditions, or window functions in the JOIN.
+
+- Create a single `data_source` with `sql_query` containing the pre-joined SQL
+- Flatten the result: measures and dimensions reference the output columns directly
+- Example:
+  ```yaml
+  data_source:
+    name: order_customer_summary
+    sql_query: >
+      SELECT o.order_id, o.amount, o.order_date,
+             c.name as customer_name, c.segment
+      FROM schema.orders o
+      JOIN schema.customers c ON o.customer_id = c.id
+    measures:
+      - name: total_revenue
+        agg: SUM
+        expr: amount
+    dimensions:
+      - name: customer_name
+        type: CATEGORICAL
+      - name: order_date
+        type: TIME
+        type_params:
+          is_primary: true
+          time_granularity: DAY
+  ```
+- Trade-off: dimensions from the pre-joined query are NOT reusable by other data sources (no identifier linkage). Only use this when Strategy A cannot handle the complexity.
+
+**Decision rule**: Default to Strategy A. Switch to Strategy B only if the JOIN cannot be expressed as simple identifier matching (e.g., composite keys, non-equi conditions, 3+ hop joins, or subquery-based logic).
 
 ## Phase 3: Generate and Validate
 
