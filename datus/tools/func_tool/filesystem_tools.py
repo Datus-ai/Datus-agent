@@ -486,7 +486,60 @@ class FilesystemFuncTool(BaseTool):
             logger.error(f"Error moving file from {source} to {destination}: {str(e)}")
             return FuncToolResult(success=0, error=str(e))
 
-    def search_files(self, path: str, pattern: str, exclude_patterns: Optional[List[str]] = None) -> FuncToolResult:
+    # Minimal fallback excludes when no .gitignore is found
+    _FALLBACK_EXCLUDE_DIRS = {".git", "__pycache__", "node_modules"}
+
+    def _load_gitignore_patterns(self, search_root: Path) -> List[str]:
+        """Load exclude patterns from .gitignore in the search root or its ancestors.
+
+        Walks up from search_root to self.config.root_path looking for .gitignore.
+        Parses non-comment, non-empty lines and converts to glob patterns.
+        Always excludes .git directory.
+        """
+        patterns = [".git", ".git/**", "**/.git/**"]
+
+        # Search for .gitignore from search_root up to root_path
+        root_resolved = Path(self.config.root_path).resolve(strict=False)
+        current = search_root.resolve(strict=False)
+        gitignore_path = None
+        while True:
+            candidate = current / ".gitignore"
+            if candidate.is_file():
+                gitignore_path = candidate
+                break
+            if current == root_resolved or current == current.parent:
+                break
+            current = current.parent
+
+        if not gitignore_path:
+            # No .gitignore found, use fallback
+            for d in self._FALLBACK_EXCLUDE_DIRS:
+                patterns.extend([d, f"{d}/**", f"**/{d}/**"])
+            return patterns
+
+        try:
+            with open(gitignore_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    # Strip leading / (gitignore root-relative marker)
+                    entry = line.lstrip("/")
+                    patterns.append(entry)
+                    # Ensure directory entries also match contents
+                    if not entry.endswith("/**"):
+                        patterns.append(f"{entry}/**")
+                    # Ensure patterns match at any depth unless already prefixed
+                    if not entry.startswith("**/"):
+                        patterns.append(f"**/{entry}")
+        except Exception:
+            pass
+
+        return patterns
+
+    def search_files(
+        self, path: str, pattern: str, exclude_patterns: Optional[List[str]] = None, max_results: int = 200
+    ) -> FuncToolResult:
         """
         Recursively search for files and directories matching a pattern.
 
@@ -494,6 +547,7 @@ class FilesystemFuncTool(BaseTool):
             path: Starting directory to begin search
             pattern: Glob-style pattern to match (e.g., "*.py", "**/*.yaml")
             exclude_patterns: List of glob-style patterns to exclude from results
+            max_results: Maximum number of results to return (default 200). Use -1 for unlimited.
 
         Returns:
             dict: A dictionary with the execution result, containing these keys:
@@ -510,7 +564,12 @@ class FilesystemFuncTool(BaseTool):
             if not target_path.is_dir():
                 return FuncToolResult(success=0, error=f"Path is not a directory: {path}")
 
-            exclude_patterns = exclude_patterns or []
+            # Merge user excludes with .gitignore patterns
+            gitignore_patterns = self._load_gitignore_patterns(target_path)
+            all_excludes = list(exclude_patterns or []) + gitignore_patterns
+            exclude_patterns = all_excludes
+
+            effective_max = max_results if max_results >= 0 else float("inf")
 
             try:
                 matches = []
@@ -569,9 +628,13 @@ class FilesystemFuncTool(BaseTool):
                                 try:
                                     if glob.globmatch(relative_path, pattern, flags=glob.DOTGLOB | glob.GLOBSTAR):
                                         matches.append(str(item_resolved))
+                                        if len(matches) >= effective_max:
+                                            return
                                 except Exception:
                                     if item.name == pattern:
                                         matches.append(str(item_resolved))
+                                        if len(matches) >= effective_max:
+                                            return
 
                                 if item.is_dir():
                                     search_recursive(item_resolved)
@@ -584,6 +647,14 @@ class FilesystemFuncTool(BaseTool):
 
                 search_recursive(target_path_resolved)
 
+                if len(matches) >= effective_max:
+                    return FuncToolResult(
+                        result={
+                            "files": matches,
+                            "truncated": True,
+                            "message": f"Results truncated to {max_results}. Use a more specific pattern or exclude_patterns to narrow results.",
+                        }
+                    )
                 return FuncToolResult(result=matches)
 
             except PermissionError:

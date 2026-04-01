@@ -526,3 +526,79 @@ class TestSearchFiles:
         result = tool.search_files(".", "*.xyz_nonexistent")
         assert result.success == 1
         assert result.result == []
+
+    def test_search_max_results_truncates(self, tmp_path):
+        """Results are truncated when exceeding max_results."""
+        for i in range(10):
+            (tmp_path / f"file_{i}.py").write_text(f"code {i}")
+        tool = _make_tool(str(tmp_path))
+        result = tool.search_files(".", "*.py", max_results=3)
+        assert result.success == 1
+        assert isinstance(result.result, dict)
+        assert len(result.result["files"]) == 3
+        assert result.result["truncated"] is True
+
+    def test_search_max_results_no_truncate_when_under_limit(self, tmp_path):
+        """No truncation dict when results fit within max_results."""
+        (tmp_path / "a.py").write_text("code")
+        (tmp_path / "b.py").write_text("code")
+        tool = _make_tool(str(tmp_path))
+        result = tool.search_files(".", "*.py", max_results=10)
+        assert result.success == 1
+        assert isinstance(result.result, list)
+        assert len(result.result) == 2
+
+    def test_search_excludes_gitignore_patterns(self, tmp_path):
+        """Patterns from .gitignore are excluded from search results."""
+        (tmp_path / ".gitignore").write_text("*.log\nbuild/\n__pycache__\n")
+        (tmp_path / "real.py").write_text("code")
+        (tmp_path / "debug.log").write_text("log data")
+        (tmp_path / "build").mkdir()
+        (tmp_path / "build" / "output.py").write_text("built")
+        (tmp_path / "__pycache__").mkdir()
+        (tmp_path / "__pycache__" / "cached.py").write_text("bytecode")
+        tool = _make_tool(str(tmp_path))
+        result = tool.search_files(".", "*")
+        assert result.success == 1
+        names = [Path(p).name for p in result.result]
+        assert "real.py" in names
+        assert "debug.log" not in names
+        assert "output.py" not in names
+        assert "cached.py" not in names
+
+    def test_search_excludes_git_dir_always(self, tmp_path):
+        """.git directory is always excluded even without .gitignore."""
+        (tmp_path / "real.py").write_text("code")
+        (tmp_path / ".git").mkdir()
+        (tmp_path / ".git" / "config").write_text("git config")
+        tool = _make_tool(str(tmp_path))
+        result = tool.search_files(".", "*")
+        assert result.success == 1
+        names = [Path(p).name for p in result.result]
+        assert "real.py" in names
+        assert "config" not in names
+
+    def test_search_fallback_excludes_without_gitignore(self, tmp_path):
+        """Without .gitignore, fallback excludes (.git, __pycache__, node_modules) apply."""
+        (tmp_path / "real.py").write_text("code")
+        (tmp_path / "__pycache__").mkdir()
+        (tmp_path / "__pycache__" / "cached.py").write_text("bytecode")
+        (tmp_path / "node_modules").mkdir()
+        (tmp_path / "node_modules" / "pkg.js").write_text("js")
+        tool = _make_tool(str(tmp_path))
+        result = tool.search_files(".", "*")
+        assert result.success == 1
+        names = [Path(p).name for p in result.result]
+        assert "real.py" in names
+        assert "cached.py" not in names
+        assert "pkg.js" not in names
+
+    def test_search_unlimited_with_negative_max(self, tmp_path):
+        """max_results=-1 returns all results without truncation."""
+        for i in range(5):
+            (tmp_path / f"file_{i}.txt").write_text(f"text {i}")
+        tool = _make_tool(str(tmp_path))
+        result = tool.search_files(".", "*.txt", max_results=-1)
+        assert result.success == 1
+        assert isinstance(result.result, list)
+        assert len(result.result) == 5
