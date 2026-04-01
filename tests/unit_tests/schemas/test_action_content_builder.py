@@ -183,6 +183,29 @@ class TestBuildInteractionContent:
         contents = build_interaction_content(action)
         assert contents[0].payload["options"] is None
 
+    def test_with_broker_format_single(self):
+        """InteractionBroker format: single question with contents/choices lists."""
+        action = _make_action(
+            role=ActionRole.INTERACTION,
+            status=ActionStatus.PROCESSING,
+            input_data={"contents": ["Pick one"], "choices": [{"y": "Yes", "n": "No"}]},
+        )
+        contents = build_interaction_content(action)
+        assert contents[0].payload["content"] == "Pick one"
+        assert len(contents[0].payload["options"]) == 2
+
+    def test_with_broker_format_batch(self):
+        """InteractionBroker format: multiple questions joined into numbered list."""
+        action = _make_action(
+            role=ActionRole.INTERACTION,
+            status=ActionStatus.PROCESSING,
+            input_data={"contents": ["Question A?", "Question B?"], "choices": [{"y": "Yes"}]},
+        )
+        contents = build_interaction_content(action)
+        content_text = contents[0].payload["content"]
+        assert "1. Question A?" in content_text
+        assert "2. Question B?" in content_text
+
 
 class TestBuildInteractionResultContent:
     def test_with_content(self):

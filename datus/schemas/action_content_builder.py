@@ -117,7 +117,12 @@ def build_interaction_content(action: ActionHistory) -> List[MessageContent]:
 
     # InteractionBroker sends "contents" (list) and "choices" (list of dicts)
     contents = input_data.get("contents", [])
-    content = contents[0] if contents else input_data.get("content", "")
+    if len(contents) > 1:
+        content = "\n".join(f"{i + 1}. {q}" for i, q in enumerate(contents))
+    elif contents:
+        content = contents[0]
+    else:
+        content = input_data.get("content", "")
     choices_list = input_data.get("choices", [])
     choices = choices_list[0] if isinstance(choices_list, list) and choices_list else choices_list
 

@@ -1056,7 +1056,7 @@ class DBFuncTool:
 
     # Regex matching allowed DDL statement prefixes
     _ALLOWED_DDL_RE = re.compile(
-        r"^\s*(CREATE\s+(?:OR\s+REPLACE\s+)?(?:TABLE|VIEW)"
+        r"^\s*(CREATE\s+(?:OR\s+REPLACE\s+)?(?:(?:TEMPORARY|TEMP)\s+)?(?:TABLE|VIEW)"
         r"|ALTER\s+TABLE"
         r"|DROP\s+(?:TABLE|VIEW)(?:\s+IF\s+EXISTS)?)\b",
         re.IGNORECASE,

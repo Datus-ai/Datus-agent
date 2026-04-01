@@ -523,8 +523,16 @@ class FilesystemFuncTool(BaseTool):
                     line = line.strip()
                     if not line or line.startswith("#"):
                         continue
+                    # Skip negation patterns (not supported in this simplified parser)
+                    if line.startswith("!"):
+                        continue
                     # Strip leading / (gitignore root-relative marker)
                     entry = line.lstrip("/")
+                    # Handle trailing-slash directory entries: also match the dir name itself
+                    if entry.endswith("/"):
+                        dir_name = entry.rstrip("/")
+                        patterns.append(dir_name)
+                        patterns.append(f"**/{dir_name}")
                     patterns.append(entry)
                     # Ensure directory entries also match contents
                     if not entry.endswith("/**"):
@@ -532,8 +540,8 @@ class FilesystemFuncTool(BaseTool):
                     # Ensure patterns match at any depth unless already prefixed
                     if not entry.startswith("**/"):
                         patterns.append(f"**/{entry}")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to fully parse .gitignore at {gitignore_path}: {e}")
 
         return patterns
 
@@ -638,6 +646,8 @@ class FilesystemFuncTool(BaseTool):
 
                                 if item.is_dir():
                                     search_recursive(item_resolved)
+                                    if len(matches) >= effective_max:
+                                        return
 
                             except OSError:
                                 continue
@@ -647,15 +657,17 @@ class FilesystemFuncTool(BaseTool):
 
                 search_recursive(target_path_resolved)
 
-                if len(matches) >= effective_max:
-                    return FuncToolResult(
-                        result={
-                            "files": matches,
-                            "truncated": True,
-                            "message": f"Results truncated to {max_results}. Use a more specific pattern or exclude_patterns to narrow results.",
-                        }
+                truncated = len(matches) >= effective_max
+                result_data = {
+                    "files": matches,
+                    "truncated": truncated,
+                }
+                if truncated:
+                    result_data["message"] = (
+                        f"Results truncated to {max_results}. "
+                        "Use a more specific pattern or exclude_patterns to narrow results."
                     )
-                return FuncToolResult(result=matches)
+                return FuncToolResult(result=result_data)
 
             except PermissionError:
                 return FuncToolResult(success=0, error=f"Permission denied: {path}")

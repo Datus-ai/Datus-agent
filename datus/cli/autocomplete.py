@@ -961,7 +961,7 @@ class AtReferenceCompleter(Completer):
                     self.agent_config.current_namespace
                 ):
                     return ""
-            except Exception:
+            except (ValueError, TypeError):
                 return ""
         return first_token
 

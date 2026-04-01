@@ -473,7 +473,7 @@ class TestSearchFiles:
         tool = _make_tool(str(tmp_path))
         result = tool.search_files(".", "*.py")
         assert result.success == 1
-        py_files = [Path(p).name for p in result.result]
+        py_files = [Path(p).name for p in result.result["files"]]
         assert "a.py" in py_files
 
     def test_search_with_glob_star(self, tmp_path):
@@ -482,7 +482,7 @@ class TestSearchFiles:
         tool = _make_tool(str(tmp_path))
         result = tool.search_files(".", "**/*.py")
         assert result.success == 1
-        names = [Path(p).name for p in result.result]
+        names = [Path(p).name for p in result.result["files"]]
         assert "deep.py" in names
 
     def test_search_nonexistent_directory(self, tmp_path):
@@ -502,7 +502,7 @@ class TestSearchFiles:
         tool = _make_tool(str(tmp_path))
         result = tool.search_files(".", "*.py", exclude_patterns=["exclude.py"])
         assert result.success == 1
-        names = [Path(p).name for p in result.result]
+        names = [Path(p).name for p in result.result["files"]]
         assert "keep.py" in names
         assert "exclude.py" not in names
 
@@ -525,7 +525,8 @@ class TestSearchFiles:
         tool = _make_tool(str(tmp_path))
         result = tool.search_files(".", "*.xyz_nonexistent")
         assert result.success == 1
-        assert result.result == []
+        assert result.result["files"] == []
+        assert result.result["truncated"] is False
 
     def test_search_max_results_truncates(self, tmp_path):
         """Results are truncated when exceeding max_results."""
@@ -539,14 +540,15 @@ class TestSearchFiles:
         assert result.result["truncated"] is True
 
     def test_search_max_results_no_truncate_when_under_limit(self, tmp_path):
-        """No truncation dict when results fit within max_results."""
+        """No truncation when results fit within max_results."""
         (tmp_path / "a.py").write_text("code")
         (tmp_path / "b.py").write_text("code")
         tool = _make_tool(str(tmp_path))
         result = tool.search_files(".", "*.py", max_results=10)
         assert result.success == 1
-        assert isinstance(result.result, list)
-        assert len(result.result) == 2
+        assert isinstance(result.result, dict)
+        assert len(result.result["files"]) == 2
+        assert result.result["truncated"] is False
 
     def test_search_excludes_gitignore_patterns(self, tmp_path):
         """Patterns from .gitignore are excluded from search results."""
@@ -560,11 +562,13 @@ class TestSearchFiles:
         tool = _make_tool(str(tmp_path))
         result = tool.search_files(".", "*")
         assert result.success == 1
-        names = [Path(p).name for p in result.result]
+        names = [Path(p).name for p in result.result["files"]]
         assert "real.py" in names
         assert "debug.log" not in names
         assert "output.py" not in names
         assert "cached.py" not in names
+        # Trailing-slash entry should also exclude the directory itself
+        assert "build" not in names
 
     def test_search_excludes_git_dir_always(self, tmp_path):
         """.git directory is always excluded even without .gitignore."""
@@ -574,7 +578,7 @@ class TestSearchFiles:
         tool = _make_tool(str(tmp_path))
         result = tool.search_files(".", "*")
         assert result.success == 1
-        names = [Path(p).name for p in result.result]
+        names = [Path(p).name for p in result.result["files"]]
         assert "real.py" in names
         assert "config" not in names
 
@@ -588,7 +592,7 @@ class TestSearchFiles:
         tool = _make_tool(str(tmp_path))
         result = tool.search_files(".", "*")
         assert result.success == 1
-        names = [Path(p).name for p in result.result]
+        names = [Path(p).name for p in result.result["files"]]
         assert "real.py" in names
         assert "cached.py" not in names
         assert "pkg.js" not in names
@@ -600,5 +604,35 @@ class TestSearchFiles:
         tool = _make_tool(str(tmp_path))
         result = tool.search_files(".", "*.txt", max_results=-1)
         assert result.success == 1
-        assert isinstance(result.result, list)
-        assert len(result.result) == 5
+        assert isinstance(result.result, dict)
+        assert len(result.result["files"]) == 5
+        assert result.result["truncated"] is False
+
+    def test_search_negation_pattern_not_excluded(self, tmp_path):
+        """Gitignore negation patterns (!) should not cause exclusion."""
+        (tmp_path / ".gitignore").write_text("*.log\n!important.log\n")
+        (tmp_path / "debug.log").write_text("debug")
+        (tmp_path / "important.log").write_text("keep this")
+        (tmp_path / "code.py").write_text("code")
+        tool = _make_tool(str(tmp_path))
+        result = tool.search_files(".", "*")
+        assert result.success == 1
+        names = [Path(p).name for p in result.result["files"]]
+        assert "code.py" in names
+        # important.log is excluded by *.log (negation not fully supported),
+        # but crucially it must NOT be excluded by the ! line itself
+        assert "debug.log" not in names
+
+    def test_search_max_results_nested_dirs(self, tmp_path):
+        """Early termination propagates correctly through nested directories."""
+        for i in range(5):
+            d = tmp_path / f"dir_{i}"
+            d.mkdir()
+            for j in range(5):
+                (d / f"file_{j}.py").write_text(f"code {i}-{j}")
+        tool = _make_tool(str(tmp_path))
+        result = tool.search_files(".", "**/*.py", max_results=3)
+        assert result.success == 1
+        assert result.result["truncated"] is True
+        # With propagation fix, should be exactly max_results
+        assert len(result.result["files"]) == 3

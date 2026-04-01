@@ -159,6 +159,8 @@ class TestExecuteDDLStatementValidation:
             "CREATE VIEW v AS SELECT 1",
             "DROP VIEW v",
             "CREATE OR REPLACE VIEW v AS SELECT 1",
+            "CREATE TEMPORARY TABLE tmp AS SELECT 1",
+            "CREATE TEMP TABLE tmp (id INT)",
         ],
     )
     def test_allowed_ddl_statements(self, sql):
