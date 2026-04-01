@@ -21,7 +21,7 @@
 
 Datus 的核心是其 **[上下文引擎](knowledge_base/introduction.md)**，融合了人工专业知识与 AI 能力：
 
-- 自动捕获[元数据](knowledge_base/metadata.zh.md)、[语义模型](knowledge_base/semantic_model.zh.md)、[指标](knowledge_base/metrics.zh.md)、[Reference SQL](knowledge_base/reference_sql.zh.md)、文档和成功案例
+- 自动捕获[元数据](knowledge_base/metadata.zh.md)、[语义模型](knowledge_base/semantic_model.zh.md)、[指标](knowledge_base/metrics.zh.md)、[Reference SQL](knowledge_base/reference_sql.zh.md)、[Reference Template](knowledge_base/reference_template.zh.md)、文档和成功案例
 - 支持人在回路的策划与迭代
 - 为子代理和工作流提供丰富、具领域特异性的上下文
 
