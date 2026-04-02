@@ -338,20 +338,11 @@ class GenerationHooks(AgentHooks):
                 callback_content += "\n\n---\n**Generation workflow completed, generating report...**"
                 await callback(callback_content)
             else:
-                # Reject: delete the generated file
-                try:
-                    if os.path.exists(file_path):
-                        os.remove(file_path)
-                        logger.info(f"Rejected and deleted: {file_path}")
-                        callback_content = "---\n\n"
-                        callback_content += f"Rejected and deleted: `{file_path}`"
-                    else:
-                        callback_content = "---\n\n"
-                        callback_content += f"Rejected: `{file_path}` (file not found)"
-                except Exception as del_err:
-                    logger.error(f"Failed to delete rejected file {file_path}: {del_err}")
-                    callback_content = "---\n\n"
-                    callback_content += f"Rejected but failed to delete: `{file_path}` ({del_err})"
+                # Reject: skip KB sync, keep file on disk for manual review
+                # (deleting could lose pre-existing content if the file was overwritten)
+                logger.info(f"Rejected KB sync for: {file_path}")
+                callback_content = "---\n\n"
+                callback_content += f"Rejected KB sync for: `{file_path}` (file preserved on disk for review)"
                 callback_content += "\n\n---\n**Generation workflow completed, generating report...**"
                 await callback(callback_content)
 

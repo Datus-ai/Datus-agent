@@ -297,6 +297,14 @@ class GenerationTools:
                     with open(temp_file, "w", encoding="utf-8") as f:
                         yaml.safe_dump_all(combined_docs, f, allow_unicode=True, sort_keys=False)
 
+                    # First: sync semantic objects from the semantic model file
+                    GenerationHooks._sync_semantic_to_db(
+                        semantic_model_file,
+                        self.agent_config,
+                        include_semantic_objects=True,
+                        include_metrics=False,
+                    )
+                    # Then: sync metrics from combined file
                     result = GenerationHooks._sync_semantic_to_db(
                         temp_file,
                         self.agent_config,

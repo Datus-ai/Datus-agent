@@ -186,14 +186,11 @@ class GenMetricsAgenticNode(AgenticNode):
     def _setup_db_tools(self):
         """Setup database tools for schema introspection."""
         try:
-            from datus.tools.db_tools.db_manager import db_manager_instance
             from datus.tools.func_tool import DBFuncTool
 
-            db_manager = db_manager_instance(self.agent_config.namespaces)
-            conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
-            self.db_func_tool = DBFuncTool(
-                conn,
-                agent_config=self.agent_config,
+            self.db_func_tool = DBFuncTool.create_dynamic(
+                self.agent_config,
+                sub_agent_name=self.NODE_NAME,
             )
             self.tools.extend(self.db_func_tool.available_tools())
             logger.debug("Added database tools from DBFuncTool")

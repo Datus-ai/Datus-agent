@@ -3,6 +3,7 @@
 """Unit tests for GenerationTools - CI level, zero external dependencies."""
 
 import json
+import os
 from unittest.mock import Mock, patch
 
 import pytest
@@ -261,13 +262,19 @@ class TestSyncMetricToDb:
             result = generation_tools._sync_metric_to_db(str(metric_file), str(semantic_file), {"rev": "SELECT 1"})
 
         assert result["success"] is True
-        # Temp file should be cleaned up
-        assert not (tmp_path / "model.yaml.combined.tmp").exists()
-        # Should be called with temp file and include_semantic_objects=False
-        call_kwargs = mock_sync.call_args
-        assert call_kwargs.kwargs.get("include_semantic_objects") is False
-        assert call_kwargs.kwargs.get("include_metrics") is True
-        assert call_kwargs.kwargs.get("metric_sqls") == {"rev": "SELECT 1"}
+        # Should have been called twice: first for semantic objects, then for metrics
+        assert mock_sync.call_count == 2
+        # First call: sync semantic objects
+        sem_call = mock_sync.call_args_list[0]
+        assert sem_call.kwargs.get("include_semantic_objects") is True
+        assert sem_call.kwargs.get("include_metrics") is False
+        # Second call: sync metrics from combined temp file
+        metric_call = mock_sync.call_args_list[1]
+        actual_temp_path = metric_call[0][0]
+        assert not os.path.exists(actual_temp_path), f"Temp file should be cleaned up: {actual_temp_path}"
+        assert metric_call.kwargs.get("include_semantic_objects") is False
+        assert metric_call.kwargs.get("include_metrics") is True
+        assert metric_call.kwargs.get("metric_sqls") == {"rev": "SELECT 1"}
 
     def test_semantic_model_not_exists_falls_through(self, generation_tools, tmp_path):
         """When semantic_model_file path provided but file doesn't exist, sync metric alone."""

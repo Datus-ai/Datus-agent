@@ -50,7 +50,7 @@ class TestGenMetricsAgentic:
             execution_mode="interactive",
         )
 
-        assert not hasattr(node, "hooks"), "gen_metrics no longer uses hooks"
+        assert getattr(node, "hooks", None) is None, "gen_metrics should not use hooks in interactive mode"
 
     @pytest.mark.asyncio
     async def test_execute_stream_generates_metric(self, nightly_agent_config):

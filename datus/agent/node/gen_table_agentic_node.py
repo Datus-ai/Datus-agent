@@ -17,7 +17,6 @@ from datus.cli.execution_state import ExecutionInterrupted
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SemanticNodeResult
-from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import DBFuncTool
 from datus.tools.func_tool.base import trans_to_function_tool
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -86,9 +85,10 @@ class GenTableAgenticNode(AgenticNode):
     def _setup_db_tools(self):
         """Setup database tools including DDL execution."""
         try:
-            db_manager = db_manager_instance(self.agent_config.namespaces)
-            conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
-            self.db_func_tool = DBFuncTool(conn, agent_config=self.agent_config)
+            self.db_func_tool = DBFuncTool.create_dynamic(
+                self.agent_config,
+                sub_agent_name=self.NODE_NAME,
+            )
             # Standard read-only tools (list_tables, describe_table, read_query, etc.)
             self.tools.extend(self.db_func_tool.available_tools())
             # DDL tool (gen-table specific, not in available_tools() default list)

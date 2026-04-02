@@ -104,7 +104,7 @@ class FilesystemFuncTool(BaseTool):
         Read the contents of a file.
 
         Args:
-            path: Relative path within the workspace directory. Do NOT use absolute paths.
+            path: Path to the file. Absolute paths are permitted for read-only operations.
 
         Returns:
             dict: A dictionary with the execution result, containing these keys:

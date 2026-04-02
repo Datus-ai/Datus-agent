@@ -710,7 +710,12 @@ class ChatCommands:
                 if answers:
                     prev_q = contents[idx - 1]
                     short_q = prev_q[:50] + "..." if len(prev_q) > 50 else prev_q
-                    prev_display = str(answers[-1])
+                    prev_answer = answers[-1]
+                    if isinstance(prev_answer, list):
+                        prev_ch = choices_list[idx - 1] if (idx - 1) < len(choices_list) else {}
+                        prev_display = ", ".join(str(prev_ch.get(k, k)) for k in prev_answer)
+                    else:
+                        prev_display = str(prev_answer)
                     if len(prev_display) > 60:
                         prev_display = prev_display[:60] + "..."
                     console.print(f"  [green]\u2705[/green] [dim]{short_q} \u2192 {prev_display}[/dim]")

@@ -170,6 +170,9 @@ class AskUserTool:
                 # For single-question: json.loads returns the raw answer directly
                 # (e.g. multi-select list ["1","3"]), wrap to match batch format [answer_for_q1]
                 if len(validated) == 1 and not (isinstance(answers, list) and len(answers) == len(validated)):
+                    # Reject list answers for single-select questions
+                    if isinstance(answers, list) and not validated[0].get("multi_select"):
+                        return FuncToolResult(success=0, error="Multiple values not allowed for single-select question")
                     answers = [answers]
             except (json.JSONDecodeError, TypeError):
                 if len(validated) == 1:

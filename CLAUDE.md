@@ -161,3 +161,14 @@ Unit tests follow the Source → Test File Mapping Rule above. The table below l
 - **New CLI commands** → test in `test_cli_commands.py`
 - **New MCP tools** → test in `test_mcp_server.py`
 - **New reference template files** → integration test in `integration/tools/test_reference_template.py`
+
+### Test Quality Dimensions (beyond coverage)
+
+When writing tests, go beyond happy-path coverage. For each function, check these dimensions:
+
+1. **Input format variants** — If the function accepts structured input (dicts, file formats, protocol messages), test ALL valid formats, not just the common one
+2. **Return type contract** — Verify ALL code paths return the same structure (e.g., don't return `list` in one path and `dict` in another)
+3. **Cross-component contract** — If consuming output from another component, test with the REAL output format from the producer
+4. **Adversarial inputs** — For security-sensitive code (regex validators, SQL filters, path sandboxes), test bypass attempts
+5. **Recursive/nested structures** — For tree-operating functions, test with depth >= 3 (flat tests miss recursion bugs)
+6. **Spec compliance** — When implementing a standard (`.gitignore`, SQL dialect), test documented edge cases

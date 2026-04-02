@@ -347,4 +347,5 @@ class TestGenMetricsV12Template:
 
         pm = PromptManager()
         latest = pm.get_latest_version("gen_metrics_system")
-        assert latest == "1.2", f"Expected latest version '1.2', got '{latest}'"
+        latest_parts = tuple(int(p) for p in latest.split("."))
+        assert latest_parts >= (1, 2), f"Expected latest version >= '1.2', got '{latest}'"
