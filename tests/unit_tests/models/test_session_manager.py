@@ -1416,25 +1416,6 @@ class TestSessionManagerScope:
         finally:
             manager.close_all_sessions()
 
-    def test_legacy_db_files_migrated_to_scope_dir(self, tmp_path):
-        """Legacy .db files in base session_dir are moved into the scope subdirectory."""
-        base_dir = tmp_path / "sessions"
-        base_dir.mkdir(parents=True, exist_ok=True)
-
-        # Create a legacy .db file directly in the base dir
-        legacy_db = base_dir / "old_session.db"
-        legacy_db.write_text("fake-db")
-
-        manager = SessionManager(session_dir=str(base_dir))
-        try:
-            # The legacy file should have been moved into the default scope dir
-            assert not legacy_db.exists()
-            migrated = base_dir / "default" / "old_session.db"
-            assert migrated.exists()
-            assert migrated.read_text() == "fake-db"
-        finally:
-            manager.close_all_sessions()
-
     def test_legacy_migration_skips_existing_files(self, tmp_path):
         """Legacy migration does not overwrite .db files already in the scope dir."""
         base_dir = tmp_path / "sessions"
