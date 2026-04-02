@@ -194,13 +194,15 @@ class TestInitFromAdapter:
 
         # agent_config must NOT have metricflow_config so code falls through
         # to the metadata.config_class branch. Use spec to restrict attributes.
-        config = MagicMock(spec=["namespace", "current_namespace"])
+        config = MagicMock(spec=["namespace", "current_namespace", "namespaces", "home"])
         config.namespace = "ns1"
         config.current_namespace = "ns1"
+        config.namespaces = {}
+        config.home = None
 
         await init_from_adapter(config, "metricflow")
 
-        mock_config_class.assert_called_once_with(namespace="ns1")
+        mock_config_class.assert_called_once_with(namespace="ns1", db_config=None, agent_home=None)
 
     @pytest.mark.asyncio
     @patch("datus.storage.metric.adapter_init.SemanticStorageManager")
@@ -243,9 +245,11 @@ class TestInitFromAdapter:
         MockStorageManager.return_value = mock_manager
 
         # Use spec to prevent auto-generated attributes like dbt_config
-        config = MagicMock(spec=["namespace", "current_namespace"])
+        config = MagicMock(spec=["namespace", "current_namespace", "namespaces", "home"])
         config.namespace = None
         config.current_namespace = "fallback_ns"
+        config.namespaces = {}
+        config.home = None
 
         with patch("datus.tools.semantic_tools.config.SemanticAdapterConfig") as MockConfig:
             MockConfig.return_value = MagicMock()
