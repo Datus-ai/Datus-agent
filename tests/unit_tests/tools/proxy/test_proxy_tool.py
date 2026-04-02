@@ -125,6 +125,32 @@ class TestCreateProxyTool:
         assert result == {"success": 1, "result": "proxied"}
 
     @pytest.mark.asyncio
+    async def test_proxy_tool_returns_error_on_channel_cancel(self):
+        """Verify that RuntimeError from channel.cancel_all is caught and returns error dict."""
+        channel = ToolResultChannel()
+        original = FunctionTool(
+            name="test_tool",
+            description="A test tool",
+            params_json_schema={"type": "object", "properties": {}},
+            on_invoke_tool=lambda ctx, args: {"success": 1},
+        )
+        proxy = create_proxy_tool(original, channel)
+
+        ctx = SimpleNamespace(tool_call_id="call_cancel")
+
+        async def cancel_after_delay():
+            await asyncio.sleep(0.01)
+            channel.cancel_all("stream ended")
+
+        task = asyncio.create_task(cancel_after_delay())
+        result = await proxy.on_invoke_tool(ctx, "{}")
+        await task
+
+        assert result["success"] == 0
+        assert "stream ended" in result["error"]
+        assert result["result"] is None
+
+    @pytest.mark.asyncio
     async def test_proxy_tool_uses_tool_call_id(self):
         channel = ToolResultChannel()
         original = FunctionTool(

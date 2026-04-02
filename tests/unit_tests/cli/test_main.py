@@ -108,6 +108,19 @@ class TestApplicationRun:
             with pytest.raises(SystemExit):
                 app.run()
 
+    def test_proxy_tools_without_print_mode_errors(self):
+        """Verify that --proxy_tools without --print raises SystemExit."""
+        app = Application()
+        mock_args = SimpleNamespace(
+            debug=False, namespace="ns1", print_mode=None, web=False, resume=None, proxy_tools="*"
+        )
+        with (
+            patch.object(app.arg_parser, "parse_args", return_value=mock_args),
+            patch("datus.cli.main.configure_logging"),
+        ):
+            with pytest.raises(SystemExit):
+                app.run()
+
     def test_run_print_mode(self):
         app = Application()
         mock_args = SimpleNamespace(
