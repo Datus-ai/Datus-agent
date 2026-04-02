@@ -32,6 +32,7 @@ from agents.extensions.memory import AdvancedSQLiteSession
 
 from datus.models.session_manager import SessionManager
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+from datus.utils.exceptions import DatusException
 from datus.utils.path_manager import DatusPathManager
 
 # ---------------------------------------------------------------------------
@@ -1369,9 +1370,9 @@ class TestSessionManagerScope:
             manager.close_all_sessions()
 
     @pytest.mark.parametrize("bad_scope", ["../etc", "my proj", "a/b", "scope@1", "a.b", "scope!"])
-    def test_invalid_scope_raises_value_error(self, tmp_path, bad_scope):
-        """Scope values with special characters raise ValueError."""
-        with pytest.raises(ValueError, match="Invalid scope"):
+    def test_invalid_scope_raises_datus_exception(self, tmp_path, bad_scope):
+        """Scope values with special characters raise DatusException."""
+        with pytest.raises(DatusException, match="Invalid scope"):
             SessionManager(session_dir=str(tmp_path / "sessions"), scope=bad_scope)
 
     def test_scope_allows_alphanumeric_hyphen_underscore(self, tmp_path):

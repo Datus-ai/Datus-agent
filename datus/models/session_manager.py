@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from agents.extensions.memory import AdvancedSQLiteSession
 
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import llm_result2json
 from datus.utils.loggings import get_logger
 from datus.utils.message_utils import extract_user_input
@@ -65,9 +66,10 @@ class SessionManager:
         # Apply scope subdirectory
         resolved_scope = scope if scope and scope.strip() else "default"
         if not re.fullmatch(r"[A-Za-z0-9_-]+", resolved_scope):
-            raise ValueError(
-                f"Invalid scope: {resolved_scope!r}. "
-                "Scope may only contain alphanumerics, hyphens, and underscores."
+            raise DatusException(
+                ErrorCode.COMMON_VALIDATION_FAILED,
+                message=f"Invalid scope: {resolved_scope!r}. "
+                "Scope may only contain alphanumerics, hyphens, and underscores.",
             )
         self.session_dir = os.path.join(self.session_dir, resolved_scope)
         os.makedirs(self.session_dir, exist_ok=True)
@@ -617,7 +619,7 @@ class SessionManager:
                     SELECT message_data, created_at
                     FROM agent_messages
                     WHERE session_id = ?
-                    ORDER BY created_at
+                    ORDER BY created_at, id
                     """,
                     (session_id,),
                 )
@@ -654,7 +656,9 @@ class SessionManager:
 
                             # Add user message (extract original user input from structured content)
                             content = extract_user_input(message_json.get("content", ""))
-                            messages.append({"role": "user", "content": content, "timestamp": created_at})
+                            messages.append(
+                                {"role": "user", "content": content, "timestamp": created_at, "created_at": created_at}
+                            )
                             continue
 
                         # Handle function calls (tool calls)
@@ -664,7 +668,12 @@ class SessionManager:
 
                             # Initialize assistant group if needed
                             if not current_assistant_group:
-                                current_assistant_group = {"role": "assistant", "content": "", "timestamp": created_at}
+                                current_assistant_group = {
+                                    "role": "assistant",
+                                    "content": "",
+                                    "timestamp": created_at,
+                                    "created_at": created_at,
+                                }
 
                             # Parse arguments
                             try:
@@ -748,6 +757,7 @@ class SessionManager:
                                             "role": "assistant",
                                             "content": "",
                                             "timestamp": created_at,
+                                            "created_at": created_at,
                                         }
 
                                     # Add to progress

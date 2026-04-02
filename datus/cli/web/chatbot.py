@@ -370,12 +370,18 @@ class StreamlitChatbot:
         return self.session_manager.get_session_messages(session_id)
 
     def get_current_session_id(self) -> Optional[str]:
-        """Get the current session ID from the active chat node."""
+        """Get the current session ID from the active chat node.
+
+        Falls back to ``st.session_state.view_session_id`` when no node is
+        active (e.g. read-only mode loaded via URL).
+        """
         if self.cli and self.cli.chat_commands:
             node = self.cli.chat_commands.current_node or self.cli.chat_commands.chat_node
             if node:
-                return node.session_id
-        return None
+                session_id = getattr(node, "session_id", None)
+                if session_id:
+                    return session_id
+        return st.session_state.get("view_session_id")
 
     def _store_session_id(self) -> None:
         """Store current session_id in session_state for sidebar access"""
