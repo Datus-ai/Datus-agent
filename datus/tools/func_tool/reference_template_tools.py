@@ -82,8 +82,8 @@ class ReferenceTemplateTools:
         Search for reference SQL templates using natural language queries.
         MUST call `list_subject_tree` first to get the subject path.
 
-        **Application Guidance**: If matches are found, use `get_reference_template` to get full details,
-        then call `render_reference_template` with appropriate parameters to generate the final SQL.
+        **Application Guidance**: If matches are found, call `execute_reference_template` with the
+        `subject_path`, `name`, and parameter values from results to render and execute in one step.
         Do NOT write SQL from scratch when a matching template exists.
 
         Args:
@@ -243,11 +243,12 @@ class ReferenceTemplateTools:
         self, subject_path: List[str], name: str, params: str, database: str = ""
     ) -> FuncToolResult:
         """
-        Render a reference template and immediately execute the resulting SQL (read-only).
-        Combines `render_reference_template` + `read_query` in a single step.
+        **PREFERRED** way to use reference templates. Render a template with parameters and immediately
+        execute the resulting SQL (read-only), returning query results in one step.
 
-        **Workflow**: First use `search_reference_template` or `get_reference_template` to find the template
-        and its required parameters, then call this tool to render and execute in one call.
+        **Workflow**: Call `search_reference_template` first to find the template and its parameters,
+        then call this tool with the `subject_path`, `name`, and parameter values from search results.
+        Do NOT write ad-hoc SQL when a matching template exists — use this tool instead.
 
         Args:
             subject_path: Subject hierarchy path (e.g., ['Finance', 'Revenue', 'Q1'])

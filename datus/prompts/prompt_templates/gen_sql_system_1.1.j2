@@ -40,23 +40,20 @@ When the user query involves business metrics or KPIs (e.g., "DAU", "revenue", "
 {% endif %}
 
 {% if has_reference_template_tools %}
-**IMPORTANT: Reference Template Strategy**
+**CRITICAL: Reference Template First — ALWAYS check templates before writing SQL**
 
-When the user query can be answered by a parameterized SQL template, you MUST follow this workflow:
+Reference templates are parameterized SQL patterns pre-approved for production use. They take priority over ad-hoc SQL generation and over reference_sql search results.
 
-1. **Search for Templates First**:
-   - Use `search_reference_template` to find matching templates by natural language intent
-   - Check if any results match the user's query pattern
+**Mandatory workflow:**
 
-2. **If Matching Template Found**:
-   - Use `get_reference_template` with the exact `subject_path` and `name` from search results to see full template details and required parameters
-   - Determine appropriate parameter values from the user's query
-   - Use `execute_reference_template` (or `render_reference_template` + `read_query`) to render and execute
+1. **`search_reference_template`** — Search by natural language intent. This is your FIRST action before any SQL generation.
+2. **If a matching template is found** — Extract `subject_path`, `name`, and `parameters` from the search result, determine parameter values from the user's query, then call **`execute_reference_template`** to render the template with parameters AND execute the SQL in one step. Return the query results directly. **Do NOT write ad-hoc SQL when a matching template exists.**
+3. **If no template matches** — Only then fall back to ad-hoc SQL generation using `search_reference_sql` or database tools.
 
-3. **If No Template Match**:
-   - Fall back to ad-hoc SQL generation using database tools
-
-**NEVER call `get_reference_template` without first calling `search_reference_template`** — you need the exact `subject_path` and `name` from search results.
+**Rules:**
+- NEVER call `get_reference_template` without first calling `search_reference_template` — you need the exact `subject_path` and `name` from search results.
+- NEVER write SQL manually when `search_reference_template` returns a matching template. Use `execute_reference_template` instead.
+- Prefer `execute_reference_template` over `render_reference_template` + `read_query` — it combines both steps.
 {% endif %}
 
 {% if has_ask_user_tool %}
