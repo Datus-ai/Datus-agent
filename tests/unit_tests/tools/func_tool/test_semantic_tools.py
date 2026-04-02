@@ -631,6 +631,41 @@ class TestAttributionAnalyze:
         assert "analysis failed" in result.error
 
 
+class TestExtractDbConfig:
+    """Tests for _extract_db_config helper method."""
+
+    def test_returns_none_when_namespace_not_in_namespaces(self, semantic_tools):
+        """Should return None when namespace is not found in agent_config.namespaces."""
+        semantic_tools.agent_config.namespaces = {}
+        result = semantic_tools._extract_db_config("missing_ns")
+        assert result is None
+
+    def test_extracts_and_filters_db_config(self, semantic_tools):
+        """Should extract db_config, stringify values, and exclude filtered keys."""
+        mock_db_config = Mock()
+        mock_db_config.to_dict.return_value = {
+            "db_type": "mysql",
+            "host": "localhost",
+            "port": 3306,
+            "password": "secret",
+            "extra": "skip",
+            "logic_name": "skip",
+            "path_pattern": "skip",
+            "catalog": "skip",
+        }
+        semantic_tools.agent_config.namespaces = {"ns1": {"default": mock_db_config}}
+
+        result = semantic_tools._extract_db_config("ns1")
+
+        assert result["db_type"] == "mysql"
+        assert result["host"] == "localhost"
+        assert result["port"] == "3306"
+        assert "extra" not in result
+        assert "logic_name" not in result
+        assert "path_pattern" not in result
+        assert "catalog" not in result
+
+
 class TestReloadAdapter:
     def test_no_adapter_type_returns_false(self, semantic_tools_ext):
         result = semantic_tools_ext._reload_adapter()

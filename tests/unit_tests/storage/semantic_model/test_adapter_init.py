@@ -299,3 +299,56 @@ class TestInitFromAdapter:
         call_kwargs = mock_config_class.call_args[1]
         assert call_kwargs["namespace"] == "ns1"
         assert call_kwargs["timeout_seconds"] == 60
+
+    @pytest.mark.asyncio
+    @patch("datus.storage.semantic_model.adapter_init.SemanticStorageManager")
+    @patch("datus.storage.semantic_model.adapter_init.semantic_adapter_registry")
+    async def test_none_config_extracts_db_config_from_namespaces(self, mock_registry, MockStorageManager):
+        """When adapter_config is None and namespaces has data, should extract db_config."""
+        from datus.storage.semantic_model.adapter_init import init_from_adapter
+
+        mock_config_class = MagicMock()
+        mock_config_instance = MagicMock()
+        mock_config_class.return_value = mock_config_instance
+
+        mock_metadata = MagicMock()
+        mock_metadata.config_class = mock_config_class
+        mock_registry.get_metadata.return_value = mock_metadata
+        mock_registry.create_adapter.return_value = MagicMock()
+
+        mock_manager = MagicMock()
+        mock_manager.sync_from_adapter = AsyncMock(return_value={"semantic_models_synced": 2})
+        MockStorageManager.return_value = mock_manager
+
+        # Set up agent_config with namespaces containing a DbConfig
+        mock_db_config = MagicMock()
+        mock_db_config.to_dict.return_value = {
+            "db_type": "mysql",
+            "host": "localhost",
+            "port": 3306,
+            "username": "root",
+            "password": "pass",
+            "database": "testdb",
+            "extra": "ignore_me",
+            "logic_name": "ignore_me_too",
+        }
+
+        config = MagicMock(spec=["namespace", "current_namespace", "namespaces", "home"])
+        config.namespace = "ns1"
+        config.current_namespace = "ns1"
+        config.namespaces = {"ns1": {"default": mock_db_config}}
+        config.home = "/home/agent"
+
+        await init_from_adapter(config, "metricflow")
+
+        mock_config_class.assert_called_once()
+        call_kwargs = mock_config_class.call_args[1]
+        assert call_kwargs["namespace"] == "ns1"
+        assert call_kwargs["agent_home"] == "/home/agent"
+        # db_config should contain stringified values, excluding "extra" and "logic_name"
+        db_config = call_kwargs["db_config"]
+        assert db_config["db_type"] == "mysql"
+        assert db_config["host"] == "localhost"
+        assert db_config["port"] == "3306"
+        assert "extra" not in db_config
+        assert "logic_name" not in db_config
