@@ -53,7 +53,7 @@ Generate the exact DDL SQL statement. **Display it as a separate assistant messa
 
 **Step A — Display DDL (Turn 1, NO tool calls)**: Output the complete DDL statement as a normal assistant message. Do NOT call any tool (including `ask_user`) in this turn. Example:
 
-> 根据您的需求，生成以下建表语句：
+> Here is the DDL statement I generated based on your request:
 >
 > ```sql
 > CREATE TABLE {schema}.{table_name} AS (
@@ -65,7 +65,7 @@ Generate the exact DDL SQL statement. **Display it as a separate assistant messa
 
 ```
 ask_user(questions=[{
-  "question": "确认执行以上建表语句？",
+  "question": "Confirm execution of the DDL statement above?",
   "options": ["Execute", "Modify", "Cancel"]
 }])
 ```
