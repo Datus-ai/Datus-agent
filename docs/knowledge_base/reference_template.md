@@ -118,7 +118,7 @@ Semicolons inside Jinja2 block structures (`{% if %}`, `{% for %}`, etc.) are no
 
 ## Tools
 
-After bootstrapping, three tools are available to agents:
+After bootstrapping, four tools are available to agents:
 
 ### `search_reference_template`
 
@@ -130,7 +130,11 @@ Retrieve a specific template by `subject_path` + `name`. Returns full template c
 
 ### `render_reference_template`
 
-Render a template with provided parameter values using Jinja2. Returns the final SQL string. Uses `StrictUndefined` mode — missing parameters produce actionable error messages listing expected vs. provided parameters.
+Render a template with provided parameter values using Jinja2. Returns the final SQL string without executing it. Uses `StrictUndefined` mode — missing parameters produce actionable error messages listing expected vs. provided parameters.
+
+### `execute_reference_template`
+
+Render a template and immediately execute the resulting SQL (read-only). Combines `render_reference_template` + `read_query` in a single step. Returns both the rendered SQL and the query result rows. Only available when database tools (`db_tools`) are configured alongside template tools.
 
 ## Data Flow
 

@@ -284,7 +284,9 @@ class GenSQLAgenticNode(AgenticNode):
         """Setup reference template tools."""
         try:
             self.reference_template_tools = ReferenceTemplateTools(
-                self.agent_config, sub_agent_name=self.node_config.get("system_prompt")
+                self.agent_config,
+                sub_agent_name=self.node_config.get("system_prompt"),
+                db_func_tool=self.db_func_tool,
             )
             self.tools.extend(self.reference_template_tools.available_tools())
         except Exception as e:
@@ -387,7 +389,9 @@ class GenSQLAgenticNode(AgenticNode):
             elif tool_type == "reference_template_tools":
                 if not self.reference_template_tools:
                     self.reference_template_tools = ReferenceTemplateTools(
-                        self.agent_config, sub_agent_name=self.node_config.get("system_prompt")
+                        self.agent_config,
+                        sub_agent_name=self.node_config.get("system_prompt"),
+                        db_func_tool=self.db_func_tool,
                     )
                 tool_instance = self.reference_template_tools
             else:

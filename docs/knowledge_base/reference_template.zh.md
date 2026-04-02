@@ -119,7 +119,7 @@ Jinja2 块结构（`{% if %}`、`{% for %}` 等）内部的分号不会被视为
 
 ## 工具
 
-Bootstrap 完成后，Agent 可使用三个工具：
+Bootstrap 完成后，Agent 可使用四个工具：
 
 ### `search_reference_template`
 
@@ -131,7 +131,11 @@ Bootstrap 完成后，Agent 可使用三个工具：
 
 ### `render_reference_template`
 
-使用提供的参数值渲染模板。使用 Jinja2 的 `StrictUndefined` 模式 — 缺少参数时会产生可操作的错误信息，列出期望参数与已提供参数的对比。
+使用提供的参数值渲染模板，返回最终 SQL 字符串但不执行。使用 Jinja2 的 `StrictUndefined` 模式 — 缺少参数时会产生可操作的错误信息，列出期望参数与已提供参数的对比。
+
+### `execute_reference_template`
+
+渲染模板并立即执行生成的 SQL（只读）。将 `render_reference_template` + `read_query` 合并为一步操作。返回渲染后的 SQL 和查询结果行。仅在同时配置了数据库工具（`db_tools`）时可用。
 
 ## 数据流
 

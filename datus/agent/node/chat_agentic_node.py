@@ -135,7 +135,7 @@ class ChatAgenticNode(AgenticNode):
         conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
         self.db_func_tool = DBFuncTool(conn, agent_config=self.agent_config)
         self.context_search_tools = ContextSearchTools(self.agent_config)
-        self.reference_template_tools = ReferenceTemplateTools(self.agent_config)
+        self.reference_template_tools = ReferenceTemplateTools(self.agent_config, db_func_tool=self.db_func_tool)
         self._setup_date_parsing_tools()
         self._setup_filesystem_tools()
         self._setup_skill_tools()

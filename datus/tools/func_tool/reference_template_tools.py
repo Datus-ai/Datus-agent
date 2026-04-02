@@ -57,11 +57,12 @@ class ReferenceTemplateTools:
         """
         return cls(agent_config, sub_agent_name=sub_agent_name)
 
-    def __init__(self, agent_config: AgentConfig, sub_agent_name: Optional[str] = None):
+    def __init__(self, agent_config: AgentConfig, sub_agent_name: Optional[str] = None, db_func_tool=None):
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
         self.reference_template_store = ReferenceTemplateRAG(agent_config, sub_agent_name)
         self.has_reference_templates = self.reference_template_store.get_reference_template_size() > 0
+        self.db_func_tool = db_func_tool
 
     def available_tools(self) -> List[Tool]:
         tools = []
@@ -69,6 +70,8 @@ class ReferenceTemplateTools:
             tools.append(trans_to_function_tool(self.search_reference_template))
             tools.append(trans_to_function_tool(self.get_reference_template))
             tools.append(trans_to_function_tool(self.render_reference_template))
+            if self.db_func_tool:
+                tools.append(trans_to_function_tool(self.execute_reference_template))
         return tools
 
     @mcp_tool(availability_check="has_reference_templates")
@@ -233,3 +236,83 @@ class ReferenceTemplateTools:
         except Exception as e:
             logger.error(f"Failed to render reference template `{'/'.join(subject_path)}/{name}`: {e}")
             return FuncToolResult(success=0, error=str(e))
+
+    @mcp_tool(availability_check="has_reference_templates")
+    def execute_reference_template(
+        self, subject_path: List[str], name: str, params: str, database: str = ""
+    ) -> FuncToolResult:
+        """
+        Render a reference template and immediately execute the resulting SQL (read-only).
+        Combines `render_reference_template` + `read_query` in a single step.
+
+        **Workflow**: First use `search_reference_template` or `get_reference_template` to find the template
+        and its required parameters, then call this tool to render and execute in one call.
+
+        Args:
+            subject_path: Subject hierarchy path (e.g., ['Finance', 'Revenue', 'Q1'])
+            name: The exact name of the reference template.
+            params: JSON string of parameter key-value pairs to render the template.
+                    Keys must match the template's parameter names.
+                    Example: '{"start_date": "2024-01-01", "end_date": "2024-12-31", "region": "US"}'
+            database: Optional database name for multi-database scenarios.
+
+        Returns:
+            FuncToolResult with:
+                - 'rendered_sql': The SQL that was executed
+                - 'template_name': Name of the template used
+                - 'parameters_used': The parameters that were applied
+                - 'query_result': The query execution result (rows)
+            Returns success=0 with descriptive error if template not found, rendering fails,
+            or query execution fails.
+        """
+        # Step 1: Render the template
+        render_result = self.render_reference_template(subject_path, name, params)
+        if render_result.success == 0:
+            return render_result
+
+        rendered_sql = render_result.result["rendered_sql"]
+        template_name = render_result.result["template_name"]
+        parameters_used = render_result.result["parameters_used"]
+
+        # Step 2: Execute the rendered SQL via db_func_tool
+        if not self.db_func_tool:
+            return FuncToolResult(
+                success=0,
+                error="Database tools not available. Use `render_reference_template` to get the SQL, "
+                "then execute it manually with `read_query`.",
+            )
+
+        try:
+            exec_result = self.db_func_tool.read_query(rendered_sql, database=database)
+            if exec_result.success == 0:
+                return FuncToolResult(
+                    success=0,
+                    error=f"Template rendered successfully but query execution failed: {exec_result.error}",
+                    result={
+                        "rendered_sql": rendered_sql,
+                        "template_name": template_name,
+                        "parameters_used": parameters_used,
+                    },
+                )
+
+            return FuncToolResult(
+                success=1,
+                error=None,
+                result={
+                    "rendered_sql": rendered_sql,
+                    "template_name": template_name,
+                    "parameters_used": parameters_used,
+                    "query_result": exec_result.result,
+                },
+            )
+        except Exception as e:
+            logger.error(f"Failed to execute rendered template `{'/'.join(subject_path)}/{name}`: {e}")
+            return FuncToolResult(
+                success=0,
+                error=f"Template rendered but execution failed: {e}",
+                result={
+                    "rendered_sql": rendered_sql,
+                    "template_name": template_name,
+                    "parameters_used": parameters_used,
+                },
+            )
