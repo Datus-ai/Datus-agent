@@ -125,7 +125,7 @@ class TestCreateProxyTool:
         assert result == {"success": 1, "result": "proxied"}
 
     @pytest.mark.asyncio
-    async def test_proxy_tool_generates_call_id_if_missing(self):
+    async def test_proxy_tool_uses_tool_call_id(self):
         channel = ToolResultChannel()
         original = FunctionTool(
             name="tool",
@@ -135,15 +135,11 @@ class TestCreateProxyTool:
         )
         proxy = create_proxy_tool(original, channel)
 
-        ctx = SimpleNamespace()  # no tool_call_id
+        ctx = SimpleNamespace(tool_call_id="call_abc123")
 
         async def publisher():
             await asyncio.sleep(0.05)
-            # Find the generated call_id
-            for cid in list(channel._futures.keys()):
-                if cid.startswith("proxy_"):
-                    await channel.publish(cid, {"success": 1})
-                    return
+            await channel.publish("call_abc123", {"success": 1})
 
         task = asyncio.create_task(publisher())
         result = await proxy.on_invoke_tool(ctx, "{}")

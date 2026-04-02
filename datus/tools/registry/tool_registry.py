@@ -11,10 +11,11 @@ and proxy_tool so that every consumer uses a single source of truth.
 
 from __future__ import annotations
 
-import logging
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
-logger = logging.getLogger(__name__)
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
 
 
 class ToolRegistry:

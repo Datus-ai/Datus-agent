@@ -11,7 +11,6 @@ results from stdin, enabling external callers to provide tool results.
 
 from __future__ import annotations
 
-import uuid
 from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
@@ -31,7 +30,7 @@ def create_proxy_tool(original: FunctionTool, channel: ToolResultChannel) -> Fun
     """Wrap a FunctionTool so it awaits results from the channel instead of executing."""
 
     async def proxy_invoke(tool_ctx: ToolContext, args_str: str) -> dict:
-        call_id = getattr(tool_ctx, "tool_call_id", None) or f"proxy_{uuid.uuid4().hex[:8]}"
+        call_id = tool_ctx.tool_call_id
         logger.debug(f"Proxy tool '{original.name}' waiting for result, call_id={call_id}")
         try:
             return await channel.wait_for(call_id)

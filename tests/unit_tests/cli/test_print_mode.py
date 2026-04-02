@@ -265,26 +265,8 @@ class TestResumeSessionId:
         # session_id should be set on the node
         assert mock_node.session_id == "session_abc"
 
-    def test_resume_nonexistent_session_exits(self):
-        with (
-            patch("datus.cli.print_mode.load_agent_config") as mock_cfg,
-            patch("datus.cli.print_mode.AtReferenceCompleter"),
-        ):
-            mock_cfg.return_value = MagicMock(namespaces=[])
-            from datus.cli.print_mode import PrintModeRunner
-
-            runner = PrintModeRunner(_make_args(resume="no_such_session"))
-
-        mock_session_mgr = MagicMock()
-        mock_session_mgr.session_exists.return_value = False
-
-        with (
-            patch("datus.models.session_manager.SessionManager", return_value=mock_session_mgr),
-            pytest.raises(SystemExit, match="not found"),
-        ):
-            runner.run()
-
-    def test_resume_derives_subagent_from_session_id(self):
+    def test_resume_nonexistent_session_continues(self):
+        """Verify that a non-existent session_id logs a warning and continues (creates new session)."""
         with (
             patch("datus.cli.print_mode.load_agent_config") as mock_cfg,
             patch("datus.cli.print_mode.AtReferenceCompleter") as mock_completer,
@@ -293,9 +275,43 @@ class TestResumeSessionId:
             mock_completer.return_value.parse_at_context.return_value = ([], [], [])
             from datus.cli.print_mode import PrintModeRunner
 
-            runner = PrintModeRunner(_make_args(resume="gen_sql_session_uuid123"))
+            runner = PrintModeRunner(_make_args(resume="no_such_session"))
 
-        assert runner.subagent_name is None  # not yet resolved
+        mock_node = MagicMock()
+        mock_node.session_id = None
+
+        async def fake_stream(actions):
+            return
+            yield
+
+        mock_node.execute_stream_with_interactions = fake_stream
+
+        mock_session_mgr = MagicMock()
+        mock_session_mgr.session_exists.return_value = False
+
+        with (
+            patch("datus.models.session_manager.SessionManager", return_value=mock_session_mgr),
+            patch("datus.cli.print_mode.create_interactive_node", return_value=mock_node),
+            patch("datus.cli.print_mode.create_node_input", return_value=MagicMock()),
+        ):
+            runner.run()  # should not raise
+
+        # session_id is still set on the node even for new sessions
+        assert mock_node.session_id == "no_such_session"
+
+    def test_resume_subagent_name_from_args(self):
+        """Verify that subagent_name comes from args, not derived from session_id."""
+        with (
+            patch("datus.cli.print_mode.load_agent_config") as mock_cfg,
+            patch("datus.cli.print_mode.AtReferenceCompleter") as mock_completer,
+        ):
+            mock_cfg.return_value = MagicMock(namespaces=[])
+            mock_completer.return_value.parse_at_context.return_value = ([], [], [])
+            from datus.cli.print_mode import PrintModeRunner
+
+            runner = PrintModeRunner(_make_args(resume="session_uuid123", subagent="gen_sql"))
+
+        assert runner.subagent_name == "gen_sql"
 
         mock_node = MagicMock()
         mock_node.session_id = None
@@ -316,9 +332,8 @@ class TestResumeSessionId:
         ):
             runner.run()
 
-        # subagent_name should be derived from session_id
-        assert runner.subagent_name == "gen_sql"
         mock_create_node.assert_called_once_with("gen_sql", runner.agent_config, node_id_suffix="_print")
+        assert mock_node.session_id == "session_uuid123"
 
 
 # ---------------------------------------------------------------------------

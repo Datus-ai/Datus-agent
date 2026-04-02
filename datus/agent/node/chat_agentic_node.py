@@ -246,6 +246,10 @@ class ChatAgenticNode(AgenticNode):
                 self.tool_registry.register_tools("skills", self.skill_func_tool.available_tools())
             if self.sub_agent_task_tool:
                 self.tool_registry.register_tools("sub_agent_tools", self.sub_agent_task_tool.available_tools())
+            if self.ask_user_tool:
+                self.tool_registry.register_tools("tools", self.ask_user_tool.available_tools())
+            if self._platform_doc_tool:
+                self.tool_registry.register_tools("tools", self._platform_doc_tool.available_tools())
 
             # 2. Create PermissionHooks sharing the same tool_registry instance
             broker = self._get_or_create_broker()

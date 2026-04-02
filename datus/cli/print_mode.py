@@ -129,6 +129,8 @@ class PrintModeRunner:
                     )
         finally:
             self._stdin_stop_event.set()
+            if self.proxy_tool_patterns:
+                node.tool_channel.cancel_all("stream ended")
             if dispatch_task and not dispatch_task.done():
                 dispatch_task.cancel()
                 try:
