@@ -82,6 +82,15 @@ Error code ranges: 100000–199999 (common), 200000–299999 (node), 300000–39
 2. Register in the MCP server tool list
 3. Add registration + invocation tests in `tests/test_mcp_server.py`
 
+## PR Title Convention
+
+PR titles **must** include a type prefix: `[BugFix]`, `[Enhancement]`, `[Feature]`, `[Refactor]`, `[UT]`, `[Doc]`, `[Tool]`, `[Others]`. CI will reject PRs without the prefix.
+
+Examples:
+- `[Feature] Add metric definition skill`
+- `[BugFix] Fix tools display in LangSmith traces`
+- `[Enhancement] Optimize schema linking performance`
+
 ## Commit Workflow
 
 1. **Coverage gate**: Before committing, run `uv run pytest tests/unit_tests/ --cov=datus --cov-report=term-missing --cov-fail-under=80`. If coverage < 80%, add tests for uncovered lines in modified files until it passes. Do NOT commit until coverage passes.
