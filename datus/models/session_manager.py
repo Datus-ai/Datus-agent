@@ -76,6 +76,10 @@ class SessionManager:
         os.makedirs(self.session_dir, exist_ok=True)
         self._sessions: Dict[str, AdvancedSQLiteSession] = {}
 
+    # Shared pattern for validating session IDs.
+    # Allows alphanumerics, hyphens, underscores, and dots.
+    _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+
     @staticmethod
     def _validate_session_id(session_id: str) -> str:
         """Validate that a session ID is safe for use in file paths.
