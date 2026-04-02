@@ -160,7 +160,7 @@ def select_multi_choice(
 
         keys = list(display_choices.keys())
         cursor = [0]
-        checked = set(default_selected or [])
+        checked = {k for k in (default_selected or []) if k in keys and k != _FREE_TEXT_SENTINEL}
 
         kb = KeyBindings()
 
@@ -185,14 +185,14 @@ def select_multi_choice(
         @kb.add("a")
         def _toggle_all(event):
             real_keys = [k for k in keys if k != _FREE_TEXT_SENTINEL]
-            if len(checked) == len(real_keys):
+            if all(k in checked for k in real_keys):
                 checked.clear()
             else:
                 checked.update(real_keys)
 
         @kb.add("enter")
         def _confirm(event):
-            event.app.exit(result=list(checked))
+            event.app.exit(result=[k for k in keys if k in checked])
 
         @kb.add("c-c")
         def _cancel(event):

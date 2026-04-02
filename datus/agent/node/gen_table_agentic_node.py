@@ -96,7 +96,11 @@ class GenTableAgenticNode(AgenticNode):
                 self.tools.append(trans_to_function_tool(self.db_func_tool.execute_ddl))
             logger.debug("Added database tools + execute_ddl from DBFuncTool")
         except Exception as e:
-            logger.error(f"Failed to setup database tools: {e}")
+            logger.exception("Failed to setup database tools")
+            raise DatusException(
+                code=ErrorCode.COMMON_CONFIG_ERROR,
+                message_args={"config_error": f"Failed to setup database tools for {self.NODE_NAME}: {e}"},
+            ) from e
 
     def _prepare_template_context(self, user_input: SemanticNodeInput) -> dict:
         context = {}

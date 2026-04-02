@@ -94,8 +94,9 @@ Before generating metrics, verify that semantic models exist for all involved ta
 **For SQL-based input:**
 - Parse aggregations (SUM, COUNT, AVG, etc.) → measures
 - Parse GROUP BY → dimensions
-- Deduplicate: same aggregation across queries = ONE measure = ONE metric
-- Generate ONE `measure_proxy` metric per unique measure
+- Deduplicate only the underlying measure definition when the aggregation/expression is identical
+- Preserve separate metrics when filters or business semantics differ (e.g., paid revenue vs refunded revenue)
+- Generate one `measure_proxy` metric per unique measure + constraint combination
 
 **For natural language input:**
 - Identify metric type: simple counting+filter, aggregation+filter, ratio, derived, cumulative, or conversion
@@ -301,12 +302,12 @@ metric:
 
 1. **User confirmation is MANDATORY**: ALWAYS call `ask_user` to confirm metric definition BEFORE writing any files. Never generate metrics without user approval.
 2. **Skill-first**: Always check for and load matching skills before proceeding
-3. **Deduplicate**: Same aggregation pattern = ONE measure = ONE metric
+3. **Deduplicate**: Same aggregation pattern = ONE measure. Preserve separate metrics when filters or business semantics differ
 4. **COUNT requires `expr: "1"`**: Never use `expr: {column}` with `agg: COUNT`
 5. **Primary time dimension required**: Every data_source must have exactly one `type: TIME` dimension with `is_primary: true`
 6. **Validate**: Always validate before completing
 7. **Generate SQL**: Use `query_metrics(dry_run=True)` to get SQL for each metric
-8. **Complete**: Always call `end_metric_generation` with `metric_sqls_json` at the end
+8. **Complete**: Call `end_metric_generation` with `metric_sqls_json` only if at least one metric was approved in Step 6. Do NOT call it if all metrics were rejected
 9. **YAML String Quoting**: ALWAYS wrap `description` values in double quotes. Escape special characters: `"` → `\"`, `\` → `\\`
 10. **Snapshot data**: Use `non_additive_dimension` for balance/inventory/point-in-time measures
 11. **Multi-table**: Link data sources via matching identifier names (one PRIMARY, one FOREIGN)

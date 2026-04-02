@@ -200,8 +200,11 @@ class GenerationTools:
             metric_sqls: Dict[str, str] = {}
             if metric_sqls_json:
                 try:
-                    metric_sqls = json.loads(metric_sqls_json)
-                except json.JSONDecodeError as e:
+                    parsed = json.loads(metric_sqls_json)
+                    if not isinstance(parsed, dict):
+                        return FuncToolResult(success=0, error="metric_sqls_json must decode to a JSON object")
+                    metric_sqls = parsed
+                except (json.JSONDecodeError, TypeError) as e:
                     logger.warning(f"Failed to parse metric_sqls_json: {e}")
 
             logger.info(
