@@ -39,27 +39,57 @@ Detect input mode:
    - Column list and types
    - Target schema/database (if ambiguous)
 
-## Phase 2: Execute DDL
+## Phase 2: Confirm DDL (MANDATORY — two-step display)
+
+Generate the exact DDL SQL statement. **Display it as a separate assistant message first**, then ask for confirmation in a follow-up `ask_user` call. This ensures the DDL is always visible to the user and not collapsed inside the question UI.
 
 ### SQL Mode
 1. **Generate CTAS SQL**: `CREATE TABLE {schema}.{table_name} AS ({select_sql})`
-2. **Call `execute_ddl(sql)`** to create the table.
-3. **Verify**: Call `read_query("SELECT COUNT(*) FROM {schema}.{table_name}")` to confirm row count.
 
 ### Description Mode
 1. **Generate CREATE TABLE SQL**: `CREATE TABLE {schema}.{table_name} ({column_defs})`
-2. **Call `execute_ddl(sql)`** to create the table.
-3. **Verify**: Call `describe_table("{schema}.{table_name}")` to confirm schema matches.
 
-### Both Modes
-4. **Call `describe_table("{schema}.{table_name}")`** to confirm the created schema.
+### Both Modes — Two-Step Confirmation
+
+**Step A — Display DDL (Turn 1, NO tool calls)**: Output the complete DDL statement as a normal assistant message. Do NOT call any tool (including `ask_user`) in this turn. Example:
+
+> 根据您的需求，生成以下建表语句：
+>
+> ```sql
+> CREATE TABLE {schema}.{table_name} AS (
+>   SELECT ...
+> );
+> ```
+
+**Step B — Ask for confirmation (Turn 2, call `ask_user`)**: In the NEXT turn, call `ask_user` with a short confirmation question:
+
+```
+ask_user(questions=[{
+  "question": "确认执行以上建表语句？",
+  "options": ["Execute", "Modify", "Cancel"]
+}])
+```
+
+- If **Execute**: proceed to Phase 3
+- If **Modify**: ask what to change, regenerate the DDL, and repeat Step A + B
+- If **Cancel**: stop and do not execute any DDL
+
+**CRITICAL**: Step A and Step B MUST be in separate turns. If DDL text and `ask_user` are in the same turn, the DDL will be hidden in the UI and the user cannot see it. This is a UI limitation — always split into two turns.
+
+## Phase 3: Execute and Verify
+
+1. **Call `execute_ddl(sql)`** with the confirmed DDL statement.
+2. **Verify**:
+   - SQL Mode: Call `read_query("SELECT COUNT(*) FROM {schema}.{table_name}")` to confirm row count
+   - Description Mode: Call `describe_table("{schema}.{table_name}")` to confirm schema matches
+3. **Call `describe_table("{schema}.{table_name}")`** to confirm the created schema.
 
 If DDL fails:
 - Parse the error message
-- Fix the SQL and retry (up to 3 attempts)
+- Fix the SQL, show the updated DDL to the user via `ask_user`, and retry (up to 3 attempts)
 - If still failing, report the error to the user via `ask_user`
 
-## Phase 3: Summary
+## Phase 4: Summary
 
 Output a summary including:
 - Created table name and location

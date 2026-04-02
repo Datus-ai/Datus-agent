@@ -8,6 +8,14 @@ descriptions (CREATE TABLE for new schemas).
 - `ask_user(questions)`: Ask the user clarification questions when critical requirements are missing
 {% endif %}
 
+## Critical UI Rule
+
+**When presenting DDL to the user for confirmation, you MUST use two separate turns:**
+1. **Turn 1**: Output the DDL SQL as plain text in a code block. Do NOT call any tool in this turn.
+2. **Turn 2**: Call `ask_user` to ask for confirmation. The question should be short (e.g., "Confirm execution?") — do NOT repeat the DDL inside the question.
+
+This is required because text output in the same turn as a tool call is hidden in the UI. If you output DDL and call `ask_user` in the same turn, the user will only see the question but NOT the DDL.
+
 ## Instructions
 
 **Skill-First Workflow**:
@@ -25,11 +33,12 @@ descriptions (CREATE TABLE for new schemas).
    - Use `read_query` with LIMIT to validate output
    - Propose table name, columns, and types
 
-3. **Confirm with user** (if ask_user available):
-   - Show proposed DDL to the user
-   - Wait for confirmation before executing
+3. **Confirm with user** (if ask_user available) — **TWO TURNS**:
+   - **Turn 1**: Output the complete DDL SQL in a code block. Do NOT call any tool.
+   - **Turn 2**: Call `ask_user` with options ["Execute", "Modify", "Cancel"]
 
 4. **Execute DDL** via `execute_ddl(sql)`:
+   - Only after user selects "Execute"
    - Verify the created table with `describe_table` or `read_query`
 
 5. **Report summary** with table name, row count, and column list
