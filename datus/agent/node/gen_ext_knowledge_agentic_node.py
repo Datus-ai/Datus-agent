@@ -33,6 +33,7 @@ from datus.tools.func_tool.generation_tools import GenerationTools
 from datus.utils.benchmark_utils import ComparisonOutcome, TableComparator
 from datus.utils.loggings import get_logger
 from datus.utils.message_utils import MessagePart, build_structured_content
+from datus.utils.node_utils import build_database_context
 
 logger = get_logger(__name__)
 
@@ -759,6 +760,11 @@ Rules:
             # Build enhanced message using question only (gold_sql accessed via tool)
             enhanced_message = question
             enhanced_parts = []
+            enhanced_parts.append(
+                build_database_context(
+                    self.agent_config.db_type, self.input.catalog, self.input.database, self.input.db_schema
+                )
+            )
 
             # Add search_text context if provided
             if user_input.search_text:

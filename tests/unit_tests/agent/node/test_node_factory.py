@@ -167,6 +167,19 @@ class TestCreateNodeInput:
         node = MagicMock(spec=GenExtKnowledgeAgenticNode)
         result = create_node_input("add knowledge", node)
         assert result.user_message == "add knowledge"
+        assert result.catalog is None
+        assert result.database is None
+        assert result.db_schema is None
+
+    def test_ext_knowledge_node_input_with_db_context(self):
+        from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
+
+        node = MagicMock(spec=GenExtKnowledgeAgenticNode)
+        result = create_node_input("add knowledge", node, catalog="cat", database="db", db_schema="sch")
+        assert result.user_message == "add knowledge"
+        assert result.catalog == "cat"
+        assert result.database == "db"
+        assert result.db_schema == "sch"
 
     def test_gen_report_node_input(self):
         from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode

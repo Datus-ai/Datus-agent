@@ -34,6 +34,7 @@ from datus.utils.message_utils import (
     extract_user_input,
     is_structured_content,
 )
+from datus.utils.node_utils import build_database_context
 
 logger = get_logger(__name__)
 
@@ -1128,14 +1129,12 @@ def build_enhanced_message(
     if external_knowledge:
         enhanced_parts.append(f"MUST use these business logic:\n{external_knowledge}")
 
-    context_parts = [f"**Dialect**: {db_type}"]
-    if catalog:
-        context_parts.append(f"**Catalog**: {catalog}")
-    if database:
-        context_parts.append(f"**Database**: {database}")
-    if db_schema:
-        context_parts.append(f"**Schema**: {db_schema}")
-    context_part_str = f"Context: \n{', '.join(context_parts)}"
+    context_part_str = build_database_context(
+        db_type,
+        catalog=catalog,
+        database=database,
+        schema=db_schema,
+    )
     enhanced_parts.append(context_part_str)
 
     if schemas:
