@@ -49,32 +49,29 @@ Generate the exact DDL SQL statement. **Display it as a separate assistant messa
 ### Description Mode
 1. **Generate CREATE TABLE SQL**: `CREATE TABLE {schema}.{table_name} ({column_defs})`
 
-### Both Modes — Two-Step Confirmation
+### Both Modes — DDL Confirmation via ask_user
 
-**Step A — Display DDL (Turn 1, NO tool calls)**: Output the complete DDL statement as a normal assistant message. Do NOT call any tool (including `ask_user`) in this turn. Example:
+**Include the full DDL SQL inside the `ask_user` question text.** This is required because when running as a sub-agent, all intermediate assistant messages are collapsed in the UI — the user can ONLY see the `ask_user` interaction widget.
 
-> Here is the DDL statement I generated based on your request:
->
-> ```sql
-> CREATE TABLE {schema}.{table_name} AS (
->   SELECT ...
-> );
-> ```
-
-**Step B — Ask for confirmation (Turn 2, call `ask_user`)**: In the NEXT turn, call `ask_user` with a short confirmation question:
+Call `ask_user` with the complete DDL embedded in the question:
 
 ```
 ask_user(questions=[{
-  "question": "Confirm execution of the DDL statement above?",
+  "question": "Generated DDL:\n\nCREATE TABLE {schema}.{table_name} AS (\n  SELECT ...\n);\n\nConfirm execution?",
   "options": ["Execute", "Modify", "Cancel"]
 }])
 ```
 
-- If **Execute**: proceed to Phase 3
-- If **Modify**: ask what to change, regenerate the DDL, and repeat Step A + B
-- If **Cancel**: stop and do not execute any DDL
+**Formatting rules for the question text:**
+- Start with a label: "Generated DDL:" or "DDL to execute:"
+- Include the COMPLETE DDL statement — do NOT abbreviate or truncate
+- Use `\n` for line breaks to keep the SQL readable
+- End with a short confirmation prompt: "Confirm execution?"
 
-**CRITICAL**: Step A and Step B MUST be in separate turns. If DDL text and `ask_user` are in the same turn, the DDL will be hidden in the UI and the user cannot see it. This is a UI limitation — always split into two turns.
+**Based on user response:**
+- If **Execute**: proceed to Phase 3
+- If **Modify**: ask what to change, regenerate the DDL, and call `ask_user` again with the updated DDL
+- If **Cancel**: stop and do not execute any DDL
 
 ## Phase 3: Execute and Verify
 

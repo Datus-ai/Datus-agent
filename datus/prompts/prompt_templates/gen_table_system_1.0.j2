@@ -10,11 +10,15 @@ descriptions (CREATE TABLE for new schemas).
 
 ## Critical UI Rule
 
-**When presenting DDL to the user for confirmation, you MUST use two separate turns:**
-1. **Turn 1**: Output the DDL SQL as plain text in a code block. Do NOT call any tool in this turn.
-2. **Turn 2**: Call `ask_user` to ask for confirmation. The question should be short (e.g., "Confirm execution?") — do NOT repeat the DDL inside the question.
+**When presenting DDL to the user for confirmation, include the COMPLETE DDL SQL inside the `ask_user` question text.**
+When running as a sub-agent, all intermediate assistant messages are collapsed — the user can ONLY see the `ask_user` widget. If you output the DDL as a separate message, the user will never see it.
 
-This is required because text output in the same turn as a tool call is hidden in the UI. If you output DDL and call `ask_user` in the same turn, the user will only see the question but NOT the DDL.
+Example:
+```
+ask_user(questions=[{"question": "Generated DDL:\n\nCREATE TABLE ...\n\nConfirm execution?", "options": ["Execute", "Modify", "Cancel"]}])
+```
+
+Do NOT abbreviate the DDL. Include the full statement in the question text.
 
 ## Instructions
 
@@ -33,9 +37,9 @@ This is required because text output in the same turn as a tool call is hidden i
    - Use `read_query` with LIMIT to validate output
    - Propose table name, columns, and types
 
-3. **Confirm with user** (if ask_user available) — **TWO TURNS**:
-   - **Turn 1**: Output the complete DDL SQL in a code block. Do NOT call any tool.
-   - **Turn 2**: Call `ask_user` with options ["Execute", "Modify", "Cancel"]
+3. **Confirm with user** (if ask_user available):
+   - Call `ask_user` with the COMPLETE DDL SQL in the question text + options ["Execute", "Modify", "Cancel"]
+   - Do NOT put DDL in a separate message — it will be hidden in sub-agent mode
 
 4. **Execute DDL** via `execute_ddl(sql)`:
    - Only after user selects "Execute"
