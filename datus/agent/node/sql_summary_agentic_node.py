@@ -46,6 +46,7 @@ class SqlSummaryAgenticNode(AgenticNode):
         execution_mode: str = "interactive",
         build_mode: str = "incremental",
         subject_tree: Optional[list] = None,
+        storage_type: str = "reference_sql",
     ):
         """
         Initialize the SqlSummaryAgenticNode.
@@ -56,11 +57,13 @@ class SqlSummaryAgenticNode(AgenticNode):
             execution_mode: Execution mode - "interactive" (default) or "workflow"
             build_mode: "overwrite" or "incremental" (default: "incremental")
             subject_tree: Optional predefined subject tree categories
+            storage_type: Storage target - "reference_sql" (default) or "reference_template"
         """
         self.configured_node_name = node_name
         self.execution_mode = execution_mode
         self.build_mode = build_mode
         self.subject_tree = subject_tree
+        self.storage_type = storage_type
 
         # Get max_turns from agentic_nodes configuration
         self.max_turns = 30
@@ -616,7 +619,10 @@ class SqlSummaryAgenticNode(AgenticNode):
                 return
 
             # Call static method to save to database with build_mode
-            result = GenerationHooks._sync_reference_sql_to_db(full_path, self.agent_config, self.build_mode)
+            if self.storage_type == "reference_template":
+                result = GenerationHooks._sync_reference_template_to_db(full_path, self.agent_config, self.build_mode)
+            else:
+                result = GenerationHooks._sync_reference_sql_to_db(full_path, self.agent_config, self.build_mode)
 
             if result.get("success"):
                 logger.info(f"Successfully saved to database: {result.get('message')}")

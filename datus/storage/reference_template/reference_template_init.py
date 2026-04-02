@@ -86,6 +86,7 @@ async def process_template_item(
             execution_mode="workflow",
             build_mode=build_mode,
             subject_tree=subject_tree,
+            storage_type="reference_template",
         )
 
         action_history_manager = ActionHistoryManager()
