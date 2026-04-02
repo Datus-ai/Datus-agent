@@ -116,11 +116,12 @@ class ReferenceTemplateTools:
     def get_reference_template(self, subject_path: List[str], name: str = "") -> FuncToolResult:
         """
         Get reference template detail by exact subject path and name.
-        Use `search_reference_template` for similarity-based search, use this for precise retrieval.
+        **IMPORTANT**: You MUST call `search_reference_template` first to discover valid subject_path and name values.
+        Do NOT guess subject_path or name — they must come from search results.
 
         Args:
-            subject_path: Subject hierarchy path (e.g., ['Finance', 'Revenue', 'Q1'])
-            name: The exact name of the reference template.
+            subject_path: Subject hierarchy path from search results (e.g., ['Finance', 'Revenue', 'Q1'])
+            name: The exact name from search results.
 
         Returns:
             FuncToolResult with a single matching entry containing:

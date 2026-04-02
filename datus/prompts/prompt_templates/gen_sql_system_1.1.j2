@@ -39,6 +39,26 @@ When the user query involves business metrics or KPIs (e.g., "DAU", "revenue", "
 
 {% endif %}
 
+{% if has_reference_template_tools %}
+**IMPORTANT: Reference Template Strategy**
+
+When the user query can be answered by a parameterized SQL template, you MUST follow this workflow:
+
+1. **Search for Templates First**:
+   - Use `search_reference_template` to find matching templates by natural language intent
+   - Check if any results match the user's query pattern
+
+2. **If Matching Template Found**:
+   - Use `get_reference_template` with the exact `subject_path` and `name` from search results to see full template details and required parameters
+   - Determine appropriate parameter values from the user's query
+   - Use `execute_reference_template` (or `render_reference_template` + `read_query`) to render and execute
+
+3. **If No Template Match**:
+   - Fall back to ad-hoc SQL generation using database tools
+
+**NEVER call `get_reference_template` without first calling `search_reference_template`** — you need the exact `subject_path` and `name` from search results.
+{% endif %}
+
 {% if has_ask_user_tool %}
 ## Clarification
 - **ask_user(questions)**: Ask the user one or more clarification questions when the natural language question is ambiguous or critical context is missing. Each question can have optional predefined choices (2-10 options).
