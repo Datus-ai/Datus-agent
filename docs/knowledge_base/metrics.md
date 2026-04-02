@@ -5,6 +5,7 @@ Starting from **version 0.2.4**, the Metrics component focuses on creating stand
 ## Core Value
 
 Solves common enterprise challenges:
+
 - **Duplicate SQL queries**: Query metrics directly instead of rewriting similar SQL
 - **Inconsistent definitions**: Standardize metric definitions across teams through executable specifications
 - **Manual classification**: Organize metrics with hierarchical subject tree taxonomy
@@ -81,6 +82,7 @@ datus-agent bootstrap-kb \
 Organizes metrics using hierarchical taxonomy: `domain/layer1/layer2` (e.g., `Sales/Reporting/Daily`)
 
 **Two modes:**
+
 - **Predefined**: Use `--subject_tree` to enforce specific categories
 - **Learning**: Omit `--subject_tree` to reuse existing categories or create new ones
 
@@ -156,6 +158,7 @@ metric:
 The Metrics component establishes a **semantic query layer** that transforms historical SQLs into standardized, executable metric definitions. Unlike traditional semantic layers that only serve as LLM references, Datus metrics can be directly queried through MetricFlow, eliminating the need for ad-hoc SQL generation for common KPIs.
 
 Key differentiators:
+
 - **Executable Metrics**: Query via `query_metrics` instead of generating SQL
 - **Metrics-First Strategy**: Agent prioritizes metric queries over ad-hoc SQL
 - **Independent from Semantic Models**: Metrics operate as a separate query tool, not embedded in schema definitions

@@ -5,6 +5,7 @@
 ## 核心价值
 
 增强数据库 schema 理解以改进 SQL 生成：
+
 - **丰富的列描述**：使用模式和过滤示例增强 DDL 注释
 - **维度和度量分类**：明确标记列为维度（用于分组）或度量（用于聚合）
 - **实体关系**：定义表之间的外键关系以准确生成 JOIN
@@ -81,6 +82,7 @@ What is the average order amount?,SELECT AVG(amount) FROM orders WHERE status = 
 ```
 
 Agent 分析这些 SQL 以：
+
 - 提取表结构
 - 识别维度（GROUP BY 列）和度量（聚合列）
 - 发现列使用模式（WHERE 子句过滤器）
@@ -171,6 +173,7 @@ search_semantic_objects(query="customer revenue", kinds=["table", "column"])
 语义模型通过丰富的语义信息扩展数据库 schema，实现更准确的临时 SQL 生成。从 0.2.4 版本开始，它们独立于指标运行：
 
 主要特点：
+
 - **Schema 扩展**：用业务语义增强物理 schema
 - **字段级存储**：单独存储表、列、实体以实现灵活搜索
 - **使用模式增强**：从历史 SQLs 捕获实际查询模式

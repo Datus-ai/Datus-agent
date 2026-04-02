@@ -7,12 +7,14 @@ The SQL Summary feature helps you analyze, classify, and catalog SQL queries for
 ## What is a SQL Summary?
 
 A **SQL summary** is a structured YAML document that captures:
+
 - **Query Text**: The complete SQL query
 - **Business Context**: Domain, categories, and tags
 - **Semantic Summary**: Detailed explanation for vector search
 - **Metadata**: Name, comment, file path
 
 **Use Cases**:
+
 - Build a searchable SQL query library
 - Share and reuse proven queries across teams
 - Document complex query patterns

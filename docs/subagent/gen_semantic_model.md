@@ -7,6 +7,7 @@ The semantic model generation feature helps you create MetricFlow semantic model
 ## What is a Semantic Model?
 
 A semantic model is a YAML configuration that defines:
+
 - **Measures**: Metrics and aggregations (SUM, COUNT, AVERAGE, etc.)
 - **Dimensions**: Categorical and time-based attributes
 - **Identifiers**: Primary and foreign keys for relationships
@@ -24,6 +25,7 @@ Start Datus CLI with `datus --namespace <namespace>`, and begin with a subagent 
 ### Interactive Generation
 
 When you request a semantic model, the AI assistant:
+
 1. Retrieves your table's DDL (structure)
 2. Checks if a semantic model already exists
 3. Generates a comprehensive YAML file
@@ -131,6 +133,7 @@ data_source:
 ## Summary
 
 The semantic model generation feature provides:
+
 - ✓ Automated YAML generation from table DDL
 - ✓ Interactive validation and error fixing
 - ✓ User confirmation before storage
