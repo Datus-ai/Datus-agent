@@ -155,10 +155,10 @@ class TestValidateSessionId:
         with pytest.raises(ValueError, match="Invalid session ID"):
             SessionManager._validate_session_id("bad session")
 
-    def test_validate_rejects_dots(self):
-        """Session IDs containing dots are rejected."""
-        with pytest.raises(ValueError, match="Invalid session ID"):
-            SessionManager._validate_session_id("session.1")
+    def test_validate_accepts_dots(self):
+        """Session IDs containing dots are accepted."""
+        result = SessionManager._validate_session_id("session.1")
+        assert result == "session.1"
 
     def test_validate_rejects_slashes(self):
         """Session IDs with path separators are rejected to prevent path traversal."""
@@ -172,7 +172,7 @@ class TestValidateSessionId:
 
     def test_validate_rejects_special_characters(self):
         """Session IDs with special characters like @ # $ are rejected."""
-        for char in ["@", "#", "$", "!", "~", " ", ".", "/"]:
+        for char in ["@", "#", "$", "!", "~", " ", "/"]:
             with pytest.raises(ValueError):
                 SessionManager._validate_session_id(f"bad{char}id")
 
@@ -1413,5 +1413,47 @@ class TestSessionManagerScope:
             expected = os.path.join(base_dir, "myproj")
             assert manager.session_dir == expected
             assert os.path.isdir(expected)
+        finally:
+            manager.close_all_sessions()
+
+    def test_legacy_db_files_migrated_to_scope_dir(self, tmp_path):
+        """Legacy .db files in base session_dir are moved into the scope subdirectory."""
+        base_dir = tmp_path / "sessions"
+        base_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create a legacy .db file directly in the base dir
+        legacy_db = base_dir / "old_session.db"
+        legacy_db.write_text("fake-db")
+
+        manager = SessionManager(session_dir=str(base_dir))
+        try:
+            # The legacy file should have been moved into the default scope dir
+            assert not legacy_db.exists()
+            migrated = base_dir / "default" / "old_session.db"
+            assert migrated.exists()
+            assert migrated.read_text() == "fake-db"
+        finally:
+            manager.close_all_sessions()
+
+    def test_legacy_migration_skips_existing_files(self, tmp_path):
+        """Legacy migration does not overwrite .db files already in the scope dir."""
+        base_dir = tmp_path / "sessions"
+        base_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create a legacy file and a pre-existing file in the scope dir
+        legacy_db = base_dir / "conflict.db"
+        legacy_db.write_text("legacy")
+
+        scope_dir = base_dir / "default"
+        scope_dir.mkdir(parents=True, exist_ok=True)
+        existing_db = scope_dir / "conflict.db"
+        existing_db.write_text("existing")
+
+        manager = SessionManager(session_dir=str(base_dir))
+        try:
+            # Existing file should not be overwritten
+            assert existing_db.read_text() == "existing"
+            # Legacy file stays because destination already existed
+            assert legacy_db.exists()
         finally:
             manager.close_all_sessions()

@@ -4,6 +4,7 @@
 
 """Session management wrapper for LLM models using OpenAI Agents Python session approach."""
 
+import ast
 import json
 import os
 import re
@@ -79,13 +80,13 @@ class SessionManager:
     def _validate_session_id(session_id: str) -> str:
         """Validate that a session ID is safe for use in file paths.
 
-        Allows only alphanumerics, hyphens, and underscores.
+        Allows only alphanumerics, hyphens, underscores, and dots.
         Raises ValueError if the session ID contains unsafe characters.
         """
-        if not re.fullmatch(r"[A-Za-z0-9_-]+", session_id):
+        if not SessionManager._SESSION_ID_RE.fullmatch(session_id):
             raise ValueError(
                 f"Invalid session ID: {session_id!r}. "
-                "Session IDs may only contain alphanumerics, hyphens, and underscores."
+                "Session IDs may only contain alphanumerics, hyphens, underscores, and dots."
             )
         return session_id
 
@@ -591,8 +592,7 @@ class SessionManager:
         messages = []
 
         # Validate session_id to prevent path traversal
-        # Only allow alphanumeric, underscore, hyphen, and dot
-        if not re.match(r"^[A-Za-z0-9_.-]+$", session_id):
+        if not self._SESSION_ID_RE.fullmatch(session_id):
             logger.warning(f"Invalid session_id format (potential path traversal): {session_id}")
             return messages
 
@@ -684,9 +684,9 @@ class SessionManager:
                                 args_dict = {}
                                 assistant_progress.append(f"✓ Tool call: {tool_name}")
 
-                            # Create ActionHistory for tool call
+                            # Create ActionHistory for tool call (use original call_id from SDK)
                             action = ActionHistory(
-                                action_id=str(uuid.uuid4()),
+                                action_id=message_json.get("call_id", str(uuid.uuid4())),
                                 role=ActionRole.TOOL,
                                 messages=f"Tool call: {tool_name}",
                                 action_type=tool_name,
@@ -712,8 +712,6 @@ class SessionManager:
                                 if output_text:
                                     try:
                                         # Try ast.literal_eval first (safer than eval)
-                                        import ast
-
                                         output_data = ast.literal_eval(output_text)
                                     except (ValueError, SyntaxError):
                                         # If that fails, try json.loads
@@ -723,9 +721,10 @@ class SessionManager:
                                             # Last resort: store as string
                                             output_data = {"result": output_text}
 
-                                # Create a new SUCCESS action instead of updating the PROCESSING one
+                                # Create a new SUCCESS action, prefix with "complete_" like openai_compatible.py
+                                call_id = message_json.get("call_id", last_action.action_id)
                                 success_action = ActionHistory(
-                                    action_id=str(uuid.uuid4()),
+                                    action_id="complete_" + call_id,
                                     role=ActionRole.TOOL,
                                     messages=f"Tool result: {last_action.action_type}",
                                     action_type=last_action.action_type,
@@ -763,9 +762,12 @@ class SessionManager:
                                     # Add to progress
                                     assistant_progress.append(f"💭Thinking: {text}")
 
-                                    # Create ActionHistory for thinking (will parse sql/output on flush)
+                                    # Create ActionHistory for thinking (use response_id from provider)
+                                    response_id = message_json.get("provider_data", {}).get(
+                                        "response_id", message_json.get("id", str(uuid.uuid4()))
+                                    )
                                     thinking_action = ActionHistory(
-                                        action_id=str(uuid.uuid4()),
+                                        action_id=response_id,
                                         role=ActionRole.ASSISTANT,
                                         messages=text,
                                         action_type="thinking",
