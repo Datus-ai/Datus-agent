@@ -276,6 +276,22 @@ class TestSyncMetricToDb:
         assert metric_call.kwargs.get("include_metrics") is True
         assert metric_call.kwargs.get("metric_sqls") == {"rev": "SELECT 1"}
 
+    def test_semantic_sync_failure_aborts_metric_sync(self, generation_tools, tmp_path):
+        """When semantic object sync fails, metric sync is skipped and failure propagated."""
+        metric_file = tmp_path / "metric.yaml"
+        metric_file.write_text("metric:\n  name: revenue\n  type: simple\n")
+        semantic_file = tmp_path / "model.yaml"
+        semantic_file.write_text("semantic_model:\n  name: orders\n")
+
+        with patch("datus.cli.generation_hooks.GenerationHooks._sync_semantic_to_db") as mock_sync:
+            mock_sync.return_value = {"success": False, "error": "semantic sync failed"}
+            result = generation_tools._sync_metric_to_db(str(metric_file), str(semantic_file))
+
+        assert result["success"] is False
+        assert result["error"] == "semantic sync failed"
+        # Only called once (semantic sync), metric sync was skipped
+        assert mock_sync.call_count == 1
+
     def test_semantic_model_not_exists_falls_through(self, generation_tools, tmp_path):
         """When semantic_model_file path provided but file doesn't exist, sync metric alone."""
         metric_file = tmp_path / "metric.yaml"

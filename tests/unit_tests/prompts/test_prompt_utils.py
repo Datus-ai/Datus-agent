@@ -339,7 +339,8 @@ class TestGenMetricsV12Template:
             existing_subject_trees=[],
         )
 
-        assert "available_skills" in result or "load_skill" in result or "define-metric" in result
+        assert "define-metric" in result
+        assert "available_skills" in result or "load_skill" in result
 
     def test_v12_is_latest_version(self):
         """PromptManager.get_latest_version returns '1.2' for gen_metrics."""

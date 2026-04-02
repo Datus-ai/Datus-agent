@@ -107,7 +107,7 @@ For each table involved in the metric:
 
 ### 2a. Check Existing Model
 
-1. Call `check_semantic_object_exists(object_name="{table_name}", kind="table")` to check if a semantic model exists.
+1. Call `check_semantic_object_exists(name="{table_name}", kind="table")` to check if a semantic model exists.
 2. **If the semantic model exists:**
    - Use `read_file` to read the existing semantic model YAML
    - Verify that it contains the measures and dimensions needed for this metric

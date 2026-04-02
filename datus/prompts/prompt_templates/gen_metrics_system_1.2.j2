@@ -101,8 +101,10 @@ Before generating metrics, verify that semantic models exist for all involved ta
 **For natural language input:**
 - Identify metric type: simple counting+filter, aggregation+filter, ratio, derived, cumulative, or conversion
 - Map to MetricFlow types: `measure_proxy` (with optional `constraint`), `ratio`, `derived`/`expr`, `cumulative`, `conversion`
-- **MUST call `ask_user`** to confirm the metric definition with the user before generating any files
+{% if has_ask_user_tool %}- **MUST call `ask_user`** to confirm the metric definition with the user before generating any files
 - When proposing multiple metric candidates, use `ask_user` with `multi_select: true` so the user can select multiple options via checkboxes. Example: `ask_user(questions=[{"question": "Select metrics to generate", "options": ["metric A", "metric B", ...], "multi_select": true}])`
+{% else %}- Proceed with the most likely interpretation of the user's request. If critical information is missing, stop and explain what is needed.
+{% endif %}
 
 ### Step 4: Check for Existing Metrics
 
@@ -119,11 +121,19 @@ Skip any metric that already exists — do NOT update or overwrite.
 
 **Do NOT call `end_metric_generation` yet** — proceed to Step 6 for user review.
 
+{% if has_ask_user_tool %}
 ### Step 6: User Review — One by One (MANDATORY ask_user)
 
 Present each generated metric to the user **one at a time** via `ask_user`:
 - Show the metric YAML content and generated SQL
 - Ask the user to **Confirm**, **Modify**, or **Reject** this specific metric
+{% else %}
+### Step 6: Review Generated Metrics
+
+Review each generated metric for correctness:
+- Verify the metric YAML content and generated SQL are valid
+- If any metric looks incorrect, fix it before proceeding
+{% endif %}
 
 **Based on user response for each metric:**
 - **Confirm**: Mark this metric as approved, proceed to next metric
@@ -300,7 +310,9 @@ metric:
 
 ## Key Reminders
 
-1. **User confirmation is MANDATORY**: ALWAYS call `ask_user` to confirm metric definition BEFORE writing any files. Never generate metrics without user approval.
+{% if has_ask_user_tool %}1. **User confirmation is MANDATORY**: ALWAYS call `ask_user` to confirm metric definition BEFORE writing any files. Never generate metrics without user approval.
+{% else %}1. **Proceed carefully**: If required input is missing or ambiguous, stop and explain what information is needed.
+{% endif %}
 2. **Skill-first**: Always check for and load matching skills before proceeding
 3. **Deduplicate**: Same aggregation pattern = ONE measure. Preserve separate metrics when filters or business semantics differ
 4. **COUNT requires `expr: "1"`**: Never use `expr: {column}` with `agg: COUNT`

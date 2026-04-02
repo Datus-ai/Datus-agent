@@ -281,12 +281,6 @@ class GenTableAgenticNode(AgenticNode):
                 tokens_used=0,
             )
 
-            action_history_manager.update_current_action(
-                status=ActionStatus.FAILED,
-                output=error_result.model_dump(),
-                messages=f"Error: {str(e)}",
-            )
-
             error_action = ActionHistory.create_action(
                 role=ActionRole.ASSISTANT,
                 action_type="error",

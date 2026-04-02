@@ -1,6 +1,6 @@
 ---
 name: gen-table
-description: Create database tables from SQL (CTAS) or natural language descriptions with optional semantic model generation
+description: Create database tables from SQL (CTAS) or natural language descriptions
 tags: "wide-table, CTAS, DDL, create-table, query-acceleration"
 version: "1.0.0"
 user_invocable: false
@@ -44,15 +44,15 @@ Detect input mode:
 ### SQL Mode
 1. **Generate CTAS SQL**: `CREATE TABLE {schema}.{table_name} AS ({select_sql})`
 2. **Call `execute_ddl(sql)`** to create the table.
-3. **Verify**: Call `read_query("SELECT COUNT(*) FROM {table_name}")` to confirm row count.
+3. **Verify**: Call `read_query("SELECT COUNT(*) FROM {schema}.{table_name}")` to confirm row count.
 
 ### Description Mode
 1. **Generate CREATE TABLE SQL**: `CREATE TABLE {schema}.{table_name} ({column_defs})`
 2. **Call `execute_ddl(sql)`** to create the table.
-3. **Verify**: Call `describe_table(table_name)` to confirm schema matches.
+3. **Verify**: Call `describe_table("{schema}.{table_name}")` to confirm schema matches.
 
 ### Both Modes
-4. **Call `describe_table(table_name)`** to confirm the created schema.
+4. **Call `describe_table("{schema}.{table_name}")`** to confirm the created schema.
 
 If DDL fails:
 - Parse the error message

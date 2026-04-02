@@ -267,7 +267,7 @@ class TestGenTableAgenticNodeExecution:
         assert len(mock_llm_create.call_history) >= 1
         call = mock_llm_create.call_history[0]
         prompt = call.get("prompt", "")
-        assert "california_schools" in prompt or "Create" in prompt
+        assert "california_schools" in prompt
 
 
 # ---------------------------------------------------------------------------
