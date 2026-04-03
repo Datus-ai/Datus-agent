@@ -816,3 +816,247 @@ class TestInitReferenceTemplateAsyncProcessing:
         assert result["processed_entries"] == 0
         mock_storage.upsert_batch.assert_not_called()
         mock_storage.after_init.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# _is_safe_identifier
+# ---------------------------------------------------------------------------
+
+
+class TestIsSafeIdentifier:
+    def test_plain_identifier(self):
+        from datus.storage.reference_template.reference_template_init import _is_safe_identifier
+
+        assert _is_safe_identifier("table_name")
+        assert _is_safe_identifier("col1")
+        assert _is_safe_identifier("_private")
+
+    def test_backtick_quoted_identifier(self):
+        from datus.storage.reference_template.reference_template_init import _is_safe_identifier
+
+        assert _is_safe_identifier("`Educational Option Type`")
+        assert _is_safe_identifier("`col with spaces`")
+
+    def test_unsafe_identifiers(self):
+        from datus.storage.reference_template.reference_template_init import _is_safe_identifier
+
+        assert not _is_safe_identifier("1bad_start")
+        assert not _is_safe_identifier("table; DROP TABLE users")
+        assert not _is_safe_identifier("col'injection")
+        assert not _is_safe_identifier("")
+
+
+# ---------------------------------------------------------------------------
+# _enrich_dimension_param
+# ---------------------------------------------------------------------------
+
+
+class TestEnrichDimensionParam:
+    def test_enrich_success(self):
+        from unittest.mock import MagicMock
+
+        from datus.storage.reference_template.reference_template_init import _enrich_dimension_param
+        from datus.tools.func_tool.base import FuncToolResult
+
+        mock_db = MagicMock()
+        mock_db.read_query.return_value = FuncToolResult(
+            success=1,
+            result={"compressed_data": "index,value\n0,TypeA\n1,TypeB\n2,TypeC"},
+        )
+        p = {"name": "school_type", "type": "dimension", "column_ref": "schools.county"}
+        _enrich_dimension_param(p, mock_db)
+        assert "sample_values" in p
+        assert "TypeA" in p["sample_values"]
+
+    def test_enrich_no_result(self):
+        from unittest.mock import MagicMock
+
+        from datus.storage.reference_template.reference_template_init import _enrich_dimension_param
+        from datus.tools.func_tool.base import FuncToolResult
+
+        mock_db = MagicMock()
+        mock_db.read_query.return_value = FuncToolResult(success=0, error="query failed")
+        p = {"name": "school_type", "type": "dimension", "column_ref": "schools.county"}
+        _enrich_dimension_param(p, mock_db)
+        assert "sample_values" not in p
+
+    def test_enrich_invalid_col_ref_no_dot(self):
+        from unittest.mock import MagicMock
+
+        from datus.storage.reference_template.reference_template_init import _enrich_dimension_param
+
+        mock_db = MagicMock()
+        p = {"name": "x", "type": "dimension", "column_ref": "no_dot_col_ref"}
+        _enrich_dimension_param(p, mock_db)
+        mock_db.read_query.assert_not_called()
+        assert "sample_values" not in p
+
+    def test_enrich_unsafe_identifier_skipped(self):
+        from unittest.mock import MagicMock
+
+        from datus.storage.reference_template.reference_template_init import _enrich_dimension_param
+
+        mock_db = MagicMock()
+        p = {"name": "x", "type": "dimension", "column_ref": "schools; DROP TABLE users.county"}
+        _enrich_dimension_param(p, mock_db)
+        mock_db.read_query.assert_not_called()
+        assert "sample_values" not in p
+
+    def test_enrich_db_exception_does_not_raise(self):
+        from unittest.mock import MagicMock
+
+        from datus.storage.reference_template.reference_template_init import _enrich_dimension_param
+
+        mock_db = MagicMock()
+        mock_db.read_query.side_effect = RuntimeError("connection lost")
+        p = {"name": "x", "type": "dimension", "column_ref": "schools.county"}
+        _enrich_dimension_param(p, mock_db)
+        assert "sample_values" not in p
+
+
+# ---------------------------------------------------------------------------
+# _enrich_column_param
+# ---------------------------------------------------------------------------
+
+
+class TestEnrichColumnParam:
+    def test_enrich_success(self):
+        from unittest.mock import MagicMock
+
+        from datus.storage.reference_template.reference_template_init import _enrich_column_param
+        from datus.tools.func_tool.base import FuncToolResult
+
+        mock_db = MagicMock()
+        mock_db.describe_table.return_value = FuncToolResult(
+            success=1,
+            result=[{"column_name": "id"}, {"column_name": "name"}, {"column_name": "region"}],
+        )
+        p = {"name": "col", "type": "column", "table_refs": ["schools"]}
+        _enrich_column_param(p, mock_db)
+        assert "sample_values" in p
+        assert "id" in p["sample_values"]
+        assert "region" in p["sample_values"]
+
+    def test_enrich_multiple_tables(self):
+        from unittest.mock import MagicMock
+
+        from datus.storage.reference_template.reference_template_init import _enrich_column_param
+        from datus.tools.func_tool.base import FuncToolResult
+
+        mock_db = MagicMock()
+        mock_db.describe_table.side_effect = [
+            FuncToolResult(success=1, result=[{"column_name": "a"}, {"column_name": "b"}]),
+            FuncToolResult(success=1, result=[{"column_name": "c"}, {"column_name": "b"}]),
+        ]
+        p = {"name": "col", "type": "column", "table_refs": ["t1", "t2"]}
+        _enrich_column_param(p, mock_db)
+        assert "a" in p["sample_values"]
+        assert "c" in p["sample_values"]
+        # "b" deduped
+        assert p["sample_values"].count("b") == 1
+
+    def test_unsafe_table_skipped(self):
+        from unittest.mock import MagicMock
+
+        from datus.storage.reference_template.reference_template_init import _enrich_column_param
+
+        mock_db = MagicMock()
+        p = {"name": "col", "type": "column", "table_refs": ["bad; table"]}
+        _enrich_column_param(p, mock_db)
+        mock_db.describe_table.assert_not_called()
+        assert "sample_values" not in p
+
+    def test_enrich_describe_fails_gracefully(self):
+        from unittest.mock import MagicMock
+
+        from datus.storage.reference_template.reference_template_init import _enrich_column_param
+
+        mock_db = MagicMock()
+        mock_db.describe_table.side_effect = RuntimeError("table not found")
+        p = {"name": "col", "type": "column", "table_refs": ["schools"]}
+        _enrich_column_param(p, mock_db)
+        assert "sample_values" not in p
+
+    def test_column_name_fallback_to_name_key(self):
+        """If result uses 'name' key instead of 'column_name', it should still be picked up."""
+        from unittest.mock import MagicMock
+
+        from datus.storage.reference_template.reference_template_init import _enrich_column_param
+        from datus.tools.func_tool.base import FuncToolResult
+
+        mock_db = MagicMock()
+        mock_db.describe_table.return_value = FuncToolResult(
+            success=1,
+            result=[{"name": "id"}, {"name": "score"}],
+        )
+        p = {"name": "col", "type": "column", "table_refs": ["t"]}
+        _enrich_column_param(p, mock_db)
+        assert "id" in p["sample_values"]
+        assert "score" in p["sample_values"]
+
+
+# ---------------------------------------------------------------------------
+# _extract_csv_values
+# ---------------------------------------------------------------------------
+
+
+class TestExtractCsvValues:
+    def test_valid_compressed_data(self):
+
+        from datus.storage.reference_template.reference_template_init import _extract_csv_values
+        from datus.tools.func_tool.base import FuncToolResult
+
+        result = FuncToolResult(
+            success=1,
+            result={"compressed_data": "index,value\n0,TypeA\n1,TypeB"},
+        )
+        values = _extract_csv_values(result)
+        assert values == ["TypeA", "TypeB"]
+
+    def test_header_only_no_values(self):
+        from datus.storage.reference_template.reference_template_init import _extract_csv_values
+        from datus.tools.func_tool.base import FuncToolResult
+
+        result = FuncToolResult(
+            success=1,
+            result={"compressed_data": "index,value"},
+        )
+        values = _extract_csv_values(result)
+        assert values is None
+
+    def test_empty_compressed_data(self):
+        from datus.storage.reference_template.reference_template_init import _extract_csv_values
+        from datus.tools.func_tool.base import FuncToolResult
+
+        result = FuncToolResult(success=1, result={"compressed_data": ""})
+        values = _extract_csv_values(result)
+        assert values is None
+
+    def test_no_result(self):
+        from datus.storage.reference_template.reference_template_init import _extract_csv_values
+        from datus.tools.func_tool.base import FuncToolResult
+
+        result = FuncToolResult(success=0, error="failed")
+        values = _extract_csv_values(result)
+        assert values is None
+
+    def test_empty_result_dict(self):
+        from datus.storage.reference_template.reference_template_init import _extract_csv_values
+        from datus.tools.func_tool.base import FuncToolResult
+
+        result = FuncToolResult(success=1, result={})
+        values = _extract_csv_values(result)
+        assert values is None
+
+    def test_values_with_commas_in_value(self):
+        """Values with commas should be captured from after the first comma."""
+        from datus.storage.reference_template.reference_template_init import _extract_csv_values
+        from datus.tools.func_tool.base import FuncToolResult
+
+        result = FuncToolResult(
+            success=1,
+            result={"compressed_data": "index,value\n0,hello world\n1,another"},
+        )
+        values = _extract_csv_values(result)
+        assert "hello world" in values
+        assert "another" in values

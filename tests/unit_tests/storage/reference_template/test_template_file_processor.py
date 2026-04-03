@@ -474,3 +474,162 @@ class TestJinjaBlockTags:
     def test_unknown_tag(self):
         assert not _is_block_opening_tag("extends 'base.html'")
         assert not _is_block_closing_tag("include 'header.html'")
+
+
+class TestAnalyzeTemplateParameters:
+    """Tests for analyze_template_parameters — the sqlglot-based enrichment function."""
+
+    def test_no_params_returns_empty(self):
+        from datus.storage.reference_template.template_file_processor import analyze_template_parameters
+
+        result = analyze_template_parameters("SELECT 1 FROM t")
+        assert result == []
+
+    def test_dimension_param_in_quoted_context(self):
+        from datus.storage.reference_template.template_file_processor import analyze_template_parameters
+
+        sql = "SELECT * FROM orders WHERE region = '{{region}}'"
+        result = analyze_template_parameters(sql)
+        assert len(result) == 1
+        entry = result[0]
+        assert entry["name"] == "region"
+        assert entry["type"] == "dimension"
+
+    def test_number_param_in_limit(self):
+        from datus.storage.reference_template.template_file_processor import analyze_template_parameters
+
+        sql = "SELECT * FROM orders LIMIT {{n}}"
+        result = analyze_template_parameters(sql)
+        assert len(result) == 1
+        assert result[0]["name"] == "n"
+        assert result[0]["type"] == "number"
+
+    def test_number_param_in_comparison(self):
+        from datus.storage.reference_template.template_file_processor import analyze_template_parameters
+
+        sql = "SELECT * FROM t WHERE score > {{threshold}}"
+        result = analyze_template_parameters(sql)
+        assert len(result) == 1
+        assert result[0]["name"] == "threshold"
+        assert result[0]["type"] == "number"
+
+    def test_keyword_param_after_order_by(self):
+        from datus.storage.reference_template.template_file_processor import analyze_template_parameters
+
+        sql = "SELECT * FROM t ORDER BY score {{sort_dir}}"
+        result = analyze_template_parameters(sql)
+        assert len(result) == 1
+        entry = result[0]
+        assert entry["name"] == "sort_dir"
+        assert entry["type"] == "keyword"
+        assert "ASC" in entry.get("allowed_values", [])
+        assert "DESC" in entry.get("allowed_values", [])
+
+    def test_column_param_in_group_by(self):
+        from datus.storage.reference_template.template_file_processor import analyze_template_parameters
+
+        sql = "SELECT {{col}}, count(*) FROM t GROUP BY {{col}}"
+        result = analyze_template_parameters(sql)
+        names = {e["name"] for e in result}
+        assert "col" in names
+        col_entry = next(e for e in result if e["name"] == "col")
+        assert col_entry["type"] == "column"
+
+    def test_column_param_in_select(self):
+        from datus.storage.reference_template.template_file_processor import analyze_template_parameters
+
+        sql = "SELECT {{col}} FROM t"
+        result = analyze_template_parameters(sql)
+        assert len(result) == 1
+        assert result[0]["name"] == "col"
+        assert result[0]["type"] == "column"
+
+    def test_unknown_param_unquoted_no_special_context(self):
+        from datus.storage.reference_template.template_file_processor import analyze_template_parameters
+
+        sql = "SELECT * FROM t WHERE {{something}} = 1"
+        result = analyze_template_parameters(sql)
+        assert len(result) == 1
+        assert result[0]["type"] == "unknown"
+
+    def test_dimension_param_resolves_column_ref_via_sqlglot(self):
+        from datus.storage.reference_template.template_file_processor import analyze_template_parameters
+
+        sql = "SELECT * FROM schools WHERE county = '{{county}}'"
+        result = analyze_template_parameters(sql, dialect="sqlite")
+        assert len(result) == 1
+        entry = result[0]
+        assert entry["name"] == "county"
+        assert entry["type"] == "dimension"
+        assert "column_ref" in entry
+        assert "county" in entry["column_ref"]
+
+    def test_multiple_params_mixed_types(self):
+        from datus.storage.reference_template.template_file_processor import analyze_template_parameters
+
+        sql = "SELECT * FROM t WHERE region = '{{region}}' ORDER BY score {{dir}} LIMIT {{n}}"
+        result = analyze_template_parameters(sql)
+        by_name = {e["name"]: e for e in result}
+        assert by_name["region"]["type"] == "dimension"
+        assert by_name["dir"]["type"] == "keyword"
+        assert by_name["n"]["type"] == "number"
+
+    def test_dialect_none_uses_fallback_chain(self):
+        """When dialect=None, should still parse without error."""
+        from datus.storage.reference_template.template_file_processor import analyze_template_parameters
+
+        sql = "SELECT * FROM t WHERE x = '{{val}}'"
+        result = analyze_template_parameters(sql, dialect=None)
+        assert len(result) == 1
+        assert result[0]["type"] == "dimension"
+
+
+class TestResolveDimensionColumns:
+    """Tests for _resolve_dimension_columns — the sqlglot AST resolution function."""
+
+    def test_resolves_simple_where_eq(self):
+        from datus.storage.reference_template.template_file_processor import _resolve_dimension_columns
+
+        sql = "SELECT * FROM schools WHERE county = '{{county}}'"
+        refs, tables = _resolve_dimension_columns(sql, {"county"}, dialect="sqlite")
+        assert "county" in refs
+        assert "county" in refs["county"]
+        assert "schools" in tables
+
+    def test_resolves_aliased_table(self):
+        from datus.storage.reference_template.template_file_processor import _resolve_dimension_columns
+
+        sql = "SELECT * FROM schools s WHERE s.county = '{{county}}'"
+        refs, tables = _resolve_dimension_columns(sql, {"county"}, dialect="sqlite")
+        assert "county" in refs
+        assert "schools" in refs["county"]
+
+    def test_resolves_multiple_tables(self):
+        from datus.storage.reference_template.template_file_processor import _resolve_dimension_columns
+
+        sql = "SELECT * FROM a JOIN b ON a.id = b.id WHERE a.name = '{{name}}'"
+        refs, tables = _resolve_dimension_columns(sql, {"name"}, dialect="sqlite")
+        assert "a" in tables and "b" in tables
+
+    def test_returns_empty_on_parse_failure(self):
+        from datus.storage.reference_template.template_file_processor import _resolve_dimension_columns
+
+        # A completely invalid SQL that no dialect can parse
+        refs, tables = _resolve_dimension_columns("NOT SQL AT ALL !!!###@@@", {"p"}, dialect="sqlite")
+        assert refs == {}
+
+    def test_empty_quoted_params(self):
+        from datus.storage.reference_template.template_file_processor import _resolve_dimension_columns
+
+        sql = "SELECT * FROM t WHERE x = 1"
+        refs, tables = _resolve_dimension_columns(sql, set(), dialect="sqlite")
+        assert refs == {}
+        assert "t" in tables
+
+    def test_single_from_table_used_when_no_alias(self):
+        from datus.storage.reference_template.template_file_processor import _resolve_dimension_columns
+
+        sql = "SELECT * FROM orders WHERE status = '{{status}}'"
+        refs, tables = _resolve_dimension_columns(sql, {"status"}, dialect="sqlite")
+        assert "status" in refs
+        assert "orders" in refs["status"]
