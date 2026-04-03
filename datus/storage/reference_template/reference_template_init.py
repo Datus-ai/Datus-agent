@@ -3,6 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import asyncio
+import json
 from typing import Any, Dict, Optional
 
 from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
@@ -25,8 +26,118 @@ TEMPLATE_EXTRA_INSTRUCTIONS = (
     "It contains placeholder variables in {{ variable }} syntax that will be filled at render time. "
     "In your summary, describe what SQL this template produces when rendered, "
     "what each parameter controls, and the business scenario it addresses. "
-    "In search_text, include both the business intent keywords and the parameter names."
+    "In search_text, include both the business intent keywords and the parameter names.\n\n"
+    "**IMPORTANT — Parameter Analysis**: In addition to the standard YAML fields, you MUST add a `parameters` "
+    "list in the YAML output. For EACH {{ variable }} placeholder in the template, analyze its SQL context "
+    "and output an entry with:\n"
+    "- `name`: the variable name\n"
+    "- `type`: one of `dimension` (filters on a table column value), `column` (a column name used in "
+    "GROUP BY/SELECT/ORDER BY), `keyword` (SQL keyword like ASC/DESC), "
+    "or `number` (numeric value like LIMIT or threshold)\n"
+    "- `column_ref`: (dimension type ONLY) the `table.column` this parameter filters on, "
+    "e.g., `frpm.\\`Educational Option Type\\``\n"
+    '- `allowed_values`: (keyword type ONLY) list of valid values, e.g., ["ASC", "DESC"]\n'
+    "- `description`: brief description of what this parameter controls\n\n"
+    "Example parameters block in YAML:\n"
+    "```yaml\n"
+    "parameters:\n"
+    '  - name: "school_type"\n'
+    '    type: "dimension"\n'
+    '    column_ref: "frpm.`Educational Option Type`"\n'
+    '    description: "Type of educational option to filter by"\n'
+    '  - name: "sort_order"\n'
+    '    type: "keyword"\n'
+    '    allowed_values: ["ASC", "DESC"]\n'
+    '    description: "Sort direction for results"\n'
+    '  - name: "limit"\n'
+    '    type: "number"\n'
+    '    description: "Maximum number of rows to return"\n'
+    "```"
 )
+
+
+def _enrich_dimension_sample_values(params: list, agent_config: AgentConfig) -> None:
+    """Enrich parameter metadata with sample values from the database.
+
+    - dimension params: queries top 10 most common values via GROUP BY / COUNT
+    - column params: queries table column names via describe_table
+
+    Args:
+        params: List of parameter dicts (modified in place)
+        agent_config: Agent config to create DB connection
+    """
+    from datus.tools.db_tools.db_manager import db_manager_instance
+    from datus.tools.func_tool.database import DBFuncTool
+
+    try:
+        db_manager = db_manager_instance(agent_config.namespaces)
+        conn = db_manager.get_conn(agent_config.current_namespace, agent_config.current_database)
+        db_tool = DBFuncTool(conn, agent_config=agent_config)
+    except Exception as e:
+        logger.debug(f"Cannot create DB connection for parameter value enrichment: {e}")
+        return
+
+    for p in params:
+        ptype = p.get("type")
+
+        if ptype == "dimension" and p.get("column_ref"):
+            _enrich_dimension_param(p, db_tool)
+        elif ptype == "column" and p.get("table_refs"):
+            _enrich_column_param(p, db_tool)
+
+
+def _enrich_dimension_param(p: dict, db_tool) -> None:
+    """Query top 10 most common values for a dimension parameter."""
+    col_ref = p["column_ref"]
+    parts = col_ref.split(".", 1)
+    if len(parts) != 2:
+        return
+    table, column = parts
+    sql = f"SELECT {column} FROM {table} WHERE {column} IS NOT NULL GROUP BY {column} ORDER BY COUNT(*) DESC LIMIT 10"
+    try:
+        result = db_tool.read_query(sql)
+        values = _extract_csv_values(result)
+        if values:
+            p["sample_values"] = values
+    except Exception as e:
+        logger.debug(f"Failed to query sample values for {col_ref}: {e}")
+
+
+def _enrich_column_param(p: dict, db_tool) -> None:
+    """Query column names from referenced tables for a column-type parameter."""
+    table_refs = p["table_refs"]
+    all_columns = []
+    for table in table_refs:
+        try:
+            result = db_tool.describe_table(table)
+            if result.success and result.result:
+                for col_info in result.result:
+                    col_name = col_info.get("column_name") or col_info.get("name", "")
+                    if col_name and col_name not in all_columns:
+                        all_columns.append(col_name)
+        except Exception as e:
+            logger.debug(f"Failed to describe table {table}: {e}")
+    if all_columns:
+        p["sample_values"] = all_columns
+
+
+def _extract_csv_values(result) -> Optional[list]:
+    """Extract values from a read_query result's compressed_data CSV."""
+    if not result.success or not result.result:
+        return None
+    compressed = result.result.get("compressed_data", "")
+    if not compressed:
+        return None
+    lines = compressed.strip().split("\n")
+    if len(lines) <= 1:
+        return None
+    values = []
+    for line in lines[1:]:
+        _, _, val = line.partition(",")
+        val = val.strip()
+        if val:
+            values.append(val)
+    return values or None
 
 
 def _action_status_value(action: Any) -> Optional[str]:
@@ -133,6 +244,29 @@ async def process_template_item(
                     item["search_text"] = doc["search_text"]
                 if doc.get("tags"):
                     item["tags"] = doc["tags"]
+                # Enrich parameters: sqlglot static analysis (deterministic) + LLM description
+                from datus.storage.reference_template.template_file_processor import analyze_template_parameters
+
+                static_params = analyze_template_parameters(
+                    item.get("template", ""), dialect=agent_config.db_type or None
+                )
+                llm_parameters = doc.get("parameters")
+                if static_params:
+                    # Merge LLM descriptions into sqlglot-analyzed params
+                    if llm_parameters and isinstance(llm_parameters, list):
+                        llm_map = {p["name"]: p for p in llm_parameters if "name" in p}
+                        for sp in static_params:
+                            llm_p = llm_map.get(sp["name"], {})
+                            if not sp.get("description"):
+                                sp["description"] = llm_p.get("description", "")
+                            if sp.get("type") == "keyword" and not sp.get("allowed_values"):
+                                sp["allowed_values"] = llm_p.get("allowed_values", [])
+                    # Query DISTINCT values for dimension params and store them
+                    _enrich_dimension_sample_values(static_params, agent_config)
+                    item["parameters"] = json.dumps(static_params)
+                elif llm_parameters and isinstance(llm_parameters, list):
+                    # Fallback to LLM-only parameters if sqlglot analysis returned nothing
+                    item["parameters"] = json.dumps(llm_parameters)
         except Exception as e:
             logger.warning(f"Failed to open summary file for {file_path}: {e}")
             return None

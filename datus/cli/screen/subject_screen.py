@@ -27,6 +27,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.storage.ext_knowledge.store import ExtKnowledgeRAG
 from datus.storage.metric.store import MetricRAG
 from datus.storage.reference_sql.store import ReferenceSqlRAG
+from datus.storage.reference_template.store import ReferenceTemplateRAG
 from datus.storage.subject_manager import SubjectUpdater
 from datus.utils.loggings import get_logger
 
@@ -596,6 +597,7 @@ class SubjectScreen(ContextScreen):
         self.metrics_rag: MetricRAG = MetricRAG(self.agent_config)
         self.sql_rag: ReferenceSqlRAG = ReferenceSqlRAG(self.agent_config)
         self.ext_knowledge_rag: ExtKnowledgeRAG = ExtKnowledgeRAG(self.agent_config)
+        self.reference_template_rag: ReferenceTemplateRAG = ReferenceTemplateRAG(self.agent_config)
         self.subject_tree_store = self.metrics_rag.storage.subject_tree
         self.inject_callback = inject_callback
         self.selected_path = ""
@@ -793,6 +795,14 @@ class SubjectScreen(ContextScreen):
                     entry_key = f"ext_knowledge:{name}"
                     node_data["subject_entries"][entry_key] = {"name": name, "entry_type": "ext_knowledge"}
 
+            # Get reference_template for this exact node (not descendants)
+            template_results = self.reference_template_rag.reference_template_storage.list_entries(node_id)
+            for template_entry in template_results:
+                name = template_entry.get("name", "")
+                if name:
+                    entry_key = f"reference_template:{name}"
+                    node_data["subject_entries"][entry_key] = {"name": name, "entry_type": "reference_template"}
+
             # Recursively attach entries for children
             for child_name, child_data in node_data.get("children", {}).items():
                 child_path = subject_path + [child_name]
@@ -917,6 +927,8 @@ class SubjectScreen(ContextScreen):
                 icon = "💻"
             elif entry_type == "ext_knowledge":
                 icon = "📚"
+            elif entry_type == "reference_template":
+                icon = "📄"
             else:
                 icon = "📋"  # Fallback icon
 
@@ -1151,6 +1163,7 @@ class SubjectScreen(ContextScreen):
         metrics: List[Dict[str, Any]],
         sql_entries: List[Dict[str, Any]],
         ext_knowledge_entries: Optional[List[Dict[str, Any]]] = None,
+        reference_template_entries: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         """Render static (read-only) details using the `_create_*_content` helpers."""
 
@@ -1178,6 +1191,10 @@ class SubjectScreen(ContextScreen):
 
         if sql_entries:
             group = self._create_sql_panel_content(sql_entries)
+            sql_container.mount(FocusableStatic(group))
+            self._toggle_visibility(sql_container, True)
+        elif reference_template_entries:
+            group = self._create_reference_template_panel_content(reference_template_entries)
             sql_container.mount(FocusableStatic(group))
             self._toggle_visibility(sql_container, True)
         else:
@@ -1586,6 +1603,8 @@ class SubjectScreen(ContextScreen):
         name = subject_info.get("name", "")
         entry_type = subject_info.get("entry_type", "")
 
+        reference_template_entries: List[Dict[str, Any]] = []
+
         if node_type == "subject_entry" and node_id and name:
             # Fetch only the specific type based on entry_type
             if entry_type == "metric":
@@ -1594,16 +1613,20 @@ class SubjectScreen(ContextScreen):
                 sql_entries = self._fetch_sql_by_path_and_name(node_id, name)
             elif entry_type == "ext_knowledge":
                 ext_knowledge_entries = self._fetch_ext_knowledge_by_path_and_name(node_id, name)
+            elif entry_type == "reference_template":
+                reference_template_entries = self._fetch_reference_template_by_path_and_name(node_id, name)
 
         # Render depending on mode
         if self.readonly:
-            self._render_readonly_panels(subject_info, metrics, sql_entries, ext_knowledge_entries)
+            self._render_readonly_panels(
+                subject_info, metrics, sql_entries, ext_knowledge_entries, reference_template_entries
+            )
         else:
             self._render_editable_panels(metrics, sql_entries, ext_knowledge_entries)
 
         # Layout sizing + divider logic (same for both modes)
         metrics_visible = bool(metrics)
-        sql_visible = bool(sql_entries)
+        sql_visible = bool(sql_entries) or bool(reference_template_entries)
         ext_knowledge_visible = bool(ext_knowledge_entries)
 
         # Calculate visible count for layout
@@ -1703,6 +1726,86 @@ class SubjectScreen(ContextScreen):
             details.add_row(
                 "SQL",
                 Syntax(str(sql_entry.get("sql", "")), "sql", theme="monokai", word_wrap=True, line_numbers=True),
+            )
+
+            sections.append(details)
+
+        return Group(*sections)
+
+    @staticmethod
+    def _format_template_parameters(parameters_json: str) -> Group:
+        """Format template parameters JSON into a readable Rich table."""
+        import json as _json
+
+        try:
+            params = _json.loads(parameters_json)
+        except (ValueError, TypeError):
+            return Group(parameters_json)
+
+        if not isinstance(params, list):
+            return Group(parameters_json)
+
+        param_table = Table(
+            show_header=True,
+            box=box.SIMPLE_HEAVY,
+            expand=True,
+            padding=(0, 1),
+        )
+        param_table.add_column("Name", style="bold white", width=18)
+        param_table.add_column("Type", style="cyan", width=10)
+        param_table.add_column("Column / Values", style="green", ratio=1)
+        param_table.add_column("Description", style="yellow", ratio=1)
+
+        for p in params:
+            name = p.get("name", "")
+            ptype = p.get("type", "unknown")
+            desc = p.get("description", "")
+
+            if ptype == "dimension":
+                col_info = p.get("column_ref", "")
+                sample_vals = p.get("sample_values", [])
+                if sample_vals:
+                    col_info += "\n[dim]values: " + ", ".join(sample_vals) + "[/dim]"
+            elif ptype == "column":
+                table_refs = p.get("table_refs", [])
+                col_info = ", ".join(table_refs) if table_refs else ""
+                sample_vals = p.get("sample_values", [])
+                if sample_vals:
+                    col_info += "\n[dim]columns: " + ", ".join(sample_vals) + "[/dim]"
+            elif ptype == "keyword":
+                vals = p.get("allowed_values", [])
+                col_info = ", ".join(vals) if vals else ""
+            else:
+                col_info = ""
+
+            param_table.add_row(name, ptype, col_info, desc)
+
+        return Group(param_table)
+
+    def _create_reference_template_panel_content(self, template_entries: List[Dict[str, Any]]) -> Group:
+        sections: List[Table] = []
+        for idx, entry in enumerate(template_entries, 1):
+            details = Table(
+                title=f"[bold cyan]📄 Template #{idx}: {entry.get('name', 'Unnamed')}[/bold cyan]",
+                show_header=False,
+                box=box.SIMPLE,
+                border_style="blue",
+                expand=True,
+                padding=(0, 1),
+            )
+            details.add_column("Key", style="bright_cyan", width=12)
+            details.add_column("Value", style="yellow", ratio=1)
+
+            if summary := entry.get("summary"):
+                details.add_row("Summary", summary)
+            if parameters := entry.get("parameters"):
+                details.add_row("Parameters", self._format_template_parameters(parameters))
+            if tags := entry.get("tags"):
+                details.add_row("Tags", build_historical_sql_tags(tags))
+
+            details.add_row(
+                "Template",
+                Syntax(str(entry.get("template", "")), "sql", theme="monokai", word_wrap=True, line_numbers=True),
             )
 
             sections.append(details)
@@ -2182,6 +2285,18 @@ class SubjectScreen(ContextScreen):
             List of ext_knowledge entries matching the criteria
         """
         return self.ext_knowledge_rag.store.list_entries(node_id=node_id, name=name)
+
+    def _fetch_reference_template_by_path_and_name(self, node_id: int, name: str) -> List[Dict[str, Any]]:
+        """Fetch reference template entries by subject node ID and entry name.
+
+        Args:
+            node_id: Subject node ID
+            name: Entry name
+
+        Returns:
+            List of reference template entries matching the criteria
+        """
+        return self.reference_template_rag.reference_template_storage.list_entries(node_id=node_id, name=name)
 
 
 class NavigationHelpScreen(ModalScreen):

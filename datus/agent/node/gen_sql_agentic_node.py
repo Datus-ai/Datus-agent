@@ -281,12 +281,26 @@ class GenSQLAgenticNode(AgenticNode):
             logger.error(f"Failed to setup context search tools: {e}")
 
     def _setup_reference_template_tools(self):
-        """Setup reference template tools."""
+        """Setup reference template tools.
+
+        If db_tools are not configured but reference_template_tools are requested,
+        create an internal-only db_func_tool for execute_reference_template
+        without exposing db_tools (read_query, list_tables, etc.) to the LLM.
+        """
         try:
+            db_tool = self.db_func_tool
+            if not db_tool:
+                db_manager = db_manager_instance(self.agent_config.namespaces)
+                conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
+                db_tool = DBFuncTool(
+                    conn,
+                    agent_config=self.agent_config,
+                    sub_agent_name=self.node_config.get("system_prompt"),
+                )
             self.reference_template_tools = ReferenceTemplateTools(
                 self.agent_config,
                 sub_agent_name=self.node_config.get("system_prompt"),
-                db_func_tool=self.db_func_tool,
+                db_func_tool=db_tool,
             )
             self.tools.extend(self.reference_template_tools.available_tools())
         except Exception as e:
@@ -388,10 +402,21 @@ class GenSQLAgenticNode(AgenticNode):
                 tool_instance = self._platform_doc_tool
             elif tool_type == "reference_template_tools":
                 if not self.reference_template_tools:
+                    db_tool = self.db_func_tool
+                    if not db_tool:
+                        _db_manager = db_manager_instance(self.agent_config.namespaces)
+                        _conn = _db_manager.get_conn(
+                            self.agent_config.current_namespace, self.agent_config.current_database
+                        )
+                        db_tool = DBFuncTool(
+                            _conn,
+                            agent_config=self.agent_config,
+                            sub_agent_name=self.node_config.get("system_prompt"),
+                        )
                     self.reference_template_tools = ReferenceTemplateTools(
                         self.agent_config,
                         sub_agent_name=self.node_config.get("system_prompt"),
-                        db_func_tool=self.db_func_tool,
+                        db_func_tool=db_tool,
                     )
                 tool_instance = self.reference_template_tools
             else:

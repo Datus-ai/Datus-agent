@@ -1,0 +1,7 @@
+SELECT {{group_column}}, COUNT(*) AS school_count,
+  AVG(`Free Meal Count (Ages 5-17)` * 1.0 / NULLIF(`Enrollment (Ages 5-17)`, 0)) AS avg_free_rate
+FROM frpm
+WHERE `Educational Option Type` = '{{school_type}}'
+GROUP BY {{group_column}}
+ORDER BY school_count {{sort_order}}
+LIMIT {{limit}}

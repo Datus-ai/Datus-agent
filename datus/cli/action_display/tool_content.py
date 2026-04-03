@@ -1063,6 +1063,60 @@ def _build_get_reference_sql(action: ActionHistory, verbose: bool) -> ToolCallCo
     return _build_get_detail(action, verbose)
 
 
+def _build_search_reference_template(action: ActionHistory, verbose: bool) -> ToolCallContent:
+    """search_reference_template: show template count."""
+    return _build_search_generic(action, verbose, "templates")
+
+
+def _build_get_reference_template(action: ActionHistory, verbose: bool) -> ToolCallContent:
+    """get_reference_template: show template name."""
+    return _build_get_detail(action, verbose)
+
+
+def _build_render_reference_template(action: ActionHistory, verbose: bool) -> ToolCallContent:
+    """render_reference_template: show rendered SQL preview."""
+    tc = make_base_content(action)
+    if verbose:
+        tc.args_lines = extract_args_markup(action)
+        if action.output:
+            tc.output_lines = _format_result_only_markup(action.output)
+    else:
+        data = parse_output_data(action.output)
+        if data:
+            result = data.get("result")
+            if isinstance(result, dict):
+                name = result.get("template_name", "")
+                tc.output_preview = f"\u2713 {name}" if name else "\u2713 Rendered"
+    return tc
+
+
+def _build_execute_reference_template(action: ActionHistory, verbose: bool) -> ToolCallContent:
+    """execute_reference_template: show rendered SQL and query results."""
+    tc = make_base_content(action)
+    if verbose:
+        tc.args_lines = extract_args_markup(action)
+        if action.output:
+            tc.output_lines = _format_result_only_markup(action.output)
+    else:
+        data = parse_output_data(action.output)
+        if data:
+            result = data.get("result")
+            if isinstance(result, dict):
+                query_result = result.get("query_result")
+                if isinstance(query_result, dict):
+                    rows = query_result.get("original_rows")
+                    if rows is not None:
+                        tc.output_preview = f"\u2713 {rows} rows"
+                    else:
+                        tc.output_preview = "\u2713 Executed"
+                    compressed = query_result.get("compressed_data")
+                    if isinstance(compressed, str) and compressed:
+                        tc.output_lines = _format_csv_preview_markup(compressed)
+                else:
+                    tc.output_preview = "\u2713 Executed"
+    return tc
+
+
 def _build_search_semantic_objects(action: ActionHistory, verbose: bool) -> ToolCallContent:
     """search_semantic_objects: show semantic object count."""
     return _build_search_generic(action, verbose, "semantic objects")
@@ -1654,6 +1708,12 @@ class ToolCallContentBuilder:
         self._registry["get_metrics"] = _build_get_metrics
         self._registry["get_reference_sql"] = _build_get_reference_sql
         self._registry["search_semantic_objects"] = _build_search_semantic_objects
+
+        # Reference template tools
+        self._registry["search_reference_template"] = _build_search_reference_template
+        self._registry["get_reference_template"] = _build_get_reference_template
+        self._registry["render_reference_template"] = _build_render_reference_template
+        self._registry["execute_reference_template"] = _build_execute_reference_template
 
         # Semantic tools
         self._registry["list_metrics"] = _build_list_metrics_semantic

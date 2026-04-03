@@ -7,7 +7,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import jinja2
 import jinja2.meta
@@ -37,6 +37,185 @@ def extract_template_parameters(template_content: str) -> List[Dict[str, str]]:
         pattern = r"\{\{\s*(\w+)\s*\}\}"
         matches = set(re.findall(pattern, template_content))
         return [{"name": var} for var in sorted(matches)]
+
+
+def analyze_template_parameters(template_content: str, dialect: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Analyze template parameters using sqlglot AST to determine types and column references.
+
+    Uses static SQL analysis to deterministically resolve:
+    - dimension params: appear in WHERE col = '{{param}}' → resolves real table.column via alias map
+    - keyword params: appear in ORDER BY position → type=keyword, allowed_values=[ASC, DESC]
+    - number params: appear in LIMIT or comparison operators → type=number
+
+    Falls back to basic name-only params if sqlglot parsing fails.
+
+    Args:
+        template_content: Raw Jinja2 SQL template content
+        dialect: SQL dialect for sqlglot parsing (e.g., "sqlite", "mysql", "duckdb").
+                 If None, tries common dialects that support backtick quoting.
+
+    Returns:
+        List of enriched parameter definitions with type, column_ref, etc.
+    """
+    base_params = extract_template_parameters(template_content)
+    if not base_params:
+        return base_params
+
+    # Track which params appear in quoted vs unquoted context
+    quoted_params = set()
+    # Find '{{param}}' patterns (quoted string context)
+    for m in re.finditer(r"'[^']*\{\{\s*(\w+)\s*\}\}[^']*'", template_content):
+        quoted_params.add(m.group(1))
+
+    # Find params after LIMIT keyword (number context)
+    limit_params = set()
+    for m in re.finditer(r"LIMIT\s+\{\{\s*(\w+)\s*\}\}", template_content, re.IGNORECASE):
+        limit_params.add(m.group(1))
+
+    # Find params after ORDER BY ... (keyword context for sort direction)
+    order_params = set()
+    for m in re.finditer(r"ORDER\s+BY\s+.+?\{\{\s*(\w+)\s*\}\}", template_content, re.IGNORECASE):
+        order_params.add(m.group(1))
+
+    # Find params in comparison operators (>, <, >=, <=) → number context
+    comparison_params = set()
+    for m in re.finditer(r"[><=!]+\s*\{\{\s*(\w+)\s*\}\}", template_content):
+        name = m.group(1)
+        if name not in quoted_params:
+            comparison_params.add(name)
+
+    # Find params used as column references (GROUP BY {{col}}, SELECT {{col}}, ORDER BY {{col}} expr)
+    # These are unquoted params in positions that expect a column name, not a value
+    column_params = set()
+    for m in re.finditer(r"GROUP\s+BY\s+\{\{\s*(\w+)\s*\}\}", template_content, re.IGNORECASE):
+        column_params.add(m.group(1))
+    for m in re.finditer(r"SELECT\s+\{\{\s*(\w+)\s*\}\}", template_content, re.IGNORECASE):
+        column_params.add(m.group(1))
+    # ORDER BY {{col}} ASC/DESC — param directly after ORDER BY is a column, not a keyword
+    for m in re.finditer(r"ORDER\s+BY\s+\{\{\s*(\w+)\s*\}\}\s*(?:ASC|DESC)?", template_content, re.IGNORECASE):
+        column_params.add(m.group(1))
+    # Remove any that were already classified as something else
+    column_params -= quoted_params | limit_params | comparison_params
+
+    # Try sqlglot parsing for dimension params to resolve real table.column
+    # Also extracts table names for column-type params
+    dimension_refs = {}  # param_name -> "real_table.column"
+    table_names: List[str] = []  # all real table names from FROM/JOIN
+    try:
+        dimension_refs, table_names = _resolve_dimension_columns(template_content, quoted_params, dialect=dialect)
+    except Exception as e:
+        logger.debug(f"sqlglot analysis failed: {e}")
+
+    # Build enriched params
+    enriched = []
+    for p in base_params:
+        name = p["name"]
+        entry: Dict[str, Any] = {"name": name}
+
+        if name in quoted_params:
+            entry["type"] = "dimension"
+            if name in dimension_refs:
+                entry["column_ref"] = dimension_refs[name]
+        elif name in column_params:
+            entry["type"] = "column"
+            if table_names:
+                entry["table_refs"] = table_names
+        elif name in order_params:
+            entry["type"] = "keyword"
+            entry["allowed_values"] = ["ASC", "DESC"]
+        elif name in limit_params or name in comparison_params:
+            entry["type"] = "number"
+        else:
+            entry["type"] = "unknown"
+
+        enriched.append(entry)
+
+    return enriched
+
+
+def _resolve_dimension_columns(template_content: str, quoted_params: set, dialect: Optional[str] = None) -> tuple:
+    """Use sqlglot to resolve dimension parameters to real table.column references.
+
+    Replaces Jinja2 placeholders with valid SQL tokens, parses with sqlglot,
+    then walks the AST to find EQ nodes containing placeholders and resolve
+    table aliases to real table names.
+
+    Args:
+        template_content: Raw Jinja2 SQL template
+        quoted_params: Set of param names that appear in quoted string context
+        dialect: SQL dialect for sqlglot (e.g., "sqlite", "mysql", "duckdb")
+
+    Returns:
+        Tuple of (refs_dict, table_names_list) where:
+        - refs_dict: Dict mapping param_name -> "real_table.column_name"
+        - table_names_list: List of real table names from FROM/JOIN clauses
+    """
+    import sqlglot
+    from sqlglot import exp
+
+    # Replace '{{param}}' with '__P_paramname__' string literal
+    sql = template_content
+    for name in quoted_params:
+        sql = re.sub(
+            r"'\s*\{\{\s*" + re.escape(name) + r"\s*\}\}\s*'",
+            f"'__P_{name}__'",
+            sql,
+        )
+    # Replace remaining {{param}} with ASC (safe for ORDER BY / LIMIT)
+    sql = re.sub(r"\{\{\s*\w+\s*\}\}", "ASC", sql)
+
+    # Try specified dialect, then fallback chain for backtick support
+    dialects_to_try = [dialect] if dialect else [dialect, "sqlite", "mysql"]
+    parsed = None
+    for d in dialects_to_try:
+        try:
+            parsed = sqlglot.parse_one(sql, dialect=d)
+            break
+        except Exception:
+            continue
+    if parsed is None:
+        return {}, []
+
+    # Build alias -> real_table mapping and collect all table names
+    alias_map: Dict[str, str] = {}
+    all_tables: List[str] = []
+    for node in parsed.walk():
+        if isinstance(node, exp.Table):
+            real_name = node.name
+            all_tables.append(real_name)
+            alias = node.alias
+            if alias:
+                alias_map[alias] = real_name
+
+    # Find EQ nodes with placeholder values → dimension columns
+    refs: Dict[str, str] = {}
+    for node in parsed.walk():
+        if not isinstance(node, exp.EQ):
+            continue
+        # Check both sides for placeholder
+        for col_side, val_side in [(node.left, node.right), (node.right, node.left)]:
+            val_str = val_side.sql() if hasattr(val_side, "sql") else str(val_side)
+            match = re.search(r"__P_(\w+)__", val_str)
+            if not match:
+                continue
+            param_name = match.group(1)
+            # Resolve column reference
+            if hasattr(col_side, "name"):
+                col_name = col_side.name
+                table_alias = col_side.table if hasattr(col_side, "table") and col_side.table else ""
+                real_table = alias_map.get(table_alias, table_alias)
+                # If no table prefix and single FROM table, use that
+                if not real_table and len(all_tables) == 1:
+                    real_table = all_tables[0]
+                col_quoted = f"`{col_name}`" if not col_name.isidentifier() else col_name
+                if real_table:
+                    refs[param_name] = f"{real_table}.{col_quoted}"
+                elif col_name:
+                    refs[param_name] = col_quoted
+
+    # Deduplicate table names while preserving order
+    unique_tables = list(dict.fromkeys(all_tables))
+    return refs, unique_tables
 
 
 def validate_template(template_content: str) -> Tuple[bool, str]:
