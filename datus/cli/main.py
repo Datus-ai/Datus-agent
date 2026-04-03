@@ -118,6 +118,14 @@ class ArgumentParser:
             help="Resume an existing session by session_id (for print mode)",
         )
 
+        self.parser.add_argument(
+            "--proxy_tools",
+            dest="proxy_tools",
+            type=str,
+            default=None,
+            help="Comma-separated tool patterns to proxy in print mode (e.g. 'filesystem_tools.*')",
+        )
+
     def parse_args(self):
         return self.parser.parse_args()
 
@@ -137,6 +145,9 @@ class Application:
 
         if args.resume and args.print_mode is None:
             self.arg_parser.parser.error("--resume requires --print mode")
+
+        if args.proxy_tools and args.print_mode is None:
+            self.arg_parser.parser.error("--proxy_tools requires --print mode")
 
         if args.print_mode is not None:
             from datus.cli.print_mode import PrintModeRunner

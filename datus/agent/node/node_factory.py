@@ -152,6 +152,9 @@ def create_node_input(
         return ExtKnowledgeNodeInput(
             user_message=user_message,
             prompt_language=prompt_language,
+            catalog=catalog,
+            database=database,
+            db_schema=db_schema,
         )
 
     elif isinstance(node, GenReportAgenticNode):

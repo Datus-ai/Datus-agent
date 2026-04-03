@@ -12,6 +12,7 @@ from datus.cli.execution_state import InteractionBroker
 from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel, PermissionRule
 from datus.tools.permission.permission_hooks import CompositeHooks, PermissionDeniedException, PermissionHooks
 from datus.tools.permission.permission_manager import PermissionManager
+from datus.tools.registry.tool_registry import ToolRegistry
 
 
 @pytest.fixture
@@ -94,43 +95,33 @@ class TestPermissionHooks:
 
     def test_initialization(self, mock_broker):
         """Test PermissionHooks initialization."""
+        registry = ToolRegistry()
         manager = PermissionManager()
         hooks = PermissionHooks(
             broker=mock_broker,
             permission_manager=manager,
             node_name="chat",
+            tool_registry=registry,
         )
 
         assert hooks.broker == mock_broker
         assert hooks.permission_manager == manager
         assert hooks.node_name == "chat"
-        assert hooks.tool_registry == {}
-
-    def test_register_tools(self, mock_broker):
-        """Test registering tools with their category."""
-        manager = PermissionManager()
-        hooks = PermissionHooks(broker=mock_broker, permission_manager=manager, node_name="chat")
-
-        # Create mock tools
-        tool1 = MagicMock()
-        tool1.name = "execute_sql"
-        tool2 = MagicMock()
-        tool2.name = "list_tables"
-
-        hooks.register_tools("db_tools", [tool1, tool2])
-
-        assert hooks.tool_registry["execute_sql"] == "db_tools"
-        assert hooks.tool_registry["list_tables"] == "db_tools"
+        assert hooks.tool_registry is registry
 
     def test_get_category_and_pattern_native_tool(self, mock_broker):
         """Test category detection for native tools."""
+        registry = ToolRegistry()
         manager = PermissionManager()
-        hooks = PermissionHooks(broker=mock_broker, permission_manager=manager, node_name="chat")
 
         # Register a tool
         tool = MagicMock()
         tool.name = "execute_sql"
-        hooks.register_tools("db_tools", [tool])
+        registry.register_tools("db_tools", [tool])
+
+        hooks = PermissionHooks(
+            broker=mock_broker, permission_manager=manager, node_name="chat", tool_registry=registry
+        )
 
         context = MagicMock()
         context.tool_arguments = "{}"
@@ -142,7 +133,9 @@ class TestPermissionHooks:
     def test_get_category_and_pattern_mcp_tool(self, mock_broker):
         """Test category detection for MCP tools."""
         manager = PermissionManager()
-        hooks = PermissionHooks(broker=mock_broker, permission_manager=manager, node_name="chat")
+        hooks = PermissionHooks(
+            broker=mock_broker, permission_manager=manager, node_name="chat", tool_registry=ToolRegistry()
+        )
 
         context = MagicMock()
         context.tool_arguments = "{}"
@@ -154,7 +147,9 @@ class TestPermissionHooks:
     def test_get_category_and_pattern_skill(self, mock_broker):
         """Test category detection for load_skill."""
         manager = PermissionManager()
-        hooks = PermissionHooks(broker=mock_broker, permission_manager=manager, node_name="chat")
+        hooks = PermissionHooks(
+            broker=mock_broker, permission_manager=manager, node_name="chat", tool_registry=ToolRegistry()
+        )
 
         context = MagicMock()
         context.tool_arguments = '{"skill_name": "sql-optimization"}'
@@ -166,7 +161,9 @@ class TestPermissionHooks:
     def test_get_category_and_pattern_unknown_tool(self, mock_broker):
         """Test category detection for unknown tools."""
         manager = PermissionManager()
-        hooks = PermissionHooks(broker=mock_broker, permission_manager=manager, node_name="chat")
+        hooks = PermissionHooks(
+            broker=mock_broker, permission_manager=manager, node_name="chat", tool_registry=ToolRegistry()
+        )
 
         context = MagicMock()
         context.tool_arguments = "{}"
@@ -178,7 +175,9 @@ class TestPermissionHooks:
     def test_parse_tool_args_valid_json(self, mock_broker):
         """Test parsing valid JSON tool arguments."""
         manager = PermissionManager()
-        hooks = PermissionHooks(broker=mock_broker, permission_manager=manager, node_name="chat")
+        hooks = PermissionHooks(
+            broker=mock_broker, permission_manager=manager, node_name="chat", tool_registry=ToolRegistry()
+        )
 
         context = MagicMock()
         context.tool_arguments = '{"key": "value", "number": 42}'
@@ -189,7 +188,9 @@ class TestPermissionHooks:
     def test_parse_tool_args_invalid_json(self, mock_broker):
         """Test parsing invalid JSON returns empty dict."""
         manager = PermissionManager()
-        hooks = PermissionHooks(broker=mock_broker, permission_manager=manager, node_name="chat")
+        hooks = PermissionHooks(
+            broker=mock_broker, permission_manager=manager, node_name="chat", tool_registry=ToolRegistry()
+        )
 
         context = MagicMock()
         context.tool_arguments = "not valid json"
@@ -200,7 +201,9 @@ class TestPermissionHooks:
     def test_parse_tool_args_dict_input(self, mock_broker):
         """Test parsing dict input returns as-is."""
         manager = PermissionManager()
-        hooks = PermissionHooks(broker=mock_broker, permission_manager=manager, node_name="chat")
+        hooks = PermissionHooks(
+            broker=mock_broker, permission_manager=manager, node_name="chat", tool_registry=ToolRegistry()
+        )
 
         context = MagicMock()
         context.tool_arguments = {"key": "value"}
@@ -216,13 +219,15 @@ class TestPermissionHooks:
             default_permission=PermissionLevel.ALLOW,
             rules=[],
         )
-        manager = PermissionManager(global_config=config)
-        hooks = PermissionHooks(broker=mock_broker, permission_manager=manager, node_name="chat")
-
-        # Register the tool
+        registry = ToolRegistry()
         tool_mock = MagicMock()
         tool_mock.name = "execute_sql"
-        hooks.register_tools("db_tools", [tool_mock])
+        registry.register_tools("db_tools", [tool_mock])
+
+        manager = PermissionManager(global_config=config)
+        hooks = PermissionHooks(
+            broker=mock_broker, permission_manager=manager, node_name="chat", tool_registry=registry
+        )
 
         context = MagicMock()
         context.tool_arguments = "{}"
@@ -243,13 +248,15 @@ class TestPermissionHooks:
                 PermissionRule(tool="db_tools", pattern="*", permission=PermissionLevel.DENY),
             ],
         )
-        manager = PermissionManager(global_config=config)
-        hooks = PermissionHooks(broker=mock_broker, permission_manager=manager, node_name="chat")
-
-        # Register the tool
+        registry = ToolRegistry()
         tool_mock = MagicMock()
         tool_mock.name = "execute_sql"
-        hooks.register_tools("db_tools", [tool_mock])
+        registry.register_tools("db_tools", [tool_mock])
+
+        manager = PermissionManager(global_config=config)
+        hooks = PermissionHooks(
+            broker=mock_broker, permission_manager=manager, node_name="chat", tool_registry=registry
+        )
 
         context = MagicMock()
         context.tool_arguments = "{}"
@@ -274,13 +281,15 @@ class TestPermissionHooks:
                 PermissionRule(tool="db_tools", pattern="*", permission=PermissionLevel.ASK),
             ],
         )
-        manager = PermissionManager(global_config=config)
-        hooks = PermissionHooks(broker=mock_broker, permission_manager=manager, node_name="chat")
-
-        # Register the tool
+        registry = ToolRegistry()
         tool_mock = MagicMock()
         tool_mock.name = "execute_sql"
-        hooks.register_tools("db_tools", [tool_mock])
+        registry.register_tools("db_tools", [tool_mock])
+
+        manager = PermissionManager(global_config=config)
+        hooks = PermissionHooks(
+            broker=mock_broker, permission_manager=manager, node_name="chat", tool_registry=registry
+        )
 
         # Pre-approve in session
         manager.approve_for_session("db_tools", "execute_sql")
@@ -301,7 +310,9 @@ class TestPermissionHooksIntegration:
     def test_mcp_tool_name_parsing(self, mock_broker):
         """Test various MCP tool name formats."""
         manager = PermissionManager()
-        hooks = PermissionHooks(broker=mock_broker, permission_manager=manager, node_name="chat")
+        hooks = PermissionHooks(
+            broker=mock_broker, permission_manager=manager, node_name="chat", tool_registry=ToolRegistry()
+        )
         context = MagicMock()
         context.tool_arguments = "{}"
 
@@ -323,7 +334,9 @@ class TestPermissionHooksIntegration:
     def test_skill_name_extraction(self, mock_broker):
         """Test skill name extraction from tool arguments."""
         manager = PermissionManager()
-        hooks = PermissionHooks(broker=mock_broker, permission_manager=manager, node_name="chat")
+        hooks = PermissionHooks(
+            broker=mock_broker, permission_manager=manager, node_name="chat", tool_registry=ToolRegistry()
+        )
 
         # Valid skill name
         context = MagicMock()
@@ -339,31 +352,36 @@ class TestPermissionHooksIntegration:
         assert cat == "skills"
         assert pat == "*"  # Fallback to wildcard
 
-    def test_register_multiple_tool_categories(self, mock_broker):
-        """Test registering tools from multiple categories."""
-        manager = PermissionManager()
-        hooks = PermissionHooks(broker=mock_broker, permission_manager=manager, node_name="chat")
+    def test_shared_tool_registry(self, mock_broker):
+        """Test that PermissionHooks shares the same ToolRegistry instance."""
+        registry = ToolRegistry()
 
         # Register db tools
         db_tool1 = MagicMock()
         db_tool1.name = "execute_sql"
         db_tool2 = MagicMock()
         db_tool2.name = "list_tables"
-        hooks.register_tools("db_tools", [db_tool1, db_tool2])
+        registry.register_tools("db_tools", [db_tool1, db_tool2])
 
         # Register skill tools
         skill_tool = MagicMock()
         skill_tool.name = "load_skill"
-        hooks.register_tools("skills", [skill_tool])
+        registry.register_tools("skills", [skill_tool])
 
         # Register filesystem tools
         fs_tool = MagicMock()
         fs_tool.name = "read_file"
-        hooks.register_tools("filesystem_tools", [fs_tool])
+        registry.register_tools("filesystem_tools", [fs_tool])
 
-        # Verify all registered
+        manager = PermissionManager()
+        hooks = PermissionHooks(
+            broker=mock_broker, permission_manager=manager, node_name="chat", tool_registry=registry
+        )
+
+        # Verify hooks shares the same registry
+        assert hooks.tool_registry is registry
         assert len(hooks.tool_registry) == 4
-        assert hooks.tool_registry["execute_sql"] == "db_tools"
-        assert hooks.tool_registry["list_tables"] == "db_tools"
-        assert hooks.tool_registry["load_skill"] == "skills"
-        assert hooks.tool_registry["read_file"] == "filesystem_tools"
+        assert hooks.tool_registry.get("execute_sql") == "db_tools"
+        assert hooks.tool_registry.get("list_tables") == "db_tools"
+        assert hooks.tool_registry.get("load_skill") == "skills"
+        assert hooks.tool_registry.get("read_file") == "filesystem_tools"

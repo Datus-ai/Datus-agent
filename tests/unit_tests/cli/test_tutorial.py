@@ -379,7 +379,8 @@ class TestBenchmarkTutorialRun:
         monkeypatch.setattr("datus.cli.interactive_init.init_metadata_and_log_result", mock_init_metadata)
         monkeypatch.setattr("datus.cli.interactive_init.overwrite_sql_and_log_result", mock_init_sql)
 
-        # Mock _init_metrics to return success
+        # Mock _init_semantic_model and _init_metrics to avoid real backend calls
+        monkeypatch.setattr(BenchmarkTutorial, "_init_semantic_model", lambda self, path: None)
         monkeypatch.setattr(BenchmarkTutorial, "_init_metrics", lambda self, path: True)
 
         # Mock add_sub_agents and add_workflows
@@ -419,6 +420,9 @@ class TestBenchmarkTutorialInitMetrics:
             mock_init_metrics,
         )
 
+        # Mock create_vector_connection to avoid creating datus_db_ in working directory
+        monkeypatch.setattr("datus.storage.backend_holder.create_vector_connection", MagicMock())
+
         tutorial = BenchmarkTutorial(config_path=str(config_file))
         tutorial.benchmark_path = tmp_path
         buffer = StringIO()
@@ -451,6 +455,9 @@ class TestBenchmarkTutorialInitMetrics:
             "datus.storage.metric.metric_init.init_success_story_metrics",
             mock_init_metrics,
         )
+
+        # Mock create_vector_connection to avoid creating datus_db_ in working directory
+        monkeypatch.setattr("datus.storage.backend_holder.create_vector_connection", MagicMock())
 
         tutorial = BenchmarkTutorial(config_path=str(config_file))
         tutorial.benchmark_path = tmp_path

@@ -359,6 +359,58 @@ class TestGenExtKnowledgeNodeExecution:
             assert last_output["tokens_used"] > 0
 
     @pytest.mark.asyncio
+    async def test_ext_knowledge_with_db_context(self, real_agent_config, mock_llm_create):
+        """execute_stream includes catalog/database/db_schema in the enhanced message."""
+        node = _create_node(real_agent_config, execution_mode="workflow")
+
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response("Knowledge generated with database context"),
+            ]
+        )
+        node.model = mock_llm_create
+
+        node.input = ExtKnowledgeNodeInput(
+            user_message="Define revenue metric",
+            question="Define revenue metric",
+            catalog="analytics",
+            database="sales_db",
+            db_schema="public",
+        )
+
+        actions = []
+        async for action in node.execute_stream():
+            actions.append(action)
+
+        assert len(actions) >= 2
+        assert actions[-1].status == ActionStatus.SUCCESS
+
+    @pytest.mark.asyncio
+    async def test_ext_knowledge_with_partial_db_context(self, real_agent_config, mock_llm_create):
+        """execute_stream works with only some db context fields set."""
+        node = _create_node(real_agent_config, execution_mode="workflow")
+
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response("Knowledge generated with partial context"),
+            ]
+        )
+        node.model = mock_llm_create
+
+        node.input = ExtKnowledgeNodeInput(
+            user_message="Define order amount",
+            question="Define order amount",
+            database="orders_db",
+        )
+
+        actions = []
+        async for action in node.execute_stream():
+            actions.append(action)
+
+        assert len(actions) >= 2
+        assert actions[-1].status == ActionStatus.SUCCESS
+
+    @pytest.mark.asyncio
     async def test_ext_knowledge_input_not_set_raises(self, real_agent_config, mock_llm_create):
         """execute_stream raises ValueError when input is not set."""
         node = _create_node(real_agent_config)

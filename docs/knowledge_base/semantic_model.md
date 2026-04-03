@@ -81,6 +81,7 @@ What is the average order amount?,SELECT AVG(amount) FROM orders WHERE status = 
 ```
 
 The agent analyzes these SQLs to:
+
 - Extract table structures
 - Identify dimensions (GROUP BY columns) and measures (aggregated columns)
 - Discover column usage patterns (WHERE clause filters)
@@ -171,6 +172,7 @@ search_semantic_objects(query="customer revenue", kinds=["table", "column"])
 Semantic models extend database schemas with rich semantic information, enabling more accurate ad-hoc SQL generation. Starting from version 0.2.4, they operate independently from metrics:
 
 Key characteristics:
+
 - **Schema extensions**: Augment physical schemas with business semantics
 - **Field-level storage**: Store tables, columns, entities separately for flexible search
 - **Usage pattern enrichment**: Capture real-world query patterns from historical SQLs

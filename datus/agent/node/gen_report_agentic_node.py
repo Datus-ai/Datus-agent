@@ -339,6 +339,8 @@ class GenReportAgenticNode(AgenticNode):
         """
         enhanced_parts = []
 
+        if user_input.catalog:
+            enhanced_parts.append(f"Catalog : {user_input.catalog}")
         # Add database context
         if user_input.database:
             enhanced_parts.append(f"Database context: {user_input.database}")

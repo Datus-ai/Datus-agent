@@ -5,14 +5,8 @@
 """
 Unit tests for stream ordering in OpenAICompatibleModel._generate_with_tools_stream_internal().
 
-Validates that ASSISTANT (thinking) actions are yielded before PROCESSING actions,
-ensuring correct display order when subagents inject depth=1 actions via ActionBus.
-
-Two layers of fix are tested:
-1. Raw event early capture: assistant text from ResponseOutputItemDoneEvent(type="message")
-   is captured BEFORE tool execution (real SDK behavior).
-2. RunItemStreamEvent fallback: if early capture doesn't fire, buffered PROCESSING is flushed
-   after message_output_item.
+Validates that PROCESSING actions are yielded immediately (not buffered) to support
+proxy tool mode where external callers need the call-tool event before providing results.
 
 CI level: zero external deps, mock all SDK interactions.
 """
@@ -209,18 +203,19 @@ async def _collect_actions(events_list) -> List[ActionHistory]:
 
 
 # ---------------------------------------------------------------------------
-# Tests: RunItemStreamEvent fallback (message_output_item after tool_call_item)
+# Tests: PROCESSING actions are yielded immediately (no buffering)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.ci
 class TestStreamActionOrdering:
-    """Tests for correct ordering of ASSISTANT vs PROCESSING via RunItemStreamEvent fallback."""
+    """Tests for immediate PROCESSING yield behavior."""
 
     @pytest.mark.asyncio
-    async def test_assistant_before_processing_when_message_after_tool_start(self):
-        """SDK order: tool_call_item → message_output → tool_call_output.
-        Expected yield: ASSISTANT → PROCESSING → SUCCESS.
+    async def test_processing_yielded_before_assistant_when_tool_starts_first(self):
+        """SDK order: tool_call_item -> message_output -> tool_call_output.
+        Expected yield: PROCESSING -> ASSISTANT -> SUCCESS.
+        PROCESSING is yielded immediately, not buffered until ASSISTANT.
         """
         events = [
             _make_tool_call_event(call_id="call_A"),
@@ -232,15 +227,15 @@ class TestStreamActionOrdering:
 
         roles_and_statuses = [(a.role, a.status) for a in actions]
         assert roles_and_statuses == [
+            (ActionRole.TOOL, ActionStatus.PROCESSING),  # yielded immediately
             (ActionRole.ASSISTANT, ActionStatus.SUCCESS),  # thinking message
-            (ActionRole.TOOL, ActionStatus.PROCESSING),  # tool start (flushed after assistant)
             (ActionRole.TOOL, ActionStatus.SUCCESS),  # tool complete
         ]
 
     @pytest.mark.asyncio
     async def test_no_message_yields_processing_then_success(self):
-        """SDK order: tool_call_item → tool_call_output (no message).
-        Expected yield: PROCESSING → SUCCESS (flushed before SUCCESS).
+        """SDK order: tool_call_item -> tool_call_output (no message).
+        Expected yield: PROCESSING -> SUCCESS.
         """
         events = [
             _make_tool_call_event(call_id="call_B"),
@@ -256,9 +251,9 @@ class TestStreamActionOrdering:
         ]
 
     @pytest.mark.asyncio
-    async def test_multiple_tool_calls_buffered_then_flushed_after_message(self):
-        """SDK order: tool_A_start → tool_B_start → message → output_A → output_B.
-        Expected yield: ASSISTANT → PROC_A → PROC_B → SUCC_A → SUCC_B.
+    async def test_multiple_tool_calls_yielded_immediately(self):
+        """SDK order: tool_A_start -> tool_B_start -> message -> output_A -> output_B.
+        Expected yield: PROC_A -> PROC_B -> ASSISTANT -> SUCC_A -> SUCC_B.
         """
         events = [
             _make_tool_call_event(call_id="call_A", tool_name="tool_a"),
@@ -272,21 +267,21 @@ class TestStreamActionOrdering:
 
         roles_and_statuses = [(a.role, a.status) for a in actions]
         assert roles_and_statuses == [
-            (ActionRole.ASSISTANT, ActionStatus.SUCCESS),  # thinking
             (ActionRole.TOOL, ActionStatus.PROCESSING),  # tool_a start
             (ActionRole.TOOL, ActionStatus.PROCESSING),  # tool_b start
+            (ActionRole.ASSISTANT, ActionStatus.SUCCESS),  # thinking
             (ActionRole.TOOL, ActionStatus.SUCCESS),  # tool_a complete
             (ActionRole.TOOL, ActionStatus.SUCCESS),  # tool_b complete
         ]
 
         # Verify tool names in order
-        assert actions[1].action_type == "tool_a"
-        assert actions[2].action_type == "tool_b"
+        assert actions[0].action_type == "tool_a"
+        assert actions[1].action_type == "tool_b"
 
     @pytest.mark.asyncio
     async def test_message_before_tool_start_yields_correct_order(self):
-        """SDK order: message_output → tool_call_item → tool_call_output.
-        Expected yield: ASSISTANT → PROCESSING → SUCCESS.
+        """SDK order: message_output -> tool_call_item -> tool_call_output.
+        Expected yield: ASSISTANT -> PROCESSING -> SUCCESS.
         """
         events = [
             _make_message_event("I will query now"),
@@ -299,14 +294,14 @@ class TestStreamActionOrdering:
         roles_and_statuses = [(a.role, a.status) for a in actions]
         assert roles_and_statuses == [
             (ActionRole.ASSISTANT, ActionStatus.SUCCESS),
-            (ActionRole.TOOL, ActionStatus.PROCESSING),  # flushed before SUCCESS
+            (ActionRole.TOOL, ActionStatus.PROCESSING),
             (ActionRole.TOOL, ActionStatus.SUCCESS),
         ]
 
     @pytest.mark.asyncio
-    async def test_turn_end_flushes_buffered_processing(self):
+    async def test_tool_call_without_output_yields_processing(self):
         """SDK order: tool_call_item (no output, no message).
-        Expected: PROCESSING flushed at turn end.
+        Expected: PROCESSING yielded immediately.
         """
         events = [
             _make_tool_call_event(call_id="call_D"),
@@ -321,7 +316,7 @@ class TestStreamActionOrdering:
 
     @pytest.mark.asyncio
     async def test_processing_action_id_matches_call_id(self):
-        """Verify that buffered PROCESSING actions preserve the correct action_id."""
+        """Verify that PROCESSING actions preserve the correct action_id."""
         events = [
             _make_tool_call_event(call_id="unique_123", tool_name="my_tool"),
             _make_message_event("thinking"),
@@ -345,15 +340,15 @@ class TestRawEventEarlyCapture:
     """Tests for assistant text capture from raw_response_event.
 
     In real SDK streaming, the event queue order is:
-      tool_call_item → raw(message_done) → [tool execution] → message_output_item → tool_output_item
-    The raw(message_done) event provides the text BEFORE tool execution, allowing
-    us to yield ASSISTANT before the subagent bus items.
+      tool_call_item -> raw(message_done) -> [tool execution] -> message_output_item -> tool_output_item
+    PROCESSING is yielded immediately at tool_call_item. The raw event provides
+    assistant text before tool execution completes.
     """
 
     @pytest.mark.asyncio
-    async def test_raw_message_before_tool_output_yields_assistant_first(self):
-        """Real SDK order: tool_called → raw(message_done) → message_output → tool_output.
-        Expected: ASSISTANT (from raw) → PROCESSING → SUCCESS.
+    async def test_raw_message_before_tool_output_yields_processing_first(self):
+        """Real SDK order: tool_called -> raw(message_done) -> message_output -> tool_output.
+        Expected: PROCESSING -> ASSISTANT (from raw) -> SUCCESS.
         The Phase 3 message_output should be skipped (duplicate).
         """
         events = [
@@ -367,20 +362,20 @@ class TestRawEventEarlyCapture:
 
         roles_and_statuses = [(a.role, a.status) for a in actions]
         assert roles_and_statuses == [
+            (ActionRole.TOOL, ActionStatus.PROCESSING),  # yielded immediately
             (ActionRole.ASSISTANT, ActionStatus.SUCCESS),  # from raw event (early)
-            (ActionRole.TOOL, ActionStatus.PROCESSING),  # flushed after assistant
             (ActionRole.TOOL, ActionStatus.SUCCESS),  # tool complete
         ]
         # Only ONE assistant action, no duplicate
         assistant_actions = [a for a in actions if a.role == ActionRole.ASSISTANT]
         assert len(assistant_actions) == 1
         assert "SQL query" in assistant_actions[0].output["raw_output"]
-        # Has pending tool calls → is_thinking=True
+        # Has in-progress tool calls -> is_thinking=True
         assert assistant_actions[0].output["is_thinking"] is True
 
     @pytest.mark.asyncio
-    async def test_raw_message_flushes_buffered_processing(self):
-        """Raw message event should flush pending PROCESSING actions."""
+    async def test_raw_message_with_processing_yielded_immediately(self):
+        """PROCESSING is yielded immediately, not flushed after ASSISTANT."""
         events = [
             _make_tool_call_event(call_id="call_R2", tool_name="subagent_tool"),
             _make_raw_message_done_event("Thinking about the query"),
@@ -389,17 +384,17 @@ class TestRawEventEarlyCapture:
 
         actions = await _collect_actions(events)
 
-        # ASSISTANT comes first, PROCESSING is flushed after it, then SUCCESS
-        assert actions[0].role == ActionRole.ASSISTANT
-        assert actions[1].role == ActionRole.TOOL
-        assert actions[1].status == ActionStatus.PROCESSING
-        assert actions[1].action_type == "subagent_tool"
+        # PROCESSING comes first (yielded immediately), then ASSISTANT, then SUCCESS
+        assert actions[0].role == ActionRole.TOOL
+        assert actions[0].status == ActionStatus.PROCESSING
+        assert actions[0].action_type == "subagent_tool"
+        assert actions[1].role == ActionRole.ASSISTANT
         assert actions[2].role == ActionRole.TOOL
         assert actions[2].status == ActionStatus.SUCCESS
 
     @pytest.mark.asyncio
     async def test_raw_message_with_multiple_tool_calls(self):
-        """Multiple buffered tool calls are flushed after raw message."""
+        """Multiple tool calls are yielded immediately before raw message."""
         events = [
             _make_tool_call_event(call_id="call_X", tool_name="tool_x"),
             _make_tool_call_event(call_id="call_Y", tool_name="tool_y"),
@@ -413,9 +408,9 @@ class TestRawEventEarlyCapture:
 
         roles_and_statuses = [(a.role, a.status) for a in actions]
         assert roles_and_statuses == [
-            (ActionRole.ASSISTANT, ActionStatus.SUCCESS),  # from raw
             (ActionRole.TOOL, ActionStatus.PROCESSING),  # tool_x
             (ActionRole.TOOL, ActionStatus.PROCESSING),  # tool_y
+            (ActionRole.ASSISTANT, ActionStatus.SUCCESS),  # from raw
             (ActionRole.TOOL, ActionStatus.SUCCESS),  # tool_x complete
             (ActionRole.TOOL, ActionStatus.SUCCESS),  # tool_y complete
         ]
@@ -470,12 +465,12 @@ class TestRawEventEarlyCapture:
         assert len(actions) == 1
         assert actions[0].role == ActionRole.ASSISTANT
         assert "analysis" in actions[0].output["raw_output"]
-        # No pending tool calls → is_thinking=False
+        # No pending tool calls -> is_thinking=False
         assert actions[0].output["is_thinking"] is False
 
     @pytest.mark.asyncio
-    async def test_is_thinking_flag_true_when_tool_calls_pending(self):
-        """is_thinking should be True when ASSISTANT fires with pending PROCESSING actions."""
+    async def test_is_thinking_flag_true_when_tool_calls_in_progress(self):
+        """is_thinking should be True when ASSISTANT fires with in-progress tool calls."""
         events = [
             _make_tool_call_event(call_id="call_T1"),
             _make_tool_call_event(call_id="call_T2"),
@@ -493,7 +488,7 @@ class TestRawEventEarlyCapture:
 
     @pytest.mark.asyncio
     async def test_is_thinking_flag_false_when_no_tool_calls(self):
-        """is_thinking should be False when ASSISTANT fires without any pending tool calls."""
+        """is_thinking should be False when ASSISTANT fires without any in-progress tool calls."""
         events = [
             _make_raw_message_done_event("Here is the final answer"),
         ]

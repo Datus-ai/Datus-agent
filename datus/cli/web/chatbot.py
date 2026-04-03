@@ -31,7 +31,6 @@ import structlog
 from datus.cli.repl import DatusCLI
 from datus.cli.web.chat_executor import ChatExecutor
 from datus.cli.web.config_manager import ConfigManager, get_home_from_config
-from datus.cli.web.session_loader import SessionLoader
 from datus.cli.web.ui_components import UIComponents
 from datus.models.session_manager import SessionManager
 from datus.schemas.action_history import ActionHistory
@@ -99,7 +98,6 @@ class StreamlitChatbot:
 
     def __init__(self):
         self.session_manager = SessionManager()
-        self.session_loader = SessionLoader()
         self.chat_executor = ChatExecutor()
         self.config_manager = ConfigManager()
 
@@ -368,12 +366,22 @@ class StreamlitChatbot:
             self.cli.chat_commands.cmd_clear_chat("")
 
     def get_session_messages(self, session_id: str) -> List[Dict]:
-        """Delegate to SessionLoader for loading messages from database."""
-        return self.session_loader.get_session_messages(session_id)
+        """Delegate to SessionManager for loading messages from database."""
+        return self.session_manager.get_session_messages(session_id)
 
     def get_current_session_id(self) -> Optional[str]:
-        """Delegate to SessionLoader for getting current session ID."""
-        return self.session_loader.get_current_session_id(self.cli)
+        """Get the current session ID from the active chat node.
+
+        Falls back to ``st.session_state.view_session_id`` when no node is
+        active (e.g. read-only mode loaded via URL).
+        """
+        if self.cli and self.cli.chat_commands:
+            node = self.cli.chat_commands.current_node or self.cli.chat_commands.chat_node
+            if node:
+                session_id = getattr(node, "session_id", None)
+                if session_id:
+                    return session_id
+        return st.session_state.get("view_session_id")
 
     def _store_session_id(self) -> None:
         """Store current session_id in session_state for sidebar access"""

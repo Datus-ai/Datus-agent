@@ -551,6 +551,9 @@ class FilesystemFuncTool(BaseTool):
 
                         for item in current_path.iterdir():
                             try:
+                                if item.is_dir() and item.name == ".git":
+                                    continue
+
                                 if should_exclude(item):
                                     continue
 

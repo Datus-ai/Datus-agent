@@ -89,6 +89,19 @@ class SemanticTools:
         self._adapter: Optional[BaseSemanticAdapter] = None
         self._attribution_tool: Optional[DimensionAttributionUtil] = None
 
+    def _extract_db_config(self, namespace: str) -> Optional[dict]:
+        """Extract db_config dict from AgentConfig.namespaces for the given namespace."""
+        ns_configs = self.agent_config.namespaces.get(namespace)
+        if not ns_configs:
+            return None
+        db_config_obj = list(ns_configs.values())[0]
+        raw = db_config_obj.to_dict()
+        return {
+            k: str(v)
+            for k, v in raw.items()
+            if v is not None and v != "" and k not in ("extra", "logic_name", "path_pattern", "catalog")
+        }
+
     @property
     def adapter(self) -> Optional[BaseSemanticAdapter]:
         """Lazy load semantic adapter if configured."""
@@ -100,16 +113,18 @@ class SemanticTools:
                     # Get namespace from agent_config
                     namespace = getattr(self.agent_config, "namespace", None) or self.agent_config.current_namespace
 
-                    # Get config_path from ConfigurationManager
-                    from datus.configuration.agent_config_loader import CONFIGURATION_MANAGER
-
-                    config_path = str(CONFIGURATION_MANAGER.config_path) if CONFIGURATION_MANAGER else None
+                    # Extract db_config to pass to adapter (avoids re-reading agent.yml)
+                    db_config = self._extract_db_config(namespace)
+                    agent_home = getattr(self.agent_config, "home", None)
 
                     # Get the registered config class for this adapter type
                     metadata = semantic_adapter_registry.get_metadata(self.adapter_type)
                     if metadata and metadata.config_class:
-                        # Use the adapter's config class with config_path
-                        adapter_config = metadata.config_class(namespace=namespace, config_path=config_path)
+                        adapter_config = metadata.config_class(
+                            namespace=namespace,
+                            db_config=db_config,
+                            agent_home=agent_home,
+                        )
                     else:
                         # Fallback to base config
                         from datus.tools.semantic_tools.config import SemanticAdapterConfig

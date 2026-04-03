@@ -20,7 +20,9 @@ class ExtKnowledgeNodeInput(BaseInput):
     """Input model for external knowledge generation node."""
 
     user_message: str = Field(..., description="User's input message or request")
-
+    catalog: Optional[str] = Field(default=None, description="Database catalog for context")
+    database: Optional[str] = Field(default=None, description="Database name for context")
+    db_schema: Optional[str] = Field(default=None, description="Database schema for context")
     # Optional fields for workflow mode (passed directly) or agentic mode (parsed via LLM)
     question: Optional[str] = Field(default=None, description="Business question extracted from user_message")
     gold_sql: Optional[str] = Field(

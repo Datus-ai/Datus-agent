@@ -7,6 +7,7 @@ The metrics generation feature helps you convert SQL queries into reusable Metri
 ## What is a Metric?
 
 A **metric** is a reusable business calculation built on top of semantic models. Metrics provide:
+
 - **Consistent Business Logic**: One definition, used everywhere
 - **Type Safety**: Validated structure and measure references
 - **Metadata**: Display names, formats, business context

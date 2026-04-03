@@ -334,6 +334,7 @@ if not structlog.is_configured():
     # Initialize event dict to avoid NoneType errors
     structlog.configure_once(
         processors=[
+            structlog.contextvars.merge_contextvars,
             structlog.stdlib.filter_by_level,
             structlog.stdlib.add_log_level,
             structlog.stdlib.add_logger_name,

@@ -506,6 +506,21 @@ class TestSearchFiles:
         assert "keep.py" in names
         assert "exclude.py" not in names
 
+    def test_search_ignores_git_directory(self, tmp_path):
+        (tmp_path / ".git").mkdir()
+        (tmp_path / ".git" / "config").write_text("git config")
+        (tmp_path / ".git" / "objects").mkdir()
+        (tmp_path / ".git" / "objects" / "pack.py").write_text("x")
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "main.py").write_text("code")
+        tool = _make_tool(str(tmp_path))
+        result = tool.search_files(".", "**/*")
+        assert result.success == 1
+        paths = [Path(p).name for p in result.result]
+        assert "main.py" in paths
+        assert "config" not in paths
+        assert "pack.py" not in paths
+
     def test_search_empty_results(self, tmp_path):
         tool = _make_tool(str(tmp_path))
         result = tool.search_files(".", "*.xyz_nonexistent")

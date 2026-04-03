@@ -73,6 +73,7 @@ datus-agent bootstrap-kb \
 **2. Learning Mode (without --subject_tree)**
 
 When no subject_tree is provided, the system operates in learning mode:
+
 - Reuses existing categories from the Knowledge Base
 - Analyzes similar SQL queries to suggest appropriate categories
 - Creates new categories as needed based on query content
@@ -87,6 +88,7 @@ datus-agent bootstrap-kb \
 ```
 
 **Benefits:**
+
 - **Consistency**: Ensures SQL queries follow organizational taxonomy
 - **Discoverability**: Makes queries easier to find through semantic search
 - **Knowledge Management**: Organizes SQL expertise in a structured way

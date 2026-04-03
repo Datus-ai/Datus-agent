@@ -1482,3 +1482,137 @@ class TestDescriptionParameter:
         """The guidelines mention providing a 'description' parameter."""
         desc = task_tool._build_task_description()
         assert "description" in desc.lower()
+
+
+# ── Proxy tool propagation ─────────────────────────────────────────
+
+
+@pytest.mark.ci
+class TestProxyToolPropagation:
+    """Tests for proxy tool config propagation to sub-agent nodes via parent node reference."""
+
+    def test_set_parent_node_stores_reference(self, task_tool):
+        """set_parent_node stores the parent node reference."""
+        parent_node = MagicMock()
+        task_tool.set_parent_node(parent_node)
+        assert task_tool._parent_node is parent_node
+
+    def test_default_parent_node_is_none(self, task_tool):
+        """By default, _parent_node is None."""
+        assert task_tool._parent_node is None
+
+    @pytest.mark.asyncio
+    async def test_apply_proxy_tools_called_when_parent_has_patterns(self, task_tool):
+        """When parent node has proxy_tool_patterns, apply_proxy_tools is called on the sub-agent node."""
+        from datus.tools.proxy.tool_result_channel import ToolResultChannel
+
+        parent_node = MagicMock()
+        parent_node.proxy_tool_patterns = ["filesystem_tools.*"]
+        parent_node.tool_channel = ToolResultChannel()
+        task_tool.set_parent_node(parent_node)
+
+        mock_action = Mock(spec=ActionHistory)
+        mock_action.status = ActionStatus.SUCCESS
+        mock_action.role = ActionRole.TOOL
+        mock_action.output = {"sql": "SELECT 1", "response": "ok", "tokens_used": 10}
+
+        mock_node = MagicMock()
+
+        async def mock_stream(ahm):
+            yield mock_action
+
+        mock_node.execute_stream_with_interactions = mock_stream
+
+        with patch.object(task_tool, "_create_node", return_value=mock_node):
+            with patch.object(task_tool, "_build_node_input", return_value=Mock()):
+                with patch("datus.tools.proxy.proxy_tool.apply_proxy_tools") as mock_apply:
+                    result = await task_tool.task(type="gen_sql", prompt="test")
+
+        mock_apply.assert_called_once_with(mock_node, parent_node.proxy_tool_patterns, channel=parent_node.tool_channel)
+        assert result.success == 1
+
+    @pytest.mark.asyncio
+    async def test_apply_proxy_tools_not_called_when_parent_has_no_patterns(self, task_tool):
+        """When parent node has no proxy_tool_patterns, apply_proxy_tools is NOT called."""
+        parent_node = MagicMock()
+        parent_node.proxy_tool_patterns = None
+        task_tool.set_parent_node(parent_node)
+
+        mock_action = Mock(spec=ActionHistory)
+        mock_action.status = ActionStatus.SUCCESS
+        mock_action.role = ActionRole.TOOL
+        mock_action.output = {"sql": "SELECT 1", "response": "ok", "tokens_used": 10}
+
+        mock_node = MagicMock()
+
+        async def mock_stream(ahm):
+            yield mock_action
+
+        mock_node.execute_stream_with_interactions = mock_stream
+
+        with patch.object(task_tool, "_create_node", return_value=mock_node):
+            with patch.object(task_tool, "_build_node_input", return_value=Mock()):
+                with patch("datus.tools.proxy.proxy_tool.apply_proxy_tools") as mock_apply:
+                    result = await task_tool.task(type="gen_sql", prompt="test")
+
+        mock_apply.assert_not_called()
+        assert result.success == 1
+
+    @pytest.mark.asyncio
+    async def test_apply_proxy_tools_not_called_when_no_parent_node(self, task_tool):
+        """When _parent_node is None, apply_proxy_tools is NOT called."""
+        assert task_tool._parent_node is None
+
+        mock_action = Mock(spec=ActionHistory)
+        mock_action.status = ActionStatus.SUCCESS
+        mock_action.role = ActionRole.TOOL
+        mock_action.output = {"sql": "SELECT 1", "response": "ok", "tokens_used": 10}
+
+        mock_node = MagicMock()
+
+        async def mock_stream(ahm):
+            yield mock_action
+
+        mock_node.execute_stream_with_interactions = mock_stream
+
+        with patch.object(task_tool, "_create_node", return_value=mock_node):
+            with patch.object(task_tool, "_build_node_input", return_value=Mock()):
+                with patch("datus.tools.proxy.proxy_tool.apply_proxy_tools") as mock_apply:
+                    result = await task_tool.task(type="gen_sql", prompt="test")
+
+        mock_apply.assert_not_called()
+        assert result.success == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "subagent_type",
+        ["gen_semantic_model", "gen_metrics", "gen_sql_summary", "gen_ext_knowledge"],
+    )
+    async def test_fs_dependent_types_still_call_apply_proxy(self, task_tool, subagent_type):
+        """FS-dependent subagents still call apply_proxy_tools (exclusion is internal to proxy_tool)."""
+        from datus.tools.proxy.tool_result_channel import ToolResultChannel
+
+        parent_node = MagicMock()
+        parent_node.proxy_tool_patterns = ["*"]
+        parent_node.tool_channel = ToolResultChannel()
+        task_tool.set_parent_node(parent_node)
+
+        mock_action = Mock(spec=ActionHistory)
+        mock_action.status = ActionStatus.SUCCESS
+        mock_action.role = ActionRole.ASSISTANT
+        mock_action.output = {"response": "ok", "tokens_used": 10}
+
+        mock_node = MagicMock()
+
+        async def mock_stream(ahm):
+            yield mock_action
+
+        mock_node.execute_stream_with_interactions = mock_stream
+
+        with patch.object(task_tool, "_create_node", return_value=mock_node):
+            with patch.object(task_tool, "_build_node_input", return_value=Mock()):
+                with patch("datus.tools.proxy.proxy_tool.apply_proxy_tools") as mock_apply:
+                    result = await task_tool.task(type=subagent_type, prompt="test")
+
+        mock_apply.assert_called_once_with(mock_node, parent_node.proxy_tool_patterns, channel=parent_node.tool_channel)
+        assert result.success == 1

@@ -54,9 +54,25 @@ async def init_from_adapter(
             adapter_config = getattr(agent_config, f"{adapter_type}_config", None)
 
         if adapter_config is None:
-            # No config provided, create default config
+            # Extract db_config from namespaces to pass to adapter (avoids re-reading agent.yml)
+            ns_configs = agent_config.namespaces.get(namespace)
+            db_config = None
+            if ns_configs:
+                db_config_obj = list(ns_configs.values())[0]
+                raw = db_config_obj.to_dict()
+                db_config = {
+                    k: str(v)
+                    for k, v in raw.items()
+                    if v is not None and v != "" and k not in ("extra", "logic_name", "path_pattern", "catalog")
+                }
+            agent_home = getattr(agent_config, "home", None)
+
             if metadata and metadata.config_class:
-                adapter_config = metadata.config_class(namespace=namespace)
+                adapter_config = metadata.config_class(
+                    namespace=namespace,
+                    db_config=db_config,
+                    agent_home=agent_home,
+                )
             else:
                 from datus.tools.semantic_tools.config import SemanticAdapterConfig
 
