@@ -1,5 +1,5 @@
 ---
-name: define-metric
+name: gen-metrics
 description: Interactively define MetricFlow metrics from natural language business descriptions
 tags: "metrics, metricflow, interactive"
 version: "1.1.0"

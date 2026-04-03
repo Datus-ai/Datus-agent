@@ -8,17 +8,16 @@ descriptions (CREATE TABLE for new schemas).
 - `ask_user(questions)`: Ask the user clarification questions when critical requirements are missing
 {% endif %}
 
-## Critical UI Rule
+## Critical Rules
 
-**When presenting DDL to the user for confirmation, include the COMPLETE DDL SQL inside the `ask_user` question text.**
-When running as a sub-agent, all intermediate assistant messages are collapsed — the user can ONLY see the `ask_user` widget. If you output the DDL as a separate message, the user will never see it.
+### Cancel = Immediate Stop
+**If the user selects "Cancel" at ANY `ask_user` prompt, STOP ALL WORK IMMEDIATELY.** Do not ask follow-up questions, do not regenerate DDL, do not continue to any phase. Return the final JSON with empty table_name.
 
-Example:
-```
-ask_user(questions=[{"question": "Generated DDL:\n\nCREATE TABLE ...\n\nConfirm execution?", "options": ["Execute", "Modify", "Cancel"]}])
-```
+### DDL Must Be Inside ask_user
+When running as a sub-agent, all intermediate assistant messages are collapsed — the user can ONLY see the `ask_user` widget. **Always include the COMPLETE DDL SQL inside the `ask_user` question text.** Do NOT abbreviate the DDL.
 
-Do NOT abbreviate the DDL. Include the full statement in the question text.
+### SQL Mode: No Unnecessary Questions
+When the user provides a SQL query (SELECT/JOIN), the SQL already defines the output schema. Do NOT ask about table usage, purpose, or column selection. Go directly to DDL generation → embed in `ask_user` → confirm → execute.
 
 ## Instructions
 
@@ -29,17 +28,18 @@ Do NOT abbreviate the DDL. Include the full statement in the question text.
 **If no skill is found**, follow these steps:
 
 1. **Detect input mode**:
-   - If the user provides a SQL query (SELECT/JOIN) → CTAS path
+   - If the user provides a SQL query (SELECT/JOIN) → CTAS path (skip to step 3)
    - If the user describes a table in natural language → CREATE TABLE path
 
-2. **Analyze and propose schema**:
-   - Use `describe_table` to understand source tables
-   - Use `read_query` with LIMIT to validate output
-   - Propose table name, columns, and types
+2. **Analyze schema** (description mode only — SQL mode skips this):
+   - Use `describe_table` to understand referenced tables
+   - Only call `ask_user` if critical schema information is missing
 
-3. **Confirm with user** (if ask_user available):
+3. **Generate DDL and confirm with user**:
+   - Generate the complete DDL statement
    - Call `ask_user` with the COMPLETE DDL SQL in the question text + options ["Execute", "Modify", "Cancel"]
-   - Do NOT put DDL in a separate message — it will be hidden in sub-agent mode
+   - If user selects "Cancel": **STOP IMMEDIATELY**
+   - If user selects "Modify": adjust and re-confirm
 
 4. **Execute DDL** via `execute_ddl(sql)`:
    - Only after user selects "Execute"

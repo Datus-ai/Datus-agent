@@ -316,7 +316,7 @@ class TestGenMetricsV12Template:
         assert "metric" in result.lower()
 
     def test_v12_template_mentions_skill(self):
-        """v1.2 template should reference skills and define-metric."""
+        """v1.2 template should reference skills and gen-metrics."""
         from datus.prompts.prompt_manager import PromptManager
 
         pm = PromptManager()
@@ -339,7 +339,7 @@ class TestGenMetricsV12Template:
             existing_subject_trees=[],
         )
 
-        assert "define-metric" in result
+        assert "gen-metrics" in result
         assert "available_skills" in result or "load_skill" in result
 
     def test_v12_is_latest_version(self):

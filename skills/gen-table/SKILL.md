@@ -7,51 +7,57 @@ user_invocable: false
 disable_model_invocation: false
 ---
 
-## Phase 1: Understand Intent (MANDATORY ask_user)
+## CRITICAL: Cancel = Immediate Stop
+
+**If the user selects "Cancel" at ANY point (any `ask_user` response), you MUST immediately stop ALL work.** Do NOT:
+- Ask follow-up questions
+- Regenerate DDL
+- Continue to any subsequent phase
+- Propose alternatives
+
+Return immediately with:
+```json
+{"table_name": "", "output": "Cancelled by user."}
+```
+
+## Phase 1: Analyze Input
 
 Detect input mode:
 - **SQL mode**: User provides a JOIN SQL or other SELECT statement → CTAS path
-- **Description mode**: User describes table structure in natural language (columns, types, purpose) → CREATE TABLE path
+- **Description mode**: User describes table structure in natural language → CREATE TABLE path
 
-### SQL Mode (CTAS)
+### SQL Mode (CTAS) — Go Directly to DDL
 
-1. **Parse the input SQL**: Identify all source tables, JOIN conditions, selected columns, and any transformations.
-2. **Call `describe_table`** for each source table to understand column types and relationships.
-3. **Optionally call `read_query`** with `LIMIT 10` to sample the result and validate column output.
-4. **Propose wide table schema**:
-   - Table name: `{prefix}_{descriptive_name}` (e.g., `wide_order_customer`)
-   - List all output columns with types
-   - Identify primary time dimension (for future metric definition)
+The user's SQL already fully defines the output schema. Do NOT ask the user about table usage, purpose, or column selection — the SQL is the spec.
 
-### Description Mode (CREATE TABLE)
+1. **Parse the input SQL**: Identify source tables, JOIN conditions, selected columns, and transformations.
+2. **Call `describe_table`** for each source table to understand column types.
+3. **Optionally call `read_query`** with `LIMIT 10` to validate the query output.
+4. **Determine table name**: Derive from the SQL context (e.g., `wide_order_customer`). If the user specified a name, use it.
+5. **Go directly to Phase 2** — do NOT call `ask_user` here. The DDL confirmation in Phase 2 is the only user interaction needed.
 
-1. **Parse user description**: Extract table name, columns, types, constraints from natural language.
+### Description Mode (CREATE TABLE) — Confirm Schema First
+
+Natural language is ambiguous, so clarification may be needed before generating DDL.
+
+1. **Parse user description**: Extract table name, columns, types, constraints.
 2. **Call `describe_table`** for any referenced existing tables to infer column types.
-3. **Propose table schema**:
-   - Table name and target schema
-   - Column definitions with types and constraints (NOT NULL, DEFAULT, etc.)
-   - Primary key if applicable
+3. **If critical information is missing** (e.g., no column names or types specified), call `ask_user` to clarify. Only ask about genuinely missing information — do NOT ask about table usage or purpose if the user already described the schema.
+4. **Go to Phase 2** once the schema is clear.
 
-### Both Modes
+## Phase 2: Generate DDL and Confirm (MANDATORY ask_user)
 
-5. **MUST call `ask_user`** to confirm:
-   - Proposed table name
-   - Column list and types
-   - Target schema/database (if ambiguous)
-
-## Phase 2: Confirm DDL (MANDATORY — two-step display)
-
-Generate the exact DDL SQL statement. **Display it as a separate assistant message first**, then ask for confirmation in a follow-up `ask_user` call. This ensures the DDL is always visible to the user and not collapsed inside the question UI.
-
-### SQL Mode
-1. **Generate CTAS SQL**: `CREATE TABLE {schema}.{table_name} AS ({select_sql})`
-
-### Description Mode
-1. **Generate CREATE TABLE SQL**: `CREATE TABLE {schema}.{table_name} ({column_defs})`
-
-### Both Modes — DDL Confirmation via ask_user
+Generate the exact DDL SQL statement and present it to the user for confirmation.
 
 **Include the full DDL SQL inside the `ask_user` question text.** This is required because when running as a sub-agent, all intermediate assistant messages are collapsed in the UI — the user can ONLY see the `ask_user` interaction widget.
+
+### SQL Mode
+Generate CTAS: `CREATE TABLE {schema}.{table_name} AS ({select_sql})`
+
+### Description Mode
+Generate: `CREATE TABLE {schema}.{table_name} ({column_defs})`
+
+### Both Modes — DDL Confirmation via ask_user
 
 Call `ask_user` with the complete DDL embedded in the question:
 
@@ -69,9 +75,9 @@ ask_user(questions=[{
 - End with a short confirmation prompt: "Confirm execution?"
 
 **Based on user response:**
-- If **Execute**: proceed to Phase 3
-- If **Modify**: ask what to change, regenerate the DDL, and call `ask_user` again with the updated DDL
-- If **Cancel**: stop and do not execute any DDL
+- **Execute**: proceed to Phase 3
+- **Modify**: ask what to change, regenerate DDL, call `ask_user` again with the updated DDL
+- **Cancel**: **STOP IMMEDIATELY.** Return `{"table_name": "", "output": "Cancelled by user."}`. Do NOT continue.
 
 ## Phase 3: Execute and Verify
 
