@@ -6,7 +6,6 @@
 Unit tests for datus/cli/print_mode.py
 """
 
-import asyncio
 import io
 import json
 import threading
