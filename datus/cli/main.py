@@ -126,6 +126,14 @@ class ArgumentParser:
             help="Comma-separated tool patterns to proxy in print mode (e.g. 'filesystem_tools.*')",
         )
 
+        self.parser.add_argument(
+            "--session-scope",
+            dest="session_scope",
+            type=str,
+            default=None,
+            help="Session scope for directory isolation (sessions stored under {session_dir}/{scope}/)",
+        )
+
     def parse_args(self):
         return self.parser.parse_args()
 

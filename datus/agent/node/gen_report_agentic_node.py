@@ -54,6 +54,7 @@ class GenReportAgenticNode(AgenticNode):
         tools: Optional[list] = None,
         node_name: Optional[str] = None,
         execution_mode: Literal["interactive", "workflow"] = "interactive",
+        scope: Optional[str] = None,
     ):
         """
         Initialize the GenReportAgenticNode.
@@ -94,6 +95,7 @@ class GenReportAgenticNode(AgenticNode):
             agent_config=agent_config,
             tools=tools or [],
             mcp_servers={},  # No MCP servers for report nodes by default
+            scope=scope,
         )
 
         # Setup tools based on configuration

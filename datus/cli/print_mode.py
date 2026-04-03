@@ -40,6 +40,7 @@ class PrintModeRunner:
         self.session_id = getattr(args, "resume", None)
         self.subagent_name = getattr(args, "subagent", None) or None
         self.proxy_tool_patterns = getattr(args, "proxy_tools", None)
+        self.scope = getattr(args, "session_scope", None)
 
         # Database context from args
         self.catalog = getattr(args, "catalog", None)
@@ -50,7 +51,7 @@ class PrintModeRunner:
         if self.session_id:
             self._validate_and_resolve_session()
 
-        node = create_interactive_node(self.subagent_name, self.agent_config, node_id_suffix="_print")
+        node = create_interactive_node(self.subagent_name, self.agent_config, node_id_suffix="_print", scope=self.scope)
         if self.session_id:
             node.session_id = self.session_id
 
@@ -208,7 +209,7 @@ class PrintModeRunner:
         """Validate session exists or create a new one with the given session_id."""
         from datus.models.session_manager import SessionManager
 
-        session_manager = SessionManager(session_dir=self.agent_config.session_dir)
+        session_manager = SessionManager(session_dir=self.agent_config.session_dir, scope=self.scope)
         if not session_manager.session_exists(self.session_id):
             logger.info("Session '%s' not found, will create a new session with this id.", self.session_id)
             return

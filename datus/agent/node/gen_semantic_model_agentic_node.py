@@ -49,6 +49,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
         self,
         agent_config: AgentConfig,
         execution_mode: Literal["interactive", "workflow"] = "interactive",
+        scope: Optional[str] = None,
     ):
         """
         Initialize the GenSemanticModelAgenticNode.
@@ -81,6 +82,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
             agent_config=agent_config,
             tools=[],
             mcp_servers={},
+            scope=scope,
         )
 
         # Setup tools

@@ -53,6 +53,7 @@ class AgenticNode(Node):
         agent_config: Optional[AgentConfig] = None,
         tools: Optional[List[Tool]] = None,
         mcp_servers: Optional[Dict[str, MCPServerStdio]] = None,
+        scope: Optional[str] = None,
     ):
         """
         Initialize the agentic node.
@@ -65,11 +66,13 @@ class AgenticNode(Node):
             agent_config: Agent configuration
             tools: List of function tools available to this node
             mcp_servers: Dictionary of MCP servers available to this node
+            scope: Optional session scope for directory isolation
         """
         # Initialize Node base class
         super().__init__(node_id, description, node_type, input_data, agent_config, tools)
 
         # AgenticNode-specific attributes
+        self.scope = scope
         self.mcp_servers = mcp_servers or {}
         self.actions: List[ActionHistory] = []
         self.session_id: Optional[str] = None
@@ -118,7 +121,7 @@ class AgenticNode(Node):
         # Initialize model: use node-specific model if configured, otherwise use default from agent_config
         if agent_config:
             model_name = self.node_config.get("model")  # Can be None, which will use active_model()
-            self.model = LLMBaseModel.create_model(model_name=model_name, agent_config=agent_config)
+            self.model = LLMBaseModel.create_model(model_name=model_name, agent_config=agent_config, scope=self.scope)
             self.context_length = self.model.context_length() if self.model else None
 
         self.interaction_broker = InteractionBroker()

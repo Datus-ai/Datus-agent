@@ -62,6 +62,7 @@ class GenSQLAgenticNode(AgenticNode):
         tools: Optional[list] = None,
         node_name: Optional[str] = None,
         execution_mode: Literal["interactive", "workflow"] = "interactive",
+        scope: Optional[str] = None,
     ):
         """
         Initialize the GenSQLAgenticNode as a workflow-compatible node.
@@ -109,6 +110,7 @@ class GenSQLAgenticNode(AgenticNode):
             agent_config=agent_config,
             tools=tools or [],
             mcp_servers={},  # Initialize empty, will setup after parent init
+            scope=scope,
         )
 
         # Initialize MCP servers based on configuration (after node_config is available)

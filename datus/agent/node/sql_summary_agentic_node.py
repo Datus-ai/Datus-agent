@@ -47,6 +47,7 @@ class SqlSummaryAgenticNode(AgenticNode):
         build_mode: str = "incremental",
         subject_tree: Optional[list] = None,
         storage_type: str = "reference_sql",
+        scope: Optional[str] = None,
     ):
         """
         Initialize the SqlSummaryAgenticNode.
@@ -87,6 +88,7 @@ class SqlSummaryAgenticNode(AgenticNode):
             agent_config=agent_config,
             tools=[],
             mcp_servers={},
+            scope=scope,
         )
 
         # Initialize reference SQL storage for context queries

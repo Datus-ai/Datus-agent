@@ -114,7 +114,9 @@ class ChatCommands:
 
         label = subagent_name or "chat"
         self.console.print(f"[dim]Creating new {label} session...[/]")
-        return create_interactive_node(subagent_name, self.cli.agent_config, node_id_suffix="_cli")
+        return create_interactive_node(
+            subagent_name, self.cli.agent_config, node_id_suffix="_cli", scope=self.cli.scope
+        )
 
     def create_node_input(
         self,
@@ -975,7 +977,7 @@ class ChatCommands:
             # Create a session manager directly (don't rely on chat_node)
             from datus.models.session_manager import SessionManager
 
-            session_manager = SessionManager(self.cli.agent_config.session_dir)
+            session_manager = SessionManager(self.cli.agent_config.session_dir, scope=self.cli.scope)
             sessions = session_manager.list_sessions()
 
             if not sessions:
@@ -1050,7 +1052,7 @@ class ChatCommands:
         from datus.models.session_manager import SessionManager
 
         try:
-            session_manager = SessionManager(self.cli.agent_config.session_dir)
+            session_manager = SessionManager(self.cli.agent_config.session_dir, scope=self.cli.scope)
 
             # If session_id provided directly, use it
             target_session_id = args.strip() if args else None
@@ -1198,7 +1200,7 @@ class ChatCommands:
                 return
 
             source_session_id = self.current_node.session_id
-            session_manager = SessionManager(self.cli.agent_config.session_dir)
+            session_manager = SessionManager(self.cli.agent_config.session_dir, scope=self.cli.scope)
 
             # Load conversation history
             messages = session_manager.get_session_messages(source_session_id)

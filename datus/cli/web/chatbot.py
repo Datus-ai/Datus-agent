@@ -97,7 +97,7 @@ class StreamlitChatbot:
     """Main Streamlit Chatbot class that wraps Datus CLI components"""
 
     def __init__(self):
-        self.session_manager = SessionManager()
+        self.session_manager = SessionManager(scope=st.session_state.get("startup_scope"))
         self.chat_executor = ChatExecutor()
         self.config_manager = ConfigManager()
 
@@ -1143,6 +1143,8 @@ def run_web_interface(args):  # pragma: no cover
             web_args.append("--debug")
         if getattr(args, "subagent", ""):
             web_args.extend(["--subagent", args.subagent])
+        if getattr(args, "session_scope", None):
+            web_args.extend(["--session-scope", args.session_scope])
 
         if web_args:
             cmd.extend(["--"] + web_args)
@@ -1175,6 +1177,7 @@ def main():  # pragma: no cover
     config_path = "conf/agent.yml"
     database = ""
     subagent_name = None
+    session_scope = None
     debug = False
 
     # Simple argument parsing for Streamlit
@@ -1187,6 +1190,8 @@ def main():  # pragma: no cover
             database = sys.argv[i + 1]
         elif arg == "--subagent" and i + 1 < len(sys.argv):
             subagent_name = sys.argv[i + 1]
+        elif arg == "--session-scope" and i + 1 < len(sys.argv):
+            session_scope = sys.argv[i + 1]
         elif arg == "--debug":
             debug = True
 
@@ -1211,6 +1216,8 @@ def main():  # pragma: no cover
         st.session_state.startup_database = database
     if "startup_debug" not in st.session_state:
         st.session_state.startup_debug = debug
+    if "startup_scope" not in st.session_state:
+        st.session_state.startup_scope = session_scope
 
     chatbot = StreamlitChatbot()
     chatbot.run()

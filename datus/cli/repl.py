@@ -70,6 +70,7 @@ class DatusCLI:
         """Initialize the CLI with the given arguments."""
         self.args = args
         self.interactive = interactive
+        self.scope = getattr(args, "session_scope", None)
         self.console = Console(log_path=False)
         self.console_column_width = 16
         self.selected_catalog_path = ""

@@ -62,6 +62,7 @@ class ChatAgenticNode(AgenticNode):
         input_data: Optional[ChatNodeInput] = None,
         agent_config: Optional[AgentConfig] = None,
         tools: Optional[list] = None,
+        scope: Optional[str] = None,
     ):
         """
         Initialize the ChatAgenticNode.
@@ -111,6 +112,7 @@ class ChatAgenticNode(AgenticNode):
             agent_config=agent_config,
             tools=tools or [],
             mcp_servers={},
+            scope=scope,
         )
 
         # Initialize MCP servers based on configuration

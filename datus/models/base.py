@@ -56,6 +56,7 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         # Initialize session manager for all models
         self._session_manager = None
         self.session_dir = kwargs.get("session_dir")
+        self.session_scope = kwargs.get("session_scope")
 
     @classmethod
     def create_model(cls, agent_config: AgentConfig, model_name: str = None, **kwargs) -> "LLMBaseModel":
@@ -74,7 +75,9 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         module = __import__(f"datus.models.{model_type}_model", fromlist=[model_class_name])
         model_class = getattr(module, model_class_name)
 
-        return model_class(model_config=target_config, session_dir=agent_config.session_dir)
+        return model_class(
+            model_config=target_config, session_dir=agent_config.session_dir, session_scope=kwargs.get("scope")
+        )
 
     @abstractmethod
     def generate(self, prompt: Any, enable_thinking: bool = False, **kwargs) -> str:
@@ -195,7 +198,7 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         if self._session_manager is None:
             from datus.models.session_manager import SessionManager
 
-            self._session_manager = SessionManager(session_dir=self.session_dir)
+            self._session_manager = SessionManager(session_dir=self.session_dir, scope=self.session_scope)
         return self._session_manager
 
     def create_session(self, session_id: str) -> SQLiteSession:

@@ -66,6 +66,7 @@ class MinimalCLI:
         self.actions = ActionHistoryManager()
         self.last_sql = ""
         self.at_completer = MinimalAtCompleter()
+        self.scope = None
 
     def prompt_input(self, message="", multiline=False):
         """Return empty string for prompt input."""
@@ -3341,6 +3342,7 @@ class MinimalCLIExtended:
         self.actions = ActionHistoryManager()
         self.last_sql = ""
         self.at_completer = MinimalAtCompleter()
+        self.scope = None
 
     def prompt_input(self, message="", multiline=False, default="", **kw):
         return default

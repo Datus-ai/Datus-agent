@@ -18,6 +18,7 @@ def create_interactive_node(
     subagent_name: Optional[str],
     agent_config: "AgentConfig",
     node_id_suffix: str = "",
+    scope: Optional[str] = None,
 ):
     """Create an interactive agentic node based on subagent_name.
 
@@ -25,6 +26,7 @@ def create_interactive_node(
         subagent_name: Name of the subagent, or None for default chat node.
         agent_config: Agent configuration.
         node_id_suffix: Suffix appended to node_id (e.g. "_cli", "_print").
+        scope: Optional session scope for directory isolation.
     """
     if subagent_name:
         node_class_type = _resolve_node_class_type(subagent_name, agent_config)
@@ -32,25 +34,25 @@ def create_interactive_node(
         if subagent_name == "gen_semantic_model":
             from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
 
-            return GenSemanticModelAgenticNode(agent_config=agent_config, execution_mode="interactive")
+            return GenSemanticModelAgenticNode(agent_config=agent_config, execution_mode="interactive", scope=scope)
 
         elif subagent_name == "gen_metrics":
             from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
 
-            return GenMetricsAgenticNode(agent_config=agent_config, execution_mode="interactive")
+            return GenMetricsAgenticNode(agent_config=agent_config, execution_mode="interactive", scope=scope)
 
         elif subagent_name == "gen_sql_summary":
             from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
 
             return SqlSummaryAgenticNode(
-                node_name=subagent_name, agent_config=agent_config, execution_mode="interactive"
+                node_name=subagent_name, agent_config=agent_config, execution_mode="interactive", scope=scope
             )
 
         elif subagent_name == "gen_ext_knowledge":
             from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
 
             return GenExtKnowledgeAgenticNode(
-                node_name=subagent_name, agent_config=agent_config, execution_mode="interactive"
+                node_name=subagent_name, agent_config=agent_config, execution_mode="interactive", scope=scope
             )
 
         elif subagent_name == "gen_table":
@@ -69,6 +71,7 @@ def create_interactive_node(
                 agent_config=agent_config,
                 tools=None,
                 node_name=subagent_name,
+                scope=scope,
             )
 
         else:
@@ -82,6 +85,7 @@ def create_interactive_node(
                 agent_config=agent_config,
                 tools=None,
                 node_name=subagent_name,
+                scope=scope,
             )
     else:
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
@@ -93,6 +97,7 @@ def create_interactive_node(
             input_data=None,
             agent_config=agent_config,
             tools=None,
+            scope=scope,
         )
 
 

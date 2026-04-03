@@ -65,20 +65,20 @@ class TestCreateInteractiveNode:
     def test_gen_semantic_model(self, mock_init):
         config = _mock_agent_config()
         create_interactive_node("gen_semantic_model", config)
-        mock_init.assert_called_once_with(agent_config=config, execution_mode="interactive")
+        mock_init.assert_called_once_with(agent_config=config, execution_mode="interactive", scope=None)
 
     @patch("datus.agent.node.gen_metrics_agentic_node.GenMetricsAgenticNode.__init__", return_value=None)
     def test_gen_metrics(self, mock_init):
         config = _mock_agent_config()
         create_interactive_node("gen_metrics", config)
-        mock_init.assert_called_once_with(agent_config=config, execution_mode="interactive")
+        mock_init.assert_called_once_with(agent_config=config, execution_mode="interactive", scope=None)
 
     @patch("datus.agent.node.sql_summary_agentic_node.SqlSummaryAgenticNode.__init__", return_value=None)
     def test_gen_sql_summary(self, mock_init):
         config = _mock_agent_config()
         create_interactive_node("gen_sql_summary", config)
         mock_init.assert_called_once_with(
-            node_name="gen_sql_summary", agent_config=config, execution_mode="interactive"
+            node_name="gen_sql_summary", agent_config=config, execution_mode="interactive", scope=None
         )
 
     @patch("datus.agent.node.gen_ext_knowledge_agentic_node.GenExtKnowledgeAgenticNode.__init__", return_value=None)
@@ -86,7 +86,7 @@ class TestCreateInteractiveNode:
         config = _mock_agent_config()
         create_interactive_node("gen_ext_knowledge", config)
         mock_init.assert_called_once_with(
-            node_name="gen_ext_knowledge", agent_config=config, execution_mode="interactive"
+            node_name="gen_ext_knowledge", agent_config=config, execution_mode="interactive", scope=None
         )
 
     @patch("datus.agent.node.gen_report_agentic_node.GenReportAgenticNode.__init__", return_value=None)
