@@ -1109,9 +1109,6 @@ def _build_execute_reference_template(action: ActionHistory, verbose: bool) -> T
                         tc.output_preview = f"\u2713 {rows} rows"
                     else:
                         tc.output_preview = "\u2713 Executed"
-                    compressed = query_result.get("compressed_data")
-                    if isinstance(compressed, str) and compressed:
-                        tc.output_lines = _format_csv_preview_markup(compressed)
                 else:
                     tc.output_preview = "\u2713 Executed"
     return tc

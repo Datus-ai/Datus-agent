@@ -5,11 +5,11 @@ This module handles the storage, processing, and analysis of parameterized Jinja
 ## Data Flow
 
 ```text
-Template Files → File Processor → sqlglot Analysis → LLM Analysis → Storage
-      ↓                ↓                ↓                 ↓            ↓
-  Split blocks     Validation      Parameter type      Metadata     Vector DB
-  Extract params   + Cleaning     + column_ref        Extraction    + Search
-                                  + sample_values
+Template Files → File Processor → Parameter Analysis → LLM Analysis → Storage
+      ↓                ↓                ↓                   ↓            ↓
+  Split blocks     Validation      Type inference        Metadata     Vector DB
+  Extract params   + Cleaning     + column resolution   Extraction    + Search
+                                  + sample values
 ```
 
 ### Processing Pipeline
@@ -17,15 +17,15 @@ Template Files → File Processor → sqlglot Analysis → LLM Analysis → Stor
 1. **File Processing**: Extract template blocks from `.j2`/`.jinja2` files (split by `;`)
 2. **Parameter Extraction**: Use `jinja2.meta.find_undeclared_variables()` to discover parameters
 3. **Validation**: Validate Jinja2 syntax for each template block
-4. **Parameter Analysis** (sqlglot): Static AST analysis to determine parameter types, column references, and sample values
+4. **Parameter Analysis**: Static SQL AST analysis to determine parameter types, resolve column references, and query sample values from the database
 5. **LLM Analysis**: Extract business metadata (name, summary, search_text, tags, subject_tree) using SqlSummaryAgenticNode
-6. **Merge**: Combine sqlglot-analyzed parameter types with LLM-generated descriptions
+6. **Merge**: Combine statically-analyzed parameter types with LLM-generated descriptions
 7. **Storage**: Store enriched data in vector store for semantic search
 8. **Indexing**: Create search indices for efficient retrieval
 
 ## Parameter Type System
 
-During bootstrap, each `{{ variable }}` placeholder is analyzed using sqlglot AST parsing to determine its type and resolve column references. Table aliases (e.g., `T1 → frpm`) are automatically resolved to real table names.
+During bootstrap, each `{{ variable }}` placeholder is analyzed using SQL AST parsing to determine its type and resolve column references. Table aliases (e.g., `T1 → frpm`) are automatically resolved to real table names.
 
 ### Parameter Types
 

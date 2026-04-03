@@ -150,67 +150,6 @@ class ReferenceTemplateTools:
             logger.error(f"Failed to get reference template for `{'/'.join(subject_path)}/{name}`: {e}")
             return FuncToolResult(success=0, error=str(e))
 
-    def _enrich_dimension_values(self, parameters_json: str) -> str:
-        """Enrich dimension-type parameters with sample values from the database.
-
-        For parameters with type=dimension and a column_ref, queries SELECT DISTINCT
-        to provide actual allowed values the LLM can use when calling execute_reference_template.
-
-        Args:
-            parameters_json: JSON string of parameter definitions
-
-        Returns:
-            Enriched JSON string with sample_values added to dimension parameters
-        """
-        if not self.db_func_tool:
-            return parameters_json
-        try:
-            params = json.loads(parameters_json)
-        except (json.JSONDecodeError, TypeError):
-            return parameters_json
-
-        for p in params:
-            if p.get("type") != "dimension" or not p.get("column_ref"):
-                continue
-            col_ref = p["column_ref"]
-            parts = col_ref.split(".", 1)
-            if len(parts) != 2:
-                continue
-            table, column = parts
-            sql = f"SELECT DISTINCT {column} FROM {table} WHERE {column} IS NOT NULL LIMIT 20"
-            try:
-                result = self.db_func_tool.read_query(sql)
-                if result.success and result.result:
-                    values = self._extract_distinct_values(result.result)
-                    if values:
-                        p["sample_values"] = values
-            except Exception as e:
-                logger.debug(f"Failed to query distinct values for {col_ref}: {e}")
-
-        return json.dumps(params)
-
-    @staticmethod
-    def _extract_distinct_values(query_result: Dict[str, Any]) -> Optional[List[str]]:
-        """Extract distinct values from a read_query result.
-
-        The compressed_data CSV format is: "index,column_name\\n0,value1\\n1,value2"
-        We skip the header and strip the index prefix from each row.
-        """
-        compressed = query_result.get("compressed_data", "")
-        if not compressed:
-            return None
-        lines = compressed.strip().split("\n")
-        if len(lines) <= 1:
-            return None
-        values = []
-        for line in lines[1:]:
-            # Strip index prefix: "0,Traditional" -> "Traditional"
-            _, _, val = line.partition(",")
-            val = val.strip()
-            if val:
-                values.append(val)
-        return values or None
-
     @mcp_tool(availability_check="has_reference_templates")
     def render_reference_template(self, subject_path: List[str], name: str, params: str) -> FuncToolResult:
         """

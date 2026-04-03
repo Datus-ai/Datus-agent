@@ -4,6 +4,7 @@
 
 import asyncio
 import json
+import re
 from typing import Any, Dict, Optional
 
 from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
@@ -86,6 +87,14 @@ def _enrich_dimension_sample_values(params: list, agent_config: AgentConfig) -> 
             _enrich_column_param(p, db_tool)
 
 
+_SAFE_IDENTIFIER = re.compile(r"^[a-zA-Z_]\w*$|^`[^`]+`$")
+
+
+def _is_safe_identifier(name: str) -> bool:
+    """Check if a string is a safe SQL identifier (plain name or backtick-quoted)."""
+    return bool(_SAFE_IDENTIFIER.match(name))
+
+
 def _enrich_dimension_param(p: dict, db_tool) -> None:
     """Query top 10 most common values for a dimension parameter."""
     col_ref = p["column_ref"]
@@ -93,6 +102,9 @@ def _enrich_dimension_param(p: dict, db_tool) -> None:
     if len(parts) != 2:
         return
     table, column = parts
+    if not _is_safe_identifier(table) or not _is_safe_identifier(column):
+        logger.debug(f"Skipping sample value query for unsafe identifier: {col_ref}")
+        return
     sql = f"SELECT {column} FROM {table} WHERE {column} IS NOT NULL GROUP BY {column} ORDER BY COUNT(*) DESC LIMIT 10"
     try:
         result = db_tool.read_query(sql)
@@ -108,6 +120,8 @@ def _enrich_column_param(p: dict, db_tool) -> None:
     table_refs = p["table_refs"]
     all_columns = []
     for table in table_refs:
+        if not _is_safe_identifier(table):
+            continue
         try:
             result = db_tool.describe_table(table)
             if result.success and result.result:
