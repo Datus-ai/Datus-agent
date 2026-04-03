@@ -165,7 +165,7 @@ class ReferenceTemplateStorage(BaseSubjectEmbeddingStore):
         )
 
     def delete_reference_template(
-        self, subject_path: List[str], name: str, extra_conditions: Optional[List] = None, datasource_id: str = ""
+        self, subject_path: List[str], name: str, extra_conditions: Optional[List] = None
     ) -> bool:
         """Delete reference template by subject_path and name.
 

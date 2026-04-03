@@ -78,6 +78,7 @@ class TestReferenceTemplateBootstrap:
         assert storage.get_reference_template_size() >= size_before
 
 
+@pytest.mark.nightly
 class TestReferenceTemplateToolsNightly:
     """Nightly: Verify tools work against bootstrapped data."""
 
