@@ -83,6 +83,7 @@ Examples:
 - **Error code ranges**: 100000–199999 common, 200000–299999 node, 300000–399999 model/LLM, 400000–499999 tool/storage, 500000–599999 database, 600000–699999 semantic adapter
 - **No secrets in code**: API keys go in env vars or `agent.yml` with `${ENV_VAR}` substitution
 - **Config via YAML**: New configurable parameters belong in `agent.yml` sections, not hardcoded constants
+- **English only**: All code, comments, docstrings, commit messages, PR titles/descriptions, and review comments must be written in English. The only exception is user-facing documentation explicitly intended for Chinese audiences
 
 ## Testing Rules
 
