@@ -49,7 +49,11 @@ class ToolResultChannel:
                 future.set_result(result)
 
     def cancel_all(self, reason: str = "Channel closed"):
-        """Cancel all pending futures."""
+        """Cancel all pending futures.
+
+        Note: This is a synchronous method and must be called from the
+        same event-loop thread that owns the futures.
+        """
         for future in self._futures.values():
             if not future.done():
                 future.set_exception(RuntimeError(reason))

@@ -173,28 +173,35 @@ class PrintModeRunner:
         On Windows falls back to a short polling loop.
         """
         fd = sys.stdin.fileno()
-        buf = []
-        while not stop_event.is_set():
-            if sys.platform == "win32":
-                # Windows: no select on stdin, poll with short sleep
+        if sys.platform == "win32":
+            str_buf: list[str] = []
+            while not stop_event.is_set():
                 if sys.stdin.readable():
                     ch = sys.stdin.read(1)
                     if not ch:
                         return None
                     if ch == "\n":
-                        return "".join(buf)
-                    buf.append(ch)
+                        return "".join(str_buf)
+                    str_buf.append(ch)
                 else:
                     stop_event.wait(0.05)
-            else:
+        else:
+            buf: list[bytes] = []
+            while not stop_event.is_set():
                 ready, _, _ = select.select([fd], [], [], 0.1)
                 if ready:
-                    ch = os.read(fd, 1)
-                    if not ch:
+                    chunk = os.read(fd, 4096)
+                    if not chunk:
                         return None
-                    if ch == b"\n":
-                        return "".join(buf)
-                    buf.append(ch.decode("utf-8", errors="replace"))
+                    buf.append(chunk)
+                    if b"\n" in chunk:
+                        data = b"".join(buf)
+                        line, _, remainder = data.partition(b"\n")
+                        # Put back any bytes after the newline (shouldn't happen
+                        # normally since each JSON message is one line, but be safe).
+                        if remainder:
+                            buf[:] = [remainder]
+                        return line.decode("utf-8", errors="replace")
         return None
 
     def _validate_and_resolve_session(self):

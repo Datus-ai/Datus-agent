@@ -105,10 +105,8 @@ class PermissionHooks(AgentHooks):
             broker=interaction_broker,
             permission_manager=manager,
             node_name="chat",
+            tool_registry=tool_registry,
         )
-
-        # Register tools during setup
-        permission_hooks.register_tools("db_tools", db_func_tool.available_tools())
 
         # Use in execution config
         config["hooks"] = CompositeHooks([existing_hooks, permission_hooks])
@@ -119,7 +117,7 @@ class PermissionHooks(AgentHooks):
         broker: InteractionBroker,
         permission_manager: "PermissionManager",
         node_name: str,
-        tool_registry: Optional[ToolRegistry] = None,
+        tool_registry: ToolRegistry,
     ):
         """Initialize the permission hooks.
 
@@ -127,23 +125,12 @@ class PermissionHooks(AgentHooks):
             broker: InteractionBroker for async user interactions
             permission_manager: PermissionManager for checking permissions
             node_name: Name of the current agentic node (e.g., "chat")
-            tool_registry: Optional shared ToolRegistry instance
+            tool_registry: Shared ToolRegistry instance (from AgenticNode)
         """
         self.broker = broker
         self.permission_manager = permission_manager
         self.node_name = node_name
-        # Tool registry: tool_name -> category
-        # Shared with AgenticNode; populated via register_tools()
-        self.tool_registry: ToolRegistry = tool_registry if tool_registry is not None else ToolRegistry()
-
-    def register_tools(self, category: str, tools: List[Any]) -> None:
-        """Register tools with their category (delegates to ToolRegistry).
-
-        Args:
-            category: Tool category (e.g., "db_tools", "skills")
-            tools: List of Tool objects with .name attribute
-        """
-        self.tool_registry.register_tools(category, tools)
+        self.tool_registry = tool_registry
 
     async def on_tool_start(self, context, agent, tool) -> None:
         """Intercept ALL tool calls for permission checking.
