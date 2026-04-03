@@ -12,6 +12,7 @@ import pytest
 from agents import FunctionTool
 
 from datus.tools.proxy.proxy_tool import (
+    _FS_DEPENDENT_NODES,
     _matches,
     _parse_patterns,
     apply_proxy_tools,
@@ -179,6 +180,106 @@ class TestCreateProxyTool:
 
 
 @pytest.mark.ci
+class TestApplyProxyToolsWithExplicitChannel:
+    """Tests for apply_proxy_tools with the optional channel parameter."""
+
+    def test_uses_explicit_channel(self):
+        """When channel is passed, proxy tools use that channel instead of node.tool_channel."""
+        original_invoke = MagicMock()
+        tool_a = FunctionTool(
+            name="read_file",
+            description="Read a file",
+            params_json_schema={"type": "object"},
+            on_invoke_tool=original_invoke,
+        )
+
+        node_channel = ToolResultChannel()
+        explicit_channel = ToolResultChannel()
+
+        node = SimpleNamespace(
+            tools=[tool_a],
+            tool_channel=node_channel,
+            tool_registry=ToolRegistry(),
+            proxy_tool_patterns=None,
+        )
+
+        apply_proxy_tools(node, ["*"], channel=explicit_channel)
+
+        # Tool should be proxied
+        assert node.tools[0].on_invoke_tool is not original_invoke
+
+    @pytest.mark.asyncio
+    async def test_proxy_tool_receives_from_explicit_channel(self):
+        """Proxy tool created with explicit channel can receive results from it."""
+        original_invoke = MagicMock()
+        tool_a = FunctionTool(
+            name="read_file",
+            description="Read a file",
+            params_json_schema={"type": "object"},
+            on_invoke_tool=original_invoke,
+        )
+
+        node_channel = ToolResultChannel()
+        explicit_channel = ToolResultChannel()
+
+        node = SimpleNamespace(
+            tools=[tool_a],
+            tool_channel=node_channel,
+            tool_registry=ToolRegistry(),
+            proxy_tool_patterns=None,
+        )
+
+        apply_proxy_tools(node, ["*"], channel=explicit_channel)
+
+        ctx = SimpleNamespace(tool_call_id="call_explicit")
+
+        async def publisher():
+            await asyncio.sleep(0.01)
+            await explicit_channel.publish("call_explicit", {"success": 1, "result": "from_explicit"})
+
+        task = asyncio.create_task(publisher())
+        result = await node.tools[0].on_invoke_tool(ctx, "{}")
+        await task
+
+        assert result == {"success": 1, "result": "from_explicit"}
+
+    def test_none_channel_falls_back_to_node_channel(self):
+        """When channel=None, proxy tools use node.tool_channel (backward compatible)."""
+        original_invoke = MagicMock()
+        tool_a = FunctionTool(
+            name="read_file",
+            description="Read a file",
+            params_json_schema={"type": "object"},
+            on_invoke_tool=original_invoke,
+        )
+
+        node = SimpleNamespace(
+            tools=[tool_a],
+            tool_channel=ToolResultChannel(),
+            tool_registry=ToolRegistry(),
+            proxy_tool_patterns=None,
+        )
+
+        apply_proxy_tools(node, ["*"], channel=None)
+
+        # Tool should still be proxied
+        assert node.tools[0].on_invoke_tool is not original_invoke
+
+    def test_stores_patterns_on_node(self):
+        """apply_proxy_tools stores the patterns on node.proxy_tool_patterns."""
+        node = SimpleNamespace(
+            tools=[],
+            tool_channel=ToolResultChannel(),
+            tool_registry=ToolRegistry(),
+            proxy_tool_patterns=None,
+        )
+
+        apply_proxy_tools(node, ["filesystem_tools.*", "read_file"])
+
+        assert node.proxy_tool_patterns == ["filesystem_tools.*", "read_file"]
+
+
+@pytest.mark.ci
 class TestApplyProxyTools:
     def test_replaces_matching_tools(self):
         original_invoke = MagicMock()
@@ -234,3 +335,121 @@ class TestApplyProxyTools:
         assert node.tools[0] is non_func_tool
         # FunctionTool should be proxied
         assert node.tools[1].name == "read_file"
+
+
+# ---------------------------------------------------------------------------
+# Tests: FS-dependent node exclusion
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.ci
+class TestFsDependentNodeExclusion:
+    """Filesystem-dependent nodes auto-exclude filesystem_tools from proxying."""
+
+    @pytest.mark.parametrize("node_name", sorted(_FS_DEPENDENT_NODES))
+    def test_filesystem_tools_not_proxied_on_fs_dependent_node(self, node_name):
+        """filesystem_tools category tools are NOT proxied on fs-dependent nodes."""
+        original_invoke = MagicMock()
+        write_file = FunctionTool(
+            name="write_file",
+            description="Write a file",
+            params_json_schema={"type": "object"},
+            on_invoke_tool=original_invoke,
+        )
+        read_file = FunctionTool(
+            name="read_file",
+            description="Read a file",
+            params_json_schema={"type": "object"},
+            on_invoke_tool=original_invoke,
+        )
+
+        node = SimpleNamespace(
+            tools=[write_file, read_file],
+            tool_channel=ToolResultChannel(),
+            tool_registry=ToolRegistry({"write_file": "filesystem_tools", "read_file": "filesystem_tools"}),
+            proxy_tool_patterns=None,
+            get_node_name=lambda: node_name,
+        )
+
+        apply_proxy_tools(node, ["*"])
+
+        # Both filesystem tools should remain un-proxied
+        assert node.tools[0].on_invoke_tool is original_invoke
+        assert node.tools[1].on_invoke_tool is original_invoke
+
+    @pytest.mark.parametrize("node_name", sorted(_FS_DEPENDENT_NODES))
+    def test_non_filesystem_tools_still_proxied_on_fs_dependent_node(self, node_name):
+        """Non-filesystem tools are still proxied on fs-dependent nodes."""
+        original_invoke = MagicMock()
+        write_file = FunctionTool(
+            name="write_file",
+            description="Write a file",
+            params_json_schema={"type": "object"},
+            on_invoke_tool=original_invoke,
+        )
+        execute_sql = FunctionTool(
+            name="execute_sql",
+            description="Execute SQL",
+            params_json_schema={"type": "object"},
+            on_invoke_tool=original_invoke,
+        )
+
+        node = SimpleNamespace(
+            tools=[write_file, execute_sql],
+            tool_channel=ToolResultChannel(),
+            tool_registry=ToolRegistry({"write_file": "filesystem_tools", "execute_sql": "db_tools"}),
+            proxy_tool_patterns=None,
+            get_node_name=lambda: node_name,
+        )
+
+        apply_proxy_tools(node, ["*"])
+
+        # write_file (filesystem_tools) should NOT be proxied
+        assert node.tools[0].on_invoke_tool is original_invoke
+        # execute_sql (db_tools) should be proxied
+        assert node.tools[1].on_invoke_tool is not original_invoke
+
+    def test_filesystem_tools_proxied_on_non_fs_dependent_node(self):
+        """On non-fs-dependent nodes, filesystem_tools are proxied normally (regression)."""
+        original_invoke = MagicMock()
+        write_file = FunctionTool(
+            name="write_file",
+            description="Write a file",
+            params_json_schema={"type": "object"},
+            on_invoke_tool=original_invoke,
+        )
+
+        node = SimpleNamespace(
+            tools=[write_file],
+            tool_channel=ToolResultChannel(),
+            tool_registry=ToolRegistry({"write_file": "filesystem_tools"}),
+            proxy_tool_patterns=None,
+            get_node_name=lambda: "gen_sql",
+        )
+
+        apply_proxy_tools(node, ["filesystem_tools.*"])
+
+        # Should be proxied on a non-fs-dependent node
+        assert node.tools[0].on_invoke_tool is not original_invoke
+
+    def test_node_without_get_node_name_proxied_normally(self):
+        """Nodes without get_node_name method have all tools proxied normally."""
+        original_invoke = MagicMock()
+        write_file = FunctionTool(
+            name="write_file",
+            description="Write a file",
+            params_json_schema={"type": "object"},
+            on_invoke_tool=original_invoke,
+        )
+
+        node = SimpleNamespace(
+            tools=[write_file],
+            tool_channel=ToolResultChannel(),
+            tool_registry=ToolRegistry({"write_file": "filesystem_tools"}),
+            proxy_tool_patterns=None,
+        )
+
+        apply_proxy_tools(node, ["*"])
+
+        # Should be proxied since node has no get_node_name
+        assert node.tools[0].on_invoke_tool is not original_invoke

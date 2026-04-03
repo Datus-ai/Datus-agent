@@ -95,6 +95,9 @@ class AgenticNode(Node):
 
         self.tool_channel = ToolResultChannel()
 
+        # Proxy tool patterns - stored when apply_proxy_tools() is called, inherited by sub-agents
+        self.proxy_tool_patterns: Optional[List[str]] = None
+
         # Shared tool_name -> category registry (used by PermissionHooks & proxy_tool)
         from datus.tools.registry.tool_registry import ToolRegistry
 

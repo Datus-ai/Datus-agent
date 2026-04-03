@@ -35,6 +35,7 @@ from datus.utils.constants import SYS_SUB_AGENTS
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
+    from datus.agent.node.agentic_node import AgenticNode
     from datus.cli.execution_state import InteractionBroker
     from datus.schemas.action_bus import ActionBus
 
@@ -129,6 +130,7 @@ class SubAgentTaskTool:
         self.agent_config = agent_config
         self._action_bus: Optional["ActionBus"] = None
         self._interaction_broker: Optional["InteractionBroker"] = None
+        self._parent_node: Optional["AgenticNode"] = None
 
     def set_action_bus(self, bus: "ActionBus") -> None:
         """Inject the :class:`ActionBus` for forwarding sub-agent actions."""
@@ -142,6 +144,15 @@ class SubAgentTaskTool:
         correctly resolve sub-agent interaction futures.
         """
         self._interaction_broker = broker
+
+    def set_parent_node(self, node: "AgenticNode") -> None:
+        """Store a reference to the parent :class:`AgenticNode`.
+
+        The parent's ``proxy_tool_patterns`` and ``tool_channel`` are read
+        lazily in :meth:`_execute_node` so sub-agent tools are automatically
+        proxied when the parent has proxy tools configured.
+        """
+        self._parent_node = node
 
     # ── public API ──────────────────────────────────────────────────────
 
@@ -382,6 +393,16 @@ class SubAgentTaskTool:
         # avoid dual-consuming the same broker.fetch() stream.
         if self._interaction_broker is not None:
             self._inject_broker(node, self._interaction_broker)
+
+        # Propagate proxy tool config from parent node so sub-agent tools are
+        # also proxied.  Uses the parent's tool_channel so stdin dispatch can
+        # resolve futures for both parent and sub-agent tools.
+        # Note: apply_proxy_tools internally detects fs-dependent nodes and
+        # excludes their filesystem_tools category from proxying.
+        if self._parent_node and self._parent_node.proxy_tool_patterns:
+            from datus.tools.proxy.proxy_tool import apply_proxy_tools
+
+            apply_proxy_tools(node, self._parent_node.proxy_tool_patterns, channel=self._parent_node.tool_channel)
 
         # Iterate the async generator directly (we're already in async context)
         action_history_manager = ActionHistoryManager()

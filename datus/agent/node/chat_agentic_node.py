@@ -222,6 +222,7 @@ class ChatAgenticNode(AgenticNode):
             )
             self.sub_agent_task_tool.set_action_bus(self.action_bus)
             self.sub_agent_task_tool.set_interaction_broker(self.interaction_broker)
+            self.sub_agent_task_tool.set_parent_node(self)
         except Exception as e:
             logger.error(f"Failed to setup SubAgent task tool: {e}")
             self.sub_agent_task_tool = None
