@@ -43,7 +43,7 @@ datus-agent bootstrap-kb \
 | `--template_dir` | Yes | Directory containing J2 template files | `/templates/queries` |
 | `--kb_update_strategy` | Yes | Update strategy | `overwrite`/`incremental` |
 | `--validate-only` | No | Only validate, don't store | |
-| `--pool_size` | No | Concurrent processing threads (default: 4) | `8` |
+| `--pool_size` | No | Concurrent processing threads (default: 1) | `8` |
 | `--subject_tree` | No | Predefined subject tree categories | `Analytics/User/Activity,Reporting/Sales/Monthly` |
 
 ### Subject Tree Categorization

@@ -43,7 +43,7 @@ datus-agent bootstrap-kb \
 | `--template_dir` | 是 | 包含 J2 模板文件的目录 | `/templates/queries` |
 | `--kb_update_strategy` | 是 | 更新策略 | `overwrite`/`incremental` |
 | `--validate-only` | 否 | 仅验证，不存储 | |
-| `--pool_size` | 否 | 并发处理线程数（默认：4） | `8` |
+| `--pool_size` | 否 | 并发处理线程数（默认：1） | `8` |
 | `--subject_tree` | 否 | 预定义主题树分类 | `Analytics/User/Activity,Reporting/Sales/Monthly` |
 
 ### 主题树分类
