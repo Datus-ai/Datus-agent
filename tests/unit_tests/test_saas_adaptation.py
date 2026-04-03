@@ -350,9 +350,9 @@ class TestSessionManagerProjectIsolation:
             mgr_a.get_session("shared-name-session")
             mgr_b.get_session("shared-name-session")
 
-            # Each project has its own .db file in its own directory (under default scope)
-            assert os.path.isfile(os.path.join(project_a_dir, "default", "shared-name-session.db"))
-            assert os.path.isfile(os.path.join(project_b_dir, "default", "shared-name-session.db"))
+            # Each project has its own .db file in its own directory
+            assert os.path.isfile(os.path.join(project_a_dir, "shared-name-session.db"))
+            assert os.path.isfile(os.path.join(project_b_dir, "shared-name-session.db"))
 
             # Listing sessions shows the session in both, but they are stored in separate directories
             assert "shared-name-session" in mgr_a.list_sessions()
@@ -376,11 +376,11 @@ class TestSessionManagerProjectIsolation:
             mgr.get_session(f"user-session-{project_id}")
             mgr.close_all_sessions()
 
-        # Verify all three project directories were created independently (under default scope)
+        # Verify all three project directories were created independently
         for project_id in ["proj-001", "proj-002", "proj-003"]:
             session_dir = os.path.join(home, project_id, "sessions")
             assert os.path.isdir(session_dir)
-            db_file = os.path.join(session_dir, "default", f"user-session-{project_id}.db")
+            db_file = os.path.join(session_dir, f"user-session-{project_id}.db")
             assert os.path.isfile(db_file)
 
     def test_custom_dir_session_roundtrip(self, tmp_path):
@@ -393,7 +393,7 @@ class TestSessionManagerProjectIsolation:
             session = mgr.get_session(session_id)
             assert session.session_id == session_id
 
-            db_path = os.path.join(custom_dir, "default", f"{session_id}.db")
+            db_path = os.path.join(custom_dir, f"{session_id}.db")
             assert os.path.isfile(db_path)
 
             # Write a session record so session_exists returns True

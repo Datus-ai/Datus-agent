@@ -54,7 +54,8 @@ class SessionManager:
                 default {agent.home}/sessions path.
             scope: Optional scope name for session directory isolation.
                 When provided, sessions are stored under {session_dir}/{scope}/.
-                When None or empty, defaults to "default".
+                When None or empty, sessions are stored directly in {session_dir}/
+                (backward compatible with previous behavior).
                 Only alphanumerics, hyphens, and underscores are allowed.
         """
         if session_dir and str(session_dir).strip():
@@ -64,15 +65,16 @@ class SessionManager:
 
             self.session_dir = str(get_path_manager(path_manager=path_manager, agent_config=agent_config).sessions_dir)
 
-        # Apply scope subdirectory
-        resolved_scope = scope if scope and scope.strip() else "default"
-        if not re.fullmatch(r"[A-Za-z0-9_-]+", resolved_scope):
-            raise DatusException(
-                ErrorCode.COMMON_VALIDATION_FAILED,
-                message=f"Invalid scope: {resolved_scope!r}. "
-                "Scope may only contain alphanumerics, hyphens, and underscores.",
-            )
-        self.session_dir = os.path.join(self.session_dir, resolved_scope)
+        # Apply scope subdirectory only when explicitly provided
+        if scope and scope.strip():
+            resolved_scope = scope.strip()
+            if not re.fullmatch(r"[A-Za-z0-9_-]+", resolved_scope):
+                raise DatusException(
+                    ErrorCode.COMMON_VALIDATION_FAILED,
+                    message=f"Invalid scope: {resolved_scope!r}. "
+                    "Scope may only contain alphanumerics, hyphens, and underscores.",
+                )
+            self.session_dir = os.path.join(self.session_dir, resolved_scope)
         os.makedirs(self.session_dir, exist_ok=True)
         self._sessions: Dict[str, AdvancedSQLiteSession] = {}
 

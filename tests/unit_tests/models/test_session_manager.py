@@ -113,7 +113,7 @@ class TestSessionManagerInit:
     def test_init_creates_session_dir(self, sm):
         """SessionManager creates the session directory on init."""
         assert os.path.isdir(sm.session_dir)
-        assert sm.session_dir.endswith("default")
+        assert sm.session_dir.endswith("sessions")
 
     def test_init_sessions_cache_is_empty(self, sm):
         """SessionManager starts with an empty session cache."""
@@ -984,11 +984,11 @@ class TestSessionManagerCustomDir:
     """Tests for SessionManager(session_dir=custom_path) - SaaS per-project isolation."""
 
     def test_custom_dir_is_used_instead_of_default(self, tmp_path):
-        """When session_dir is provided, it is used as the session directory (with default scope)."""
+        """When session_dir is provided, it is used as the session directory directly."""
         custom_dir = str(tmp_path / "my_project" / "sessions")
         manager = SessionManager(session_dir=custom_dir)
         try:
-            assert manager.session_dir == os.path.join(custom_dir, "default")
+            assert manager.session_dir == custom_dir
         finally:
             manager.close_all_sessions()
 
@@ -1065,7 +1065,7 @@ class TestSessionManagerCustomDir:
         assert sm_custom.session_exists(session_id) is True
 
     def test_saas_style_project_path(self, tmp_path):
-        """Simulates SaaS use: {home}/{project_id}/sessions as session_dir (with default scope)."""
+        """Simulates SaaS use: {home}/{project_id}/sessions as session_dir directly."""
         home = str(tmp_path)
         project_id = "proj-42"
         saas_session_dir = os.path.join(home, project_id, "sessions")
@@ -1073,7 +1073,7 @@ class TestSessionManagerCustomDir:
         manager = SessionManager(session_dir=saas_session_dir)
         try:
             assert os.path.isdir(manager.session_dir)
-            assert manager.session_dir == os.path.join(saas_session_dir, "default")
+            assert manager.session_dir == saas_session_dir
 
             # Create and verify a session
             manager.get_session("user-abc")
@@ -1082,12 +1082,11 @@ class TestSessionManagerCustomDir:
             manager.close_all_sessions()
 
     def test_none_session_dir_falls_back_to_default(self, real_agent_config):
-        """SessionManager(session_dir=None) uses the default path_manager sessions dir with default scope."""
+        """SessionManager(session_dir=None) uses the default path_manager sessions dir directly."""
         manager = SessionManager(session_dir=None)
         try:
-            # Default should end with 'default' scope under 'sessions'
-            assert manager.session_dir.endswith("default")
-            assert os.sep + "sessions" + os.sep in manager.session_dir
+            # Default should end with 'sessions' (no scope subdirectory)
+            assert manager.session_dir.endswith("sessions")
             assert os.path.isdir(manager.session_dir)
         finally:
             manager.close_all_sessions()
@@ -1114,7 +1113,7 @@ class TestSessionManagerPathManagerInjection:
         path_manager = DatusPathManager(tmp_path / "tenant_home")
         manager = SessionManager(path_manager=path_manager)
         try:
-            assert manager.session_dir == os.path.join(str(path_manager.sessions_dir), "default")
+            assert manager.session_dir == str(path_manager.sessions_dir)
             assert path_manager.sessions_dir.exists()
         finally:
             manager.close_all_sessions()
@@ -1124,7 +1123,7 @@ class TestSessionManagerPathManagerInjection:
         agent_config = SimpleNamespace(path_manager=path_manager)
         manager = SessionManager(agent_config=agent_config)
         try:
-            assert manager.session_dir == os.path.join(str(path_manager.sessions_dir), "default")
+            assert manager.session_dir == str(path_manager.sessions_dir)
             assert path_manager.sessions_dir.exists()
         finally:
             manager.close_all_sessions()
@@ -1133,7 +1132,7 @@ class TestSessionManagerPathManagerInjection:
         path_manager = DatusPathManager(tmp_path / "tenant_home")
         manager = SessionManager(session_dir="   ", path_manager=path_manager)
         try:
-            assert manager.session_dir == os.path.join(str(path_manager.sessions_dir), "default")
+            assert manager.session_dir == str(path_manager.sessions_dir)
         finally:
             manager.close_all_sessions()
 
@@ -1327,11 +1326,12 @@ class TestParseOutputFromAction:
 class TestSessionManagerScope:
     """Tests for SessionManager scope parameter (session directory isolation)."""
 
-    def test_no_scope_defaults_to_default(self, tmp_path):
-        """Not passing scope results in session_dir ending with /default."""
-        manager = SessionManager(session_dir=str(tmp_path / "sessions"))
+    def test_no_scope_uses_session_dir_directly(self, tmp_path):
+        """Not passing scope results in session_dir used directly (no subdirectory)."""
+        base_dir = str(tmp_path / "sessions")
+        manager = SessionManager(session_dir=base_dir)
         try:
-            assert manager.session_dir.endswith(os.sep + "default")
+            assert manager.session_dir == base_dir
             assert os.path.isdir(manager.session_dir)
         finally:
             manager.close_all_sessions()
@@ -1345,27 +1345,30 @@ class TestSessionManagerScope:
         finally:
             manager.close_all_sessions()
 
-    def test_scope_none_defaults_to_default(self, tmp_path):
-        """Passing scope=None explicitly uses 'default' as scope."""
-        manager = SessionManager(session_dir=str(tmp_path / "sessions"), scope=None)
+    def test_scope_none_uses_session_dir_directly(self, tmp_path):
+        """Passing scope=None explicitly uses session_dir directly (no subdirectory)."""
+        base_dir = str(tmp_path / "sessions")
+        manager = SessionManager(session_dir=base_dir, scope=None)
         try:
-            assert manager.session_dir.endswith(os.sep + "default")
+            assert manager.session_dir == base_dir
         finally:
             manager.close_all_sessions()
 
-    def test_scope_empty_string_defaults_to_default(self, tmp_path):
-        """Passing scope='' uses 'default' as scope."""
-        manager = SessionManager(session_dir=str(tmp_path / "sessions"), scope="")
+    def test_scope_empty_string_uses_session_dir_directly(self, tmp_path):
+        """Passing scope='' uses session_dir directly (no subdirectory)."""
+        base_dir = str(tmp_path / "sessions")
+        manager = SessionManager(session_dir=base_dir, scope="")
         try:
-            assert manager.session_dir.endswith(os.sep + "default")
+            assert manager.session_dir == base_dir
         finally:
             manager.close_all_sessions()
 
-    def test_scope_whitespace_only_defaults_to_default(self, tmp_path):
-        """Passing scope='  ' (whitespace only) uses 'default' as scope."""
-        manager = SessionManager(session_dir=str(tmp_path / "sessions"), scope="   ")
+    def test_scope_whitespace_only_uses_session_dir_directly(self, tmp_path):
+        """Passing scope='  ' (whitespace only) uses session_dir directly (no subdirectory)."""
+        base_dir = str(tmp_path / "sessions")
+        manager = SessionManager(session_dir=base_dir, scope="   ")
         try:
-            assert manager.session_dir.endswith(os.sep + "default")
+            assert manager.session_dir == base_dir
         finally:
             manager.close_all_sessions()
 
@@ -1416,25 +1419,23 @@ class TestSessionManagerScope:
         finally:
             manager.close_all_sessions()
 
-    def test_legacy_migration_skips_existing_files(self, tmp_path):
-        """Legacy migration does not overwrite .db files already in the scope dir."""
+    def test_no_scope_stores_sessions_in_base_dir(self, tmp_path):
+        """Without scope, sessions are stored directly in the base session_dir (backward compatible)."""
         base_dir = tmp_path / "sessions"
         base_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create a legacy file and a pre-existing file in the scope dir
-        legacy_db = base_dir / "conflict.db"
+        # Create a legacy .db file directly in base_dir
+        legacy_db = base_dir / "legacy-session.db"
         legacy_db.write_text("legacy")
-
-        scope_dir = base_dir / "default"
-        scope_dir.mkdir(parents=True, exist_ok=True)
-        existing_db = scope_dir / "conflict.db"
-        existing_db.write_text("existing")
 
         manager = SessionManager(session_dir=str(base_dir))
         try:
-            # Existing file should not be overwritten
-            assert existing_db.read_text() == "existing"
-            # Legacy file stays because destination already existed
+            # session_dir should be the base_dir itself, not a subdirectory
+            assert manager.session_dir == str(base_dir)
+            # Legacy file should still be accessible
             assert legacy_db.exists()
+            # list_sessions should find the legacy file
+            sessions = manager.list_sessions()
+            assert "legacy-session" in sessions
         finally:
             manager.close_all_sessions()

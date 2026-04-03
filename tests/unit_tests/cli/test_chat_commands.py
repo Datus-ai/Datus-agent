@@ -105,7 +105,7 @@ def _create_session_on_disk(session_id, messages=None):
     """
     from datus.utils.path_manager import get_path_manager
 
-    sessions_dir = os.path.join(str(get_path_manager().sessions_dir), "default")
+    sessions_dir = str(get_path_manager().sessions_dir)
     os.makedirs(sessions_dir, exist_ok=True)
     db_path = os.path.join(sessions_dir, f"{session_id}.db")
 
@@ -2350,7 +2350,7 @@ class TestCmdResumeWithSession:
         # Insert token usage > 50000 into turn_usage table
         from datus.utils.path_manager import get_path_manager
 
-        db_path = os.path.join(str(get_path_manager().sessions_dir), "default", f"{session_id}.db")
+        db_path = os.path.join(str(get_path_manager().sessions_dir), f"{session_id}.db")
         with sqlite3.connect(db_path) as conn:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS turn_usage ("
@@ -2642,7 +2642,7 @@ class TestCmdRewindWithSession:
         # Create disk session with NO messages (only session record)
         from datus.utils.path_manager import get_path_manager
 
-        sessions_dir = os.path.join(str(get_path_manager().sessions_dir), "default")
+        sessions_dir = str(get_path_manager().sessions_dir)
         os.makedirs(sessions_dir, exist_ok=True)
         db_path = os.path.join(sessions_dir, f"{session_id}.db")
         with sqlite3.connect(db_path) as conn:
@@ -2738,7 +2738,7 @@ class TestResumeWithSqlMessages:
         """Create a session with function_call messages that SessionManager parses as SQL."""
         from datus.utils.path_manager import get_path_manager
 
-        sessions_dir = os.path.join(str(get_path_manager().sessions_dir), "default")
+        sessions_dir = str(get_path_manager().sessions_dir)
         os.makedirs(sessions_dir, exist_ok=True)
         db_path = os.path.join(sessions_dir, f"{session_id}.db")
 
@@ -2939,7 +2939,7 @@ class TestResumeInteractiveNoSessions:
         # Create an empty session (has session record but no messages)
         from datus.utils.path_manager import get_path_manager
 
-        sessions_dir = os.path.join(str(get_path_manager().sessions_dir), "default")
+        sessions_dir = str(get_path_manager().sessions_dir)
         os.makedirs(sessions_dir, exist_ok=True)
         session_id = "chat_session_empty01"
         db_path = os.path.join(sessions_dir, f"{session_id}.db")
