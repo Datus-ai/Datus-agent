@@ -145,7 +145,7 @@ Unit tests follow the Source → Test File Mapping Rule above. The table below l
 | `datus/models/{provider}_model.py` | integration/models/test_*_model.py, regression/test_regression_llm.py |
 | `datus/agent/node/` | test_node.py, test_schema_linking.py, test_date_parser_*.py |
 | `datus/cli/repl.py` | test_cli_commands.py, regression/test_regression_web*.py |
-| `datus/tools/func_tool/` | test_func_tools_db.py |
+| `datus/tools/func_tool/` | test_func_tools_db.py, test_mcp_server.py |
 | `datus/tools/skill_tools/` | test_skill_config.py, test_skill_registry.py, test_skill_manager.py, test_skill_bash_tool.py, test_skill_func_tool.py |
 | `datus/tools/permission/` | test_permission_config.py, test_permission_hooks.py, test_permission_manager.py |
 | `datus/mcp_server.py` | test_mcp_server.py, integration/tools/test_mcp_server.py |
