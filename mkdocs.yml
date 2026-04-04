@@ -36,6 +36,7 @@ nav:
       - Semantic Models: knowledge_base/semantic_model.md
       - Metrics: knowledge_base/metrics.md
       - Reference SQL: knowledge_base/reference_sql.md
+      - Reference Template: knowledge_base/reference_template.md
     - Workflow:
       - Introduction: workflow/introduction.md
       - Nodes: workflow/nodes.md
@@ -106,6 +107,7 @@ plugins:
             Semantic Models: 语义模型
             Metrics: 指标
             Reference SQL: Reference SQL
+            Reference Template: SQL模板
             Workflow: 工作流
             Nodes: 节点
             Orchestration: 编排

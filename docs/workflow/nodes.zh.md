@@ -160,7 +160,7 @@ nodes:
     temperature: 0.3
 ```
 
-### 提示模板
+### SQL模板
 ```yaml
 nodes:
   generate_sql:

@@ -32,7 +32,7 @@ schema_linking:
 
 - `model`：引用 agent.models 的键
 - `matching_rate`：匹配范围/速度（fast/medium/slow/from_llm）
-- `prompt_version`：提示模板版本
+- `prompt_version`：SQL模板版本
 
 ### Generate SQL
 ```yaml

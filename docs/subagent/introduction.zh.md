@@ -313,7 +313,7 @@ graph LR
 agentic_nodes:
   gen_metrics:
     model: claude                          # LLM 模型
-    system_prompt: gen_metrics             # 提示模板名称
+    system_prompt: gen_metrics             # SQL模板名称
     prompt_version: "1.0"                  # 模板版本
     tools: generation_tools.*, filesystem_tools.*, semantic_tools.*  # 可用工具
     hooks: generation_hooks                # 用户确认
@@ -330,7 +330,7 @@ agentic_nodes:
 | 参数 | 必需 | 描述 | 示例 |
 |-----------|----------|-------------|---------|
 | `model` | 是 | LLM 模型名称 | `claude`、`deepseek`、`openai` |
-| `system_prompt` | 是 | 提示模板标识符 | `gen_metrics`、`gen_semantic_model` |
+| `system_prompt` | 是 | SQL模板标识符 | `gen_metrics`、`gen_semantic_model` |
 | `prompt_version` | 否 | 模板版本 | `"1.0"`、`"2.0"` |
 | `tools` | 是 | 逗号分隔的工具模式 | `db_tools.*, semantic_tools.*` |
 | `hooks` | 否 | 启用确认工作流 | `generation_hooks` |
