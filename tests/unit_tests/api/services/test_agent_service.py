@@ -1,5 +1,7 @@
 """Tests for datus.api.services.agent_service — tool validation and agent constants."""
 
+from pathlib import Path
+
 import pytest
 
 from datus.api.services.agent_service import (
@@ -175,3 +177,162 @@ class TestGetAgent:
         result = await svc.get_agent("totally_fake_agent", real_agent_config)
         assert result.success is False
         assert result.errorCode == "AGENT_NOT_FOUND"
+
+    async def test_get_custom_agent_from_agentic_nodes(self, real_agent_config):
+        """get_agent returns custom agent info from agentic_nodes."""
+        svc = AgentService()
+        # real_agent_config has agentic_nodes from conftest (e.g. 'gensql', 'chat', etc.)
+        nodes = real_agent_config.agentic_nodes or {}
+        if nodes:
+            first_name = next(iter(nodes))
+            result = await svc.get_agent(first_name, real_agent_config)
+            assert result.success is True
+            assert result.data["agent"]["name"] == first_name
+
+
+@pytest.mark.asyncio
+class TestCreateAgent:
+    """Tests for create_agent — agent creation with YAML persistence."""
+
+    async def test_create_agent_success(self, real_agent_config):
+        """create_agent creates a new custom agent."""
+        import yaml
+
+        from datus.api.models.agent_models import CreateAgentInput
+
+        # Ensure agent.yml exists
+        config_path = Path(real_agent_config.home) / "agent.yml"
+        if not config_path.exists():
+            with open(config_path, "w") as f:
+                yaml.dump({"agentic_nodes": {}}, f)
+
+        svc = AgentService()
+        request = CreateAgentInput(
+            name="test_new_agent",
+            type="gen_sql",
+            description="Test agent for unit tests",
+            tools=["db_tools"],
+        )
+        result = await svc.create_agent(request, real_agent_config)
+        assert result.success is True
+        assert result.data["name"] == "test_new_agent"
+
+    async def test_create_agent_duplicate_name_fails(self, real_agent_config):
+        """create_agent rejects duplicate agent name."""
+        import yaml
+
+        from datus.api.models.agent_models import CreateAgentInput
+
+        config_path = Path(real_agent_config.home) / "agent.yml"
+        if not config_path.exists():
+            with open(config_path, "w") as f:
+                yaml.dump({"agentic_nodes": {}}, f)
+
+        svc = AgentService()
+        # Create first
+        await svc.create_agent(
+            CreateAgentInput(name="dup_agent", type="gen_sql"),
+            real_agent_config,
+        )
+        # Try duplicate
+        result = await svc.create_agent(
+            CreateAgentInput(name="dup_agent", type="gen_sql"),
+            real_agent_config,
+        )
+        assert result.success is False
+        assert result.errorCode == "AGENT_ALREADY_EXISTS"
+
+    async def test_create_agent_builtin_name_fails(self, real_agent_config):
+        """create_agent rejects builtin agent names."""
+        import yaml
+
+        from datus.api.models.agent_models import CreateAgentInput
+
+        config_path = Path(real_agent_config.home) / "agent.yml"
+        if not config_path.exists():
+            with open(config_path, "w") as f:
+                yaml.dump({"agentic_nodes": {}}, f)
+
+        svc = AgentService()
+        result = await svc.create_agent(
+            CreateAgentInput(name="gen_sql", type="gen_sql"),
+            real_agent_config,
+        )
+        assert result.success is False
+        assert result.errorCode == "AGENT_ALREADY_EXISTS"
+
+    async def test_create_agent_invalid_tools_fails(self, real_agent_config):
+        """create_agent rejects invalid tool patterns."""
+        import yaml
+
+        from datus.api.models.agent_models import CreateAgentInput
+
+        config_path = Path(real_agent_config.home) / "agent.yml"
+        if not config_path.exists():
+            with open(config_path, "w") as f:
+                yaml.dump({"agentic_nodes": {}}, f)
+
+        svc = AgentService()
+        result = await svc.create_agent(
+            CreateAgentInput(name="bad_tools_agent", type="gen_sql", tools=["fake_tool_category"]),
+            real_agent_config,
+        )
+        assert result.success is False
+        assert result.errorCode == "INVALID_TOOLS"
+
+
+@pytest.mark.asyncio
+class TestEditAgent:
+    """Tests for edit_agent — agent update with YAML persistence."""
+
+    async def test_edit_agent_not_found(self, real_agent_config):
+        """edit_agent returns error for nonexistent agent."""
+        from datus.api.models.agent_models import EditAgentInput
+
+        svc = AgentService()
+        result = await svc.edit_agent(
+            EditAgentInput(name="nonexistent_agent", description="updated"),
+            real_agent_config,
+        )
+        assert result.success is False
+        assert result.errorCode == "AGENT_NOT_FOUND"
+
+    async def test_edit_agent_invalid_tools(self, real_agent_config):
+        """edit_agent rejects invalid tool patterns."""
+        from datus.api.models.agent_models import EditAgentInput
+
+        svc = AgentService()
+        result = await svc.edit_agent(
+            EditAgentInput(name="some_agent", tools=["bad_tools.bad"]),
+            real_agent_config,
+        )
+        assert result.success is False
+        assert result.errorCode == "INVALID_TOOLS"
+
+    async def test_edit_existing_agent(self, real_agent_config):
+        """edit_agent updates existing custom agent."""
+        import yaml
+
+        from datus.api.models.agent_models import CreateAgentInput, EditAgentInput
+
+        config_path = Path(real_agent_config.home) / "agent.yml"
+        if not config_path.exists():
+            with open(config_path, "w") as f:
+                yaml.dump({"agentic_nodes": {}}, f)
+
+        svc = AgentService()
+        # Create first
+        await svc.create_agent(
+            CreateAgentInput(name="edit_me", type="gen_sql", description="original"),
+            real_agent_config,
+        )
+        # Edit
+        result = await svc.edit_agent(
+            EditAgentInput(name="edit_me", description="updated description"),
+            real_agent_config,
+        )
+        assert result.success is True
+        # Verify update persisted
+        get_result = await svc.get_agent("edit_me", real_agent_config)
+        assert get_result.success is True
+        assert get_result.data["agent"]["description"] == "updated description"

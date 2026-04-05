@@ -48,6 +48,34 @@ class TestDatabaseServiceGetDatabaseType:
         assert ds_id == svc.current_database
 
 
+class TestGetSemanticModel:
+    """Tests for get_semantic_model and validate_semantic_model."""
+
+    def test_get_semantic_model_nonexistent(self, real_agent_config):
+        """get_semantic_model for nonexistent table returns empty result."""
+        svc = DatabaseService(agent_config=real_agent_config)
+        result = svc.get_semantic_model("nonexistent_table_xyz")
+        # Should return success=True with no data, or success=False
+        assert result is not None
+
+    def test_get_semantic_model_for_known_table(self, real_agent_config):
+        """get_semantic_model for known table (may return empty if no semantic model built)."""
+        svc = DatabaseService(agent_config=real_agent_config)
+        result = svc.get_semantic_model("schools")
+        # The table exists but may not have a semantic model file
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_validate_semantic_model_nonexistent(self, real_agent_config):
+        """validate_semantic_model for nonexistent table returns error."""
+        from datus.api.models.table_models import SemanticModelInput
+
+        svc = DatabaseService(agent_config=real_agent_config)
+        request = SemanticModelInput(table="nonexistent_xyz", yaml="metric:\n  name: test\n")
+        result = await svc.validate_semantic_model(request)
+        assert result.success is False
+
+
 class TestListDatabases:
     """Tests for list_databases with real SQLite connection."""
 
@@ -90,6 +118,37 @@ class TestListDatabases:
         request = ListDatabasesInput(datasource_id="test_ns")
         result = svc.list_databases(request)
         assert result.success is True
+
+    def test_list_databases_with_database_name_filter(self, real_agent_config):
+        """list_databases with database_name filter narrows results."""
+        svc = DatabaseService(agent_config=real_agent_config)
+        request = ListDatabasesInput(database_name="main")
+        result = svc.list_databases(request)
+        assert result.success is True
+
+    def test_list_databases_has_tables_list(self, real_agent_config):
+        """list_databases includes tables list in database info."""
+        svc = DatabaseService(agent_config=real_agent_config)
+        request = ListDatabasesInput()
+        result = svc.list_databases(request)
+        for db in result.data.databases:
+            if db.tables is not None:
+                assert isinstance(db.tables, list)
+
+    def test_list_databases_has_type_field(self, real_agent_config):
+        """list_databases includes database type."""
+        svc = DatabaseService(agent_config=real_agent_config)
+        request = ListDatabasesInput()
+        result = svc.list_databases(request)
+        for db in result.data.databases:
+            assert db.type is not None
+
+    def test_list_databases_has_current_database(self, real_agent_config):
+        """list_databases data includes current_database field."""
+        svc = DatabaseService(agent_config=real_agent_config)
+        request = ListDatabasesInput()
+        result = svc.list_databases(request)
+        assert result.data.current_database is not None
 
 
 class TestGetTableSchema:

@@ -156,6 +156,151 @@ class TestChatTaskManagerBehavior:
         assert result is True
         mock_asyncio_task.cancel.assert_called_once()
 
+@pytest.mark.asyncio
+class TestStartChat:
+    """Tests for start_chat — background task creation."""
+
+    async def test_start_chat_creates_task(self, real_agent_config, mock_llm_create):
+        """start_chat creates a ChatTask and returns it."""
+        from datus.api.models.cli_models import StreamChatInput
+
+        manager = ChatTaskManager()
+        request = StreamChatInput(message="hello", session_id="start-test")
+        task = await manager.start_chat(real_agent_config, request)
+        assert task is not None
+        assert task.session_id == "start-test"
+        assert task.status == "running"
+        # Clean up
+        await manager.shutdown()
+
+    async def test_start_chat_duplicate_session_raises(self, real_agent_config, mock_llm_create):
+        """start_chat raises ValueError for duplicate session_id."""
+        from datus.api.models.cli_models import StreamChatInput
+
+        manager = ChatTaskManager()
+        request = StreamChatInput(message="hello", session_id="dup-session")
+        await manager.start_chat(real_agent_config, request)
+
+        with pytest.raises(ValueError, match="already running"):
+            await manager.start_chat(real_agent_config, StreamChatInput(message="again", session_id="dup-session"))
+        await manager.shutdown()
+
+    async def test_start_chat_generates_session_id(self, real_agent_config, mock_llm_create):
+        """start_chat generates session_id when not provided."""
+        from datus.api.models.cli_models import StreamChatInput
+
+        manager = ChatTaskManager()
+        request = StreamChatInput(message="hello")
+        task = await manager.start_chat(real_agent_config, request)
+        assert task.session_id is not None
+        assert len(task.session_id) > 0
+        await manager.shutdown()
+
+    async def test_start_chat_with_subagent(self, real_agent_config, mock_llm_create):
+        """start_chat with sub_agent_id creates task with correct session pattern."""
+        from datus.api.models.cli_models import StreamChatInput
+
+        manager = ChatTaskManager()
+        request = StreamChatInput(message="hello")
+        task = await manager.start_chat(real_agent_config, request, sub_agent_id="gen_sql")
+        assert "gen_sql" in task.session_id
+        await manager.shutdown()
+
+    async def test_start_chat_fills_database_context(self, real_agent_config, mock_llm_create):
+        """start_chat fills database context from request."""
+        from datus.api.models.cli_models import StreamChatInput
+
+        manager = ChatTaskManager()
+        request = StreamChatInput(message="hello", database="california_schools")
+        task = await manager.start_chat(real_agent_config, request)
+        assert task is not None
+        assert real_agent_config.current_database == "california_schools"
+        await manager.shutdown()
+
+    async def test_stop_running_task_with_node(self, real_agent_config, mock_llm_create):
+        """stop_task interrupts a running task that has a node set."""
+        from unittest.mock import MagicMock
+
+        from datus.api.models.cli_models import StreamChatInput
+
+        manager = ChatTaskManager()
+        request = StreamChatInput(message="hello", session_id="stop-test")
+        task = await manager.start_chat(real_agent_config, request)
+
+        # Set a mock node with interrupt_controller
+        mock_node = MagicMock()
+        mock_node.interrupt_controller.interrupt = MagicMock()
+        task.node = mock_node
+
+        result = await manager.stop_task("stop-test")
+        assert result is True
+        mock_node.interrupt_controller.interrupt.assert_called_once()
+        await manager.shutdown()
+
+    async def test_wait_all_tasks_with_running(self, real_agent_config, mock_llm_create):
+        """wait_all_tasks waits for running tasks without cancelling."""
+        from datus.api.models.cli_models import StreamChatInput
+
+        manager = ChatTaskManager()
+        request = StreamChatInput(message="wait test", session_id="wait-test")
+        await manager.start_chat(real_agent_config, request)
+
+        # wait_all_tasks should return (tasks may finish quickly with mock LLM)
+        await manager.wait_all_tasks()
+        await manager.shutdown()
+
+    async def test_consume_events_from_completed_task(self, real_agent_config, mock_llm_create):
+        """consume_events yields buffered events from completed task."""
+        from datus.api.models.cli_models import SSEEvent, SSEPingData
+
+        manager = ChatTaskManager()
+        task = ChatTask(session_id="consume-test", asyncio_task=MagicMock())
+        task.status = "completed"
+        event = SSEEvent(id=1, event="ping", data=SSEPingData(), timestamp="2025-01-01T00:00:00Z")
+        task.events = [event]
+        manager._tasks["consume-test"] = task
+
+        events = []
+        async for e in manager.consume_events(task, start_from=0):
+            events.append(e)
+        assert len(events) == 1
+        assert events[0].id == 1
+
+
+class TestResolveAtContext:
+    """Tests for _resolve_at_context — @ reference resolution."""
+
+    def test_resolve_empty_paths_returns_empty(self, real_agent_config):
+        """_resolve_at_context with no paths returns empty lists."""
+        manager = ChatTaskManager()
+        tables, metrics, sqls = manager._resolve_at_context(real_agent_config, None, None, None)
+        assert tables == []
+        assert metrics == []
+        assert sqls == []
+
+    def test_resolve_with_empty_lists(self, real_agent_config):
+        """_resolve_at_context with empty lists returns empty results."""
+        manager = ChatTaskManager()
+        tables, metrics, sqls = manager._resolve_at_context(real_agent_config, [], [], [])
+        assert tables == []
+        assert metrics == []
+        assert sqls == []
+
+    def test_resolve_nonexistent_paths(self, real_agent_config):
+        """_resolve_at_context with nonexistent paths returns empty (no crash)."""
+        manager = ChatTaskManager()
+        tables, metrics, sqls = manager._resolve_at_context(
+            real_agent_config,
+            ["nonexistent/table/path"],
+            ["nonexistent/metric/path"],
+            ["nonexistent/sql/path"],
+        )
+        # Should return empty lists since paths don't exist
+        assert isinstance(tables, list)
+        assert isinstance(metrics, list)
+        assert isinstance(sqls, list)
+
+
 class TestCreateNode:
     """Tests for _create_node — agentic node factory."""
 
@@ -182,3 +327,98 @@ class TestCreateNode:
         manager = ChatTaskManager()
         node = manager._create_node(real_agent_config, None, "test-session")
         assert isinstance(node, AgenticNode)
+
+    def test_create_gen_semantic_model_node(self, real_agent_config, mock_llm_create):
+        """_create_node creates GenSemanticModelAgenticNode for gen_semantic_model."""
+        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+
+        manager = ChatTaskManager()
+        node = manager._create_node(real_agent_config, "gen_semantic_model", "test-session")
+        assert isinstance(node, GenSemanticModelAgenticNode)
+
+    def test_create_gen_metrics_node(self, real_agent_config, mock_llm_create):
+        """_create_node creates GenMetricsAgenticNode for gen_metrics."""
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+
+        manager = ChatTaskManager()
+        node = manager._create_node(real_agent_config, "gen_metrics", "test-session")
+        assert isinstance(node, GenMetricsAgenticNode)
+
+    def test_create_gen_ext_knowledge_node(self, real_agent_config, mock_llm_create):
+        """_create_node creates GenExtKnowledgeAgenticNode for gen_ext_knowledge."""
+        from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
+
+        manager = ChatTaskManager()
+        node = manager._create_node(real_agent_config, "gen_ext_knowledge", "test-session")
+        assert isinstance(node, GenExtKnowledgeAgenticNode)
+
+
+class TestCreateNodeInput:
+    """Tests for _create_node_input — input model factory."""
+
+    def test_gen_sql_node_input(self, real_agent_config, mock_llm_create):
+        """_create_node_input for GenSQLAgenticNode returns GenSQLNodeInput."""
+        from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
+
+        manager = ChatTaskManager()
+        node = manager._create_node(real_agent_config, "gen_sql", "test")
+        result = manager._create_node_input("test query", node, [], [], [])
+        assert isinstance(result, GenSQLNodeInput)
+        assert result.user_message == "test query"
+
+    def test_default_node_input(self, real_agent_config, mock_llm_create):
+        """_create_node_input for default node returns valid input."""
+        manager = ChatTaskManager()
+        node = manager._create_node(real_agent_config, None, "test")
+        result = manager._create_node_input("hello", node, [], [], [])
+        assert result.user_message == "hello"
+
+    def test_semantic_model_node_input(self, real_agent_config, mock_llm_create):
+        """_create_node_input for GenSemanticModelAgenticNode returns SemanticNodeInput."""
+        from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
+
+        manager = ChatTaskManager()
+        node = manager._create_node(real_agent_config, "gen_semantic_model", "test")
+        result = manager._create_node_input("generate model", node, [], [], [])
+        assert isinstance(result, SemanticNodeInput)
+
+    def test_metrics_node_input(self, real_agent_config, mock_llm_create):
+        """_create_node_input for GenMetricsAgenticNode returns SemanticNodeInput."""
+        from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
+
+        manager = ChatTaskManager()
+        node = manager._create_node(real_agent_config, "gen_metrics", "test")
+        result = manager._create_node_input("generate metrics", node, [], [], [])
+        assert isinstance(result, SemanticNodeInput)
+
+    def test_ext_knowledge_node_input(self, real_agent_config, mock_llm_create):
+        """_create_node_input for GenExtKnowledgeAgenticNode returns ExtKnowledgeNodeInput."""
+        from datus.schemas.ext_knowledge_agentic_node_models import ExtKnowledgeNodeInput
+
+        manager = ChatTaskManager()
+        node = manager._create_node(real_agent_config, "gen_ext_knowledge", "test")
+        result = manager._create_node_input("extract knowledge", node, [], [], [])
+        assert isinstance(result, ExtKnowledgeNodeInput)
+
+    def test_sql_summary_node_input(self, real_agent_config, mock_llm_create):
+        """_create_node_input for SqlSummaryAgenticNode returns SqlSummaryNodeInput."""
+        from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput
+
+        manager = ChatTaskManager()
+        node = manager._create_node(real_agent_config, "gen_sql_summary", "test")
+        result = manager._create_node_input("summarize sql", node, [], [], [])
+        assert isinstance(result, SqlSummaryNodeInput)
+
+    def test_node_input_with_db_context(self, real_agent_config, mock_llm_create):
+        """_create_node_input passes database context through."""
+        from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
+
+        manager = ChatTaskManager()
+        node = manager._create_node(real_agent_config, "gen_sql", "test")
+        result = manager._create_node_input(
+            "test", node, [], [], [],
+            catalog="cat", database="db", db_schema="schema",
+        )
+        assert result.catalog == "cat"
+        assert result.database == "db"
+        assert result.db_schema == "schema"

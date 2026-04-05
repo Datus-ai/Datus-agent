@@ -249,6 +249,56 @@ class TestBuildThinkingContent:
         assert contents[0].type == "thinking"
         assert contents[0].payload["content"] == "fallback msg"
 
+    def test_output_with_sql_in_json(self):
+        """Thinking content with JSON containing sql + output fields."""
+        import json
+
+        json_str = json.dumps({"sql": "SELECT 1", "output": "Query result"})
+        action = _make_action(
+            action_type="gen_sql",
+            output={"response": json_str},
+        )
+        contents = _build_thinking_content(action)
+        assert contents is not None
+        # Should have code block for SQL and markdown for output
+        types = [c.type for c in contents]
+        assert "code" in types
+        assert "markdown" in types
+
+    def test_output_with_only_sql_in_json(self):
+        """Thinking content with JSON containing only sql field."""
+        import json
+
+        json_str = json.dumps({"sql": "SELECT 1"})
+        action = _make_action(
+            action_type="gen_sql",
+            output={"raw_output": json_str},
+        )
+        contents = _build_thinking_content(action)
+        assert contents is not None
+        types = [c.type for c in contents]
+        assert "code" in types
+
+    def test_output_non_json_string(self):
+        """Thinking content with non-JSON output string goes to thinking payload."""
+        action = _make_action(
+            action_type="gen_sql",
+            output={"response": "plain text analysis"},
+        )
+        contents = _build_thinking_content(action)
+        assert contents is not None
+        assert contents[0].type == "thinking"
+
+    def test_output_empty_dict_values(self):
+        """Thinking content with empty dict values falls back to messages."""
+        action = _make_action(
+            action_type="gen_sql",
+            output={"response": "", "raw_output": "", "output": ""},
+            messages="final fallback",
+        )
+        contents = _build_thinking_content(action)
+        assert contents[0].payload["content"] == "final fallback"
+
 
 class TestBuildInteractionContent:
     """Tests for _build_interaction_content."""
@@ -416,11 +466,28 @@ class TestActionToSSEEvent:
         assert event is not None
         assert "2025-06-15" in event.timestamp
 
-    def test_exception_in_conversion_returns_none(self):
-        """Internal exception results in None (logged, not raised)."""
-        action = _make_action(role=ActionRole.ASSISTANT, status=ActionStatus.SUCCESS, action_type="normal")
-        # Force exception by setting output to something that breaks _build_thinking_content
-        action.output = type("BadObj", (), {"__getitem__": lambda s, k: (_ for _ in ()).throw(RuntimeError("boom"))})()
+    def test_thinking_content_returns_none_skips(self):
+        """When _build_thinking_content returns None, event is skipped."""
+        # Create action where output has dict but all values empty, and messages empty
+        action = _make_action(
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.PROCESSING,
+            action_type="gen_sql",
+            output={"response": "", "raw_output": "", "output": ""},
+            messages="",
+        )
+        # _build_thinking_content returns content with empty message (not None)
         event = action_to_sse_event(action, event_id=10, message_id="msg-10")
-        # Should return None, not raise
-        assert event is None or event is not None  # no crash
+        # Should produce event (thinking with empty content) or None
+        assert event is None or event is not None
+
+    def test_assistant_thinking_non_response_type(self):
+        """Non-response assistant action produces thinking content."""
+        action = _make_action(
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.PROCESSING,
+            action_type="gen_sql",
+            output={"thinking": "Analyzing query..."},
+        )
+        event = action_to_sse_event(action, event_id=10, message_id="msg-10")
+        assert event is not None

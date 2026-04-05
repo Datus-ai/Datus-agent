@@ -296,44 +296,65 @@ class TestAPIChatN9:
     # ------ Source proxy + tool_result ------
 
     @pytest.mark.asyncio
-    async def test_source_proxy_tool_result(self, chat_client, chat_datus_service):
-        """source='web' activates proxy; tool_result resolves channel."""
-        # Part A: source=web stream completes normally
-        resp = await chat_client.post(
-            "/api/v1/chat/stream",
-            json={"message": "How many schools are there?", "source": "web"},
-        )
-        assert resp.status_code == 200
-        events = parse_sse_body(resp.text)
-        sev = find_event(events, "session")
-        assert sev is not None
-        assert find_event(events, "end") or find_event(events, "error")
-        await chat_client.delete(f"/api/v1/chat/sessions/{sev['data']['session_id']}")
+    async def test_source_proxy_tool_result(self, chat_client, chat_datus_service, tmp_path):
+        """source='web' proxies fs tools; execute via FilesystemFuncTool, submit result via REST."""
+        from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 
-        # Part B: verify ToolResultChannel plumbing
-        task = await _start_task(chat_datus_service, "How many schools are there?", "proxy_sess", source="web")
+        fs_tool = FilesystemFuncTool(root_path=str(tmp_path))
+
+        task = await _start_task(
+            chat_datus_service,
+            "Create a new directory called 'test_output_dir' for me.",
+            "proxy_sess",
+            source="vscode",
+        )
         try:
             if task.node is None:
                 pytest.skip("Node not created in time")
-            ch = task.node.tool_channel
 
-            # Direct publish + wait_for
-            await ch.publish("call_001", {"success": 1, "result": "file written"})
-            r = await asyncio.wait_for(ch.wait_for("call_001"), timeout=5)
-            assert r["success"] == 1
+            # Poll task events for call-tool events and respond until task completes
+            responded_ids = set()
+            deadline = asyncio.get_event_loop().time() + 120
+            while asyncio.get_event_loop().time() < deadline and task.status == "running":
+                await asyncio.sleep(1)
+                for ev in task.events:
+                    if ev.event != "message" or not hasattr(ev.data, "payload"):
+                        continue
+                    p = ev.data.payload
+                    if not p or not p.content:
+                        continue
+                    for c in p.content:
+                        if c.type != "call-tool" or not c.payload:
+                            continue
+                        call_tool_id = c.payload.get("callToolId")
+                        if not call_tool_id or call_tool_id in responded_ids:
+                            continue
+                        responded_ids.add(call_tool_id)
 
-            # REST /tool_result → channel
-            resp = await chat_client.post(
-                "/api/v1/chat/tool_result",
-                json={
-                    "session_id": "proxy_sess",
-                    "call_tool_id": "call_002",
-                    "tool_result": {"success": 1, "result": "ok"},
-                },
-            )
-            assert resp.json()["success"] is True
-            r2 = await asyncio.wait_for(ch.wait_for("call_002"), timeout=5)
-            assert r2["success"] == 1
+                        tool_name = c.payload.get("toolName", "")
+                        tool_params = c.payload.get("toolParams", {})
+
+                        # Execute the tool locally via FilesystemFuncTool
+                        handler = getattr(fs_tool, tool_name, None)
+                        if handler:
+                            result = handler(**tool_params)
+                            tool_result = result.model_dump()
+                        else:
+                            tool_result = {"success": 0, "error": f"Unknown tool: {tool_name}", "result": None}
+
+                        # Submit result via REST API
+                        resp = await chat_client.post(
+                            "/api/v1/chat/tool_result",
+                            json={
+                                "session_id": "proxy_sess",
+                                "call_tool_id": call_tool_id,
+                                "tool_result": tool_result,
+                            },
+                        )
+                        assert resp.json()["success"] is True
+
+            assert len(responded_ids) >= 1, "Expected at least one proxied tool call"
+            assert task.status in ("completed", "error")
         finally:
             await _cleanup_task(chat_datus_service, task)
 

@@ -92,3 +92,12 @@ class TestDatusServiceBehavior:
         """Shutdown completes without error even with no running tasks."""
         svc = DatusService(agent_config=real_agent_config, project_id="p1")
         await svc.shutdown()  # should not raise
+
+    @pytest.mark.asyncio
+    async def test_shutdown_handles_exception(self, real_agent_config):
+        """Shutdown handles exception in task_manager gracefully."""
+        from unittest.mock import AsyncMock
+
+        svc = DatusService(agent_config=real_agent_config, project_id="p1")
+        svc._task_manager.shutdown = AsyncMock(side_effect=RuntimeError("boom"))
+        await svc.shutdown()  # should not raise — exception is caught and logged

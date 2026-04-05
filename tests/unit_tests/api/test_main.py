@@ -136,3 +136,34 @@ class TestAPIServerArgumentParserEdgeCases:
                 parser = APIServerArgumentParser()
                 args = parser.parse_args()
                 assert args.output_dir == "/custom/output"
+
+
+class TestMainFunction:
+    """Tests for main() entry point."""
+
+    def test_main_config_not_found_exits(self):
+        """main() exits with code 1 when config file is not found."""
+        from datus.api.main import main
+
+        with patch.object(sys, "argv", ["datus-api", "--config", "/nonexistent/agent.yml"]):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+            assert exc_info.value.code == 1
+
+    def test_main_sets_env_vars(self):
+        """main() sets DATUS_CONFIG, DATUS_NAMESPACE, DATUS_OUTPUT_DIR, DATUS_LOG_LEVEL env vars."""
+        import os
+
+        from datus.api.main import main
+
+        with patch.object(sys, "argv", ["datus-api", "--namespace", "test_main_ns"]):
+            with patch("datus.api.main.parse_config_path", return_value="/tmp/agent.yml"):
+                with patch("datus.api.main.uvicorn") as mock_uvicorn:
+                    mock_uvicorn.run = lambda *a, **kw: None
+                    with patch("datus.api.service.create_app") as mock_create:
+                        mock_create.return_value = None
+                        try:
+                            main()
+                        except Exception:
+                            pass
+                        assert os.environ.get("DATUS_NAMESPACE") == "test_main_ns"
