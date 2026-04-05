@@ -6,7 +6,7 @@
 Datus Agent FastAPI service package.
 """
 
-from .models import (
+from .legacy_models import (
     FeedbackRequest,
     FeedbackResponse,
     HealthResponse,

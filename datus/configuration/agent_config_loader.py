@@ -206,6 +206,13 @@ def load_agent_config(reload: bool = False, **kwargs) -> AgentConfig:
     if kwargs:
         # Filter out the 'config' parameter as it's only used for loading, not for overriding
         override_kwargs = {k: v for k, v in kwargs.items() if k != "config"}
+
+        # Only set namespace if it's valid (exists in agent_config.namespaces)
+        if "namespace" in override_kwargs and override_kwargs["namespace"]:
+            if override_kwargs["namespace"] not in agent_config.namespaces:
+                # Silently skip invalid namespace, keep config's default
+                del override_kwargs["namespace"]
+
         if override_kwargs:
             agent_config.override_by_args(**override_kwargs)
     if agent_config.db_type in {DBType.SQLITE, DBType.DUCKDB} and not agent_config.current_database:
