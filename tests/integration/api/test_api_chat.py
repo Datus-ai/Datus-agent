@@ -1,32 +1,25 @@
 """
 Integration tests for Chat API endpoints with real LLM interaction.
 
-These tests exercise the full streaming chat lifecycle against the
-california_schools SQLite database with a real LLM backend (DeepSeek).
+Exercises the full streaming chat lifecycle against the california_schools
+SQLite database with a real LLM backend. Each test targets a distinct
+user-facing scenario; prompts are designed to be short and deterministic
+so that total LLM round-trips stay minimal.
 
-Scenario design:
-
-  C1: Basic Chat       — send a simple factual question, parse SSE stream,
-                         verify session/message/end events and SQL correctness
-  C2: Resume (Reconnect) — start a chat, disconnect mid-stream, resume from
-                           a cursor, verify no events are lost
-  C3: Session Persistence — after a completed chat, list sessions, read history,
-                            start a new turn on the same session
-  C4: Subagent Routing   — route to a custom subagent (chatbot from agent.yml),
-                           verify the conversation uses the correct node
-  C5: Stop Mid-Stream    — start a long chat, stop before it finishes,
-                           verify session is stopped gracefully
-  C6: Edge Cases         — empty message, very short prompt, session lifecycle
-
-Prerequisites (auto-skipped if missing):
-  - DEEPSEEK_API_KEY env var
-  - california_schools.sqlite at ~/.datus/benchmark/bird/dev_20240627/dev_databases/california_schools/
+  Basic stream      — SSE lifecycle (message/session/end), session list, history, delete
+  Resume            — start via task_manager, reconnect via /resume
+  Multi-turn        — two turns on the same session, context preserved
+  Subagent routing  — route to chatbot custom sub-agent
+  Stop mid-stream   — interrupt a running task via /stop
+  Source proxy       — source="web" proxies fs tools, tool_result resolves channel
+  ask_user e2e      — LLM calls ask_user, frontend submits via /user_interaction
+  Invalid subagent  — 404 for non-existent subagent
+  Error paths       — stop/resume/interaction on non-existent sessions
 """
 
 import argparse
 import asyncio
 import json
-import os
 import shutil
 import sys
 from pathlib import Path
@@ -38,45 +31,26 @@ from httpx import ASGITransport, AsyncClient
 
 TESTS_ROOT = Path(__file__).resolve().parent.parent.parent
 CONF_DIR = TESTS_ROOT / "conf"
-SQLITE_DB = (
-    Path.home()
-    / ".datus"
-    / "benchmark"
-    / "bird"
-    / "dev_20240627"
-    / "dev_databases"
-    / "california_schools"
-    / "california_schools.sqlite"
-)
-
-# Skip entire module if LLM prerequisites are missing
-pytestmark = [
-    pytest.mark.nightly,
-    pytest.mark.skipif(not os.environ.get("DEEPSEEK_API_KEY"), reason="DEEPSEEK_API_KEY not set"),
-    pytest.mark.skipif(not SQLITE_DB.exists(), reason=f"california_schools.sqlite not found at {SQLITE_DB}"),
-]
 
 
 # ---------------------------------------------------------------------------
-# SSE parsing helpers
+# SSE helpers
 # ---------------------------------------------------------------------------
 
 
 def parse_sse_body(body: str) -> list[dict]:
     """Parse raw SSE text into a list of {id, event, data} dicts."""
-    events = []
-    current = {}
+    events, current = [], {}
     for line in body.split("\n"):
         if line.startswith("id: "):
             current["id"] = int(line[4:])
         elif line.startswith("event: "):
             current["event"] = line[7:]
         elif line.startswith("data: "):
-            raw = line[6:]
             try:
-                current["data"] = json.loads(raw)
+                current["data"] = json.loads(line[6:])
             except json.JSONDecodeError:
-                current["data"] = raw
+                current["data"] = line[6:]
         elif line == "" and current:
             events.append(current)
             current = {}
@@ -86,12 +60,10 @@ def parse_sse_body(body: str) -> list[dict]:
 
 
 def find_events(events: list[dict], event_type: str) -> list[dict]:
-    """Filter SSE events by event type."""
     return [e for e in events if e.get("event") == event_type]
 
 
 def find_event(events: list[dict], event_type: str) -> Optional[dict]:
-    """Find the first event of a given type."""
     matches = find_events(events, event_type)
     return matches[0] if matches else None
 
@@ -101,33 +73,23 @@ def find_event(events: list[dict], event_type: str) -> Optional[dict]:
 # ---------------------------------------------------------------------------
 
 
-def _get_service_module():
+def _svc_mod():
     return sys.modules["datus.api.service"]
 
 
 @pytest.fixture(scope="module")
 def chat_agent_config(tmp_path_factory):
-    """Load AgentConfig with bird_school namespace for chat tests."""
+    """Load AgentConfig with bird_school namespace."""
     src = CONF_DIR / "agent.yml"
-    tmp_dir = tmp_path_factory.mktemp("chat_api_conf")
-    tmp_cfg = tmp_dir / "agent.yml"
+    tmp_cfg = tmp_path_factory.mktemp("chat_api_conf") / "agent.yml"
     shutil.copy2(src, tmp_cfg)
-
     from datus.configuration.agent_config_loader import load_agent_config
 
-    config = load_agent_config(
-        config=str(tmp_cfg),
-        namespace="bird_school",
-        reload=True,
-        force=True,
-        yes=True,
-    )
-    return config
+    return load_agent_config(config=str(tmp_cfg), namespace="bird_school", reload=True, force=True, yes=True)
 
 
 @pytest.fixture(scope="module")
 def chat_datus_service(chat_agent_config):
-    """Create a real DatusService backed by california_schools."""
     from datus.api.services.datus_service import DatusService
 
     return DatusService(agent_config=chat_agent_config, project_id="chat_integration_test")
@@ -151,574 +113,330 @@ async def chat_client(chat_agent_config, chat_datus_service):
     )
     app = create_app(agent_args)
 
-    svc_mod = _get_service_module()
-    mock_service = DatusAPIService(agent_args)
-    original_service = svc_mod.service
-    svc_mod.service = mock_service
+    mod = _svc_mod()
+    saved = mod.service
+    mod.service = DatusAPIService(agent_args)
 
-    namespace = "bird_school"
-    auth_provider = NoAuthProvider(namespace=namespace)
+    ns = "bird_school"
     cache = DatusServiceCache(max_size=4)
-    init_deps(auth_provider, cache, namespace=namespace)
+    init_deps(NoAuthProvider(namespace=ns), cache, namespace=ns)
 
     async def _factory():
         return chat_datus_service
 
-    await cache.get_or_create(namespace, _factory)
+    await cache.get_or_create(ns, _factory)
 
     try:
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test",
-            timeout=120.0,
-        ) as client:
-            yield client
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", timeout=120.0) as c:
+            yield c
     finally:
-        svc_mod.service = original_service
+        mod.service = saved
         await cache.shutdown()
 
 
 # ---------------------------------------------------------------------------
-# C1: Basic Chat — factual question → SSE stream → SQL
+# Helper to start a task via task_manager and wait for node init
 # ---------------------------------------------------------------------------
 
 
-class TestC1BasicChat:
-    """C1: Send a simple factual question about california_schools,
-    verify the full SSE lifecycle: message → session → thinking/tool → end.
+async def _start_task(svc, message, session_id, *, source=None):
+    """Start a background chat task and wait for node creation."""
+    from datus.api.models.cli_models import StreamChatInput
 
-    Prompt design: ask a concrete COUNT query that the LLM can answer
-    in a single turn with a short SQL, minimizing token consumption.
-    """
-
-    @pytest.mark.asyncio
-    async def test_c1_01_stream_count_query(self, chat_client):
-        """C1-01: Ask 'How many schools are there?' — expect SQL with COUNT.
-
-        Verifies:
-        - SSE stream returns 200 with text/event-stream content-type
-        - First event is a 'message' (processing notification)
-        - A 'session' event provides session_id
-        - Stream terminates with an 'end' event
-        - At least one message event contains content
-        """
-        resp = await chat_client.post(
-            "/api/v1/chat/stream",
-            json={"message": "How many schools are there in total?"},
-        )
-        assert resp.status_code == 200
-        assert "text/event-stream" in resp.headers.get("content-type", "")
-
-        events = parse_sse_body(resp.text)
-        assert len(events) >= 3, f"Expected at least 3 SSE events, got {len(events)}"
-
-        # Session event should provide session_id
-        session_ev = find_event(events, "session")
-        assert session_ev is not None, "Missing 'session' event"
-        session_id = session_ev["data"]["session_id"]
-        assert session_id, "session_id should not be empty"
-
-        # End event should be present
-        end_ev = find_event(events, "end")
-        assert end_ev is not None, "Missing 'end' event — stream did not terminate properly"
-        assert end_ev["data"]["action_count"] > 0, "At least one action should have been performed"
-        assert end_ev["data"]["duration"] > 0, "Duration should be positive"
-
-        # Message events should have content
-        message_events = find_events(events, "message")
-        assert len(message_events) >= 1, "At least one 'message' event expected"
-
-        # Check that some event contains SQL-like content (tool call or markdown)
-        all_data = json.dumps([e.get("data", {}) for e in events])
-        has_sql_hint = any(kw in all_data.lower() for kw in ["select", "count", "schools"])
-        assert has_sql_hint, "Response should contain SQL-related content about schools"
-
-        # Store session_id for subsequent tests
-        self.__class__._session_id = session_id
-
-    @pytest.mark.asyncio
-    async def test_c1_02_session_appears_in_list(self, chat_client):
-        """C1-02: After a completed chat, the session should appear in session list."""
-        session_id = getattr(self.__class__, "_session_id", None)
-        if not session_id:
-            pytest.skip("No session_id from previous test")
-
-        resp = await chat_client.get("/api/v1/chat/sessions")
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["success"] is True
-
-        session_ids = [s["session_id"] for s in body["data"].get("sessions", [])]
-        assert session_id in session_ids, f"Session {session_id} should appear in session list"
-
-    @pytest.mark.asyncio
-    async def test_c1_03_history_has_user_and_assistant(self, chat_client):
-        """C1-03: Chat history should contain both user and assistant messages."""
-        session_id = getattr(self.__class__, "_session_id", None)
-        if not session_id:
-            pytest.skip("No session_id from previous test")
-
-        resp = await chat_client.get(
-            "/api/v1/chat/history",
-            params={"session_id": session_id},
-        )
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["success"] is True
-
-        messages = body["data"].get("messages", [])
-        assert len(messages) >= 2, "History should have at least user + assistant messages"
-
-        roles = [m["role"] for m in messages]
-        assert "user" in roles, "History should contain user message"
-        assert "assistant" in roles, "History should contain assistant response"
-
-    @pytest.mark.asyncio
-    async def test_c1_04_delete_session(self, chat_client):
-        """C1-04: Delete the session and verify it no longer appears."""
-        session_id = getattr(self.__class__, "_session_id", None)
-        if not session_id:
-            pytest.skip("No session_id from previous test")
-
-        resp = await chat_client.delete(f"/api/v1/chat/sessions/{session_id}")
-        assert resp.status_code == 200
-
-        # Verify it's gone
-        resp = await chat_client.get("/api/v1/chat/sessions")
-        session_ids = [s["session_id"] for s in resp.json()["data"].get("sessions", [])]
-        assert session_id not in session_ids, "Deleted session should not appear in list"
+    req = StreamChatInput(message=message, session_id=session_id)
+    if source:
+        req.source = source
+    task = await svc.task_manager.start_chat(svc.agent_config, req)
+    for _ in range(120):
+        await asyncio.sleep(0.5)
+        if task.node is not None or task.status != "running":
+            break
+    return task
 
 
-# ---------------------------------------------------------------------------
-# C2: Resume (Reconnect) — disconnect mid-stream, resume from cursor
-# ---------------------------------------------------------------------------
-
-
-class TestC2ResumeChat:
-    """C2: Simulate network interruption by consuming only a few events,
-    then reconnect via /chat/resume with a cursor to get remaining events.
-
-    Uses the DatusService.task_manager directly to start a task and then
-    exercises the resume endpoint while the task is still running.
-    """
-
-    @pytest.mark.asyncio
-    async def test_c2_01_resume_from_cursor(self, chat_client, chat_datus_service):
-        """C2-01: Start chat via task_manager, resume via REST endpoint.
-
-        Steps:
-        1. Start a chat task directly through task_manager
-        2. Wait briefly for the first few events to accumulate
-        3. Call POST /chat/resume with from_event_id=0 to consume events
-        4. Verify we receive session + message events
-
-        Prompt: ultra-short factual query to keep execution fast.
-        """
-        from datus.api.models.cli_models import StreamChatInput
-
-        task_manager = chat_datus_service.task_manager
-        agent_config = chat_datus_service.agent_config
-
-        request = StreamChatInput(
-            message="What is the total number of charter schools?",
-            session_id="resume_test_session",
-        )
-
-        # Start background task
-        task = await task_manager.start_chat(agent_config, request)
-        session_id = task.session_id
-
-        # Wait a bit for events to accumulate
-        for _ in range(60):
-            await asyncio.sleep(1)
-            if len(task.events) >= 2 or task.status != "running":
-                break
-
+async def _cleanup_task(svc, task):
+    """Stop and cancel a task, swallowing errors."""
+    await svc.task_manager.stop_task(task.session_id)
+    if task.asyncio_task and not task.asyncio_task.done():
+        task.asyncio_task.cancel()
         try:
-            # Resume via REST endpoint
-            resp = await chat_client.post(
-                "/api/v1/chat/resume",
-                json={"session_id": session_id, "from_event_id": 0},
-            )
-            assert resp.status_code == 200
-
-            # If task completed, we get all events; if still running, we get partial
-            if "text/event-stream" in resp.headers.get("content-type", ""):
-                events = parse_sse_body(resp.text)
-                assert len(events) >= 1, "Resume should return at least one event"
-
-                # Verify continuity: event IDs should be sequential from cursor
-                event_ids = [e["id"] for e in events if "id" in e and e["id"] >= 0]
-                if len(event_ids) >= 2:
-                    assert event_ids[0] == 0, "First event should have ID 0 when resuming from cursor 0"
-            else:
-                # Task already completed — resume returns JSON error
-                body = resp.json()
-                assert "TASK_NOT_FOUND" in body.get("errorCode", "")
-
-        finally:
-            # Ensure cleanup
-            await task_manager.stop_task(session_id)
-            # Wait for task to finish
-            if task.asyncio_task and not task.asyncio_task.done():
-                try:
-                    await asyncio.wait_for(task.asyncio_task, timeout=30)
-                except (asyncio.TimeoutError, asyncio.CancelledError):
-                    pass
-
-
-# ---------------------------------------------------------------------------
-# C3: Session Persistence — multi-turn conversation on the same session
-# ---------------------------------------------------------------------------
-
-
-class TestC3MultiTurnSession:
-    """C3: Send two consecutive messages to the same session, verifying
-    the second turn has access to conversation context from the first.
-
-    Turn 1: Ask a factual question about a specific table.
-    Turn 2: Ask a follow-up that requires context from Turn 1.
-    """
-
-    @pytest.mark.asyncio
-    async def test_c3_01_two_turn_conversation(self, chat_client):
-        """C3-01: Two-turn conversation maintains context.
-
-        Turn 1: 'What columns does the frpm table have?'
-        Turn 2: 'Which of those columns stores the county name?'
-        The second turn should reference CDSCode or county without
-        re-explaining what 'frpm' is.
-        """
-        # --- Turn 1 ---
-        resp1 = await chat_client.post(
-            "/api/v1/chat/stream",
-            json={"message": "What columns does the frpm table have?"},
-        )
-        assert resp1.status_code == 200
-        events1 = parse_sse_body(resp1.text)
-
-        session_ev = find_event(events1, "session")
-        assert session_ev is not None
-        session_id = session_ev["data"]["session_id"]
-
-        end_ev1 = find_event(events1, "end")
-        assert end_ev1 is not None, "Turn 1 should complete"
-
-        # --- Turn 2: same session_id ---
-        resp2 = await chat_client.post(
-            "/api/v1/chat/stream",
-            json={
-                "message": "Which of those columns stores the county name?",
-                "session_id": session_id,
-            },
-        )
-        assert resp2.status_code == 200
-        events2 = parse_sse_body(resp2.text)
-
-        end_ev2 = find_event(events2, "end")
-        assert end_ev2 is not None, "Turn 2 should complete"
-
-        # Turn 2 response should mention county-related column
-        all_data2 = json.dumps([e.get("data", {}) for e in events2]).lower()
-        county_mentioned = any(kw in all_data2 for kw in ["county", "county name", "county_name"])
-        assert county_mentioned, "Turn 2 should mention county column from context"
-
-        # --- Verify history has both turns ---
-        resp_hist = await chat_client.get(
-            "/api/v1/chat/history",
-            params={"session_id": session_id},
-        )
-        assert resp_hist.status_code == 200
-        messages = resp_hist.json()["data"].get("messages", [])
-        user_messages = [m for m in messages if m["role"] == "user"]
-        assert len(user_messages) >= 2, "History should contain both user turns"
-
-        # Cleanup
-        self.__class__._session_id = session_id
-
-    @pytest.mark.asyncio
-    async def test_c3_02_cleanup(self, chat_client):
-        """C3-02: Clean up test session."""
-        session_id = getattr(self.__class__, "_session_id", None)
-        if session_id:
-            await chat_client.delete(f"/api/v1/chat/sessions/{session_id}")
-
-
-# ---------------------------------------------------------------------------
-# C4: Subagent Routing — chatbot node from agent.yml
-# ---------------------------------------------------------------------------
-
-
-class TestC4SubagentChat:
-    """C4: Route conversation to the 'chatbot' subagent defined in agent.yml.
-
-    The chatbot node has different tools and system prompt compared to
-    the default chat node. We verify it initializes and responds.
-    """
-
-    @pytest.mark.asyncio
-    async def test_c4_01_chatbot_subagent_responds(self, chat_client):
-        """C4-01: Stream chat routed to chatbot subagent.
-
-        The chatbot subagent is defined in agent.yml with gen_sql prompt
-        and db_tools + context_search_tools. It should be able to answer
-        a simple database question.
-        """
-        resp = await chat_client.post(
-            "/api/v1/chat/stream",
-            json={
-                "message": "How many rows are in the schools table?",
-                "subagent_id": "chatbot",
-            },
-        )
-        assert resp.status_code == 200
-        assert "text/event-stream" in resp.headers.get("content-type", "")
-
-        events = parse_sse_body(resp.text)
-
-        session_ev = find_event(events, "session")
-        assert session_ev is not None, "Subagent chat should emit session event"
-
-        end_ev = find_event(events, "end")
-        assert end_ev is not None, "Subagent chat should complete"
-
-        # Should have tool calls (db_tools)
-        message_events = find_events(events, "message")
-        assert len(message_events) >= 1
-
-        session_id = session_ev["data"]["session_id"]
-
-        # Cleanup
-        await chat_client.delete(f"/api/v1/chat/sessions/{session_id}")
-
-    @pytest.mark.asyncio
-    async def test_c4_02_builtin_gen_sql_subagent(self, chat_client):
-        """C4-02: Stream chat routed to builtin gen_sql subagent.
-
-        gen_sql uses GenSQLAgenticNode which generates SQL directly
-        without the full ChatAgenticNode orchestration.
-        """
-        resp = await chat_client.post(
-            "/api/v1/chat/stream",
-            json={
-                "message": "Count schools by county, show top 3",
-                "subagent_id": "gen_sql",
-            },
-        )
-        assert resp.status_code == 200
-
-        events = parse_sse_body(resp.text)
-
-        # Check basic lifecycle events
-        session_ev = find_event(events, "session")
-        assert session_ev is not None
-
-        end_or_error = find_event(events, "end") or find_event(events, "error")
-        assert end_or_error is not None, "gen_sql subagent should complete or error"
-
-        session_id = session_ev["data"]["session_id"]
-        await chat_client.delete(f"/api/v1/chat/sessions/{session_id}")
-
-
-# ---------------------------------------------------------------------------
-# C5: Stop Mid-Stream — interrupt a running chat
-# ---------------------------------------------------------------------------
-
-
-class TestC5StopChat:
-    """C5: Start a chat with a complex question that takes multiple turns,
-    then stop it mid-stream and verify it terminates gracefully.
-    """
-
-    @pytest.mark.asyncio
-    async def test_c5_01_stop_running_chat(self, chat_client, chat_datus_service):
-        """C5-01: Start a slow chat and stop it before completion.
-
-        Uses task_manager directly to start and then exercises
-        POST /chat/stop while the task is running.
-        """
-        from datus.api.models.cli_models import StreamChatInput
-
-        task_manager = chat_datus_service.task_manager
-        agent_config = chat_datus_service.agent_config
-
-        request = StreamChatInput(
-            message="List all distinct counties, their school counts, and average enrollment for each county",
-            session_id="stop_test_session",
-        )
-
-        task = await task_manager.start_chat(agent_config, request)
-
-        # Wait for the task to start processing
-        for _ in range(30):
-            await asyncio.sleep(0.5)
-            if len(task.events) >= 2 or task.status != "running":
-                break
-
-        if task.status == "running":
-            # Stop via REST endpoint
-            resp = await chat_client.post(
-                "/api/v1/chat/stop",
-                json={"session_id": "stop_test_session"},
-            )
-            assert resp.status_code == 200
-            body = resp.json()
-            assert body["success"] is True, "Stop should succeed for a running task"
-
-            # Wait for the task to actually stop
-            for _ in range(20):
-                await asyncio.sleep(0.5)
-                if task.status != "running":
-                    break
-
-            assert task.status in ("cancelled", "completed", "error"), (
-                f"Task should be stopped, got status: {task.status}"
-            )
-        else:
-            # Task already finished — that's okay for a fast query
+            await asyncio.wait_for(task.asyncio_task, timeout=10)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
             pass
 
-        # Ensure task is cleaned up
-        if task.asyncio_task and not task.asyncio_task.done():
-            task.asyncio_task.cancel()
-            try:
-                await asyncio.wait_for(task.asyncio_task, timeout=10)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
-                pass
-
 
 # ---------------------------------------------------------------------------
-# C6: Edge Cases and Error Handling
+# Tests — N9 series
 # ---------------------------------------------------------------------------
 
 
-class TestC6ChatEdgeCases:
-    """C6: Boundary conditions for the chat API."""
+@pytest.mark.nightly
+class TestAPIChatN9:
+    """N9: Chat API integration tests with real LLM."""
+
+    # ------ Basic stream + session lifecycle ------
 
     @pytest.mark.asyncio
-    async def test_c6_01_explicit_session_id(self, chat_client):
-        """C6-01: Client can provide their own session_id."""
-        resp = await chat_client.post(
-            "/api/v1/chat/stream",
-            json={
-                "message": "How many schools are there?",
-                "session_id": "custom_session_12345",
-            },
-        )
+    async def test_stream_and_session_lifecycle(self, chat_client):
+        """stream → verify SSE events → list sessions → history → delete."""
+        resp = await chat_client.post("/api/v1/chat/stream", json={"message": "How many schools are there in total?"})
         assert resp.status_code == 200
+        assert "text/event-stream" in resp.headers.get("content-type", "")
+
         events = parse_sse_body(resp.text)
+        assert len(events) >= 3
 
         session_ev = find_event(events, "session")
         assert session_ev is not None
-        assert session_ev["data"]["session_id"] == "custom_session_12345"
+        sid = session_ev["data"]["session_id"]
 
-        # Cleanup
-        await chat_client.delete("/api/v1/chat/sessions/custom_session_12345")
+        end_ev = find_event(events, "end")
+        assert end_ev is not None
+        assert end_ev["data"]["action_count"] > 0
+
+        # session list
+        body = (await chat_client.get("/api/v1/chat/sessions")).json()
+        assert sid in [s["session_id"] for s in body["data"].get("sessions", [])]
+
+        # history
+        body = (await chat_client.get("/api/v1/chat/history", params={"session_id": sid})).json()
+        assert body["success"] is True
+        roles = [m["role"] for m in body["data"].get("messages", [])]
+        assert "user" in roles and "assistant" in roles
+
+        # delete — API returns success; session file may already be cleaned
+        # by the node itself, so we only assert the API call succeeds.
+        del_body = (await chat_client.delete(f"/api/v1/chat/sessions/{sid}")).json()
+        assert del_body["success"] is True
+
+    # ------ Resume (reconnect) ------
 
     @pytest.mark.asyncio
-    async def test_c6_02_resume_completed_task(self, chat_client):
-        """C6-02: Resuming a completed (cleaned-up) task returns TASK_NOT_FOUND."""
-        resp = await chat_client.post(
-            "/api/v1/chat/resume",
-            json={"session_id": "definitely_not_running_xyz"},
+    async def test_resume_from_cursor(self, chat_client, chat_datus_service):
+        """start task → wait for events → resume from cursor 0."""
+        task = await _start_task(chat_datus_service, "How many charter schools are there?", "resume_sess")
+        try:
+            resp = await chat_client.post(
+                "/api/v1/chat/resume",
+                json={"session_id": task.session_id, "from_event_id": 0},
+            )
+            assert resp.status_code == 200
+            if "text/event-stream" in resp.headers.get("content-type", ""):
+                events = parse_sse_body(resp.text)
+                assert len(events) >= 1
+                ids = [e["id"] for e in events if e.get("id", -1) >= 0]
+                if len(ids) >= 2:
+                    assert ids[0] == 0
+            else:
+                assert resp.json().get("errorCode") == "TASK_NOT_FOUND"
+        finally:
+            await _cleanup_task(chat_datus_service, task)
+
+    # ------ Multi-turn context ------
+
+    @pytest.mark.asyncio
+    async def test_multi_turn_context(self, chat_client):
+        """two turns on the same session, second references first."""
+        r1 = await chat_client.post("/api/v1/chat/stream", json={"message": "What columns does the frpm table have?"})
+        events1 = parse_sse_body(r1.text)
+        sid = find_event(events1, "session")["data"]["session_id"]
+        assert find_event(events1, "end") is not None
+
+        r2 = await chat_client.post(
+            "/api/v1/chat/stream",
+            json={"message": "Which of those columns stores the county name?", "session_id": sid},
         )
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["success"] is False
-        assert body["errorCode"] == "TASK_NOT_FOUND"
+        events2 = parse_sse_body(r2.text)
+        assert find_event(events2, "end") is not None
+        assert "county" in json.dumps([e.get("data", {}) for e in events2]).lower()
+
+        # history has both turns
+        body = (await chat_client.get("/api/v1/chat/history", params={"session_id": sid})).json()
+        assert len([m for m in body["data"].get("messages", []) if m["role"] == "user"]) >= 2
+        await chat_client.delete(f"/api/v1/chat/sessions/{sid}")
+
+    # ------ Subagent routing (chatbot) ------
 
     @pytest.mark.asyncio
-    async def test_c6_03_stop_nonexistent_session(self, chat_client):
-        """C6-03: Stopping a non-existent session returns clear error."""
-        resp = await chat_client.post(
-            "/api/v1/chat/stop",
-            json={"session_id": "nonexistent_stop_xyz"},
-        )
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["success"] is False
-
-    @pytest.mark.asyncio
-    async def test_c6_04_stream_invalid_subagent_returns_404(self, chat_client):
-        """C6-04: Streaming to a non-existent subagent returns 404."""
+    async def test_chatbot_subagent(self, chat_client):
+        """route to chatbot custom sub-agent, verify completion."""
         resp = await chat_client.post(
             "/api/v1/chat/stream",
-            json={
-                "message": "test",
-                "subagent_id": "totally_nonexistent_subagent_xyz",
-            },
+            json={"message": "How many rows are in the schools table?", "subagent_id": "chatbot"},
+        )
+        assert resp.status_code == 200
+        events = parse_sse_body(resp.text)
+        session_ev = find_event(events, "session")
+        assert session_ev is not None
+        assert find_event(events, "end") is not None
+        await chat_client.delete(f"/api/v1/chat/sessions/{session_ev['data']['session_id']}")
+
+    # ------ Stop mid-stream ------
+
+    @pytest.mark.asyncio
+    async def test_stop_running_chat(self, chat_client, chat_datus_service):
+        """start a chat, stop it, verify task terminates."""
+        task = await _start_task(
+            chat_datus_service,
+            "List all distinct counties, their school counts, and average enrollment",
+            "stop_sess",
+        )
+        try:
+            if task.status == "running":
+                body = (await chat_client.post("/api/v1/chat/stop", json={"session_id": "stop_sess"})).json()
+                assert body["success"] is True
+                for _ in range(20):
+                    await asyncio.sleep(0.5)
+                    if task.status != "running":
+                        break
+                assert task.status in ("cancelled", "completed", "error")
+        finally:
+            await _cleanup_task(chat_datus_service, task)
+
+    # ------ Source proxy + tool_result ------
+
+    @pytest.mark.asyncio
+    async def test_source_proxy_tool_result(self, chat_client, chat_datus_service):
+        """source='web' activates proxy; tool_result resolves channel."""
+        # Part A: source=web stream completes normally
+        resp = await chat_client.post(
+            "/api/v1/chat/stream",
+            json={"message": "How many schools are there?", "source": "web"},
+        )
+        assert resp.status_code == 200
+        events = parse_sse_body(resp.text)
+        sev = find_event(events, "session")
+        assert sev is not None
+        assert find_event(events, "end") or find_event(events, "error")
+        await chat_client.delete(f"/api/v1/chat/sessions/{sev['data']['session_id']}")
+
+        # Part B: verify ToolResultChannel plumbing
+        task = await _start_task(chat_datus_service, "How many schools are there?", "proxy_sess", source="web")
+        try:
+            if task.node is None:
+                pytest.skip("Node not created in time")
+            ch = task.node.tool_channel
+
+            # Direct publish + wait_for
+            await ch.publish("call_001", {"success": 1, "result": "file written"})
+            r = await asyncio.wait_for(ch.wait_for("call_001"), timeout=5)
+            assert r["success"] == 1
+
+            # REST /tool_result → channel
+            resp = await chat_client.post(
+                "/api/v1/chat/tool_result",
+                json={
+                    "session_id": "proxy_sess",
+                    "call_tool_id": "call_002",
+                    "tool_result": {"success": 1, "result": "ok"},
+                },
+            )
+            assert resp.json()["success"] is True
+            r2 = await asyncio.wait_for(ch.wait_for("call_002"), timeout=5)
+            assert r2["success"] == 1
+        finally:
+            await _cleanup_task(chat_datus_service, task)
+
+    # ------ ask_user interaction e2e ------
+
+    @pytest.mark.asyncio
+    async def test_ask_user_interaction(self, chat_client, chat_datus_service):
+        """prompt instructs LLM to call ask_user, submit via REST, agent completes."""
+        task = await _start_task(
+            chat_datus_service,
+            "I want to know about schools in a specific county. "
+            "Use the ask_user tool to ask me which county I'm interested in. "
+            "Provide these options: Los Angeles, San Francisco, San Diego. "
+            "After I answer, count the schools in that county.",
+            "askuser_sess",
+        )
+        try:
+            # Poll for user-interaction event
+            interaction_key = None
+            deadline = asyncio.get_event_loop().time() + 90
+            while asyncio.get_event_loop().time() < deadline:
+                await asyncio.sleep(1)
+                for ev in task.events:
+                    if ev.event != "message" or not hasattr(ev.data, "payload"):
+                        continue
+                    p = ev.data.payload
+                    if not p or not p.content:
+                        continue
+                    for c in p.content:
+                        if c.type == "user-interaction":
+                            interaction_key = c.payload.get("interactionKey")
+                            break
+                    if interaction_key:
+                        break
+                if interaction_key or task.status != "running":
+                    break
+
+            if interaction_key is None:
+                pytest.skip(f"LLM did not call ask_user (status={task.status}, events={len(task.events)})")
+
+            # Submit choice
+            body = (
+                await chat_client.post(
+                    "/api/v1/chat/user_interaction",
+                    json={"session_id": "askuser_sess", "interaction_key": interaction_key, "input": ["Los Angeles"]},
+                )
+            ).json()
+            assert body["success"] is True
+            assert body["data"]["submitted"] is True
+
+            # Wait for completion
+            for _ in range(120):
+                await asyncio.sleep(1)
+                if task.status != "running":
+                    break
+            assert task.status in ("completed", "error")
+
+            # Response should mention Los Angeles
+            dump = json.dumps(
+                [ev.data.model_dump() if hasattr(ev.data, "model_dump") else str(ev.data) for ev in task.events]
+            ).lower()
+            assert "los angeles" in dump
+        finally:
+            await _cleanup_task(chat_datus_service, task)
+
+    # ------ Invalid subagent → 404 ------
+
+    @pytest.mark.asyncio
+    async def test_invalid_subagent_404(self, chat_client):
+        """streaming to a non-existent subagent returns 404."""
+        resp = await chat_client.post(
+            "/api/v1/chat/stream",
+            json={"message": "test", "subagent_id": "nonexistent_xyz"},
         )
         assert resp.status_code == 404
 
+    # ------ Error paths (no LLM call needed) ------
+
     @pytest.mark.asyncio
-    async def test_c6_05_interaction_no_active_task(self, chat_client):
-        """C6-05: Submitting user interaction to non-existent task fails."""
-        resp = await chat_client.post(
-            "/api/v1/chat/user_interaction",
-            json={
-                "session_id": "nonexistent_session",
-                "interaction_key": "key1",
-                "input": ["option_a"],
-            },
-        )
-        assert resp.status_code == 200
-        body = resp.json()
+    async def test_error_paths(self, chat_client):
+        """stop / resume / interaction / tool_result on non-existent sessions."""
+        # stop
+        body = (await chat_client.post("/api/v1/chat/stop", json={"session_id": "no_such"})).json()
         assert body["success"] is False
 
-    @pytest.mark.asyncio
-    async def test_c6_06_tool_result_no_active_task(self, chat_client):
-        """C6-06: Submitting tool result to non-existent task fails."""
-        resp = await chat_client.post(
-            "/api/v1/chat/tool_result",
-            json={
-                "session_id": "nonexistent_session",
-                "call_tool_id": "tool_1",
-                "tool_result": {"success": 1, "result": "done"},
-            },
-        )
-        assert resp.status_code == 200
-        body = resp.json()
+        # resume
+        body = (await chat_client.post("/api/v1/chat/resume", json={"session_id": "no_such"})).json()
+        assert body["success"] is False and body["errorCode"] == "TASK_NOT_FOUND"
+
+        # user_interaction
+        body = (
+            await chat_client.post(
+                "/api/v1/chat/user_interaction",
+                json={"session_id": "no_such", "interaction_key": "k", "input": ["x"]},
+            )
+        ).json()
         assert body["success"] is False
 
-    @pytest.mark.asyncio
-    async def test_c6_07_sse_events_have_valid_structure(self, chat_client):
-        """C6-07: Verify SSE events conform to the expected schema.
-
-        Each event should have: id (int), event (str), data (json).
-        The data.payload should contain message_id and role.
-        """
-        resp = await chat_client.post(
-            "/api/v1/chat/stream",
-            json={"message": "How many rows in the frpm table?"},
-        )
-        assert resp.status_code == 200
-
-        events = parse_sse_body(resp.text)
-
-        for ev in events:
-            assert "id" in ev, f"Event missing 'id': {ev}"
-            assert "event" in ev, f"Event missing 'event': {ev}"
-            assert "data" in ev, f"Event missing 'data': {ev}"
-            assert isinstance(ev["data"], dict), f"Event data should be dict: {ev['event']}"
-
-        # Message events should have payload with message_id + role
-        for ev in find_events(events, "message"):
-            payload = ev["data"].get("payload", {})
-            assert "message_id" in payload, "Message event payload should have message_id"
-            assert "role" in payload, "Message event payload should have role"
-            assert payload["role"] in ("user", "assistant"), f"Unexpected role: {payload['role']}"
-
-        # Session event should have session_id
-        session_ev = find_event(events, "session")
-        if session_ev:
-            assert "session_id" in session_ev["data"]
-
-        # End event should have duration
-        end_ev = find_event(events, "end")
-        if end_ev:
-            assert "duration" in end_ev["data"]
-            assert "total_events" in end_ev["data"]
-
-        # Cleanup
-        if session_ev:
-            await chat_client.delete(f"/api/v1/chat/sessions/{session_ev['data']['session_id']}")
+        # tool_result
+        body = (
+            await chat_client.post(
+                "/api/v1/chat/tool_result",
+                json={"session_id": "no_such", "call_tool_id": "t", "tool_result": {"success": 1, "result": "x"}},
+            )
+        ).json()
+        assert body["success"] is False

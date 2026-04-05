@@ -2,7 +2,7 @@
 
 from fastapi import Request
 
-from datus.api.auth.context import AppContext, UserContext
+from datus.api.auth.context import AppContext
 from datus.api.auth.provider import EvictCallback
 from datus.utils.loggings import get_logger
 
@@ -29,15 +29,6 @@ class NoAuthProvider:
             user_id="anonymous",
             project_id=self._namespace,
             config=None,
-        )
-
-    async def authenticate_light(self, request: Request) -> UserContext:
-        """Lightweight auth for open-source — no AgentConfig loading."""
-        return UserContext(
-            user_id="anonymous",
-            workspace_id=self._namespace,
-            tenant_id=self._namespace,
-            project_id=self._namespace,
         )
 
     def on_evict(self, callback: EvictCallback) -> None:

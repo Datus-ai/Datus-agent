@@ -142,7 +142,16 @@ class TestMetricflowDetection:
         assert semantic_validation._check_metricflow() is False
 
     def test_detection_returns_false_when_import_fails(self):
-        with patch.dict("sys.modules", {"metricflow": None}):
+        """Verify _check_metricflow returns False when metricflow cannot be imported."""
+        blocked = {
+            "metricflow": None,
+            "metricflow.model": None,
+            "metricflow.model.model_validator": None,
+            "metricflow.model.parsing": None,
+            "metricflow.model.parsing.config_linter": None,
+            "metricflow.model.parsing.dir_to_model": None,
+        }
+        with patch.dict("sys.modules", blocked):
             semantic_validation._METRICFLOW_AVAILABLE = None
             result = semantic_validation._check_metricflow()
             assert result is False

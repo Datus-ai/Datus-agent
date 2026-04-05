@@ -13,13 +13,3 @@ class AppContext:
     user_id: str
     project_id: str = "default"
     config: Optional[AgentConfig] = None
-
-
-@dataclass
-class UserContext:
-    """Lightweight context for agent-related routes without AgentConfig."""
-
-    user_id: str
-    workspace_id: str
-    tenant_id: str
-    project_id: Optional[str] = None

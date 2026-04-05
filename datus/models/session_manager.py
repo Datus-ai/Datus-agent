@@ -138,8 +138,10 @@ class SessionManager:
         Args:
             session_id: Session ID to clear
         """
-        if session_id in self._sessions:
-            self._sessions[session_id].clear_session()
+        # Load session from disk if not in memory
+        session = self.get_session(session_id) if self.session_exists(session_id) else self._sessions.get(session_id)
+        if session:
+            session.clear_session()
             logger.debug(f"Cleared session: {session_id}")
         else:
             logger.warning(f"Attempted to clear non-existent session: {session_id}")
@@ -152,16 +154,17 @@ class SessionManager:
             session_id: Session ID to delete
         """
         self._validate_session_id(session_id)
-        if session_id in self._sessions:
-            # Close the session
-            self._sessions.pop(session_id)
+        # Remove from in-memory cache if present
+        self._sessions.pop(session_id, None)
 
-            # Delete the database file if it exists
-            db_path = os.path.join(self.session_dir, f"{session_id}.db")
-            if os.path.exists(db_path):
-                os.remove(db_path)
-                logger.debug(f"Deleted session database: {db_path}")
-
+        # Delete the database file and SQLite WAL/SHM files if they exist on disk
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if os.path.exists(db_path):
+            os.remove(db_path)
+            for suffix in ("-shm", "-wal"):
+                wal_path = db_path + suffix
+                if os.path.exists(wal_path):
+                    os.remove(wal_path)
             logger.debug(f"Deleted session: {session_id}")
         else:
             logger.warning(f"Attempted to delete non-existent session: {session_id}")

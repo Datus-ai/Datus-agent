@@ -4,7 +4,7 @@ from typing import Awaitable, Callable, Protocol, runtime_checkable
 
 from fastapi import Request
 
-from datus.api.auth.context import AppContext, UserContext
+from datus.api.auth.context import AppContext
 
 EvictCallback = Callable[[str], Awaitable[None]]  # project_id -> evict
 
@@ -15,10 +15,6 @@ class AuthProvider(Protocol):
 
     async def authenticate(self, request: Request) -> AppContext:
         """Authenticate a request and return AppContext (with loaded AgentConfig)."""
-        ...
-
-    async def authenticate_light(self, request: Request) -> UserContext:
-        """Lightweight auth — no AgentConfig loading."""
         ...
 
     def on_evict(self, callback: EvictCallback) -> None:

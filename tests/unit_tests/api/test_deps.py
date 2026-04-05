@@ -1,0 +1,97 @@
+"""Tests for datus.api.deps — dependency injection module."""
+
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from datus.api import deps
+from datus.api.auth.context import AppContext
+from datus.api.deps import get_datus_service, init_deps
+from datus.api.services.datus_service_cache import DatusServiceCache
+
+
+@pytest.fixture(autouse=True)
+def _reset_deps():
+    """Reset module-level singletons between tests."""
+    deps._auth_provider = None
+    deps._service_cache = None
+    deps._namespace = "default"
+    yield
+    deps._auth_provider = None
+    deps._service_cache = None
+    deps._namespace = "default"
+
+
+class TestInitDeps:
+    """Tests for init_deps — singleton initialization."""
+
+    def test_sets_auth_provider(self):
+        """init_deps stores the auth provider."""
+        mock_auth = MagicMock()
+        mock_auth.on_evict = MagicMock()
+        mock_cache = MagicMock(spec=DatusServiceCache)
+
+        init_deps(mock_auth, mock_cache, namespace="test_ns")
+
+        assert deps._auth_provider is mock_auth
+        assert deps._service_cache is mock_cache
+        assert deps._namespace == "test_ns"
+
+    def test_default_namespace(self):
+        """Default namespace is 'default'."""
+        mock_auth = MagicMock()
+        mock_auth.on_evict = MagicMock()
+        mock_cache = MagicMock(spec=DatusServiceCache)
+
+        init_deps(mock_auth, mock_cache)
+        assert deps._namespace == "default"
+
+    def test_wires_eviction_callback(self):
+        """init_deps wires auth_provider.on_evict to cache.evict."""
+        mock_auth = MagicMock()
+        mock_cache = MagicMock(spec=DatusServiceCache)
+
+        init_deps(mock_auth, mock_cache)
+        mock_auth.on_evict.assert_called_once_with(mock_cache.evict)
+
+
+@pytest.mark.asyncio
+class TestGetDatusService:
+    """Tests for get_datus_service — FastAPI dependency."""
+
+    async def test_raises_when_auth_not_initialized(self):
+        """RuntimeError when auth_provider is None."""
+        request = MagicMock()
+        with pytest.raises(RuntimeError, match="Auth provider not initialized"):
+            await get_datus_service(request)
+
+    async def test_raises_when_cache_not_initialized(self):
+        """RuntimeError when service_cache is None but auth is set."""
+        deps._auth_provider = MagicMock()
+        deps._auth_provider.authenticate = AsyncMock()
+        request = MagicMock()
+        with pytest.raises(RuntimeError, match="Service cache not initialized"):
+            await get_datus_service(request)
+
+    async def test_authenticates_and_returns_service(self):
+        """Full flow: authenticate → factory → cache.get_or_create."""
+        mock_auth = MagicMock()
+        ctx = AppContext(user_id="user-1", project_id="proj-1", config=MagicMock())
+        mock_auth.authenticate = AsyncMock(return_value=ctx)
+
+        mock_cache = MagicMock(spec=DatusServiceCache)
+        mock_svc = MagicMock()
+        mock_cache.get_or_create = AsyncMock(return_value=mock_svc)
+
+        deps._auth_provider = mock_auth
+        deps._service_cache = mock_cache
+
+        request = MagicMock()
+        result = await get_datus_service(request)
+
+        assert result is mock_svc
+        mock_auth.authenticate.assert_awaited_once_with(request)
+        mock_cache.get_or_create.assert_awaited_once()
+        # Verify project_id was passed
+        call_args = mock_cache.get_or_create.call_args
+        assert call_args[0][0] == "proj-1"
