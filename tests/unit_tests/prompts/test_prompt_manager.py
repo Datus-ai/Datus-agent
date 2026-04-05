@@ -7,7 +7,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from datus.prompts.prompt_manager import PromptManager
+from datus.prompts.prompt_manager import (
+    PromptManager,
+    get_prompt_manager,
+    reset_prompt_manager,
+    set_current_prompt_manager,
+)
 from datus.utils.path_manager import DatusPathManager, reset_path_manager, set_current_path_manager
 
 
@@ -33,8 +38,12 @@ def _make_manager(
 @pytest.fixture(autouse=True)
 def reset_context_home():
     reset_path_manager()
+    reset_prompt_manager()
+    PromptManager._env_cache.clear()
     yield
     reset_path_manager()
+    reset_prompt_manager()
+    PromptManager._env_cache.clear()
 
 
 class TestPromptManager:
@@ -168,3 +177,96 @@ class TestPromptManager:
 
         manager.copy_to("greet", "greet_copy", "1.0", overwrite=True)
         assert copied_path.read_text(encoding="utf-8") == "default"
+
+    def test_env_cache_is_class_level_shared_across_instances(self, tmp_path):
+        pm_a = DatusPathManager(tmp_path / "home_a")
+        pm_b = DatusPathManager(tmp_path / "home_b")
+        manager_a = _make_manager(tmp_path, path_manager=pm_a)
+        manager_b = _make_manager(tmp_path, path_manager=pm_b)
+
+        manager_a._get_env()
+        manager_b._get_env()
+
+        # Both instances share the class-level cache
+        assert len(PromptManager._env_cache) == 2
+        assert manager_a._env_cache is manager_b._env_cache
+
+
+class TestGetPromptManager:
+    def test_returns_explicit_prompt_manager(self, tmp_path):
+        explicit = PromptManager(path_manager=DatusPathManager(tmp_path / "explicit"))
+        result = get_prompt_manager(prompt_manager=explicit)
+
+        assert result is explicit
+
+    def test_returns_from_agent_config_prompt_manager_attr(self, tmp_path):
+        pm = PromptManager(path_manager=DatusPathManager(tmp_path / "config"))
+        agent_config = SimpleNamespace(prompt_manager=pm, path_manager=None)
+        result = get_prompt_manager(agent_config=agent_config)
+
+        assert result is pm
+
+    def test_builds_from_agent_config_path_manager(self, tmp_path):
+        path_manager = DatusPathManager(tmp_path / "tenant")
+        agent_config = SimpleNamespace(path_manager=path_manager)
+        result = get_prompt_manager(agent_config=agent_config)
+
+        assert isinstance(result, PromptManager)
+        assert result.user_templates_dir == path_manager.template_dir
+
+    def test_builds_from_explicit_path_manager(self, tmp_path):
+        path_manager = DatusPathManager(tmp_path / "tenant")
+        result = get_prompt_manager(path_manager=path_manager)
+
+        assert isinstance(result, PromptManager)
+        assert result.user_templates_dir == path_manager.template_dir
+
+    def test_returns_context_local_instance(self, tmp_path):
+        pm = PromptManager(path_manager=DatusPathManager(tmp_path / "ctx"))
+        token = set_current_prompt_manager(pm)
+        try:
+            result = get_prompt_manager()
+            assert result is pm
+        finally:
+            reset_prompt_manager(token)
+
+    def test_falls_back_to_default(self):
+        result = get_prompt_manager()
+        assert isinstance(result, PromptManager)
+
+
+class TestSetCurrentPromptManager:
+    def test_set_and_reset_with_token(self, tmp_path):
+        pm = PromptManager(path_manager=DatusPathManager(tmp_path / "a"))
+        token = set_current_prompt_manager(pm)
+        assert get_prompt_manager() is pm
+
+        reset_prompt_manager(token)
+        assert get_prompt_manager() is not pm
+
+    def test_set_from_agent_config(self, tmp_path):
+        path_manager = DatusPathManager(tmp_path / "tenant")
+        agent_config = SimpleNamespace(path_manager=path_manager)
+        token = set_current_prompt_manager(agent_config=agent_config)
+        try:
+            result = get_prompt_manager()
+            assert result.user_templates_dir == path_manager.template_dir
+        finally:
+            reset_prompt_manager(token)
+
+    def test_set_from_path_manager(self, tmp_path):
+        path_manager = DatusPathManager(tmp_path / "tenant")
+        token = set_current_prompt_manager(path_manager=path_manager)
+        try:
+            result = get_prompt_manager()
+            assert result.user_templates_dir == path_manager.template_dir
+        finally:
+            reset_prompt_manager(token)
+
+    def test_reset_without_token_clears(self, tmp_path):
+        pm = PromptManager(path_manager=DatusPathManager(tmp_path / "a"))
+        set_current_prompt_manager(pm)
+        reset_prompt_manager()
+        # After reset, get_prompt_manager returns a fresh default
+        result = get_prompt_manager()
+        assert result is not pm

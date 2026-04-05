@@ -45,7 +45,8 @@ class TestBaseMcpStream:
         mock_model.generate_with_tools_stream = fake_stream
         input_data = self._make_input_data()
 
-        with patch("datus.tools.llms_tools.mcp_stream_utils.prompt_manager") as mock_pm:
+        with patch("datus.tools.llms_tools.mcp_stream_utils.get_prompt_manager") as mock_gpm:
+            mock_pm = mock_gpm.return_value
             mock_pm.get_raw_template.return_value = "system instruction"
 
             results = asyncio.run(
@@ -75,7 +76,8 @@ class TestBaseMcpStream:
         input_data = self._make_input_data()
         existing_manager = ActionHistoryManager()
 
-        with patch("datus.tools.llms_tools.mcp_stream_utils.prompt_manager") as mock_pm:
+        with patch("datus.tools.llms_tools.mcp_stream_utils.get_prompt_manager") as mock_gpm:
+            mock_pm = mock_gpm.return_value
             mock_pm.get_raw_template.return_value = "instruction"
 
             results = asyncio.run(
@@ -106,7 +108,8 @@ class TestBaseMcpStream:
         mock_model.generate_with_tools_stream = fake_stream
         input_data = self._make_input_data()
 
-        with patch("datus.tools.llms_tools.mcp_stream_utils.prompt_manager") as mock_pm:
+        with patch("datus.tools.llms_tools.mcp_stream_utils.get_prompt_manager") as mock_gpm:
+            mock_pm = mock_gpm.return_value
             mock_pm.get_raw_template.return_value = "instruction"
 
             results = asyncio.run(
@@ -139,7 +142,8 @@ class TestBaseMcpStream:
         mock_model.generate_with_tools_stream = fake_stream
         input_data = self._make_input_data()
 
-        with patch("datus.tools.llms_tools.mcp_stream_utils.prompt_manager") as mock_pm:
+        with patch("datus.tools.llms_tools.mcp_stream_utils.get_prompt_manager") as mock_gpm:
+            mock_pm = mock_gpm.return_value
             mock_pm.get_raw_template.return_value = "instruction"
 
             asyncio.run(
@@ -170,7 +174,8 @@ class TestBaseMcpStream:
         mock_model.generate_with_tools_stream = fake_stream
         input_data = self._make_input_data()
 
-        with patch("datus.tools.llms_tools.mcp_stream_utils.prompt_manager") as mock_pm:
+        with patch("datus.tools.llms_tools.mcp_stream_utils.get_prompt_manager") as mock_gpm:
+            mock_pm = mock_gpm.return_value
             mock_pm.get_raw_template.return_value = "instruction"
 
             asyncio.run(
@@ -199,7 +204,8 @@ class TestBaseMcpStream:
         mock_model.generate_with_tools_stream = fake_stream
         input_data = self._make_input_data()
 
-        with patch("datus.tools.llms_tools.mcp_stream_utils.prompt_manager") as mock_pm:
+        with patch("datus.tools.llms_tools.mcp_stream_utils.get_prompt_manager") as mock_gpm:
+            mock_pm = mock_gpm.return_value
             mock_pm.get_raw_template.return_value = "instruction"
 
             with pytest.raises(PermissionError):
@@ -227,7 +233,8 @@ class TestBaseMcpStream:
         mock_model.generate_with_tools_stream = fake_stream
         input_data = self._make_input_data()
 
-        with patch("datus.tools.llms_tools.mcp_stream_utils.prompt_manager") as mock_pm:
+        with patch("datus.tools.llms_tools.mcp_stream_utils.get_prompt_manager") as mock_gpm:
+            mock_pm = mock_gpm.return_value
             mock_pm.get_raw_template.return_value = "instruction"
 
             with pytest.raises(RuntimeError, match="rate limit"):
@@ -255,7 +262,8 @@ class TestBaseMcpStream:
         mock_model.generate_with_tools_stream = fake_stream
         input_data = self._make_input_data()
 
-        with patch("datus.tools.llms_tools.mcp_stream_utils.prompt_manager") as mock_pm:
+        with patch("datus.tools.llms_tools.mcp_stream_utils.get_prompt_manager") as mock_gpm:
+            mock_pm = mock_gpm.return_value
             mock_pm.get_raw_template.return_value = "instruction"
 
             with pytest.raises(ValueError, match="some unexpected error"):
@@ -283,7 +291,8 @@ class TestBaseMcpStream:
         mock_model.generate_with_tools_stream = fake_stream
         input_data = self._make_input_data()
 
-        with patch("datus.tools.llms_tools.mcp_stream_utils.prompt_manager") as mock_pm:
+        with patch("datus.tools.llms_tools.mcp_stream_utils.get_prompt_manager") as mock_gpm:
+            mock_pm = mock_gpm.return_value
             mock_pm.get_raw_template.return_value = "instruction"
 
             results = asyncio.run(

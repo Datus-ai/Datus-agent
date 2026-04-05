@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from datus.models.base import LLMBaseModel
 from datus.prompts.extract_dates import get_date_extraction_prompt, parse_date_extraction_response
-from datus.prompts.prompt_manager import prompt_manager
+from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.date_parser_node_models import ExtractedDate
 from datus.tools import BaseTool
 from datus.utils.loggings import get_logger
@@ -131,7 +131,7 @@ class DateParserTool(BaseTool):
         """Parse temporal expressions using LLM."""
         response = None
         try:
-            prompt = prompt_manager.render_template(
+            prompt = get_prompt_manager().render_template(
                 f"date_parser_{self.language}",
                 version="1.0",
                 text=text,

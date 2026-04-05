@@ -9,7 +9,7 @@ from datus.utils.loggings import get_logger
 from datus.utils.message_utils import MessagePart, build_structured_content
 
 from ..utils.json_utils import to_pretty_str
-from .prompt_manager import prompt_manager
+from .prompt_manager import get_prompt_manager
 
 logger = get_logger(__name__)
 
@@ -76,8 +76,8 @@ def get_sql_prompt(
     if metrics:
         processed_metrics = to_pretty_str([m.__dict__ for m in metrics])
 
-    system_content = prompt_manager.get_raw_template("gen_sql_system", version=prompt_version)
-    enhanced_context = prompt_manager.render_template(
+    system_content = get_prompt_manager().get_raw_template("gen_sql_system", version=prompt_version)
+    enhanced_context = get_prompt_manager().render_template(
         "gen_sql_user",
         database_type=database_type,
         database_notes=database_notes,

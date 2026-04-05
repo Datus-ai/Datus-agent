@@ -20,7 +20,7 @@ from pandas.api.types import (
 
 from datus.configuration.agent_config import AgentConfig
 from datus.models.base import LLMBaseModel
-from datus.prompts.prompt_manager import prompt_manager
+from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.visualization import VisualizationInput, VisualizationOutput
 from datus.tools.base import BaseTool
 from datus.utils.loggings import get_logger
@@ -123,7 +123,7 @@ class VisualizationTool(BaseTool):
     # ------------------------------------------------------------------ #
     def _llm_based_recommendation(self, df: pd.DataFrame) -> Optional[VisualizationOutput]:
         """Use LLM to recommend visualization configuration."""
-        prompt = prompt_manager.render_template(
+        prompt = get_prompt_manager().render_template(
             self.PROMPT_TEMPLATE,
             version=self.prompt_version,
             columns_info=self._format_columns_info(df),

@@ -6,7 +6,7 @@ from typing import Dict, List
 
 from datus.utils.loggings import get_logger
 
-from .prompt_manager import prompt_manager
+from .prompt_manager import get_prompt_manager
 
 logger = get_logger(__name__)
 
@@ -20,8 +20,8 @@ def compare_sql_prompt(
     sql_error: str = "",
     expectation: str = "",
 ) -> List[Dict[str, str]]:
-    system_content = prompt_manager.get_raw_template("compare_sql_system_mcp", version=prompt_version)
-    user_content = prompt_manager.render_template(
+    system_content = get_prompt_manager().get_raw_template("compare_sql_system_mcp", version=prompt_version)
+    user_content = get_prompt_manager().render_template(
         "compare_sql_user",
         database_type=sql_task.database_type,
         database_name=sql_task.database_name,

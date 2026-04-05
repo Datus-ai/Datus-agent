@@ -7,7 +7,7 @@ from typing import Dict, List, Optional
 
 from datus.utils.json_utils import json2csv
 
-from .prompt_manager import prompt_manager
+from .prompt_manager import get_prompt_manager
 
 
 def gen_prompt(
@@ -24,14 +24,14 @@ def gen_prompt(
     table_metadata_csv = json2csv(table_metadata, ["identifier", "definition"])
     current_date = datetime.datetime.now().strftime("%Y-%m-%d")
 
-    system_content = prompt_manager.render_template(
+    system_content = get_prompt_manager().render_template(
         "schema_lineage_system",
         dialect=dialect,
         current_date=current_date,
         version=prompt_version,
     )
 
-    user_content = prompt_manager.render_template(
+    user_content = get_prompt_manager().render_template(
         "schema_lineage_user",
         database_name=database_name,
         user_question=user_question,
@@ -60,7 +60,7 @@ def gen_summary_prompt(
     table_metadata_csv = json2csv(table_metadata, ["schema_name", "table_name", "schema_text", "score", "reasons"])
     current_date = datetime.datetime.now().strftime("%Y-%m-%d")
 
-    content = prompt_manager.render_template(
+    content = get_prompt_manager().render_template(
         "schema_lineage_summary",
         dialect=dialect,
         current_date=current_date,

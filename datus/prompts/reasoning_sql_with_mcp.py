@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from datus.schemas.node_models import TableSchema, TableValue
 from datus.utils.loggings import get_logger
 
-from .prompt_manager import prompt_manager
+from .prompt_manager import get_prompt_manager
 
 logger = get_logger(__name__)
 
@@ -111,7 +111,7 @@ def get_reasoning_prompt(
             "When referencing table names in Snowflake SQL, you must include both the database_name and schema_name."
         )
 
-    user_content = prompt_manager.render_template(
+    user_content = get_prompt_manager().render_template(
         "reasoning_user",
         database_type=database_type,
         database_notes=database_notes,

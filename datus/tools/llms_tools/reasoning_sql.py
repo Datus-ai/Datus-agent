@@ -8,7 +8,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 from agents import Tool
 
 from datus.models.base import LLMBaseModel
-from datus.prompts.prompt_manager import prompt_manager
+from datus.prompts.prompt_manager import get_prompt_manager
 from datus.prompts.reasoning_sql_with_mcp import get_reasoning_prompt
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.reason_sql_node_models import ReasoningInput, ReasoningResult
@@ -138,7 +138,7 @@ def reasoning_sql_with_mcp(
         logger.error(f"Input type error: expected ReasoningInput, got {type(input_data)}")
         raise ValueError(f"Input must be a ReasoningInput instance, got {type(input_data)}")
 
-    instruction = prompt_manager.get_raw_template("reasoning_system", input_data.prompt_version)
+    instruction = get_prompt_manager().get_raw_template("reasoning_system", input_data.prompt_version)
     # update to python 3.12 to enable structured output
     # output_type = tool_config.get(
     # "output_type", {"sql": str, "tables": list, "explanation": str})

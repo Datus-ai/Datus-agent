@@ -7,7 +7,7 @@ from typing import Dict, List, Union
 from datus.schemas.node_models import Metric, TableSchema
 from datus.utils.constants import DBType
 
-from .prompt_manager import prompt_manager
+from .prompt_manager import get_prompt_manager
 
 
 def gen_prompt(
@@ -57,7 +57,7 @@ def gen_prompt(
         table_schemas_str = "\n".join([schema.to_prompt(dialect) for schema in table_schemas])
 
     # Render template
-    content = prompt_manager.render_template(
+    content = get_prompt_manager().render_template(
         "output_checking",
         dialect=dialect,
         user_question=user_question,

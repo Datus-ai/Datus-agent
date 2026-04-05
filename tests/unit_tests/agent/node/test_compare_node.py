@@ -187,7 +187,11 @@ class TestExecuteCompare:
     def test_execute_compare_returns_result(self):
         node = _make_node()
         with patch("datus.agent.node.compare_node.CompareAgenticNode") as mock_cls:
-            mock_cls._prepare_prompt_components.return_value = ("sys", "user", [{"role": "system", "content": "sys"}])
+            mock_cls.return_value._prepare_prompt_components.return_value = (
+                "sys",
+                "user",
+                [{"role": "system", "content": "sys"}],
+            )
             mock_cls._parse_comparison_output.return_value = {
                 "explanation": "Looks correct",
                 "suggest": "None",
@@ -215,7 +219,7 @@ class TestExecuteCompare:
     def test_execute_compare_returns_failure_on_exception(self):
         node = _make_node()
         with patch("datus.agent.node.compare_node.CompareAgenticNode") as mock_cls:
-            mock_cls._prepare_prompt_components.side_effect = RuntimeError("prompt error")
+            mock_cls.return_value._prepare_prompt_components.side_effect = RuntimeError("prompt error")
             result = node._execute_compare()
 
         assert result.success is False
@@ -224,7 +228,11 @@ class TestExecuteCompare:
     def test_execute_sets_result(self):
         node = _make_node()
         with patch("datus.agent.node.compare_node.CompareAgenticNode") as mock_cls:
-            mock_cls._prepare_prompt_components.return_value = ("sys", "user", [{"role": "system", "content": "sys"}])
+            mock_cls.return_value._prepare_prompt_components.return_value = (
+                "sys",
+                "user",
+                [{"role": "system", "content": "sys"}],
+            )
             mock_cls._parse_comparison_output.return_value = {
                 "explanation": "OK",
                 "suggest": "None",

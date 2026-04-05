@@ -242,7 +242,8 @@ class TestExecute:
             }
         )
 
-        with patch("datus.tools.llms_tools.visualization_tool.prompt_manager") as mock_pm:
+        with patch("datus.tools.llms_tools.visualization_tool.get_prompt_manager") as mock_gpm:
+            mock_pm = mock_gpm.return_value
             mock_pm.render_template.return_value = "prompt text"
             result = tool.execute(_make_input(df))
 
@@ -254,7 +255,8 @@ class TestExecute:
         tool = _make_tool(model=mock_model)
         df = pd.DataFrame({"x": [1, 2, 3], "y": [4, 5, 6]})
 
-        with patch("datus.tools.llms_tools.visualization_tool.prompt_manager") as mock_pm:
+        with patch("datus.tools.llms_tools.visualization_tool.get_prompt_manager") as mock_gpm:
+            mock_pm = mock_gpm.return_value
             mock_pm.render_template.return_value = "prompt"
             result = tool.execute(_make_input(df))
 
@@ -368,7 +370,8 @@ class TestLlmBasedRecommendation:
         tool = _make_tool(model=mock_model)
         df = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
 
-        with patch("datus.tools.llms_tools.visualization_tool.prompt_manager") as mock_pm:
+        with patch("datus.tools.llms_tools.visualization_tool.get_prompt_manager") as mock_gpm:
+            mock_pm = mock_gpm.return_value
             mock_pm.render_template.return_value = "prompt"
             result = tool._llm_based_recommendation(df)
 
@@ -385,7 +388,8 @@ class TestLlmBasedRecommendation:
         tool = _make_tool(model=mock_model)
         df = pd.DataFrame({"cat": ["A", "B"], "val": [1, 2]})
 
-        with patch("datus.tools.llms_tools.visualization_tool.prompt_manager") as mock_pm:
+        with patch("datus.tools.llms_tools.visualization_tool.get_prompt_manager") as mock_gpm:
+            mock_pm = mock_gpm.return_value
             mock_pm.render_template.return_value = "prompt"
             result = tool._llm_based_recommendation(df)
 
@@ -403,7 +407,8 @@ class TestLlmBasedRecommendation:
         tool = _make_tool(model=mock_model)
         df = pd.DataFrame({"cat": ["A", "B"], "val": [1, 2]})
 
-        with patch("datus.tools.llms_tools.visualization_tool.prompt_manager") as mock_pm:
+        with patch("datus.tools.llms_tools.visualization_tool.get_prompt_manager") as mock_gpm:
+            mock_pm = mock_gpm.return_value
             mock_pm.render_template.return_value = "prompt"
             result = tool._llm_based_recommendation(df)
 

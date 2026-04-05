@@ -147,7 +147,7 @@ class ExploreAgenticNode(AgenticNode):
         self, conversation_summary: Optional[str] = None, prompt_version: Optional[str] = None
     ) -> str:
         """Get the system prompt for the explore node."""
-        from datus.prompts.prompt_manager import prompt_manager
+        from datus.prompts.prompt_manager import get_prompt_manager
         from datus.utils.time_utils import get_default_current_date
 
         version = prompt_version or self.node_config.get("prompt_version")
@@ -165,7 +165,9 @@ class ExploreAgenticNode(AgenticNode):
         }
 
         try:
-            base_prompt = prompt_manager.render_template(template_name=template_name, version=version, **context)
+            base_prompt = get_prompt_manager(agent_config=self.agent_config).render_template(
+                template_name=template_name, version=version, **context
+            )
             return self._finalize_system_prompt(base_prompt)
         except Exception as e:
             logger.error(f"Template loading error for '{template_name}': {e}")

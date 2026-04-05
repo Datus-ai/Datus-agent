@@ -6,7 +6,7 @@
 Unit tests for prompt utility modules.
 
 CI-level: zero external deps, zero network, zero API keys.
-Mocks prompt_manager.render_template / get_raw_template to avoid template file I/O.
+Mocks get_prompt_manager().render_template / get_raw_template to avoid template file I/O.
 """
 
 from unittest.mock import MagicMock, patch
@@ -26,7 +26,8 @@ class TestGetComparePrompt:
         sql_task.task = "Find total sales"
         sql_task.external_knowledge = ""
 
-        with patch("datus.prompts.compare_sql_with_mcp.prompt_manager") as mock_pm:
+        with patch("datus.prompts.compare_sql_with_mcp.get_prompt_manager") as mock_gpm:
+            mock_pm = mock_gpm.return_value
             mock_pm.get_raw_template.return_value = "system content"
             mock_pm.render_template.return_value = "user content"
             result = get_compare_prompt(sql_task, sql_query="SELECT 1", expectation="result > 0")
@@ -55,7 +56,8 @@ class TestCompareSqlPrompt:
         sql_task.task = "Count students"
         sql_task.external_knowledge = ""
 
-        with patch("datus.prompts.compare_sql.prompt_manager") as mock_pm:
+        with patch("datus.prompts.compare_sql.get_prompt_manager") as mock_gpm:
+            mock_pm = mock_gpm.return_value
             mock_pm.get_raw_template.return_value = "system"
             mock_pm.render_template.return_value = "user"
             result = compare_sql_prompt(sql_task, sql_query="SELECT COUNT(*) FROM students")
@@ -74,7 +76,8 @@ class TestOutputCheckingGenPrompt:
     def test_returns_single_user_message(self):
         from datus.prompts.output_checking import gen_prompt
 
-        with patch("datus.prompts.output_checking.prompt_manager") as mock_pm:
+        with patch("datus.prompts.output_checking.get_prompt_manager") as mock_gpm:
+            mock_pm = mock_gpm.return_value
             mock_pm.render_template.return_value = "output checking content"
             result = gen_prompt(
                 user_question="What is the total?",
@@ -92,7 +95,8 @@ class TestOutputCheckingGenPrompt:
 
         long_result = "x" * 600
 
-        with patch("datus.prompts.output_checking.prompt_manager") as mock_pm:
+        with patch("datus.prompts.output_checking.get_prompt_manager") as mock_gpm:
+            mock_pm = mock_gpm.return_value
             mock_pm.render_template.return_value = "content"
             # Capture the call kwargs to verify truncation
             gen_prompt(
@@ -112,7 +116,8 @@ class TestOutputCheckingGenPrompt:
         mock_schema = MagicMock(spec=TableSchema)
         mock_schema.to_prompt.return_value = "table schema text"
 
-        with patch("datus.prompts.output_checking.prompt_manager") as mock_pm:
+        with patch("datus.prompts.output_checking.get_prompt_manager") as mock_gpm:
+            mock_pm = mock_gpm.return_value
             mock_pm.render_template.return_value = "content"
             gen_prompt(
                 user_question="Q",
@@ -130,7 +135,8 @@ class TestOutputCheckingGenPrompt:
         mock_metric = MagicMock(spec=Metric)
         mock_metric.to_prompt.return_value = "metric: revenue = SUM(sales)"
 
-        with patch("datus.prompts.output_checking.prompt_manager") as mock_pm:
+        with patch("datus.prompts.output_checking.get_prompt_manager") as mock_gpm:
+            mock_pm = mock_gpm.return_value
             mock_pm.render_template.return_value = "content"
             gen_prompt(
                 user_question="Q",
@@ -146,7 +152,8 @@ class TestOutputCheckingGenPrompt:
     def test_handles_external_knowledge(self):
         from datus.prompts.output_checking import gen_prompt
 
-        with patch("datus.prompts.output_checking.prompt_manager") as mock_pm:
+        with patch("datus.prompts.output_checking.get_prompt_manager") as mock_gpm:
+            mock_pm = mock_gpm.return_value
             mock_pm.render_template.return_value = "content"
             gen_prompt(
                 user_question="Q",
@@ -182,7 +189,8 @@ class TestSchemaLineageGenPrompt:
 
         table_metadata = [{"identifier": "users", "definition": "CREATE TABLE users (id INT)"}]
 
-        with patch("datus.prompts.schema_lineage.prompt_manager") as mock_pm:
+        with patch("datus.prompts.schema_lineage.get_prompt_manager") as mock_gpm:
+            mock_pm = mock_gpm.return_value
             mock_pm.render_template.return_value = "rendered content"
             result = gen_prompt(
                 dialect="duckdb",
@@ -208,7 +216,8 @@ class TestSchemaLineageGenPrompt:
             }
         ]
 
-        with patch("datus.prompts.schema_lineage.prompt_manager") as mock_pm:
+        with patch("datus.prompts.schema_lineage.get_prompt_manager") as mock_gpm:
+            mock_pm = mock_gpm.return_value
             mock_pm.render_template.return_value = "summary content"
             result = gen_summary_prompt(
                 dialect="sqlite",
@@ -232,7 +241,8 @@ class TestCreateSelectionPrompt:
 
         candidates = {"cand_1": {"sql": "SELECT 1", "result": "1"}}
 
-        with patch("datus.prompts.selection.prompt_manager") as mock_pm:
+        with patch("datus.prompts.selection.get_prompt_manager") as mock_gpm:
+            mock_pm = mock_gpm.return_value
             mock_pm.render_template.return_value = "selection prompt text"
             result = create_selection_prompt(candidates)
 
@@ -244,7 +254,8 @@ class TestCreateSelectionPrompt:
         long_error = "E" * 600
         candidates = {"cand_1": {"sql": "SELECT 1", "error": long_error}}
 
-        with patch("datus.prompts.selection.prompt_manager") as mock_pm:
+        with patch("datus.prompts.selection.get_prompt_manager") as mock_gpm:
+            mock_pm = mock_gpm.return_value
             mock_pm.render_template.return_value = "prompt"
             create_selection_prompt(candidates, max_text_length=500)
 
@@ -258,7 +269,8 @@ class TestCreateSelectionPrompt:
         long_candidate = "A" * 600
         candidates = {"cand_1": long_candidate}
 
-        with patch("datus.prompts.selection.prompt_manager") as mock_pm:
+        with patch("datus.prompts.selection.get_prompt_manager") as mock_gpm:
+            mock_pm = mock_gpm.return_value
             mock_pm.render_template.return_value = "prompt"
             create_selection_prompt(candidates, max_text_length=500)
 
@@ -271,7 +283,8 @@ class TestCreateSelectionPrompt:
 
         candidates = {"c": {"sql": "SELECT 1"}}
 
-        with patch("datus.prompts.selection.prompt_manager") as mock_pm:
+        with patch("datus.prompts.selection.get_prompt_manager") as mock_gpm:
+            mock_pm = mock_gpm.return_value
             mock_pm.render_template.return_value = "prompt"
             create_selection_prompt(candidates, prompt_version="v2")
 

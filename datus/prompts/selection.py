@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional
 
 from datus.utils.loggings import get_logger
 
-from .prompt_manager import prompt_manager
+from .prompt_manager import get_prompt_manager
 
 logger = get_logger(__name__)
 
@@ -54,7 +54,7 @@ def create_selection_prompt(
         processed_candidates[candidate_id] = processed_candidate
 
     # Render the template
-    prompt = prompt_manager.render_template(
+    prompt = get_prompt_manager().render_template(
         "selection_analysis", candidates=processed_candidates, version=prompt_version
     )
 

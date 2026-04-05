@@ -31,7 +31,7 @@ from pygments.lexers.html import HtmlLexer
 
 from datus.agent.node.gen_sql_agentic_node import prepare_template_context
 from datus.cli.autocomplete import TableCompleter
-from datus.prompts.prompt_manager import prompt_manager
+from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.agent_models import ScopedContext, SubAgentConfig
 from datus.tools.func_tool import PlatformDocSearchTool
 from datus.tools.mcp_tools import MCPTool
@@ -135,7 +135,7 @@ class SubAgentWizard:
     def _load_reserved_template_names(self) -> Set[str]:
         """Collect template base names that would conflict with agent names."""
         try:
-            templates = prompt_manager.list_templates()
+            templates = get_prompt_manager().list_templates()
         except Exception:
             return set()
 
@@ -1669,9 +1669,9 @@ class SubAgentWizard:
         node_class = self.data.node_class or "gen_sql"
         preview_template = "gen_report_system" if node_class == "gen_report" else "sql_system"
         try:
-            prompt_text = prompt_manager.render_template(preview_template, **prompt_context)
+            prompt_text = get_prompt_manager().render_template(preview_template, **prompt_context)
         except FileNotFoundError:
-            prompt_text = prompt_manager.render_template("sql_system", **prompt_context)
+            prompt_text = get_prompt_manager().render_template("sql_system", **prompt_context)
         try:
             self.prompt_preview_buffer.text = prompt_text
         except Exception:

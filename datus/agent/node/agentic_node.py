@@ -24,7 +24,7 @@ from datus.agent.node.node import Node
 from datus.cli.execution_state import ExecutionInterrupted, InteractionBroker, InterruptController
 from datus.configuration.agent_config import AgentConfig
 from datus.models.base import LLMBaseModel
-from datus.prompts.prompt_manager import prompt_manager
+from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.base import BaseInput, BaseResult
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -177,7 +177,7 @@ class AgenticNode(Node):
 
         try:
             # Use prompt manager to render the template
-            base_prompt = prompt_manager.render_template(
+            base_prompt = get_prompt_manager(agent_config=self.agent_config).render_template(
                 template_name=template_name,
                 version=version,
                 # Add common template variables

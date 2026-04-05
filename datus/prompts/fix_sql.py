@@ -7,7 +7,7 @@ from typing import Dict, List
 from datus.schemas.node_models import TableSchema
 from datus.utils.loggings import get_logger
 
-from .prompt_manager import prompt_manager
+from .prompt_manager import get_prompt_manager
 
 logger = get_logger(__name__)
 
@@ -24,8 +24,8 @@ def fix_sql_prompt(
     if docs is None:
         docs = []
 
-    system_content = prompt_manager.get_raw_template("fix_sql_system", version=prompt_version)
-    user_content = prompt_manager.render_template(
+    system_content = get_prompt_manager().get_raw_template("fix_sql_system", version=prompt_version)
+    user_content = get_prompt_manager().render_template(
         "fix_sql_user",
         sql_task=sql_task,
         sql_context=sql_context,

@@ -566,16 +566,17 @@ class GenSQLAgenticNode(AgenticNode):
         template_name = f"{system_prompt_name}_system"
 
         # Use prompt manager to render the template
-        from datus.prompts.prompt_manager import prompt_manager
+        from datus.prompts.prompt_manager import get_prompt_manager
 
+        pm = get_prompt_manager(agent_config=self.agent_config)
         try:
-            base_prompt = prompt_manager.render_template(template_name=template_name, version=prompt_version, **context)
+            base_prompt = pm.render_template(template_name=template_name, version=prompt_version, **context)
             return self._finalize_system_prompt(base_prompt)
 
         except FileNotFoundError:
             # Template not found - throw DatusException
             logger.warning(f"Failed to render system prompt '{system_prompt_name}', using the default template instead")
-            base_prompt = prompt_manager.render_template(template_name="sql_system", version=None, **context)
+            base_prompt = pm.render_template(template_name="sql_system", version=None, **context)
             return self._finalize_system_prompt(base_prompt)
         except Exception as e:
             # Other template errors - wrap in DatusException
@@ -1008,7 +1009,7 @@ class GenSQLAgenticNode(AgenticNode):
 
     def _build_plan_prompt(self, original_prompt: str) -> str:
         """Build enhanced prompt for plan mode based on current phase."""
-        from datus.prompts.prompt_manager import prompt_manager
+        from datus.prompts.prompt_manager import get_prompt_manager
 
         # Check current phase and replan feedback
         current_phase = getattr(self.plan_hooks, "plan_phase", "generating") if self.plan_hooks else "generating"
@@ -1016,7 +1017,7 @@ class GenSQLAgenticNode(AgenticNode):
 
         # Load plan mode prompt from template
         try:
-            plan_prompt_addition = prompt_manager.render_template(
+            plan_prompt_addition = get_prompt_manager(agent_config=self.agent_config).render_template(
                 template_name="plan_mode_system",
                 version=None,  # Use latest version
                 current_phase=current_phase,

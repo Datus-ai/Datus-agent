@@ -7,7 +7,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 from agents import Tool
 
 from datus.models.base import LLMBaseModel
-from datus.prompts.prompt_manager import prompt_manager
+from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.utils.loggings import get_logger
 
@@ -44,7 +44,7 @@ async def base_mcp_stream(
 
     try:
         # Get instruction and generate prompt
-        instruction = prompt_manager.get_raw_template(instruction_template, input_data.prompt_version)
+        instruction = get_prompt_manager().get_raw_template(instruction_template, input_data.prompt_version)
         max_turns = tool_config.get("max_turns", 10)
 
         logger.info(f"Starting MCP stream with {len(mcp_servers)} servers, max_turns={max_turns}")
