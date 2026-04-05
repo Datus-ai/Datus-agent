@@ -6,7 +6,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
-from datus.api.models import FeedbackResponse, RunWorkflowResponse
+from datus.api.legacy_models import FeedbackResponse, RunWorkflowResponse
 from datus.api.service import DatusAPIService, create_app
 
 

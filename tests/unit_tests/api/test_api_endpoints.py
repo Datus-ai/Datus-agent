@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from datus.api.models import (
+from datus.api.legacy_models import (
     FeedbackRequest,
     FeedbackResponse,
     FeedbackStatus,
@@ -89,7 +89,7 @@ def client(app):
 @pytest.fixture
 def auth_token():
     """Generate a valid JWT token for testing."""
-    from datus.api.auth import auth_service
+    from datus.api.legacy_auth import auth_service
 
     token_data = auth_service.generate_access_token("datus_client")
     return token_data["access_token"]

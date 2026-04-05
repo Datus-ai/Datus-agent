@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from datus.api.models import FeedbackRequest, FeedbackStatus, RunWorkflowRequest
+from datus.api.legacy_models import FeedbackRequest, FeedbackStatus, RunWorkflowRequest
 from datus.api.service import DatusAPIService
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 
