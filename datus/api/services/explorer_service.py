@@ -730,7 +730,7 @@ class ExplorerService:
             )
 
     def _validate_metric_yaml(self, yaml_content: str, file_path: str) -> Tuple[bool, List[str]]:
-        """Validate metric YAML content.
+        """Validate metric YAML content using metricflow when available.
 
         Args:
             yaml_content: The YAML content to validate
@@ -739,7 +739,14 @@ class ExplorerService:
         Returns:
             Tuple of (is_valid, error_messages)
         """
-        return _validate_yaml_format(yaml_content)
+        from datus.api.utils.semantic_validation import validate_semantic_yaml
+
+        return validate_semantic_yaml(
+            yaml_content=yaml_content,
+            file_path=file_path,
+            datus_home=self.agent_config.home,
+            namespace=self.agent_config.current_namespace,
+        )
 
     async def create_metric(self, request: EditMetricInput) -> Result[dict]:
         """Create a new metric from YAML.
@@ -1404,12 +1411,3 @@ class ExplorerService:
             )
 
 
-def _validate_yaml_format(yaml_content: str) -> tuple[bool, list[str]]:
-    """Open-source: YAML syntax check only (no deep semantic validation)."""
-    import yaml as _yaml
-
-    try:
-        _yaml.safe_load(yaml_content)
-        return True, []
-    except _yaml.YAMLError as e:
-        return False, [str(e)]

@@ -522,8 +522,18 @@ class DatabaseService:
                     errorMessage=f"Semantic model not found for table: {full_name}",
                 )
 
-            # Validate YAML format only (open-source version)
-            is_valid, error_messages = _validate_yaml_format(request.yaml)
+            # Get semantic file path from result
+            semantic_file_path = semantic_model.get("yaml_path", "")
+
+            # Validate using shared utility (deep validation when metricflow is available)
+            from datus.api.utils.semantic_validation import validate_semantic_yaml
+
+            is_valid, error_messages = validate_semantic_yaml(
+                yaml_content=request.yaml,
+                file_path=semantic_file_path,
+                datus_home=self.agent_config.home,
+                namespace=self.agent_config.current_namespace,
+            )
 
             if not is_valid:
                 return Result[ValidateSemanticModelData](
@@ -542,17 +552,6 @@ class DatabaseService:
                 errorCode=ErrorCode.INTERNAL_COMMAND_ERROR,
                 errorMessage=str(e),
             )
-
-
-def _validate_yaml_format(yaml_content: str) -> tuple[bool, list[str]]:
-    """Open-source: YAML syntax check only (no deep semantic validation)."""
-    import yaml as _yaml
-
-    try:
-        _yaml.safe_load(yaml_content)
-        return True, []
-    except _yaml.YAMLError as e:
-        return False, [str(e)]
 
 
 def _get_uri(connector: BaseSqlConnector) -> str:
