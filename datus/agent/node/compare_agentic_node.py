@@ -105,13 +105,16 @@ class CompareAgenticNode(AgenticNode):
             logger.error(f"Failed to initialize tools for CompareAgenticNode: {exc}")
             self.tools = self.tools or []
 
-    def _prepare_prompt_components(self, input_data: CompareInput) -> tuple[str, str, List[Dict[str, str]]]:
+    @staticmethod
+    def _prepare_prompt_components(
+        input_data: CompareInput, agent_config: Optional[Any] = None
+    ) -> tuple[str, str, List[Dict[str, str]]]:
         """
         Render the system instruction, user prompt, and message list for comparison.
         """
         prompt_version = input_data.prompt_version
 
-        pm = get_prompt_manager(agent_config=self.agent_config)
+        pm = get_prompt_manager(agent_config=agent_config)
         system_instruction = pm.get_raw_template("compare_sql_system_mcp", version=prompt_version)
 
         sql_context = input_data.sql_context
@@ -210,7 +213,9 @@ class CompareAgenticNode(AgenticNode):
             await self._auto_compact()
             session, conversation_summary = self._get_or_create_session()
 
-            system_instruction, user_prompt, _ = self._prepare_prompt_components(user_input)
+            system_instruction, user_prompt, _ = self._prepare_prompt_components(
+                user_input, agent_config=self.agent_config
+            )
             if conversation_summary:
                 user_prompt = (
                     f"Previous conversation summary:\n{conversation_summary}\n\nNew comparison request:\n{user_prompt}"

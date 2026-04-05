@@ -433,7 +433,9 @@ Do NOT give up. Continue iterating until verify_sql returns success=1.
             )
 
             # Use CompareAgenticNode to generate suggestions
-            _, _, messages = CompareAgenticNode._prepare_prompt_components(compare_input)
+            _, _, messages = CompareAgenticNode._prepare_prompt_components(
+                compare_input, agent_config=self.agent_config
+            )
             raw_result = self.model.generate_with_json_output(messages)
             result_dict = CompareAgenticNode._parse_comparison_output(raw_result)
 
