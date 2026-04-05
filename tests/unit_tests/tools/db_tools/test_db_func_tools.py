@@ -586,6 +586,40 @@ class TestDBFuncTool:
         result = db_func_tool.read_query("SELECT ';' AS x")
         assert result.success == 1
 
+    def test_read_query_respects_scope(self, scoped_db_func_tool, mock_connector):
+        """Scoped tool should reject SQL referencing out-of-scope tables."""
+        result = scoped_db_func_tool.read_query("SELECT * FROM db1.schema2.secret_data")
+        assert result.success == 0
+        assert "outside scoped context" in result.error
+        mock_connector.execute_query.assert_not_called()
+
+    def test_read_query_allows_in_scope_tables(self, scoped_db_func_tool, mock_connector):
+        """Scoped tool should allow SQL on in-scope tables."""
+        result = scoped_db_func_tool.read_query("SELECT * FROM db1.schema1.orders")
+        assert result.success == 1
+        mock_connector.execute_query.assert_called_once()
+
+    def test_read_query_allows_show_statements_with_scope(self, scoped_db_func_tool, mock_connector):
+        """SHOW/DESCRIBE statements should pass even with scope (no table refs to parse)."""
+        mock_connector.execute_query.return_value = Mock(success=True, sql_return=[{"table": "orders"}])
+        result = scoped_db_func_tool.read_query("SHOW TABLES")
+        assert result.success == 1
+
+    def test_read_query_no_scope_allows_any_query(self, db_func_tool, mock_connector):
+        """Unscoped tool should allow queries on any table."""
+        result = db_func_tool.read_query("SELECT * FROM any_table")
+        assert result.success == 1
+        mock_connector.execute_query.assert_called_once()
+
+    def test_read_query_scope_rejects_join_with_out_of_scope_table(self, scoped_db_func_tool, mock_connector):
+        """Scoped tool should reject SQL when any joined table is out of scope."""
+        result = scoped_db_func_tool.read_query(
+            "SELECT o.id FROM db1.schema1.orders o JOIN db1.schema2.secrets s ON o.id = s.order_id"
+        )
+        assert result.success == 0
+        assert "outside scoped context" in result.error
+        mock_connector.execute_query.assert_not_called()
+
     def test_get_table_ddl_success(self, db_func_tool, mock_connector):
         """get_table_ddl should return connector DDL info."""
         mock_connector.get_tables_with_ddl.return_value = [
@@ -731,6 +765,151 @@ class TestDBFuncTool:
         denied = tool.describe_table("users")
         assert denied.success == 0
         mock_connector.get_schema.assert_not_called()
+
+
+class TestScopedContextFromSubAgentConfig:
+    """Test all DB operations when scoped_context is loaded from sub-agent config."""
+
+    @pytest.fixture
+    def scoped_tool(self, mock_connector, monkeypatch):
+        """Create a DBFuncTool with scoped_context loaded via sub_agent_name."""
+
+        class StubSchemaStore:
+            def table_size(self):
+                return 0
+
+        class StubSchemaRAG:
+            def __init__(self, *args, **kwargs):
+                self.schema_store = StubSchemaStore()
+
+        class StubSemanticRAG:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def get_size(self):
+                return 0
+
+        monkeypatch.setattr("datus.tools.func_tool.database.SchemaWithValueRAG", StubSchemaRAG)
+        monkeypatch.setattr("datus.tools.func_tool.database.SemanticModelRAG", StubSemanticRAG)
+
+        class DummyModelConfig:
+            model = "gpt-4o"
+
+        class DummyAgentConfig:
+            def __init__(self):
+                self.agentic_nodes = {
+                    "sales": {
+                        "system_prompt": "Sales agent",
+                        "scoped_context": {"tables": "db1.schema1.orders, db1.schema1.customers"},
+                    }
+                }
+
+            def sub_agent_config(self, name: str):
+                return self.agentic_nodes.get(name, {})
+
+            def active_model(self):
+                return DummyModelConfig()
+
+        return DBFuncTool(mock_connector, agent_config=DummyAgentConfig(), sub_agent_name="sales")
+
+    def test_list_databases(self, scoped_tool, mock_connector):
+        """list_databases should only return databases referenced in scoped tables."""
+        result = scoped_tool.list_databases()
+        assert result.success == 1
+        assert result.result == ["db1"]
+
+    def test_list_schemas(self, scoped_tool, mock_connector):
+        """list_schemas should only return schemas referenced in scoped tables."""
+        result = scoped_tool.list_schemas(database="db1")
+        assert result.success == 1
+        assert result.result == ["schema1"]
+
+    def test_list_schemas_blocked_database(self, scoped_tool, mock_connector):
+        """list_schemas for an out-of-scope database should return empty."""
+        result = scoped_tool.list_schemas(database="db2")
+        assert result.success == 1
+        assert result.result == []
+
+    def test_list_tables(self, scoped_tool, mock_connector):
+        """list_tables should only return in-scope tables."""
+        result = scoped_tool.list_tables(database="db1", schema_name="schema1")
+        assert result.success == 1
+        names = [entry["name"] for entry in result.result]
+        assert "orders" in names
+        assert "users" not in names
+
+    def test_describe_table_allowed(self, scoped_tool, mock_connector):
+        """describe_table should succeed for in-scope tables."""
+        result = scoped_tool.describe_table("orders")
+        assert result.success == 1
+        mock_connector.get_schema.assert_called_once()
+
+    def test_describe_table_blocked(self, scoped_tool, mock_connector):
+        """describe_table should fail for out-of-scope tables."""
+        result = scoped_tool.describe_table("users")
+        assert result.success == 0
+        assert "outside the scoped context" in result.error
+        mock_connector.get_schema.assert_not_called()
+
+    def test_get_table_ddl_allowed(self, scoped_tool, mock_connector):
+        """get_table_ddl should succeed for in-scope tables."""
+        mock_connector.get_tables_with_ddl.return_value = [
+            {"identifier": "db1.schema1.orders", "definition": "CREATE TABLE orders (...)"},
+        ]
+        result = scoped_tool.get_table_ddl("orders")
+        assert result.success == 1
+
+    def test_get_table_ddl_blocked(self, scoped_tool, mock_connector):
+        """get_table_ddl should fail for out-of-scope tables."""
+        result = scoped_tool.get_table_ddl("users")
+        assert result.success == 0
+        assert "outside the scoped context" in result.error
+        mock_connector.get_tables_with_ddl.assert_not_called()
+
+    def test_read_query_allowed(self, scoped_tool, mock_connector):
+        """read_query should succeed when SQL only references in-scope tables."""
+        result = scoped_tool.read_query("SELECT * FROM db1.schema1.orders")
+        assert result.success == 1
+        mock_connector.execute_query.assert_called_once()
+
+    def test_read_query_blocked(self, scoped_tool, mock_connector):
+        """read_query should fail when SQL references out-of-scope tables."""
+        result = scoped_tool.read_query("SELECT * FROM db1.schema1.users")
+        assert result.success == 0
+        assert "outside scoped context" in result.error
+        mock_connector.execute_query.assert_not_called()
+
+    def test_read_query_join_mixed_scope(self, scoped_tool, mock_connector):
+        """read_query should fail when JOIN mixes in-scope and out-of-scope tables."""
+        result = scoped_tool.read_query(
+            "SELECT o.id FROM db1.schema1.orders o JOIN db1.schema1.users u ON o.uid = u.id"
+        )
+        assert result.success == 0
+        assert "outside scoped context" in result.error
+        mock_connector.execute_query.assert_not_called()
+
+    def test_read_query_join_all_in_scope(self, scoped_tool, mock_connector):
+        """read_query should succeed when all JOINed tables are in scope."""
+        result = scoped_tool.read_query(
+            "SELECT o.id FROM db1.schema1.orders o JOIN db1.schema1.customers c ON o.cid = c.id"
+        )
+        assert result.success == 1
+        mock_connector.execute_query.assert_called_once()
+
+    def test_read_query_subquery_out_of_scope(self, scoped_tool, mock_connector):
+        """read_query should fail when a subquery references out-of-scope tables."""
+        result = scoped_tool.read_query(
+            "SELECT * FROM db1.schema1.orders WHERE uid IN (SELECT id FROM db1.schema2.secrets)"
+        )
+        assert result.success == 0
+        assert "outside scoped context" in result.error
+        mock_connector.execute_query.assert_not_called()
+
+    def test_read_query_show_allowed(self, scoped_tool, mock_connector):
+        """SHOW statements should be allowed even with scoped context."""
+        mock_connector.execute_query.return_value = Mock(success=True, sql_return=[{"table": "orders"}])
+        result = scoped_tool.read_query("SHOW TABLES")
+        assert result.success == 1
 
 
 class TestDBFuncToolEdgeCases:

@@ -552,6 +552,23 @@ class DBFuncTool:
             wildcard_allowed = True
         return wildcard_allowed
 
+    def _check_sql_table_scope(self, sql: str) -> List[str]:
+        """Return table names from *sql* that fall outside the scoped context."""
+        if not self._scoped_patterns:
+            return []
+        from datus.utils.sql_utils import extract_table_names
+
+        dialect = getattr(self._primary_connector, "dialect", "") or ""
+        table_names = extract_table_names(sql, dialect=dialect, ignore_empty=True)
+        if not table_names:
+            return []  # can't parse → allow (SHOW/DESCRIBE/EXPLAIN have no tables)
+        out_of_scope: List[str] = []
+        for name in table_names:
+            coordinate = self._build_table_coordinate(raw_name=name)
+            if not self._table_matches_scope(coordinate):
+                out_of_scope.append(name)
+        return out_of_scope
+
     @staticmethod
     def all_tools_name() -> List[str]:
         from datus.utils.class_utils import get_public_instance_methods
@@ -990,6 +1007,14 @@ class DBFuncTool:
                         success=0,
                         error="Writable PRAGMA statements are not allowed in read-only mode.",
                     )
+
+            # Check table scope — reject queries referencing out-of-scope tables
+            out_of_scope = self._check_sql_table_scope(sql)
+            if out_of_scope:
+                return FuncToolResult(
+                    success=0,
+                    error=f"Query references tables outside scoped context: {', '.join(out_of_scope)}",
+                )
 
             logger.info("read_query", sql_type=sql_type.value, database=database or "default")
             result = connector.execute_query(sql, result_format="arrow" if connector.dialect == "snowflake" else "list")
