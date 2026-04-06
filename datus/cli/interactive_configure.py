@@ -4,21 +4,18 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 """
-Interactive configuration command for Datus Agent.
+Interactive configuration manager for Datus Agent.
 
-Configures workspace-level settings: LLM provider, database connections,
-and storage paths. Writes to ~/.datus/conf/agent.yml using the new
-service.databases format.
-
-This replaces the LLM/DB config part of the old `datus init` command.
-Bootstrap (metadata KB, reference SQL) is now separate via `datus bootstrap-kb`.
+Incrementally manages LLM models and database connections in
+~/.datus/conf/agent.yml. Shows current state, supports add/delete
+of individual entries. Does not touch other config sections.
 """
 
 import logging
 import os
 from getpass import getpass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import yaml
 from rich.console import Console
@@ -35,10 +32,9 @@ logger = get_logger(__name__)
 
 
 class InteractiveConfigure:
-    """Interactive configuration wizard for Datus Agent workspace."""
+    """Incremental configuration manager for LLM models and databases."""
 
     def __init__(self, user_home: Optional[str] = None):
-        self.db_name = ""
         self.user_home = user_home if user_home else Path.home()
         self.console = Console(log_path=False)
 
@@ -46,29 +42,19 @@ class InteractiveConfigure:
         self.conf_dir = path_manager.conf_dir
         self.template_dir = path_manager.template_dir
         self.sample_dir = path_manager.sample_dir
+        self.config_path = self.conf_dir / "agent.yml"
 
-        self.config = {
-            "agent": {
-                "target": "",
-                "models": {},
-                "service": {
-                    "databases": {},
-                    "bi_tools": {},
-                    "schedulers": {},
-                },
-                "nodes": {
-                    "schema_linking": {"matching_rate": "fast"},
-                    "date_parser": {"language": "en"},
-                },
-            }
-        }
+        # Working state — loaded from existing config or empty
+        self.target: str = ""
+        self.models: Dict[str, dict] = {}
+        self.databases: Dict[str, dict] = {}
+
+    # ── Setup helpers ──────────────────────────────────────────────
 
     def _init_dirs(self):
-        path_manager = get_path_manager()
-        path_manager.ensure_dirs("conf", "data", "logs", "sessions", "template", "sample")
+        get_path_manager().ensure_dirs("conf", "data", "logs", "sessions", "template", "sample")
 
     def _copy_files(self):
-        """Copy template and sample files to datus home."""
         try:
             copy_data_file(resource_path="prompts", dest_dir=self.template_dir, overwrite=True)
         except Exception as e:
@@ -78,29 +64,85 @@ class InteractiveConfigure:
         except Exception as e:
             logger.debug(f"Error copying sample files: {e}")
 
+    def _load_existing_config(self):
+        """Load models and databases from existing agent.yml."""
+        if not self.config_path.exists():
+            return
+
+        try:
+            with open(self.config_path, encoding="utf-8") as f:
+                raw = yaml.safe_load(f) or {}
+        except Exception:
+            return
+
+        agent = raw.get("agent", {})
+        self.target = agent.get("target", "")
+        self.models = agent.get("models", {})
+
+        # Support both new service format and legacy namespace format
+        service = agent.get("service", {})
+        if service:
+            self.databases = service.get("databases", {})
+        elif "namespace" in agent:
+            # Auto-migrate legacy namespace format
+            from datus.configuration.agent_config import ServiceConfig
+
+            migrated = ServiceConfig.migrate_from_namespace(agent["namespace"])
+            self.databases = migrated.get("databases", {})
+
+    def _load_provider_catalog(self) -> dict:
+        try:
+            text = read_data_file_text(resource_path="conf/providers.yml", encoding="utf-8")
+            return yaml.safe_load(text)
+        except Exception as e:
+            logger.error(f"Failed to load providers.yml: {e}")
+            return {"providers": {}, "model_overrides": {}}
+
+    # ── Display ────────────────────────────────────────────────────
+
+    def _show_current_state(self):
+        """Display current models and databases."""
+        # Models table
+        if self.models:
+            table = Table(title="Current Models", show_header=True, header_style="bold green")
+            table.add_column("Name", style="cyan")
+            table.add_column("Model")
+            table.add_column("Base URL")
+            table.add_column("Default")
+            for name, cfg in self.models.items():
+                is_default = "*" if name == self.target else ""
+                table.add_row(name, cfg.get("model", ""), cfg.get("base_url", ""), is_default)
+            self.console.print(table)
+        else:
+            self.console.print("[yellow]No models configured.[/yellow]")
+
+        self.console.print()
+
+        # Databases table
+        if self.databases:
+            table = Table(title="Current Databases", show_header=True, header_style="bold green")
+            table.add_column("Name", style="cyan")
+            table.add_column("Type")
+            table.add_column("Connection")
+            table.add_column("Default")
+            for name, cfg in self.databases.items():
+                conn = cfg.get("uri", "") or cfg.get("host", "") or cfg.get("account", "")
+                is_default = "*" if cfg.get("default") else ""
+                table.add_row(name, cfg.get("type", ""), str(conn), is_default)
+            self.console.print(table)
+        else:
+            self.console.print("[yellow]No databases configured.[/yellow]")
+
+        self.console.print()
+
+    # ── Main flow ──────────────────────────────────────────────────
+
     def run(self) -> int:
-        """Main entry point for the interactive configuration."""
         self._init_dirs()
         self._copy_files()
+        self._load_existing_config()
 
-        config_path = self.conf_dir / "agent.yml"
-
-        if config_path.exists():
-            self.console.print(f"\n[yellow]Configuration file already exists at {config_path}[/yellow]")
-            if not Confirm.ask("Do you want to overwrite the existing configuration?", default=False):
-                self.console.print("Configuration cancelled.")
-                return 0
-            # Backup with timestamp
-            from datetime import datetime
-
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_path = config_path.with_suffix(f".yml.bak.{ts}")
-            import shutil
-
-            shutil.copy2(config_path, backup_path)
-            self.console.print(f"[dim]Backed up to {backup_path}[/dim]\n")
-
-        # Suppress console logging during configure process
+        # Suppress console logging
         root_logger = logging.getLogger()
         original_handler_levels = {}
         for handler in root_logger.handlers:
@@ -110,26 +152,12 @@ class InteractiveConfigure:
 
         try:
             self.console.print("\n[bold cyan]Datus Configure[/bold cyan]")
-            self.console.print("Set up your LLM and database connections.\n")
+            self.console.print("Manage your LLM models and database connections.\n")
 
-            # Step 1: Configure LLM
-            while not self._configure_llm():
-                if not Confirm.ask("Re-enter LLM configuration?", default=True):
-                    return 1
-
-            # Step 2: Configure Database
-            while not self._configure_database():
-                if not Confirm.ask("Re-enter database configuration?", default=True):
-                    return 1
-
-            if not self._save_configuration():
-                return 1
-
-            # Summary
-            self.console.print("\n[bold yellow]Configuration Summary[/bold yellow]")
-            self._display_summary()
-            self._display_completion()
-            return 0
+            if not self.models and not self.databases:
+                return self._first_time_setup()
+            else:
+                return self._interactive_menu()
 
         except KeyboardInterrupt:
             self.console.print("\nConfiguration cancelled by user")
@@ -141,17 +169,71 @@ class InteractiveConfigure:
             for handler, level in original_handler_levels.items():
                 handler.setLevel(level)
 
-    def _load_provider_catalog(self) -> dict:
-        try:
-            text = read_data_file_text(resource_path="conf/providers.yml", encoding="utf-8")
-            return yaml.safe_load(text)
-        except Exception as e:
-            logger.error(f"Failed to load providers.yml: {e}")
-            return {"providers": {}, "model_overrides": {}}
+    def _first_time_setup(self) -> int:
+        """Guided first-time setup: add one model + one database."""
+        self.console.print("[dim]First time setup — let's add a model and database.[/dim]\n")
 
-    def _configure_llm(self) -> bool:
-        """Step 1: Configure LLM provider and test connectivity."""
-        self.console.print("[bold yellow][1/2] Configure LLM[/bold yellow]")
+        # Add model
+        while not self._add_model():
+            if not Confirm.ask("Re-enter model configuration?", default=True):
+                return 1
+
+        # Add database
+        while not self._add_database():
+            if not Confirm.ask("Re-enter database configuration?", default=True):
+                return 1
+
+        self._save()
+        self.console.print()
+        self._show_current_state()
+        self._display_completion()
+        return 0
+
+    def _interactive_menu(self) -> int:
+        """Show current state + action menu loop."""
+        while True:
+            self._show_current_state()
+
+            actions = {}
+            actions["add_model"] = "Add a model"
+            actions["add_database"] = "Add a database"
+            if self.models:
+                actions["delete_model"] = "Delete a model"
+            if self.databases:
+                actions["delete_database"] = "Delete a database"
+            if len(self.models) > 1:
+                actions["set_default_model"] = "Set default model"
+            actions["done"] = "Done"
+
+            self.console.print("What would you like to do?")
+            action = select_choice(self.console, actions, default="done")
+
+            if action == "done":
+                self._display_completion()
+                return 0
+            elif action == "add_model":
+                self._add_model()
+                self._save()
+            elif action == "add_database":
+                self._add_database()
+                self._save()
+            elif action == "delete_model":
+                self._delete_model()
+                self._save()
+            elif action == "delete_database":
+                self._delete_database()
+                self._save()
+            elif action == "set_default_model":
+                self._set_default_model()
+                self._save()
+
+            self.console.print()
+
+    # ── Add model ──────────────────────────────────────────────────
+
+    def _add_model(self) -> bool:
+        """Add a new LLM model configuration."""
+        self.console.print("[bold yellow]Add Model[/bold yellow]")
 
         catalog = self._load_provider_catalog()
         providers = catalog.get("providers", {})
@@ -162,50 +244,39 @@ class InteractiveConfigure:
             return False
 
         self.console.print("- Which LLM provider?")
-        provider = select_choice(
-            self.console,
-            {k: k for k in providers.keys()},
-            default="openai",
-        )
-
-        # OAuth flow for Codex provider
-        if providers[provider].get("auth_type") == "oauth":
-            return self._configure_codex_oauth(provider, providers[provider])
-
-        # Subscription flow for Claude subscription
-        if providers[provider].get("auth_type") == "subscription":
-            return self._configure_claude_subscription(provider, providers[provider])
+        provider = select_choice(self.console, {k: k for k in providers}, default="openai")
 
         provider_info = providers[provider]
 
-        # API key: detect env var, offer ${ENV_VAR} as default
+        # OAuth / subscription flows
+        if provider_info.get("auth_type") == "oauth":
+            return self._configure_codex_oauth(provider, provider_info)
+        if provider_info.get("auth_type") == "subscription":
+            return self._configure_claude_subscription(provider, provider_info)
+
+        # API key: detect env var
         api_key_env = provider_info.get("api_key_env", "")
         env_value = os.environ.get(api_key_env, "") if api_key_env else ""
 
         if env_value:
             self.console.print(f"  [dim]Detected ${{{api_key_env}}} in environment[/dim]")
             use_env = Confirm.ask(f"- Use ${{{api_key_env}}} as API key?", default=True)
-            if use_env:
-                api_key = f"${{{api_key_env}}}"
-            else:
-                api_key = getpass("- Enter your API key: ")
+            api_key = f"${{{api_key_env}}}" if use_env else getpass("- Enter your API key: ")
         elif api_key_env:
             self.console.print(f"  [dim]Hint: set ${{{api_key_env}}} env var to avoid entering key manually[/dim]")
-            api_key = Prompt.ask(
-                f"- API key (or env var like ${{{api_key_env}}})",
-                default=f"${{{api_key_env}}}",
-            )
+            api_key = Prompt.ask(f"- API key (or env var like ${{{api_key_env}}})", default=f"${{{api_key_env}}}")
         else:
             api_key = getpass("- Enter your API key: ")
 
         if not api_key.strip():
             self.console.print("API key cannot be empty")
             return False
-        base_url = Prompt.ask("- Enter your base URL", default=provider_info["base_url"])
+
+        base_url = Prompt.ask("- Base URL", default=provider_info["base_url"])
 
         models = provider_info.get("models", [])
         if models:
-            self.console.print("- Select your model:")
+            self.console.print("- Select model:")
             model_name = select_choice(
                 self.console,
                 {str(m): str(m) for m in models},
@@ -213,35 +284,43 @@ class InteractiveConfigure:
                 allow_free_text=True,
             )
         else:
-            model_name = Prompt.ask("- Enter your model name", default=provider_info.get("default_model", "")).strip()
+            model_name = Prompt.ask("- Model name", default=provider_info.get("default_model", "")).strip()
 
-        self.config["agent"]["target"] = provider
-        model_config_entry = {
-            "type": provider_info["type"],
-            "base_url": base_url,
-            "api_key": api_key,
-            "model": model_name,
-        }
+        entry = {"type": provider_info["type"], "base_url": base_url, "api_key": api_key, "model": model_name}
         if model_name in model_param_overrides:
-            model_config_entry.update(model_param_overrides[model_name])
-        self.config["agent"]["models"][provider] = model_config_entry
+            entry.update(model_param_overrides[model_name])
 
+        # Test connectivity
         self.console.print("Testing LLM connectivity...")
-        success, error_msg = self._test_llm_connectivity()
-        if success:
-            self.console.print("LLM model test successful\n")
-            return True
-        else:
+        success, error_msg = self._test_llm_connectivity(entry)
+        if not success:
             self.console.print(f"LLM connectivity test failed: {error_msg}\n")
             return False
 
-    def _configure_database(self) -> bool:
-        """Step 2: Configure database connection."""
-        self.console.print("[bold yellow][2/2] Configure Database[/bold yellow]")
+        self.console.print("LLM model test successful\n")
+        self.models[provider] = entry
 
-        self.db_name = Prompt.ask("- Database name")
-        if not self.db_name.strip():
+        # Set as default if first model or user confirms
+        if not self.target:
+            self.target = provider
+        elif Confirm.ask(f"- Set '{provider}' as default model?", default=False):
+            self.target = provider
+
+        return True
+
+    # ── Add database ───────────────────────────────────────────────
+
+    def _add_database(self) -> bool:
+        """Add a new database connection."""
+        self.console.print("[bold yellow]Add Database[/bold yellow]")
+
+        db_name = Prompt.ask("- Database name")
+        if not db_name.strip():
             self.console.print("Database name cannot be empty")
+            return False
+
+        if db_name in self.databases:
+            self.console.print(f"Database '{db_name}' already exists. Delete it first to re-add.")
             return False
 
         from datus.tools.db_tools import connector_registry
@@ -254,19 +333,15 @@ class InteractiveConfigure:
         db_types = sorted(available_adapters.keys())
         default_type = "duckdb" if "duckdb" in db_types else db_types[0]
         self.console.print("- Database type:")
-        db_type = select_choice(
-            self.console,
-            {t: t for t in db_types},
-            default=default_type,
-        )
+        db_type = select_choice(self.console, {t: t for t in db_types}, default=default_type)
 
         adapter_metadata = available_adapters[db_type]
         config_fields = adapter_metadata.get_config_fields()
 
-        config_data = {"type": db_type}
+        config_data: Dict[str, Any] = {"type": db_type}
 
         if not config_fields:
-            self.console.print(f"Adapter '{db_type}' does not have a configuration schema registered.")
+            self.console.print(f"Adapter '{db_type}' does not have a configuration schema.")
             return False
 
         for field_name, field_info in config_fields.items():
@@ -282,11 +357,8 @@ class InteractiveConfigure:
                 value = getpass(f"{label}: ")
             elif input_type == "file_path":
                 sample_file = field_info.get("default_sample")
-                if sample_file:
-                    default_path = str(self.sample_dir / sample_file)
-                    value = Prompt.ask(label, default=default_path)
-                else:
-                    value = Prompt.ask(label, default=str(default_value) if default_value else "")
+                default_path = str(self.sample_dir / sample_file) if sample_file else str(default_value or "")
+                value = Prompt.ask(label, default=default_path)
             elif field_info.get("type") == "int" or field_name == "port":
                 while True:
                     value_str = Prompt.ask(label, default=str(default_value) if default_value else "")
@@ -311,90 +383,118 @@ class InteractiveConfigure:
             if value != "" and value is not None:
                 config_data[field_name] = value
 
-        # Mark as default (first database)
-        config_data["default"] = True
-
-        self.config["agent"]["service"]["databases"][self.db_name] = config_data
-
         # Test connectivity
         self.console.print("Testing database connectivity...")
-        success, error_msg = detect_db_connectivity(self.db_name, config_data)
-        if success:
-            self.console.print("Database connection test successful\n")
-            return True
-        else:
+        success, error_msg = detect_db_connectivity(db_name, config_data)
+        if not success:
             self.console.print(f"Database connectivity test failed: {error_msg}\n")
-            if self.db_name in self.config["agent"]["service"]["databases"]:
-                del self.config["agent"]["service"]["databases"][self.db_name]
             return False
 
-    def _save_configuration(self) -> bool:
-        """Save configuration, merging with existing file to preserve other sections."""
-        try:
-            config_path = self.conf_dir / "agent.yml"
+        self.console.print("Database connection test successful\n")
 
-            # Load existing config to preserve sections we don't touch
-            existing = {}
-            if config_path.exists():
-                with open(config_path, encoding="utf-8") as f:
+        # Mark as default if first database
+        if not self.databases:
+            config_data["default"] = True
+        elif Confirm.ask(f"- Set '{db_name}' as default database?", default=False):
+            # Clear other defaults
+            for cfg in self.databases.values():
+                cfg.pop("default", None)
+            config_data["default"] = True
+
+        self.databases[db_name] = config_data
+        return True
+
+    # ── Delete ─────────────────────────────────────────────────────
+
+    def _delete_model(self):
+        """Delete a model configuration."""
+        name = Prompt.ask("- Model name to delete", choices=list(self.models.keys()))
+        if Confirm.ask(f"Delete model '{name}'?", default=False):
+            del self.models[name]
+            if self.target == name:
+                self.target = next(iter(self.models), "")
+            self.console.print(f"Model '{name}' deleted.")
+
+    def _delete_database(self):
+        """Delete a database configuration."""
+        name = Prompt.ask("- Database name to delete", choices=list(self.databases.keys()))
+        if Confirm.ask(f"Delete database '{name}'?", default=False):
+            del self.databases[name]
+            self.console.print(f"Database '{name}' deleted.")
+
+    def _set_default_model(self):
+        """Set default model (target)."""
+        name = Prompt.ask("- Default model", choices=list(self.models.keys()), default=self.target)
+        self.target = name
+        self.console.print(f"Default model set to '{name}'.")
+
+    # ── Save ───────────────────────────────────────────────────────
+
+    def _save(self):
+        """Save models and databases to agent.yml, preserving other sections."""
+        existing = {}
+        if self.config_path.exists():
+            try:
+                with open(self.config_path, encoding="utf-8") as f:
                     existing = yaml.safe_load(f) or {}
+            except Exception:
+                pass
 
-            existing_agent = existing.get("agent", {})
+        agent = existing.get("agent", {})
 
-            # Merge: only overwrite sections that configure touches
-            existing_agent["target"] = self.config["agent"]["target"]
-            existing_agent["models"] = self.config["agent"]["models"]
-            existing_agent["service"] = self.config["agent"]["service"]
+        # Only update what we manage
+        agent["target"] = self.target
+        agent["models"] = self.models
 
-            # Set default nodes if not already configured
-            if "nodes" not in existing_agent:
-                existing_agent["nodes"] = self.config["agent"]["nodes"]
+        # Ensure service structure
+        service = agent.get("service", {})
+        service["databases"] = self.databases
+        if "bi_tools" not in service:
+            service["bi_tools"] = {}
+        if "schedulers" not in service:
+            service["schedulers"] = {}
+        agent["service"] = service
 
-            # Remove legacy namespace key if present
-            existing_agent.pop("namespace", None)
+        # Remove legacy namespace
+        agent.pop("namespace", None)
 
-            existing["agent"] = existing_agent
+        # Set default nodes if not present
+        if "nodes" not in agent:
+            agent["nodes"] = {"schema_linking": {"matching_rate": "fast"}, "date_parser": {"language": "en"}}
 
-            with open(config_path, "w", encoding="utf-8") as f:
-                yaml.dump(existing, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
-            self.console.print(f"Configuration saved to {config_path}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to save configuration: {e}")
-            self.console.print(f"Failed to save configuration: {e}")
-            return False
+        existing["agent"] = agent
 
-    def _display_summary(self):
-        table = Table(title="Configuration Summary")
-        table.add_column("Setting", style="cyan")
-        table.add_column("Value", style="green")
+        with open(self.config_path, "w", encoding="utf-8") as f:
+            yaml.dump(existing, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
-        provider = self.config["agent"]["target"]
-        model = self.config["agent"]["models"][provider]["model"]
-
-        table.add_row("LLM", f"{provider} ({model})")
-        table.add_row("Database", self.db_name)
-
-        self.console.print(table)
+    # ── Display ────────────────────────────────────────────────────
 
     def _display_completion(self):
-        self.console.print("\nYou can now run `datus init` to initialize your project workspace.")
-        self.console.print(f"Or run `datus-cli --database {self.db_name}` to start the CLI.\n")
-        self.console.print("Check the document at https://docs.datus.ai/ for more details.")
+        default_db = ""
+        for name, cfg in self.databases.items():
+            if cfg.get("default"):
+                default_db = name
+                break
+        if not default_db and self.databases:
+            default_db = next(iter(self.databases))
 
-    def _test_llm_connectivity(self) -> tuple[bool, str]:
-        """Test LLM connectivity with the configured model."""
+        if default_db:
+            self.console.print(
+                f"\nRun `datus init` to initialize your project, or `datus-cli --database {default_db}`."
+            )
+        else:
+            self.console.print("\nRun `datus init` to initialize your project.")
+
+    # ── LLM connectivity test ──────────────────────────────────────
+
+    def _test_llm_connectivity(self, model_entry: dict) -> tuple[bool, str]:
         try:
             from datus.configuration.agent_config import load_model_config, resolve_env
             from datus.models.base import LLMBaseModel
 
-            provider = self.config["agent"]["target"]
-            raw = dict(self.config["agent"]["models"][provider])
-            # Resolve env vars (e.g. ${DEEPSEEK_API_KEY}) for the test
-            resolved = {k: resolve_env(str(v)) if isinstance(v, str) else v for k, v in raw.items()}
+            resolved = {k: resolve_env(str(v)) if isinstance(v, str) else v for k, v in model_entry.items()}
             model_config = load_model_config(resolved)
 
-            # Instantiate the model class directly (create_model expects AgentConfig)
             model_type = model_config.type
             model_class_name = LLMBaseModel.MODEL_TYPE_MAP.get(model_type)
             if not model_class_name:
@@ -404,14 +504,13 @@ class InteractiveConfigure:
             llm = model_class(model_config)
 
             response = llm.generate("Say hello in 5 words")
-            if response:
-                return True, ""
-            return False, "Empty response from model"
+            return (True, "") if response else (False, "Empty response from model")
         except Exception as e:
             return False, str(e)
 
+    # ── Special auth flows ─────────────────────────────────────────
+
     def _configure_codex_oauth(self, provider: str, provider_config: dict) -> bool:
-        """Configure Codex with OAuth authentication."""
         try:
             from datus.auth.codex_credential import get_codex_oauth_token
 
@@ -422,7 +521,7 @@ class InteractiveConfigure:
 
         models = provider_config.get("models", [])
         if models:
-            self.console.print("- Select your model:")
+            self.console.print("- Select model:")
             model_name = select_choice(
                 self.console,
                 {m: m for m in models},
@@ -430,10 +529,9 @@ class InteractiveConfigure:
                 allow_free_text=True,
             )
         else:
-            model_name = Prompt.ask("- Enter your model name", default=provider_config.get("default_model", "")).strip()
+            model_name = Prompt.ask("- Model name", default=provider_config.get("default_model", "")).strip()
 
-        self.config["agent"]["target"] = provider
-        self.config["agent"]["models"][provider] = {
+        entry = {
             "type": provider_config["type"],
             "vendor": provider,
             "api_key": token,
@@ -442,19 +540,21 @@ class InteractiveConfigure:
         }
 
         self.console.print("Testing LLM connectivity...")
-        success, error_msg = self._test_llm_connectivity()
-        if success:
-            self.console.print("Codex OAuth model test successful\n")
-            return True
-        else:
+        success, error_msg = self._test_llm_connectivity(entry)
+        if not success:
             self.console.print(f"LLM connectivity test failed: {error_msg}\n")
             return False
 
+        self.console.print("Codex OAuth model test successful\n")
+        self.models[provider] = entry
+        if not self.target:
+            self.target = provider
+        return True
+
     def _configure_claude_subscription(self, provider: str, provider_config: dict) -> bool:
-        """Configure Claude with subscription plan (Pro/Max)."""
         models = provider_config.get("models", [])
         if models:
-            self.console.print("- Select your model:")
+            self.console.print("- Select model:")
             model_name = select_choice(
                 self.console,
                 {m: m for m in models},
@@ -462,7 +562,7 @@ class InteractiveConfigure:
                 allow_free_text=True,
             )
         else:
-            model_name = Prompt.ask("- Enter your model name", default=provider_config.get("default_model", "")).strip()
+            model_name = Prompt.ask("- Model name", default=provider_config.get("default_model", "")).strip()
 
         self.console.print("  [dim]Detecting Claude subscription token...[/dim]")
         try:
@@ -470,30 +570,30 @@ class InteractiveConfigure:
 
             token, source = get_claude_subscription_token()
             self.console.print(f"  Subscription token detected (from {source})")
-            auth_type = "subscription"
         except Exception:
             self.console.print("  [yellow]Could not auto-detect subscription token[/yellow]")
             token = getpass("- Paste your subscription token (sk-ant-oat01-...): ")
             if not token.strip():
                 self.console.print("Token cannot be empty")
                 return False
-            auth_type = "subscription"
 
-        self.config["agent"]["target"] = provider
-        self.config["agent"]["models"][provider] = {
+        entry = {
             "type": provider_config["type"],
             "vendor": provider,
             "base_url": provider_config["base_url"],
             "api_key": token,
             "model": model_name,
-            "auth_type": auth_type,
+            "auth_type": "subscription",
         }
 
         self.console.print("Testing LLM connectivity...")
-        success, error_msg = self._test_llm_connectivity()
-        if success:
-            self.console.print("Claude subscription model test successful\n")
-            return True
-        else:
+        success, error_msg = self._test_llm_connectivity(entry)
+        if not success:
             self.console.print(f"LLM connectivity test failed: {error_msg}")
             return False
+
+        self.console.print("Claude subscription model test successful\n")
+        self.models[provider] = entry
+        if not self.target:
+            self.target = provider
+        return True
