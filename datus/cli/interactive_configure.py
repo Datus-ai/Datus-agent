@@ -352,19 +352,9 @@ class InteractiveConfigure:
             self.console.print(f"[dim]Installing {package}...[/dim]")
             if not self._install_plugin(package):
                 return False
-            # Reload registry after install — re-discover entry points
-            import importlib
-
-            import datus_db_core.registry
-
-            importlib.reload(datus_db_core.registry)
-            from datus_db_core import connector_registry as fresh_registry
-
-            available_adapters = fresh_registry.list_available_adapters()
-            if db_type not in available_adapters:
-                self.console.print(f"[red]Adapter '{db_type}' still not available after installing {package}.[/red]")
-                return False
-            self.console.print(f"[green]{package} installed successfully.[/green]\n")
+            self.console.print(f"[green]{package} installed successfully.[/green]")
+            self.console.print("[yellow]Please run `datus configure` again to configure the new database.[/yellow]")
+            return False
 
         adapter_metadata = available_adapters[db_type]
         config_fields = adapter_metadata.get_config_fields()
@@ -519,16 +509,18 @@ class InteractiveConfigure:
     # ── Plugin install ─────────────────────────────────────────────
 
     def _install_plugin(self, package: str) -> bool:
-        """Install a database adapter plugin via pip/uv."""
+        """Install a database adapter plugin into the current Python environment."""
         import shutil
         import subprocess
+        import sys
 
-        # Prefer uv if available, fall back to pip
+        # Use the current Python's pip to ensure correct environment
+        python = sys.executable
         uv_path = shutil.which("uv")
         if uv_path:
-            cmd = [uv_path, "pip", "install", package]
+            cmd = [uv_path, "pip", "install", "--python", python, package]
         else:
-            cmd = ["pip", "install", package]
+            cmd = [python, "-m", "pip", "install", package]
 
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
