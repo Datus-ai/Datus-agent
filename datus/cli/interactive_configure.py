@@ -94,7 +94,15 @@ class InteractiveConfigure:
             if not Confirm.ask("Do you want to overwrite the existing configuration?", default=False):
                 self.console.print("Configuration cancelled.")
                 return 0
-            self.console.print()
+            # Backup with timestamp
+            from datetime import datetime
+
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_path = config_path.with_suffix(f".yml.bak.{ts}")
+            import shutil
+
+            shutil.copy2(config_path, backup_path)
+            self.console.print(f"[dim]Backed up to {backup_path}[/dim]\n")
 
         # Suppress console logging during configure process
         root_logger = logging.getLogger()
