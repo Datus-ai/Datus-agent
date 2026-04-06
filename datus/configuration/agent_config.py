@@ -36,7 +36,8 @@ class DbConfig:
     schema: str = field(default="", init=True)
     warehouse: str = field(default="", init=True)
     catalog: str = field(default="", init=True)
-    logic_name: str = field(default="", init=True)  # Logical name defined in namespace, used to switch databases
+    logic_name: str = field(default="", init=True)  # Logical name for the database entry
+    default: bool = field(default=False, init=True)  # Whether this is the default database
     extra: Optional[Dict] = field(default=None, init=True)  # Adapter-specific fields stored here
 
     def to_dict(self) -> Dict[str, Any]:
@@ -71,6 +72,78 @@ class DbConfig:
             db_config.database = file_stem_from_uri(db_config.uri)
         db_config.logic_name = kwargs.get("name")
         return db_config
+
+
+@dataclass
+class ServiceConfig:
+    """Structured service configuration: databases, BI tools, schedulers.
+
+    Replaces the old flat 'namespace' config. Each database is an independent entry.
+    """
+
+    databases: Dict[str, DbConfig] = field(default_factory=dict)
+    bi_tools: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    schedulers: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+
+    @property
+    def default_database(self) -> Optional[str]:
+        """Return the database marked as default, or the only one if just one exists."""
+        defaults = [name for name, cfg in self.databases.items() if cfg.default]
+        if defaults:
+            return defaults[0]
+        if len(self.databases) == 1:
+            return next(iter(self.databases))
+        return None
+
+    @classmethod
+    def from_dict(cls, raw: Dict[str, Any]) -> "ServiceConfig":
+        """Parse service config from agent.yml 'service' section."""
+        return cls(
+            databases={},  # populated by AgentConfig._init_service_config()
+            bi_tools=raw.get("bi_tools", {}),
+            schedulers=raw.get("schedulers", {}),
+        )
+
+    @classmethod
+    def migrate_from_namespace(cls, namespace_config: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert old namespace config format to new service.databases format.
+
+        Old format:
+            namespace:
+              my_ns:
+                type: sqlite
+                dbs:
+                  - name: db1
+                    uri: ...
+                  - name: db2
+                    uri: ...
+
+        New format:
+            service:
+              databases:
+                db1:
+                  type: sqlite
+                  uri: ...
+                db2:
+                  type: sqlite
+                  uri: ...
+        """
+        databases = {}
+        for ns_name, ns_cfg in namespace_config.items():
+            if not isinstance(ns_cfg, dict):
+                continue
+            db_type = ns_cfg.get("type", "")
+            if "dbs" in ns_cfg:
+                for item in ns_cfg["dbs"]:
+                    name = item.get("name", ns_name)
+                    entry = {k: v for k, v in item.items() if k != "name"}
+                    entry["type"] = db_type
+                    databases[name] = entry
+            elif "path_pattern" in ns_cfg:
+                databases[ns_name] = ns_cfg
+            else:
+                databases[ns_name] = ns_cfg
+        return {"databases": databases, "bi_tools": {}, "schedulers": {}}
 
 
 @dataclass
@@ -255,9 +328,10 @@ class AgentConfig:
     search_metrics_rate: str
     _reflection_nodes: Dict[str, List[str]]
     _save_dir: str
-    _current_namespace: str
     _current_database: str
+    _project_name: str
     _trajectory_dir: str
+    service: ServiceConfig
 
     def __init__(self, nodes: Dict[str, NodeConfig], **kwargs):
         """
@@ -271,8 +345,8 @@ class AgentConfig:
         self.target = kwargs["target"]
         self.models = {name: load_model_config(cfg) for name, cfg in models_raw.items()}
         self._benchmark_config_dict = kwargs.get("benchmark", {})
-        self._current_namespace = ""
         self._current_database = ""
+        self._project_name = kwargs.get("project_name", os.path.basename(os.getcwd()))
         self.nodes = nodes
         self.export_config: Dict[str, Any] = kwargs.get("export", {})
         self.api_config: Dict[str, Any] = kwargs.get("api", {}) or {}
@@ -311,8 +385,15 @@ class AgentConfig:
             if k != "plan":
                 # Store workflow configuration, supporting both list format and {steps: [], config: {}} format
                 self.custom_workflows[k] = v
-        self.namespaces: Dict[str, Dict[str, DbConfig]] = {}
-        self._init_namespace_config(kwargs.get("namespace", {}))
+        # Initialize service config (databases, bi_tools, schedulers)
+        # Supports both new 'service' format and legacy 'namespace' format with auto-migration
+        service_raw = kwargs.get("service", {})
+        namespace_raw = kwargs.get("namespace", {})
+        if not service_raw and namespace_raw:
+            logger.info("Migrating legacy 'namespace' config to 'service.databases' format")
+            service_raw = ServiceConfig.migrate_from_namespace(namespace_raw)
+        self.service = ServiceConfig.from_dict(service_raw)
+        self._init_service_config(service_raw.get("databases", {}))
 
         # SaaS mode: skip _init_dirs() because callers want only derived paths here,
         # not full local directory / backend initialization.
@@ -348,7 +429,7 @@ class AgentConfig:
             # Initialize storage backend configuration (rdb + vector)
             backend_config = StorageBackendConfig.from_dict(storage_config)
             self._backend_config = backend_config
-            init_backends(backend_config, data_dir=self.rag_base_path, namespace=self._current_namespace)
+            init_backends(backend_config, data_dir=self.rag_base_path, namespace=self._project_name)
 
         # Initialize unified permission system
         self.permissions_config = self._init_permissions_config(kwargs.get("permissions", {}))
@@ -383,23 +464,35 @@ class AgentConfig:
 
     @current_database.setter
     def current_database(self, value):
-        """
-        This field is used to set the current database name.
-        When db_type is sqlite or duckdb, this field is the logical name (the name configured in namespaces),
-        not the database file name.
-        """
+        """Set the current database name (must exist in service.databases)."""
         if not value:
             return
-        if self.db_type == DBType.SQLITE and value not in self.current_db_configs():
+        if value not in self.service.databases:
             raise DatusException(
                 ErrorCode.COMMON_CONFIG_ERROR,
-                message=f"No database configuration named `{value}` found under namespace `{self._current_namespace}`.",
+                message=f"No database configuration named `{value}` found. Available: {list(self.service.databases.keys())}",
             )
         self._current_database = value
+        self.db_type = self.service.databases[value].type
+
+    @property
+    def project_name(self) -> str:
+        return self._project_name
+
+    @project_name.setter
+    def project_name(self, value: str):
+        if not value:
+            return
+        self._project_name = value
+        if hasattr(self, "_backend_config"):
+            from datus.storage.backend_holder import init_backends
+
+            init_backends(self._backend_config, data_dir=self.rag_base_path, namespace=value)
 
     @property
     def current_namespace(self) -> str:
-        return self._current_namespace
+        """Backward-compat: returns project_name for DBManager namespace key compat."""
+        return self._project_name
 
     @property
     def max_export_lines(self) -> int:
@@ -407,55 +500,68 @@ class AgentConfig:
 
     @current_namespace.setter
     def current_namespace(self, value: str):
+        """Backward-compat: setting current_namespace now sets current_database.
+
+        Accepts a database name from service.databases. Also accepts legacy namespace names
+        which are auto-migrated to database names.
+        """
         if not value:
             raise DatusException(
                 code=ErrorCode.COMMON_FIELD_REQUIRED,
-                message_args={"field_name": "namespace"},
+                message_args={"field_name": "database"},
             )
-        if value not in self.namespaces or not self.namespaces[value]:
+        if value not in self.service.databases:
             raise DatusException(
                 code=ErrorCode.COMMON_UNSUPPORTED,
-                message_args={"field_name": "namespace", "your_value": value},
+                message_args={"field_name": "database", "your_value": value},
             )
-        if value == self._current_namespace:
+        if value == self._current_database:
             return
-        self._current_database = ""
-        self._current_namespace = value
-        self.db_type = list(self.namespaces[self._current_namespace].values())[0].type
+        self._current_database = value
+        db_config = self.service.databases[value]
+        self.db_type = db_config.type
 
-        if hasattr(self, "_backend_config"):
-            from datus.storage.backend_holder import init_backends
+    @property
+    def namespaces(self) -> Dict[str, Dict[str, DbConfig]]:
+        """Backward-compat: wraps service.databases as a single-namespace dict.
 
-            init_backends(self._backend_config, data_dir=self.rag_base_path, namespace=value)
+        Returns {current_database: {db_name: DbConfig}} so downstream code
+        that reads self.namespaces[current_namespace] still works.
+        Legacy callers that iterate all namespaces get all databases under one key.
+        """
+        # Expose all databases under a synthetic namespace key matching project_name
+        return {self._project_name: self.service.databases}
 
-    def _init_namespace_config(self, namespace_config: Dict[str, Any]):
-        for namespace, db_config_dict in namespace_config.items():
-            if not _SAFE_NAME_RE.match(namespace):
+    def _init_service_config(self, databases_config: Dict[str, Any]):
+        """Parse service.databases section into ServiceConfig.databases."""
+        for db_name, db_config_dict in databases_config.items():
+            if not isinstance(db_config_dict, dict):
+                continue
+            if not _SAFE_NAME_RE.match(db_name):
                 raise DatusException(
                     ErrorCode.COMMON_FIELD_INVALID,
-                    message=f"Invalid namespace name '{namespace}'. "
+                    message=f"Invalid database name '{db_name}'. "
                     f"Only alphanumeric characters, underscores, and hyphens are allowed.",
                 )
             db_type = db_config_dict.get("type", "")
-            self.namespaces[namespace] = {}
+            is_default = db_config_dict.get("default", False)
+
             if db_type in (DBType.SQLITE, DBType.DUCKDB):
                 if "path_pattern" in db_config_dict:
-                    self._parse_glob_pattern(namespace, db_config_dict["path_pattern"], db_type)
-                elif "dbs" in db_config_dict:
-                    # Multi-database
-                    for item in db_config_dict.get("dbs", []):
-                        db_config = _parse_single_file_db(item, db_type)
-                        self.namespaces[namespace][db_config.logic_name] = db_config
+                    self._parse_glob_pattern_flat(db_name, db_config_dict["path_pattern"], db_type)
                 elif "uri" in db_config_dict:
-                    # Single database
                     db_config = _parse_single_file_db(db_config_dict, db_type)
-                    self.namespaces[namespace][db_config.logic_name] = db_config
-
+                    db_config.logic_name = db_name
+                    db_config.default = is_default
+                    self.service.databases[db_name] = db_config
             else:
-                name = db_config_dict.get("name", namespace)
-                self.namespaces[namespace][name] = DbConfig.filter_kwargs(DbConfig, db_config_dict)
+                db_config = DbConfig.filter_kwargs(DbConfig, db_config_dict)
+                db_config.logic_name = db_name
+                db_config.default = is_default
+                self.service.databases[db_name] = db_config
 
-    def _parse_glob_pattern(self, namespace: str, path_pattern: str, db_type: str):
+    def _parse_glob_pattern_flat(self, base_name: str, path_pattern: str, db_type: str):
+        """Parse glob pattern and register each matched file as an independent database entry."""
         any_db_path = False
         logic_names = set()
         for db_path in get_files_from_glob_pattern(path_pattern, db_type):
@@ -465,25 +571,24 @@ class AgentConfig:
             if not os.path.exists(file_path):
                 continue
             any_db_path = True
-            if db_path["logic_name"] in logic_names:
+            entry_name = db_path["logic_name"]
+            if entry_name in logic_names:
                 logger.warning(f"Duplicate logical names are detected and will be skipped: {db_path}")
                 continue
-            logic_names.add(db_path["logic_name"])
+            logic_names.add(entry_name)
             child_config = DbConfig(
                 type=db_type,
                 uri=uri,
                 database=database_name,
                 schema="",
-                logic_name=db_path["logic_name"],
+                logic_name=entry_name,
             )
-            self.namespaces[namespace][child_config.logic_name] = child_config
+            self.service.databases[entry_name] = child_config
 
         if not any_db_path:
             raise DatusException(
                 code=ErrorCode.COMMON_CONFIG_ERROR,
-                message=(
-                    f"No available database files found under namespace {namespace}, path_pattern: `{path_pattern}`"
-                ),
+                message=(f"No available database files found for '{base_name}', path_pattern: `{path_pattern}`"),
             )
 
     def _init_permissions_config(self, permissions_raw: Dict[str, Any]):
@@ -527,66 +632,50 @@ class AgentConfig:
             return None
 
     def current_db_config(self, db_name: str = "") -> DbConfig:
-        configs = self.namespaces[self._current_namespace]
-        if len(configs) == 1:
-            return list(configs.values())[0]
-        else:
-            if not db_name:
-                return list(configs.values())[0]
-            if db_name not in configs:
-                raise DatusException(
-                    code=ErrorCode.COMMON_UNSUPPORTED,
-                    message=f"Database {db_name} not found in configuration of namespace {self._current_namespace}",
-                )
-            return configs[db_name]
+        """Get a database config by name, or the current/default one."""
+        databases = self.service.databases
+        if db_name and db_name in databases:
+            return databases[db_name]
+        if self._current_database and self._current_database in databases:
+            return databases[self._current_database]
+        if len(databases) == 1:
+            return list(databases.values())[0]
+        if not db_name:
+            default = self.service.default_database
+            if default:
+                return databases[default]
+        raise DatusException(
+            code=ErrorCode.COMMON_UNSUPPORTED,
+            message=f"Database '{db_name}' not found. Available: {list(databases.keys())}",
+        )
 
-    def current_db_configs(
-        self,
-    ) -> Dict[str, DbConfig]:
-        return self.namespaces[self._current_namespace]
+    def current_db_configs(self) -> Dict[str, DbConfig]:
+        """Backward-compat: returns all databases (was namespace-scoped, now returns all)."""
+        return self.service.databases
 
     @property
     def output_dir(self) -> str:
-        return f"{self._save_dir}/{self._current_namespace}"
+        return f"{self._save_dir}/{self._project_name}"
 
     def get_save_run_dir(self, run_id: Optional[str] = None) -> str:
-        """
-        Get save directory for current namespace and optional run_id.
+        return str(self.save_run_dir(self._project_name, run_id))
 
-        Args:
-            run_id: Optional run identifier (typically a timestamp)
-
-        Returns:
-            Path string for save storage
-        """
-        return str(self.save_run_dir(self._current_namespace, run_id))
-
-    def save_run_dir(self, namespace: str, run_id: Optional[str] = None) -> Path:
+    def save_run_dir(self, project_name: str, run_id: Optional[str] = None) -> Path:
         from datus.utils.path_manager import DatusPathManager
 
-        return DatusPathManager.resolve_run_dir(Path(self._save_dir), namespace, run_id)
+        return DatusPathManager.resolve_run_dir(Path(self._save_dir), project_name, run_id)
 
     @property
     def trajectory_dir(self) -> str:
         return self._trajectory_dir
 
     def get_trajectory_run_dir(self, run_id: Optional[str] = None) -> str:
-        """
-        Get trajectory directory for current namespace and optional run_id.
+        return str(self.trajectory_run_dir(self._project_name, run_id))
 
-        Args:
-            run_id: Optional run identifier (typically a timestamp)
-
-        Returns:
-            Path string for trajectory storage
-        """
-
-        return str(self.trajectory_run_dir(self._current_namespace, run_id))
-
-    def trajectory_run_dir(self, namespace: str, run_id: Optional[str] = None) -> Path:
+    def trajectory_run_dir(self, project_name: str, run_id: Optional[str] = None) -> Path:
         from datus.utils.path_manager import DatusPathManager
 
-        return DatusPathManager.resolve_run_dir(Path(self._trajectory_dir), namespace, run_id)
+        return DatusPathManager.resolve_run_dir(Path(self._trajectory_dir), project_name, run_id)
 
     def reflection_nodes(self, strategy: str) -> List[str]:
         if strategy not in self._reflection_nodes:
@@ -688,10 +777,13 @@ class AgentConfig:
             self.search_metrics_rate = kwargs["search_metrics_rate"]
         if kwargs.get("plan", ""):
             self.workflow_plan = kwargs["plan"]
-        if kwargs.get("action", "") not in ["probe-llm", "generate-dataset", "namespace", "platform-doc"]:
-            self.current_namespace = kwargs.get("namespace", "")
-        if database_name := kwargs.get("database", ""):
-            self.current_database = database_name
+        if kwargs.get("action", "") not in ["probe-llm", "generate-dataset", "service", "platform-doc"]:
+            # Support both --database (new) and --namespace (legacy) CLI args
+            db_arg = kwargs.get("database", "") or kwargs.get("namespace", "")
+            if db_arg:
+                self.current_namespace = db_arg  # uses the compat setter
+            elif self.service.default_database:
+                self.current_namespace = self.service.default_database
         if kwargs.get("benchmark", ""):
             benchmark_platform = kwargs["benchmark"]
             # Validate benchmark is supported (will raise exception if not)
@@ -748,31 +840,27 @@ class AgentConfig:
         set_current_path_manager(self.path_manager)
 
     def _current_db_config(self) -> Dict[str, DbConfig]:
-        if not self._current_namespace:
+        """Backward-compat: returns all database configs."""
+        if not self._current_database and not self.service.databases:
             raise DatusException(
                 code=ErrorCode.COMMON_FIELD_REQUIRED,
-                message="Namespace is required, please run with --namespace <namespace>",
+                message="Database is required, please run with --database <database>",
             )
-        if self._current_namespace not in self.namespaces:
-            raise DatusException(
-                code=ErrorCode.COMMON_UNSUPPORTED,
-                message_args={"field_name": "Namespace", "your_value": self._current_namespace},
-            )
-        return self.namespaces[self._current_namespace]
+        return self.service.databases
 
     def current_db_name_type(self, db_name: str) -> tuple[str, str]:
-        db_configs = self._current_db_config()
-        if len(db_configs) > 1:
-            if db_name not in db_configs:
-                raise DatusException(
-                    code=ErrorCode.COMMON_UNSUPPORTED,
-                    message=f"Database {db_name} not found in configuration of namespace {self._current_namespace}",
-                )
-            db_type = db_configs[db_name].type
-        else:
-            db_config = list(db_configs.values())[0]
-            db_type = db_config.type
-        return db_name, db_type
+        databases = self.service.databases
+        if db_name and db_name in databases:
+            return db_name, databases[db_name].type
+        if self._current_database and self._current_database in databases:
+            return self._current_database, databases[self._current_database].type
+        if len(databases) == 1:
+            cfg = list(databases.values())[0]
+            return cfg.logic_name or db_name, cfg.type
+        raise DatusException(
+            code=ErrorCode.COMMON_UNSUPPORTED,
+            message=f"Database '{db_name}' not found. Available: {list(databases.keys())}",
+        )
 
     def active_model(self) -> ModelConfig:
         return self.models[self.target]
@@ -792,7 +880,7 @@ class AgentConfig:
                 isolation = iso.value
             elif iso:
                 isolation = str(iso)
-        return rag_storage_path(self.rag_base_path, self.current_namespace, isolation=isolation)
+        return rag_storage_path(self.rag_base_path, self._project_name, isolation=isolation)
 
     def document_storage_path(self, platform: str) -> str:
         """Per-platform document storage path (namespace-independent).

@@ -109,16 +109,17 @@ def real_agent_config(tmp_path, reset_global_singletons):
                 "base_url": "http://localhost:0",
             },
         },
-        "namespace": {
-            "test_ns": {
-                "type": "sqlite",
-                "dbs": [
-                    {
-                        "uri": db_path,
-                        "name": "california_schools",
-                    }
-                ],
+        "service": {
+            "databases": {
+                "california_schools": {
+                    "type": "sqlite",
+                    "uri": db_path,
+                    "name": "california_schools",
+                    "default": True,
+                },
             },
+            "bi_tools": {},
+            "schedulers": {},
         },
         "storage": {
             "workspace_root": str(tmp_path / "workspace"),
@@ -176,8 +177,7 @@ def real_agent_config(tmp_path, reset_global_singletons):
     nodes: dict[str, NodeConfig] = {}
     agent_config = AgentConfig(nodes=nodes, **config_kwargs)
 
-    # Set current namespace and database
-    agent_config.current_namespace = "test_ns"
+    # Set current database (was: current_namespace = "test_ns")
     agent_config.current_database = "california_schools"
 
     return agent_config

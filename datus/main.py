@@ -62,10 +62,19 @@ def create_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
-    # namespace command
+    # service command (was: namespace)
+    service_parser = subparsers.add_parser(
+        "service",
+        help="Manage services (databases, BI tools, schedulers)",
+        parents=[global_parser],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    service_parser.add_argument("command", help="Service management command", choices=["list", "add", "delete"])
+
+    # Keep 'namespace' as hidden alias for backward compatibility
     namespace_parser = subparsers.add_parser(
         "namespace",
-        help="Manage namespaces",
+        help=argparse.SUPPRESS,
         parents=[global_parser],
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -87,7 +96,7 @@ def create_parser() -> argparse.ArgumentParser:
         parents=[global_parser],
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    check_db_parser.add_argument("--namespace", type=str, required=True, help="Database namespace to check")
+    check_db_parser.add_argument("--database", "--namespace", type=str, required=True, help="Database name to check")
 
     # bootstrap-kb command
     bootstrap_parser = subparsers.add_parser(
@@ -123,7 +132,7 @@ def create_parser() -> argparse.ArgumentParser:
     bootstrap_parser.add_argument(
         "--benchmark", type=str, choices=["spider2", "bird_dev", "bird_critic"], help="Benchmark dataset to use"
     )
-    bootstrap_parser.add_argument("--namespace", type=str, required=True, help="Database namespace")
+    bootstrap_parser.add_argument("--database", "--namespace", type=str, required=True, help="Database name")
     bootstrap_parser.add_argument(
         "--schema_linking_type",
         type=str,
@@ -299,7 +308,7 @@ def create_parser() -> argparse.ArgumentParser:
     benchmark_parser.add_argument(
         "--benchmark_task_ids", type=str, nargs="+", help="Specific benchmark task IDs to run"
     )
-    benchmark_parser.add_argument("--namespace", type=str, required=True, help="Database namespace")
+    benchmark_parser.add_argument("--database", "--namespace", type=str, required=True, help="Database name")
     benchmark_parser.add_argument("--task_db_name", type=str, help="Database name for the task")
     benchmark_parser.add_argument("--task_schema", type=str, help="Schema name for the task")
     benchmark_parser.add_argument("--subject_path", type=str, help="Subject path for the task")
@@ -365,7 +374,7 @@ def create_parser() -> argparse.ArgumentParser:
         parents=[global_parser],
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    run_parser.add_argument("--namespace", type=str, required=True, help="Database namespace")
+    run_parser.add_argument("--database", "--namespace", type=str, required=True, help="Database name")
     run_parser.add_argument("--task", type=str, required=True, help="Natural language task description")
     run_parser.add_argument(
         "--task_id",
@@ -404,7 +413,7 @@ def create_parser() -> argparse.ArgumentParser:
         parents=[global_parser],
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    evaluation_parser.add_argument("--namespace", type=str, required=True, help="Database namespace")
+    evaluation_parser.add_argument("--database", "--namespace", type=str, required=True, help="Database name")
     evaluation_parser.add_argument(
         "--benchmark",
         type=str,
@@ -430,7 +439,7 @@ def create_parser() -> argparse.ArgumentParser:
         parents=[global_parser],
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    bi_subparser.add_argument("--namespace", type=str, required=True, help="Database namespace")
+    bi_subparser.add_argument("--database", "--namespace", type=str, required=True, help="Database name")
 
     multi_benchmark_parser = subparsers.add_parser(
         "multi-round-benchmark", parents=[global_parser], help="Multi-round benchmarking"
@@ -523,7 +532,7 @@ def main():
         tutorial = BenchmarkTutorial(args.config)
         return tutorial.run()
 
-    if args.action == "namespace":
+    if args.action in ("service", "namespace"):
         configure_logging(args.debug, console_output=False)
         namespace_manager = NamespaceManager(args.config or "")
         return namespace_manager.run(args.command)

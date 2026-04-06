@@ -59,12 +59,12 @@ class ArgumentParser:
         # storage_path parameter deprecated - data path is now fixed at {agent.home}/data
 
         self.parser.add_argument(
+            "--database",
             "--namespace",
             type=str,
-            help="Namespace of databases or benchmark",
+            help="Database name to connect (use --database, --namespace is deprecated)",
+            default="",
         )
-
-        self.parser.add_argument("--database", type=str, help="Default database to connect", default="")
 
         # LLM trace settings
         self.parser.add_argument(
@@ -155,7 +155,7 @@ class Application:
 
         configure_logging(args.debug, console_output=False)
 
-        if not args.namespace:
+        if not args.database:
             self.arg_parser.parser.print_help()
             return
 

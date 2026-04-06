@@ -215,9 +215,12 @@ def load_agent_config(reload: bool = False, **kwargs) -> AgentConfig:
 
         if override_kwargs:
             agent_config.override_by_args(**override_kwargs)
+    # Auto-select default database for file-based DBs if not already set
     if agent_config.db_type in {DBType.SQLITE, DBType.DUCKDB} and not agent_config.current_database:
-        current_configs = agent_config.current_db_configs()
-        agent_config.current_database = current_configs[list(current_configs.keys())[0]].logic_name
+        databases = agent_config.service.databases
+        if databases:
+            first_key = next(iter(databases))
+            agent_config.current_database = first_key
 
     return agent_config
 
