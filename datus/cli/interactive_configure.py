@@ -30,6 +30,16 @@ from datus.utils.resource_utils import copy_data_file, read_data_file_text
 
 logger = get_logger(__name__)
 
+_BACK = "__back__"
+
+
+def _prompt_with_back(label: str, **kwargs) -> str:
+    """Prompt.ask wrapper that treats 'back' input as a back signal."""
+    value = Prompt.ask(f"{label} [dim](type 'back' to go back)[/dim]", **kwargs)
+    if value.strip().lower() == "back":
+        return _BACK
+    return value
+
 
 class InteractiveConfigure:
     """Incremental configuration manager for LLM models and databases."""
@@ -232,7 +242,7 @@ class InteractiveConfigure:
     # ── Add model ──────────────────────────────────────────────────
 
     def _add_model(self) -> bool:
-        """Add a new LLM model configuration."""
+        """Add a new LLM model configuration. Supports 'back' at each step."""
         self.console.print("[bold yellow]Add Model[/bold yellow]")
 
         catalog = self._load_provider_catalog()
@@ -243,50 +253,85 @@ class InteractiveConfigure:
             self.console.print("No providers found in conf/providers.yml")
             return False
 
-        self.console.print("- Which LLM provider?")
-        provider = select_choice(self.console, {k: k for k in providers}, default="openai")
+        # Collected values
+        provider = ""
+        api_key = ""
+        base_url = ""
+        model_name = ""
 
-        provider_info = providers[provider]
+        step = 0
+        while step < 4:
+            if step == 0:
+                # Step 0: Provider
+                self.console.print("- Which LLM provider?")
+                provider = select_choice(self.console, {k: k for k in providers}, default="openai")
+                provider_info = providers[provider]
 
-        # OAuth / subscription flows
-        if provider_info.get("auth_type") == "oauth":
-            return self._configure_codex_oauth(provider, provider_info)
-        if provider_info.get("auth_type") == "subscription":
-            return self._configure_claude_subscription(provider, provider_info)
+                # OAuth / subscription — no back support for these special flows
+                if provider_info.get("auth_type") == "oauth":
+                    return self._configure_codex_oauth(provider, provider_info)
+                if provider_info.get("auth_type") == "subscription":
+                    return self._configure_claude_subscription(provider, provider_info)
+                step = 1
 
-        # API key: detect env var
-        api_key_env = provider_info.get("api_key_env", "")
-        env_value = os.environ.get(api_key_env, "") if api_key_env else ""
+            elif step == 1:
+                # Step 1: API key
+                provider_info = providers[provider]
+                api_key_env = provider_info.get("api_key_env", "")
+                env_value = os.environ.get(api_key_env, "") if api_key_env else ""
 
-        if env_value:
-            self.console.print(f"  [dim]Detected ${{{api_key_env}}} in environment[/dim]")
-            use_env = Confirm.ask(f"- Use ${{{api_key_env}}} as API key?", default=True)
-            api_key = f"${{{api_key_env}}}" if use_env else getpass("- Enter your API key: ")
-        elif api_key_env:
-            self.console.print(f"  [dim]Hint: set ${{{api_key_env}}} env var to avoid entering key manually[/dim]")
-            api_key = Prompt.ask(f"- API key (or env var like ${{{api_key_env}}})", default=f"${{{api_key_env}}}")
-        else:
-            api_key = getpass("- Enter your API key: ")
+                if env_value:
+                    self.console.print(f"  [dim]Detected ${{{api_key_env}}} in environment[/dim]")
+                    use_env = Confirm.ask(f"- Use ${{{api_key_env}}} as API key?", default=True)
+                    api_key = f"${{{api_key_env}}}" if use_env else getpass("- Enter your API key: ")
+                elif api_key_env:
+                    self.console.print(
+                        f"  [dim]Hint: set ${{{api_key_env}}} env var to avoid entering key manually[/dim]"
+                    )
+                    api_key = _prompt_with_back(
+                        f"- API key (or env var like ${{{api_key_env}}})", default=f"${{{api_key_env}}}"
+                    )
+                else:
+                    api_key = _prompt_with_back("- API key")
 
-        if not api_key.strip():
-            self.console.print("API key cannot be empty")
-            return False
+                if api_key == _BACK:
+                    step = 0
+                    continue
+                if not api_key.strip():
+                    self.console.print("API key cannot be empty")
+                    continue
+                step = 2
 
-        base_url = Prompt.ask("- Base URL", default=provider_info["base_url"])
+            elif step == 2:
+                # Step 2: Base URL
+                provider_info = providers[provider]
+                base_url = _prompt_with_back("- Base URL", default=provider_info["base_url"])
+                if base_url == _BACK:
+                    step = 1
+                    continue
+                step = 3
 
-        models = provider_info.get("models", [])
-        if models:
-            self.console.print("- Select model:")
-            model_name = select_choice(
-                self.console,
-                {str(m): str(m) for m in models},
-                default=provider_info.get("default_model", str(models[0])),
-                allow_free_text=True,
-            )
-        else:
-            model_name = Prompt.ask("- Model name", default=provider_info.get("default_model", "")).strip()
+            elif step == 3:
+                # Step 3: Model
+                provider_info = providers[provider]
+                models = provider_info.get("models", [])
+                if models:
+                    self.console.print("- Select model:")
+                    model_name = select_choice(
+                        self.console,
+                        {str(m): str(m) for m in models},
+                        default=provider_info.get("default_model", str(models[0])),
+                        allow_free_text=True,
+                    )
+                else:
+                    model_name = _prompt_with_back("- Model name", default=provider_info.get("default_model", ""))
+                    if model_name == _BACK:
+                        step = 2
+                        continue
+                    model_name = model_name.strip()
+                step = 4
 
-        entry = {"type": provider_info["type"], "base_url": base_url, "api_key": api_key, "model": model_name}
+        entry = {"type": providers[provider]["type"], "base_url": base_url, "api_key": api_key, "model": model_name}
         if model_name in model_param_overrides:
             entry.update(model_param_overrides[model_name])
 
@@ -300,7 +345,6 @@ class InteractiveConfigure:
         self.console.print("LLM model test successful\n")
         self.models[provider] = entry
 
-        # Set as default if first model or user confirms
         if not self.target:
             self.target = provider
         elif Confirm.ask(f"- Set '{provider}' as default model?", default=False):
@@ -311,98 +355,148 @@ class InteractiveConfigure:
     # ── Add database ───────────────────────────────────────────────
 
     def _add_database(self) -> bool:
-        """Add a new database connection."""
+        """Add a new database connection. Supports 'back' at each step."""
         self.console.print("[bold yellow]Add Database[/bold yellow]")
-
-        db_name = Prompt.ask("- Database name")
-        if not db_name.strip():
-            self.console.print("Database name cannot be empty")
-            return False
-
-        if db_name in self.databases:
-            self.console.print(f"Database '{db_name}' already exists. Delete it first to re-add.")
-            return False
 
         from datus.tools.db_tools import connector_registry
 
-        available_adapters = connector_registry.list_available_adapters()
+        db_name = ""
+        db_type = ""
+        config_data: Dict[str, Any] = {}
 
-        # Build choice list: installed adapters + known installable ones
-        installed_types = set(available_adapters.keys())
-        installable_types = {"snowflake", "mysql", "postgresql", "starrocks", "bigquery", "clickhouse"}
-        not_installed = sorted(installable_types - installed_types)
+        step = 0
+        while step < 3:
+            if step == 0:
+                # Step 0: Database name
+                db_name = _prompt_with_back("- Database name")
+                if db_name == _BACK:
+                    return False  # Back from first step = cancel
+                if not db_name.strip():
+                    self.console.print("Database name cannot be empty")
+                    continue
+                if db_name in self.databases:
+                    self.console.print(f"Database '{db_name}' already exists. Delete it first to re-add.")
+                    continue
+                step = 1
 
-        all_choices = {}
-        for t in sorted(installed_types):
-            all_choices[t] = t
-        for t in not_installed:
-            all_choices[t] = f"{t} (not installed — will install datus-{t})"
+            elif step == 1:
+                # Step 1: Database type (with plugin install)
+                available_adapters = connector_registry.list_available_adapters()
+                installed_types = set(available_adapters.keys())
+                installable_types = {"snowflake", "mysql", "postgresql", "starrocks", "bigquery", "clickhouse"}
+                not_installed = sorted(installable_types - installed_types)
 
-        if not all_choices:
-            self.console.print("No database types available.")
-            return False
+                all_choices = {}
+                for t in sorted(installed_types):
+                    all_choices[t] = t
+                for t in not_installed:
+                    all_choices[t] = f"{t} (not installed — will install datus-{t})"
 
-        default_type = "duckdb" if "duckdb" in all_choices else list(all_choices.keys())[0]
-        self.console.print("- Database type:")
-        db_type = select_choice(self.console, all_choices, default=default_type)
+                if not all_choices:
+                    self.console.print("No database types available.")
+                    return False
 
-        # Install plugin if not available
-        if db_type not in installed_types:
-            package = f"datus-{db_type}"
-            self.console.print(f"[dim]Installing {package}...[/dim]")
-            if not self._install_plugin(package):
-                return False
-            self.console.print(f"[green]{package} installed successfully.[/green]")
-            self.console.print("[yellow]Please run `datus configure` again to configure the new database.[/yellow]")
-            return False
+                default_type = "duckdb" if "duckdb" in all_choices else list(all_choices.keys())[0]
+                self.console.print("- Database type:")
+                db_type = select_choice(self.console, all_choices, default=default_type)
 
-        adapter_metadata = available_adapters[db_type]
-        config_fields = adapter_metadata.get_config_fields()
+                # Install plugin if needed
+                if db_type not in installed_types:
+                    package = f"datus-{db_type}"
+                    self.console.print(f"[dim]Installing {package}...[/dim]")
+                    if not self._install_plugin(package):
+                        return False
+                    self.console.print(f"[green]{package} installed successfully.[/green]")
+                    self.console.print(
+                        "[yellow]Please run `datus configure` again to configure the new database.[/yellow]"
+                    )
+                    return False
 
-        config_data: Dict[str, Any] = {"type": db_type}
+                step = 2
 
-        if not config_fields:
-            self.console.print(f"Adapter '{db_type}' does not have a configuration schema.")
-            return False
+            elif step == 2:
+                # Step 2: Connection fields (from adapter schema)
+                available_adapters = connector_registry.list_available_adapters()
+                adapter_metadata = available_adapters[db_type]
+                config_fields = adapter_metadata.get_config_fields()
 
-        for field_name, field_info in config_fields.items():
-            if field_name in ["type", "name"]:
-                continue
+                if not config_fields:
+                    self.console.print(f"Adapter '{db_type}' does not have a configuration schema.")
+                    return False
 
-            label = f"- {field_name.replace('_', ' ').capitalize()}"
-            required = field_info.get("required", False)
-            default_value = field_info.get("default")
-            input_type = field_info.get("input_type", "text")
+                config_data = {"type": db_type}
+                field_list = [(k, v) for k, v in config_fields.items() if k not in ("type", "name")]
+                field_idx = 0
+                went_back_to_type = False
 
-            if input_type == "password" or field_name == "password":
-                value = getpass(f"{label}: ")
-            elif input_type == "file_path":
-                sample_file = field_info.get("default_sample")
-                default_path = str(self.sample_dir / sample_file) if sample_file else str(default_value or "")
-                value = Prompt.ask(label, default=default_path)
-            elif field_info.get("type") == "int" or field_name == "port":
-                while True:
-                    value_str = Prompt.ask(label, default=str(default_value) if default_value else "")
-                    if not value_str:
-                        value = default_value
-                        break
-                    try:
-                        value = int(value_str)
-                        if field_name == "port" and not (1 <= value <= 65535):
-                            self.console.print("[yellow]Port must be between 1 and 65535.[/yellow]")
+                while field_idx < len(field_list):
+                    field_name, field_info = field_list[field_idx]
+                    label = f"- {field_name.replace('_', ' ').capitalize()}"
+                    default_value = field_info.get("default")
+                    input_type = field_info.get("input_type", "text")
+                    required = field_info.get("required", False)
+
+                    if input_type == "password" or field_name == "password":
+                        value = getpass(f"{label} (type 'back' to go back): ")
+                        if value.strip().lower() == "back":
+                            if field_idx == 0:
+                                went_back_to_type = True
+                                break
+                            field_idx -= 1
+                            # Remove previous field from config_data
+                            prev_field = field_list[field_idx][0]
+                            config_data.pop(prev_field, None)
                             continue
-                        break
-                    except ValueError:
-                        self.console.print("[yellow]Invalid integer value.[/yellow]")
-            elif not required and default_value is not None:
-                value = Prompt.ask(label, default=str(default_value))
-            elif not required:
-                value = Prompt.ask(label, default="")
-            else:
-                value = Prompt.ask(label)
+                    elif input_type == "file_path":
+                        sample_file = field_info.get("default_sample")
+                        default_path = str(self.sample_dir / sample_file) if sample_file else str(default_value or "")
+                        value = _prompt_with_back(label, default=default_path)
+                    elif field_info.get("type") == "int" or field_name == "port":
+                        value = _prompt_with_back(label, default=str(default_value) if default_value else "")
+                        if value == _BACK:
+                            if field_idx == 0:
+                                went_back_to_type = True
+                                break
+                            field_idx -= 1
+                            prev_field = field_list[field_idx][0]
+                            config_data.pop(prev_field, None)
+                            continue
+                        if value:
+                            try:
+                                value = int(value)
+                                if field_name == "port" and not (1 <= value <= 65535):
+                                    self.console.print("[yellow]Port must be between 1 and 65535.[/yellow]")
+                                    continue
+                            except ValueError:
+                                self.console.print("[yellow]Invalid integer value.[/yellow]")
+                                continue
+                        else:
+                            value = default_value
+                    elif not required and default_value is not None:
+                        value = _prompt_with_back(label, default=str(default_value))
+                    elif not required:
+                        value = _prompt_with_back(label, default="")
+                    else:
+                        value = _prompt_with_back(label)
 
-            if value != "" and value is not None:
-                config_data[field_name] = value
+                    if value == _BACK:
+                        if field_idx == 0:
+                            went_back_to_type = True
+                            break
+                        field_idx -= 1
+                        prev_field = field_list[field_idx][0]
+                        config_data.pop(prev_field, None)
+                        continue
+
+                    if value != "" and value is not None:
+                        config_data[field_name] = value
+                    field_idx += 1
+
+                if went_back_to_type:
+                    step = 1
+                    continue
+
+                step = 3
 
         # Test connectivity
         self.console.print("Testing database connectivity...")
@@ -417,7 +511,6 @@ class InteractiveConfigure:
         if not self.databases:
             config_data["default"] = True
         elif Confirm.ask(f"- Set '{db_name}' as default database?", default=False):
-            # Clear other defaults
             for cfg in self.databases.values():
                 cfg.pop("default", None)
             config_data["default"] = True
