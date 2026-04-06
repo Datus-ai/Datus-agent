@@ -178,7 +178,14 @@ class InitWorkspace:
             from datus.models.base import LLMBaseModel
 
             model_config = agent_config.active_model()
-            llm = LLMBaseModel.create_model(model_config)
+            model_type = model_config.type
+            model_class_name = LLMBaseModel.MODEL_TYPE_MAP.get(model_type)
+            if not model_class_name:
+                logger.warning(f"Unsupported model type: {model_type}")
+                return None
+            module = __import__(f"datus.models.{model_type}_model", fromlist=[model_class_name])
+            model_class = getattr(module, model_class_name)
+            llm = model_class(model_config)
 
             # Read README if exists
             readme_content = ""
@@ -227,7 +234,7 @@ Generate AGENTS.md with these exact sections (use ## headers):
 Output ONLY the markdown content, no code fences around the entire document."""
 
             self.console.print("[dim]Generating AGENTS.md with LLM...[/dim]")
-            response = llm.chat_completions(prompt)
+            response = llm.generate(prompt)
 
             if response and len(response) > 100:
                 return response
