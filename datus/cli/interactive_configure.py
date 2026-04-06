@@ -423,7 +423,16 @@ class InteractiveConfigure:
             # Resolve env vars (e.g. ${DEEPSEEK_API_KEY}) for the test
             resolved = {k: resolve_env(str(v)) if isinstance(v, str) else v for k, v in raw.items()}
             model_config = load_model_config(resolved)
-            llm = LLMBaseModel.create_model(model_config)
+
+            # Instantiate the model class directly (create_model expects AgentConfig)
+            model_type = model_config.type
+            model_class_name = LLMBaseModel.MODEL_TYPE_MAP.get(model_type)
+            if not model_class_name:
+                return False, f"Unsupported model type: {model_type}"
+            module = __import__(f"datus.models.{model_type}_model", fromlist=[model_class_name])
+            model_class = getattr(module, model_class_name)
+            llm = model_class(model_config)
+
             response = llm.chat_completions("Say hello in 5 words")
             if response:
                 return True, ""
