@@ -33,12 +33,30 @@ logger = get_logger(__name__)
 _BACK = "__back__"
 
 
-def _prompt_with_back(label: str, **kwargs) -> str:
-    """Prompt.ask wrapper that treats 'back' input as a back signal."""
-    value = Prompt.ask(f"{label} [dim](type 'back' to go back)[/dim]", **kwargs)
-    if value.strip().lower() == "back":
+def _prompt_with_back(label: str, default: str = "", password: bool = False) -> str:
+    """Prompt with ESC to go back. Uses prompt_toolkit for key handling.
+
+    Returns _BACK if ESC pressed, otherwise the entered value.
+    """
+    try:
+        from prompt_toolkit import PromptSession
+        from prompt_toolkit.key_binding import KeyBindings
+
+        kb = KeyBindings()
+
+        @kb.add("escape")
+        def _esc(event):
+            event.app.exit(result=_BACK)
+
+        session = PromptSession(key_bindings=kb)
+        suffix = f" ({default})" if default else ""
+        result = session.prompt(f"{label}{suffix} [ESC=back]: ", is_password=password)
+        if result == _BACK:
+            return _BACK
+        return result.strip() if result.strip() else default
+
+    except (KeyboardInterrupt, EOFError):
         return _BACK
-    return value
 
 
 class InteractiveConfigure:
@@ -283,7 +301,7 @@ class InteractiveConfigure:
                 if env_value:
                     self.console.print(f"  [dim]Detected ${{{api_key_env}}} in environment[/dim]")
                     use_env = Confirm.ask(f"- Use ${{{api_key_env}}} as API key?", default=True)
-                    api_key = f"${{{api_key_env}}}" if use_env else getpass("- Enter your API key: ")
+                    api_key = f"${{{api_key_env}}}" if use_env else _prompt_with_back("- API key", password=True)
                 elif api_key_env:
                     self.console.print(
                         f"  [dim]Hint: set ${{{api_key_env}}} env var to avoid entering key manually[/dim]"
@@ -437,13 +455,12 @@ class InteractiveConfigure:
                     required = field_info.get("required", False)
 
                     if input_type == "password" or field_name == "password":
-                        value = getpass(f"{label} (type 'back' to go back): ")
-                        if value.strip().lower() == "back":
+                        value = _prompt_with_back(label, password=True)
+                        if value == _BACK:
                             if field_idx == 0:
                                 went_back_to_type = True
                                 break
                             field_idx -= 1
-                            # Remove previous field from config_data
                             prev_field = field_list[field_idx][0]
                             config_data.pop(prev_field, None)
                             continue
