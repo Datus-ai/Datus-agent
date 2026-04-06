@@ -415,18 +415,14 @@ class InteractiveConfigure:
     def _test_llm_connectivity(self) -> tuple[bool, str]:
         """Test LLM connectivity with the configured model."""
         try:
-            from datus.configuration.agent_config import AgentConfig
-
-            agent_kwargs = dict(self.config["agent"])
-            agent_kwargs.pop("nodes", None)
-            test_config = AgentConfig(
-                nodes={},
-                skip_init_dirs=True,
-                **agent_kwargs,
-            )
+            from datus.configuration.agent_config import load_model_config, resolve_env
             from datus.models.base import LLMBaseModel
 
-            model_config = test_config.active_model()
+            provider = self.config["agent"]["target"]
+            raw = dict(self.config["agent"]["models"][provider])
+            # Resolve env vars (e.g. ${DEEPSEEK_API_KEY}) for the test
+            resolved = {k: resolve_env(str(v)) if isinstance(v, str) else v for k, v in raw.items()}
+            model_config = load_model_config(resolved)
             llm = LLMBaseModel.create_model(model_config)
             response = llm.chat_completions("Say hello in 5 words")
             if response:
