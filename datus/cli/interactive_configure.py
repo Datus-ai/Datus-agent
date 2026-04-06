@@ -386,9 +386,7 @@ class InteractiveConfigure:
         while step < 3:
             if step == 0:
                 # Step 0: Database name
-                db_name = _prompt_with_back("- Database name")
-                if db_name == _BACK:
-                    return False  # Back from first step = cancel
+                db_name = Prompt.ask("- Database name")
                 if not db_name.strip():
                     self.console.print("Database name cannot be empty")
                     continue
@@ -515,9 +513,10 @@ class InteractiveConfigure:
 
                 step = 3
 
-        # Test connectivity
+        # Test connectivity — strip internal fields before passing to adapter
+        test_data = {k: v for k, v in config_data.items() if k != "default"}
         self.console.print("Testing database connectivity...")
-        success, error_msg = detect_db_connectivity(db_name, config_data)
+        success, error_msg = detect_db_connectivity(db_name, test_data)
         if not success:
             self.console.print(f"Database connectivity test failed: {error_msg}\n")
             return False
