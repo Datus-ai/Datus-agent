@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from datus.api.utils.path_utils import safe_resolve
+from datus.utils.exceptions import DatusException
 
 
 class TestSafeResolveBehavior:
@@ -32,21 +33,21 @@ class TestSafeResolveBehavior:
 
 
 class TestSafeResolveTraversalDetection:
-    """Paths that escape base must raise ValueError."""
+    """Paths that escape base must raise DatusException."""
 
-    def test_double_dot_escapes_raises_valueerror(self, tmp_path):
-        """Path traversal with .. raises ValueError."""
-        with pytest.raises(ValueError, match="escapes the project root"):
+    def test_double_dot_escapes_raises(self, tmp_path):
+        """Path traversal with .. raises DatusException."""
+        with pytest.raises(DatusException, match="escapes the project root"):
             safe_resolve(tmp_path, "../../etc/passwd")
 
-    def test_absolute_path_outside_base_raises_valueerror(self, tmp_path):
-        """Absolute path outside base raises ValueError."""
-        with pytest.raises(ValueError, match="escapes the project root"):
+    def test_absolute_path_outside_base_raises(self, tmp_path):
+        """Absolute path outside base raises DatusException."""
+        with pytest.raises(DatusException, match="escapes the project root"):
             safe_resolve(tmp_path, "/etc/passwd")
 
-    def test_dot_dot_at_start_raises_valueerror(self, tmp_path):
-        """Single parent traversal raises ValueError."""
-        with pytest.raises(ValueError, match="escapes the project root"):
+    def test_dot_dot_at_start_raises(self, tmp_path):
+        """Single parent traversal raises DatusException."""
+        with pytest.raises(DatusException, match="escapes the project root"):
             safe_resolve(tmp_path, "../sibling/file.txt")
 
 

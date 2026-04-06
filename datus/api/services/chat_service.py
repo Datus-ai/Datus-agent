@@ -27,6 +27,7 @@ from datus.api.models.cli_models import (
 from datus.api.services.action_sse_converter import action_to_sse_event
 from datus.configuration.agent_config import AgentConfig
 from datus.models.session_manager import SessionManager
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -60,11 +61,12 @@ class ChatService:
                 request,
                 sub_agent_id=sub_agent_id,
             )
-        except ValueError as e:
+        except (ValueError, DatusException) as e:
+            error_code = e.error_code.name if isinstance(e, DatusException) else ErrorCode.COMMON_VALIDATION_FAILED.name
             yield SSEEvent(
                 id=1,
                 event="error",
-                data=SSEErrorData(error=str(e), error_type="ValueError", session_id=request.session_id),
+                data=SSEErrorData(error=str(e), error_type=error_code, session_id=request.session_id),
                 timestamp=datetime.now().isoformat() + "Z",
             )
             return
@@ -197,7 +199,7 @@ class ChatService:
 
             sse_messages: List[SSEMessagePayload] = []
             event_id = 0
-            logger.info(f"Retrieved {len(raw_messages)} messages for session {session_id}: {raw_messages}")
+            logger.info(f"Retrieved {len(raw_messages)} messages for session {session_id}")
 
             for idx, msg in enumerate(raw_messages):
                 role = msg.get("role", "")
@@ -212,13 +214,25 @@ class ChatService:
                             )
                         )
                         event_id += 1
-                elif "actions" in msg:
-                    messages = msg["actions"]
-                    for action in messages:
-                        sse_event = action_to_sse_event(action, event_id, str(uuid.uuid4()), include_user_message=True)
+                elif role == "assistant":
+                    if "actions" in msg:
+                        messages = msg["actions"]
+                        for action in messages:
+                            sse_event = action_to_sse_event(
+                                action, event_id, str(uuid.uuid4()), include_user_message=True
+                            )
+                            event_id += 1
+                            if sse_event:
+                                sse_messages.append(sse_event.data.payload)
+                    elif msg.get("content"):
+                        sse_messages.append(
+                            SSEMessagePayload(
+                                message_id=str(uuid.uuid4()),
+                                role="assistant",
+                                content=[IMessageContent(type="markdown", payload={"content": msg["content"]})],
+                            )
+                        )
                         event_id += 1
-                        if sse_event:
-                            sse_messages.append(sse_event.data.payload)
 
             logger.info(f"Retrieved {len(sse_messages)} messages for session {session_id}")
             return Result[ChatHistoryData](success=True, data=ChatHistoryData(messages=sse_messages))

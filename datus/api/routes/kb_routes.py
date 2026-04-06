@@ -4,13 +4,12 @@ import json
 import os
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi import APIRouter, HTTPException, Path
 from fastapi.responses import StreamingResponse
 
-from datus.api.deps import get_datus_service
+from datus.api.deps import ServiceDep
 from datus.api.models.base_models import Result
 from datus.api.models.kb_models import BootstrapKbInput
-from datus.api.services.datus_service import DatusService
 from datus.api.utils.path_utils import safe_resolve
 from datus.api.utils.stream_cancellation import (
     cancel_stream,
@@ -28,7 +27,7 @@ router = APIRouter(prefix="/api/v1/kb", tags=["knowledge-base"])
 )
 async def bootstrap_kb(
     request: BootstrapKbInput,
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
 ):
     """Start KB bootstrap with SSE progress streaming."""
     stream_id = str(uuid.uuid4())
@@ -70,8 +69,8 @@ async def bootstrap_kb(
     description="Cancel a running bootstrap stream",
 )
 async def cancel_bootstrap(
+    svc: ServiceDep,  # noqa: ARG001 — triggers auth
     stream_id: str = Path(..., description="Stream ID to cancel"),
-    svc: DatusService = Depends(get_datus_service),  # noqa: ARG001 — triggers auth
 ):
     """Cancel a running bootstrap stream."""
     cancelled = cancel_stream(stream_id)

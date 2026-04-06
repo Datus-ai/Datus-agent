@@ -19,7 +19,7 @@ from datus.agent.agent import Agent
 from datus.api.auth import NoAuthProvider
 from datus.api.deps import init_deps
 from datus.api.services.datus_service_cache import DatusServiceCache
-from datus.configuration.agent_config_loader import load_agent_config
+from datus.configuration.agent_config_loader import load_agent_config, parse_config_path
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import SqlTask
 from datus.storage.task import TaskStore
@@ -450,78 +450,38 @@ def create_app(agent_args: argparse.Namespace) -> FastAPI:
     app.state.agent_args = agent_args
 
     # Add CORS middleware
+    cors_origins_env = os.getenv("DATUS_CORS_ORIGINS", "*")
+    cors_origins = [o.strip() for o in cors_origins_env.split(",") if o.strip()]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
+        allow_origins=cors_origins,
+        allow_credentials=cors_origins != ["*"],
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
     # Register new API v1 routes from plugin system (with lazy imports)
-    try:
-        from datus.api.routes.chat_routes import router as chat_router
+    _route_modules = [
+        ("datus.api.routes.chat_routes", "chat"),
+        ("datus.api.routes.cli_routes", "cli"),
+        ("datus.api.routes.database_routes", "database"),
+        ("datus.api.routes.table_routes", "table"),
+        ("datus.api.routes.explorer_routes", "explorer"),
+        ("datus.api.routes.config_routes", "config"),
+        ("datus.api.routes.mcp_routes", "mcp"),
+        ("datus.api.routes.kb_routes", "kb"),
+        ("datus.api.routes.agent_routes", "agent"),
+    ]
+    import importlib
 
-        app.include_router(chat_router)
-    except ImportError:
-        logger.warning("Failed to load chat_routes")
-
-    try:
-        from datus.api.routes.cli_routes import router as cli_router
-
-        app.include_router(cli_router)
-    except ImportError:
-        logger.warning("Failed to load cli_routes")
-
-    try:
-        from datus.api.routes.database_routes import router as database_router
-
-        app.include_router(database_router)
-    except ImportError:
-        logger.warning("Failed to load database_routes")
-
-    try:
-        from datus.api.routes.table_routes import router as table_router
-
-        app.include_router(table_router)
-    except ImportError:
-        logger.warning("Failed to load table_routes")
-
-    try:
-        from datus.api.routes.explorer_routes import router as explorer_router
-
-        app.include_router(explorer_router)
-    except ImportError:
-        logger.warning("Failed to load explorer_routes")
-
-    try:
-        from datus.api.routes.config_routes import router as config_router
-
-        app.include_router(config_router)
-    except ImportError:
-        logger.warning("Failed to load config_routes")
-
-    try:
-        from datus.api.routes.mcp_routes import router as mcp_router
-
-        app.include_router(mcp_router)
-    except ImportError:
-        logger.warning("Failed to load mcp_routes")
-
-    try:
-        from datus.api.routes.kb_routes import router as kb_router
-
-        app.include_router(kb_router)
-    except ImportError:
-        logger.warning("Failed to load kb_routes")
-
-    # Agent routes
-    try:
-        from datus.api.routes.agent_routes import router as agent_router
-
-        app.include_router(agent_router)
-    except ImportError:
-        logger.info("Agent routes not available")
+    for module_path, name in _route_modules:
+        try:
+            mod = importlib.import_module(module_path)
+            app.include_router(mod.router)
+        except ImportError:
+            logger.info(f"{name} routes not available (module not found)")
+        except Exception:
+            logger.exception(f"Failed to load {name} routes from {module_path}")
 
     # Route handlers with decorators
     @app.get("/", tags=["root"])
@@ -601,8 +561,6 @@ def create_app(agent_args: argparse.Namespace) -> FastAPI:
 
 # Global app instance for uvicorn to load
 # Configuration via environment variables: DATUS_CONFIG, DATUS_NAMESPACE, DATUS_OUTPUT_DIR, DATUS_LOG_LEVEL
-from datus.configuration.agent_config_loader import parse_config_path
-
 _config_file = os.getenv("DATUS_CONFIG", "")  # Empty string uses default resolution
 try:
     _config_path = str(parse_config_path(_config_file))

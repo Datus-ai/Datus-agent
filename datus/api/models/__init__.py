@@ -46,7 +46,6 @@ from datus.api.models.cli_models import (
     SSEEventData,
     SSEMessageData,
     SSEMessagePayload,
-    SSEPayload,
     SSEPingData,
     SSESessionData,
     StreamChatChunk,

@@ -59,14 +59,23 @@ class TestExplorerServiceGetSubjectList:
         svc = ExplorerService(agent_config=real_agent_config)
         # Create some structure
         await svc.create_directory(CreateDirectoryInput(subject_path=["tree_test"]))
-        await svc.create_reference_sql(ReferenceSQLInput(
-            subject_path=["tree_test"], name="tree_sql",
-            sql="SELECT 1", summary="test", search_text="test",
-        ))
-        await svc.create_knowledge(CreateKnowledgeInput(
-            subject_path=["tree_test"], name="tree_kb",
-            search_text="test", explanation="test",
-        ))
+        await svc.create_reference_sql(
+            ReferenceSQLInput(
+                subject_path=["tree_test"],
+                name="tree_sql",
+                sql="SELECT 1",
+                summary="test",
+                search_text="test",
+            )
+        )
+        await svc.create_knowledge(
+            CreateKnowledgeInput(
+                subject_path=["tree_test"],
+                name="tree_kb",
+                search_text="test",
+                explanation="test",
+            )
+        )
 
         result = await svc.get_subject_list()
         assert result.success is True
@@ -168,13 +177,15 @@ class TestExplorerServiceReferenceSql:
         """Full lifecycle: create reference SQL then retrieve it."""
         svc = ExplorerService(agent_config=real_agent_config)
         await svc.create_directory(CreateDirectoryInput(subject_path=["ref_test"]))
-        await svc.create_reference_sql(ReferenceSQLInput(
-            subject_path=["ref_test"],
-            name="my_query",
-            sql="SELECT COUNT(*) FROM schools",
-            summary="Count schools",
-            search_text="count schools",
-        ))
+        await svc.create_reference_sql(
+            ReferenceSQLInput(
+                subject_path=["ref_test"],
+                name="my_query",
+                sql="SELECT COUNT(*) FROM schools",
+                summary="Count schools",
+                search_text="count schools",
+            )
+        )
         result = await svc.get_reference_sql(["ref_test", "my_query"])
         assert result.success is True
         assert result.data.name == "my_query"
@@ -183,33 +194,39 @@ class TestExplorerServiceReferenceSql:
     async def test_edit_reference_sql_empty_path(self, real_agent_config):
         """edit_reference_sql with empty path returns error."""
         svc = ExplorerService(agent_config=real_agent_config)
-        result = await svc.edit_reference_sql(ReferenceSQLInput(
-            subject_path=[],
-            name="",
-            sql="SELECT 1",
-            summary="test",
-            search_text="test",
-        ))
+        result = await svc.edit_reference_sql(
+            ReferenceSQLInput(
+                subject_path=[],
+                name="",
+                sql="SELECT 1",
+                summary="test",
+                search_text="test",
+            )
+        )
         assert result.success is False
 
     async def test_edit_reference_sql_updates(self, real_agent_config):
         """edit_reference_sql updates an existing reference SQL entry."""
         svc = ExplorerService(agent_config=real_agent_config)
         await svc.create_directory(CreateDirectoryInput(subject_path=["edit_ref"]))
-        await svc.create_reference_sql(ReferenceSQLInput(
-            subject_path=["edit_ref"],
-            name="editable",
-            sql="SELECT 1",
-            summary="original",
-            search_text="original",
-        ))
-        result = await svc.edit_reference_sql(ReferenceSQLInput(
-            subject_path=["edit_ref", "editable"],
-            name="editable",
-            sql="SELECT 2",
-            summary="updated",
-            search_text="updated",
-        ))
+        await svc.create_reference_sql(
+            ReferenceSQLInput(
+                subject_path=["edit_ref"],
+                name="editable",
+                sql="SELECT 1",
+                summary="original",
+                search_text="original",
+            )
+        )
+        result = await svc.edit_reference_sql(
+            ReferenceSQLInput(
+                subject_path=["edit_ref", "editable"],
+                name="editable",
+                sql="SELECT 2",
+                summary="updated",
+                search_text="updated",
+            )
+        )
         assert result.success is True
 
 
@@ -234,40 +251,55 @@ class TestExplorerServiceRenameSubject:
         """rename_subject renames a reference SQL entry."""
         svc = ExplorerService(agent_config=real_agent_config)
         await svc.create_directory(CreateDirectoryInput(subject_path=["rename_sql_dir"]))
-        await svc.create_reference_sql(ReferenceSQLInput(
-            subject_path=["rename_sql_dir"], name="old_sql",
-            sql="SELECT 1", summary="test", search_text="test",
-        ))
-        result = await svc.rename_subject(RenameSubjectInput(
-            type=SubjectNodeType.REFERENCE_SQL,
-            subject_path=["rename_sql_dir", "old_sql"],
-            new_subject_path=["rename_sql_dir", "new_sql"],
-        ))
+        await svc.create_reference_sql(
+            ReferenceSQLInput(
+                subject_path=["rename_sql_dir"],
+                name="old_sql",
+                sql="SELECT 1",
+                summary="test",
+                search_text="test",
+            )
+        )
+        result = await svc.rename_subject(
+            RenameSubjectInput(
+                type=SubjectNodeType.REFERENCE_SQL,
+                subject_path=["rename_sql_dir", "old_sql"],
+                new_subject_path=["rename_sql_dir", "new_sql"],
+            )
+        )
         assert result.success is True
 
     async def test_rename_knowledge(self, real_agent_config):
         """rename_subject renames a knowledge entry."""
         svc = ExplorerService(agent_config=real_agent_config)
         await svc.create_directory(CreateDirectoryInput(subject_path=["rename_kb_dir"]))
-        await svc.create_knowledge(CreateKnowledgeInput(
-            subject_path=["rename_kb_dir"], name="old_kb",
-            search_text="test", explanation="test",
-        ))
-        result = await svc.rename_subject(RenameSubjectInput(
-            type=SubjectNodeType.KNOWLEDGE,
-            subject_path=["rename_kb_dir", "old_kb"],
-            new_subject_path=["rename_kb_dir", "new_kb"],
-        ))
+        await svc.create_knowledge(
+            CreateKnowledgeInput(
+                subject_path=["rename_kb_dir"],
+                name="old_kb",
+                search_text="test",
+                explanation="test",
+            )
+        )
+        result = await svc.rename_subject(
+            RenameSubjectInput(
+                type=SubjectNodeType.KNOWLEDGE,
+                subject_path=["rename_kb_dir", "old_kb"],
+                new_subject_path=["rename_kb_dir", "new_kb"],
+            )
+        )
         assert result.success is True
 
     async def test_rename_metric(self, real_agent_config):
         """rename_subject for metric type exercises metric rename path."""
         svc = ExplorerService(agent_config=real_agent_config)
-        result = await svc.rename_subject(RenameSubjectInput(
-            type=SubjectNodeType.METRIC,
-            subject_path=["dir", "old_metric"],
-            new_subject_path=["dir", "new_metric"],
-        ))
+        result = await svc.rename_subject(
+            RenameSubjectInput(
+                type=SubjectNodeType.METRIC,
+                subject_path=["dir", "old_metric"],
+                new_subject_path=["dir", "new_metric"],
+            )
+        )
         # May succeed or fail depending on metric existence, but exercises the code path
         assert result is not None
 
@@ -316,37 +348,52 @@ class TestExplorerServiceDeleteSubject:
         """delete_subject removes reference SQL entry."""
         svc = ExplorerService(agent_config=real_agent_config)
         await svc.create_directory(CreateDirectoryInput(subject_path=["del_sql_dir"]))
-        await svc.create_reference_sql(ReferenceSQLInput(
-            subject_path=["del_sql_dir"], name="del_query",
-            sql="SELECT 1", summary="test", search_text="test",
-        ))
-        result = await svc.delete_subject(DeleteSubjectInput(
-            type=SubjectNodeType.REFERENCE_SQL,
-            subject_path=["del_sql_dir", "del_query"],
-        ))
+        await svc.create_reference_sql(
+            ReferenceSQLInput(
+                subject_path=["del_sql_dir"],
+                name="del_query",
+                sql="SELECT 1",
+                summary="test",
+                search_text="test",
+            )
+        )
+        result = await svc.delete_subject(
+            DeleteSubjectInput(
+                type=SubjectNodeType.REFERENCE_SQL,
+                subject_path=["del_sql_dir", "del_query"],
+            )
+        )
         assert result.success is True
 
     async def test_delete_knowledge(self, real_agent_config):
         """delete_subject removes knowledge entry."""
         svc = ExplorerService(agent_config=real_agent_config)
         await svc.create_directory(CreateDirectoryInput(subject_path=["del_kb_dir"]))
-        await svc.create_knowledge(CreateKnowledgeInput(
-            subject_path=["del_kb_dir"], name="del_kb",
-            search_text="test", explanation="test",
-        ))
-        result = await svc.delete_subject(DeleteSubjectInput(
-            type=SubjectNodeType.KNOWLEDGE,
-            subject_path=["del_kb_dir", "del_kb"],
-        ))
+        await svc.create_knowledge(
+            CreateKnowledgeInput(
+                subject_path=["del_kb_dir"],
+                name="del_kb",
+                search_text="test",
+                explanation="test",
+            )
+        )
+        result = await svc.delete_subject(
+            DeleteSubjectInput(
+                type=SubjectNodeType.KNOWLEDGE,
+                subject_path=["del_kb_dir", "del_kb"],
+            )
+        )
         assert result.success is True
 
     async def test_delete_metric_nonexistent(self, real_agent_config):
         """delete_subject for nonexistent metric returns error."""
         svc = ExplorerService(agent_config=real_agent_config)
-        result = await svc.delete_subject(DeleteSubjectInput(
-            type=SubjectNodeType.METRIC,
-            subject_path=["dir", "nonexistent_metric"],
-        ))
+        result = await svc.delete_subject(
+            DeleteSubjectInput(
+                type=SubjectNodeType.METRIC,
+                subject_path=["dir", "nonexistent_metric"],
+            )
+        )
         assert result.success is False
 
     async def test_delete_directory_with_children(self, real_agent_config):
@@ -355,19 +402,30 @@ class TestExplorerServiceDeleteSubject:
         # Create parent dir with children
         await svc.create_directory(CreateDirectoryInput(subject_path=["cascade_dir"]))
         await svc.create_directory(CreateDirectoryInput(subject_path=["cascade_dir", "child"]))
-        await svc.create_reference_sql(ReferenceSQLInput(
-            subject_path=["cascade_dir"], name="child_sql",
-            sql="SELECT 1", summary="test", search_text="test",
-        ))
-        await svc.create_knowledge(CreateKnowledgeInput(
-            subject_path=["cascade_dir"], name="child_kb",
-            search_text="test", explanation="test",
-        ))
+        await svc.create_reference_sql(
+            ReferenceSQLInput(
+                subject_path=["cascade_dir"],
+                name="child_sql",
+                sql="SELECT 1",
+                summary="test",
+                search_text="test",
+            )
+        )
+        await svc.create_knowledge(
+            CreateKnowledgeInput(
+                subject_path=["cascade_dir"],
+                name="child_kb",
+                search_text="test",
+                explanation="test",
+            )
+        )
         # Delete parent — should cascade
-        result = await svc.delete_subject(DeleteSubjectInput(
-            type=SubjectNodeType.DIRECTORY,
-            subject_path=["cascade_dir"],
-        ))
+        result = await svc.delete_subject(
+            DeleteSubjectInput(
+                type=SubjectNodeType.DIRECTORY,
+                subject_path=["cascade_dir"],
+            )
+        )
         assert result.success is True
 
 
@@ -404,12 +462,14 @@ class TestExplorerServiceKnowledge:
         """Full lifecycle: create knowledge then retrieve it."""
         svc = ExplorerService(agent_config=real_agent_config)
         await svc.create_directory(CreateDirectoryInput(subject_path=["kb_full"]))
-        await svc.create_knowledge(CreateKnowledgeInput(
-            subject_path=["kb_full"],
-            name="test_kb",
-            search_text="california schools types",
-            explanation="Schools in California have various types.",
-        ))
+        await svc.create_knowledge(
+            CreateKnowledgeInput(
+                subject_path=["kb_full"],
+                name="test_kb",
+                search_text="california schools types",
+                explanation="Schools in California have various types.",
+            )
+        )
         result = await svc.get_knowledge(["kb_full", "test_kb"])
         assert result.success is True
         assert result.data.name == "test_kb"
@@ -418,7 +478,10 @@ class TestExplorerServiceKnowledge:
         """create_knowledge with empty path returns error."""
         svc = ExplorerService(agent_config=real_agent_config)
         request = CreateKnowledgeInput(
-            subject_path=[], name="x", search_text="test", explanation="test",
+            subject_path=[],
+            name="x",
+            search_text="test",
+            explanation="test",
         )
         result = await svc.create_knowledge(request)
         assert result.success is False
@@ -427,14 +490,22 @@ class TestExplorerServiceKnowledge:
         """create_knowledge rejects duplicate names in same directory."""
         svc = ExplorerService(agent_config=real_agent_config)
         await svc.create_directory(CreateDirectoryInput(subject_path=["dup_kb_dir"]))
-        await svc.create_knowledge(CreateKnowledgeInput(
-            subject_path=["dup_kb_dir"], name="dup_entry",
-            search_text="first", explanation="first",
-        ))
-        result = await svc.create_knowledge(CreateKnowledgeInput(
-            subject_path=["dup_kb_dir"], name="dup_entry",
-            search_text="second", explanation="second",
-        ))
+        await svc.create_knowledge(
+            CreateKnowledgeInput(
+                subject_path=["dup_kb_dir"],
+                name="dup_entry",
+                search_text="first",
+                explanation="first",
+            )
+        )
+        result = await svc.create_knowledge(
+            CreateKnowledgeInput(
+                subject_path=["dup_kb_dir"],
+                name="dup_entry",
+                search_text="second",
+                explanation="second",
+            )
+        )
         assert result.success is False
         assert "already exists" in result.errorMessage
 
@@ -448,12 +519,14 @@ class TestExplorerServiceKnowledge:
     async def test_edit_knowledge_short_path_fails(self, real_agent_config):
         """edit_knowledge with path < 2 components returns error."""
         svc = ExplorerService(agent_config=real_agent_config)
-        result = await svc.edit_knowledge(EditKnowledgeInput(
-            subject_path=["only_one"],
-            name="kb",
-            search_text="test",
-            explanation="test",
-        ))
+        result = await svc.edit_knowledge(
+            EditKnowledgeInput(
+                subject_path=["only_one"],
+                name="kb",
+                search_text="test",
+                explanation="test",
+            )
+        )
         assert result.success is False
         assert "2 components" in result.errorMessage
 
@@ -461,14 +534,24 @@ class TestExplorerServiceKnowledge:
         """create_reference_sql rejects duplicate names."""
         svc = ExplorerService(agent_config=real_agent_config)
         await svc.create_directory(CreateDirectoryInput(subject_path=["dup_ref_dir"]))
-        await svc.create_reference_sql(ReferenceSQLInput(
-            subject_path=["dup_ref_dir"], name="dup_sql",
-            sql="SELECT 1", summary="first", search_text="first",
-        ))
-        result = await svc.create_reference_sql(ReferenceSQLInput(
-            subject_path=["dup_ref_dir"], name="dup_sql",
-            sql="SELECT 2", summary="second", search_text="second",
-        ))
+        await svc.create_reference_sql(
+            ReferenceSQLInput(
+                subject_path=["dup_ref_dir"],
+                name="dup_sql",
+                sql="SELECT 1",
+                summary="first",
+                search_text="first",
+            )
+        )
+        result = await svc.create_reference_sql(
+            ReferenceSQLInput(
+                subject_path=["dup_ref_dir"],
+                name="dup_sql",
+                sql="SELECT 2",
+                summary="second",
+                search_text="second",
+            )
+        )
         assert result.success is False
         assert "already exists" in result.errorMessage
 
@@ -572,10 +655,12 @@ class TestExplorerServiceCreateMetric:
         file_path = metrics_dir / "pre_existing.yml"
         file_path.write_text("metric:\n  name: pre_existing\n")
 
-        result = await svc.create_metric(EditMetricInput(
-            subject_path=["dup_file_dir"],
-            yaml="metric:\n  name: pre_existing\n  type: measure_proxy\n",
-        ))
+        result = await svc.create_metric(
+            EditMetricInput(
+                subject_path=["dup_file_dir"],
+                yaml="metric:\n  name: pre_existing\n  type: measure_proxy\n",
+            )
+        )
         assert result.success is False
         assert "already exists" in result.errorMessage.lower()
 
@@ -669,18 +754,22 @@ class TestExplorerServiceEditKnowledge:
         """edit_knowledge updates an existing knowledge entry."""
         svc = ExplorerService(agent_config=real_agent_config)
         await svc.create_directory(CreateDirectoryInput(subject_path=["edit_kb"]))
-        await svc.create_knowledge(CreateKnowledgeInput(
-            subject_path=["edit_kb"],
-            name="editable_kb",
-            search_text="original",
-            explanation="original explanation",
-        ))
-        result = await svc.edit_knowledge(EditKnowledgeInput(
-            subject_path=["edit_kb", "editable_kb"],
-            name="editable_kb",
-            search_text="updated search",
-            explanation="updated explanation",
-        ))
+        await svc.create_knowledge(
+            CreateKnowledgeInput(
+                subject_path=["edit_kb"],
+                name="editable_kb",
+                search_text="original",
+                explanation="original explanation",
+            )
+        )
+        result = await svc.edit_knowledge(
+            EditKnowledgeInput(
+                subject_path=["edit_kb", "editable_kb"],
+                name="editable_kb",
+                search_text="updated search",
+                explanation="updated explanation",
+            )
+        )
         assert result.success is True
 
 

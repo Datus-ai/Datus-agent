@@ -2,8 +2,6 @@
 
 import argparse
 
-import pytest
-
 from datus.api.service import DatusAPIService, create_app
 
 
@@ -38,7 +36,6 @@ class TestCreateApp:
         args = argparse.Namespace(config="", namespace="default", output_dir="./output", log_level="INFO")
         app = create_app(args)
         # CORS middleware is in the middleware stack
-        middleware_classes = [type(m).__name__ for m in app.user_middleware]
         # FastAPI stores user middleware as Middleware objects
         assert len(app.user_middleware) >= 1
 

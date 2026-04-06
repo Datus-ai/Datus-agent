@@ -26,9 +26,7 @@ class APIServerArgumentParser:
     """Argument parser for Datus API Server."""
 
     def __init__(self):
-        self.parser = argparse.ArgumentParser(
-            description="Datus API Server: FastAPI-based REST API for Datus Agent"
-        )
+        self.parser = argparse.ArgumentParser(description="Datus API Server: FastAPI-based REST API for Datus Agent")
         self._setup_arguments()
 
     def _setup_arguments(self):
@@ -115,7 +113,7 @@ def main():
         logger.error(f"Failed to locate configuration file: {e}")
         sys.exit(1)
 
-    logger.info(f"Starting Datus API Server")
+    logger.info("Starting Datus API Server")
     logger.info(f"  Config: {config_path}")
     logger.info(f"  Namespace: {args.namespace}")
     logger.info(f"  Server: {args.host}:{args.port}")
@@ -138,14 +136,35 @@ def main():
     app = create_app(cli_args)
 
     # Run uvicorn
-    uvicorn.run(
-        app,
-        host=args.host,
-        port=args.port,
-        log_level=args.log_level.lower(),
-        reload=args.reload,
-        workers=args.workers,
-    )
+    if args.reload and args.workers > 1:
+        logger.warning("--reload is incompatible with --workers > 1; using single worker process")
+        args.workers = 1
+
+    if args.reload:
+        # reload requires an import string, not an app instance
+        uvicorn.run(
+            "datus.api.service:app",
+            host=args.host,
+            port=args.port,
+            log_level=args.log_level.lower(),
+            reload=True,
+        )
+    elif args.workers > 1:
+        # multi-worker mode also requires an import string
+        uvicorn.run(
+            "datus.api.service:app",
+            host=args.host,
+            port=args.port,
+            log_level=args.log_level.lower(),
+            workers=args.workers,
+        )
+    else:
+        uvicorn.run(
+            app,
+            host=args.host,
+            port=args.port,
+            log_level=args.log_level.lower(),
+        )
 
 
 if __name__ == "__main__":

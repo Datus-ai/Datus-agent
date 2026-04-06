@@ -5,9 +5,9 @@ This module provides endpoints for initialization status checks
 and supported provider/database type listings.
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 
-from datus.api.deps import get_datus_service
+from datus.api.deps import ServiceDep
 from datus.api.models.base_models import Result
 from datus.api.models.config_models import (
     DatabaseTypeInfo,
@@ -15,7 +15,6 @@ from datus.api.models.config_models import (
     LLMProviderInfo,
     LLMProvidersData,
 )
-from datus.api.services.datus_service import DatusService
 
 router = APIRouter(prefix="/api/v1", tags=["configuration"])
 
@@ -27,7 +26,7 @@ router = APIRouter(prefix="/api/v1", tags=["configuration"])
     description="Get the current project's agent configuration (models, namespace, agentic_nodes)",
 )
 async def get_agent_config_endpoint(
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
 ) -> Result[dict]:
     """Return the project's loaded AgentConfig summary."""
     config = svc.agent_config

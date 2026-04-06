@@ -156,6 +156,7 @@ class TestChatTaskManagerBehavior:
         assert result is True
         mock_asyncio_task.cancel.assert_called_once()
 
+
 @pytest.mark.asyncio
 class TestStartChat:
     """Tests for start_chat — background task creation."""
@@ -411,13 +412,18 @@ class TestCreateNodeInput:
 
     def test_node_input_with_db_context(self, real_agent_config, mock_llm_create):
         """_create_node_input passes database context through."""
-        from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
 
         manager = ChatTaskManager()
         node = manager._create_node(real_agent_config, "gen_sql", "test")
         result = manager._create_node_input(
-            "test", node, [], [], [],
-            catalog="cat", database="db", db_schema="schema",
+            "test",
+            node,
+            [],
+            [],
+            [],
+            catalog="cat",
+            database="db",
+            db_schema="schema",
         )
         assert result.catalog == "cat"
         assert result.database == "db"

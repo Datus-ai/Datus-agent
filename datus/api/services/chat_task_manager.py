@@ -8,6 +8,7 @@ the client can reconnect and resume from where it left off.
 """
 
 import asyncio
+import copy
 import uuid
 from datetime import datetime
 from typing import AsyncGenerator, Dict, List, Optional
@@ -80,6 +81,9 @@ class ChatTask:
         self.consumer_offset: int = 0
 
 
+COMPLETED_TASK_TTL = 300  # seconds to keep completed tasks for resume
+
+
 class ChatTaskManager:
     """Per-project manager for active chat tasks.
 
@@ -88,6 +92,7 @@ class ChatTaskManager:
 
     def __init__(self) -> None:
         self._tasks: Dict[str, ChatTask] = {}
+        self._completed_tasks: Dict[str, ChatTask] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -103,6 +108,8 @@ class ChatTaskManager:
             :param sub_agent_id: builtin name or custom sub-agent DB ID
         Raises ``ValueError`` if a task is already running for the session.
         """
+        # Clone config to avoid cross-request mutation of shared AgentConfig
+        agent_config = copy.deepcopy(agent_config)
         _fill_database_context(
             agent_config,
             catalog=request.catalog,
@@ -152,7 +159,7 @@ class ChatTaskManager:
         return any(t.status == "running" for t in self._tasks.values())
 
     def get_task(self, session_id: str) -> Optional[ChatTask]:
-        return self._tasks.get(session_id)
+        return self._tasks.get(session_id) or self._completed_tasks.get(session_id)
 
     async def consume_events(self, task: ChatTask, start_from: Optional[int] = None) -> AsyncGenerator[SSEEvent, None]:
         """Yield events from *task*'s buffer.
@@ -167,13 +174,14 @@ class ChatTaskManager:
             cursor = max(task.consumer_offset - 1, 0)
 
         while True:
+            ping_event = None
             async with task.condition:
                 while cursor >= len(task.events) and task.status == "running":
                     try:
                         await asyncio.wait_for(task.condition.wait(), timeout=HEARTBEAT_INTERVAL)
                     except asyncio.TimeoutError:
                         if cursor >= len(task.events) and task.status == "running":
-                            yield SSEEvent(
+                            ping_event = SSEEvent(
                                 id=-1,
                                 event="ping",
                                 data=SSEPingData(),
@@ -181,6 +189,10 @@ class ChatTaskManager:
                             )
                 new_events = task.events[cursor:]
                 is_done = task.status != "running"
+
+            # Yield outside the lock to avoid blocking producers
+            if ping_event is not None:
+                yield ping_event
 
             for event in new_events:
                 yield event
@@ -205,6 +217,7 @@ class ChatTaskManager:
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
         self._tasks.clear()
+        self._completed_tasks.clear()
 
     # ------------------------------------------------------------------
     # Background loop (full agentic loop implementation)
@@ -362,6 +375,9 @@ class ChatTaskManager:
             async with task.condition:
                 task.condition.notify_all()
             self._tasks.pop(session_id, None)
+            # Keep completed task for resume within TTL
+            self._completed_tasks[session_id] = task
+            self._purge_expired_completed()
 
     async def _push_event(self, task: ChatTask, event: SSEEvent) -> None:
         """Append an event to the task buffer and notify consumers."""
@@ -369,6 +385,15 @@ class ChatTaskManager:
         async with task.condition:
             task.events.append(event)
             task.condition.notify_all()
+
+    def _purge_expired_completed(self) -> None:
+        """Remove completed tasks older than COMPLETED_TASK_TTL."""
+        now = datetime.now()
+        expired = [
+            sid for sid, t in self._completed_tasks.items() if (now - t.created_at).total_seconds() > COMPLETED_TASK_TTL
+        ]
+        for sid in expired:
+            self._completed_tasks.pop(sid, None)
 
     # ------------------------------------------------------------------
     # Node factory

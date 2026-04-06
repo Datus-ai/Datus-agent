@@ -1,6 +1,5 @@
 """Tests for datus.api.main — CLI argument parsing for datus-api command."""
 
-import argparse
 import sys
 from unittest.mock import patch
 

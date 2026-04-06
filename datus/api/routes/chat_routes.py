@@ -13,12 +13,12 @@ asyncio.Task so that client disconnects do not cancel the computation.
 import json
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, HTTPException, Path, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from datus.api.constants import BUILTIN_SUBAGENTS
-from datus.api.deps import get_datus_service
+from datus.api.deps import ServiceDep
 from datus.api.models.base_models import Result
 from datus.api.models.chat_models import ToolResultData, ToolResultInput
 from datus.api.models.cli_models import (
@@ -29,7 +29,6 @@ from datus.api.models.cli_models import (
     StreamChatInput,
     UserInteractionInput,
 )
-from datus.api.services.datus_service import DatusService
 
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 
@@ -42,7 +41,7 @@ class ResumeChatInput(BaseModel):
 
     session_id: str = Field(..., description="Session ID to reconnect to")
     source: Optional[str] = Field(None, description="chat source, web/vscode")
-    from_event_id: Optional[int] = Field(None, description="Event cursor to resume from; omit to auto-resume")
+    from_event_id: Optional[int] = Field(None, ge=0, description="Event cursor to resume from; omit to auto-resume")
 
 
 class StopChatInput(BaseModel):
@@ -62,7 +61,7 @@ class StopChatInput(BaseModel):
 )
 async def stream_chat(
     request: StreamChatInput,
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
 ):
     sub_agent_id = request.subagent_id
 
@@ -88,7 +87,7 @@ async def stream_chat(
 )
 async def resume_chat(
     request: ResumeChatInput,
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
 ):
     task_manager = svc.task_manager
     task = task_manager.get_task(request.session_id)
@@ -117,7 +116,7 @@ async def resume_chat(
 )
 async def stop_chat(
     request: StopChatInput,
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
 ) -> Result[dict]:
     stopped = await svc.task_manager.stop_task(request.session_id)
     if stopped:
@@ -140,7 +139,7 @@ async def stop_chat(
 )
 async def compact_chat_session(
     session_id: Annotated[str, Path(description="Session ID to compact")],
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
 ) -> Result[CompactSessionData]:
     return await svc.chat.compact_session(CompactSessionInput(session_id=session_id))
 
@@ -152,7 +151,7 @@ async def compact_chat_session(
     description="List all chat sessions",
 )
 async def list_sessions(
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
 ) -> Result[ChatSessionData]:
     return svc.chat.list_sessions()
 
@@ -165,7 +164,7 @@ async def list_sessions(
 )
 async def delete_session(
     session_id: Annotated[str, Path(description="Session ID to delete")],
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
 ) -> Result[ChatSessionData]:
     return svc.chat.delete_session(session_id)
 
@@ -180,8 +179,8 @@ async def delete_session(
     description="Get full conversation messages for a chat session",
 )
 async def get_chat_history(
+    svc: ServiceDep,
     session_id: str = Query(..., description="Session ID to retrieve history for"),
-    svc: DatusService = Depends(get_datus_service),
 ) -> Result[ChatHistoryData]:
     return svc.chat.get_history(session_id)
 
@@ -197,7 +196,7 @@ async def get_chat_history(
 )
 async def submit_user_interaction(
     request: UserInteractionInput,
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
 ) -> Result[dict]:
     task_manager = svc.task_manager
     task = task_manager.get_task(request.session_id)
@@ -235,7 +234,7 @@ async def submit_user_interaction(
 )
 async def submit_tool_result(
     request: ToolResultInput,
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
 ) -> Result[ToolResultData]:
     """Receive tool execution result from frontend."""
     task_manager = svc.task_manager

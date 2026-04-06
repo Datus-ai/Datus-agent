@@ -9,13 +9,12 @@ API routes for Agent endpoints.
 - /agent/tools: list all valid tool categories
 """
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Query
 
-from datus.api.deps import get_datus_service
+from datus.api.deps import ServiceDep
 from datus.api.models.agent_models import CreateAgentInput, EditAgentInput
 from datus.api.models.base_models import Result
 from datus.api.services.agent_service import VALID_TOOL_METHODS, AgentService
-from datus.api.services.datus_service import DatusService
 
 router = APIRouter(prefix="/api/v1", tags=["agent"])
 
@@ -46,8 +45,8 @@ async def get_agent_use_tools(
     description="Get configuration details for a specific agent by name",
 )
 async def get_agent(
+    svc: ServiceDep,
     name: str = Query(..., description="Agent name"),
-    svc: DatusService = Depends(get_datus_service),
 ) -> Result[dict]:
     """Return agent configuration matching IAgentInfo."""
     agent_service = AgentService()
@@ -67,7 +66,7 @@ async def get_agent(
     description="Get list of all available agents (builtin + custom sub-agents)",
 )
 async def list_agents(
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
 ) -> Result[dict]:
     """List all agents available for this project."""
     agent_service = AgentService()
@@ -85,7 +84,7 @@ async def list_agents(
 )
 async def create_agent(
     request: CreateAgentInput,
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
 ) -> Result[dict]:
     """Create a new custom sub-agent."""
     agent_service = AgentService()
@@ -106,7 +105,7 @@ async def create_agent(
 )
 async def edit_agent(
     request: EditAgentInput,
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
 ) -> Result[dict]:
     """Edit an existing custom sub-agent."""
     agent_service = AgentService()

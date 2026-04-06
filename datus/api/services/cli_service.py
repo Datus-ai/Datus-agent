@@ -2,7 +2,6 @@
 Service for handling CLI Command operations.
 """
 
-import logging
 import time
 from datetime import datetime
 from typing import Any, Dict, Optional
@@ -47,8 +46,9 @@ from datus.schemas.action_history import (
 from datus.tools.db_tools.db_manager import DBManager
 from datus.tools.func_tool.context_search import ContextSearchTools
 from datus.tools.output_tools.output import OutputTool
+from datus.utils.loggings import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class CLIService:

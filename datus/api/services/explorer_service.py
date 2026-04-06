@@ -84,8 +84,6 @@ class ExplorerService:
                 If successful, error_message is None
                 If failed, semantic_file_path is empty string
         """
-        import os
-
         from datus.storage.semantic_model.store import SemanticModelRAG
 
         try:
@@ -166,7 +164,6 @@ class ExplorerService:
         Returns:
             error_message if failed, None if successful
         """
-        import os
         import shutil
         import tempfile
 
@@ -1409,5 +1406,3 @@ class ExplorerService:
                 errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
                 errorMessage=str(e),
             )
-
-

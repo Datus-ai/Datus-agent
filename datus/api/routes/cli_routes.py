@@ -4,9 +4,9 @@ API routes for CLI Command Type endpoints.
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Path
 
-from datus.api.deps import get_datus_service
+from datus.api.deps import ServiceDep
 from datus.api.models.base_models import Result
 from datus.api.models.cli_models import (
     ExecuteContextData,
@@ -18,7 +18,6 @@ from datus.api.models.cli_models import (
     InternalCommandData,
     InternalCommandInput,
 )
-from datus.api.services.datus_service import DatusService
 
 router = APIRouter(prefix="/api/v1", tags=["cli"])
 
@@ -31,7 +30,7 @@ router = APIRouter(prefix="/api/v1", tags=["cli"])
 )
 async def execute_sql(
     request: ExecuteSQLInput,
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
 ) -> Result[ExecuteSQLData]:
     """Execute SQL query directly."""
     return svc.cli.execute_sql(request)
@@ -45,7 +44,7 @@ async def execute_sql(
 )
 async def execute_tool(
     tool_name: Annotated[str, Path(description="Name of the tool to execute")],
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
     request: ExecuteToolInput = None,
 ) -> Result[ExecuteToolData]:
     """Execute tool command."""
@@ -64,7 +63,7 @@ async def execute_tool(
 )
 async def execute_context(
     context_type: Annotated[str, Path(description="Type of context command")],
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
     request: ExecuteContextInput = None,
 ) -> Result[ExecuteContextData]:
     """Execute context command."""
@@ -83,7 +82,7 @@ async def execute_context(
 )
 async def execute_internal_command(
     command: Annotated[str, Path(description="Internal command name")],
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
     request: InternalCommandInput = None,
 ) -> Result[InternalCommandData]:
     """Execute internal command."""

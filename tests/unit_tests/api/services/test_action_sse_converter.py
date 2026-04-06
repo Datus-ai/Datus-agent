@@ -2,8 +2,6 @@
 
 from datetime import datetime, timedelta
 
-import pytest
-
 from datus.api.models.cli_models import SSEDataType
 from datus.api.services.action_sse_converter import (
     _build_error_content,

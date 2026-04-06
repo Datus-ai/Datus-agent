@@ -4,16 +4,15 @@ API routes for Database Management endpoints.
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Query
 
-from datus.api.deps import get_datus_service
+from datus.api.deps import ServiceDep
 from datus.api.models.base_models import Result
 from datus.api.models.database_models import (
     DatabasesData,
     ListDatabasesData,
     ListDatabasesInput,
 )
-from datus.api.services.datus_service import DatusService
 
 router = APIRouter(prefix="/api/v1", tags=["databases"])
 
@@ -32,12 +31,12 @@ INCLUDE_SYS_SCHEMAS_QUERY = Query(False, description="Include system schemas")
     description="List available catalogs",
 )
 async def list_catalogs(
+    svc: ServiceDep,
     datasource_id: Optional[str] = DATASOURCE_QUERY,
     catalog_name: Optional[str] = CATALOG_NAME_QUERY,
     database_name: Optional[str] = DATABASE_NAME_QUERY,
     schema_name: Optional[str] = SCHEMA_NAME_QUERY,
     include_sys_schemas: bool = INCLUDE_SYS_SCHEMAS_QUERY,
-    svc: DatusService = Depends(get_datus_service),
 ) -> Result[DatabasesData]:
     """List available databases."""
     request = ListDatabasesInput(

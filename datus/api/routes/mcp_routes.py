@@ -4,16 +4,15 @@ API routes for MCP (Model Context Protocol) endpoints.
 
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Path, Query
 
-from datus.api.deps import get_datus_service
+from datus.api.deps import ServiceDep
 from datus.api.models.base_models import Result
 from datus.api.models.mcp_models import (
     AddServerInput,
     CallToolInput,
     ToolFilterInput,
 )
-from datus.api.services.datus_service import DatusService
 
 router = APIRouter(prefix="/api/v1/mcp", tags=["mcp"])
 
@@ -33,7 +32,7 @@ APPLY_FILTER_QUERY = Query(True, description="Whether to apply tool filtering")
     description="List all MCP servers with optional filtering by type",
 )
 async def list_servers(
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
     server_type: Optional[str] = SERVER_TYPE_QUERY,
 ) -> Result[Dict[str, Any]]:
     """List all MCP servers."""
@@ -48,7 +47,7 @@ async def list_servers(
 )
 async def add_server(
     server_config: AddServerInput,
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
 ) -> Result[Dict[str, Any]]:
     """Add a new MCP server."""
     return svc.mcp.add_server(server_config)
@@ -61,7 +60,7 @@ async def add_server(
     description="Remove an MCP server configuration",
 )
 async def remove_server(
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
     server_name: str = REMOVE_SERVER_NAME_PATH,
 ) -> Result[Dict[str, Any]]:
     """Remove an MCP server."""
@@ -75,7 +74,7 @@ async def remove_server(
     description="Check connectivity status of an MCP server",
 )
 async def check_connectivity(
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
     server_name: str = SERVER_NAME_CHECK_PATH,
 ) -> Result[Dict[str, Any]]:
     """Check server connectivity status."""
@@ -89,7 +88,7 @@ async def check_connectivity(
     description="List tools available on an MCP server",
 )
 async def list_tools(
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
     server_name: str = SERVER_NAME_PATH,
     apply_filter: bool = APPLY_FILTER_QUERY,
 ) -> Result[Dict[str, Any]]:
@@ -105,7 +104,7 @@ async def list_tools(
 )
 async def call_tool(
     request: CallToolInput,
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
     server_name: str = SERVER_NAME_PATH,
     tool_name: str = TOOL_NAME_PATH,
 ) -> Result[Dict[str, Any]]:
@@ -120,7 +119,7 @@ async def call_tool(
     description="Get tool filter configuration for an MCP server",
 )
 async def get_tool_filter(
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
     server_name: str = SERVER_NAME_PATH,
 ) -> Result[Dict[str, Any]]:
     """Get tool filter configuration."""
@@ -135,7 +134,7 @@ async def get_tool_filter(
 )
 async def set_tool_filter(
     filter_config: ToolFilterInput,
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
     server_name: str = SERVER_NAME_PATH,
 ) -> Result[Dict[str, Any]]:
     """Set tool filter configuration."""
@@ -149,7 +148,7 @@ async def set_tool_filter(
     description="Remove tool filter configuration from an MCP server",
 )
 async def remove_tool_filter(
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
     server_name: str = SERVER_NAME_PATH,
 ) -> Result[Dict[str, Any]]:
     """Remove tool filter configuration."""

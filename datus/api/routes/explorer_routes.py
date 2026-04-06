@@ -2,9 +2,9 @@
 API routes for Explorer endpoints.
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 
-from datus.api.deps import get_datus_service
+from datus.api.deps import ServiceDep
 from datus.api.models.base_models import Result
 from datus.api.models.explorer_models import (
     CreateDirectoryInput,
@@ -20,7 +20,6 @@ from datus.api.models.explorer_models import (
     SubjectListData,
     SubjectPathInput,
 )
-from datus.api.services.datus_service import DatusService
 
 router = APIRouter(prefix="/api/v1", tags=["explorer"])
 
@@ -35,7 +34,7 @@ router = APIRouter(prefix="/api/v1", tags=["explorer"])
     description="Get nested subject tree structure with directories, metrics, and reference SQL items",
 )
 async def get_subject_list(
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
 ) -> Result[SubjectListData]:
     """Get subject tree."""
     return await svc.explorer.get_subject_list()
@@ -49,7 +48,7 @@ async def get_subject_list(
 )
 async def create_directory(
     request: CreateDirectoryInput,
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
 ) -> Result[dict]:
     """Create directory."""
     return await svc.explorer.create_directory(request)
@@ -63,7 +62,7 @@ async def create_directory(
 )
 async def rename_subject(
     request: RenameSubjectInput,
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
 ) -> Result[dict]:
     """Rename/move subject."""
     return await svc.explorer.rename_subject(request)
@@ -77,7 +76,7 @@ async def rename_subject(
 )
 async def delete_subject(
     request: DeleteSubjectInput,
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
 ) -> Result[dict]:
     """Delete subject."""
     return await svc.explorer.delete_subject(request)
@@ -91,7 +90,7 @@ async def delete_subject(
 )
 async def get_metric(
     request: SubjectPathInput,
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
 ) -> Result[MetricInfo]:
     """Get metric info."""
     return await svc.explorer.get_metric(request.subject_path)
@@ -105,7 +104,7 @@ async def get_metric(
 )
 async def get_reference_sql(
     request: SubjectPathInput,
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
 ) -> Result[ReferenceSQLInfo]:
     """Get reference SQL."""
     return await svc.explorer.get_reference_sql(request.subject_path)
@@ -119,7 +118,7 @@ async def get_reference_sql(
 )
 async def create_reference_sql(
     request: ReferenceSQLInput,
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
 ) -> Result[dict]:
     """Create reference SQL."""
     return await svc.explorer.create_reference_sql(request)
@@ -133,7 +132,7 @@ async def create_reference_sql(
 )
 async def edit_reference_sql(
     request: ReferenceSQLInput,
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
 ) -> Result[dict]:
     """Edit reference SQL."""
     return await svc.explorer.edit_reference_sql(request)
@@ -147,7 +146,7 @@ async def edit_reference_sql(
 )
 async def create_metric(
     request: EditMetricInput,
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
 ) -> Result[dict]:
     """Create metric from YAML."""
     return await svc.explorer.create_metric(request)
@@ -161,7 +160,7 @@ async def create_metric(
 )
 async def edit_metric(
     request: EditMetricInput,
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
 ) -> Result[dict]:
     """Edit metric YAML."""
     return await svc.explorer.edit_metric(request)
@@ -178,7 +177,7 @@ async def edit_metric(
 )
 async def create_knowledge(
     request: CreateKnowledgeInput,
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
 ) -> Result[dict]:
     """Create knowledge."""
     return await svc.explorer.create_knowledge(request)
@@ -192,7 +191,7 @@ async def create_knowledge(
 )
 async def get_knowledge(
     request: SubjectPathInput,
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
 ) -> Result[KnowledgeInfo]:
     """Get knowledge."""
     return await svc.explorer.get_knowledge(request.subject_path)
@@ -206,7 +205,7 @@ async def get_knowledge(
 )
 async def edit_knowledge(
     request: EditKnowledgeInput,
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
 ) -> Result[dict]:
     """Edit knowledge."""
     return await svc.explorer.edit_knowledge(request)

@@ -44,8 +44,8 @@ VALID_TOOL_METHODS: dict[str, set[str]] = {
 
 VALID_TOOL_CATEGORIES = set(VALID_TOOL_METHODS.keys())
 
-# Built-in sub-agents available to all projects
-BUILTIN_SUBAGENTS: dict[str, str] = {
+# Built-in sub-agents available to all projects (descriptions keyed by name)
+BUILTIN_SUBAGENT_DESCRIPTIONS: dict[str, str] = {
     "gen_sql": "Generate SQL queries",
     "gen_report": "Generate reports",
     "gen_semantic_model": "Generate semantic models",
@@ -53,6 +53,9 @@ BUILTIN_SUBAGENTS: dict[str, str] = {
     "gen_sql_summary": "Generate SQL summaries",
     "gen_ext_knowledge": "Generate external knowledge",
 }
+
+# Re-export for backward compatibility
+BUILTIN_SUBAGENTS = BUILTIN_SUBAGENT_DESCRIPTIONS
 
 # Tool reference for each agent type
 SUBAGENT_TOOL_REFERENCE: dict[str, list[str]] = {
@@ -280,6 +283,16 @@ class AgentService:
             return version
         return self._prompt_manager.get_latest_version(template_base)
 
+    @staticmethod
+    def _sanitize_path_component(value: str) -> str:
+        """Sanitize a string for safe use as a path component (no traversal)."""
+        # Take only the basename to strip any directory separators
+        safe = Path(value.replace(" ", "_")).name
+        # Reject empty or dot-only names
+        if not safe or safe in (".", ".."):
+            raise ValueError(f"Invalid path component: {value!r}")
+        return safe
+
     def _copy_prompt_template(
         self,
         agent_type: str,
@@ -289,16 +302,19 @@ class AgentService:
     ) -> None:
         """Copy the builtin prompt template for the agent type to the workspace template dir."""
         template_base = self._TYPE_TO_TEMPLATE.get(agent_type, "gen_sql_system")
-        safe_name = agent_name.replace(" ", "_")
+        safe_name = self._sanitize_path_component(agent_name)
         try:
             source_path = self._prompt_manager._get_template_path(template_base)
         except FileNotFoundError:
             logger.warning(f"Builtin template '{template_base}' not found, skipping copy")
             return
 
+        safe_version = self._sanitize_path_component(version) if version else version
         template_dir = Path(agent_config.home) / "template"
         os.makedirs(template_dir, exist_ok=True)
-        target_file = template_dir / f"{safe_name}_system_{version}.j2"
+        target_file = template_dir / f"{safe_name}_system_{safe_version}.j2"
+        if not target_file.resolve().is_relative_to(template_dir.resolve()):
+            raise ValueError(f"Path escapes template directory: {target_file}")
         if not target_file.exists():
             content = source_path.read_text(encoding="utf-8")
             target_file.write_text(content, encoding="utf-8")
@@ -313,13 +329,14 @@ class AgentService:
     ) -> str:
         """Read prompt template content. Checks workspace dir first, falls back to builtin."""
         template_base = self._TYPE_TO_TEMPLATE.get(agent_type, "gen_sql_system")
-        safe_name = agent_name.replace(" ", "_")
+        safe_name = self._sanitize_path_component(agent_name)
         resolved = self._resolve_template_version(template_base, version)
 
         if resolved:
+            safe_resolved = self._sanitize_path_component(resolved)
             # Try workspace template first
             template_dir = Path(agent_config.home) / "template"
-            target_file = template_dir / f"{safe_name}_system_{resolved}.j2"
+            target_file = template_dir / f"{safe_name}_system_{safe_resolved}.j2"
             try:
                 if target_file.exists():
                     return target_file.read_text(encoding="utf-8")
@@ -345,11 +362,13 @@ class AgentService:
         """Write prompt template content to the project's template file."""
         if not content:
             return
-        safe_name = agent_name.replace(" ", "_")
-        resolved = version or "1.0"
+        safe_name = self._sanitize_path_component(agent_name)
+        resolved = self._sanitize_path_component(version or "1.0")
         template_dir = Path(agent_config.home) / "template"
         os.makedirs(template_dir, exist_ok=True)
         target_file = template_dir / f"{safe_name}_system_{resolved}.j2"
+        if not target_file.resolve().is_relative_to(template_dir.resolve()):
+            raise ValueError(f"Path escapes template directory: {target_file}")
         target_file.write_text(content, encoding="utf-8")
         logger.info(f"Saved prompt template: {target_file}")
 

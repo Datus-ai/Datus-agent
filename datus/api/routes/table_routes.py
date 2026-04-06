@@ -2,9 +2,11 @@
 API routes for Table and SemanticModel endpoints.
 """
 
-from fastapi import APIRouter, Depends, Query
+import asyncio
 
-from datus.api.deps import get_datus_service
+from fastapi import APIRouter, Query
+
+from datus.api.deps import ServiceDep
 from datus.api.models.base_models import Result
 from datus.api.models.table_models import (
     GetSemanticModelData,
@@ -12,7 +14,6 @@ from datus.api.models.table_models import (
     SemanticModelInput,
     ValidateSemanticModelData,
 )
-from datus.api.services.datus_service import DatusService
 
 router = APIRouter(prefix="/api/v1", tags=["table"])
 
@@ -27,14 +28,14 @@ router = APIRouter(prefix="/api/v1", tags=["table"])
     description="Get detailed information about a table including columns, indexes, and row count",
 )
 async def get_table_detail(
+    svc: ServiceDep,
     table: str = Query(
         ...,
         description="Full table name e.g. 'production_db.public.frpm' or 'db.schema.table'",
     ),
-    svc: DatusService = Depends(get_datus_service),
 ) -> Result[GetTableDetailData]:
     """Get table detail."""
-    return svc.database.get_table_schema(table)
+    return await asyncio.to_thread(svc.database.get_table_schema, table)
 
 
 # ========== SemanticModel Endpoints ==========
@@ -47,14 +48,14 @@ async def get_table_detail(
     description="Get SemanticModel YAML configuration for a specific table",
 )
 async def get_semantic_model(
+    svc: ServiceDep,
     table: str = Query(
         ...,
         description="Full table name e.g. 'production_db.public.frpm' or 'db.schema.table'",
     ),
-    svc: DatusService = Depends(get_datus_service),
 ) -> Result[GetSemanticModelData]:
     """Get SemanticModel YAML."""
-    return svc.database.get_semantic_model(table)
+    return await asyncio.to_thread(svc.database.get_semantic_model, table)
 
 
 @router.post(
@@ -65,7 +66,7 @@ async def get_semantic_model(
 )
 async def save_semantic_model(
     request: SemanticModelInput,
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
 ) -> Result[dict]:
     """Save SemanticModel YAML."""
     return await svc.database.save_semantic_model(request)
@@ -79,7 +80,7 @@ async def save_semantic_model(
 )
 async def validate_semantic_model(
     request: SemanticModelInput,
-    svc: DatusService = Depends(get_datus_service),
+    svc: ServiceDep,
 ) -> Result[ValidateSemanticModelData]:
     """Validate SemanticModel YAML."""
     return await svc.database.validate_semantic_model(request)

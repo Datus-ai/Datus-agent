@@ -1,8 +1,8 @@
 """FastAPI dependency injection — plugin-based auth + DatusService cache."""
 
-from typing import Optional
+from typing import Annotated, Optional
 
-from fastapi import Request
+from fastapi import Depends, Request
 
 from datus.api.auth.context import AppContext
 from datus.api.auth.provider import AuthProvider
@@ -58,3 +58,6 @@ async def get_datus_service(request: Request) -> DatusService:
         return DatusService(agent_config=agent_config, project_id=ctx.project_id)
 
     return await _service_cache.get_or_create(ctx.project_id, _factory)
+
+
+ServiceDep = Annotated[DatusService, Depends(get_datus_service)]

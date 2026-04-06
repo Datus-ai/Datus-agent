@@ -2,7 +2,6 @@
 Service for handling Database Management operations.
 """
 
-import logging
 import os
 from datetime import datetime
 from typing import List, Optional
@@ -46,7 +45,6 @@ class DatabaseService:
         Args:
             agent_config: Datus agent configuration
         """
-        self.logger = logging.getLogger(__name__)
         self.agent_config = agent_config
 
         self.db_manager = DBManager(agent_config.namespaces)
@@ -82,7 +80,7 @@ class DatabaseService:
                     db_config = list(namespace_config.values())[0]
                     db_type = db_config.type.value if hasattr(db_config.type, "value") else str(db_config.type)
         except Exception as e:
-            self.logger.warning(f"Failed to get db type from config: {e}")
+            logger.warning(f"Failed to get db type from config: {e}")
 
         return db_type, target_db
 
@@ -94,7 +92,7 @@ class DatabaseService:
                 self.current_db_connector = connector
                 self.current_database = connector.database_name or db_name
             except Exception as e:
-                self.logger.warning(f"Failed to initialize database connection: {e}")
+                logger.warning(f"Failed to initialize database connection: {e}")
                 self.current_db_connector = None
                 self.current_database = None
 
@@ -135,9 +133,7 @@ class DatabaseService:
             if not connector.test_connection():
                 return [_disconnected(connector.database_name)]
         except Exception:
-            import traceback
-
-            traceback.print_exc()
+            logger.exception("Connection test failed for %s", connector.database_name)
             return [_disconnected(connector.database_name)]
 
         try:
@@ -212,7 +208,7 @@ class DatabaseService:
             return db_infos
 
         except Exception as e:
-            self.logger.warning(f"Failed to enumerate databases for {connector.database_name}: {e}")
+            logger.warning(f"Failed to enumerate databases for {connector.database_name}: {e}")
             return [_disconnected(connector.database_name)]
 
     def list_databases(self, request: ListDatabasesInput) -> Result[ListDatabasesData]:
@@ -258,7 +254,7 @@ class DatabaseService:
             return Result(success=True, data=data)
 
         except Exception as e:
-            self.logger.error(f"Failed to list databases: {e}")
+            logger.error(f"Failed to list databases: {e}")
             return Result(
                 success=False,
                 errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
@@ -349,7 +345,7 @@ class DatabaseService:
                 )
 
         except Exception as e:
-            self.logger.error(f"Failed to get table schema: {e}")
+            logger.error(f"Failed to get table schema: {e}")
             return Result(
                 success=False,
                 errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
@@ -413,7 +409,7 @@ class DatabaseService:
             return Result[GetSemanticModelData](success=True, data=GetSemanticModelData(yaml=yaml_content))
 
         except Exception as e:
-            self.logger.error(f"Failed to get semantic model: {e}")
+            logger.error(f"Failed to get semantic model: {e}")
             return Result[GetSemanticModelData](
                 success=False,
                 errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
@@ -440,11 +436,11 @@ class DatabaseService:
             )
 
         # Check if validation passed
-        if validation_result.data and not validation_result.data.validation.valid:
+        if validation_result.data and not validation_result.data.valid:
             return Result[dict](
                 success=False,
                 errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                errorMessage="; ".join(validation_result.data.validation.invalid_message or []),
+                errorMessage="; ".join(validation_result.data.invalid_message or []),
             )
 
         # Step 2: Get semantic file path
