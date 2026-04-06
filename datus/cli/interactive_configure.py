@@ -433,7 +433,7 @@ class InteractiveConfigure:
             model_class = getattr(module, model_class_name)
             llm = model_class(model_config)
 
-            response = llm.chat_completions("Say hello in 5 words")
+            response = llm.generate("Say hello in 5 words")
             if response:
                 return True, ""
             return False, "Empty response from model"
