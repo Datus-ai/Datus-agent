@@ -21,7 +21,6 @@ if __package__ is None:
 
 from datus import __version__
 from datus.agent.agent import Agent
-from datus.cli.interactive_init import InteractiveInit
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.schemas.node_models import SqlTask
 from datus.utils.exceptions import setup_exception_handler
@@ -54,10 +53,18 @@ def create_parser() -> argparse.ArgumentParser:
     # Create subparsers for different commands, inheriting global options
     subparsers = parser.add_subparsers(dest="action", help="Action to perform")
 
-    # init command
+    # configure command — LLM + database + workspace setup
+    subparsers.add_parser(
+        "configure",
+        help="Configure LLM, database connections, and workspace settings",
+        parents=[global_parser],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
+    # init command — project workspace initialization (AGENTS.md)
     subparsers.add_parser(
         "init",
-        help="Interactive setup wizard for basic configuration",
+        help="Initialize project workspace (generate AGENTS.md)",
         parents=[global_parser],
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -521,11 +528,19 @@ def main():
         parser.print_help()
         return 1
 
-    # Handle init command separately as it doesn't require existing configuration
+    # configure command — set up LLM + database (replaces old init config part)
+    if args.action == "configure":
+        configure_logging(args.debug, console_output=False)
+        from datus.cli.interactive_configure import InteractiveConfigure
+
+        return InteractiveConfigure().run()
+
+    # init command — generate AGENTS.md workspace (requires configured LLM)
     if args.action == "init":
         configure_logging(args.debug, console_output=False)
-        init = InteractiveInit()
-        return init.run()
+        from datus.cli.init_workspace import InitWorkspace
+
+        return InitWorkspace(args).run()
 
     if args.action == "tutorial":
         configure_logging(args.debug, console_output=False)
