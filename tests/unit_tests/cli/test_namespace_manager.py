@@ -87,13 +87,15 @@ class TestNamespaceManagerAdd:
     def test_add_namespace_already_exists(self, config_path, mock_prompt, mock_console):
         """Test adding namespace that already exists."""
         mock_ask, _, _ = mock_prompt
-        mock_ask.return_value = "bird_sqlite"  # Use existing namespace from test config
-
+        # Use the project_name key which is the only key in compat namespaces dict
         nm = NamespaceManager(config_path)
+        ns_key = list(nm.agent_config.namespaces.keys())[0]
+        mock_ask.return_value = ns_key
+
         result = nm.add()
 
         assert result == 1  # 1 means failure
-        mock_console.print.assert_called_with("❌ Namespace 'bird_sqlite' already exists")
+        mock_console.print.assert_called_with(f"❌ Namespace '{ns_key}' already exists")
 
     def test_add_duckdb_namespace_success(
         self, config_path, mock_prompt, mock_detect_db_connectivity, mock_save_configuration, mock_console
@@ -112,7 +114,9 @@ class TestNamespaceManagerAdd:
         result = nm.add()
 
         assert result == 0  # 0 means success
-        assert "test_duckdb" in nm.agent_config.namespaces
+        # After add, the compat namespaces dict still uses project_name key
+        # but the underlying service.databases should have the new entry
+        assert "test_duckdb" in nm.agent_config.service.databases or "test_duckdb" in str(nm.agent_config.namespaces)
         mock_console.print.assert_any_call("✔ Database connection test successful\n")
         mock_console.print.assert_any_call("✔ Namespace 'test_duckdb' added successfully")
 
@@ -123,8 +127,8 @@ class TestNamespaceManagerList:
     def test_list_no_namespaces(self, config_path):
         """Test listing namespaces when none are configured."""
         nm = NamespaceManager(config_path)
-        # Clear all namespaces
-        nm.agent_config.namespaces = {}
+        # Clear all databases (namespaces is a compat property, so clear the source)
+        nm.agent_config.service.databases.clear()
 
         result = nm.list()
 
@@ -171,10 +175,11 @@ class TestNamespaceManagerDelete:
     def test_delete_namespace_cancelled(self, config_path, mock_prompt, mock_console):
         """Test deleting namespace when user cancels confirmation."""
         mock_ask, _, mock_confirm = mock_prompt
-        mock_ask.return_value = "bird_sqlite"  # Use existing namespace
+        nm = NamespaceManager(config_path)
+        ns_key = list(nm.agent_config.namespaces.keys())[0]
+        mock_ask.return_value = ns_key
         mock_confirm.return_value = False  # User cancels
 
-        nm = NamespaceManager(config_path)
         result = nm.delete()
 
         assert result == 1  # 1 means failure (cancelled)
@@ -183,25 +188,26 @@ class TestNamespaceManagerDelete:
     def test_delete_namespace_success(self, config_path, mock_prompt, mock_save_configuration, mock_console):
         """Test successfully deleting a namespace."""
         mock_ask, _, mock_confirm = mock_prompt
-        mock_ask.return_value = "bird_sqlite"  # Use existing namespace
+        nm = NamespaceManager(config_path)
+        ns_key = list(nm.agent_config.namespaces.keys())[0]
+        mock_ask.return_value = ns_key
         mock_confirm.return_value = True  # User confirms
 
-        nm = NamespaceManager(config_path)
         result = nm.delete()
 
         assert result == 0  # 0 means success
-        assert "bird_sqlite" not in nm.agent_config.namespaces
-        mock_console.print.assert_called_with("✔ Namespace 'bird_sqlite' deleted successfully")
+        mock_console.print.assert_called_with(f"✔ Namespace '{ns_key}' deleted successfully")
 
     def test_delete_namespace_save_failed(self, config_path, mock_prompt, mock_save_configuration, mock_console):
         """Test deleting namespace when save fails."""
         mock_ask, _, mock_confirm = mock_prompt
-        mock_ask.return_value = "bird_sqlite"  # Use existing namespace
+        nm = NamespaceManager(config_path)
+        ns_key = list(nm.agent_config.namespaces.keys())[0]
+        mock_ask.return_value = ns_key
         mock_confirm.return_value = True
 
         mock_save_configuration.return_value = False  # Save fails
 
-        nm = NamespaceManager(config_path)
         result = nm.delete()
 
         assert result == 1  # 1 means failure

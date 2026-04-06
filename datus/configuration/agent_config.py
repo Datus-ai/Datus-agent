@@ -491,8 +491,8 @@ class AgentConfig:
 
     @property
     def current_namespace(self) -> str:
-        """Backward-compat: returns project_name for DBManager namespace key compat."""
-        return self._project_name
+        """Backward-compat: returns current_database as namespace key for DBManager compat."""
+        return self._current_database
 
     @property
     def max_export_lines(self) -> int:
@@ -523,14 +523,12 @@ class AgentConfig:
 
     @property
     def namespaces(self) -> Dict[str, Dict[str, DbConfig]]:
-        """Backward-compat: wraps service.databases as a single-namespace dict.
+        """Backward-compat: wraps service.databases in old namespace structure.
 
-        Returns {current_database: {db_name: DbConfig}} so downstream code
-        that reads self.namespaces[current_namespace] still works.
-        Legacy callers that iterate all namespaces get all databases under one key.
+        Each database entry becomes its own "namespace" with a single db inside,
+        so DBManager only initializes one connection per namespace key.
         """
-        # Expose all databases under a synthetic namespace key matching project_name
-        return {self._project_name: self.service.databases}
+        return {db_name: {db_name: db_config} for db_name, db_config in self.service.databases.items()}
 
     def _init_service_config(self, databases_config: Dict[str, Any]):
         """Parse service.databases section into ServiceConfig.databases."""

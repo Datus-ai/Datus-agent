@@ -262,10 +262,11 @@ class TestCmdListNamespaces:
         assert len(output) > 0
 
     def test_current_namespace_highlighted(self, cli):
-        cli.agent_config.current_namespace = "test_ns"
+        cli.agent_config.current_database = "california_schools"
         cli._cmd_list_namespaces()
         output = cli.console.file.getvalue()
-        assert "test_ns" in output
+        # Each database is listed as its own namespace entry
+        assert "california_schools" in output
 
 
 # ---------------------------------------------------------------------------
@@ -293,11 +294,12 @@ class TestCmdSwitchNamespace:
         mock_conn.schema_name = ""
         cli.db_manager.first_conn_with_name.return_value = ("newdb", mock_conn)
 
+        # Switch to the california_schools database (namespace key in compat dict)
         with patch.object(cli, "reset_session"):
-            cli._cmd_switch_namespace("test_ns")
+            cli._cmd_switch_namespace("california_schools")
 
         output = cli.console.file.getvalue()
-        assert "test_ns" in output
+        assert "california_schools" in output
 
 
 # ---------------------------------------------------------------------------

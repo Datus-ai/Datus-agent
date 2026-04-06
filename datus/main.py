@@ -532,7 +532,13 @@ def main():
         tutorial = BenchmarkTutorial(args.config)
         return tutorial.run()
 
-    if args.action in ("service", "namespace"):
+    if args.action == "service":
+        configure_logging(args.debug, console_output=False)
+        from datus.cli.service_manager import ServiceManager
+
+        return ServiceManager(args.config or "").run(args.command)
+
+    if args.action == "namespace":
         configure_logging(args.debug, console_output=False)
         namespace_manager = NamespaceManager(args.config or "")
         return namespace_manager.run(args.command)

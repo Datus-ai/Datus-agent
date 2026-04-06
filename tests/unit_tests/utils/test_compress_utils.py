@@ -122,7 +122,11 @@ def agent_config():
 
 @pytest.fixture
 def db_manager(agent_config: AgentConfig) -> DBManager:
-    return db_manager_instance(agent_config.namespaces)
+    # Only pass sqlite/duckdb databases to avoid connector-not-installed errors
+    sqlite_dbs = {
+        name: {name: cfg} for name, cfg in agent_config.service.databases.items() if cfg.type in ("sqlite", "duckdb")
+    }
+    return db_manager_instance(sqlite_dbs)
 
 
 def test_compress(db_manager: DBManager):
@@ -145,7 +149,7 @@ ORDER BY
         ELSE 4
     END,
     name;"""
-    connector: BaseSqlConnector = db_manager.get_conn("bird_sqlite", "card_games")
+    connector: BaseSqlConnector = db_manager.get_conn("card_games", "card_games")
     tool = DBFuncTool(connector)
     result = tool.read_query(sql)
 
