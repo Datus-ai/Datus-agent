@@ -15,6 +15,7 @@ Bootstrap (metadata KB, reference SQL) is now separate via `datus bootstrap-kb`.
 """
 
 import logging
+import os
 from getpass import getpass
 from pathlib import Path
 from typing import Optional
@@ -185,13 +186,31 @@ class InteractiveConfigure:
         if providers[provider].get("auth_type") == "subscription":
             return self._configure_claude_subscription(provider, providers[provider])
 
-        # API key input
-        api_key = getpass("- Enter your API key: ")
+        provider_info = providers[provider]
+
+        # API key: detect env var, offer ${ENV_VAR} as default
+        api_key_env = provider_info.get("api_key_env", "")
+        env_value = os.environ.get(api_key_env, "") if api_key_env else ""
+
+        if env_value:
+            self.console.print(f"  [dim]Detected ${{{api_key_env}}} in environment[/dim]")
+            use_env = Confirm.ask(f"- Use ${{{api_key_env}}} as API key?", default=True)
+            if use_env:
+                api_key = f"${{{api_key_env}}}"
+            else:
+                api_key = getpass("- Enter your API key: ")
+        elif api_key_env:
+            self.console.print(f"  [dim]Hint: set ${{{api_key_env}}} env var to avoid entering key manually[/dim]")
+            api_key = Prompt.ask(
+                f"- API key (or env var like ${{{api_key_env}}})",
+                default=f"${{{api_key_env}}}",
+            )
+        else:
+            api_key = getpass("- Enter your API key: ")
+
         if not api_key.strip():
             self.console.print("API key cannot be empty")
             return False
-
-        provider_info = providers[provider]
         base_url = Prompt.ask("- Enter your base URL", default=provider_info["base_url"])
 
         models = provider_info.get("models", [])

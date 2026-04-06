@@ -5,6 +5,7 @@ providers:
   openai:
     type: openai
     base_url: https://api.openai.com/v1
+    api_key_env: OPENAI_API_KEY
     default_model: gpt-4.1
     models:
       - gpt-5.2
@@ -17,6 +18,7 @@ providers:
   deepseek:
     type: deepseek
     base_url: https://api.deepseek.com
+    api_key_env: DEEPSEEK_API_KEY
     default_model: deepseek-chat
     models:
       - deepseek-chat
@@ -25,6 +27,7 @@ providers:
   claude:
     type: claude
     base_url: https://api.anthropic.com
+    api_key_env: ANTHROPIC_API_KEY
     default_model: claude-sonnet-4-5
     models:
       - claude-haiku-4-5
@@ -36,6 +39,7 @@ providers:
   kimi:
     type: kimi
     base_url: https://api.moonshot.cn/v1
+    api_key_env: KIMI_API_KEY
     default_model: kimi-k2.5
     models:
       - kimi-k2.5
@@ -46,6 +50,7 @@ providers:
   qwen:
     type: openai
     base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api_key_env: DASHSCOPE_API_KEY
     default_model: qwen3-max
     models:
       - qwen3-max
@@ -56,6 +61,7 @@ providers:
   gemini:
     type: gemini
     base_url: https://generativelanguage.googleapis.com/v1beta
+    api_key_env: GEMINI_API_KEY
     default_model: gemini-2.5-flash
     models:
       - gemini-2.5-flash
