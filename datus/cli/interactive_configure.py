@@ -392,10 +392,12 @@ class InteractiveConfigure:
         try:
             from datus.configuration.agent_config import AgentConfig
 
+            agent_kwargs = dict(self.config["agent"])
+            agent_kwargs.pop("nodes", None)
             test_config = AgentConfig(
                 nodes={},
                 skip_init_dirs=True,
-                **self.config["agent"],
+                **agent_kwargs,
             )
             from datus.models.base import LLMBaseModel
 
