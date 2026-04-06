@@ -584,9 +584,9 @@ class AgentConfig:
             self.service.databases[entry_name] = child_config
 
         if not any_db_path:
-            raise DatusException(
-                code=ErrorCode.COMMON_CONFIG_ERROR,
-                message=(f"No available database files found for '{base_name}', path_pattern: `{path_pattern}`"),
+            logger.warning(
+                f"No available database files found for '{base_name}', path_pattern: `{path_pattern}`. "
+                f"Skipping this entry. Ensure the path exists or remove it from agent.yml."
             )
 
     def _init_permissions_config(self, permissions_raw: Dict[str, Any]):
