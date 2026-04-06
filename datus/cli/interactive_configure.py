@@ -326,14 +326,45 @@ class InteractiveConfigure:
         from datus.tools.db_tools import connector_registry
 
         available_adapters = connector_registry.list_available_adapters()
-        if not available_adapters:
-            self.console.print("No database adapters available.")
+
+        # Build choice list: installed adapters + known installable ones
+        installed_types = set(available_adapters.keys())
+        installable_types = {"snowflake", "mysql", "postgresql", "starrocks", "bigquery", "clickhouse"}
+        not_installed = sorted(installable_types - installed_types)
+
+        all_choices = {}
+        for t in sorted(installed_types):
+            all_choices[t] = t
+        for t in not_installed:
+            all_choices[t] = f"{t} (not installed — will install datus-{t})"
+
+        if not all_choices:
+            self.console.print("No database types available.")
             return False
 
-        db_types = sorted(available_adapters.keys())
-        default_type = "duckdb" if "duckdb" in db_types else db_types[0]
+        default_type = "duckdb" if "duckdb" in all_choices else list(all_choices.keys())[0]
         self.console.print("- Database type:")
-        db_type = select_choice(self.console, {t: t for t in db_types}, default=default_type)
+        db_type = select_choice(self.console, all_choices, default=default_type)
+
+        # Install plugin if not available
+        if db_type not in installed_types:
+            package = f"datus-{db_type}"
+            self.console.print(f"[dim]Installing {package}...[/dim]")
+            if not self._install_plugin(package):
+                return False
+            # Reload registry after install — re-discover entry points
+            import importlib
+
+            import datus_db_core.registry
+
+            importlib.reload(datus_db_core.registry)
+            from datus_db_core import connector_registry as fresh_registry
+
+            available_adapters = fresh_registry.list_available_adapters()
+            if db_type not in available_adapters:
+                self.console.print(f"[red]Adapter '{db_type}' still not available after installing {package}.[/red]")
+                return False
+            self.console.print(f"[green]{package} installed successfully.[/green]\n")
 
         adapter_metadata = available_adapters[db_type]
         config_fields = adapter_metadata.get_config_fields()
@@ -484,6 +515,33 @@ class InteractiveConfigure:
             )
         else:
             self.console.print("\nRun `datus init` to initialize your project.")
+
+    # ── Plugin install ─────────────────────────────────────────────
+
+    def _install_plugin(self, package: str) -> bool:
+        """Install a database adapter plugin via pip/uv."""
+        import shutil
+        import subprocess
+
+        # Prefer uv if available, fall back to pip
+        uv_path = shutil.which("uv")
+        if uv_path:
+            cmd = [uv_path, "pip", "install", package]
+        else:
+            cmd = ["pip", "install", package]
+
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            if result.returncode != 0:
+                self.console.print(f"[red]Install failed: {result.stderr.strip()}[/red]")
+                return False
+            return True
+        except subprocess.TimeoutExpired:
+            self.console.print("[red]Install timed out.[/red]")
+            return False
+        except Exception as e:
+            self.console.print(f"[red]Install failed: {e}[/red]")
+            return False
 
     # ── LLM connectivity test ──────────────────────────────────────
 
