@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import copy
 import multiprocessing
 import os
 import platform
@@ -65,6 +66,23 @@ class EmbeddingModel:
         self.is_model_failed = False
         self.model_error_message = ""
         self.model_initialization_attempted = False
+
+    def __deepcopy__(self, memo: dict) -> "EmbeddingModel":
+        """Support deepcopy by sharing the loaded model and creating a fresh lock."""
+        new = object.__new__(type(self))
+        memo[id(self)] = new
+        new.registry_name = self.registry_name
+        new.model_name = self.model_name
+        new._dim_size = self._dim_size
+        new.device = self.device
+        new._model = self._model  # share the heavy model object
+        new.batch_size = self.batch_size
+        new.openai_config = copy.deepcopy(self.openai_config, memo)
+        new.lock = Lock()
+        new.is_model_failed = self.is_model_failed
+        new.model_error_message = self.model_error_message
+        new.model_initialization_attempted = self.model_initialization_attempted
+        return new
 
     def to_dict(self) -> dict[str, Any]:
         return {
