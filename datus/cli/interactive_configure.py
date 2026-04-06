@@ -50,7 +50,7 @@ def _prompt_with_back(label: str, default: str = "", password: bool = False) -> 
 
         session = PromptSession(key_bindings=kb)
         suffix = f" ({default})" if default else ""
-        result = session.prompt(f"{label}{suffix} [ESC=back]: ", is_password=password)
+        result = session.prompt(f"{label}{suffix}: ", is_password=password)
         if result == _BACK:
             return _BACK
         return result.strip() if result.strip() else default
