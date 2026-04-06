@@ -955,13 +955,8 @@ class AtReferenceCompleter(Completer):
 
         raw_config = self.agent_config.sub_agent_config(first_token)
         if raw_config:
-            try:
-                sub_config = SubAgentConfig.model_validate(raw_config)
-                if sub_config.has_scoped_context() and not sub_config.is_in_namespace(
-                    self.agent_config.current_namespace
-                ):
-                    return ""
-            except (ValueError, TypeError):
+            sub_config = SubAgentConfig.model_validate(raw_config)
+            if sub_config.has_scoped_context() and not sub_config.is_in_namespace(self.agent_config.current_database):
                 return ""
         return first_token
 
@@ -1069,7 +1064,7 @@ class SubagentCompleter(Completer):
                 if name != "chat" and name not in SYS_SUB_AGENTS:  # Exclude default chat and avoid duplicates
                     sub_namespace = sub_config.get("scoped_context", {}).get("namespace")
                     # Can only access sub-agent under the current namespace
-                    if not sub_namespace or sub_namespace == self.agent_config.current_namespace:
+                    if not sub_namespace or sub_namespace == self.agent_config.current_database:
                         subagents.append(name)
         return subagents
 

@@ -16,7 +16,7 @@ from datus.schemas.subworkflow_node_models import SubworkflowInput, SubworkflowR
 def make_agent_config(has_workflow=True, workflow_name="my_wf"):
     cfg = MagicMock()
     cfg.namespaces = {}
-    cfg.current_namespace = "test"
+    cfg.current_database = "test"
     cfg.nodes = {}
     if has_workflow:
         cfg.custom_workflows = {workflow_name: {}}

@@ -105,7 +105,7 @@ class ExploreAgenticNode(AgenticNode):
         """Setup database tools (all are read-only)."""
         try:
             db_manager = db_manager_instance(self.agent_config.namespaces)
-            conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
+            conn = db_manager.get_conn(self.agent_config.current_database, self.agent_config.current_database)
             self.db_func_tool = DBFuncTool(
                 conn,
                 agent_config=self.agent_config,
@@ -158,7 +158,7 @@ class ExploreAgenticNode(AgenticNode):
             "has_context_search_tools": bool(self.context_search_tools),
             "has_filesystem_tools": bool(self.filesystem_func_tool),
             "has_date_parsing_tools": bool(self.date_parsing_tools),
-            "namespace": getattr(self.agent_config, "current_namespace", None) if self.agent_config else None,
+            "namespace": getattr(self.agent_config, "current_database", None) if self.agent_config else None,
             "workspace_root": self._resolve_workspace_root(),
             "conversation_summary": conversation_summary,
             "current_date": get_default_current_date(None),

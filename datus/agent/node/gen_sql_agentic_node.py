@@ -206,7 +206,7 @@ class GenSQLAgenticNode(AgenticNode):
             database_name: The name of the database to connect to
         """
         db_manager = db_manager_instance(self.agent_config.namespaces)
-        conn = db_manager.get_conn(self.agent_config.current_namespace, database_name)
+        conn = db_manager.get_conn(self.agent_config.current_database, database_name)
         self.db_func_tool = DBFuncTool(
             conn,
             agent_config=self.agent_config,
@@ -267,7 +267,7 @@ class GenSQLAgenticNode(AgenticNode):
         """Setup database tools."""
         try:
             db_manager = db_manager_instance(self.agent_config.namespaces)
-            conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
+            conn = db_manager.get_conn(self.agent_config.current_database, self.agent_config.current_database)
             self.db_func_tool = DBFuncTool(
                 conn,
                 agent_config=self.agent_config,
@@ -387,7 +387,7 @@ class GenSQLAgenticNode(AgenticNode):
             elif tool_type == "db_tools":
                 if not self.db_func_tool:
                     db_manager = db_manager_instance(self.agent_config.namespaces)
-                    conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
+                    conn = db_manager.get_conn(self.agent_config.current_database, self.agent_config.current_database)
                     self.db_func_tool = DBFuncTool(
                         conn,
                         agent_config=self.agent_config,
@@ -454,7 +454,7 @@ class GenSQLAgenticNode(AgenticNode):
                 logger.warning("Database config not found")
                 return None
 
-            metricflow_server = MCPServer.get_metricflow_mcp_server(namespace=self.agent_config.current_namespace)
+            metricflow_server = MCPServer.get_metricflow_mcp_server(namespace=self.agent_config.current_database)
             if metricflow_server:
                 logger.info(f"Added metricflow_mcp MCP server for database: {db_config.database}")
                 return metricflow_server
@@ -1173,7 +1173,7 @@ def prepare_template_context(
     # Add namespace and workspace info
     if agent_config:
         context["agent_config"] = agent_config
-        context["namespace"] = getattr(agent_config, "current_namespace", None)
+        context["namespace"] = getattr(agent_config, "current_database", None)
         context["db_name"] = getattr(agent_config, "current_database", None)
         context["workspace_root"] = workspace_root or agent_config.workspace_root
     logger.debug(f"Prepared template context: {context}")

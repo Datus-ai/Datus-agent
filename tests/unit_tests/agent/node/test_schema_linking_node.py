@@ -26,7 +26,7 @@ from datus.schemas.schema_linking_node_models import SchemaLinkingInput, SchemaL
 def _make_agent_config(rag_path="/tmp/nonexistent_rag"):
     cfg = MagicMock()
     cfg.schema_linking_rate = "fast"
-    cfg.current_namespace = "test_ns"
+    cfg.current_database = "test_ns"
     cfg.namespaces = {"test_ns": {}}
     cfg.rag_storage_path.return_value = rag_path
     cfg.agentic_nodes = {}

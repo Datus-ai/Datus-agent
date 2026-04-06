@@ -262,7 +262,7 @@ def _make_args(**kwargs):
 
 def _make_agent_config(namespace="test_ns"):
     cfg = MagicMock()
-    cfg.current_namespace = namespace
+    cfg.current_database = namespace
     cfg.namespaces = {namespace: {"type": "sqlite", "dbs": []}}
     cfg.workflow_plan = "reflection"
     cfg.get_trajectory_run_dir.return_value = "/tmp/traj"
@@ -552,7 +552,7 @@ def _make_args_ext(**kwargs):
 
 def _make_agent_config_ext(namespace="test_ns"):
     cfg = MagicMock()
-    cfg.current_namespace = namespace
+    cfg.current_database = namespace
     cfg.namespaces = {namespace: {"type": "sqlite", "dbs": []}}
     cfg.workflow_plan = "reflection"
     cfg.get_trajectory_run_dir.return_value = "/tmp/traj"
@@ -1251,7 +1251,7 @@ class TestBenchmarkHelpers:
         namespace_dir = tmp_path / "test_ns"
         namespace_dir.mkdir()
         agent.global_config.output_dir = str(tmp_path)
-        agent.global_config.current_namespace = "test_ns"
+        agent.global_config.current_database = "test_ns"
 
         with patch("datus.agent.agent.safe_rmtree", return_value=True):
             agent._cleanup_benchmark_output_paths(str(tmp_path / "bm"))
@@ -1264,7 +1264,7 @@ class TestBenchmarkHelpers:
     def test_cleanup_benchmark_output_paths_gold_not_present(self, tmp_path):
         agent = _make_agent_ext()
         agent.global_config.output_dir = str(tmp_path)
-        agent.global_config.current_namespace = "test_ns"
+        agent.global_config.current_database = "test_ns"
 
         # No gold dir, no error
         agent._cleanup_benchmark_output_paths(str(tmp_path / "bm"))

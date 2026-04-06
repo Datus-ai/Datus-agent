@@ -27,8 +27,6 @@ from prompt_toolkit.styles import Style, merge_styles, style_from_pygments_cls
 from rich.console import Console
 from rich.table import Table
 
-from datus.cli.cli_context import CliContext
-
 if TYPE_CHECKING:
     from datus.agent.workflow_runner import WorkflowRunner
 
@@ -72,7 +70,6 @@ class DatusCLI:
         """Initialize the CLI with the given arguments."""
         self.args = args
         self.interactive = interactive
-        self.scope = getattr(args, "session_scope", None)
         self.console = Console(log_path=False)
         self.console_column_width = 16
         self.selected_catalog_path = ""
@@ -123,6 +120,7 @@ class DatusCLI:
         self.actions = ActionHistoryManager()
 
         # Initialize CLI context for state management
+        from datus.cli.cli_context import CliContext
 
         self.cli_context = CliContext(
             current_db_name=getattr(args, "database", ""),
@@ -463,7 +461,7 @@ class DatusCLI:
         table = Table(show_header=True, header_style="bold green")
         table.add_column("Namespace")
         for namespace in self.agent_config.namespaces.keys():
-            if self.agent_config.current_namespace == namespace:
+            if self.agent_config.current_database == namespace:
                 table.add_row(f"[bold green]{namespace}[/]")
             else:
                 table.add_row(namespace)
@@ -572,20 +570,20 @@ class DatusCLI:
     def _cmd_switch_namespace(self, args: str):
         if args.strip() == "":
             self._cmd_list_namespaces()
-        elif self.agent_config.current_namespace == args.strip():
+        elif self.agent_config.current_database == args.strip():
             self.console.print(
                 (
-                    f"[yellow]It's now under the namespace [bold]{self.agent_config.current_namespace}[/]"
+                    f"[yellow]It's now under the namespace [bold]{self.agent_config.current_database}[/]"
                     " and doesn't need to be switched[/]"
                 )
             )
             self._cmd_list_namespaces()
             return
         else:
-            self.agent_config.current_namespace = args.strip()
-            name, self.db_connector = self.db_manager.first_conn_with_name(self.agent_config.current_namespace)
+            self.agent_config.current_database = args.strip()
+            name, self.db_connector = self.db_manager.first_conn_with_name(self.agent_config.current_database)
             db_name = self.db_connector.database_name
-            db_logic_name = name or self.agent_config.current_namespace
+            db_logic_name = name or self.agent_config.current_database
             self.cli_context.update_database_context(
                 catalog=self.db_connector.catalog_name,
                 db_name=db_name,
@@ -594,7 +592,7 @@ class DatusCLI:
             )
             self.reset_session()
             self.chat_commands.update_chat_node_tools()
-            self.console.print(f"[bold green]Namespace changed to: {self.agent_config.current_namespace}[/]")
+            self.console.print(f"[bold green]Namespace changed to: {self.agent_config.current_database}[/]")
 
     def _parse_command(self, text: str) -> Tuple[CommandType, str, str]:
         """
@@ -643,11 +641,8 @@ class DatusCLI:
                     # Regular chat: /message (first part is not a valid subagent)
                     return CommandType.CHAT, "", message
             else:
-                # Single token or empty: check if it's a subagent name
-                if parts and parts[0] in self.available_subagents:
-                    return CommandType.CHAT, parts[0], "Start interactive session"
-                # Regular chat: /message (or just "/" with no content)
-                return CommandType.CHAT, "", message or "/"
+                # Regular chat: /message
+                return CommandType.CHAT, "", message
 
         # Internal commands (.prefix)
         if text.startswith("."):
@@ -742,13 +737,6 @@ class DatusCLI:
                         self.console.print(f"[dim]Update {result.sql_return} rows in {exec_time:.2f} seconds[/]")
                     elif result.sql_return:
                         self.console.print(f"[dim]SQL execution successful in {exec_time:.2f} seconds[/]")
-                        if parse_sql_type(sql, self.db_connector.dialect) == SQLType.CONTENT_SET:
-                            self.cli_context.update_database_context(
-                                catalog=self.db_connector.catalog_name or "",
-                                db_name=self.db_connector.database_name or "",
-                                schema=self.db_connector.schema_name or "",
-                            )
-
                         # Update action with success
                         self.actions.update_action_by_id(
                             sql_action.action_id,
@@ -1083,15 +1071,15 @@ Type '.help' for a list of commands or '.exit' to quit.
         Args:
             timeout_seconds: Maximum time to wait for connection (default: 30 seconds)
         """
-        current_namespace = self.agent_config.current_namespace
+        current_database = self.agent_config.current_database
 
         def _do_init_connection():
             """Inner function to perform connection initialization."""
             if not self.cli_context.current_db_name:
-                db_name, connector = self.db_manager.first_conn_with_name(current_namespace)
-                return db_name or connector.database_name, connector
+                db_name, connector = self.db_manager.first_conn_with_name(current_database)
+                return db_name, connector
             else:
-                connector = self.db_manager.get_conn(current_namespace, self.cli_context.current_db_name)
+                connector = self.db_manager.get_conn(current_database, self.cli_context.current_db_name)
                 return self.cli_context.current_db_name, connector
 
         try:
@@ -1103,10 +1091,10 @@ Type '.help' for a list of commands or '.exit' to quit.
                 except FuturesTimeoutError:
                     self.console.print(
                         f"[bold red]Error:[/] Database connection timed out after {timeout_seconds} seconds. "
-                        f"Please check if the database server for namespace '{current_namespace}' is running "
+                        f"Please check if the database server for namespace '{current_database}' is running "
                         "and accessible."
                     )
-                    logger.error(f"Database connection timeout for namespace: {current_namespace}")
+                    logger.error(f"Database connection timeout for namespace: {current_database}")
                     self.db_connector = None
                     return
 
@@ -1121,7 +1109,7 @@ Type '.help' for a list of commands or '.exit' to quit.
                 self.cli_context.update_database_context(
                     catalog=self.db_connector.catalog_name,
                     db_name=self.db_connector.database_name,
-                    db_logic_name=db_name or self.db_connector.database_name or current_namespace,
+                    db_logic_name=db_name or self.db_connector.database_name or current_database,
                 )
 
             # Test the connection with timeout
@@ -1133,14 +1121,14 @@ Type '.help' for a list of commands or '.exit' to quit.
                 except FuturesTimeoutError:
                     self.console.print(
                         f"[bold red]Error:[/] Connection test timed out after {timeout_seconds} seconds. "
-                        f"The database server for namespace '{current_namespace}' may be unresponsive."
+                        f"The database server for namespace '{current_database}' may be unresponsive."
                     )
-                    logger.error(f"Connection test timeout for namespace: {current_namespace}")
+                    logger.error(f"Connection test timeout for namespace: {current_database}")
                     self.db_connector = None
 
         except Exception as e:
             self.console.print(f"[bold red]Error:[/] Failed to connect to database: {str(e)}")
-            logger.error(f"Database connection failed for namespace {current_namespace}: {e}")
+            logger.error(f"Database connection failed for namespace {current_database}: {e}")
             self.db_connector = None
 
     def _create_workflow_runner(self) -> WorkflowRunner:

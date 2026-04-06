@@ -20,7 +20,7 @@ def _make_agent_config(namespace="test_ns", adapter_type_config=None):
     """Create a mock AgentConfig."""
     config = MagicMock()
     config.namespace = namespace
-    config.current_namespace = namespace
+    config.current_database = namespace
     # By default, no adapter-specific config on agent_config
     if adapter_type_config is not None:
         for key, val in adapter_type_config.items():
@@ -194,9 +194,9 @@ class TestInitFromAdapter:
 
         # agent_config must NOT have metricflow_config so code falls through
         # to the metadata.config_class branch. Use spec to restrict attributes.
-        config = MagicMock(spec=["namespace", "current_namespace", "namespaces", "home"])
+        config = MagicMock(spec=["namespace", "current_database", "namespaces", "home"])
         config.namespace = "ns1"
-        config.current_namespace = "ns1"
+        config.current_database = "ns1"
         config.namespaces = {}
         config.home = None
 
@@ -231,8 +231,8 @@ class TestInitFromAdapter:
     @pytest.mark.asyncio
     @patch("datus.storage.metric.adapter_init.SemanticStorageManager")
     @patch("datus.storage.metric.adapter_init.semantic_adapter_registry")
-    async def test_namespace_from_current_namespace_fallback(self, mock_registry, MockStorageManager):
-        """Should use current_namespace when namespace attr is None."""
+    async def test_namespace_from_current_database_fallback(self, mock_registry, MockStorageManager):
+        """Should use current_database when namespace attr is None."""
         from datus.storage.metric.adapter_init import init_from_adapter
 
         mock_metadata = MagicMock()
@@ -245,9 +245,9 @@ class TestInitFromAdapter:
         MockStorageManager.return_value = mock_manager
 
         # Use spec to prevent auto-generated attributes like dbt_config
-        config = MagicMock(spec=["namespace", "current_namespace", "namespaces", "home"])
+        config = MagicMock(spec=["namespace", "current_database", "namespaces", "home"])
         config.namespace = None
-        config.current_namespace = "fallback_ns"
+        config.current_database = "fallback_ns"
         config.namespaces = {}
         config.home = None
 
@@ -290,9 +290,9 @@ class TestInitFromAdapter:
             "logic_name": "ignore_me_too",
         }
 
-        config = MagicMock(spec=["namespace", "current_namespace", "namespaces", "home"])
+        config = MagicMock(spec=["namespace", "current_database", "namespaces", "home"])
         config.namespace = "ns1"
-        config.current_namespace = "ns1"
+        config.current_database = "ns1"
         config.namespaces = {"ns1": {"default": mock_db_config}}
         config.home = "/home/agent"
 

@@ -17,7 +17,7 @@ from datus.schemas.parallel_node_models import ParallelInput, ParallelResult
 def make_agent_config():
     cfg = MagicMock()
     cfg.namespaces = {}
-    cfg.current_namespace = "test"
+    cfg.current_database = "test"
     cfg.nodes = {}
     cfg.custom_workflows = {}
     return cfg

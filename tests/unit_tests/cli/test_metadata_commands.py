@@ -41,7 +41,7 @@ def _make_cli(db_type=DBType.SQLITE):
 
     # agent_config
     db_cfg = _make_db_config(db_type=db_type)
-    cli.agent_config.current_namespace = "test_ns"
+    cli.agent_config.current_database = "test_ns"
     cli.agent_config.namespaces = {"test_ns": {"mydb": db_cfg}}
     cli.agent_config.db_type = db_type
 
@@ -91,7 +91,7 @@ class TestCmdListDatabases:
         assert any("Empty set" in c for c in calls)
 
     def test_exception_prints_error(self, meta):
-        meta.cli.agent_config.current_namespace = None
+        meta.cli.agent_config.current_database = None
         meta.cli.agent_config.namespaces = {}
         meta.cmd_list_databases()
         meta.cli.console.print.assert_called()

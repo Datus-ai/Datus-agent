@@ -94,7 +94,7 @@ def init_metrics(
         if build_model == "overwrite":
             from datus.storage.backend_holder import create_vector_connection
 
-            db = create_vector_connection(agent_config.current_namespace)
+            db = create_vector_connection(agent_config.current_database)
             try:
                 db.drop_table("metrics", ignore_missing=True)
                 logger.info("Dropped existing metrics table")
@@ -196,14 +196,14 @@ def init_semantic_model(
         if build_mode == "overwrite":
             from datus.storage.backend_holder import create_vector_connection
 
-            db = create_vector_connection(agent_config.current_namespace)
+            db = create_vector_connection(agent_config.current_database)
             try:
                 db.drop_table("semantic_model", ignore_missing=True)
                 logger.info("Dropped existing semantic_model table")
             finally:
                 db.close()
             # Also clear semantic_models/{namespace} directory (YAML files)
-            semantic_yaml_dir = agent_config.path_manager.semantic_model_path(agent_config.current_namespace)
+            semantic_yaml_dir = agent_config.path_manager.semantic_model_path(agent_config.current_database)
             if semantic_yaml_dir.exists() and not safe_rmtree(
                 semantic_yaml_dir, "semantic YAML directory", force=force
             ):

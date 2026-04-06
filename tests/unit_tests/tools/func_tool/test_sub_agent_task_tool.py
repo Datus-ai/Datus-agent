@@ -24,7 +24,6 @@ def mock_agent_config():
     config = Mock(spec=AgentConfig)
     config.db_type = "sqlite"
     config.current_database = "test_db"
-    config.current_namespace = "default"
     config.agentic_nodes = {
         "chat": {"model": "default"},
         "gen_sql": {"model": "default", "system_prompt": "gen_sql", "node_class": "gen_sql"},
@@ -97,7 +96,7 @@ class TestGetAvailableTypes:
     def test_includes_agent_without_node_class(self):
         """Subagent without node_class should still be discovered (defaults to gen_sql)."""
         config = Mock(spec=AgentConfig)
-        config.current_namespace = "default"
+        config.current_database = "default"
         config.agentic_nodes = {
             "chat": {"model": "default"},
             "custom": {"model": "default"},  # no node_class
@@ -110,7 +109,7 @@ class TestGetAvailableTypes:
     def test_excludes_scoped_agent_wrong_namespace(self):
         """Subagent with scoped_context bound to a different namespace should be excluded."""
         config = Mock(spec=AgentConfig)
-        config.current_namespace = "default"
+        config.current_database = "default"
         config.agentic_nodes = {
             "chat": {"model": "default"},
             "scoped_agent": {
@@ -126,7 +125,7 @@ class TestGetAvailableTypes:
     def test_includes_scoped_agent_matching_namespace(self):
         """Subagent with scoped_context matching current namespace should be included."""
         config = Mock(spec=AgentConfig)
-        config.current_namespace = "sales"
+        config.current_database = "sales"
         config.agentic_nodes = {
             "chat": {"model": "default"},
             "scoped_agent": {
@@ -142,7 +141,7 @@ class TestGetAvailableTypes:
     def test_includes_agent_without_scoped_context(self):
         """Subagent without scoped_context should not be filtered by namespace."""
         config = Mock(spec=AgentConfig)
-        config.current_namespace = "default"
+        config.current_database = "default"
         config.agentic_nodes = {
             "chat": {"model": "default"},
             "global_agent": {

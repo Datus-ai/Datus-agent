@@ -26,7 +26,7 @@ class CatalogUpdater:
 
     def __init__(self, agent_config: AgentConfig, datasource_id: Optional[str] = None):
         self._agent_config = agent_config
-        self.datasource_id = datasource_id or agent_config.current_namespace or ""
+        self.datasource_id = datasource_id or agent_config.current_database or ""
         self.semantic_model_storage = get_storage(SemanticModelStorage, "semantic_model", namespace=self.datasource_id)
 
     def _get_all_storages(self) -> List[SemanticModelStorage]:

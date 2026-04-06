@@ -261,7 +261,7 @@ class TestCmdListNamespaces:
         # Should have printed something (the table)
         assert len(output) > 0
 
-    def test_current_namespace_highlighted(self, cli):
+    def test_current_database_highlighted(self, cli):
         cli.agent_config.current_database = "california_schools"
         cli._cmd_list_namespaces()
         output = cli.console.file.getvalue()
@@ -281,7 +281,7 @@ class TestCmdSwitchNamespace:
         mock_list.assert_called_once()
 
     def test_same_namespace_prints_message(self, cli):
-        current_ns = cli.agent_config.current_namespace
+        current_ns = cli.agent_config.current_database
         with patch.object(cli, "_cmd_list_namespaces"):
             cli._cmd_switch_namespace(current_ns)
         output = cli.console.file.getvalue()
@@ -651,11 +651,11 @@ class TestCmdSwitchNamespaceExtended:
         mock_conn.schema_name = ""
         cli.db_manager.first_conn_with_name.return_value = ("test_ns", mock_conn)
 
-        # Patch current_namespace property to return a different value so the
+        # Patch current_database property to return a different value so the
         # "already on this namespace" branch is NOT taken; setter is a no-op.
         with patch.object(
             type(cli.agent_config),
-            "current_namespace",
+            "current_database",
             new_callable=lambda: property(
                 lambda self: "other_ns",
                 lambda self, v: None,
@@ -669,7 +669,7 @@ class TestCmdSwitchNamespaceExtended:
         assert "Namespace changed" in output
 
     def test_same_namespace_both_listed_and_message(self, cli):
-        current = cli.agent_config.current_namespace
+        current = cli.agent_config.current_database
 
         with patch.object(cli, "_cmd_list_namespaces") as mock_list:
             cli._cmd_switch_namespace(current)

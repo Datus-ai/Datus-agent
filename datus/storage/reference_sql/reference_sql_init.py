@@ -105,7 +105,7 @@ async def process_sql_item(
 
         logger.info(f"Generated SQL summary: {sql_summary_file}")
 
-        file_path = agent_config.path_manager.sql_summary_path(agent_config.current_namespace) / sql_summary_file
+        file_path = agent_config.path_manager.sql_summary_path(agent_config.current_database) / sql_summary_file
         import yaml
 
         try:

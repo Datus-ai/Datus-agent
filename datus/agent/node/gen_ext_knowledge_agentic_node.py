@@ -106,7 +106,7 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
         self._last_verification_result: Optional[VerifyResult] = None
         self._verification_attempt_count: int = 0
 
-        self.ext_knowledge_dir = str(agent_config.path_manager.ext_knowledge_path(agent_config.current_namespace))
+        self.ext_knowledge_dir = str(agent_config.path_manager.ext_knowledge_path(agent_config.current_database))
 
         from datus.configuration.node_type import NodeType
 
@@ -159,7 +159,7 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
         # filesystem_tools.edit_file, filesystem_tools.list_directory
         # Chat node uses all available tools by default
         db_manager = db_manager_instance(self.agent_config.namespaces)
-        self.conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
+        self.conn = db_manager.get_conn(self.agent_config.current_database, self.agent_config.current_database)
         self.db_func_tool = DBFuncTool(self.conn, agent_config=self.agent_config)
         self.context_search_tools = ContextSearchTools(self.agent_config)
         if self.db_func_tool:

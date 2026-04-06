@@ -66,7 +66,7 @@ class GenMetricsAgenticNode(AgenticNode):
             if isinstance(agentic_node_config, dict):
                 self.max_turns = agentic_node_config.get("max_turns", 30)
 
-        self.metrics_dir = str(agent_config.path_manager.semantic_model_path(agent_config.current_namespace))
+        self.metrics_dir = str(agent_config.path_manager.semantic_model_path(agent_config.current_database))
 
         from datus.configuration.node_type import NodeType
 

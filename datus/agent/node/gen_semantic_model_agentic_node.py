@@ -67,7 +67,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
             if isinstance(agentic_node_config, dict):
                 self.max_turns = agentic_node_config.get("max_turns", 30)
 
-        self.semantic_model_dir = str(agent_config.path_manager.semantic_model_path(agent_config.current_namespace))
+        self.semantic_model_dir = str(agent_config.path_manager.semantic_model_path(agent_config.current_database))
 
         from datus.configuration.node_type import NodeType
 
@@ -131,7 +131,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
         """Setup database tools."""
         try:
             db_manager = db_manager_instance(self.agent_config.namespaces)
-            conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
+            conn = db_manager.get_conn(self.agent_config.current_database, self.agent_config.current_database)
             self.db_func_tool = DBFuncTool(
                 conn,
                 agent_config=self.agent_config,

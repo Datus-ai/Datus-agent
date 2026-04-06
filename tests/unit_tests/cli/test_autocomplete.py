@@ -84,7 +84,7 @@ class TestSubagentCompleterLoadSubagents:
         real_agent_config.agentic_nodes["local_sub"] = {
             "system_prompt": "local_sub",
             "scoped_context": {
-                "namespace": real_agent_config.current_namespace,
+                "namespace": real_agent_config.current_database,
             },
         }
         completer = SubagentCompleter(real_agent_config)

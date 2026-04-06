@@ -1291,7 +1291,6 @@ class TestDBFuncToolMultiConnector:
     def mock_agent_config(self):
         """Create a mock AgentConfig for multi-connector tests."""
         config = Mock()
-        config.current_namespace = "test_ns"
         config.current_database = "db1"
         # Return multiple databases to trigger multi-connector mode
         config.current_db_configs.return_value = {"db1": {}, "db2": {}}
@@ -1301,7 +1300,6 @@ class TestDBFuncToolMultiConnector:
     def mock_single_db_agent_config(self):
         """Create a mock AgentConfig with single database."""
         config = Mock()
-        config.current_namespace = "test_ns"
         config.current_database = "db1"
         # Return single database to trigger single connector mode
         config.current_db_configs.return_value = {"db1": {}}
@@ -1346,11 +1344,11 @@ class TestDBFuncToolMultiConnector:
 
         # Verify multi-connector mode
         assert tool._db_manager is mock_db_manager
-        assert tool._namespace == "test_ns"
+        assert tool._namespace == "db1"
         assert tool._default_database == "db1"
         assert tool._connector_cache_size == 4
         assert tool._primary_connector is mock_connector
-        mock_db_manager.first_conn.assert_called_once_with("test_ns")
+        mock_db_manager.first_conn.assert_called_once_with("db1")
 
     def test_multi_connector_requires_agent_config(self):
         """Test that multi-connector mode requires agent_config parameter."""
@@ -1521,7 +1519,7 @@ class TestDBFuncToolMultiConnector:
         result = tool.read_query("SELECT * FROM test", database="db2")
 
         assert result.success == 1
-        mock_db_manager.get_conn.assert_called_with("test_ns", "db2")
+        mock_db_manager.get_conn.assert_called_with("db1", "db2")
         mock_connector.execute_query.assert_called_once()
 
 

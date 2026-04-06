@@ -91,10 +91,10 @@ def init_local_schema(
     """
     event_helper = BatchEventHelper(BIZ_NAME, emit)
 
-    logger.info(f"Initializing local schema for namespace: {agent_config.current_namespace}")
-    event_helper.task_started(namespace=agent_config.current_namespace, build_mode=build_mode, table_type=table_type)
+    logger.info(f"Initializing local schema for namespace: {agent_config.current_database}")
+    event_helper.task_started(namespace=agent_config.current_database, build_mode=build_mode, table_type=table_type)
 
-    db_configs = agent_config.namespaces[agent_config.current_namespace]
+    db_configs = agent_config.namespaces[agent_config.current_database]
     if len(db_configs) == 1:
         db_configs = list(db_configs.values())[0]
 
@@ -188,7 +188,7 @@ def init_sqlite_schema(
     event_helper: Optional[BatchEventHelper] = None,
 ):
     database_name = getattr(db_config, "database", "")
-    sql_connector = db_manager.get_conn(agent_config.current_namespace, database_name)
+    sql_connector = db_manager.get_conn(agent_config.current_database, database_name)
     all_schema_tables, all_value_tables = exists_table_value(
         table_lineage_store,
         database_name=database_name,
@@ -253,7 +253,7 @@ def init_duckdb_schema(
     logger.info(
         f"Exists data from vector store {database_name}, tables={len(all_schema_tables)},values={len(all_value_tables)}"
     )
-    sql_connector = db_manager.get_conn(agent_config.current_namespace, database_name)
+    sql_connector = db_manager.get_conn(agent_config.current_database, database_name)
     if table_type == "table" or table_type == "full":
         # Get all tables with DDL
         tables = sql_connector.get_tables_with_ddl(schema_name=schema_name)
@@ -303,7 +303,7 @@ def init_other_three_level_schema(
     schema_name = getattr(db_config, "schema", "")
     catalog_name = catalog_name or getattr(db_config, "catalog", "")
 
-    sql_connector = db_manager.get_conn(agent_config.current_namespace)
+    sql_connector = db_manager.get_conn(agent_config.current_database)
 
     if not database_name and hasattr(sql_connector, "database_name"):
         database_name = getattr(sql_connector, "database_name", "")

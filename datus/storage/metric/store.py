@@ -289,7 +289,7 @@ class MetricRAG:
         from datus.storage.rag_scope import _build_sub_agent_filter
         from datus.storage.registry import get_storage
 
-        self.datasource_id = datasource_id or agent_config.current_namespace or ""
+        self.datasource_id = datasource_id or agent_config.current_database or ""
         self.storage: MetricStorage = get_storage(MetricStorage, "metric", namespace=self.datasource_id)
         self._sub_agent_filter = _build_sub_agent_filter(agent_config, sub_agent_name, self.storage, "metrics")
 

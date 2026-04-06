@@ -159,7 +159,7 @@ class Agent:
     def check_db(self):
         """Validate database connectivity."""
         logger.info("Checking database connectivity")
-        namespace = self.global_config.current_namespace
+        namespace = self.global_config.current_database
         if namespace in self.global_config.namespaces:
             connections = self.db_manager.get_connections(namespace)
             if not connections:
@@ -411,7 +411,7 @@ class Agent:
                     init_dev_schema(
                         self.metadata_store,
                         self.db_manager,
-                        self.global_config.current_namespace,
+                        self.global_config.current_database,
                         benchmark_path,
                         kb_update_strategy,
                         pool_size=pool_size,
@@ -441,7 +441,7 @@ class Agent:
                     # because MetricFlow adapter needs to read YAML files from this directory
                     if not (hasattr(self.args, "from_adapter") and self.args.from_adapter):
                         semantic_yaml_dir = self.global_config.path_manager.semantic_model_path(
-                            self.global_config.current_namespace
+                            self.global_config.current_database
                         )
                         force = self._force_delete
                         if semantic_yaml_dir.exists() and not safe_rmtree(
@@ -491,7 +491,7 @@ class Agent:
                     # because MetricFlow adapter needs to read YAML files from this directory
                     if not (hasattr(self.args, "from_adapter") and self.args.from_adapter):
                         semantic_yaml_dir = self.global_config.path_manager.semantic_model_path(
-                            self.global_config.current_namespace
+                            self.global_config.current_database
                         )
                         force = self._force_delete
                         if semantic_yaml_dir.exists() and not safe_rmtree(
@@ -542,7 +542,7 @@ class Agent:
                 if kb_update_strategy == "overwrite":
                     # Also clear ext_knowledge/{namespace} directory
                     ext_knowledge_dir = self.global_config.path_manager.ext_knowledge_path(
-                        self.global_config.current_namespace
+                        self.global_config.current_database
                     )
                     force = self._force_delete
                     if ext_knowledge_dir.exists() and not safe_rmtree(
@@ -586,7 +586,7 @@ class Agent:
                 if kb_update_strategy == "overwrite":
                     # Also clear sql_summaries/{namespace} directory (YAML files)
                     sql_summary_dir = self.global_config.path_manager.sql_summary_path(
-                        self.global_config.current_namespace
+                        self.global_config.current_database
                     )
                     force = self._force_delete
                     if sql_summary_dir.exists() and not safe_rmtree(
@@ -695,7 +695,7 @@ class Agent:
         self, benchmark_platform: str, target_task_ids: Optional[Set[str]] = None, run_id: Optional[str] = None
     ):
         _, conn = db_manager_instance(self.global_config.namespaces).first_conn_with_name(
-            self.global_config.current_namespace
+            self.global_config.current_database
         )
         self.check_db()
 
@@ -831,11 +831,11 @@ class Agent:
 
     def _cleanup_benchmark_output_paths(self, benchmark_path: str):
         """Clean up previous benchmark execution results to avoid interference."""
-        current_namespace = self.global_config.current_namespace
+        current_database = self.global_config.current_database
 
         # Clean up namespace directory in output directory
         output_dir = self.global_config.output_dir
-        namespace_dir = os.path.join(output_dir, current_namespace)
+        namespace_dir = os.path.join(output_dir, current_database)
         if os.path.exists(namespace_dir):
             logger.info(f"Cleaning up namespace directory: {namespace_dir}")
             try:

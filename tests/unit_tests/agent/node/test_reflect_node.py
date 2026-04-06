@@ -16,7 +16,7 @@ from datus.schemas.node_models import ReflectionInput, ReflectionResult, SQLCont
 def make_agent_config():
     cfg = MagicMock()
     cfg.namespaces = {}
-    cfg.current_namespace = "test"
+    cfg.current_database = "test"
     cfg.nodes = {}
     return cfg
 

@@ -24,7 +24,7 @@ def _make_cli():
     cli = MagicMock()
     cli.console = MagicMock()
     cli.agent_config = MagicMock()
-    cli.agent_config.current_namespace = "test_ns"
+    cli.agent_config.current_database = "test_ns"
     cli.agent_config.agentic_nodes = {}
     cli.available_subagents = set()
     return cli

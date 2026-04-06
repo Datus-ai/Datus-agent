@@ -59,6 +59,9 @@ class GenerationHooks(AgentHooks):
         # Intercept semantic model generation completion
         if tool_name == "end_semantic_model_generation":
             await self._handle_end_semantic_model_generation(result)
+        # Intercept metric generation completion
+        elif tool_name == "end_metric_generation":
+            await self._handle_end_metric_generation(result)
         # Intercept write_file tool and check if it's SQL summary
         elif tool_name == "write_file":
             # Check if this is a SQL summary file by examining tool arguments
@@ -102,6 +105,45 @@ class GenerationHooks(AgentHooks):
         except Exception as e:
             logger.error(f"Error handling end_semantic_model_generation: {e}", exc_info=True)
 
+    async def _handle_end_metric_generation(self, result):
+        """
+        Handle end_metric_generation tool result.
+
+        Args:
+            result: Tool result containing metric_file, optional semantic_model_file, and metric_sqls
+        """
+        try:
+            metric_file, semantic_model_file, metric_sqls = self._extract_metric_generation_result(result)
+
+            if not metric_file:
+                logger.warning(f"Could not extract metric_file from end_metric_generation result: {result}")
+                return
+
+            # Convert relative paths to absolute paths
+            if self.agent_config:
+                base_dir = str(self.agent_config.path_manager.semantic_model_path(self.agent_config.current_database))
+                if metric_file and not os.path.isabs(metric_file):
+                    metric_file = os.path.join(base_dir, metric_file)
+                if semantic_model_file and not os.path.isabs(semantic_model_file):
+                    semantic_model_file = os.path.join(base_dir, semantic_model_file)
+
+            logger.debug(
+                f"Processing metric generation: metric_file={metric_file}, "
+                f"semantic_model_file={semantic_model_file}, metric_sqls={list(metric_sqls.keys())}"
+            )
+
+            if semantic_model_file:
+                # Process both files together for proper association
+                await self._process_metric_with_semantic_model(semantic_model_file, metric_file, metric_sqls)
+            else:
+                # Process metric file alone (semantic model already exists in KB)
+                await self._process_single_file(metric_file, metric_sqls=metric_sqls)
+
+        except GenerationCancelledException:
+            logger.info("Generation workflow cancelled")
+        except Exception as e:
+            logger.error(f"Error handling end_metric_generation: {e}", exc_info=True)
+
     def _extract_filepaths_from_result(self, result) -> list:
         """
         Extract semantic_model_files list from tool result.
@@ -124,6 +166,35 @@ class GenerationHooks(AgentHooks):
                 return filepaths
 
         return []
+
+    def _extract_metric_generation_result(self, result) -> tuple:
+        """
+        Extract metric_file, semantic_model_file, and metric_sqls from tool result.
+
+        Args:
+            result: Tool result (dict or FuncToolResult object)
+
+        Returns:
+            Tuple of (metric_file, semantic_model_file, metric_sqls)
+        """
+        # Debug: log raw result type and content
+        logger.info(f"_extract_metric_generation_result raw result: type={type(result).__name__}, value={result}")
+
+        result_dict = None
+        if isinstance(result, dict):
+            result_dict = result.get("result", {})
+        elif hasattr(result, "result") and hasattr(result, "success"):
+            result_dict = result.result
+
+        if isinstance(result_dict, dict):
+            metric_file = result_dict.get("metric_file", "")
+            semantic_model_file = result_dict.get("semantic_model_file", "")
+            metric_sqls = result_dict.get("metric_sqls", {})
+            logger.info(f"Extracted from end_metric_generation: metric_sqls={metric_sqls}")
+            return metric_file, semantic_model_file, metric_sqls
+
+        logger.warning(f"Could not extract metric_generation_result from: {result}")
+        return "", "", {}
 
     async def _process_single_file(self, file_path: str, metric_sqls: dict = None):
         """
@@ -164,89 +235,64 @@ class GenerationHooks(AgentHooks):
             yaml_content, file_path, "semantic", metric_sqls=metric_sqls, display_content=display_content
         )
 
-    async def _process_metric_with_semantic_model(self, semantic_model_file: str, metric_file: str):
+    async def _process_metric_with_semantic_model(
+        self, semantic_model_file: str, metric_file: str, metric_sqls: dict = None
+    ):
         """
-        Process a metric file together with its paired semantic model file.
+        Process metric file along with its semantic model file.
+        Display both files and sync them together so metrics can reference semantic model data.
 
-        If one file is missing, falls back to processing the other alone via
-        ``_process_single_file``.  If both are present, displays them side-by-side
-        and asks for a single confirmation.
+        Args:
+            semantic_model_file: Path to the semantic model YAML file
+            metric_file: Path to the metric YAML file
+            metric_sqls: Optional dict mapping metric names to generated SQL (from dry_run)
         """
-        sem_exists = os.path.exists(semantic_model_file)
-        met_exists = os.path.exists(metric_file)
-
-        if not sem_exists and not met_exists:
+        # Check if files exist
+        if not os.path.exists(semantic_model_file):
+            logger.warning(f"Semantic model file {semantic_model_file} does not exist")
+            # Still try to process metric file alone
+            if os.path.exists(metric_file):
+                await self._process_single_file(metric_file, metric_sqls=metric_sqls)
             return
 
-        if not sem_exists:
-            await self._process_single_file(metric_file, metric_sqls=None)
-            return
-
-        if not met_exists:
+        if not os.path.exists(metric_file):
+            logger.warning(f"Metric file {metric_file} does not exist")
+            # Still try to process semantic model file alone
             await self._process_single_file(semantic_model_file)
             return
 
-        # Both exist — skip if already processed
+        # Skip if both files have already been processed
         if semantic_model_file in self.processed_files and metric_file in self.processed_files:
+            logger.info("Both files already processed, skipping")
             return
 
-        # Read contents
-        with open(semantic_model_file, "r", encoding="utf-8") as f:
-            sem_content = f.read()
-        with open(metric_file, "r", encoding="utf-8") as f:
-            met_content = f.read()
-
-        if not sem_content or not met_content:
-            return
-
-        await self._get_sync_confirmation_for_pair(semantic_model_file, sem_content, metric_file, met_content)
+        # Mark both files as processed
         self.processed_files.add(semantic_model_file)
         self.processed_files.add(metric_file)
 
-    async def _get_sync_confirmation_for_pair(
-        self,
-        semantic_model_file: str,
-        sem_content: str,
-        metric_file: str,
-        met_content: str,
-    ):
-        """
-        Display semantic model and metric file side-by-side and get user confirmation.
-        """
-        display_content = f"## Semantic Model: {os.path.basename(semantic_model_file)}\n\n"
+        # Read both files
+        with open(semantic_model_file, "r", encoding="utf-8") as f:
+            semantic_content = f.read()
+        with open(metric_file, "r", encoding="utf-8") as f:
+            metric_content = f.read()
+
+        if not semantic_content or not metric_content:
+            logger.warning("Empty content in semantic model or metric file")
+            return
+
+        # Build display content (markdown format) with both files
+        display_content = f"## Generated Semantic Model: {os.path.basename(semantic_model_file)}\n\n"
         display_content += f"*Path: {semantic_model_file}*\n\n"
-        display_content += f"```yaml\n{sem_content}\n```\n\n"
-        display_content += f"## Metric: {os.path.basename(metric_file)}\n\n"
+        display_content += f"```yaml\n{semantic_content}\n```\n\n"
+        display_content += "---\n\n"
+        display_content += f"## Generated Metric: {os.path.basename(metric_file)}\n\n"
         display_content += f"*Path: {metric_file}*\n\n"
-        display_content += f"```yaml\n{met_content}\n```\n"
+        display_content += f"```yaml\n{metric_content}\n```\n"
 
-        try:
-            request_content = f"{display_content}\n### Accept and sync both to Knowledge Base?"
-            choice, callback = await self.broker.request(
-                contents=[request_content],
-                choices=[{"y": "Accept - Sync to Knowledge Base", "n": "Reject - Delete files"}],
-                default_choices=["y"],
-            )
-
-            if choice == "y":
-                sem_result = await self._sync_to_storage(semantic_model_file, "semantic")
-                met_result = await self._sync_to_storage(metric_file, "semantic")
-                callback_content = f"---\n\n{sem_result}\n\n{met_result}"
-                callback_content += "\n\n---\n**Generation workflow completed, generating report...**"
-                await callback(callback_content)
-            else:
-                logger.info(f"Rejected KB sync for: {semantic_model_file}, {metric_file}")
-                callback_content = "---\n\nRejected KB sync (files preserved on disk for review)"
-                callback_content += "\n\n---\n**Generation workflow completed, generating report...**"
-                await callback(callback_content)
-
-        except InteractionCancelled:
-            raise GenerationCancelledException("User interrupted")
-        except GenerationCancelledException:
-            raise
-        except Exception as e:
-            logger.error(f"Error in sync confirmation for pair: {e}", exc_info=True)
-            raise
+        # Get user confirmation to sync both files together
+        await self._get_sync_confirmation_for_pair(
+            semantic_model_file, metric_file, metric_sqls, display_content=display_content
+        )
 
     async def _handle_sql_summary_result(self, result):
         """
@@ -380,6 +426,53 @@ class GenerationHooks(AgentHooks):
         except Exception as e:
             logger.error(f"Error handling write_file_ext_knowledge result: {e}", exc_info=True)
 
+    async def _get_sync_confirmation_for_pair(
+        self,
+        semantic_model_file: str,
+        metric_file: str,
+        metric_sqls: dict = None,
+        display_content: str = "",
+    ):
+        """
+        Get user confirmation to sync semantic model and metric files together to Knowledge Base.
+
+        Args:
+            semantic_model_file: Path to semantic model YAML file
+            metric_file: Path to metric YAML file
+            metric_sqls: Optional dict mapping metric names to generated SQL (from dry_run)
+            display_content: Pre-built markdown content to display (headers + YAML contents)
+        """
+        try:
+            request_content = f"{display_content}\n### Sync to Knowledge Base?"
+
+            choice, callback = await self.broker.request(
+                contents=[request_content],
+                choices=[{"y": "Yes - Save to Knowledge Base", "n": "No - Keep file only"}],
+                default_choices=["y"],
+            )
+
+            if choice == "y":
+                # Sync both files to Knowledge Base
+                sync_result = await self._sync_semantic_and_metric(semantic_model_file, metric_file, metric_sqls)
+                callback_content = "---\n\n"
+                callback_content += sync_result
+                callback_content += "\n\n---\n**Generation workflow completed, generating report...**"
+                await callback(callback_content)
+            else:
+                # Keep files only
+                callback_content = "---\n\n"
+                callback_content += f"YAMLs saved to files only:\n- `{semantic_model_file}`\n- `{metric_file}`"
+                callback_content += "\n\n---\n**Generation workflow completed, generating report...**"
+                await callback(callback_content)
+
+        except InteractionCancelled:
+            raise GenerationCancelledException("User interrupted")
+        except GenerationCancelledException:
+            raise
+        except Exception as e:
+            logger.error(f"Error in sync confirmation: {e}", exc_info=True)
+            raise
+
     async def _get_sync_confirmation(
         self,
         yaml_content: str,
@@ -405,11 +498,11 @@ class GenerationHooks(AgentHooks):
                 display_content += f"*Path: {file_path}*\n\n"
                 display_content += f"```yaml\n{yaml_content}\n```\n\n"
 
-            request_content = f"{display_content}\n### Accept and sync to Knowledge Base?"
+            request_content = f"{display_content}\n### Sync to Knowledge Base?"
 
             choice, callback = await self.broker.request(
                 contents=[request_content],
-                choices=[{"y": "Accept - Sync to Knowledge Base", "n": "Reject - Delete file"}],
+                choices=[{"y": "Yes - Save to Knowledge Base", "n": "No - Keep file only"}],
                 default_choices=["y"],
             )
 
@@ -422,11 +515,9 @@ class GenerationHooks(AgentHooks):
                 callback_content += "\n\n---\n**Generation workflow completed, generating report...**"
                 await callback(callback_content)
             else:
-                # Reject: skip KB sync, keep file on disk for manual review
-                # (deleting could lose pre-existing content if the file was overwritten)
-                logger.info(f"Rejected KB sync for: {file_path}")
+                # Keep file only
                 callback_content = "---\n\n"
-                callback_content += f"Rejected KB sync for: `{file_path}` (file preserved on disk for review)"
+                callback_content += f"YAML saved to file only: `{file_path}`"
                 callback_content += "\n\n---\n**Generation workflow completed, generating report...**"
                 await callback(callback_content)
 
@@ -475,11 +566,6 @@ class GenerationHooks(AgentHooks):
                     None, GenerationHooks._sync_ext_knowledge_to_db, file_path, self.agent_config, "incremental"
                 )
                 item_type = "external knowledge"
-            elif yaml_type == "reference_template":
-                result = await loop.run_in_executor(
-                    None, GenerationHooks._sync_reference_template_to_db, file_path, self.agent_config
-                )
-                item_type = "reference template"
             else:
                 return f"**Error:** Invalid yaml_type: {yaml_type}\n\nYAML saved to file: `{file_path}`"
 
@@ -497,6 +583,80 @@ class GenerationHooks(AgentHooks):
         except Exception as e:
             logger.error(f"Error syncing to storage: {e}")
             return f"**Sync error:** {e}\n\nYAML saved to file: `{file_path}`"
+
+    async def _sync_semantic_and_metric(
+        self, semantic_model_file: str, metric_file: str, metric_sqls: dict = None
+    ) -> str:
+        """
+        Sync both semantic model and metric files to RAG storage.
+        Creates a combined YAML for syncing so metrics can reference semantic model data.
+
+        Args:
+            semantic_model_file: Path to semantic model YAML file
+            metric_file: Path to metric YAML file
+            metric_sqls: Optional dict mapping metric names to generated SQL (from dry_run)
+
+        Returns:
+            Markdown string describing the result
+        """
+        files_info = f"- `{semantic_model_file}`\n- `{metric_file}`"
+
+        if not self.agent_config:
+            return (
+                f"**Error:** Agent configuration not available, cannot sync to RAG\n\n"
+                f"YAMLs saved to files:\n{files_info}"
+            )
+
+        try:
+            loop = asyncio.get_event_loop()
+
+            # Load both YAML files
+            with open(semantic_model_file, "r", encoding="utf-8") as f:
+                semantic_docs = list(yaml.safe_load_all(f))
+            with open(metric_file, "r", encoding="utf-8") as f:
+                metric_docs = list(yaml.safe_load_all(f))
+
+            # Create a temporary combined YAML content
+            combined_docs = semantic_docs + metric_docs
+            temp_file = semantic_model_file + ".combined.tmp"
+
+            try:
+                # Write combined YAML to temp file
+                with open(temp_file, "w", encoding="utf-8") as f:
+                    yaml.safe_dump_all(combined_docs, f, allow_unicode=True, sort_keys=False)
+
+                # Sync the combined file - only sync metrics, not semantic objects (avoid duplicates)
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: GenerationHooks._sync_semantic_to_db(
+                        temp_file,
+                        self.agent_config,
+                        include_semantic_objects=False,  # Semantic model already synced separately
+                        include_metrics=True,
+                        metric_sqls=metric_sqls,
+                        original_yaml_path=metric_file,  # Use original metric file path, not temp file
+                    ),
+                )
+
+                if result.get("success"):
+                    result_content = "**Successfully synced semantic model and metrics to Knowledge Base**\n\n"
+                    message = result.get("message", "")
+                    if message:
+                        result_content += f"{message}\n\n"
+                    result_content += f"Files:\n{files_info}"
+                    return result_content
+                else:
+                    error = result.get("error", "Unknown error")
+                    return f"**Sync failed:** {error}\n\nYAMLs saved to files:\n{files_info}"
+
+            finally:
+                # Clean up temp file
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+
+        except Exception as e:
+            logger.error(f"Error syncing semantic and metric: {e}", exc_info=True)
+            return f"**Sync error:** {e}\n\nYAMLs saved to files:\n{files_info}"
 
     def _is_sql_summary_tool_call(self, context) -> bool:
         """
@@ -1042,82 +1202,6 @@ class GenerationHooks(AgentHooks):
 
         except Exception as e:
             logger.error(f"Error syncing reference SQL to DB: {e}", exc_info=True)
-            return {"success": False, "error": str(e)}
-
-    @staticmethod
-    def _sync_reference_template_to_db(
-        file_path: str, agent_config: AgentConfig, build_mode: str = "incremental"
-    ) -> dict:
-        """
-        Sync reference template YAML file to Knowledge Base.
-        """
-        try:
-            from datus.storage.reference_template.init_utils import (
-                exists_reference_templates,
-                gen_reference_template_id,
-            )
-            from datus.storage.reference_template.store import ReferenceTemplateRAG
-
-            with open(file_path, "r", encoding="utf-8") as f:
-                doc = yaml.safe_load(f)
-
-            if isinstance(doc, dict) and "sql" in doc:
-                reference_template_data = doc
-            else:
-                return {"success": False, "error": "No reference_template data found in YAML file"}
-
-            # The template content is stored in the "sql" field by SqlSummaryAgenticNode
-            template_content = reference_template_data.get("sql", "")
-            comment = reference_template_data.get("comment", "")
-            item_id = reference_template_data.get("id", "")
-
-            if not item_id or item_id == "auto_generated":
-                item_id = gen_reference_template_id(template_content)
-                reference_template_data["id"] = item_id
-
-            storage = ReferenceTemplateRAG(agent_config)
-            existing_ids = exists_reference_templates(storage, build_mode=build_mode)
-
-            if item_id in existing_ids:
-                logger.info(f"Reference template {item_id} already exists in Knowledge Base, skipping")
-                return {
-                    "success": True,
-                    "message": f"Reference template '{reference_template_data.get('name', '')}' already exists, skipped",
-                }
-
-            subject_path = []
-            subject_tree_str = reference_template_data.get("subject_tree", "")
-            if subject_tree_str:
-                parts = subject_tree_str.split("/")
-                subject_path = [part.strip() for part in parts if part.strip()]
-
-            # Extract parameters from template content
-            import json
-
-            from datus.storage.reference_template.template_file_processor import extract_template_parameters
-
-            parameters = extract_template_parameters(template_content)
-
-            reference_template_dict = {
-                "id": item_id,
-                "name": reference_template_data.get("name", ""),
-                "template": template_content,
-                "parameters": json.dumps(parameters),
-                "comment": comment,
-                "summary": reference_template_data.get("summary", ""),
-                "search_text": reference_template_data.get("search_text", ""),
-                "filepath": file_path,
-                "subject_path": subject_path,
-                "tags": reference_template_data.get("tags", ""),
-            }
-
-            storage.upsert_batch([reference_template_dict])
-
-            logger.info(f"Successfully synced reference template {item_id} to Knowledge Base")
-            return {"success": True, "message": f"Synced reference template: {reference_template_dict['name']}"}
-
-        except Exception as e:
-            logger.error(f"Error syncing reference template to DB: {e}", exc_info=True)
             return {"success": False, "error": str(e)}
 
     @staticmethod

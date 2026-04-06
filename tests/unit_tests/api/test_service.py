@@ -469,7 +469,7 @@ class TestHealthCheck:
     async def test_healthy_when_agent_config_available(self):
         service = _make_service()
         service.agent_config = MagicMock()
-        service.agent_config.current_namespace = "ns"
+        service.agent_config.current_database = "ns"
 
         mock_agent = MagicMock()
         mock_agent.check_db.return_value = {"status": "success"}

@@ -792,7 +792,7 @@ class SubAgentTaskTool:
         if not self.agent_config or not hasattr(self.agent_config, "agentic_nodes"):
             return types
 
-        current_namespace = self.agent_config.current_namespace
+        current_database = self.agent_config.current_database
 
         for name, config in self.agent_config.agentic_nodes.items():
             if name in ("chat", "explore") or name in SYS_SUB_AGENTS:
@@ -801,7 +801,7 @@ class SubAgentTaskTool:
             # If scoped_context is configured, namespace must match current namespace
             try:
                 sub_config = SubAgentConfig.model_validate(config)
-                if sub_config.has_scoped_context() and not sub_config.is_in_namespace(current_namespace):
+                if sub_config.has_scoped_context() and not sub_config.is_in_namespace(current_database):
                     continue
             except Exception as e:
                 logger.debug(f"Skipping invalid subagent config '{name}': {e}")

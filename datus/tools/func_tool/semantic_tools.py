@@ -111,7 +111,7 @@ class SemanticTools:
                 adapter_config = getattr(self.agent_config, f"{self.adapter_type}_config", None)
                 if adapter_config is None:
                     # Get namespace from agent_config
-                    namespace = getattr(self.agent_config, "namespace", None) or self.agent_config.current_namespace
+                    namespace = getattr(self.agent_config, "namespace", None) or self.agent_config.current_database
 
                     # Extract db_config to pass to adapter (avoids re-reading agent.yml)
                     db_config = self._extract_db_config(namespace)

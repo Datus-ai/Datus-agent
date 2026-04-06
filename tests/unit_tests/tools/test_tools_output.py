@@ -42,7 +42,7 @@ class TestBirdDevOutput:
     def test_output(self, test_data: dict, llm_model: LLMBaseModel, global_config: AgentConfig):
         for benchmark, data in test_data.items():
             print(f"switch benchmark to {benchmark}")
-            global_config.current_namespace = data["namespace"]
+            global_config.current_database = data["namespace"]
             self._do_execute(benchmark, data, global_config, llm_model)
 
     def _do_execute(

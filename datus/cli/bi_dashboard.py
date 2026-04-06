@@ -91,7 +91,7 @@ class BiDashboardCommands:
         self.db_manager = db_manager_instance(self.agent_config.namespaces)
 
     def current_database_context(self) -> Tuple[str, str, str]:
-        current_con = self.db_manager.get_conn(self.agent_config.current_namespace)
+        current_con = self.db_manager.get_conn(self.agent_config.current_database)
         return (
             getattr(current_con, "catalog_name", ""),
             getattr(current_con, "database_name", ""),
@@ -470,7 +470,7 @@ class BiDashboardCommands:
         dashboard: DashboardInfo,
         result: DashboardAssemblyResult,
     ) -> None:
-        if not getattr(self.agent_config, "current_namespace", ""):
+        if not getattr(self.agent_config, "current_database", ""):
             self.console.print("[yellow]No namespace set. Skipping sub-agent save.[/]")
             return
 
@@ -522,7 +522,7 @@ class BiDashboardCommands:
 
         manager = SubAgentManager(
             configuration_manager=self._configuration_manager or configuration_manager(),
-            namespace=self.agent_config.current_namespace,
+            namespace=self.agent_config.current_database,
             agent_config=self.agent_config,
         )
         self._do_save_sub_agent(
@@ -849,7 +849,7 @@ class BiDashboardCommands:
         metrics = set()
         if files := metrics_result.get("semantic_models", []):
             # Get base directory for semantic models
-            base_dir = self.agent_config.path_manager.semantic_model_path(self.agent_config.current_namespace)
+            base_dir = self.agent_config.path_manager.semantic_model_path(self.agent_config.current_database)
             for file in files:
                 # Convert relative path to absolute path if needed
                 file_path = file if Path(file).is_absolute() else base_dir / file

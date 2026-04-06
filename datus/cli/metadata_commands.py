@@ -35,7 +35,7 @@ class MetadataCommands:
         """List all databases in the current connection."""
         try:
             # For SQLite, this is simply the current database file
-            namespace = self.cli.agent_config.current_namespace
+            namespace = self.cli.agent_config.current_database
             database_config_dict = self.cli.agent_config.namespaces[namespace]
             result = []
             show_uri = False
@@ -133,7 +133,7 @@ class MetadataCommands:
                 self.cli.console.print(f"[bold yellow]No corresponding database was found: {new_db}[/]")
                 return
             # Logic database name
-            self.cli.db_connector = self.cli.db_manager.get_conn(self.cli.agent_config.current_namespace, new_db)
+            self.cli.db_connector = self.cli.db_manager.get_conn(self.cli.agent_config.current_database, new_db)
             # use real database name
             self.cli.cli_context.update_database_context(
                 db_name=self.cli.db_connector.database_name, db_logic_name=new_db

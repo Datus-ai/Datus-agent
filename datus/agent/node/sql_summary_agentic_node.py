@@ -73,7 +73,7 @@ class SqlSummaryAgenticNode(AgenticNode):
             if isinstance(agentic_node_config, dict):
                 self.max_turns = agentic_node_config.get("max_turns", 30)
 
-        self.sql_summary_dir = str(agent_config.path_manager.sql_summary_path(agent_config.current_namespace))
+        self.sql_summary_dir = str(agent_config.path_manager.sql_summary_path(agent_config.current_database))
 
         from datus.configuration.node_type import NodeType
 

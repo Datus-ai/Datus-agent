@@ -84,7 +84,7 @@ class CompareAgenticNode(AgenticNode):
             return
 
         try:
-            namespace = self.agent_config.current_namespace
+            namespace = self.agent_config.current_database
 
             db_manager = db_manager_instance(self.agent_config.namespaces)
             database = getattr(self.agent_config, "current_database", "")

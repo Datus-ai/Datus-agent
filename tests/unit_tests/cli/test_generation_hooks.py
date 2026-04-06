@@ -41,7 +41,7 @@ def broker():
 def agent_config():
     cfg = MagicMock()
     cfg.home = "/tmp/datus_test"
-    cfg.current_namespace = "test_ns"
+    cfg.current_database = "test_ns"
     cfg.db_type = "sqlite"
     cfg.path_manager = MagicMock()
     cfg.path_manager.semantic_model_path.return_value = Path("/tmp/datus_test/semantic_models/test_ns")

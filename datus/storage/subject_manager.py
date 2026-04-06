@@ -26,7 +26,7 @@ class SubjectUpdater:
 
     def __init__(self, agent_config: AgentConfig, datasource_id: Optional[str] = None):
         self._agent_config = agent_config
-        self.datasource_id = datasource_id or agent_config.current_namespace or ""
+        self.datasource_id = datasource_id or agent_config.current_database or ""
         self.metrics_storage: MetricStorage = get_storage(MetricStorage, "metric", namespace=self.datasource_id)
         self.reference_sql_storage: ReferenceSqlStorage = get_storage(
             ReferenceSqlStorage, "reference_sql", namespace=self.datasource_id

@@ -161,6 +161,22 @@ class Application:
             if not args.database:
                 return
 
+        if args.resume and args.print_mode is None:
+            self.arg_parser.parser.error("--resume requires --print mode")
+
+        if args.proxy_tools and args.print_mode is None:
+            self.arg_parser.parser.error("--proxy_tools requires --print mode")
+
+        if args.print_mode is not None:
+            from datus.cli.print_mode import PrintModeRunner
+
+            PrintModeRunner(args).run()
+        elif args.web:
+            self._run_web_interface(args)
+        else:
+            cli = DatusCLI(args)
+            cli.run()
+
     def _resolve_default_database(self, args) -> str:
         """Auto-select database when --database is not specified."""
         from rich.console import Console
@@ -194,22 +210,6 @@ class Application:
             table.add_row(name, cfg.type)
         console.print(table)
         return ""
-
-        if args.resume and args.print_mode is None:
-            self.arg_parser.parser.error("--resume requires --print mode")
-
-        if args.proxy_tools and args.print_mode is None:
-            self.arg_parser.parser.error("--proxy_tools requires --print mode")
-
-        if args.print_mode is not None:
-            from datus.cli.print_mode import PrintModeRunner
-
-            PrintModeRunner(args).run()
-        elif args.web:
-            self._run_web_interface(args)
-        else:
-            cli = DatusCLI(args)
-            cli.run()
 
     def _run_web_interface(self, args):
         """Launch web chatbot interface"""
