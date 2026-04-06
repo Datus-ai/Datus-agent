@@ -39,7 +39,6 @@ class InteractiveConfigure:
 
     def __init__(self, user_home: Optional[str] = None):
         self.db_name = ""
-        self.workspace_path = ""
         self.user_home = user_home if user_home else Path.home()
         self.console = Console(log_path=False)
 
@@ -56,10 +55,6 @@ class InteractiveConfigure:
                     "databases": {},
                     "bi_tools": {},
                     "schedulers": {},
-                },
-                "storage": {
-                    "workspace_root": "~/.datus/workspace",
-                    "embedding_device_type": "cpu",
                 },
                 "nodes": {
                     "schema_linking": {"matching_rate": "fast"},
@@ -127,11 +122,6 @@ class InteractiveConfigure:
                 if not Confirm.ask("Re-enter database configuration?", default=True):
                     return 1
 
-            # Step 3: Configure Workspace
-            while not self._configure_workspace():
-                if not Confirm.ask("Re-enter workspace configuration?", default=True):
-                    return 1
-
             if not self._save_configuration():
                 return 1
 
@@ -161,7 +151,7 @@ class InteractiveConfigure:
 
     def _configure_llm(self) -> bool:
         """Step 1: Configure LLM provider and test connectivity."""
-        self.console.print("[bold yellow][1/3] Configure LLM[/bold yellow]")
+        self.console.print("[bold yellow][1/2] Configure LLM[/bold yellow]")
 
         catalog = self._load_provider_catalog()
         providers = catalog.get("providers", {})
@@ -247,7 +237,7 @@ class InteractiveConfigure:
 
     def _configure_database(self) -> bool:
         """Step 2: Configure database connection."""
-        self.console.print("[bold yellow][2/3] Configure Database[/bold yellow]")
+        self.console.print("[bold yellow][2/2] Configure Database[/bold yellow]")
 
         self.db_name = Prompt.ask("- Database name")
         if not self.db_name.strip():
@@ -338,24 +328,6 @@ class InteractiveConfigure:
                 del self.config["agent"]["service"]["databases"][self.db_name]
             return False
 
-    def _configure_workspace(self) -> bool:
-        """Step 3: Configure workspace directory."""
-        self.console.print("[bold yellow][3/3] Configure Workspace[/bold yellow]")
-
-        default_workspace = str(self.user_home / ".datus" / "workspace")
-        self.workspace_path = Prompt.ask("- Workspace path", default=default_workspace)
-
-        self.config["agent"]["storage"]["workspace_root"] = self.workspace_path
-        self.config["agent"]["storage"]["base_path"] = str(self.user_home / ".datus" / "data")
-
-        try:
-            Path(self.workspace_path).mkdir(parents=True, exist_ok=True)
-            self.console.print("Workspace directory created\n")
-            return True
-        except Exception as e:
-            print_rich_exception(self.console, e, "Failed to create workspace directory", logger)
-            return False
-
     def _save_configuration(self) -> bool:
         """Save configuration, merging with existing file to preserve other sections."""
         try:
@@ -373,7 +345,6 @@ class InteractiveConfigure:
             existing_agent["target"] = self.config["agent"]["target"]
             existing_agent["models"] = self.config["agent"]["models"]
             existing_agent["service"] = self.config["agent"]["service"]
-            existing_agent["storage"] = self.config["agent"]["storage"]
 
             # Set default nodes if not already configured
             if "nodes" not in existing_agent:
@@ -403,7 +374,6 @@ class InteractiveConfigure:
 
         table.add_row("LLM", f"{provider} ({model})")
         table.add_row("Database", self.db_name)
-        table.add_row("Workspace", self.workspace_path)
 
         self.console.print(table)
 
