@@ -357,10 +357,35 @@ class InteractiveConfigure:
             return False
 
     def _save_configuration(self) -> bool:
+        """Save configuration, merging with existing file to preserve other sections."""
         try:
             config_path = self.conf_dir / "agent.yml"
+
+            # Load existing config to preserve sections we don't touch
+            existing = {}
+            if config_path.exists():
+                with open(config_path, encoding="utf-8") as f:
+                    existing = yaml.safe_load(f) or {}
+
+            existing_agent = existing.get("agent", {})
+
+            # Merge: only overwrite sections that configure touches
+            existing_agent["target"] = self.config["agent"]["target"]
+            existing_agent["models"] = self.config["agent"]["models"]
+            existing_agent["service"] = self.config["agent"]["service"]
+            existing_agent["storage"] = self.config["agent"]["storage"]
+
+            # Set default nodes if not already configured
+            if "nodes" not in existing_agent:
+                existing_agent["nodes"] = self.config["agent"]["nodes"]
+
+            # Remove legacy namespace key if present
+            existing_agent.pop("namespace", None)
+
+            existing["agent"] = existing_agent
+
             with open(config_path, "w", encoding="utf-8") as f:
-                yaml.dump(self.config, f, default_flow_style=False, allow_unicode=True)
+                yaml.dump(existing, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
             self.console.print(f"Configuration saved to {config_path}")
             return True
         except Exception as e:
