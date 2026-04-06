@@ -286,7 +286,7 @@ class DBManager:
 
             # Remove None and empty string values, and internal fields
             # Keep False, 0, and empty containers to allow explicit configuration
-            excluded_fields = ["type", "path_pattern", "logic_name", "extra"]
+            excluded_fields = ["type", "path_pattern", "logic_name", "default", "extra"]
 
             filtered_config = {
                 k: v
