@@ -516,7 +516,7 @@ class TestSearchFiles:
         tool = _make_tool(str(tmp_path))
         result = tool.search_files(".", "**/*")
         assert result.success == 1
-        paths = [Path(p).name for p in result.result]
+        paths = [Path(p).name for p in result.result["files"]]
         assert "main.py" in paths
         assert "config" not in paths
         assert "pack.py" not in paths

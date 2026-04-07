@@ -164,6 +164,90 @@ class GenerationHooks(AgentHooks):
             yaml_content, file_path, "semantic", metric_sqls=metric_sqls, display_content=display_content
         )
 
+    async def _process_metric_with_semantic_model(self, semantic_model_file: str, metric_file: str):
+        """
+        Process a metric file together with its paired semantic model file.
+
+        If one file is missing, falls back to processing the other alone via
+        ``_process_single_file``.  If both are present, displays them side-by-side
+        and asks for a single confirmation.
+        """
+        sem_exists = os.path.exists(semantic_model_file)
+        met_exists = os.path.exists(metric_file)
+
+        if not sem_exists and not met_exists:
+            return
+
+        if not sem_exists:
+            await self._process_single_file(metric_file, metric_sqls=None)
+            return
+
+        if not met_exists:
+            await self._process_single_file(semantic_model_file)
+            return
+
+        # Both exist — skip if already processed
+        if semantic_model_file in self.processed_files and metric_file in self.processed_files:
+            return
+
+        # Read contents
+        with open(semantic_model_file, "r", encoding="utf-8") as f:
+            sem_content = f.read()
+        with open(metric_file, "r", encoding="utf-8") as f:
+            met_content = f.read()
+
+        if not sem_content or not met_content:
+            return
+
+        await self._get_sync_confirmation_for_pair(semantic_model_file, sem_content, metric_file, met_content)
+        self.processed_files.add(semantic_model_file)
+        self.processed_files.add(metric_file)
+
+    async def _get_sync_confirmation_for_pair(
+        self,
+        semantic_model_file: str,
+        sem_content: str,
+        metric_file: str,
+        met_content: str,
+    ):
+        """
+        Display semantic model and metric file side-by-side and get user confirmation.
+        """
+        display_content = f"## Semantic Model: {os.path.basename(semantic_model_file)}\n\n"
+        display_content += f"*Path: {semantic_model_file}*\n\n"
+        display_content += f"```yaml\n{sem_content}\n```\n\n"
+        display_content += f"## Metric: {os.path.basename(metric_file)}\n\n"
+        display_content += f"*Path: {metric_file}*\n\n"
+        display_content += f"```yaml\n{met_content}\n```\n"
+
+        try:
+            request_content = f"{display_content}\n### Accept and sync both to Knowledge Base?"
+            choice, callback = await self.broker.request(
+                contents=[request_content],
+                choices=[{"y": "Accept - Sync to Knowledge Base", "n": "Reject - Delete files"}],
+                default_choices=["y"],
+            )
+
+            if choice == "y":
+                sem_result = await self._sync_to_storage(semantic_model_file, "semantic")
+                met_result = await self._sync_to_storage(metric_file, "semantic")
+                callback_content = f"---\n\n{sem_result}\n\n{met_result}"
+                callback_content += "\n\n---\n**Generation workflow completed, generating report...**"
+                await callback(callback_content)
+            else:
+                logger.info(f"Rejected KB sync for: {semantic_model_file}, {metric_file}")
+                callback_content = "---\n\nRejected KB sync (files preserved on disk for review)"
+                callback_content += "\n\n---\n**Generation workflow completed, generating report...**"
+                await callback(callback_content)
+
+        except InteractionCancelled:
+            raise GenerationCancelledException("User interrupted")
+        except GenerationCancelledException:
+            raise
+        except Exception as e:
+            logger.error(f"Error in sync confirmation for pair: {e}", exc_info=True)
+            raise
+
     async def _handle_sql_summary_result(self, result):
         """
         Handle sql_summary tool result.
