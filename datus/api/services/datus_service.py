@@ -4,6 +4,10 @@ Consolidates all agent services (chat, cli, database, explorer, mcp, kb)
 and a project-scoped ChatTaskManager into a single cached instance.
 """
 
+import dataclasses
+import hashlib
+import json
+
 from datus.configuration.agent_config import AgentConfig
 from datus.utils.loggings import get_logger
 
@@ -21,6 +25,7 @@ class DatusService:
     def __init__(self, agent_config: AgentConfig, project_id: str):
         self._agent_config = agent_config
         self._project_id = project_id
+        self._config_fingerprint = self.compute_fingerprint(agent_config)
 
         # ChatTaskManager — project-scoped (not process-level singleton)
         from datus.api.services.chat_task_manager import ChatTaskManager
@@ -42,6 +47,24 @@ class DatusService:
     @property
     def agent_config(self) -> AgentConfig:
         return self._agent_config
+
+    @property
+    def config_fingerprint(self) -> str:
+        return self._config_fingerprint
+
+    @staticmethod
+    def compute_fingerprint(agent_config: AgentConfig) -> str:
+        """Compute a stable content-based fingerprint for an AgentConfig.
+
+        Falls back to an id-based string if the config cannot be serialized.
+        """
+        try:
+            payload = dataclasses.asdict(agent_config)
+            serialized = json.dumps(payload, sort_keys=True, default=str)
+            return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+        except Exception as e:
+            logger.warning(f"Failed to compute AgentConfig fingerprint, falling back to id(): {e}")
+            return f"id:{id(agent_config)}"
 
     @property
     def project_id(self) -> str:

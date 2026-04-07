@@ -75,6 +75,8 @@ class TestGetDatusService:
 
     async def test_authenticates_and_returns_service(self):
         """Full flow: authenticate → factory → cache.get_or_create."""
+        from unittest.mock import patch
+
         mock_auth = MagicMock()
         ctx = AppContext(user_id="user-1", project_id="proj-1", config=MagicMock())
         mock_auth.authenticate = AsyncMock(return_value=ctx)
@@ -87,14 +89,35 @@ class TestGetDatusService:
         deps._service_cache = mock_cache
 
         request = MagicMock()
-        result = await get_datus_service(request)
+        with patch(
+            "datus.api.deps.DatusService.compute_fingerprint",
+            return_value="fp-xyz",
+        ) as mock_fp:
+            result = await get_datus_service(request)
 
         assert result is mock_svc
         mock_auth.authenticate.assert_awaited_once_with(request)
         mock_cache.get_or_create.assert_awaited_once()
-        # Verify project_id was passed
+        mock_fp.assert_called_once_with(ctx.config)
         call_args = mock_cache.get_or_create.call_args
         assert call_args[0][0] == "proj-1"
+        assert call_args.kwargs["expected_fingerprint"] == "fp-xyz"
+
+    async def test_no_fingerprint_when_config_is_none(self):
+        """When ctx.config is None, expected_fingerprint passed as None."""
+        mock_auth = MagicMock()
+        ctx = AppContext(user_id="user-1", project_id="proj-1", config=None)
+        mock_auth.authenticate = AsyncMock(return_value=ctx)
+
+        mock_cache = MagicMock(spec=DatusServiceCache)
+        mock_cache.get_or_create = AsyncMock(return_value=MagicMock())
+
+        deps._auth_provider = mock_auth
+        deps._service_cache = mock_cache
+
+        await get_datus_service(MagicMock())
+        call_args = mock_cache.get_or_create.call_args
+        assert call_args.kwargs["expected_fingerprint"] is None
 
     async def test_factory_loads_config_when_none(self, real_agent_config):
         """Factory in get_datus_service loads config when ctx.config is None."""

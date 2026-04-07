@@ -6,7 +6,7 @@ the same project_id share a single factory call.
 
 import asyncio
 import collections
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Optional
 
 from datus.api.services.datus_service import DatusService
 from datus.utils.loggings import get_logger
@@ -27,15 +27,27 @@ class DatusServiceCache:
         self,
         project_id: str,
         factory: Callable[[], Awaitable[DatusService]],
+        expected_fingerprint: Optional[str] = None,
     ) -> DatusService:
-        """Return cached DatusService or create via factory (thundering-herd safe)."""
+        """Return cached DatusService or create via factory (thundering-herd safe).
+
+        If ``expected_fingerprint`` is provided and does not match the cached
+        instance's ``config_fingerprint``, the stale entry is evicted before
+        creating a new one.
+        """
         is_creator = False
+        stale_svc: Optional[DatusService] = None
 
         async with self._lock:
             # Fast path: cache hit
             if project_id in self._cache:
-                self._cache.move_to_end(project_id)
-                return self._cache[project_id]
+                cached = self._cache[project_id]
+                if expected_fingerprint is None or cached.config_fingerprint == expected_fingerprint:
+                    self._cache.move_to_end(project_id)
+                    return cached
+                # Fingerprint mismatch — evict stale entry and rebuild
+                stale_svc = self._cache.pop(project_id)
+                logger.info(f"Evicting DatusService for project {project_id} due to AgentConfig fingerprint mismatch")
 
             # Another coroutine is already creating this entry — share its future
             if project_id in self._futures:
@@ -45,6 +57,9 @@ class DatusServiceCache:
                 fut = asyncio.get_running_loop().create_future()
                 self._futures[project_id] = fut
                 is_creator = True
+
+        if stale_svc is not None:
+            await self._dispose(project_id, stale_svc)
 
         if not is_creator:
             # Wait for the creator coroutine to finish
@@ -102,6 +117,10 @@ class DatusServiceCache:
             svc = self._cache.pop(project_id, None)
         if not svc:
             return
+        await self._dispose(project_id, svc)
+
+    async def _dispose(self, project_id: str, svc: DatusService) -> None:
+        """Shutdown a service, deferring if it still has active tasks."""
         if svc.has_active_tasks():
             logger.info(f"Evicting DatusService for project {project_id} (deferring shutdown — active tasks)")
             asyncio.create_task(self._deferred_shutdown(project_id, svc))

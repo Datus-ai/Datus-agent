@@ -45,6 +45,8 @@ async def get_datus_service(request: Request) -> DatusService:
 
     ctx: AppContext = await _auth_provider.authenticate(request)
 
+    expected_fp = DatusService.compute_fingerprint(ctx.config) if ctx.config is not None else None
+
     async def _factory() -> DatusService:
         # Load config on-demand if not provided by auth provider
         agent_config = ctx.config
@@ -57,7 +59,7 @@ async def get_datus_service(request: Request) -> DatusService:
 
         return DatusService(agent_config=agent_config, project_id=ctx.project_id)
 
-    return await _service_cache.get_or_create(ctx.project_id, _factory)
+    return await _service_cache.get_or_create(ctx.project_id, _factory, expected_fingerprint=expected_fp)
 
 
 ServiceDep = Annotated[DatusService, Depends(get_datus_service)]

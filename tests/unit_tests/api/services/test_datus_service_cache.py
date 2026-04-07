@@ -8,10 +8,11 @@ import pytest
 from datus.api.services.datus_service_cache import DatusServiceCache
 
 
-def _mock_service(project_id="p1", has_active=False):
+def _mock_service(project_id="p1", has_active=False, fingerprint="fp-default"):
     """Create a mock DatusService."""
     svc = MagicMock()
     svc.project_id = project_id
+    svc.config_fingerprint = fingerprint
     svc.has_active_tasks.return_value = has_active
     svc.shutdown = AsyncMock()
     svc.task_manager = MagicMock()
@@ -147,6 +148,59 @@ class TestGetOrCreate:
         )
         assert all(r is svc for r in results)
         assert call_count == 1
+
+
+@pytest.mark.asyncio
+class TestFingerprintEviction:
+    """Tests for fingerprint-based stale-entry eviction in get_or_create."""
+
+    async def test_matching_fingerprint_returns_cached(self):
+        cache = DatusServiceCache()
+        svc = _mock_service("p", fingerprint="fp-1")
+        await cache.get_or_create("p", AsyncMock(return_value=svc))
+
+        factory = AsyncMock()
+        result = await cache.get_or_create("p", factory, expected_fingerprint="fp-1")
+        assert result is svc
+        factory.assert_not_called()
+
+    async def test_mismatched_fingerprint_evicts_and_rebuilds(self):
+        cache = DatusServiceCache()
+        old = _mock_service("p", fingerprint="fp-old")
+        await cache.get_or_create("p", AsyncMock(return_value=old))
+
+        new = _mock_service("p", fingerprint="fp-new")
+        factory = AsyncMock(return_value=new)
+        result = await cache.get_or_create("p", factory, expected_fingerprint="fp-new")
+
+        assert result is new
+        factory.assert_awaited_once()
+        old.shutdown.assert_awaited_once()
+        assert cache._cache["p"] is new
+
+    async def test_mismatched_fingerprint_with_active_tasks_defers(self):
+        cache = DatusServiceCache()
+        old = _mock_service("p", has_active=True, fingerprint="fp-old")
+        await cache.get_or_create("p", AsyncMock(return_value=old))
+
+        new = _mock_service("p", fingerprint="fp-new")
+        await cache.get_or_create("p", AsyncMock(return_value=new), expected_fingerprint="fp-new")
+
+        # Old was not immediately shut down; deferred via active-tasks path
+        old.shutdown.assert_not_awaited()
+        await asyncio.sleep(0.05)
+        old.task_manager.wait_all_tasks.assert_awaited()
+        assert cache._cache["p"] is new
+
+    async def test_none_fingerprint_preserves_legacy_behavior(self):
+        cache = DatusServiceCache()
+        svc = _mock_service("p", fingerprint="fp-1")
+        await cache.get_or_create("p", AsyncMock(return_value=svc))
+
+        factory = AsyncMock()
+        result = await cache.get_or_create("p", factory)  # no expected_fingerprint
+        assert result is svc
+        factory.assert_not_called()
 
 
 @pytest.mark.asyncio

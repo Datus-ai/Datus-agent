@@ -93,6 +93,29 @@ class TestDatusServiceBehavior:
         svc = DatusService(agent_config=real_agent_config, project_id="p1")
         await svc.shutdown()  # should not raise
 
+    def test_config_fingerprint_is_stable(self, real_agent_config):
+        """Same config yields the same fingerprint across instances."""
+        svc1 = DatusService(agent_config=real_agent_config, project_id="p1")
+        svc2 = DatusService(agent_config=real_agent_config, project_id="p2")
+        assert svc1.config_fingerprint == svc2.config_fingerprint
+        assert isinstance(svc1.config_fingerprint, str) and len(svc1.config_fingerprint) > 0
+
+    def test_compute_fingerprint_detects_changes(self, real_agent_config):
+        """Mutating a dataclass field changes the fingerprint."""
+        import copy
+
+        fp1 = DatusService.compute_fingerprint(real_agent_config)
+        mutated = copy.deepcopy(real_agent_config)
+        mutated.target = f"{mutated.target}-mutated"
+        fp2 = DatusService.compute_fingerprint(mutated)
+        assert fp1 != fp2
+
+    def test_compute_fingerprint_fallback_for_non_dataclass(self):
+        """Non-dataclass input falls back to id-based fingerprint."""
+        obj = object()
+        fp = DatusService.compute_fingerprint(obj)  # type: ignore[arg-type]
+        assert fp.startswith("id:")
+
     @pytest.mark.asyncio
     async def test_shutdown_handles_exception(self, real_agent_config):
         """Shutdown handles exception in task_manager gracefully."""
