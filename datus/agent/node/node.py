@@ -134,6 +134,10 @@ class Node(ABC):
             if input_data is not None:
                 node.input = input_data
             return node
+        elif node_type == NodeType.TYPE_SKILL_CREATOR:
+            from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+
+            return SkillCreatorAgenticNode(node_id, description, node_type, input_data, agent_config, tools, node_name)
         else:
             raise ValueError(f"Invalid node type: {node_type}")
 

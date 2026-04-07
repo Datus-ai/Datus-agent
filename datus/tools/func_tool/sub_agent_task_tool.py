@@ -51,6 +51,7 @@ NODE_CLASS_MAP = {
     "sql_summary": NodeType.TYPE_SQL_SUMMARY,
     "explore": NodeType.TYPE_EXPLORE,
     "gen_table": NodeType.TYPE_GEN_TABLE,
+    "create_skill": NodeType.TYPE_SKILL_CREATOR,
 }
 
 # Descriptions for built-in system subagents (used in task tool description for LLM)
@@ -109,6 +110,13 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "Use when asked to summarize, document, or index SQL queries for future reference. "
         "Prompt MUST contain a complete SQL query, optionally with business context description. "
         "Returns JSON with {response, sql_summary_file, tokens_used}."
+    ),
+    "create_skill": (
+        "Create, edit, and evaluate Datus skills. Interactive workflow: capture intent, "
+        "interview user, write SKILL.md, scaffold directory structure. "
+        "Supports editing existing skills via load and diff. "
+        "Prompt: describe what skill to create, or 'edit <skill-name>' to modify an existing skill. "
+        "Returns JSON with {response, skill_name, skill_path, tokens_used}."
     ),
     "gen_ext_knowledge": (
         "Discover and extract business knowledge through blind-test → verify → extract workflow. "
@@ -312,6 +320,18 @@ class SubAgentTaskTool:
             return GenTableAgenticNode(
                 agent_config=self.agent_config,
                 execution_mode="interactive",
+            )
+        elif subagent_type == "create_skill":
+            from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+
+            return SkillCreatorAgenticNode(
+                node_id=f"task_create_skill_{uuid.uuid4().hex[:8]}",
+                description="Skill creation node",
+                node_type="skill_creator",
+                input_data=None,
+                agent_config=self.agent_config,
+                tools=None,
+                node_name="create_skill",
             )
         else:
             raise ValueError(f"Unknown builtin subagent type: {subagent_type}")
@@ -589,6 +609,13 @@ class SubAgentTaskTool:
                 database=self.agent_config.current_database,
             )
 
+        from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+
+        if isinstance(node, SkillCreatorAgenticNode):
+            from datus.schemas.skill_creator_agentic_node_models import SkillCreatorNodeInput
+
+            return SkillCreatorNodeInput(user_message=prompt)
+
         # Generic fallback for other agentic node types
         from datus.schemas.base import BaseInput
 
@@ -689,6 +716,18 @@ class SubAgentTaskTool:
                 }
             )
 
+        # Skill creator result: has 'skill_path' key
+        skill_path = output.get("skill_path")
+        if skill_path is not None:
+            return FuncToolResult(
+                result={
+                    "response": response,
+                    "skill_name": output.get("skill_name", ""),
+                    "skill_path": skill_path,
+                    "tokens_used": tokens,
+                }
+            )
+
         # Generic format
         return FuncToolResult(
             result={
@@ -735,6 +774,7 @@ class SubAgentTaskTool:
                 "complex joins, or domain-specific logic",
                 '- Use task(type="gen_report") for metric attribution, root cause analysis, '
                 "or analyzing why a metric/reference_sql result changed",
+                '- Use task(type="create_skill") when the user wants to create, edit, or scaffold a Datus skill',
                 "- In plan mode, use task() for each SQL sub-step",
                 "- Always provide a short 'description' summarizing the task goal",
             ]

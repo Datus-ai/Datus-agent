@@ -27,6 +27,7 @@ __all__ = [
     "GenReportAgenticNode",
     "GenExtKnowledgeAgenticNode",
     "ExploreAgenticNode",
+    "SkillCreatorAgenticNode",
     "Node",
 ]
 
@@ -55,4 +56,5 @@ from .reflect_node import ReflectNode
 from .schema_linking_node import SchemaLinkingNode
 from .search_metrics_node import SearchMetricsNode
 from .selection_node import SelectionNode
+from .skill_creator_agentic_node import SkillCreatorAgenticNode
 from .subworkflow_node import SubworkflowNode

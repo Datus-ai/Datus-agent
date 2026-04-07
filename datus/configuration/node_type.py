@@ -21,6 +21,7 @@ from datus.schemas.reason_sql_node_models import ReasoningInput
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput
 from datus.schemas.search_metrics_node_models import SearchMetricsInput
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
+from datus.schemas.skill_creator_agentic_node_models import SkillCreatorNodeInput
 from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput
 from datus.schemas.subworkflow_node_models import SubworkflowInput
 
@@ -59,6 +60,7 @@ class NodeType:
     TYPE_EXT_KNOWLEDGE = "ext_knowledge"  # For external knowledge generation
     TYPE_EXPLORE = "explore"  # For read-only data exploration and context gathering
     TYPE_GEN_TABLE = "gen_table"  # For wide table generation from JOIN SQL
+    TYPE_SKILL_CREATOR = "skill_creator"  # For interactive skill creation and editing
 
     ACTION_TYPES = [
         TYPE_SCHEMA_LINKING,
@@ -79,6 +81,7 @@ class NodeType:
         TYPE_EXT_KNOWLEDGE,
         TYPE_EXPLORE,
         TYPE_GEN_TABLE,
+        TYPE_SKILL_CREATOR,
     ]
 
     NODE_TYPE_DESCRIPTIONS = {
@@ -106,6 +109,7 @@ class NodeType:
         TYPE_EXT_KNOWLEDGE: "External knowledge generation with conversational AI",
         TYPE_EXPLORE: "Read-only data exploration and context gathering",
         TYPE_GEN_TABLE: "Wide table generation from JOIN SQL with CTAS",
+        TYPE_SKILL_CREATOR: "Interactive skill creation, editing, and evaluation",
     }
 
     @classmethod
@@ -159,6 +163,8 @@ class NodeType:
             input_data_cls = ExploreNodeInput
         elif node_type == NodeType.TYPE_GEN_TABLE:
             input_data_cls = SemanticNodeInput
+        elif node_type == NodeType.TYPE_SKILL_CREATOR:
+            input_data_cls = SkillCreatorNodeInput
         else:
             raise NotImplementedError(f"node_type {node_type} not implemented")
 
