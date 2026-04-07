@@ -605,9 +605,9 @@ class TestChatAgenticNodeExecutionConfig:
 
         config = node._get_execution_config("normal", node.input)
 
-        # If permission_hooks was set up, hooks should be non-None
-        if node.permission_hooks:
-            assert config["hooks"] is not None
+        # Permission hooks should always be set up for chat node
+        assert node.permission_hooks is not None
+        assert config["hooks"] is not None
 
 
 # ===========================================================================
@@ -1518,6 +1518,39 @@ class TestChatAgenticNodeBITools:
         call_kwargs = mock_bi_tool_cls.call_args
         assert call_kwargs[1]["dataset_db_uri"] == "postgresql+psycopg2://user:pass@localhost/db"
         assert call_kwargs[1]["dataset_db_schema"] == "public"
+        assert call_kwargs[1]["datasource_name"] == ""
+
+    def test_bi_tools_passes_datasource_name(self, real_agent_config, mock_llm_create):
+        """datasource_name from dataset_db config is passed to BIFuncTool."""
+        from unittest.mock import MagicMock, patch
+
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+        from datus.configuration.node_type import NodeType
+
+        cfg = self._make_bi_agent_config(real_agent_config)
+        cfg.dashboard_config["superset"].dataset_db["datasource_name"] = "My-PostgreSQL"
+
+        mock_adaptor = MagicMock()
+        mock_adaptor_cls = MagicMock(return_value=mock_adaptor)
+
+        with (
+            patch("datus.agent.node.chat_agentic_node.BIFuncTool") as mock_bi_tool_cls,
+            patch("datus_bi_core.adaptor_registry") as mock_registry,
+        ):
+            mock_registry.get.return_value = mock_adaptor_cls
+            mock_bi_instance = MagicMock()
+            mock_bi_instance.available_tools.return_value = []
+            mock_bi_tool_cls.return_value = mock_bi_instance
+
+            ChatAgenticNode(
+                node_id="test_ds_name",
+                description="Test datasource name",
+                node_type=NodeType.TYPE_CHAT,
+                agent_config=cfg,
+            )
+
+        call_kwargs = mock_bi_tool_cls.call_args
+        assert call_kwargs[1]["datasource_name"] == "My-PostgreSQL"
 
     def test_bi_tools_not_loaded_without_bi_platform(self, real_agent_config, mock_llm_create):
         """BI tools should NOT be loaded when bi_platform is not configured."""

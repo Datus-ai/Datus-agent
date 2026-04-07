@@ -33,14 +33,21 @@ class BIFuncTool:
     """
 
     def __init__(
-        self, adaptor: Any, dataset_db_uri: str = "", dataset_db_schema: str = "", read_connector: Any = None
+        self,
+        adaptor: Any,
+        dataset_db_uri: str = "",
+        dataset_db_schema: str = "",
+        read_connector: Any = None,
+        datasource_name: str = "",
     ) -> None:
         self.adaptor = adaptor
         self._dataset_db_uri = dataset_db_uri
         self._dataset_db_schema = dataset_db_schema
         self._read_connector = read_connector
+        self._datasource_name = datasource_name  # name of pre-configured datasource in BI platform
         self._write_engine = None  # lazy-initialized
         self._dataset_db_id = None  # lazy-resolved from BI platform
+        self._grafana_ds_uid = None  # lazy-resolved Grafana datasource UID
 
     # ------------------------------------------------------------------ #
     # Read operations (available on all adaptors)
@@ -143,14 +150,18 @@ class BIFuncTool:
         dimensions: str = "",
         dashboard_id: str = "",
         description: str = "",
+        sql: str = "",
     ) -> FuncToolResult:
         """
-        Create a new chart/panel. Requires a dataset — create one first with create_dataset().
+        Create a new chart/panel.
+
+        For Superset: requires dataset_id (create one first with create_dataset()).
+        For Grafana: requires sql and dashboard_id. The datasource is auto-resolved from dataset_db config.
 
         Args:
             chart_type: Type of chart: bar, line, pie, table, big_number, scatter
             title: Chart title
-            dataset_id: (Required) Dataset ID from create_dataset()
+            dataset_id: (Superset: required) Dataset ID from create_dataset()
             x_axis: Column name for x-axis or time column (for line/bar charts)
             metrics: Comma-separated metric expressions. Supported formats:
                      - "column_name" → defaults to SUM(column_name)
@@ -159,6 +170,7 @@ class BIFuncTool:
             dimensions: Comma-separated list of dimension/groupby column names
             dashboard_id: (Grafana: required) Dashboard ID to add the chart to
             description: Chart description
+            sql: SQL query for the chart (Grafana: required, used directly in the panel)
         """
         try:
             from datus_bi_core.models import ChartSpec
@@ -166,19 +178,31 @@ class BIFuncTool:
             metrics_list = [m.strip() for m in metrics.split(",") if m.strip()] if metrics else None
             dims_list = [d.strip() for d in dimensions.split(",") if d.strip()] if dimensions else None
             ds_id = int(dataset_id) if dataset_id.strip().isdigit() else None
-            if not ds_id:
+
+            # Superset requires dataset_id; Grafana requires sql + dashboard_id
+            if not ds_id and not sql:
                 return FuncToolResult(
                     success=0,
-                    error="dataset_id is required. Create a dataset first with create_dataset(), then use its ID here.",
+                    error="Either dataset_id (Superset) or sql (Grafana) is required.",
                 )
+
+            extra = {}
+            # Auto-resolve Grafana datasource UID when sql is provided
+            if sql:
+                ds_uid = self._resolve_grafana_datasource_uid()
+                if ds_uid:
+                    extra["datasource_uid"] = ds_uid
+
             spec = ChartSpec(
                 chart_type=chart_type,
                 title=title,
                 description=description,
                 dataset_id=ds_id,
+                sql=sql or None,
                 x_axis=x_axis or None,
                 metrics=metrics_list,
                 dimensions=dims_list,
+                extra=extra,
             )
             dash_id = dashboard_id.strip() or None
             result = self.adaptor.create_chart(spec, dashboard_id=dash_id)
@@ -349,6 +373,47 @@ class BIFuncTool:
         except Exception as exc:
             logger.warning(f"write_query failed: {exc}")
             return FuncToolResult(success=0, error=f"write_query failed for table '{table_name}': {exc}")
+
+    def _resolve_grafana_datasource_uid(self) -> Any:
+        """Look up a pre-configured datasource in the BI platform and return its UID.
+
+        Uses ``datasource_name`` (from agent.yml) to find the datasource.
+        Falls back to matching by database name from ``dataset_db_uri``.
+        """
+        if self._grafana_ds_uid is not None:
+            return self._grafana_ds_uid
+        if not hasattr(self.adaptor, "list_datasets"):
+            return None
+        try:
+            datasets = self.adaptor.list_datasets("")
+            target_name = self._datasource_name
+            # Try matching by configured datasource_name first
+            if target_name:
+                for ds in datasets:
+                    name = ds.name if hasattr(ds, "name") else ""
+                    if name == target_name:
+                        ds_uid = (ds.extra or {}).get("grafana_ds", {}).get("uid") if hasattr(ds, "extra") else None
+                        if ds_uid:
+                            self._grafana_ds_uid = ds_uid
+                            return ds_uid
+
+            # Fallback: match by database name from dataset_db_uri
+            if self._dataset_db_uri:
+                from sqlalchemy.engine.url import make_url
+
+                db_name = make_url(self._dataset_db_uri).database or ""
+                if db_name:
+                    for ds in datasets:
+                        extra = (ds.extra or {}).get("grafana_ds", {}) if hasattr(ds, "extra") else {}
+                        json_data = extra.get("jsonData", {})
+                        if json_data.get("database") == db_name:
+                            uid = extra.get("uid")
+                            if uid:
+                                self._grafana_ds_uid = uid
+                                return uid
+        except Exception as exc:
+            logger.debug(f"Could not resolve Grafana datasource: {exc}")
+        return None
 
     def _resolve_dataset_db_id(self) -> Any:
         """Look up the BI platform database ID that matches dataset_db by name.

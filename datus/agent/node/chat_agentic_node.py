@@ -212,6 +212,9 @@ class ChatAgenticNode(AgenticNode):
             if dash_cfg.dataset_db:
                 dataset_db_uri = dash_cfg.dataset_db.get("uri", "")
                 dataset_db_schema = dash_cfg.dataset_db.get("schema", "")
+            datasource_name = ""
+            if dash_cfg.dataset_db:
+                datasource_name = dash_cfg.dataset_db.get("datasource_name", "")
             read_connector = None
             if self.db_func_tool and hasattr(self.db_func_tool, "connector"):
                 read_connector = self.db_func_tool.connector
@@ -220,6 +223,7 @@ class ChatAgenticNode(AgenticNode):
                 dataset_db_uri=dataset_db_uri,
                 dataset_db_schema=dataset_db_schema,
                 read_connector=read_connector,
+                datasource_name=datasource_name,
             )
             self.tools.extend(self.bi_func_tool.available_tools())
             logger.info(f"BI tools initialized for platform '{bi_platform}'")

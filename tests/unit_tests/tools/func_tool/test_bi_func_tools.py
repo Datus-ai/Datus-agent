@@ -281,6 +281,27 @@ class TestBIFuncToolWriteOps:
         assert result.success == 0
         assert "not found" in result.error
 
+    def test_create_chart_with_sql_succeeds(self):
+        """create_chart accepts sql parameter without dataset_id (Grafana path)."""
+        tool = self._make_tool()
+        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock, "datus_bi_core.models": _bi_core_mock.models}):
+            result = tool.create_chart(
+                chart_type="line",
+                title="SQL Chart",
+                sql="SELECT date AS time, count FROM my_table ORDER BY date",
+                dashboard_id="abc-123",
+            )
+        assert result.success == 1
+        assert result.result["name"] == "SQL Chart"
+
+    def test_create_chart_rejects_no_dataset_id_and_no_sql(self):
+        """create_chart fails when neither dataset_id nor sql is provided."""
+        tool = self._make_tool()
+        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock, "datus_bi_core.models": _bi_core_mock.models}):
+            result = tool.create_chart(chart_type="bar", title="Test")
+        assert result.success == 0
+        assert "dataset_id" in result.error.lower() or "sql" in result.error.lower()
+
     def test_create_chart_rejects_zero_dataset_id(self):
         tool = self._make_tool()
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock, "datus_bi_core.models": _bi_core_mock.models}):
@@ -413,6 +434,93 @@ class TestBIFuncToolWriteQuery:
             tools = tool.available_tools()
         tool_names = {t.name for t in tools}
         assert "write_query" in tool_names
+
+
+class TestBIFuncToolResolveGrafanaDatasource:
+    """Tests for _resolve_grafana_datasource_uid: lookup pre-configured datasources."""
+
+    def test_returns_cached_uid(self):
+        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
+            from datus.tools.func_tool.bi_func_tools import BIFuncTool
+
+            tool = BIFuncTool(FullMockAdaptor())
+            tool._grafana_ds_uid = "cached-uid-123"
+            assert tool._resolve_grafana_datasource_uid() == "cached-uid-123"
+
+    def test_returns_none_when_no_list_datasets(self):
+        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
+            from datus.tools.func_tool.bi_func_tools import BIFuncTool
+
+            adaptor = MagicMock(spec=[])  # no list_datasets
+            tool = BIFuncTool(adaptor)
+            assert tool._resolve_grafana_datasource_uid() is None
+
+    def test_matches_by_datasource_name(self):
+        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
+            from datus.tools.func_tool.bi_func_tools import BIFuncTool
+
+            ds_info = MagicMock()
+            ds_info.name = "My-PostgreSQL"
+            ds_info.extra = {"grafana_ds": {"uid": "matched-uid"}}
+
+            adaptor = MagicMock()
+            adaptor.list_datasets.return_value = [ds_info]
+
+            tool = BIFuncTool(adaptor, datasource_name="My-PostgreSQL")
+            uid = tool._resolve_grafana_datasource_uid()
+            assert uid == "matched-uid"
+            assert tool._grafana_ds_uid == "matched-uid"
+
+    def test_fallback_matches_by_database_name(self):
+        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
+            from datus.tools.func_tool.bi_func_tools import BIFuncTool
+
+            ds_info = MagicMock()
+            ds_info.name = "some-other-name"
+            ds_info.extra = {"grafana_ds": {"uid": "fallback-uid", "jsonData": {"database": "grafana_data"}}}
+
+            adaptor = MagicMock()
+            adaptor.list_datasets.return_value = [ds_info]
+
+            tool = BIFuncTool(
+                adaptor,
+                dataset_db_uri="postgresql+psycopg2://user:pass@localhost:5434/grafana_data",
+            )
+            uid = tool._resolve_grafana_datasource_uid()
+            assert uid == "fallback-uid"
+
+    def test_returns_none_when_no_match(self):
+        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
+            from datus.tools.func_tool.bi_func_tools import BIFuncTool
+
+            ds_info = MagicMock()
+            ds_info.name = "unrelated"
+            ds_info.extra = {"grafana_ds": {"uid": "some-uid", "jsonData": {"database": "other_db"}}}
+
+            adaptor = MagicMock()
+            adaptor.list_datasets.return_value = [ds_info]
+
+            tool = BIFuncTool(
+                adaptor,
+                datasource_name="NonExistent",
+                dataset_db_uri="postgresql+psycopg2://user:pass@localhost/my_db",
+            )
+            uid = tool._resolve_grafana_datasource_uid()
+            assert uid is None
+
+
+class TestBIFuncToolWriteQueryContinued:
+    """Continuation of write_query tests (split to keep class sizes manageable)."""
+
+    def _make_tool_with_dataset_db(self):
+        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
+            from datus.tools.func_tool.bi_func_tools import BIFuncTool
+
+            return BIFuncTool(
+                FullMockAdaptor(),
+                dataset_db_uri="postgresql+psycopg2://superset:superset@localhost:5432/superset",
+                dataset_db_schema="public",
+            )
 
     def test_write_query_absent_from_tools_when_no_dataset_db(self):
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
