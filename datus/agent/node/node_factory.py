@@ -74,17 +74,17 @@ def create_interactive_node(
                 scope=scope,
             )
 
-        elif subagent_name == "create_skill":
-            from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+        elif subagent_name == "gen_skill":
+            from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
             return SkillCreatorAgenticNode(
-                node_id=f"create_skill{node_id_suffix}",
-                description="Skill creation node",
-                node_type="skill_creator",
+                node_id=f"gen_skill{node_id_suffix}",
+                description="Skill generation node",
+                node_type="gen_skill",
                 input_data=None,
                 agent_config=agent_config,
                 tools=None,
-                node_name="create_skill",
+                node_name="gen_skill",
             )
 
         else:
@@ -206,10 +206,10 @@ def create_node_input(
             plan_mode=plan_mode,
         )
 
-    from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+    from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
     if isinstance(node, SkillCreatorAgenticNode):
-        from datus.schemas.skill_creator_agentic_node_models import SkillCreatorNodeInput
+        from datus.schemas.gen_skill_agentic_node_models import SkillCreatorNodeInput
 
         return SkillCreatorNodeInput(user_message=user_message)
 

@@ -22,7 +22,7 @@ from datus.agent.workflow import Workflow
 from datus.cli.execution_state import ExecutionInterrupted
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
-from datus.schemas.skill_creator_agentic_node_models import SkillCreatorNodeInput, SkillCreatorNodeResult
+from datus.schemas.gen_skill_agentic_node_models import SkillCreatorNodeInput, SkillCreatorNodeResult
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import DBFuncTool, FilesystemFuncTool
 from datus.tools.func_tool.base import trans_to_function_tool
@@ -67,7 +67,7 @@ class SkillCreatorAgenticNode(AgenticNode):
         self,
         node_id: str = "skill_creator",
         description: str = "Skill creation node",
-        node_type: str = "skill_creator",
+        node_type: str = "gen_skill",
         input_data: Optional[SkillCreatorNodeInput] = None,
         agent_config: Optional[AgentConfig] = None,
         tools: Optional[list] = None,
@@ -80,9 +80,9 @@ class SkillCreatorAgenticNode(AgenticNode):
         if (
             agent_config
             and hasattr(agent_config, "agentic_nodes")
-            and (node_name or "create_skill") in (agent_config.agentic_nodes or {})
+            and (node_name or "gen_skill") in (agent_config.agentic_nodes or {})
         ):
-            agentic_node_config = agent_config.agentic_nodes.get(node_name or "create_skill", {})
+            agentic_node_config = agent_config.agentic_nodes.get(node_name or "gen_skill", {})
             if isinstance(agentic_node_config, dict):
                 self.max_turns = agentic_node_config.get("max_turns", 30)
 
@@ -108,7 +108,7 @@ class SkillCreatorAgenticNode(AgenticNode):
         logger.debug(f"SkillCreatorAgenticNode tools: {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
 
     def get_node_name(self) -> str:
-        return self.configured_node_name or "create_skill"
+        return self.configured_node_name or "gen_skill"
 
     def setup_tools(self):
         """Setup tools for skill creation: filesystem, db, ask_user, skill loading."""
@@ -214,24 +214,35 @@ class SkillCreatorAgenticNode(AgenticNode):
         except Exception as e:
             logger.warning(f"Failed to setup skill validate tool, continuing without: {e}")
 
-    def _load_companion_skill_content(self) -> str:
-        """Load the companion skill-creator SKILL.md content for injection into system prompt.
+    # Companion skills loaded into system prompt
+    COMPANION_SKILLS = ("create-skill", "optimize-skill")
 
-        Searches the SkillRegistry for the 'skill-creator' skill and returns its
-        markdown body (without frontmatter). Returns empty string if not found.
+    def _load_companion_skill_content(self) -> str:
+        """Load companion skill SKILL.md content for injection into system prompt.
+
+        Loads both create-skill and optimize-skill, returning their markdown
+        bodies (without frontmatter) under labeled sections.
         """
+        parts = []
+        for skill_name in self.COMPANION_SKILLS:
+            content = self._load_single_skill_body(skill_name)
+            if content:
+                parts.append(f"## {skill_name} Workflow\n\n{content}")
+        return "\n\n".join(parts)
+
+    def _load_single_skill_body(self, skill_name: str) -> str:
+        """Load a single skill's SKILL.md body (without frontmatter)."""
         if not self.skill_func_tool_instance or not self.skill_func_tool_instance.manager:
             return ""
         try:
             registry = self.skill_func_tool_instance.manager.registry
             skills = registry.list_skills()
-            metadata = skills.get("skill-creator")
-            if not metadata:
+            if skill_name not in skills:
                 return ""
-            content = registry.load_skill_content("skill-creator")
+            content = registry.load_skill_content(skill_name)
             if not content:
                 return ""
-            # Strip YAML frontmatter — return only the markdown body
+            # Strip YAML frontmatter
             import re
 
             match = re.match(r"^---\s*\n.*?\n---\s*\n", content, re.DOTALL)
@@ -239,7 +250,7 @@ class SkillCreatorAgenticNode(AgenticNode):
                 return content[match.end() :].strip()
             return content.strip()
         except Exception as e:
-            logger.debug(f"Could not load companion skill-creator content: {e}")
+            logger.debug(f"Could not load companion skill '{skill_name}': {e}")
             return ""
 
     def _get_system_prompt(

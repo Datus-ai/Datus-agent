@@ -9,7 +9,7 @@ Unit tests for SkillCreatorAgenticNode input/result models.
 import pytest
 from pydantic import ValidationError
 
-from datus.schemas.skill_creator_agentic_node_models import SkillCreatorNodeInput, SkillCreatorNodeResult
+from datus.schemas.gen_skill_agentic_node_models import SkillCreatorNodeInput, SkillCreatorNodeResult
 
 
 class TestSkillCreatorNodeInput:

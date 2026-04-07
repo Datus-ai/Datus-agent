@@ -51,8 +51,8 @@ SYS_SUB_AGENTS = {
     "gen_ext_knowledge",
     "gen_sql",
     "gen_report",
-    "gen_table",
-    "create_skill",
+"gen_table",
+"gen_skill",
 }
 
 

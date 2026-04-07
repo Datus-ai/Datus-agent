@@ -18,7 +18,7 @@ import pytest
 from datus.agent.node.agentic_node import AgenticNode
 from datus.configuration.node_type import NodeType
 from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
-from datus.schemas.skill_creator_agentic_node_models import SkillCreatorNodeInput
+from datus.schemas.gen_skill_agentic_node_models import SkillCreatorNodeInput
 from tests.unit_tests.mock_llm_model import MockLLMModel, build_simple_response
 
 
@@ -27,66 +27,66 @@ class TestSkillCreatorAgenticNodeInit:
 
     def test_inherits_from_agentic_node(self, real_agent_config, mock_llm_create):
         """SkillCreatorAgenticNode should inherit from AgenticNode."""
-        from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
         node = SkillCreatorAgenticNode(
             node_id="test_skill_creator_1",
-            description="Test Skill Creator node",
-            node_type=NodeType.TYPE_SKILL_CREATOR,
+            description="Test gen_skill node",
+            node_type=NodeType.TYPE_GEN_SKILL,
             agent_config=real_agent_config,
-            node_name="create_skill",
+            node_name="gen_skill",
         )
         assert isinstance(node, AgenticNode)
 
-    def test_node_name_returns_create_skill(self, real_agent_config, mock_llm_create):
-        """Node name should be 'create_skill'."""
-        from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+    def test_node_name_returns_gen_skill(self, real_agent_config, mock_llm_create):
+        """Node name should be 'gen_skill'."""
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
         node = SkillCreatorAgenticNode(
             node_id="test_skill_creator_2",
-            description="Test Skill Creator node",
-            node_type=NodeType.TYPE_SKILL_CREATOR,
+            description="Test gen_skill node",
+            node_type=NodeType.TYPE_GEN_SKILL,
             agent_config=real_agent_config,
-            node_name="create_skill",
+            node_name="gen_skill",
         )
-        assert node.get_node_name() == "create_skill"
+        assert node.get_node_name() == "gen_skill"
 
     def test_default_max_turns_30(self, real_agent_config, mock_llm_create):
         """Default max_turns should be 30."""
-        from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
         node = SkillCreatorAgenticNode(
             node_id="test_skill_creator_3",
-            description="Test Skill Creator node",
-            node_type=NodeType.TYPE_SKILL_CREATOR,
+            description="Test gen_skill node",
+            node_type=NodeType.TYPE_GEN_SKILL,
             agent_config=real_agent_config,
-            node_name="create_skill",
+            node_name="gen_skill",
         )
         assert node.max_turns == 30
 
     def test_model_is_mock(self, real_agent_config, mock_llm_create):
         """Model should be the mock model."""
-        from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
         node = SkillCreatorAgenticNode(
             node_id="test_skill_creator_4",
-            description="Test Skill Creator node",
-            node_type=NodeType.TYPE_SKILL_CREATOR,
+            description="Test gen_skill node",
+            node_type=NodeType.TYPE_GEN_SKILL,
             agent_config=real_agent_config,
-            node_name="create_skill",
+            node_name="gen_skill",
         )
         assert isinstance(node.model, MockLLMModel)
 
     def test_no_mcp_servers(self, real_agent_config, mock_llm_create):
         """Node should have no MCP servers."""
-        from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
         node = SkillCreatorAgenticNode(
             node_id="test_skill_creator_5",
-            description="Test Skill Creator node",
-            node_type=NodeType.TYPE_SKILL_CREATOR,
+            description="Test gen_skill node",
+            node_type=NodeType.TYPE_GEN_SKILL,
             agent_config=real_agent_config,
-            node_name="create_skill",
+            node_name="gen_skill",
         )
         assert node.mcp_servers == {}
 
@@ -96,14 +96,14 @@ class TestSkillCreatorAgenticNodeTools:
 
     def test_has_skills_write_tools(self, real_agent_config, mock_llm_create):
         """Node should have skill_* prefixed write tools for skills directory."""
-        from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
         node = SkillCreatorAgenticNode(
             node_id="test_skill_creator_tools_1",
-            description="Test Skill Creator node",
-            node_type=NodeType.TYPE_SKILL_CREATOR,
+            description="Test gen_skill node",
+            node_type=NodeType.TYPE_GEN_SKILL,
             agent_config=real_agent_config,
-            node_name="create_skill",
+            node_name="gen_skill",
         )
         tool_names = [t.name for t in node.tools]
         assert "skill_write_file" in tool_names
@@ -113,14 +113,14 @@ class TestSkillCreatorAgenticNodeTools:
 
     def test_has_workspace_read_tools(self, real_agent_config, mock_llm_create):
         """Node should have workspace read-only tools (unprefixed)."""
-        from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
         node = SkillCreatorAgenticNode(
             node_id="test_skill_creator_tools_2",
-            description="Test Skill Creator node",
-            node_type=NodeType.TYPE_SKILL_CREATOR,
+            description="Test gen_skill node",
+            node_type=NodeType.TYPE_GEN_SKILL,
             agent_config=real_agent_config,
-            node_name="create_skill",
+            node_name="gen_skill",
         )
         tool_names = [t.name for t in node.tools]
         assert "read_file" in tool_names
@@ -131,14 +131,14 @@ class TestSkillCreatorAgenticNodeTools:
 
     def test_has_skills_read_tools(self, real_agent_config, mock_llm_create):
         """Node should have skill_* prefixed read tools for skills directory."""
-        from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
         node = SkillCreatorAgenticNode(
             node_id="test_skill_creator_tools_2b",
-            description="Test Skill Creator node",
-            node_type=NodeType.TYPE_SKILL_CREATOR,
+            description="Test gen_skill node",
+            node_type=NodeType.TYPE_GEN_SKILL,
             agent_config=real_agent_config,
-            node_name="create_skill",
+            node_name="gen_skill",
         )
         tool_names = [t.name for t in node.tools]
         assert "skill_read_file" in tool_names
@@ -147,14 +147,14 @@ class TestSkillCreatorAgenticNodeTools:
 
     def test_has_db_tools(self, real_agent_config, mock_llm_create):
         """Node should have database tools."""
-        from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
         node = SkillCreatorAgenticNode(
             node_id="test_skill_creator_tools_3",
-            description="Test Skill Creator node",
-            node_type=NodeType.TYPE_SKILL_CREATOR,
+            description="Test gen_skill node",
+            node_type=NodeType.TYPE_GEN_SKILL,
             agent_config=real_agent_config,
-            node_name="create_skill",
+            node_name="gen_skill",
         )
         assert node.db_func_tool is not None
         tool_names = [t.name for t in node.tools]
@@ -163,42 +163,42 @@ class TestSkillCreatorAgenticNodeTools:
 
     def test_has_ask_user_tool(self, real_agent_config, mock_llm_create):
         """Node should have ask_user tool."""
-        from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
         node = SkillCreatorAgenticNode(
             node_id="test_skill_creator_tools_4",
-            description="Test Skill Creator node",
-            node_type=NodeType.TYPE_SKILL_CREATOR,
+            description="Test gen_skill node",
+            node_type=NodeType.TYPE_GEN_SKILL,
             agent_config=real_agent_config,
-            node_name="create_skill",
+            node_name="gen_skill",
         )
         tool_names = [t.name for t in node.tools]
         assert "ask_user" in tool_names
 
     def test_has_skill_loading_tools(self, real_agent_config, mock_llm_create):
         """Node should have skill loading tools (load_skill)."""
-        from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
         node = SkillCreatorAgenticNode(
             node_id="test_skill_creator_tools_5",
-            description="Test Skill Creator node",
-            node_type=NodeType.TYPE_SKILL_CREATOR,
+            description="Test gen_skill node",
+            node_type=NodeType.TYPE_GEN_SKILL,
             agent_config=real_agent_config,
-            node_name="create_skill",
+            node_name="gen_skill",
         )
         tool_names = [t.name for t in node.tools]
         assert "load_skill" in tool_names
 
     def test_has_validate_skill_tool(self, real_agent_config, mock_llm_create):
         """Node should have validate_skill tool."""
-        from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
         node = SkillCreatorAgenticNode(
             node_id="test_skill_creator_tools_6",
-            description="Test Skill Creator node",
-            node_type=NodeType.TYPE_SKILL_CREATOR,
+            description="Test gen_skill node",
+            node_type=NodeType.TYPE_GEN_SKILL,
             agent_config=real_agent_config,
-            node_name="create_skill",
+            node_name="gen_skill",
         )
         tool_names = [t.name for t in node.tools]
         assert "validate_skill" in tool_names
@@ -209,49 +209,50 @@ class TestSkillCreatorSystemPrompt:
 
     def test_system_prompt_renders(self, real_agent_config, mock_llm_create):
         """System prompt template should render without error."""
-        from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
         node = SkillCreatorAgenticNode(
             node_id="test_skill_creator_prompt_1",
-            description="Test Skill Creator node",
-            node_type=NodeType.TYPE_SKILL_CREATOR,
+            description="Test gen_skill node",
+            node_type=NodeType.TYPE_GEN_SKILL,
             agent_config=real_agent_config,
-            node_name="create_skill",
+            node_name="gen_skill",
         )
         prompt = node._get_system_prompt()
         assert prompt is not None
         assert len(prompt) > 100
 
-    def test_system_prompt_contains_skill_format(self, real_agent_config, mock_llm_create):
-        """System prompt should mention SKILL.md format."""
-        from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+    def test_system_prompt_contains_routing(self, real_agent_config, mock_llm_create):
+        """System prompt should contain routing logic for create vs optimize."""
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
         node = SkillCreatorAgenticNode(
             node_id="test_skill_creator_prompt_2",
-            description="Test Skill Creator node",
-            node_type=NodeType.TYPE_SKILL_CREATOR,
+            description="Test gen_skill node",
+            node_type=NodeType.TYPE_GEN_SKILL,
             agent_config=real_agent_config,
-            node_name="create_skill",
+            node_name="gen_skill",
         )
         prompt = node._get_system_prompt()
-        assert "SKILL.md" in prompt
-        assert "frontmatter" in prompt.lower()
+        assert "create-skill" in prompt
+        assert "optimize-skill" in prompt
+        assert "Routing" in prompt
 
-    def test_system_prompt_contains_workflow(self, real_agent_config, mock_llm_create):
-        """System prompt should contain workflow phases."""
-        from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+    def test_system_prompt_contains_critical_rules(self, real_agent_config, mock_llm_create):
+        """System prompt should contain critical rules."""
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
         node = SkillCreatorAgenticNode(
             node_id="test_skill_creator_prompt_3",
-            description="Test Skill Creator node",
-            node_type=NodeType.TYPE_SKILL_CREATOR,
+            description="Test gen_skill node",
+            node_type=NodeType.TYPE_GEN_SKILL,
             agent_config=real_agent_config,
-            node_name="create_skill",
+            node_name="gen_skill",
         )
         prompt = node._get_system_prompt()
-        assert "Understand Intent" in prompt
-        assert "Confirm with User" in prompt
-        assert "Validate" in prompt
+        assert "Critical Rules" in prompt
+        assert "validate_skill" in prompt
+        assert "ask_user" in prompt
 
 
 class TestSkillCreatorExecution:
@@ -260,7 +261,7 @@ class TestSkillCreatorExecution:
     @pytest.mark.asyncio
     async def test_simple_response(self, real_agent_config, mock_llm_create):
         """execute_stream with simple text response produces USER and ASSISTANT actions."""
-        from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
         mock_llm_create.reset(
             responses=[
@@ -270,10 +271,10 @@ class TestSkillCreatorExecution:
 
         node = SkillCreatorAgenticNode(
             node_id="test_skill_creator_exec_1",
-            description="Test Skill Creator node",
-            node_type=NodeType.TYPE_SKILL_CREATOR,
+            description="Test gen_skill node",
+            node_type=NodeType.TYPE_GEN_SKILL,
             agent_config=real_agent_config,
-            node_name="create_skill",
+            node_name="gen_skill",
         )
 
         node.input = SkillCreatorNodeInput(
@@ -295,7 +296,7 @@ class TestSkillCreatorExecution:
     @pytest.mark.asyncio
     async def test_result_has_response(self, real_agent_config, mock_llm_create):
         """Final result should contain the response text."""
-        from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
         mock_llm_create.reset(
             responses=[
@@ -305,10 +306,10 @@ class TestSkillCreatorExecution:
 
         node = SkillCreatorAgenticNode(
             node_id="test_skill_creator_exec_2",
-            description="Test Skill Creator node",
-            node_type=NodeType.TYPE_SKILL_CREATOR,
+            description="Test gen_skill node",
+            node_type=NodeType.TYPE_GEN_SKILL,
             agent_config=real_agent_config,
-            node_name="create_skill",
+            node_name="gen_skill",
         )
 
         node.input = SkillCreatorNodeInput(
@@ -326,15 +327,15 @@ class TestSkillCreatorExecution:
     @pytest.mark.asyncio
     async def test_no_input_raises(self, real_agent_config, mock_llm_create):
         """execute_stream should raise DatusException if no input is set."""
-        from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
         from datus.utils.exceptions import DatusException
 
         node = SkillCreatorAgenticNode(
             node_id="test_skill_creator_exec_3",
-            description="Test Skill Creator node",
-            node_type=NodeType.TYPE_SKILL_CREATOR,
+            description="Test gen_skill node",
+            node_type=NodeType.TYPE_GEN_SKILL,
             agent_config=real_agent_config,
-            node_name="create_skill",
+            node_name="gen_skill",
         )
 
         with pytest.raises(DatusException):
@@ -345,16 +346,16 @@ class TestSkillCreatorExecution:
     @pytest.mark.asyncio
     async def test_execute_stream_without_ahm(self, real_agent_config, mock_llm_create):
         """execute_stream should create ActionHistoryManager if None is passed."""
-        from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
         mock_llm_create.reset(responses=[build_simple_response("Done.")])
 
         node = SkillCreatorAgenticNode(
             node_id="test_skill_creator_exec_4",
-            description="Test Skill Creator node",
-            node_type=NodeType.TYPE_SKILL_CREATOR,
+            description="Test gen_skill node",
+            node_type=NodeType.TYPE_GEN_SKILL,
             agent_config=real_agent_config,
-            node_name="create_skill",
+            node_name="gen_skill",
         )
         node.input = SkillCreatorNodeInput(user_message="test")
 
@@ -368,16 +369,16 @@ class TestSkillCreatorExecution:
     @pytest.mark.asyncio
     async def test_execute_stream_error_handling(self, real_agent_config, mock_llm_create):
         """execute_stream should handle LLM errors gracefully and yield error action."""
-        from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
         mock_llm_create.reset(responses=[build_simple_response("ok")])
 
         node = SkillCreatorAgenticNode(
             node_id="test_skill_creator_exec_5",
-            description="Test Skill Creator node",
-            node_type=NodeType.TYPE_SKILL_CREATOR,
+            description="Test gen_skill node",
+            node_type=NodeType.TYPE_GEN_SKILL,
             agent_config=real_agent_config,
-            node_name="create_skill",
+            node_name="gen_skill",
         )
         node.input = SkillCreatorNodeInput(user_message="test")
 
@@ -400,17 +401,17 @@ class TestSkillCreatorExecution:
     @pytest.mark.asyncio
     async def test_execute_stream_datus_exception_handling(self, real_agent_config, mock_llm_create):
         """execute_stream should handle DatusException with error code."""
-        from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
         from datus.utils.exceptions import DatusException, ErrorCode
 
         mock_llm_create.reset(responses=[build_simple_response("ok")])
 
         node = SkillCreatorAgenticNode(
             node_id="test_skill_creator_exec_6",
-            description="Test Skill Creator node",
-            node_type=NodeType.TYPE_SKILL_CREATOR,
+            description="Test gen_skill node",
+            node_type=NodeType.TYPE_GEN_SKILL,
             agent_config=real_agent_config,
-            node_name="create_skill",
+            node_name="gen_skill",
         )
         node.input = SkillCreatorNodeInput(user_message="test")
 
@@ -434,46 +435,46 @@ class TestSkillCreatorConfigOverrides:
 
     def test_max_turns_override_from_config(self, real_agent_config, mock_llm_create):
         """max_turns should be overridden from agentic_nodes config."""
-        from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
-        # Inject config for create_skill node
-        real_agent_config.agentic_nodes["create_skill"] = {"max_turns": 50}
+        # Inject config for gen_skill node
+        real_agent_config.agentic_nodes["gen_skill"] = {"max_turns": 50}
 
         node = SkillCreatorAgenticNode(
             node_id="test_config_1",
             description="Test",
-            node_type=NodeType.TYPE_SKILL_CREATOR,
+            node_type=NodeType.TYPE_GEN_SKILL,
             agent_config=real_agent_config,
-            node_name="create_skill",
+            node_name="gen_skill",
         )
         assert node.max_turns == 50
 
         # Cleanup
-        del real_agent_config.agentic_nodes["create_skill"]
+        del real_agent_config.agentic_nodes["gen_skill"]
 
     def test_node_name_default_without_name(self, real_agent_config, mock_llm_create):
-        """get_node_name should return 'create_skill' when node_name is None."""
-        from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+        """get_node_name should return 'gen_skill' when node_name is None."""
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
         node = SkillCreatorAgenticNode(
             node_id="test_config_2",
             description="Test",
-            node_type=NodeType.TYPE_SKILL_CREATOR,
+            node_type=NodeType.TYPE_GEN_SKILL,
             agent_config=real_agent_config,
             node_name=None,
         )
-        assert node.get_node_name() == "create_skill"
+        assert node.get_node_name() == "gen_skill"
 
     def test_setup_tools_no_agent_config(self, mock_llm_create):
         """setup_tools should return early if agent_config is None."""
-        from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
         node = SkillCreatorAgenticNode(
             node_id="test_config_3",
             description="Test",
-            node_type=NodeType.TYPE_SKILL_CREATOR,
+            node_type=NodeType.TYPE_GEN_SKILL,
             agent_config=None,
-            node_name="create_skill",
+            node_name="gen_skill",
         )
         # Should have empty tools since agent_config is None
         assert node.tools == []
@@ -484,14 +485,14 @@ class TestSkillCreatorSetupInputUpdateContext:
 
     def test_setup_input_from_workflow(self, real_agent_config, mock_llm_create):
         """setup_input should create input from workflow task."""
-        from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
         node = SkillCreatorAgenticNode(
             node_id="test_setup_1",
             description="Test",
-            node_type=NodeType.TYPE_SKILL_CREATOR,
+            node_type=NodeType.TYPE_GEN_SKILL,
             agent_config=real_agent_config,
-            node_name="create_skill",
+            node_name="gen_skill",
         )
 
         mock_workflow = MagicMock()
@@ -504,14 +505,14 @@ class TestSkillCreatorSetupInputUpdateContext:
 
     def test_setup_input_preserves_existing(self, real_agent_config, mock_llm_create):
         """setup_input should not overwrite existing SkillCreatorNodeInput."""
-        from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
         node = SkillCreatorAgenticNode(
             node_id="test_setup_2",
             description="Test",
-            node_type=NodeType.TYPE_SKILL_CREATOR,
+            node_type=NodeType.TYPE_GEN_SKILL,
             agent_config=real_agent_config,
-            node_name="create_skill",
+            node_name="gen_skill",
         )
 
         existing_input = SkillCreatorNodeInput(user_message="existing message")
@@ -526,14 +527,14 @@ class TestSkillCreatorSetupInputUpdateContext:
 
     def test_update_context(self, real_agent_config, mock_llm_create):
         """update_context should return success without modifying workflow."""
-        from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
         node = SkillCreatorAgenticNode(
             node_id="test_setup_3",
             description="Test",
-            node_type=NodeType.TYPE_SKILL_CREATOR,
+            node_type=NodeType.TYPE_GEN_SKILL,
             agent_config=real_agent_config,
-            node_name="create_skill",
+            node_name="gen_skill",
         )
 
         mock_workflow = MagicMock()
@@ -546,14 +547,14 @@ class TestSkillCreatorSystemPromptEdgeCases:
 
     def test_system_prompt_with_existing_skills(self, real_agent_config, mock_llm_create):
         """System prompt should include existing skills when available."""
-        from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
         node = SkillCreatorAgenticNode(
             node_id="test_prompt_edge_1",
             description="Test",
-            node_type=NodeType.TYPE_SKILL_CREATOR,
+            node_type=NodeType.TYPE_GEN_SKILL,
             agent_config=real_agent_config,
-            node_name="create_skill",
+            node_name="gen_skill",
         )
         prompt = node._get_system_prompt()
         # The prompt should render successfully even if no skills found
@@ -562,15 +563,15 @@ class TestSkillCreatorSystemPromptEdgeCases:
 
     def test_system_prompt_template_error(self, real_agent_config, mock_llm_create):
         """System prompt should raise DatusException on template error."""
-        from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
         from datus.utils.exceptions import DatusException
 
         node = SkillCreatorAgenticNode(
             node_id="test_prompt_edge_2",
             description="Test",
-            node_type=NodeType.TYPE_SKILL_CREATOR,
+            node_type=NodeType.TYPE_GEN_SKILL,
             agent_config=real_agent_config,
-            node_name="create_skill",
+            node_name="gen_skill",
         )
 
         with patch(
