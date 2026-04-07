@@ -253,6 +253,7 @@ class TestInitSuccessStoryMetricsSync:
 
         assert isinstance(result, tuple)
         assert len(result) == 3
+        assert result[0] is False, f"Expected failure for missing CSV, got success={result[0]}"
 
     def test_sync_accepts_all_kwargs(self, tmp_path):
         """Sync wrapper accepts subject_tree, emit, extra_instructions kwargs."""
@@ -278,3 +279,4 @@ class TestInitSuccessStoryMetricsSync:
 
         assert isinstance(result, tuple)
         assert len(result) == 3
+        assert result[0] is True, f"Expected success, got {result[0]}"

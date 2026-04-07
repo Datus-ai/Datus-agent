@@ -781,6 +781,36 @@ class TestProcessMetricWithSemanticModel:
             os.unlink(metric_path)
         hooks._get_sync_confirmation_for_pair.assert_not_called()
 
+    async def test_confirmation_error_propagates(self, hooks):
+        """Exception in _get_sync_confirmation_for_pair propagates to caller."""
+        hooks._get_sync_confirmation_for_pair = AsyncMock(side_effect=RuntimeError("broker down"))
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as sf:
+            sf.write("data_source:\n  name: orders\n")
+            sem_path = sf.name
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as mf:
+            mf.write("metric: revenue\n")
+            metric_path = mf.name
+        try:
+            with pytest.raises(RuntimeError, match="broker down"):
+                await hooks._process_metric_with_semantic_model(sem_path, metric_path)
+        finally:
+            os.unlink(sem_path)
+            os.unlink(metric_path)
+
+    async def test_read_error_propagates(self, hooks, tmp_path):
+        """Unreadable file raises OSError."""
+        sem_dir = tmp_path / "not_a_file"
+        sem_dir.mkdir()
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as mf:
+            mf.write("metric: revenue\n")
+            metric_path = mf.name
+        try:
+            # sem_dir is a directory, open() will raise
+            with pytest.raises(IsADirectoryError):
+                await hooks._process_metric_with_semantic_model(str(sem_dir), metric_path)
+        finally:
+            os.unlink(metric_path)
+
 
 # ---------------------------------------------------------------------------
 # Tests: _parse_subject_tree_from_tags (static method)

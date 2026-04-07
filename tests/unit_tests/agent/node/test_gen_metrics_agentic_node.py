@@ -310,11 +310,11 @@ class TestGenMetricsAgenticNodeExecution:
         assert len(actions) >= 2
         assert actions[-1].status == ActionStatus.SUCCESS
 
-        # In interactive mode, the final result should have tokens_used > 0
+        # In interactive mode, the final action output should be present
         last_output = actions[-1].output
         assert last_output is not None
-        if isinstance(last_output, dict) and "tokens_used" in last_output:
-            assert last_output["tokens_used"] > 0
+        # Verify output is a dict (interactive mode returns structured output)
+        assert isinstance(last_output, dict), f"Expected dict output in interactive mode, got {type(last_output)}"
 
     @pytest.mark.asyncio
     async def test_metrics_with_thinking(self, real_agent_config, mock_llm_create):
@@ -346,18 +346,11 @@ class TestGenMetricsAgenticNodeExecution:
         assistant_actions = [a for a in actions if a.role == ActionRole.ASSISTANT]
         assert len(assistant_actions) >= 2  # thinking + response + final
 
-        # Check that at least one action contains thinking text
-        thinking_found = False
-        for a in assistant_actions:
-            if a.output and isinstance(a.output, dict):
-                raw = a.output.get("raw_output", "")
-                if "analyze the revenue data" in str(raw):
-                    thinking_found = True
-                    break
-            if a.messages and "Thinking" in str(a.messages):
-                thinking_found = True
-                break
-        assert thinking_found, "Expected thinking content in actions"
+        # Check that thinking content appears somewhere in the action stream
+        all_action_text = " ".join(str(a.output) + " " + str(getattr(a, "messages", "")) for a in assistant_actions)
+        assert "analyze the revenue data" in all_action_text, (
+            f"Expected thinking content in actions, got: {all_action_text[:200]}"
+        )
 
     @pytest.mark.asyncio
     async def test_metrics_execution_interrupted_propagates(self, real_agent_config, mock_llm_create):
