@@ -27,6 +27,8 @@ from prompt_toolkit.styles import Style, merge_styles, style_from_pygments_cls
 from rich.console import Console
 from rich.table import Table
 
+from datus.cli.cli_context import CliContext
+
 if TYPE_CHECKING:
     from datus.agent.workflow_runner import WorkflowRunner
 
@@ -742,6 +744,13 @@ class DatusCLI:
                         self.console.print(f"[dim]Update {result.sql_return} rows in {exec_time:.2f} seconds[/]")
                     elif result.sql_return:
                         self.console.print(f"[dim]SQL execution successful in {exec_time:.2f} seconds[/]")
+                        if parse_sql_type(sql, self.db_connector.dialect) == SQLType.CONTENT_SET:
+                            self.cli_context = CliContext(
+                                current_catalog=self.db_connector.catalog_name or "",
+                                current_db_name=self.db_connector.database_name or "",
+                                current_schema=self.db_connector.schema_name or "",
+                            )
+
                         # Update action with success
                         self.actions.update_action_by_id(
                             sql_action.action_id,
@@ -1082,7 +1091,7 @@ Type '.help' for a list of commands or '.exit' to quit.
             """Inner function to perform connection initialization."""
             if not self.cli_context.current_db_name:
                 db_name, connector = self.db_manager.first_conn_with_name(current_namespace)
-                return db_name, connector
+                return db_name or connector.database_name, connector
             else:
                 connector = self.db_manager.get_conn(current_namespace, self.cli_context.current_db_name)
                 return self.cli_context.current_db_name, connector
