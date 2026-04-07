@@ -148,8 +148,14 @@ class InitWorkspace:
             # Build services section from config
             services_section = _build_services_section(agent_config.service.databases)
 
+            # Probe database schema if --database specified
+            db_schema_info = ""
+            db_name = getattr(self.args, "database", "")
+            if db_name:
+                db_schema_info = self._probe_database(agent_config, db_name)
+
             # Try LLM-assisted generation
-            content = self._generate_with_llm(agent_config, dir_tree, project_type, services_section)
+            content = self._generate_with_llm(agent_config, dir_tree, project_type, services_section, db_schema_info)
             if not content:
                 # Fallback to template
                 self.console.print("[yellow]LLM generation failed, using template.[/yellow]")
@@ -170,8 +176,42 @@ class InitWorkspace:
             print_rich_exception(self.console, e, "Init failed", logger)
             return 1
 
+    def _probe_database(self, agent_config, db_name: str) -> str:
+        """Probe database schema and return summary for LLM context."""
+        try:
+            from datus.tools.db_tools.db_manager import DBManager
+
+            self.console.print(f"[dim]Probing database '{db_name}'...[/dim]")
+            db_config = agent_config.service.databases.get(db_name)
+            if not db_config:
+                self.console.print(f"[yellow]Database '{db_name}' not found in config, skipping probe.[/yellow]")
+                return ""
+
+            namespaces = {db_name: {db_name: db_config}}
+            db_manager = DBManager(namespaces)
+            connector = db_manager.get_conn(db_name, db_name)
+
+            tables = connector.get_tables()
+            if not tables:
+                return f"Database '{db_name}' ({db_config.type}): no tables found.\n"
+
+            lines = [f"Database '{db_name}' ({db_config.type}) — {len(tables)} tables:"]
+            for t in tables[:30]:  # Limit to 30 tables
+                table_name = t.get("table_name", t.get("name", str(t)))
+                lines.append(f"  - {table_name}")
+            if len(tables) > 30:
+                lines.append(f"  ... and {len(tables) - 30} more tables")
+
+            self.console.print(f"[dim]Found {len(tables)} tables in '{db_name}'[/dim]")
+            return "\n".join(lines) + "\n"
+
+        except Exception as e:
+            logger.warning(f"Database probe failed for '{db_name}': {e}")
+            self.console.print(f"[yellow]Could not probe database '{db_name}': {e}[/yellow]")
+            return ""
+
     def _generate_with_llm(
-        self, agent_config, dir_tree: str, project_type: str, services_section: str
+        self, agent_config, dir_tree: str, project_type: str, services_section: str, db_schema_info: str = ""
     ) -> Optional[str]:
         """Use configured LLM to generate AGENTS.md content."""
         try:
@@ -194,10 +234,14 @@ class InitWorkspace:
                 if os.path.exists(readme_path):
                     try:
                         with open(readme_path, encoding="utf-8") as f:
-                            readme_content = f.read()[:3000]  # Limit size
+                            readme_content = f.read()[:3000]
                     except Exception:
                         pass
                     break
+
+            db_section = ""
+            if db_schema_info:
+                db_section = f"\nDatabase schema:\n{db_schema_info}\n"
 
             prompt = f"""Generate an AGENTS.md file for the project "{self.project_name}".
 
@@ -209,11 +253,10 @@ Directory structure:
 {dir_tree}
 ```
 
-{f"README excerpt:\n{readme_content}\n" if readme_content else ""}
-
+{f"README excerpt:\n{readme_content}\n" if readme_content else ""}\
 Configured services (databases):
 {services_section}
-
+{db_section}\
 Generate AGENTS.md with these exact sections (use ## headers):
 
 1. **# {self.project_name}** — One-line project description
@@ -227,8 +270,17 @@ Generate AGENTS.md with these exact sections (use ## headers):
 
 4. **## Services** — Use the configured services table provided above.
    Add any additional services detected from docker-compose.yml, Dockerfile, etc.
-
-5. **## Artifacts** — Describe data artifacts, configs, or outputs this project produces.
+{
+                '''
+5. **## Data Tables** — List tables from the database schema above.
+   Table with columns: Table | Type | Description
+'''
+                if db_schema_info
+                else ""
+            }\
+{
+                f"{'6' if db_schema_info else '5'}"
+            }. **## Artifacts** — Describe data artifacts, configs, or outputs this project produces.
    Examples: data catalogs, semantic models, SQL files, reports, API schemas.
 
 Output ONLY the markdown content, no code fences around the entire document."""

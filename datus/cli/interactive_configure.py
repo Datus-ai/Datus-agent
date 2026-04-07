@@ -91,6 +91,12 @@ class InteractiveConfigure:
             copy_data_file(resource_path="sample_data", dest_dir=self.sample_dir, overwrite=False)
         except Exception as e:
             logger.debug(f"Error copying sample files: {e}")
+        # Deploy built-in skills (init, etc.) to ~/.datus/skills/
+        try:
+            skills_dir = Path(self.user_home) / ".datus" / "skills"
+            copy_data_file(resource_path="resources/skills", dest_dir=skills_dir, overwrite=False)
+        except Exception as e:
+            logger.debug(f"Error deploying built-in skills: {e}")
 
     def _load_existing_config(self):
         """Load models and databases from existing agent.yml."""

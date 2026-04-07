@@ -62,11 +62,14 @@ def create_parser() -> argparse.ArgumentParser:
     )
 
     # init command — project workspace initialization (AGENTS.md)
-    subparsers.add_parser(
+    init_parser = subparsers.add_parser(
         "init",
         help="Initialize project workspace (generate AGENTS.md)",
         parents=[global_parser],
         formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    init_parser.add_argument(
+        "--database", "--namespace", type=str, default="", help="Database to probe for schema info in AGENTS.md"
     )
 
     # service command (was: namespace)
