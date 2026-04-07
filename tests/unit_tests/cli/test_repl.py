@@ -403,6 +403,51 @@ class TestExecuteSql:
         # Should print update message
         assert len(output) > 0
 
+    def test_content_set_sql_rebuilds_cli_context(self, cli):
+        """USE/SET SQL rebuilds cli_context from connector state."""
+        from datus.utils.constants import SQLType
+
+        mock_result = MagicMock()
+        mock_result.success = True
+        mock_result.row_count = None
+        mock_result.sql_return = "OK"  # truthy, no column_names attr
+        cli.db_connector.execute.return_value = mock_result
+
+        # Connector state after USE command
+        cli.db_connector.catalog_name = "new_catalog"
+        cli.db_connector.database_name = "new_db"
+        cli.db_connector.schema_name = "new_schema"
+        cli.db_connector.dialect = "snowflake"
+
+        # Ensure initial context is different
+        cli.cli_context.current_catalog = "old_catalog"
+        cli.cli_context.current_db_name = "old_db"
+        cli.cli_context.current_schema = "old_schema"
+
+        with patch("datus.cli.repl.parse_sql_type", return_value=SQLType.CONTENT_SET):
+            cli._execute_sql("USE DATABASE new_db")
+
+        assert cli.cli_context.current_catalog == "new_catalog"
+        assert cli.cli_context.current_db_name == "new_db"
+        assert cli.cli_context.current_schema == "new_schema"
+
+    def test_non_content_set_sql_does_not_rebuild_context(self, cli):
+        """Non-CONTENT_SET SQL does not rebuild cli_context."""
+        from datus.utils.constants import SQLType
+
+        mock_result = MagicMock()
+        mock_result.success = True
+        mock_result.row_count = None
+        mock_result.sql_return = "OK"
+        cli.db_connector.execute.return_value = mock_result
+
+        cli.cli_context.current_db_name = "original_db"
+
+        with patch("datus.cli.repl.parse_sql_type", return_value=SQLType.DDL):
+            cli._execute_sql("CREATE TABLE t1 (id INT)")
+
+        assert cli.cli_context.current_db_name == "original_db"
+
 
 # ---------------------------------------------------------------------------
 # Tests: _execute_tool_command
@@ -625,3 +670,45 @@ class TestCmdSwitchNamespaceExtended:
         mock_list.assert_called()
         output = cli.console.file.getvalue()
         assert "doesn't need" in output or "already" in output.lower()
+
+
+# ---------------------------------------------------------------------------
+# Tests: _init_connection
+# ---------------------------------------------------------------------------
+
+
+class TestInitConnection:
+    def test_db_name_none_falls_back_to_connector_database_name(self, cli):
+        """When first_conn_with_name returns None for db_name, connector.database_name is used."""
+        mock_conn = MagicMock()
+        mock_conn.database_name = "fallback_db"
+        mock_conn.catalog_name = ""
+        mock_conn.schema_name = ""
+        mock_conn.dialect = "snowflake"
+        mock_conn.test_connection.return_value = True
+        cli.db_manager.first_conn_with_name.return_value = (None, mock_conn)
+
+        # Ensure cli_context.current_db_name is falsy so the first branch is taken
+        cli.cli_context.current_db_name = None
+
+        cli._init_connection(timeout_seconds=5)
+
+        assert cli.db_connector is mock_conn
+        # The fallback should have populated db_name from connector.database_name
+        assert cli.cli_context.current_db_name == "fallback_db"
+
+    def test_db_name_present_uses_returned_name(self, cli):
+        """When first_conn_with_name returns a db_name, it is used directly."""
+        mock_conn = MagicMock()
+        mock_conn.database_name = "connector_db"
+        mock_conn.catalog_name = ""
+        mock_conn.schema_name = ""
+        mock_conn.dialect = "snowflake"
+        mock_conn.test_connection.return_value = True
+        cli.db_manager.first_conn_with_name.return_value = ("returned_db", mock_conn)
+
+        cli.cli_context.current_db_name = None
+
+        cli._init_connection(timeout_seconds=5)
+
+        assert cli.db_connector is mock_conn

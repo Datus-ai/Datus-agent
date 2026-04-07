@@ -79,6 +79,17 @@ class TestCmdListDatabases:
         meta.cmd_list_databases()
         cli.console.print.assert_called()
 
+    def test_empty_result_prints_empty_set(self):
+        """Non-SQLite single DB with get_databases returning empty triggers 'Empty set' message."""
+        cli = _make_cli(db_type="snowflake")
+        db_cfg = _make_db_config(db_type="snowflake", logic_name="mydb")
+        cli.agent_config.namespaces = {"test_ns": {"mydb": db_cfg}}
+        cli.db_connector.get_databases.return_value = []
+        meta = MetadataCommands(cli)
+        meta.cmd_list_databases()
+        calls = [str(c) for c in cli.console.print.call_args_list]
+        assert any("Empty set" in c for c in calls)
+
     def test_exception_prints_error(self, meta):
         meta.cli.agent_config.current_namespace = None
         meta.cli.agent_config.namespaces = {}
@@ -196,7 +207,7 @@ class TestCmdSchemas:
         cli = _make_cli(db_type="snowflake")
         with patch("datus.cli.metadata_commands.connector_registry") as mock_reg:
             mock_reg.support_schema.return_value = True
-            cli.db_connector.get_schemas.return_value = []
+            cli.db_connector.update_database_context.return_value = []
             meta = MetadataCommands(cli)
             meta.cmd_schemas("")
         cli.console.print.assert_called_with("[yellow]Empty set.[/]")
@@ -205,10 +216,13 @@ class TestCmdSchemas:
         cli = _make_cli(db_type="snowflake")
         with patch("datus.cli.metadata_commands.connector_registry") as mock_reg:
             mock_reg.support_schema.return_value = True
-            cli.db_connector.get_schemas.return_value = ["public", "private"]
+            cli.db_connector.update_database_context.return_value = ["public", "private"]
             meta = MetadataCommands(cli)
             meta.cmd_schemas("")
         cli.console.print.assert_called()
+        cli.db_connector.update_database_context.assert_called_once_with(
+            catalog=cli.cli_context.current_catalog, schema=cli.cli_context.current_db_name
+        )
 
 
 # ---------------------------------------------------------------------------
