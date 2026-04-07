@@ -330,6 +330,68 @@ class TestBIFuncToolWriteOps:
         assert result.success == 0
         assert "database_id" in result.error.lower()
 
+    def test_list_datasets_success(self):
+        tool = self._make_tool()
+        result = tool.list_datasets()
+        assert result.success == 1
+        assert len(result.result) == 1
+
+    def test_update_dashboard_success(self):
+        tool = self._make_tool()
+        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock, "datus_bi_core.models": _bi_core_mock.models}):
+            result = tool.update_dashboard("1", title="Updated")
+        assert result.success == 1
+        assert result.result["name"] == "Updated"
+
+    def test_update_chart_success(self):
+        tool = self._make_tool()
+        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock, "datus_bi_core.models": _bi_core_mock.models}):
+            result = tool.update_chart("1", title="New Title", chart_type="line")
+        assert result.success == 1
+        assert result.result["name"] == "New Title"
+
+    def test_add_chart_to_dashboard_success(self):
+        tool = self._make_tool()
+        result = tool.add_chart_to_dashboard("5", "10")
+        assert result.success == 1
+        assert result.result["chart_id"] == "5"
+        assert result.result["dashboard_id"] == "10"
+
+    def test_create_dataset_success(self):
+        tool = self._make_tool()
+        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock, "datus_bi_core.models": _bi_core_mock.models}):
+            result = tool.create_dataset(name="my_ds", database_id="1", sql="SELECT * FROM t")
+        assert result.success == 1
+        assert result.result["name"] == "my_ds"
+
+    def test_list_dashboards_no_support(self):
+        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
+            from datus.tools.func_tool.bi_func_tools import BIFuncTool
+
+            tool = BIFuncTool(ReadOnlyMockAdaptor())
+        result = tool.list_dashboards()
+        assert result.success == 0
+        assert "not support" in result.error.lower()
+
+    def test_get_dashboard_not_found(self):
+        tool = self._make_tool()
+        tool.adaptor.get_dashboard_info = lambda dashboard_id: None
+        result = tool.get_dashboard("999")
+        assert result.success == 0
+        assert "not found" in result.error
+
+    def test_list_charts_exception(self):
+        tool = self._make_tool()
+        tool.adaptor.list_charts = lambda dashboard_id: (_ for _ in ()).throw(RuntimeError("fail"))
+        result = tool.list_charts("1")
+        assert result.success == 0
+
+    def test_list_datasets_exception(self):
+        tool = self._make_tool()
+        tool.adaptor.list_datasets = lambda dashboard_id="": (_ for _ in ()).throw(RuntimeError("fail"))
+        result = tool.list_datasets()
+        assert result.success == 0
+
     def test_error_handling(self):
         tool = self._make_tool()
         tool.adaptor.list_dashboards = lambda **kwargs: (_ for _ in ()).throw(RuntimeError("connection failed"))
