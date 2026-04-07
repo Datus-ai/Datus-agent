@@ -1,7 +1,12 @@
 ---
 name: gen-table
 description: Create database tables from SQL (CTAS) or natural language descriptions
-tags: "wide-table, CTAS, DDL, create-table, query-acceleration"
+tags:
+  - wide-table
+  - CTAS
+  - DDL
+  - create-table
+  - query-acceleration
 version: "1.0.0"
 user_invocable: false
 disable_model_invocation: false

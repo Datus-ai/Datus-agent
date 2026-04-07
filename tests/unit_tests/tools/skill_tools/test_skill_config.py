@@ -10,6 +10,8 @@ Tests SkillConfig and SkillMetadata classes.
 
 from pathlib import Path
 
+import pytest
+
 from datus.tools.skill_tools.skill_config import SkillConfig, SkillMetadata
 
 
@@ -170,6 +172,18 @@ class TestSkillMetadata:
         assert metadata.version == "1.0.0"
         assert metadata.allowed_commands == ["python:scripts/*.py"]
         assert metadata.location == Path("/skills/sql-optimization")
+
+    def test_skill_metadata_from_frontmatter_rejects_string_tags(self):
+        """Tags must be a list, not a comma-separated string."""
+        from pydantic import ValidationError
+
+        frontmatter = {
+            "name": "bad-tags",
+            "description": "Skill with string tags",
+            "tags": "sql, performance, optimization",
+        }
+        with pytest.raises(ValidationError, match="tags"):
+            SkillMetadata.from_frontmatter(frontmatter, Path("/skills/bad-tags"))
 
     def test_skill_metadata_from_frontmatter_minimal(self):
         """Test creating SkillMetadata from minimal frontmatter."""

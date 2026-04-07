@@ -1,7 +1,10 @@
 ---
 name: gen-metrics
 description: Interactively define MetricFlow metrics from natural language business descriptions
-tags: "metrics, metricflow, interactive"
+tags:
+  - metrics
+  - metricflow
+  - interactive
 version: "1.1.0"
 user_invocable: false
 disable_model_invocation: false
