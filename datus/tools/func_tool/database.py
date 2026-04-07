@@ -54,8 +54,13 @@ class ScopedTablePattern:
 def _pattern_matches(pattern: str, value: str) -> bool:
     if not pattern or pattern in ("*", "%"):
         return True
+    if not value:
+        # Empty value means the field could not be resolved from either the SQL
+        # or connector defaults (e.g. catalog_name not set).  Treat as a wildcard
+        # so that scope checking only enforces fields we can actually verify.
+        return True
     normalized_pattern = pattern.replace("%", "*")
-    return fnmatchcase(value or "", normalized_pattern)
+    return fnmatchcase(value, normalized_pattern)
 
 
 @mcp_tool_class(

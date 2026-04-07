@@ -912,6 +912,162 @@ class TestScopedContextFromSubAgentConfig:
         assert result.success == 1
 
 
+class TestCheckSqlTableScopeDialects:
+    """_check_sql_table_scope must handle partial (non-fully-qualified) table names across dialects."""
+
+    @staticmethod
+    def _make_tool(monkeypatch, dialect, capabilities, scoped_tables, **kw):
+        from datus_db_core import connector_registry
+
+        monkeypatch.setitem(connector_registry._capabilities, dialect, capabilities)
+        connector = Mock()
+        connector.dialect = dialect
+        connector.catalog_name = kw.get("catalog_name", "")
+        connector.database_name = kw.get("database_name", "")
+        connector.schema_name = kw.get("schema_name", "")
+        return DBFuncTool(connector, scoped_tables=scoped_tables)
+
+    def test_mysql(self, monkeypatch):
+        """MySQL: [database, table]."""
+        tool = self._make_tool(
+            monkeypatch,
+            "mysql",
+            {"database"},
+            scoped_tables={"mydb.orders", "mydb.users"},
+            database_name="mydb",
+        )
+        assert tool._check_sql_table_scope("SELECT * FROM orders") == []
+        assert tool._check_sql_table_scope("SELECT * FROM mydb.orders") == []
+        assert tool._check_sql_table_scope("SELECT * FROM mydb.secret") != []
+
+    def test_starrocks(self, monkeypatch):
+        """StarRocks: [catalog, database, table]."""
+        tool = self._make_tool(
+            monkeypatch,
+            "starrocks",
+            {"catalog", "database"},
+            scoped_tables={"ctl1.db1.tb1", "ctl1.db1.tb2"},
+            catalog_name="ctl1",
+            database_name="db1",
+        )
+        assert tool._check_sql_table_scope("SELECT * FROM tb1") == []
+        assert tool._check_sql_table_scope("SELECT * FROM db1.tb1") == []
+        assert tool._check_sql_table_scope("SELECT * FROM ctl1.db1.tb1") == []
+        assert tool._check_sql_table_scope("SELECT * FROM db1.tb3") != []
+
+    def test_starrocks_empty_catalog(self, monkeypatch):
+        """StarRocks: empty catalog_name + partial SQL should still match."""
+        tool = self._make_tool(
+            monkeypatch,
+            "starrocks",
+            {"catalog", "database"},
+            scoped_tables={"ctl1.db1.tb1"},
+            catalog_name="",
+            database_name="db1",
+        )
+        assert tool._check_sql_table_scope("SELECT * FROM db1.tb1") == []
+        assert tool._check_sql_table_scope("SELECT * FROM tb1") == []
+
+    def test_postgresql(self, monkeypatch):
+        """PostgreSQL: [database, schema, table]."""
+        tool = self._make_tool(
+            monkeypatch,
+            "postgresql",
+            {"database", "schema"},
+            scoped_tables={"mydb.public.orders"},
+            database_name="mydb",
+            schema_name="public",
+        )
+        assert tool._check_sql_table_scope("SELECT * FROM orders") == []
+        assert tool._check_sql_table_scope("SELECT * FROM public.orders") == []
+        assert tool._check_sql_table_scope("SELECT * FROM mydb.public.orders") == []
+        assert tool._check_sql_table_scope("SELECT * FROM public.secret") != []
+
+    def test_hive(self, monkeypatch):
+        """Hive: [database, table]."""
+        tool = self._make_tool(
+            monkeypatch,
+            "hive",
+            {"database"},
+            scoped_tables={"default.logs"},
+            database_name="default",
+        )
+        assert tool._check_sql_table_scope("SELECT * FROM logs") == []
+        assert tool._check_sql_table_scope("SELECT * FROM `default`.logs") == []
+        assert tool._check_sql_table_scope("SELECT * FROM `default`.secret") != []
+
+    def test_snowflake(self, monkeypatch):
+        """Snowflake: [catalog, database, schema, table]."""
+        tool = self._make_tool(
+            monkeypatch,
+            "snowflake",
+            {"catalog", "database", "schema"},
+            scoped_tables={"wh1.analytics.public.orders"},
+            catalog_name="wh1",
+            database_name="analytics",
+            schema_name="public",
+        )
+        assert tool._check_sql_table_scope("SELECT * FROM orders") == []
+        assert tool._check_sql_table_scope("SELECT * FROM public.orders") == []
+        assert tool._check_sql_table_scope("SELECT * FROM analytics.public.orders") == []
+        assert tool._check_sql_table_scope("SELECT * FROM public.secret") != []
+
+    def test_snowflake_empty_catalog(self, monkeypatch):
+        """Snowflake: empty catalog_name + partial SQL should still match."""
+        tool = self._make_tool(
+            monkeypatch,
+            "snowflake",
+            {"catalog", "database", "schema"},
+            scoped_tables={"wh1.analytics.public.orders"},
+            catalog_name="",
+            database_name="analytics",
+            schema_name="public",
+        )
+        assert tool._check_sql_table_scope("SELECT * FROM orders") == []
+        assert tool._check_sql_table_scope("SELECT * FROM public.orders") == []
+
+    def test_clickhouse(self, monkeypatch):
+        """ClickHouse: [database, table]."""
+        tool = self._make_tool(
+            monkeypatch,
+            "clickhouse",
+            {"database"},
+            scoped_tables={"default.hits"},
+            database_name="default",
+        )
+        assert tool._check_sql_table_scope("SELECT * FROM hits") == []
+        assert tool._check_sql_table_scope("SELECT * FROM default.hits") == []
+        assert tool._check_sql_table_scope("SELECT * FROM default.secret") != []
+
+    def test_spark(self, monkeypatch):
+        """Spark: [catalog, database, table]."""
+        tool = self._make_tool(
+            monkeypatch,
+            "spark",
+            {"catalog", "database"},
+            scoped_tables={"spark_catalog.default.events"},
+            catalog_name="spark_catalog",
+            database_name="default",
+        )
+        assert tool._check_sql_table_scope("SELECT * FROM events") == []
+        assert tool._check_sql_table_scope("SELECT * FROM `default`.events") == []
+        assert tool._check_sql_table_scope("SELECT * FROM spark_catalog.`default`.events") == []
+        assert tool._check_sql_table_scope("SELECT * FROM `default`.secret") != []
+
+    def test_spark_empty_catalog(self, monkeypatch):
+        """Spark: empty catalog_name + partial SQL should still match."""
+        tool = self._make_tool(
+            monkeypatch,
+            "spark",
+            {"catalog", "database"},
+            scoped_tables={"spark_catalog.default.events"},
+            catalog_name="",
+            database_name="default",
+        )
+        assert tool._check_sql_table_scope("SELECT * FROM events") == []
+        assert tool._check_sql_table_scope("SELECT * FROM `default`.events") == []
+
+
 class TestDBFuncToolEdgeCases:
     """Test edge cases for DBFuncTool."""
 
