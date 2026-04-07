@@ -136,8 +136,8 @@ class SkillCreatorAgenticNode(AgenticNode):
     def _setup_full_filesystem_tools(self):
         """Setup filesystem tools: read from workspace root, write restricted to skills directory."""
         try:
-            # Read tools — can access the full workspace (for browsing existing skills, etc.)
-            read_root = self._resolve_workspace_root()
+            # Read tools — use home dir so we can browse both workspace and ~/.datus/skills
+            read_root = os.path.expanduser("~")
             self.filesystem_func_tool = FilesystemFuncTool(root_path=read_root)
             for method_name in READONLY_FILESYSTEM_METHODS:
                 if hasattr(self.filesystem_func_tool, method_name):
