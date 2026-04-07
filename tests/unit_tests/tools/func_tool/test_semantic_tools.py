@@ -14,37 +14,24 @@ from datus.tools.semantic_tools.models import QueryResult
 class TestNormalizeNull:
     """Tests for normalize_null utility function."""
 
-    def test_none_returns_none(self):
-        assert normalize_null(None) is None
+    @pytest.mark.parametrize(
+        "value",
+        [None, "null", "None", "NULL", "Null", "NONE", "none", "", "  ", "\t"],
+    )
+    def test_null_variants_return_none(self, value):
+        assert normalize_null(value) is None
 
-    def test_string_null_returns_none(self):
-        assert normalize_null("null") is None
-
-    def test_string_none_returns_none(self):
-        assert normalize_null("None") is None
-
-    def test_case_insensitive_null(self):
-        assert normalize_null("NULL") is None
-        assert normalize_null("Null") is None
-
-    def test_case_insensitive_none(self):
-        assert normalize_null("NONE") is None
-        assert normalize_null("none") is None
-
-    def test_empty_string_returns_none(self):
-        assert normalize_null("") is None
-
-    def test_whitespace_only_returns_none(self):
-        assert normalize_null("  ") is None
-        assert normalize_null("\t") is None
-
-    def test_valid_value_passes_through(self):
-        assert normalize_null("2024-01-01") == "2024-01-01"
-        assert normalize_null("hello") == "hello"
-
-    def test_numeric_value_passes_through(self):
-        assert normalize_null(42) == 42
-        assert normalize_null(0) == 0
+    @pytest.mark.parametrize(
+        "value, expected",
+        [
+            ("2024-01-01", "2024-01-01"),
+            ("hello", "hello"),
+            (42, 42),
+            (0, 0),
+        ],
+    )
+    def test_valid_value_passes_through(self, value, expected):
+        assert normalize_null(value) == expected
 
 
 @pytest.fixture
@@ -690,8 +677,7 @@ class TestReloadAdapter:
 
             result = tool._reload_adapter()
 
-        # It either returns False or raises - we just check it doesn't crash
-        assert isinstance(result, bool)
+        assert result is False
 
 
 class TestCompressorModelName:

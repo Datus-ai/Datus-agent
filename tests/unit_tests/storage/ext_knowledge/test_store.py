@@ -95,6 +95,9 @@ class TestExtKnowledgeStoreInit:
         """Test that store initializes correctly with expected attributes."""
         assert ext_store.table_name == "ext_knowledge"
         assert ext_store.subject_tree is not None
+        assert hasattr(ext_store.subject_tree, "get_matched_children_id"), (
+            "subject_tree must expose get_matched_children_id for scoped filtering"
+        )
 
     def test_store_empty_initially(self, ext_store):
         """Test that a new store has no entries."""

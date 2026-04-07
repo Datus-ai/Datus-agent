@@ -184,7 +184,10 @@ class TestReferenceTemplateToolsNightly:
             assert "requires parameters" in render_result.error or "Missing" in render_result.error
             assert "retry" in render_result.error.lower()
         else:
-            pytest.skip("No template with >1 parameter found to test missing params scenario")
+            pytest.skip(
+                "No template with >1 parameter found to test missing params scenario. "
+                "The test data must include at least one multi-parameter template to exercise this code path."
+            )
 
 
 @pytest.mark.nightly

@@ -188,17 +188,22 @@ class TestResolveNodeType:
             task_tool._resolve_node_type("nonexistent")
 
     def test_node_class_map_coverage(self):
-        """All NODE_CLASS_MAP entries map to valid NodeType constants."""
-        for key, value in NODE_CLASS_MAP.items():
-            assert hasattr(NodeType, f"TYPE_{value.upper()}" if value != "gensql" else "") or value in (
-                NodeType.TYPE_GENSQL,
-                NodeType.TYPE_CHAT,
-                NodeType.TYPE_GEN_REPORT,
-                NodeType.TYPE_EXT_KNOWLEDGE,
-                NodeType.TYPE_SEMANTIC,
-                NodeType.TYPE_SQL_SUMMARY,
-                NodeType.TYPE_GEN_TABLE,
-            )
+        """NODE_CLASS_MAP contains exactly the expected key→NodeType mappings."""
+        expected_map = {
+            "gen_sql": NodeType.TYPE_GENSQL,
+            "chat": NodeType.TYPE_CHAT,
+            "gen_report": NodeType.TYPE_GEN_REPORT,
+            "ext_knowledge": NodeType.TYPE_EXT_KNOWLEDGE,
+            "semantic": NodeType.TYPE_SEMANTIC,
+            "sql_summary": NodeType.TYPE_SQL_SUMMARY,
+            "explore": NodeType.TYPE_EXPLORE,
+            "gen_table": NodeType.TYPE_GEN_TABLE,
+        }
+        assert set(NODE_CLASS_MAP.keys()) == set(expected_map.keys()), (
+            f"NODE_CLASS_MAP keys differ: got {set(NODE_CLASS_MAP.keys())}"
+        )
+        for key, expected_value in expected_map.items():
+            assert NODE_CLASS_MAP[key] == expected_value, f"Wrong mapping for key '{key}'"
 
 
 # ── _build_task_description ────────────────────────────────────────
@@ -243,16 +248,22 @@ class TestBuildTaskDescription:
 
 @pytest.mark.ci
 class TestNodeCreation:
-    @patch("datus.tools.func_tool.sub_agent_task_tool.SubAgentTaskTool._create_node")
-    def test_always_creates_fresh_node(self, mock_create, task_tool):
-        """Each call creates a new node instance (no caching)."""
-        mock_create.side_effect = [Mock(), Mock()]
+    def test_always_creates_fresh_node(self, task_tool):
+        """Each call to _create_node returns a distinct new instance (no caching).
 
-        node1 = task_tool._create_node("gen_sql")
-        node2 = task_tool._create_node("gen_sql")
+        Uses "explore" because it is in NODE_CLASS_MAP but NOT in SYS_SUB_AGENTS,
+        so it goes through the Node.new_instance factory path.
+        """
+        node_a = Mock(name="node_a")
+        node_b = Mock(name="node_b")
+
+        with patch("datus.agent.node.node.Node.new_instance", side_effect=[node_a, node_b]):
+            node1 = task_tool._create_node("explore")
+            node2 = task_tool._create_node("explore")
 
         assert node1 is not node2
-        assert mock_create.call_count == 2
+        assert node1 is node_a
+        assert node2 is node_b
 
 
 # ── _build_node_input ──────────────────────────────────────────────

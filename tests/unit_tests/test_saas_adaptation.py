@@ -78,17 +78,23 @@ def _make_ext_knowledge_csv(tmp_path, filename="knowledge.csv"):
 class TestAllAsyncFunctionsAreCoroutines:
     """Verify every async init function introduced by the SaaS adaptation is an async def."""
 
-    def test_semantic_model_async_is_coroutine(self):
-        assert inspect.iscoroutinefunction(init_success_story_semantic_model_async)
-
-    def test_metrics_async_is_coroutine(self):
-        assert inspect.iscoroutinefunction(init_success_story_metrics_async)
-
-    def test_ext_knowledge_async_is_coroutine(self):
-        assert inspect.iscoroutinefunction(init_success_story_knowledge_async)
-
-    def test_reference_sql_async_is_coroutine(self):
-        assert inspect.iscoroutinefunction(init_reference_sql_async)
+    @pytest.mark.parametrize(
+        "func",
+        [
+            init_success_story_semantic_model_async,
+            init_success_story_metrics_async,
+            init_success_story_knowledge_async,
+            init_reference_sql_async,
+        ],
+        ids=[
+            "semantic_model_async",
+            "metrics_async",
+            "ext_knowledge_async",
+            "reference_sql_async",
+        ],
+    )
+    def test_async_func_is_coroutine(self, func):
+        assert inspect.iscoroutinefunction(func)
 
 
 # ===========================================================================
@@ -100,38 +106,36 @@ class TestAllAsyncFunctionsAreCoroutines:
 class TestNoArgparseNamespaceDependency:
     """Verify that all changed functions have removed argparse.Namespace (args) param."""
 
-    def _assert_no_args_param(self, func):
+    @pytest.mark.parametrize(
+        "func",
+        [
+            init_success_story_semantic_model_async,
+            init_success_story_semantic_model,
+            init_success_story_metrics_async,
+            init_success_story_metrics,
+            init_success_story_knowledge_async,
+            init_success_story_knowledge,
+            init_ext_knowledge,
+            init_reference_sql_async,
+            init_reference_sql,
+        ],
+        ids=[
+            "semantic_model_async",
+            "semantic_model_sync",
+            "metrics_async",
+            "metrics_sync",
+            "ext_knowledge_async",
+            "ext_knowledge_sync",
+            "ext_knowledge_init",
+            "reference_sql_async",
+            "reference_sql_sync",
+        ],
+    )
+    def test_no_args_param(self, func):
         sig = inspect.signature(func)
         assert "args" not in sig.parameters, (
             f"{func.__name__} still has 'args' parameter — argparse.Namespace dependency not removed"
         )
-
-    def test_semantic_model_async_no_args(self):
-        self._assert_no_args_param(init_success_story_semantic_model_async)
-
-    def test_semantic_model_sync_no_args(self):
-        self._assert_no_args_param(init_success_story_semantic_model)
-
-    def test_metrics_async_no_args(self):
-        self._assert_no_args_param(init_success_story_metrics_async)
-
-    def test_metrics_sync_no_args(self):
-        self._assert_no_args_param(init_success_story_metrics)
-
-    def test_ext_knowledge_knowledge_async_no_args(self):
-        self._assert_no_args_param(init_success_story_knowledge_async)
-
-    def test_ext_knowledge_knowledge_sync_no_args(self):
-        self._assert_no_args_param(init_success_story_knowledge)
-
-    def test_ext_knowledge_init_no_args(self):
-        self._assert_no_args_param(init_ext_knowledge)
-
-    def test_reference_sql_async_no_args(self):
-        self._assert_no_args_param(init_reference_sql_async)
-
-    def test_reference_sql_sync_no_args(self):
-        self._assert_no_args_param(init_reference_sql)
 
 
 # ===========================================================================
@@ -430,71 +434,53 @@ class TestSessionManagerProjectIsolation:
 # ===========================================================================
 
 
+def _load_pydantic_v2_classes():
+    """Lazily import classes for parametrize so import errors surface at test time."""
+    from datus.schemas.base import BaseInput, BaseResult, CommonData
+    from datus.schemas.chat_agentic_node_models import ChatNodeInput
+    from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
+    from datus.schemas.node_models import ExecuteSQLResult, ReflectionResult
+    from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
+    from datus.tools.db_tools.config import ConnectionConfig
+
+    return [
+        (BaseInput, "extra", "forbid"),
+        (BaseResult, "extra", "forbid"),
+        (CommonData, "extra", "forbid"),
+        (ExecuteSQLResult, "arbitrary_types_allowed", True),
+        (ReflectionResult, "use_enum_values", True),
+        (ChatNodeInput, "populate_by_name", True),
+        (GenSQLNodeInput, "populate_by_name", True),
+        (SemanticNodeInput, "populate_by_name", True),
+        (ConnectionConfig, "extra", "forbid"),
+    ]
+
+
 class TestPydanticV2ConfigDict:
     """Verify that all specified Pydantic models use model_config instead of class Config."""
 
-    def test_base_input_uses_model_config(self):
-        """BaseInput uses model_config = ConfigDict(...)."""
-        from datus.schemas.base import BaseInput
-
-        assert hasattr(BaseInput, "model_config")
-        assert BaseInput.model_config.get("extra") == "forbid"
-
-    def test_base_result_uses_model_config(self):
-        """BaseResult uses model_config = ConfigDict(...)."""
-        from datus.schemas.base import BaseResult
-
-        assert hasattr(BaseResult, "model_config")
-        assert BaseResult.model_config.get("extra") == "forbid"
-
-    def test_common_data_uses_model_config(self):
-        """CommonData uses model_config = ConfigDict(...)."""
-        from datus.schemas.base import CommonData
-
-        assert hasattr(CommonData, "model_config")
-        assert CommonData.model_config.get("extra") == "forbid"
-
-    def test_execute_sql_result_uses_model_config(self):
-        """ExecuteSQLResult uses model_config with arbitrary_types_allowed."""
-        from datus.schemas.node_models import ExecuteSQLResult
-
-        assert hasattr(ExecuteSQLResult, "model_config")
-        assert ExecuteSQLResult.model_config.get("arbitrary_types_allowed") is True
-
-    def test_reflection_result_uses_model_config(self):
-        """ReflectionResult uses model_config with use_enum_values."""
-        from datus.schemas.node_models import ReflectionResult
-
-        assert hasattr(ReflectionResult, "model_config")
-        assert ReflectionResult.model_config.get("use_enum_values") is True
-
-    def test_chat_node_input_uses_model_config(self):
-        """ChatNodeInput uses model_config with populate_by_name."""
-        from datus.schemas.chat_agentic_node_models import ChatNodeInput
-
-        assert hasattr(ChatNodeInput, "model_config")
-        assert ChatNodeInput.model_config.get("populate_by_name") is True
-
-    def test_gen_sql_node_input_uses_model_config(self):
-        """GenSQLNodeInput uses model_config with populate_by_name."""
-        from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
-
-        assert hasattr(GenSQLNodeInput, "model_config")
-        assert GenSQLNodeInput.model_config.get("populate_by_name") is True
-
-    def test_semantic_node_input_uses_model_config(self):
-        """SemanticNodeInput uses model_config with populate_by_name."""
-        from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
-
-        assert hasattr(SemanticNodeInput, "model_config")
-        assert SemanticNodeInput.model_config.get("populate_by_name") is True
-
-    def test_connection_config_uses_model_config(self):
-        """ConnectionConfig uses model_config with extra=forbid."""
-        from datus.tools.db_tools.config import ConnectionConfig
-
-        assert hasattr(ConnectionConfig, "model_config")
-        assert ConnectionConfig.model_config.get("extra") == "forbid"
+    @pytest.mark.parametrize(
+        "cls,config_key,expected_value",
+        _load_pydantic_v2_classes(),
+        ids=[
+            "BaseInput",
+            "BaseResult",
+            "CommonData",
+            "ExecuteSQLResult",
+            "ReflectionResult",
+            "ChatNodeInput",
+            "GenSQLNodeInput",
+            "SemanticNodeInput",
+            "ConnectionConfig",
+        ],
+    )
+    def test_model_uses_model_config(self, cls, config_key, expected_value):
+        """Model uses model_config = ConfigDict(...) with the expected key/value."""
+        assert hasattr(cls, "model_config"), f"{cls.__name__} is missing model_config"
+        assert cls.model_config.get(config_key) == expected_value, (
+            f"{cls.__name__}.model_config['{config_key}'] expected {expected_value!r}, "
+            f"got {cls.model_config.get(config_key)!r}"
+        )
 
     def test_no_class_config_in_changed_files(self):
         """None of the migrated classes still define a nested class Config."""

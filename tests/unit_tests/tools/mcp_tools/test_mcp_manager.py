@@ -10,7 +10,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from datus.tools.mcp_tools.mcp_config import MCPServerType, SSEServerConfig, STDIOServerConfig, ToolFilterConfig
+from datus.tools.mcp_tools.mcp_config import (
+    MCPConfig,
+    MCPServerType,
+    SSEServerConfig,
+    STDIOServerConfig,
+    ToolFilterConfig,
+)
 from datus.tools.mcp_tools.mcp_manager import MCPManager, _validate_server_exists, create_static_tool_filter
 
 # ---------------------------------------------------------------------------
@@ -575,25 +581,12 @@ class TestDispatchOperation:
 
 class TestCleanupServerInstance:
     @pytest.mark.asyncio
-    async def test_cleanup_with_cleanup_method(self, tmp_path):
+    @pytest.mark.parametrize("method_name", ["cleanup", "disconnect", "close"])
+    async def test_cleanup_calls_available_method(self, tmp_path, method_name):
         manager = _make_manager(tmp_path)
-        mock_srv = AsyncMock()
+        mock_srv = AsyncMock(spec=[method_name])
         await manager._cleanup_server_instance(mock_srv)
-        mock_srv.cleanup.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_cleanup_with_disconnect_method(self, tmp_path):
-        manager = _make_manager(tmp_path)
-        mock_srv = AsyncMock(spec=["disconnect"])
-        await manager._cleanup_server_instance(mock_srv)
-        mock_srv.disconnect.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_cleanup_with_close_method(self, tmp_path):
-        manager = _make_manager(tmp_path)
-        mock_srv = AsyncMock(spec=["close"])
-        await manager._cleanup_server_instance(mock_srv)
-        mock_srv.close.assert_called_once()
+        getattr(mock_srv, method_name).assert_called_once()
 
     @pytest.mark.asyncio
     async def test_cleanup_exception_suppressed(self, tmp_path):
@@ -612,5 +605,7 @@ class TestCleanupServerInstance:
 class TestCleanup:
     def test_cleanup_manager(self, tmp_path):
         manager = _make_manager(tmp_path)
-        # Should not raise
         manager.cleanup()
+        # cleanup() is a no-op finalizer; verify manager state remains intact
+        assert isinstance(manager.config, MCPConfig)
+        assert manager.config_path is not None

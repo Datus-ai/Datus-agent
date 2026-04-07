@@ -461,12 +461,11 @@ class TestGenSQLAgenticNodeExecution:
 
         # Check that SQL was extracted into the result
         output = final_action.output
-        if isinstance(output, dict):
-            # The sql field in the result should contain our query
-            sql_value = output.get("sql")
-            if sql_value:
-                assert "satscores" in sql_value.lower()
-                assert "avgscrread" in sql_value.lower()
+        assert isinstance(output, dict), f"Expected dict output, got {type(output)}"
+        sql_value = output.get("sql")
+        assert sql_value, f"Missing 'sql' key in output: {output.keys()}"
+        assert "satscores" in sql_value.lower()
+        assert "avgscrread" in sql_value.lower()
 
     @pytest.mark.asyncio
     async def test_gensql_input_not_set_raises(self, real_agent_config, mock_llm_create):
@@ -694,8 +693,12 @@ class TestChatAgenticNodeExecution:
             assert mock_llm_create.tool_results[0]["tool"] == first_tool_name
         else:
             # No context search tools available (empty RAG store) - this is OK
-            # Just verify the context_search_tools object was created
+            # Verify the context_search_tools object was created and is iterable
             assert node.context_search_tools is not None
+            assert hasattr(node.context_search_tools, "available_tools"), (
+                "context_search_tools must expose available_tools()"
+            )
+            assert isinstance(ctx_tools, list), "available_tools() must return a list"
 
     @pytest.mark.asyncio
     async def test_chat_input_not_set_raises(self, real_agent_config, mock_llm_create):
@@ -1003,9 +1006,8 @@ class TestEndToEndNodeHooksInteraction:
         # The error action should indicate failure due to permission denial
         error_action = assistant_actions[-1]
         assert error_action.output is not None
-        if isinstance(error_action.output, dict):
-            # ChatAgenticNode wraps PermissionDeniedException into a ChatNodeResult
-            assert error_action.output.get("success") is False or "rejected" in str(error_action.output).lower()
+        assert isinstance(error_action.output, dict), f"Expected dict, got {type(error_action.output)}"
+        assert error_action.output.get("success") is False or "rejected" in str(error_action.output).lower()
 
     @pytest.mark.asyncio
     async def test_e2e_ask_permission_session_approve_second_call_auto(self, real_agent_config, mock_llm_create):

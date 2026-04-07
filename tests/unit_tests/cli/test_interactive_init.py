@@ -385,10 +385,11 @@ class TestConfigureWorkspace:
 
             with patch("datus.cli.interactive_init.Prompt.ask", return_value=workspace):
                 with patch("pathlib.Path.mkdir", side_effect=PermissionError("denied")):
-                    with patch("datus.cli.interactive_init.print_rich_exception"):
+                    with patch("datus.cli.interactive_init.print_rich_exception") as mock_print_exc:
                         result = init._configure_workspace()
 
             assert result is False
+            mock_print_exc.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

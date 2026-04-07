@@ -65,7 +65,6 @@ class TestVectorIndexParameterCalculation:
 
     def test_index_type_ivf_flat_for_small_dataset(self):
         """Datasets with < 5000 rows should use IVF_FLAT."""
-        # IVF_PQ threshold is 5000
         row_count = 4999
         index_type = "IVF_PQ" if row_count >= 5000 else "IVF_FLAT"
         assert index_type == "IVF_FLAT"
@@ -95,8 +94,7 @@ class TestVectorIndexParameterCalculation:
         ],
     )
     def test_partition_count_calculation(self, row_count, expected_partitions):
-        """Partition count follows the documented rules: <1000 -> //10, <5000 -> //20."""
-        # Replicate the logic from create_vector_index
+        """Partition count must match production formula in base.py create_vector_index."""
         num_partitions = max(1, min(1024, int(row_count**0.5)))
         if row_count < 1000:
             num_partitions = max(1, row_count // 10)
@@ -128,7 +126,7 @@ class TestVectorIndexParameterCalculation:
         ],
     )
     def test_sub_vectors_for_ivf_pq_large(self, row_count, vector_dim, expected_sub_vectors):
-        """Sub-vector calculation for IVF_PQ with >= 5000 rows."""
+        """Sub-vector count must match production formula in base.py create_vector_index."""
         num_sub_vectors = min(96, max(32, vector_dim // 16))
         assert num_sub_vectors == expected_sub_vectors
 

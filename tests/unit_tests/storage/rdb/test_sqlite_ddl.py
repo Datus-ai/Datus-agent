@@ -17,26 +17,20 @@ from datus.storage.rdb.sqlite_backend import (
 class TestSqliteMapType:
     """Tests for SQLite type mapping."""
 
-    def test_boolean_maps_to_integer(self):
-        """SQLite maps BOOLEAN to INTEGER."""
-        assert _sqlite_map_type("BOOLEAN") == "INTEGER"
-
-    def test_timestamp_maps_to_text(self):
-        """SQLite maps TIMESTAMP to TEXT."""
-        assert _sqlite_map_type("TIMESTAMP") == "TEXT"
-
-    def test_unknown_type_passes_through(self):
-        """Unknown column type passes through as-is."""
-        assert _sqlite_map_type("JSONB") == "JSONB"
-
-    def test_real_type(self):
-        """REAL maps to REAL in SQLite."""
-        assert _sqlite_map_type("REAL") == "REAL"
-
-    def test_case_insensitive(self):
-        """Type mapping is case-insensitive."""
-        assert _sqlite_map_type("boolean") == "INTEGER"
-        assert _sqlite_map_type("integer") == "INTEGER"
+    @pytest.mark.parametrize(
+        "input_type,expected",
+        [
+            ("BOOLEAN", "INTEGER"),
+            ("TIMESTAMP", "TEXT"),
+            ("JSONB", "JSONB"),  # unknown type passes through as-is
+            ("REAL", "REAL"),
+            ("boolean", "INTEGER"),  # case-insensitive
+            ("integer", "INTEGER"),  # case-insensitive
+        ],
+    )
+    def test_type_mapping(self, input_type, expected):
+        """SQLite type mapping produces correct output for all known and unknown types."""
+        assert _sqlite_map_type(input_type) == expected
 
 
 class TestSqliteColDdl:

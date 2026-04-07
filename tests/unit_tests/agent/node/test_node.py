@@ -21,6 +21,7 @@ from datus.schemas.node_models import (
     GenerateSQLInput,
     GenerateSQLResult,
     ReflectionInput,
+    ReflectionResult,
     SQLContext,
     SqlTask,
 )
@@ -297,71 +298,66 @@ class TestNode:
 
     def test_generation_node(self, generate_sql_input, agent_config, function_tools: List[Tool], mock_llm_create):
         """Test SQL generation node with mock LLM and SQLite database"""
-        try:
-            # Mock LLM response for SQL generation
-            mock_llm_create.reset(
-                responses=[
-                    build_tool_then_response(
-                        tool_calls=[
-                            MockToolCall(name="list_tables", arguments="{}"),
-                            MockToolCall(name="describe_table", arguments='{"table_name": "schools"}'),
-                        ],
-                        content=json.dumps(
-                            {
-                                "sql": "SELECT * FROM schools WHERE City = 'Fresno' LIMIT 10",
-                                "tables": ["schools"],
-                                "explanation": "Query to retrieve schools in Fresno city",
-                            }
-                        ),
+        # Mock LLM response for SQL generation
+        mock_llm_create.reset(
+            responses=[
+                build_tool_then_response(
+                    tool_calls=[
+                        MockToolCall(name="list_tables", arguments="{}"),
+                        MockToolCall(name="describe_table", arguments='{"table_name": "schools"}'),
+                    ],
+                    content=json.dumps(
+                        {
+                            "sql": "SELECT * FROM schools WHERE City = 'Fresno' LIMIT 10",
+                            "tables": ["schools"],
+                            "explanation": "Query to retrieve schools in Fresno city",
+                        }
                     ),
-                ]
-            )
+                ),
+            ]
+        )
 
-            # Create table schema from input data
-            input_data = GenerateSQLInput(**generate_sql_input[0]["input"])
+        # Create table schema from input data
+        input_data = GenerateSQLInput(**generate_sql_input[0]["input"])
 
-            # Create node instance for testing
-            node = Node.new_instance(
-                node_id="gen_sql_test",
-                description="Generate SQL Test",
-                node_type=NodeType.TYPE_GENERATE_SQL,
-                input_data=input_data,
-                agent_config=agent_config,
-                tools=function_tools,
-            )
+        # Create node instance for testing
+        node = Node.new_instance(
+            node_id="gen_sql_test",
+            description="Generate SQL Test",
+            node_type=NodeType.TYPE_GENERATE_SQL,
+            input_data=input_data,
+            agent_config=agent_config,
+            tools=function_tools,
+        )
 
-            # Verify initial node configuration
-            assert node.type == NodeType.TYPE_GENERATE_SQL
-            assert isinstance(node.input, GenerateSQLInput)
-            assert node.input.sql_task.task == generate_sql_input[0]["input"]["sql_task"]["task"]
-            assert node.input.database_type == DBType.SQLITE
-            assert len(node.input.table_schemas) == 3
-            assert node.input.table_schemas[0].table_name == "schools"
+        # Verify initial node configuration
+        assert node.type == NodeType.TYPE_GENERATE_SQL
+        assert isinstance(node.input, GenerateSQLInput)
+        assert node.input.sql_task.task == generate_sql_input[0]["input"]["sql_task"]["task"]
+        assert node.input.database_type == DBType.SQLITE
+        assert len(node.input.table_schemas) == 3
+        assert node.input.table_schemas[0].table_name == "schools"
 
-            # Test validation error for invalid input
-            with pytest.raises(ValidationError):
-                GenerateSQLInput(**{"invalid": "data"})
+        # Test validation error for invalid input
+        with pytest.raises(ValidationError):
+            GenerateSQLInput(**{"invalid": "data"})
 
-            # Execute node with valid dependencies
-            result = node.run()
-            logger.debug(f"Generation node result: {result.to_str()}")
+        # Execute node with valid dependencies
+        result = node.run()
+        logger.debug(f"Generation node result: {result.to_str()}")
 
-            # Verify execution results
-            assert node.status == "completed", f"Node execution failed with status: {node.status}"
-            assert result.success is True, f"Node execution failed: {result}"
-            assert isinstance(result, GenerateSQLResult), "Result type mismatch"
-            assert len(result.sql_query) > 0, "Empty SQL query generated"
-            assert isinstance(result.tables, list), "Tables result is not a list"
-            assert len(result.tables) > 0, "No tables in result"
+        # Verify execution results
+        assert node.status == "completed", f"Node execution failed with status: {node.status}"
+        assert result.success is True, f"Node execution failed: {result}"
+        assert isinstance(result, GenerateSQLResult), "Result type mismatch"
+        assert len(result.sql_query) > 0, "Empty SQL query generated"
+        assert isinstance(result.tables, list), "Tables result is not a list"
+        assert len(result.tables) > 0, "No tables in result"
 
-            # Test error state handling
-            node.fail("Test error")
-            assert node.status == "failed"
-            assert node.result["error"] == "Test error"
-
-        except Exception as e:
-            logger.error(f"Generation node test failed: {str(e)}")
-            raise
+        # Test error state handling
+        node.fail("Test error")
+        assert node.status == "failed"
+        assert node.result["error"] == "Test error"
 
     def test_node_dependencies(self, agent_config):
         """Test node dependencies"""
@@ -421,454 +417,423 @@ class TestNode:
 
     def test_reasoning_node(self, agent_config, function_tools: List[Tool], mock_llm_create):
         """Test reasoning node with SSB SQLite database using revenue calculation task"""
-        try:
-            # Mock LLM response for reasoning
-            # Note: reasoning_sql_with_mcp expects "sql" key in JSON response, not "sql_query"
-            mock_llm_create.reset(
-                responses=[
-                    MockLLMResponse(
-                        tool_calls=[
-                            MockToolCall(name="list_tables", arguments="{}"),
-                        ],
-                        content=json.dumps(
-                            {
-                                "sql": (
-                                    "SELECT SUM(lo_revenue) as total_revenue FROM lineorder "
-                                    "WHERE lo_orderdate >= 19940101 AND lo_orderdate < 19940201 "
-                                    "AND lo_discount BETWEEN 4 AND 6 AND lo_quantity BETWEEN 26 AND 35"
-                                ),
-                                "explanation": (
-                                    "Calculate total revenue for January 1994 with specified discount and quantity"
-                                ),
-                            }
-                        ),
+        # Mock LLM response for reasoning
+        # Note: reasoning_sql_with_mcp expects "sql" key in JSON response, not "sql_query"
+        mock_llm_create.reset(
+            responses=[
+                MockLLMResponse(
+                    tool_calls=[
+                        MockToolCall(name="list_tables", arguments="{}"),
+                    ],
+                    content=json.dumps(
+                        {
+                            "sql": (
+                                "SELECT SUM(lo_revenue) as total_revenue FROM lineorder "
+                                "WHERE lo_orderdate >= 19940101 AND lo_orderdate < 19940201 "
+                                "AND lo_discount BETWEEN 4 AND 6 AND lo_quantity BETWEEN 26 AND 35"
+                            ),
+                            "explanation": (
+                                "Calculate total revenue for January 1994 with specified discount and quantity"
+                            ),
+                        }
                     ),
-                ]
-            )
+                ),
+            ]
+        )
 
-            agent_config.current_namespace = "ssb_sqlite"
+        agent_config.current_namespace = "ssb_sqlite"
 
-            # Create simple ReasoningInput with revenue calculation task
-            input_data = ReasoningInput(
-                contexts=[],
-                data_details=[],
-                table_schemas=[],
-                metrics=[],
-                sql_task=SqlTask(
-                    id="revenue_test",
-                    task=(
-                        "Total revenue for January 1994 where discount was between 4 and 6 and "
-                        "quantity sold was between 26 and 35"
-                    ),
-                    database_type="sqlite",
-                    database_name="SSB",
-                    output_dir="output/test",
+        # Create simple ReasoningInput with revenue calculation task
+        input_data = ReasoningInput(
+            contexts=[],
+            data_details=[],
+            table_schemas=[],
+            metrics=[],
+            sql_task=SqlTask(
+                id="revenue_test",
+                task=(
+                    "Total revenue for January 1994 where discount was between 4 and 6 and "
+                    "quantity sold was between 26 and 35"
                 ),
                 database_type="sqlite",
-                external_knowledge="",
-                prompt_version="",
-            )
+                database_name="SSB",
+                output_dir="output/test",
+            ),
+            database_type="sqlite",
+            external_knowledge="",
+            prompt_version="",
+        )
+
+        # Create node instance for testing
+        node = Node.new_instance(
+            node_id="reasoning_test",
+            description="Reasoning SQL Test",
+            node_type=NodeType.TYPE_REASONING,
+            input_data=input_data,
+            agent_config=agent_config,
+            tools=function_tools,
+        )
+
+        # Verify initial node configuration
+        assert node.type == NodeType.TYPE_REASONING
+        assert isinstance(node.input, ReasoningInput)
+
+        # Execute node
+        result = node.run()
+        logger.debug(f"Reasoning node result: {result.to_str()}")
+
+        # Simple assertions - just check it works and produces SQL
+        assert isinstance(result, ReasoningResult), "Result type mismatch"
+        assert result.success is True, f"Node execution failed: {result}"
+        assert node.status == "completed", f"Node execution failed with status: {node.status}"
+
+    def test_reflection_node(self, reflection_input, agent_config, function_tools: List[Tool], mock_llm_create):
+        """Test reflection node with test case[0] from YAML"""
+        # Mock LLM response for reflection
+        mock_llm_create.reset(
+            responses=[
+                MockLLMResponse(
+                    content=json.dumps(
+                        {
+                            "strategy": "SUCCESS",
+                            "details": {
+                                "reflection_strategy": "SUCCESS",
+                                "reflection_explanation": (
+                                    "The SQL query executed successfully and returned valid results"
+                                ),
+                                "is_correct": "true",
+                            },
+                        }
+                    ),
+                ),
+            ]
+        )
+
+        # Create reflection input data
+        index = 0
+        input_data = reflection_input[index]["input"]
+        # expected_result = reflection_input[index]["result"]
+
+        logger.debug(f"raw input: {input_data}")
+
+        # Parse input components
+        task_description = SqlTask.from_dict(input_data["task_description"])
+        contexts = [SQLContext(**context_data) for context_data in input_data["sql_context"]]
+
+        # Create reflection input
+        reflection_input_obj = ReflectionInput(task_description=task_description, sql_context=contexts)
+
+        # Create reflection node
+        node = Node.new_instance(
+            node_id=f"reflection_test_{index}",
+            description="Reflection Analysis",
+            node_type=NodeType.TYPE_REFLECT,
+            input_data=reflection_input_obj,
+            agent_config=agent_config,
+            tools=function_tools,
+        )
+
+        # Validate node type and input
+        assert node.type == NodeType.TYPE_REFLECT
+        assert isinstance(node.input, ReflectionInput)
+
+        # Run reflection node
+        result = node.run()
+        logger.debug(f"Reflection node result: {result}")
+
+        # Verify execution results
+        assert node.status == "completed", f"Node execution failed with status: {node.status}"
+        assert isinstance(result, ReflectionResult), "Result type mismatch"
+        assert result.success is True, f"Node execution failed: {result}"
+        assert result.strategy is not None, "Reflection result should have a strategy"
+        assert isinstance(result.details, dict), "Reflection details should be a dict"
+
+    def test_execution_node(self, execute_sql_input, agent_config, function_tools: List[Tool]):
+        """Test SQL execution node with Snowflake database"""
+        agent_config.current_namespace = "bird_sqlite"
+        # Create execution input from test data
+        test_cases = [0, 1]
+        for test_case_num in test_cases:
+            # Create execution input from test data
+            exec_input = execute_sql_input[test_case_num]["input"]
+            input_data = ExecuteSQLInput(**exec_input)
 
             # Create node instance for testing
             node = Node.new_instance(
-                node_id="reasoning_test",
-                description="Reasoning SQL Test",
-                node_type=NodeType.TYPE_REASONING,
+                node_id="execute_sql_test",
+                description="Execute SQL Test",
+                node_type=NodeType.TYPE_EXECUTE_SQL,
                 input_data=input_data,
                 agent_config=agent_config,
                 tools=function_tools,
             )
 
             # Verify initial node configuration
-            assert node.type == NodeType.TYPE_REASONING
-            assert isinstance(node.input, ReasoningInput)
+            assert node.type == NodeType.TYPE_EXECUTE_SQL
+            assert isinstance(node.input, ExecuteSQLInput)
+            assert node.input.sql_query == exec_input["sql_query"]
 
-            # Execute node
+            # Test validation error for invalid input
+            with pytest.raises(ValidationError):
+                ExecuteSQLInput(**{"invalid": "data"})
+
+            # Execute node with valid database connection
             result = node.run()
-            logger.debug(f"Reasoning node result: {result.to_str()}")
+            logger.debug(f"Execution node result: {result}")
 
-            # Simple assertions - just check it works and produces SQL
-            assert isinstance(result, ReasoningResult), "Result type mismatch"
-            assert result.success is True, f"Node execution failed: {result}"
+            # Verify execution results
             assert node.status == "completed", f"Node execution failed with status: {node.status}"
-
-        except Exception as e:
-            logger.error(f"Simple reasoning node test failed: {str(e)}")
-            raise
-
-    def test_reflection_node(self, reflection_input, agent_config, function_tools: List[Tool], mock_llm_create):
-        """Test reflection node with test case[0] from YAML"""
-        try:
-            # Mock LLM response for reflection
-            mock_llm_create.reset(
-                responses=[
-                    MockLLMResponse(
-                        content=json.dumps(
-                            {
-                                "strategy": "SUCCESS",
-                                "details": {
-                                    "reflection_strategy": "SUCCESS",
-                                    "reflection_explanation": (
-                                        "The SQL query executed successfully and returned valid results"
-                                    ),
-                                    "is_correct": "true",
-                                },
-                            }
-                        ),
-                    ),
-                ]
-            )
-
-            # Create reflection input data
-            index = 0
-            input_data = reflection_input[index]["input"]
-            # expected_result = reflection_input[index]["result"]
-
-            logger.debug(f"raw input: {input_data}")
-
-            # Parse input components
-            task_description = SqlTask.from_dict(input_data["task_description"])
-            contexts = [SQLContext(**context_data) for context_data in input_data["sql_context"]]
-
-            # Create reflection input
-            reflection_input_obj = ReflectionInput(task_description=task_description, sql_context=contexts)
-
-            # Create reflection node
-            node = Node.new_instance(
-                node_id=f"reflection_test_{index}",
-                description="Reflection Analysis",
-                node_type=NodeType.TYPE_REFLECT,
-                input_data=reflection_input_obj,
-                agent_config=agent_config,
-                tools=function_tools,
-            )
-
-            # Validate node type and input
-            assert node.type == NodeType.TYPE_REFLECT
-            assert isinstance(node.input, ReflectionInput)
-
-            # Run reflection node
-            result = node.run()
-            logger.debug(f"Reflection node result: {result}")
-
-        except Exception as e:
-            logger.error(f"Reflection node test failed: {str(e)}")
-            raise
-
-    def test_execution_node(self, execute_sql_input, agent_config, function_tools: List[Tool]):
-        """Test SQL execution node with Snowflake database"""
-        try:
-            agent_config.current_namespace = "bird_sqlite"
-            # Create execution input from test data
-            test_cases = [0, 1]
-            for test_case_num in test_cases:
-                # Create execution input from test data
-                exec_input = execute_sql_input[test_case_num]["input"]
-                input_data = ExecuteSQLInput(**exec_input)
-
-                # Create node instance for testing
-                node = Node.new_instance(
-                    node_id="execute_sql_test",
-                    description="Execute SQL Test",
-                    node_type=NodeType.TYPE_EXECUTE_SQL,
-                    input_data=input_data,
-                    agent_config=agent_config,
-                    tools=function_tools,
-                )
-
-                # Verify initial node configuration
-                assert node.type == NodeType.TYPE_EXECUTE_SQL
-                assert isinstance(node.input, ExecuteSQLInput)
-                assert node.input.sql_query == exec_input["sql_query"]
-
-                # Test validation error for invalid input
-                with pytest.raises(ValidationError):
-                    ExecuteSQLInput(**{"invalid": "data"})
-
-                # Execute node with valid database connection
-                result = node.run()
-                logger.debug(f"Execution node result: {result}")
-
-                # Verify execution results
-                assert node.status == "completed", f"Node execution failed with status: {node.status}"
-                assert isinstance(result, ExecuteSQLResult), "Result type mismatch"
-                assert result.success is True, f"Node execution failed: {result}"
-                assert result.sql_return is not None, "Execution result is empty"
-                assert result.row_count is not None, "Execution explanation is empty"
-
-        except Exception as e:
-            logger.error(f"Execution node test failed: {str(e)}")
-            raise
+            assert isinstance(result, ExecuteSQLResult), "Result type mismatch"
+            assert result.success is True, f"Node execution failed: {result}"
+            assert result.sql_return is not None, "Execution result is empty"
+            assert result.row_count is not None, "Execution explanation is empty"
 
     def test_doc_search_node(self, doc_search_input, agent_config):
         """Test document node"""
-        try:
-            # Create doc search input from test data
-            for case in doc_search_input:
-                input_data = DocSearchInput(**case["doc_search"])
-                node = Node.new_instance(
-                    node_id="doc_search_test",
-                    description="Doc Search Test",
-                    node_type=NodeType.TYPE_DOC_SEARCH,
-                    input_data=input_data,
-                    agent_config=agent_config,
-                )
-                result = node.run()
-                logger.debug(f"Doc search node result: {result}")
-                assert node.status == "completed", f"Node execution failed with status: {node.status}"
-                assert isinstance(result, DocSearchResult), "Result type mismatch"
-                assert result.success is True, f"Node execution failed: {result}"
-        except Exception as e:
-            logger.error(f"Doc search node test failed: {str(e)}")
-            raise
+        # Create doc search input from test data
+        for case in doc_search_input:
+            input_data = DocSearchInput(**case["doc_search"])
+            node = Node.new_instance(
+                node_id="doc_search_test",
+                description="Doc Search Test",
+                node_type=NodeType.TYPE_DOC_SEARCH,
+                input_data=input_data,
+                agent_config=agent_config,
+            )
+            result = node.run()
+            logger.debug(f"Doc search node result: {result}")
+            assert node.status == "completed", f"Node execution failed with status: {node.status}"
+            assert isinstance(result, DocSearchResult), "Result type mismatch"
+            assert result.success is True, f"Node execution failed: {result}"
 
     def test_search_metrics_node(self, search_metrics_input, agent_config: AgentConfig):
         """Test schema linking node"""
         # Take first test case from the list
         _current_namespace = agent_config.current_namespace
-        try:
-            for case in search_metrics_input:
-                input_data = SearchMetricsInput(**case["input"])
-                node = Node.new_instance(
-                    node_id="search_metrics",
-                    description="Search Metrics",
-                    node_type=NodeType.TYPE_SEARCH_METRICS,
-                    input_data=input_data,
-                    agent_config=agent_config,
-                )
-                assert node.type == NodeType.TYPE_SEARCH_METRICS
-                assert isinstance(node.input, SearchMetricsInput)
-                result = node.run()
-                logger.debug(f"Search metrics node result: {result}")
-                assert node.status == "completed", f"Node execution failed with status: {node.status}"
-                assert isinstance(result, SearchMetricsResult), "Result type mismatch"
-                assert result.success is True, f"Node execution failed: {result}"
-        except Exception as e:
-            logger.error(f"Search metrics node test failed: {str(e)}")
-            raise
+        for case in search_metrics_input:
+            input_data = SearchMetricsInput(**case["input"])
+            node = Node.new_instance(
+                node_id="search_metrics",
+                description="Search Metrics",
+                node_type=NodeType.TYPE_SEARCH_METRICS,
+                input_data=input_data,
+                agent_config=agent_config,
+            )
+            assert node.type == NodeType.TYPE_SEARCH_METRICS
+            assert isinstance(node.input, SearchMetricsInput)
+            result = node.run()
+            logger.debug(f"Search metrics node result: {result}")
+            assert node.status == "completed", f"Node execution failed with status: {node.status}"
+            assert isinstance(result, SearchMetricsResult), "Result type mismatch"
+            assert result.success is True, f"Node execution failed: {result}"
 
     def test_compare_node(self, agent_config: AgentConfig, function_tools: List[Tool], mock_llm_create):
         """Test compare node with mock LLM and california_schools data"""
-        try:
-            # Mock LLM response for SQL comparison
-            resp = {
-                "explanation": (
-                    "The two queries differ in approach: the first query directly "
-                    "selects from schools table using Charter and FundingType columns, "
-                    "while the expected query joins frpm and schools tables."
-                ),
-                "suggest": (
-                    "Consider joining with the frpm table to ensure data consistency. "
-                    "The frpm table may contain the authoritative charter funding information."
-                ),
-            }
-            mock_llm_create.reset(
-                responses=[
-                    MockLLMResponse(content=json.dumps(resp)),
-                ]
-            )
+        # Mock LLM response for SQL comparison
+        resp = {
+            "explanation": (
+                "The two queries differ in approach: the first query directly "
+                "selects from schools table using Charter and FundingType columns, "
+                "while the expected query joins frpm and schools tables."
+            ),
+            "suggest": (
+                "Consider joining with the frpm table to ensure data consistency. "
+                "The frpm table may contain the authoritative charter funding information."
+            ),
+        }
+        mock_llm_create.reset(
+            responses=[
+                MockLLMResponse(content=json.dumps(resp)),
+            ]
+        )
 
-            # Create test SQL task
-            sql_task = SqlTask(
-                task=(
-                    "Please list the phone numbers of the direct charter-funded schools that are opened after 2000/1/1."
-                ),
-                database_type="sqlite",
-                database_name="california_schools",
-            )
+        # Create test SQL task
+        sql_task = SqlTask(
+            task=("Please list the phone numbers of the direct charter-funded schools that are opened after 2000/1/1."),
+            database_type="sqlite",
+            database_name="california_schools",
+        )
 
-            # Create test SQL context
-            sql_context = SQLContext(
-                sql_query=(
-                    "SELECT Phone FROM schools WHERE Charter = 1 AND FundingType = 'Directly funded' "
-                    "AND OpenDate > '2000-01-01' AND Phone IS NOT NULL ORDER BY OpenDate"
-                ),
-                explanation="Query to get phone numbers of direct charter-funded schools opened after 2000/1/1",
-                sql_return="Phone numbers result",
-                row_count=5,
-            )
+        # Create test SQL context
+        sql_context = SQLContext(
+            sql_query=(
+                "SELECT Phone FROM schools WHERE Charter = 1 AND FundingType = 'Directly funded' "
+                "AND OpenDate > '2000-01-01' AND Phone IS NOT NULL ORDER BY OpenDate"
+            ),
+            explanation="Query to get phone numbers of direct charter-funded schools opened after 2000/1/1",
+            sql_return="Phone numbers result",
+            row_count=5,
+        )
 
-            # Create compare input with expected SQL
-            input_data = CompareInput(
-                sql_task=sql_task,
-                sql_context=sql_context,
-                expectation=(
-                    "SELECT T2.Phone FROM frpm AS T1 INNER JOIN schools AS T2 ON T1.CDSCode = T2.CDSCode "
-                    "WHERE T1.Charter Funding Type = 'Directly funded' AND T1.Charter School (Y/N) = 1 "
-                    "AND T2.OpenDate > '2000-01-01'"
-                ),
-            )
+        # Create compare input with expected SQL
+        input_data = CompareInput(
+            sql_task=sql_task,
+            sql_context=sql_context,
+            expectation=(
+                "SELECT T2.Phone FROM frpm AS T1 INNER JOIN schools AS T2 ON T1.CDSCode = T2.CDSCode "
+                "WHERE T1.Charter Funding Type = 'Directly funded' AND T1.Charter School (Y/N) = 1 "
+                "AND T2.OpenDate > '2000-01-01'"
+            ),
+        )
 
-            # Create compare node
-            node = Node.new_instance(
-                node_id="compare_test",
-                description="Compare SQL Test",
-                node_type=NodeType.TYPE_COMPARE,
-                input_data=input_data,
-                agent_config=agent_config,
-                tools=db_function_tools,
-            )
+        # Create compare node
+        node = Node.new_instance(
+            node_id="compare_test",
+            description="Compare SQL Test",
+            node_type=NodeType.TYPE_COMPARE,
+            input_data=input_data,
+            agent_config=agent_config,
+            tools=db_function_tools,
+        )
 
-            # Verify initial node configuration
-            assert node.type == NodeType.TYPE_COMPARE
-            assert isinstance(node.input, CompareInput)
-            assert (
-                node.input.sql_task.task
-                == "Please list the phone numbers of the direct charter-funded schools that are opened after 2000/1/1."
-            )
-            assert "SELECT Phone FROM schools WHERE Charter = 1" in node.input.sql_context.sql_query
-            assert "SELECT T2.Phone FROM frpm AS T1 INNER JOIN schools AS T2" in node.input.expectation
+        # Verify initial node configuration
+        assert node.type == NodeType.TYPE_COMPARE
+        assert isinstance(node.input, CompareInput)
+        assert (
+            node.input.sql_task.task
+            == "Please list the phone numbers of the direct charter-funded schools that are opened after 2000/1/1."
+        )
+        assert "SELECT Phone FROM schools WHERE Charter = 1" in node.input.sql_context.sql_query
+        assert "SELECT T2.Phone FROM frpm AS T1 INNER JOIN schools AS T2" in node.input.expectation
 
-            # Test validation error for invalid input
-            with pytest.raises(ValidationError):
-                CompareInput(**{"invalid": "data"})
+        # Test validation error for invalid input
+        with pytest.raises(ValidationError):
+            CompareInput(**{"invalid": "data"})
 
-            # Execute node
-            result = node.run()
-            logger.info(f"Compare node result: {result}")
+        # Execute node
+        result = node.run()
+        logger.info(f"Compare node result: {result}")
 
-            # Verify execution results
-            assert node.status == "completed", f"Node execution failed with status: {node.status}"
-            assert isinstance(result, CompareResult), "Result type mismatch"
-            assert result.success is True, f"Node execution failed: {result}"
-            assert len(result.explanation) > 0, "Empty explanation"
-            assert len(result.suggest) > 0, "Empty suggestions"
+        # Verify execution results
+        assert node.status == "completed", f"Node execution failed with status: {node.status}"
+        assert isinstance(result, CompareResult), "Result type mismatch"
+        assert result.success is True, f"Node execution failed: {result}"
+        assert len(result.explanation) > 0, "Empty explanation"
+        assert len(result.suggest) > 0, "Empty suggestions"
 
-            # Test that explanation contains meaningful content
-            assert "Charter" in result.explanation or "charter" in result.explanation, (
-                "Explanation should mention charter schools"
-            )
+        # Test that explanation contains meaningful content
+        assert "Charter" in result.explanation or "charter" in result.explanation, (
+            "Explanation should mention charter schools"
+        )
 
-            # Test that suggestions contain actionable advice
-            assert "JOIN" in result.suggest or "join" in result.suggest or "table" in result.suggest, (
-                "Suggestions should mention JOIN or table differences"
-            )
+        # Test that suggestions contain actionable advice
+        assert "JOIN" in result.suggest or "join" in result.suggest or "table" in result.suggest, (
+            "Suggestions should mention JOIN or table differences"
+        )
 
-            # Print results for manual inspection
-            print("\n=== Compare Node Test Results ===")
-            print(f"Explanation: {result.explanation}")
-            print(f"Suggestions: {result.suggest}")
-            print(f"Success: {result.success}")
-            print("=====================================\n")
-
-        except Exception as e:
-            logger.error(f"Compare node test failed: {str(e)}")
-            raise
+        # Print results for manual inspection
+        print("\n=== Compare Node Test Results ===")
+        print(f"Explanation: {result.explanation}")
+        print(f"Suggestions: {result.suggest}")
+        print(f"Success: {result.success}")
+        print("=====================================\n")
 
     def test_compare_with_mcp_node(self, agent_config, function_tools: List[Tool], mock_llm_create):
         """Test compare node with MCP streaming for enhanced database analysis"""
-        try:
-            # Mock LLM response for SQL comparison with MCP
-            mock_llm_create.reset(
-                responses=[
-                    MockLLMResponse(
-                        tool_calls=[
-                            MockToolCall(name="describe_table", arguments='{"table_name": "schools"}'),
-                            MockToolCall(name="describe_table", arguments='{"table_name": "frpm"}'),
-                        ],
-                        content=json.dumps(
-                            {
-                                "explanation": (
-                                    "The MCP analysis reveals that the frpm table contains the authoritative charter "
-                                    "funding information. The current query uses schools table directly which may not "
-                                    "accurately reflect the charter funding type."
-                                ),
-                                "suggest": (
-                                    "Join with the frpm table using CDSCode to accurately retrieve "
-                                    "charter school information. Use `Charter Funding Type` and "
-                                    "`Charter School (Y/N)` columns from frpm table."
-                                ),
-                            }
-                        ),
+        # Mock LLM response for SQL comparison with MCP
+        mock_llm_create.reset(
+            responses=[
+                MockLLMResponse(
+                    tool_calls=[
+                        MockToolCall(name="describe_table", arguments='{"table_name": "schools"}'),
+                        MockToolCall(name="describe_table", arguments='{"table_name": "frpm"}'),
+                    ],
+                    content=json.dumps(
+                        {
+                            "explanation": (
+                                "The MCP analysis reveals that the frpm table contains the authoritative charter "
+                                "funding information. The current query uses schools table directly which may not "
+                                "accurately reflect the charter funding type."
+                            ),
+                            "suggest": (
+                                "Join with the frpm table using CDSCode to accurately retrieve "
+                                "charter school information. Use `Charter Funding Type` and "
+                                "`Charter School (Y/N)` columns from frpm table."
+                            ),
+                        }
                     ),
-                ]
-            )
-
-            # Create test SQL task
-            sql_task = SqlTask(
-                task=(
-                    "Please list the phone numbers of the direct charter-funded schools that are opened after 2000/1/1."
                 ),
-                database_type="sqlite",
-                database_name="california_schools",
-            )
+            ]
+        )
 
-            # Create test SQL context with current query
-            sql_context = SQLContext(
-                sql_query=(
-                    "SELECT Phone FROM schools WHERE Charter = 1 AND FundingType = 'Directly funded' "
-                    "AND OpenDate > '2000-01-01' AND Phone IS NOT NULL ORDER BY OpenDate"
-                ),
-                explanation="Query to get phone numbers of direct charter-funded schools opened after 2000/1/1",
-                sql_return="Phone numbers result",
-                row_count=5,
-            )
+        # Create test SQL task
+        sql_task = SqlTask(
+            task=("Please list the phone numbers of the direct charter-funded schools that are opened after 2000/1/1."),
+            database_type="sqlite",
+            database_name="california_schools",
+        )
 
-            # Create compare input with expected SQL that uses proper joins
-            input_data = CompareInput(
-                sql_task=sql_task,
-                sql_context=sql_context,
-                expectation=(
-                    "SELECT T2.Phone FROM frpm AS T1 INNER JOIN schools AS T2 ON T1.CDSCode = T2.CDSCode"
-                    " WHERE T1.`Charter Funding Type` = 'Directly funded' AND T1.`Charter School (Y/N)` = 1"
-                    " AND T2.OpenDate > '2000-01-01'"
-                ),
-            )
+        # Create test SQL context with current query
+        sql_context = SQLContext(
+            sql_query=(
+                "SELECT Phone FROM schools WHERE Charter = 1 AND FundingType = 'Directly funded' "
+                "AND OpenDate > '2000-01-01' AND Phone IS NOT NULL ORDER BY OpenDate"
+            ),
+            explanation="Query to get phone numbers of direct charter-funded schools opened after 2000/1/1",
+            sql_return="Phone numbers result",
+            row_count=5,
+        )
 
-            # Create compare node
-            node = Node.new_instance(
-                node_id="compare_mcp_test",
-                description="Compare SQL MCP Test",
-                node_type=NodeType.TYPE_COMPARE,
-                input_data=input_data,
-                agent_config=agent_config,
-                tools=function_tools,
-            )
+        # Create compare input with expected SQL that uses proper joins
+        input_data = CompareInput(
+            sql_task=sql_task,
+            sql_context=sql_context,
+            expectation=(
+                "SELECT T2.Phone FROM frpm AS T1 INNER JOIN schools AS T2 ON T1.CDSCode = T2.CDSCode"
+                " WHERE T1.`Charter Funding Type` = 'Directly funded' AND T1.`Charter School (Y/N)` = 1"
+                " AND T2.OpenDate > '2000-01-01'"
+            ),
+        )
 
-            # Verify initial node configuration
-            assert node.type == NodeType.TYPE_COMPARE
-            assert isinstance(node.input, CompareInput)
-            assert (
-                node.input.sql_task.task
-                == "Please list the phone numbers of the direct charter-funded schools that are opened after 2000/1/1."
-            )
-            assert "SELECT Phone FROM schools WHERE Charter = 1" in node.input.sql_context.sql_query
-            assert "SELECT T2.Phone FROM frpm AS T1 INNER JOIN schools AS T2" in node.input.expectation
+        # Create compare node
+        node = Node.new_instance(
+            node_id="compare_mcp_test",
+            description="Compare SQL MCP Test",
+            node_type=NodeType.TYPE_COMPARE,
+            input_data=input_data,
+            agent_config=agent_config,
+            tools=function_tools,
+        )
 
-            # Test MCP streaming method exists
-            assert hasattr(node, "_compare_sql_stream"), "Node should have MCP streaming method"
+        # Verify initial node configuration
+        assert node.type == NodeType.TYPE_COMPARE
+        assert isinstance(node.input, CompareInput)
+        assert (
+            node.input.sql_task.task
+            == "Please list the phone numbers of the direct charter-funded schools that are opened after 2000/1/1."
+        )
+        assert "SELECT Phone FROM schools WHERE Charter = 1" in node.input.sql_context.sql_query
+        assert "SELECT T2.Phone FROM frpm AS T1 INNER JOIN schools AS T2" in node.input.expectation
 
-            # Execute node (standard execution first)
-            result = node.run()
-            logger.debug(f"Compare MCP node result: {result}")
+        # Test MCP streaming method exists
+        assert hasattr(node, "_compare_sql_stream"), "Node should have MCP streaming method"
 
-            # Verify execution results
-            assert node.status == "completed", f"Node execution failed with status: {node.status}"
-            assert isinstance(result, CompareResult), "Result type mismatch"
-            assert result.success is True, f"Node execution failed: {result}"
-            assert len(result.explanation) > 0, "Empty explanation"
-            # assert len(result.suggest) > 0, "Empty suggestions"
+        # Execute node (standard execution first)
+        result = node.run()
+        logger.debug(f"Compare MCP node result: {result}")
 
-            # Should identify key differences between single table vs JOIN approach
-            explanation_lower = result.explanation.lower()
-            assert "join" in explanation_lower or "table" in explanation_lower or "frpm" in explanation_lower, (
-                "Should identify table structure differences"
-            )
+        # Verify execution results
+        assert node.status == "completed", f"Node execution failed with status: {node.status}"
+        assert isinstance(result, CompareResult), "Result type mismatch"
+        assert result.success is True, f"Node execution failed: {result}"
+        assert len(result.explanation) > 0, "Empty explanation"
 
-            # Suggestions should be actionable and database-informed
-            if result.suggest:
-                suggest_lower = result.suggest.lower()
-                assert "join" in suggest_lower or "table" in suggest_lower or "modify" in suggest_lower, (
-                    "Should provide actionable database-informed suggestions"
-                )
+        # Should identify key differences between single table vs JOIN approach
+        explanation_lower = result.explanation.lower()
+        assert "join" in explanation_lower or "table" in explanation_lower or "frpm" in explanation_lower, (
+            "Should identify table structure differences"
+        )
 
-            # Print results for manual inspection
-            print("\n=== Compare MCP Node Test Results ===")
-            print(f"Explanation: {result.explanation}")
-            print(f"Suggestions: {result.suggest}")
-            print(f"Success: {result.success}")
-            print("==========================================\n")
+        # Suggestions should be actionable and database-informed
+        assert result.suggest, "Should provide suggestions"
+        suggest_lower = result.suggest.lower()
+        assert "join" in suggest_lower or "table" in suggest_lower or "modify" in suggest_lower, (
+            "Should provide actionable database-informed suggestions"
+        )
 
-        except Exception as e:
-            logger.error(f"Compare MCP node test failed: {str(e)}")
-            raise
+        # Print results for manual inspection
+        print("\n=== Compare MCP Node Test Results ===")
+        print(f"Explanation: {result.explanation}")
+        print(f"Suggestions: {result.suggest}")
+        print(f"Success: {result.success}")
+        print("==========================================\n")

@@ -234,7 +234,8 @@ class TestInitReferenceTemplateAsync:
     def test_async_function_is_importable(self):
         from datus.storage.reference_template.reference_template_init import init_reference_template_async
 
-        assert init_reference_template_async is not None
+        assert callable(init_reference_template_async)
+        assert inspect.iscoroutinefunction(init_reference_template_async)
 
     def test_async_function_is_coroutine(self):
         from datus.storage.reference_template.reference_template_init import init_reference_template_async

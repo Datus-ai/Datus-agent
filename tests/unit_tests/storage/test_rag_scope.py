@@ -6,6 +6,7 @@
 
 from unittest.mock import MagicMock
 
+import pytest
 from datus_storage_base.conditions import build_where
 
 from datus.storage.rag_scope import _build_sub_agent_filter
@@ -41,23 +42,19 @@ def _mock_storage(has_subject_tree=False):
 class TestBuildSubAgentFilter:
     """Tests for _build_sub_agent_filter."""
 
-    def test_no_sub_agent_returns_none(self):
-        """No sub_agent_name -> no scoping."""
-        config = _mock_agent_config()
-        result = _build_sub_agent_filter(config, None, _mock_storage(), "tables")
-        assert result is None
-
-    def test_no_config_for_sub_agent_returns_none(self):
-        """Sub-agent name with no matching config -> no scoping."""
-        config = _mock_agent_config()
-        result = _build_sub_agent_filter(config, "unknown_agent", _mock_storage(), "tables")
-        assert result is None
-
-    def test_no_scoped_context_returns_none(self):
-        """Sub-agent config without scoped_context -> no scoping."""
-        config = _mock_agent_config(sub_agent_configs={"team_a": {"system_prompt": "team_a"}})
-        result = _build_sub_agent_filter(config, "team_a", _mock_storage(), "tables")
-        assert result is None
+    @pytest.mark.parametrize(
+        "sub_agent_name,sub_agent_configs,expected_description",
+        [
+            (None, None, "no sub_agent_name"),
+            ("unknown_agent", None, "sub-agent name with no matching config"),
+            ("team_a", {"team_a": {"system_prompt": "team_a"}}, "config without scoped_context"),
+        ],
+    )
+    def test_returns_none_when_no_scope(self, sub_agent_name, sub_agent_configs, expected_description):
+        """_build_sub_agent_filter returns None when there is no effective scope."""
+        config = _mock_agent_config(sub_agent_configs=sub_agent_configs)
+        result = _build_sub_agent_filter(config, sub_agent_name, _mock_storage(), "tables")
+        assert result is None, f"Expected None for case: {expected_description}"
 
     def test_table_scope_builds_filter(self):
         """Sub-agent with tables scoped context -> table filter."""

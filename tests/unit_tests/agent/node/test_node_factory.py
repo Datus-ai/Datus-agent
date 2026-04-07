@@ -8,6 +8,8 @@ Unit tests for datus/agent/node/node_factory.py
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from datus.agent.node.node_factory import _resolve_node_class_type, create_interactive_node, create_node_input
 
 # ---------------------------------------------------------------------------
@@ -127,79 +129,87 @@ class TestCreateInteractiveNode:
 # ---------------------------------------------------------------------------
 
 
+def _load_node_class(module_path, class_name):
+    import importlib
+
+    module = importlib.import_module(module_path)
+    return getattr(module, class_name)
+
+
 class TestCreateNodeInput:
-    def test_chat_node_input(self):
-        from datus.agent.node.chat_agentic_node import ChatAgenticNode
-
-        node = MagicMock(spec=ChatAgenticNode)
-        result = create_node_input("hello", node, catalog="cat", database="db")
-        assert result.user_message == "hello"
-        assert result.catalog == "cat"
-
-    def test_gensql_node_input(self):
-        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
-
-        node = MagicMock(spec=GenSQLAgenticNode)
-        result = create_node_input("generate SQL", node, catalog="cat", plan_mode=True)
-        assert result.user_message == "generate SQL"
-        assert result.plan_mode is True
-
-    def test_semantic_node_input(self):
-        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
-
-        node = MagicMock(spec=GenSemanticModelAgenticNode)
-        result = create_node_input("build model", node, catalog="cat", prompt_language="zh")
-        assert result.user_message == "build model"
-        assert result.prompt_language == "zh"
-
-    def test_metrics_node_input(self):
-        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
-
-        node = MagicMock(spec=GenMetricsAgenticNode)
-        result = create_node_input("gen metrics", node)
-        assert result.user_message == "gen metrics"
-
-    def test_sql_summary_node_input(self):
-        from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
-
-        node = MagicMock(spec=SqlSummaryAgenticNode)
-        result = create_node_input("summarize", node, database="mydb")
-        assert result.user_message == "summarize"
-        assert result.database == "mydb"
-
-    def test_ext_knowledge_node_input(self):
-        from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
-
-        node = MagicMock(spec=GenExtKnowledgeAgenticNode)
-        result = create_node_input("add knowledge", node)
-        assert result.user_message == "add knowledge"
-        assert result.catalog is None
-        assert result.database is None
-        assert result.db_schema is None
-
-    def test_ext_knowledge_node_input_with_db_context(self):
-        from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
-
-        node = MagicMock(spec=GenExtKnowledgeAgenticNode)
-        result = create_node_input("add knowledge", node, catalog="cat", database="db", db_schema="sch")
-        assert result.user_message == "add knowledge"
-        assert result.catalog == "cat"
-        assert result.database == "db"
-        assert result.db_schema == "sch"
-
-    def test_gen_table_node_input(self):
-        from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
-
-        node = MagicMock(spec=GenTableAgenticNode)
-        result = create_node_input("create table", node, catalog="cat", database="db")
-        assert result.user_message == "create table"
-        assert result.catalog == "cat"
-        assert result.database == "db"
-
-    def test_gen_report_node_input(self):
-        from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
-
-        node = MagicMock(spec=GenReportAgenticNode)
-        result = create_node_input("report", node, catalog="cat", database="db")
-        assert result.user_message == "report"
-        assert result.catalog == "cat"
+    @pytest.mark.parametrize(
+        "node_module,node_class_name,message,kwargs,expected_attrs",
+        [
+            (
+                "datus.agent.node.chat_agentic_node",
+                "ChatAgenticNode",
+                "hello",
+                {"catalog": "cat", "database": "db"},
+                {"user_message": "hello", "catalog": "cat"},
+            ),
+            (
+                "datus.agent.node.gen_sql_agentic_node",
+                "GenSQLAgenticNode",
+                "generate SQL",
+                {"catalog": "cat", "plan_mode": True},
+                {"user_message": "generate SQL", "plan_mode": True},
+            ),
+            (
+                "datus.agent.node.gen_semantic_model_agentic_node",
+                "GenSemanticModelAgenticNode",
+                "build model",
+                {"catalog": "cat", "prompt_language": "zh"},
+                {"user_message": "build model", "prompt_language": "zh"},
+            ),
+            (
+                "datus.agent.node.gen_metrics_agentic_node",
+                "GenMetricsAgenticNode",
+                "gen metrics",
+                {},
+                {"user_message": "gen metrics"},
+            ),
+            (
+                "datus.agent.node.sql_summary_agentic_node",
+                "SqlSummaryAgenticNode",
+                "summarize",
+                {"database": "mydb"},
+                {"user_message": "summarize", "database": "mydb"},
+            ),
+            (
+                "datus.agent.node.gen_ext_knowledge_agentic_node",
+                "GenExtKnowledgeAgenticNode",
+                "add knowledge",
+                {},
+                {"user_message": "add knowledge", "catalog": None, "database": None, "db_schema": None},
+            ),
+            (
+                "datus.agent.node.gen_ext_knowledge_agentic_node",
+                "GenExtKnowledgeAgenticNode",
+                "add knowledge with context",
+                {"catalog": "cat", "database": "db", "db_schema": "sch"},
+                {"user_message": "add knowledge with context", "catalog": "cat", "database": "db", "db_schema": "sch"},
+            ),
+            (
+                "datus.agent.node.gen_table_agentic_node",
+                "GenTableAgenticNode",
+                "create table",
+                {"catalog": "cat", "database": "db"},
+                {"user_message": "create table", "catalog": "cat", "database": "db"},
+            ),
+            (
+                "datus.agent.node.gen_report_agentic_node",
+                "GenReportAgenticNode",
+                "report",
+                {"catalog": "cat", "database": "db"},
+                {"user_message": "report", "catalog": "cat", "database": "db"},
+            ),
+        ],
+    )
+    def test_create_node_input(self, node_module, node_class_name, message, kwargs, expected_attrs):
+        node_class = _load_node_class(node_module, node_class_name)
+        node = MagicMock(spec=node_class)
+        result = create_node_input(message, node, **kwargs)
+        for attr, expected_value in expected_attrs.items():
+            assert getattr(result, attr) == expected_value, (
+                f"{node_class_name}: expected {attr}={expected_value!r}, got {getattr(result, attr)!r}"
+            )

@@ -51,47 +51,27 @@ class TestDatusPathManagerProperties:
     def pm(self, tmp_path):
         return DatusPathManager(datus_home=str(tmp_path / "datus"))
 
-    def test_conf_dir(self, pm):
-        assert pm.conf_dir == pm.datus_home / "conf"
-
-    def test_data_dir(self, pm):
-        assert pm.data_dir == pm.datus_home / "data"
-
-    def test_logs_dir(self, pm):
-        assert pm.logs_dir == pm.datus_home / "logs"
-
-    def test_sessions_dir(self, pm):
-        assert pm.sessions_dir == pm.datus_home / "sessions"
-
-    def test_template_dir(self, pm):
-        assert pm.template_dir == pm.datus_home / "template"
-
-    def test_sample_dir(self, pm):
-        assert pm.sample_dir == pm.datus_home / "sample"
-
-    def test_run_dir(self, pm):
-        assert pm.run_dir == pm.datus_home / "run"
-
-    def test_benchmark_dir(self, pm):
-        assert pm.benchmark_dir == pm.datus_home / "benchmark"
-
-    def test_save_dir(self, pm):
-        assert pm.save_dir == pm.datus_home / "save"
-
-    def test_workspace_dir(self, pm):
-        assert pm.workspace_dir == pm.datus_home / "workspace"
-
-    def test_trajectory_dir(self, pm):
-        assert pm.trajectory_dir == pm.datus_home / "trajectory"
-
-    def test_semantic_models_dir(self, pm):
-        assert pm.semantic_models_dir == pm.datus_home / "semantic_models"
-
-    def test_sql_summaries_dir(self, pm):
-        assert pm.sql_summaries_dir == pm.datus_home / "sql_summaries"
-
-    def test_ext_knowledge_dir(self, pm):
-        assert pm.ext_knowledge_dir == pm.datus_home / "ext_knowledge"
+    @pytest.mark.parametrize(
+        "attr,suffix",
+        [
+            ("conf_dir", "conf"),
+            ("data_dir", "data"),
+            ("logs_dir", "logs"),
+            ("sessions_dir", "sessions"),
+            ("template_dir", "template"),
+            ("sample_dir", "sample"),
+            ("run_dir", "run"),
+            ("benchmark_dir", "benchmark"),
+            ("save_dir", "save"),
+            ("workspace_dir", "workspace"),
+            ("trajectory_dir", "trajectory"),
+            ("semantic_models_dir", "semantic_models"),
+            ("sql_summaries_dir", "sql_summaries"),
+            ("ext_knowledge_dir", "ext_knowledge"),
+        ],
+    )
+    def test_directory_property(self, pm, attr, suffix):
+        assert getattr(pm, attr) == pm.datus_home / suffix
 
 
 class TestDatusPathManagerConfigPaths:
@@ -101,26 +81,22 @@ class TestDatusPathManagerConfigPaths:
     def pm(self, tmp_path):
         return DatusPathManager(datus_home=str(tmp_path / "datus"))
 
-    def test_agent_config_path(self, pm):
-        assert pm.agent_config_path() == pm.conf_dir / "agent.yml"
-
-    def test_mcp_config_path(self, pm):
-        assert pm.mcp_config_path() == pm.conf_dir / ".mcp.json"
-
-    def test_auth_config_path(self, pm):
-        assert pm.auth_config_path() == pm.conf_dir / "auth_clients.yml"
-
-    def test_history_file_path(self, pm):
-        assert pm.history_file_path() == pm.datus_home / "history"
-
-    def test_dashboard_path(self, pm):
-        assert pm.dashboard_path() == pm.datus_home / "dashboard"
-
-    def test_pid_file_path_default(self, pm):
-        assert pm.pid_file_path() == pm.run_dir / "datus-agent-api.pid"
-
-    def test_pid_file_path_custom_service(self, pm):
-        assert pm.pid_file_path("my-service") == pm.run_dir / "my-service.pid"
+    @pytest.mark.parametrize(
+        "method,args,expected_parts",
+        [
+            ("agent_config_path", [], ("conf_dir", "agent.yml")),
+            ("mcp_config_path", [], ("conf_dir", ".mcp.json")),
+            ("auth_config_path", [], ("conf_dir", "auth_clients.yml")),
+            ("history_file_path", [], ("datus_home", "history")),
+            ("dashboard_path", [], ("datus_home", "dashboard")),
+            ("pid_file_path", [], ("run_dir", "datus-agent-api.pid")),
+            ("pid_file_path", ["my-service"], ("run_dir", "my-service.pid")),
+        ],
+    )
+    def test_config_path_method(self, pm, method, args, expected_parts):
+        base_attr, filename = expected_parts
+        expected = getattr(pm, base_attr) / filename
+        assert getattr(pm, method)(*args) == expected
 
 
 class TestDatusPathManagerDataPaths:

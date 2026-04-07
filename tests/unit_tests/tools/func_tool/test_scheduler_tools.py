@@ -117,38 +117,45 @@ class TestAvailableTools:
 
 
 class TestAdapterCloseError:
-    def test_trigger_close_exception_still_returns(self):
-        """adapter.close() failure should not affect the result."""
-        mock_run = _make_job_run()
+    """adapter.close() failure should not affect the method result."""
+
+    @pytest.mark.parametrize(
+        "method_name, call_args, call_kwargs, adapter_setup",
+        [
+            (
+                "trigger_scheduler_job",
+                ("dag_1",),
+                {},
+                lambda a: setattr(a, "trigger_job", MagicMock(return_value=_make_job_run())),
+            ),
+            (
+                "get_scheduler_job",
+                ("dag_1",),
+                {},
+                lambda a: setattr(a, "get_job", MagicMock(return_value=_make_scheduled_job())),
+            ),
+            ("list_scheduler_jobs", (), {}, lambda a: setattr(a, "list_jobs", MagicMock(return_value=[]))),
+            ("pause_job", ("dag_1",), {}, None),
+            ("resume_job", ("dag_1",), {}, None),
+            ("delete_job", ("dag_1",), {}, None),
+            ("list_job_runs", ("dag_1",), {}, lambda a: setattr(a, "list_job_runs", MagicMock(return_value=[]))),
+            (
+                "get_run_log",
+                ("dag_1", "run_1"),
+                {},
+                lambda a: setattr(a, "get_run_log", MagicMock(return_value="log text")),
+            ),
+        ],
+    )
+    def test_close_exception_still_returns(self, method_name, call_args, call_kwargs, adapter_setup):
         mock_adapter = MagicMock()
-        mock_adapter.trigger_job.return_value = mock_run
         mock_adapter.close.side_effect = Exception("close failed")
+        if adapter_setup is not None:
+            adapter_setup(mock_adapter)
 
         tools = SchedulerTools(_make_agent_config())
         with patch.object(tools, "_get_adapter", return_value=mock_adapter):
-            result = tools.trigger_scheduler_job("dag_1")
-
-        assert result.success == 1
-
-    def test_get_job_close_exception_still_returns(self):
-        mock_adapter = MagicMock()
-        mock_adapter.get_job.return_value = _make_scheduled_job()
-        mock_adapter.close.side_effect = Exception("close failed")
-
-        tools = SchedulerTools(_make_agent_config())
-        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
-            result = tools.get_scheduler_job("dag_1")
-
-        assert result.success == 1
-
-    def test_list_jobs_close_exception_still_returns(self):
-        mock_adapter = MagicMock()
-        mock_adapter.list_jobs.return_value = []
-        mock_adapter.close.side_effect = Exception("close failed")
-
-        tools = SchedulerTools(_make_agent_config())
-        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
-            result = tools.list_scheduler_jobs()
+            result = getattr(tools, method_name)(*call_args, **call_kwargs)
 
         assert result.success == 1
 
@@ -182,36 +189,6 @@ class TestAdapterCloseError:
 
         assert result.success == 1
 
-    def test_pause_close_exception_still_returns(self):
-        mock_adapter = MagicMock()
-        mock_adapter.close.side_effect = Exception("close failed")
-
-        tools = SchedulerTools(_make_agent_config())
-        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
-            result = tools.pause_job("dag_1")
-
-        assert result.success == 1
-
-    def test_resume_close_exception_still_returns(self):
-        mock_adapter = MagicMock()
-        mock_adapter.close.side_effect = Exception("close failed")
-
-        tools = SchedulerTools(_make_agent_config())
-        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
-            result = tools.resume_job("dag_1")
-
-        assert result.success == 1
-
-    def test_delete_close_exception_still_returns(self):
-        mock_adapter = MagicMock()
-        mock_adapter.close.side_effect = Exception("close failed")
-
-        tools = SchedulerTools(_make_agent_config())
-        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
-            result = tools.delete_job("dag_1")
-
-        assert result.success == 1
-
     def test_update_close_exception_still_returns(self, tmp_path):
         sql_file = tmp_path / "q.sql"
         sql_file.write_text("SELECT 1")
@@ -227,33 +204,29 @@ class TestAdapterCloseError:
 
         assert result.success == 1
 
-    def test_list_runs_close_exception_still_returns(self):
-        mock_adapter = MagicMock()
-        mock_adapter.list_job_runs.return_value = []
-        mock_adapter.close.side_effect = Exception("close failed")
-
-        tools = SchedulerTools(_make_agent_config())
-        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
-            result = tools.list_job_runs("dag_1")
-
-        assert result.success == 1
-
-    def test_get_run_log_close_exception_still_returns(self):
-        mock_adapter = MagicMock()
-        mock_adapter.get_run_log.return_value = "log text"
-        mock_adapter.close.side_effect = Exception("close failed")
-
-        tools = SchedulerTools(_make_agent_config())
-        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
-            result = tools.get_run_log("dag_1", "run_1")
-
-        assert result.success == 1
-
 
 # ── _get_adapter error paths in tool methods ───────────────────────────────
 
 
 class TestAdapterCreationErrors:
+    @pytest.mark.parametrize(
+        "method_name, call_args, call_kwargs",
+        [
+            ("trigger_scheduler_job", ("dag_1",), {}),
+            ("get_scheduler_job", ("dag_1",), {}),
+            ("list_scheduler_jobs", (), {}),
+            ("pause_job", ("dag_1",), {}),
+            ("resume_job", ("dag_1",), {}),
+            ("delete_job", ("dag_1",), {}),
+            ("list_job_runs", ("dag_1",), {}),
+            ("get_run_log", ("dag_1", "run_1"), {}),
+        ],
+    )
+    def test_no_scheduler_config_returns_failure(self, method_name, call_args, call_kwargs):
+        tools = SchedulerTools(_make_agent_config(scheduler_config={}))
+        result = getattr(tools, method_name)(*call_args, **call_kwargs)
+        assert result.success == 0
+
     def test_submit_sql_no_scheduler_config(self, tmp_path):
         sql_file = tmp_path / "q.sql"
         sql_file.write_text("SELECT 1")
@@ -277,46 +250,6 @@ class TestAdapterCreationErrors:
         result = tools.update_job(job_id="j1", sql_file_path=str(sql_file), job_name="J1", conn_id="my_conn")
         assert result.success == 0
         assert "scheduler" in (result.error or "").lower()
-
-    def test_trigger_no_scheduler_config(self):
-        tools = SchedulerTools(_make_agent_config(scheduler_config={}))
-        result = tools.trigger_scheduler_job("dag_1")
-        assert result.success == 0
-
-    def test_get_job_no_scheduler_config(self):
-        tools = SchedulerTools(_make_agent_config(scheduler_config={}))
-        result = tools.get_scheduler_job("dag_1")
-        assert result.success == 0
-
-    def test_list_jobs_no_scheduler_config(self):
-        tools = SchedulerTools(_make_agent_config(scheduler_config={}))
-        result = tools.list_scheduler_jobs()
-        assert result.success == 0
-
-    def test_pause_no_scheduler_config(self):
-        tools = SchedulerTools(_make_agent_config(scheduler_config={}))
-        result = tools.pause_job("dag_1")
-        assert result.success == 0
-
-    def test_resume_no_scheduler_config(self):
-        tools = SchedulerTools(_make_agent_config(scheduler_config={}))
-        result = tools.resume_job("dag_1")
-        assert result.success == 0
-
-    def test_delete_no_scheduler_config(self):
-        tools = SchedulerTools(_make_agent_config(scheduler_config={}))
-        result = tools.delete_job("dag_1")
-        assert result.success == 0
-
-    def test_list_runs_no_scheduler_config(self):
-        tools = SchedulerTools(_make_agent_config(scheduler_config={}))
-        result = tools.list_job_runs("dag_1")
-        assert result.success == 0
-
-    def test_get_run_log_no_scheduler_config(self):
-        tools = SchedulerTools(_make_agent_config(scheduler_config={}))
-        result = tools.get_run_log("dag_1", "run_1")
-        assert result.success == 0
 
 
 # ── DAG template tests ─────────────────────────────────────────────────────

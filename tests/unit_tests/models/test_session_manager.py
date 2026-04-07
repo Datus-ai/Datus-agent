@@ -219,6 +219,10 @@ class TestSessionManagerExecution:
 
     # -- clear_session --
 
+    @pytest.mark.xfail(
+        strict=True,
+        reason="BUG: SessionManager.clear_session does not await async AdvancedSQLiteSession.clear_session",
+    )
     def test_clear_session_removes_messages(self, sm):
         """clear_session removes all messages from the session's database."""
         session_id = "clear-me"
@@ -236,12 +240,8 @@ class TestSessionManagerExecution:
         # SessionManager.clear_session delegates to AdvancedSQLiteSession.clear_session.
         sm.clear_session(session_id)
 
-        # Verify through direct SQL that messages were deleted (clear_session may be
-        # sync or async depending on the AdvancedSQLiteSession implementation).
         remaining = _count_messages(sm.session_dir, session_id)
-        # If the underlying clear is async and not awaited, messages may still exist.
-        # The important assertion is that clear_session does not raise.
-        assert remaining >= 0
+        assert remaining == 0
 
     def test_clear_session_non_cached_does_not_raise(self, sm):
         """clear_session on a session not in cache does not raise."""

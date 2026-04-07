@@ -201,18 +201,16 @@ class TestOpenAICompatibleModelInit:
 class TestSetupCustomJsonEncoder:
     def test_does_not_raise(self):
         OpenAICompatibleModel._setup_custom_json_encoder()
+        # Verify the encoder is installed: json._default_encoder should be our CustomJSONEncoder
+        assert type(json._default_encoder).__name__ == "CustomJSONEncoder"
 
     def test_anyurl_serializable_after_setup(self):
         from pydantic import AnyUrl
 
         OpenAICompatibleModel._setup_custom_json_encoder()
         url = AnyUrl("https://example.com")
-        # Use json.dumps without default=str to verify the encoder actually works
-        try:
-            encoded = json.dumps(url)
-        except TypeError:
-            # If direct serialization fails, the encoder patch targets a different path
-            encoded = json.dumps(str(url))
+        # json.dumps must succeed directly — no try/except, that would hide failures
+        encoded = json.dumps(url)
         assert "example.com" in encoded
 
 
@@ -349,11 +347,10 @@ class TestGenerateWithJsonOutput:
         model = _make_model()
         with patch.object(model, "generate", return_value='{"a": 1}') as mock_gen:
             model.generate_with_json_output("prompt", enable_thinking=True)
-        # enable_thinking is popped from kwargs and passed as positional arg to generate
-        call_args = mock_gen.call_args
-        # It should be called with enable_thinking=True (2nd positional arg or keyword)
-        all_args = list(call_args[0]) + list(call_args[1].values())
-        assert True in all_args or call_args[0][1] is True or call_args[1].get("enable_thinking") is True
+        # generate_with_json_output pops enable_thinking from kwargs and passes it as
+        # the keyword argument enable_thinking to self.generate (see openai_compatible.py:406)
+        call_kwargs = mock_gen.call_args[1]
+        assert call_kwargs.get("enable_thinking") is True
 
 
 # ---------------------------------------------------------------------------
@@ -882,28 +879,36 @@ class TestSaveLlmTrace:
     def test_does_nothing_when_disabled(self, tmp_path):
         cfg = _make_model_config(save_llm_trace=False)
         model = _make_model(cfg)
-        # Should not raise, does nothing
-        model._save_llm_trace("prompt", "response")
+        with patch("builtins.open") as mock_open:
+            model._save_llm_trace("prompt", "response")
+        # No file should have been opened — early return before any I/O
+        mock_open.assert_not_called()
 
     def test_does_nothing_when_no_workflow_context(self, tmp_path):
         cfg = _make_model_config(save_llm_trace=True)
         model = _make_model(cfg)
-        # No workflow/current_node attributes
-        model._save_llm_trace("prompt", "response")
+        # No workflow/current_node attributes on the model
+        with patch("builtins.open") as mock_open:
+            model._save_llm_trace("prompt", "response")
+        mock_open.assert_not_called()
 
     def test_does_nothing_when_workflow_is_none(self):
         cfg = _make_model_config(save_llm_trace=True)
         model = _make_model(cfg)
         model.workflow = None
         model.current_node = MagicMock()
-        model._save_llm_trace("prompt", "response")
+        with patch("builtins.open") as mock_open:
+            model._save_llm_trace("prompt", "response")
+        mock_open.assert_not_called()
 
     def test_does_nothing_when_current_node_is_none(self):
         cfg = _make_model_config(save_llm_trace=True)
         model = _make_model(cfg)
         model.workflow = MagicMock()
         model.current_node = None
-        model._save_llm_trace("prompt", "response")
+        with patch("builtins.open") as mock_open:
+            model._save_llm_trace("prompt", "response")
+        mock_open.assert_not_called()
 
     def test_saves_trace_file(self, tmp_path):
         import yaml as pyyaml
@@ -990,9 +995,17 @@ class TestSaveLlmTrace:
         model.workflow = mock_workflow
         model.current_node = mock_node
 
-        with patch("builtins.open", side_effect=OSError("permission denied")):
+        with (
+            patch("builtins.open", side_effect=OSError("permission denied")),
+            patch("datus.models.openai_compatible.logger") as mock_logger,
+        ):
             # Should not raise
             model._save_llm_trace("prompt", "response")
+
+        # The error must be logged (logger.error is called in the except block)
+        mock_logger.error.assert_called_once()
+        logged_msg = mock_logger.error.call_args[0][0]
+        assert "permission denied" in logged_msg
 
     def test_saves_trace_with_other_prompt_type(self, tmp_path):
         import yaml as pyyaml

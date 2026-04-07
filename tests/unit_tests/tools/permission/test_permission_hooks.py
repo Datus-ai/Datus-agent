@@ -89,6 +89,44 @@ class TestCompositeHooks:
         hook1.on_tool_end.assert_awaited_once_with(context, agent, tool, result)
         hook2.on_tool_end.assert_awaited_once_with(context, agent, tool, result)
 
+    @pytest.mark.asyncio
+    async def test_on_tool_start_propagates_hook_exception(self):
+        """Exception from first hook propagates; second hook is NOT called."""
+        hook1 = MagicMock()
+        hook1.on_tool_start = AsyncMock(side_effect=RuntimeError("hook1 failed"))
+        hook2 = MagicMock()
+        hook2.on_tool_start = AsyncMock()
+
+        composite = CompositeHooks([hook1, hook2])
+        context = MagicMock()
+        agent = MagicMock()
+        tool = MagicMock()
+
+        with pytest.raises(RuntimeError, match="hook1 failed"):
+            await composite.on_tool_start(context, agent, tool)
+
+        # Second hook is never reached because the first raised
+        hook2.on_tool_start.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_on_tool_end_propagates_hook_exception(self):
+        """Exception from first hook propagates; second hook is NOT called."""
+        hook1 = MagicMock()
+        hook1.on_tool_end = AsyncMock(side_effect=ValueError("end hook error"))
+        hook2 = MagicMock()
+        hook2.on_tool_end = AsyncMock()
+
+        composite = CompositeHooks([hook1, hook2])
+        context = MagicMock()
+        agent = MagicMock()
+        tool = MagicMock()
+        result = {"success": True}
+
+        with pytest.raises(ValueError, match="end hook error"):
+            await composite.on_tool_end(context, agent, tool, result)
+
+        hook2.on_tool_end.assert_not_awaited()
+
 
 class TestPermissionHooks:
     """Tests for PermissionHooks."""

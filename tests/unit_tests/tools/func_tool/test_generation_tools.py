@@ -168,15 +168,12 @@ class TestEndSemanticModelGeneration:
         assert "2 file(s)" in result.result["message"]
 
     def test_exception_returns_failure(self, generation_tools):
-        with patch.object(generation_tools, "end_semantic_model_generation", side_effect=Exception("disk full")):
-            pass  # testing the inner exception path
-
-        # Test directly by triggering exception inside
+        # Trigger exception inside the method by making logger.info raise
         with patch("datus.tools.func_tool.generation_tools.logger") as mock_logger:
             mock_logger.info.side_effect = Exception("log failure")
             result = generation_tools.end_semantic_model_generation(["/path/model.yaml"])
-            # Even if logger fails, result should fail gracefully
-            assert result.success == 0
+        assert result.success == 0
+        assert "log failure" in result.error
 
 
 class TestEndMetricGeneration:

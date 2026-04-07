@@ -373,8 +373,6 @@ class TestCreateWorkflowRunner:
         assert isinstance(runner, WorkflowRunner)
 
     def test_run_id_passed_through(self):
-        pass
-
         agent = _make_agent()
         runner = agent.create_workflow_runner(check_db=False, run_id="my-run-id")
         assert runner.run_id == "my-run-id"

@@ -121,9 +121,12 @@ class TestInitSuccessStoryMetricsAsync:
 
     def test_async_function_is_importable(self):
         """init_success_story_metrics_async can be imported from the module."""
+        import inspect
+
         from datus.storage.metric.metric_init import init_success_story_metrics_async
 
-        assert init_success_story_metrics_async is not None
+        assert callable(init_success_story_metrics_async)
+        assert inspect.iscoroutinefunction(init_success_story_metrics_async)
 
     def test_async_function_is_coroutine(self):
         """init_success_story_metrics_async is a coroutine function (async def)."""
@@ -211,9 +214,12 @@ class TestInitSuccessStoryMetricsSync:
 
     def test_sync_function_is_importable(self):
         """init_success_story_metrics can be imported."""
+        import inspect
+
         from datus.storage.metric.metric_init import init_success_story_metrics
 
-        assert init_success_story_metrics is not None
+        assert callable(init_success_story_metrics)
+        assert not inspect.iscoroutinefunction(init_success_story_metrics)
 
     def test_sync_function_is_not_coroutine(self):
         """init_success_story_metrics is a plain sync function."""

@@ -487,3 +487,6 @@ class TestE2EIntegration:
             print(f"\n  FAILED: {result['platform']} - {result['error']}")
 
         print("-" * 80)
+
+        failed = [r for r in test_results if r["status"] == "failed"]
+        assert not failed, f"Dashboard tests failed: {[r['error'] for r in failed]}"

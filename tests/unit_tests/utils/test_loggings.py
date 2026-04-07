@@ -34,6 +34,10 @@ def test_log_context(logger):
 
     # Use context manager to temporarily output to console only
     with log_context("console"):
+        root_logger = logging.getLogger()
+        assert any(isinstance(h, logging.StreamHandler) for h in root_logger.handlers), (
+            "Expected a StreamHandler (console) to be active inside log_context('console')"
+        )
         logger.info("This log will only be output to console (temporary)")
 
     # Restore default configuration after context ends
@@ -42,6 +46,10 @@ def test_log_context(logger):
     # Use context manager to temporarily output to file only
     print("=== Output to file only ===")
     with log_context("file"):
+        root_logger = logging.getLogger()
+        # In file-only mode no StreamHandler for stdout should be active
+        active_handlers = root_logger.handlers
+        assert len(active_handlers) > 0, "Expected at least one handler (file) inside log_context('file')"
         logger.info("This log will only be output to file (temporary)")
 
     # Restore default configuration after context ends
@@ -58,10 +66,21 @@ def test_log_manager(logger):
 
     # Use manager to set output target
     log_manager.set_output_target("console")
+    root_logger = logging.getLogger()
+    assert log_manager.console_handler in root_logger.handlers, (
+        "console_handler should be active after set_output_target('console')"
+    )
+    assert log_manager.file_handler not in root_logger.handlers, (
+        "file_handler should NOT be active after set_output_target('console')"
+    )
     logger.info("Set via manager: output to console only")
 
     # Restore default configuration
     log_manager.restore_default()
+    assert log_manager.file_handler in root_logger.handlers, "file_handler should be active after restore_default()"
+    assert log_manager.console_handler in root_logger.handlers, (
+        "console_handler should be active after restore_default()"
+    )
     logger.info("Restore default configuration via manager")
 
 
@@ -70,16 +89,30 @@ def test_multiple_switches(logger):
 
     print("=== Test multiple switches ===")
 
+    log_manager = get_log_manager()
+    root_logger = logging.getLogger()
+
     # Test multiple rapid switches
     logger.info("Initial log with default config")
 
     # Test context manager with multiple switches
     with log_context("console"):
         logger.info("Context 1: console only")
+        assert log_manager.console_handler in root_logger.handlers
+        assert log_manager.file_handler not in root_logger.handlers
+
         with log_context("file"):
             logger.info("Context 2: file only (nested)")
-        logger.info("Context 1: back to console only")
+            assert log_manager.file_handler in root_logger.handlers
+            assert log_manager.console_handler not in root_logger.handlers
 
+        # Back in outer console-only context
+        logger.info("Context 1: back to console only")
+        assert log_manager.console_handler in root_logger.handlers
+
+    # After both contexts exit, handlers should be restored
+    handlers_after = set(root_logger.handlers)
+    assert len(handlers_after) > 0, "Handlers should be restored after context exit"
     logger.info("Final log: should be both file and console")
 
 
@@ -88,10 +121,22 @@ def test_simple_context(logger):
 
     print("=== Test simple context manager ===")
 
+    log_manager = get_log_manager()
+    root_logger = logging.getLogger()
+
+    # Capture handlers before entering context
+    handlers_before = set(root_logger.handlers)
+
     # Test basic context manager
     with log_context("console"):
         logger.info("Simple context test: console only")
+        assert log_manager.console_handler in root_logger.handlers, (
+            "console_handler should be active inside log_context('console')"
+        )
 
+    # After context exits, handlers should be restored
+    handlers_after = set(root_logger.handlers)
+    assert handlers_after == handlers_before, "Handlers should be restored after log_context exits"
     logger.info("Back to default configuration")
 
 
@@ -100,14 +145,26 @@ def test_nested_context(logger):
 
     print("=== Test nested context managers ===")
 
+    log_manager = get_log_manager()
+    root_logger = logging.getLogger()
+    handlers_before = set(root_logger.handlers)
+
     with log_context("console"):
         logger.info("Outer context: console only")
+        assert log_manager.console_handler in root_logger.handlers
+        assert log_manager.file_handler not in root_logger.handlers
 
         with log_context("file"):
             logger.info("Inner context: file only")
+            assert log_manager.file_handler in root_logger.handlers
+            assert log_manager.console_handler not in root_logger.handlers
 
+        # Restored to outer context state
+        assert log_manager.console_handler in root_logger.handlers
         logger.info("Back to outer context: console only")
 
+    # Fully restored after all contexts exit
+    assert set(root_logger.handlers) == handlers_before, "Handlers should be fully restored after nested contexts exit"
     logger.info("Back to default configuration")
 
 
@@ -119,6 +176,8 @@ class TestIsSourceEnvironment:
 
         result = _is_source_environment()
         assert isinstance(result, bool)
+        # Running from the source repo means this must be True (same as test_returns_true_in_repo)
+        assert result is True
 
     def test_returns_true_in_repo(self):
         """Running from the source repo should return True."""
@@ -220,12 +279,13 @@ class TestDynamicLogManager:
         import datus.utils.loggings as loggings_module
         from datus.utils.loggings import DynamicLogManager
 
+        pm_logs = tmp_path / "pm_logs"
+        pm_logs.mkdir(parents=True, exist_ok=True)
         with patch.object(loggings_module, "_is_source_environment", return_value=False):
             with patch("datus.utils.path_manager.get_path_manager") as mock_pm:
-                mock_pm.return_value.logs_dir = tmp_path / "pm_logs"
-                (tmp_path / "pm_logs").mkdir(parents=True, exist_ok=True)
-                mgr = DynamicLogManager(log_dir=str(tmp_path / "pm_logs"))
-        assert mgr is not None
+                mock_pm.return_value.logs_dir = pm_logs
+                mgr = DynamicLogManager(log_dir=str(pm_logs))
+        assert Path(mgr.log_dir) == pm_logs.resolve()
 
     def test_init_non_source_env_uses_agent_config_path_manager(self, tmp_path):
         import datus.utils.loggings as loggings_module
@@ -466,12 +526,16 @@ class TestSetupWebChatbotLogging:
     """Tests for setup_web_chatbot_logging (lines 228-279)."""
 
     def test_returns_structlog_logger(self, tmp_path):
-        pass
+        import structlog
 
         from datus.utils.loggings import setup_web_chatbot_logging
 
         result = setup_web_chatbot_logging(log_dir=str(tmp_path / "chatbot_logs"))
-        assert result is not None
+        # structlog.get_logger() returns a BoundLoggerLazyProxy — verify it has the
+        # standard structlog logger interface (info/debug/error/warning methods).
+        assert isinstance(result, structlog._config.BoundLoggerLazyProxy), (
+            f"Expected structlog BoundLoggerLazyProxy, got {type(result)}"
+        )
 
     def test_creates_log_directory(self, tmp_path):
         from datus.utils.loggings import setup_web_chatbot_logging
@@ -481,17 +545,27 @@ class TestSetupWebChatbotLogging:
         assert log_dir.exists()
 
     def test_debug_mode(self, tmp_path):
+        import structlog
+
         from datus.utils.loggings import setup_web_chatbot_logging
 
         result = setup_web_chatbot_logging(debug=True, log_dir=str(tmp_path / "logs"))
-        assert result is not None
+        assert isinstance(result, structlog._config.BoundLoggerLazyProxy), (
+            f"Expected structlog BoundLoggerLazyProxy, got {type(result)}"
+        )
+        # setup_web_chatbot_logging sets debug level on the "web_chatbot" named logger
+        assert logging.getLogger("web_chatbot").level == logging.DEBUG
 
     def test_auto_detect_source_env(self, tmp_path):
+        import structlog
+
         import datus.utils.loggings as loggings_module
 
         with patch.object(loggings_module, "_is_source_environment", return_value=True):
             result = loggings_module.setup_web_chatbot_logging()
-        assert result is not None
+        assert isinstance(result, structlog._config.BoundLoggerLazyProxy), (
+            f"Expected structlog BoundLoggerLazyProxy, got {type(result)}"
+        )
 
     def test_non_source_env_uses_agent_config_path_manager(self, tmp_path):
         import datus.utils.loggings as loggings_module
@@ -502,7 +576,7 @@ class TestSetupWebChatbotLogging:
         with patch.object(loggings_module, "_is_source_environment", return_value=False):
             result = loggings_module.setup_web_chatbot_logging(agent_config=agent_config)
 
-        assert result is not None
+        assert result is not None  # no isinstance check — verifying path_manager integration
         assert path_manager.logs_dir.exists()
         assert any(path_manager.logs_dir.glob("web_chatbot.*.log"))
 
@@ -531,11 +605,16 @@ class TestLogContext:
     def test_log_context_console_only(self, tmp_path):
         from datus.utils.loggings import configure_logging, log_context
 
-        configure_logging(log_dir=str(tmp_path / "logs"))
+        mgr = configure_logging(log_dir=str(tmp_path / "logs"))
 
         with log_context("console"):
             root_logger = logging.getLogger()
-            # Should not raise
+            assert mgr.console_handler in root_logger.handlers, (
+                "console_handler should be active inside log_context('console')"
+            )
+            assert mgr.file_handler not in root_logger.handlers, (
+                "file_handler should NOT be active inside log_context('console')"
+            )
             root_logger.info("test message in context")
 
     def test_log_context_restores_after_exit(self, tmp_path):

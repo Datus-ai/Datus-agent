@@ -181,34 +181,43 @@ class TestLoginBrowserFull:
         mock_state.return_value = "test_state"
         mock_exchange.return_value = {"access_token": "browser_tok", "refresh_token": "rt"}
 
-        mock_server = MagicMock()
+        # Capture the handler class when HTTPServer is constructed so handle_request
+        # can simulate a real GET callback and populate the result dict closure.
+        captured = {}
 
-        def handle_request():
-            # Simulate the handler setting the code by modifying closure variables
-            # We need to patch at the point where result dict is checked
-            pass
+        def fake_http_server(addr, handler_cls):
+            captured["handler_cls"] = handler_cls
+            mock_server = MagicMock()
+            mock_server.timeout = None
 
-        mock_server.handle_request = handle_request
-        mock_server.server_close = MagicMock()
-        mock_server_cls.return_value = mock_server
+            def handle_request():
+                # Build a minimal fake handler that simulates a valid OAuth callback.
+                # The handler's do_GET reads self.path; we set it via __init__ bypass.
+                handler_cls_ref = captured["handler_cls"]
+                handler = handler_cls_ref.__new__(handler_cls_ref)
+                handler.path = "/auth/callback?code=auth_code_xyz&state=test_state"
+                handler.wfile = MagicMock()
+                handler.send_response = MagicMock()
+                handler.send_header = MagicMock()
+                handler.end_headers = MagicMock()
+                handler.do_GET()
 
-        # Patch the result dict check by making _exchange_code succeed
-        # and patching the flow to set result["code"]
-        with patch.object(
-            OAuthManager,
-            "login_browser",
-            wraps=manager.login_browser,
-        ):
-            # We can't easily test the inner handler, so test the exchange path directly
-            # by monkeypatching the method to skip the server
-            def patched_login():
-                tokens = mock_exchange("auth_code", "verifier")
-                manager.token_storage.save(tokens)
-                return tokens
+            mock_server.handle_request = handle_request
+            mock_server.server_close = MagicMock()
+            return mock_server
 
-            tokens = patched_login()
-            assert tokens["access_token"] == "browser_tok"
-            assert manager.token_storage.load()["access_token"] == "browser_tok"
+        mock_server_cls.side_effect = fake_http_server
+
+        # Call the REAL login_browser method with lower-level mocks only
+        tokens = manager.login_browser()
+
+        assert tokens["access_token"] == "browser_tok"
+        assert tokens["refresh_token"] == "rt"
+        assert manager.token_storage.load()["access_token"] == "browser_tok"
+        # Verify _exchange_code was called with the code the handler extracted
+        mock_exchange.assert_called_once_with("auth_code_xyz", "verifier")
+        # Verify browser was opened
+        mock_browser.assert_called_once()
 
     @patch("datus.auth.oauth_manager.time.monotonic")
     @patch("datus.auth.oauth_manager.webbrowser.open")

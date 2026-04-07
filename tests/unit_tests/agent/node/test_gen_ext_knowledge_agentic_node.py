@@ -355,8 +355,9 @@ class TestGenExtKnowledgeNodeExecution:
         # In interactive mode, the final result should have tokens_used > 0
         last_output = actions[-1].output
         assert last_output is not None
-        if isinstance(last_output, dict) and "tokens_used" in last_output:
-            assert last_output["tokens_used"] > 0
+        assert isinstance(last_output, dict), f"Expected dict, got {type(last_output)}"
+        assert "tokens_used" in last_output, f"Missing 'tokens_used' key in {last_output.keys()}"
+        assert last_output["tokens_used"] > 0
 
     @pytest.mark.asyncio
     async def test_ext_knowledge_with_db_context(self, real_agent_config, mock_llm_create):

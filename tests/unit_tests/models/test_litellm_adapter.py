@@ -22,29 +22,20 @@ class TestLiteLLMAdapterInit:
         assert adapter.model == "gpt-4o"
         assert adapter.api_key == "sk-test"
 
-    def test_auto_detect_claude(self):
-        adapter = LiteLLMAdapter(provider="openai", model="claude-sonnet-4", api_key="key")
-        assert adapter.provider == "claude"
-
-    def test_auto_detect_deepseek(self):
-        adapter = LiteLLMAdapter(provider="openai", model="deepseek-chat", api_key="key")
-        assert adapter.provider == "deepseek"
-
-    def test_auto_detect_qwen(self):
-        adapter = LiteLLMAdapter(provider="openai", model="qwen3-coder", api_key="key")
-        assert adapter.provider == "qwen"
-
-    def test_auto_detect_gemini(self):
-        adapter = LiteLLMAdapter(provider="openai", model="gemini-2.5-pro", api_key="key")
-        assert adapter.provider == "gemini"
-
-    def test_auto_detect_kimi(self):
-        adapter = LiteLLMAdapter(provider="openai", model="kimi-k2.5", api_key="key")
-        assert adapter.provider == "kimi"
-
-    def test_auto_detect_gpt_stays_openai(self):
-        adapter = LiteLLMAdapter(provider="openai", model="gpt-4o", api_key="key")
-        assert adapter.provider == "openai"
+    @pytest.mark.parametrize(
+        "model,expected_provider",
+        [
+            ("claude-sonnet-4", "claude"),
+            ("deepseek-chat", "deepseek"),
+            ("qwen3-coder", "qwen"),
+            ("gemini-2.5-pro", "gemini"),
+            ("kimi-k2.5", "kimi"),
+            ("gpt-4o", "openai"),
+        ],
+    )
+    def test_auto_detect_provider(self, model, expected_provider):
+        adapter = LiteLLMAdapter(provider="openai", model=model, api_key="key")
+        assert adapter.provider == expected_provider
 
     def test_custom_base_url(self):
         adapter = LiteLLMAdapter(provider="openai", model="gpt-4o", api_key="key", base_url="https://custom.api.com")
@@ -64,43 +55,28 @@ class TestLiteLLMAdapterInit:
 
 
 class TestLiteLLMAdapterModelName:
-    def test_openai_no_prefix(self):
-        adapter = LiteLLMAdapter(provider="openai", model="gpt-4o", api_key="key")
-        assert adapter.litellm_model_name == "gpt-4o"
-
-    def test_claude_with_prefix(self):
-        adapter = LiteLLMAdapter(provider="claude", model="claude-sonnet-4", api_key="key")
-        assert adapter.litellm_model_name == "anthropic/claude-sonnet-4"
-
-    def test_deepseek_with_prefix(self):
-        adapter = LiteLLMAdapter(provider="deepseek", model="deepseek-chat", api_key="key")
-        assert adapter.litellm_model_name == "deepseek/deepseek-chat"
-
-    def test_model_already_has_prefix(self):
-        adapter = LiteLLMAdapter(provider="claude", model="anthropic/claude-sonnet-4", api_key="key")
-        assert adapter.litellm_model_name == "anthropic/claude-sonnet-4"
+    @pytest.mark.parametrize(
+        "provider,model,expected_litellm_name",
+        [
+            ("openai", "gpt-4o", "gpt-4o"),
+            ("claude", "claude-sonnet-4", "anthropic/claude-sonnet-4"),
+            ("deepseek", "deepseek-chat", "deepseek/deepseek-chat"),
+            ("claude", "anthropic/claude-sonnet-4", "anthropic/claude-sonnet-4"),  # already has prefix
+            ("unknown_provider", "my-model", "my-model"),
+            ("gemini", "gemini-2.5-pro", "gemini/gemini-2.5-pro"),
+            ("qwen", "qwen3-coder", "dashscope/qwen3-coder"),
+            ("kimi", "kimi-k2.5", "moonshot/kimi-k2.5"),
+        ],
+    )
+    def test_litellm_model_name(self, provider, model, expected_litellm_name):
+        adapter = LiteLLMAdapter(provider=provider, model=model, api_key="key")
+        assert adapter.litellm_model_name == expected_litellm_name
 
     def test_litellm_model_name_cached(self):
         adapter = LiteLLMAdapter(provider="openai", model="gpt-4o", api_key="key")
         name1 = adapter.litellm_model_name
         name2 = adapter.litellm_model_name
         assert name1 is name2  # same object (cached)
-
-    def test_unknown_provider_no_prefix(self):
-        adapter = LiteLLMAdapter(provider="unknown_provider", model="my-model", api_key="key")
-        assert adapter.litellm_model_name == "my-model"
-
-    def test_gemini_prefix(self):
-        adapter = LiteLLMAdapter(provider="gemini", model="gemini-2.5-pro", api_key="key")
-        assert adapter.litellm_model_name == "gemini/gemini-2.5-pro"
-
-    def test_qwen_prefix(self):
-        adapter = LiteLLMAdapter(provider="qwen", model="qwen3-coder", api_key="key")
-        assert adapter.litellm_model_name == "dashscope/qwen3-coder"
-
-    def test_kimi_prefix(self):
-        adapter = LiteLLMAdapter(provider="kimi", model="kimi-k2.5", api_key="key")
-        assert adapter.litellm_model_name == "moonshot/kimi-k2.5"
 
 
 class TestOpenRouterModelName:

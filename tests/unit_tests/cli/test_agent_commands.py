@@ -147,8 +147,9 @@ class TestGenSqlTask:
         agent_commands.cli.db_connector = None
         # With no db_connector, it falls back to SQLITE — should still work
         result = agent_commands._gen_sql_task("test query")
-        # Either None or a valid task — just confirm no unhandled exception
-        assert result is not None or result is None
+        # The code falls back to SQLITE when db_connector is None; a SqlTask should be returned
+        assert result is not None
+        assert result.task == "test query"
 
 
 # ---------------------------------------------------------------------------
@@ -824,10 +825,7 @@ class TestExtractSqlFromStreamingActions:
 
         node = MagicMock(spec=[])
         # Should not raise - outer try/except catches it
-        try:
-            agent_commands._extract_sql_from_streaming_actions([], workflow, node)
-        except Exception:
-            pass  # acceptable - the outer except may re-raise in some code paths
+        agent_commands._extract_sql_from_streaming_actions([], workflow, node)
 
 
 # ---------------------------------------------------------------------------
@@ -1038,19 +1036,20 @@ class TestCreateNodeInputExtended:
         result = agent_commands.create_node_input(NodeType.TYPE_FIX, "fix it")
         assert result is None
 
-    def test_reasoning_type_exception_returns_none(self, agent_commands, cli_context, sql_task):
-        """Reasoning type is reached; production code has a validation error but create_node_input
-        catches ValueError. For non-ValueError exceptions, the production bug surfaces as None or
-        an exception — we just verify no unhandled exception propagates out of the command wrapper."""
+    @pytest.mark.xfail(
+        reason="Production bug: create_node_input passes sql_query= to ReasoningInput which forbids extras",
+        strict=True,
+    )
+    def test_reasoning_type_creates_input(self, agent_commands, cli_context, sql_task):
+        """Reasoning type should create a valid ReasoningInput.
+
+        Currently fails with ValidationError because create_node_input passes
+        sql_query= as a keyword argument but ReasoningInput inherits extra='forbid'
+        from GenerateSQLInput.
+        """
         cli_context.set_current_sql_task(sql_task)
         agent_commands.cli_context = cli_context
         agent_commands.cli.prompt_input = lambda msg, default="", **kw: default or ""
 
-        # The production create_node_input may raise ValidationError (Pydantic) for TYPE_REASONING
-        # due to a schema mismatch; wrap in try/except to confirm no crash in the test itself.
-        try:
-            result = agent_commands.create_node_input(NodeType.TYPE_REASONING, "explain query")
-        except Exception:
-            result = None
-        # Whether None or a valid object, no unhandled exception should escape the test
-        assert result is None or result is not None
+        result = agent_commands.create_node_input(NodeType.TYPE_REASONING, "explain query")
+        assert result is not None

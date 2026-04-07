@@ -103,83 +103,122 @@ class TestParseJsonField:
 
 
 class TestUpdateColumnsFieldMapping:
-    """Tests for _update_columns column_type / type field mapping logic."""
+    """Tests for _update_columns column_type / type field mapping constants.
+
+    The full change-detection loop is tested via TestUpdateColumnsMethod below.
+    These tests verify the field mapping constants (allowed_fields sets) that
+    are passed to _update_columns in update_semantic_model.
+    """
 
     def _make_updater(self):
         """Create a bare CatalogUpdater for pure method tests."""
         obj = object.__new__(CatalogUpdater)
+        obj.datasource_id = "test_datasource"
         return obj
 
     def test_type_to_column_type_mapping_detects_change(self):
-        """When old has type='string' and new has type='integer', changed should include column_type."""
-        # Simulate the mapping logic from _update_columns
-        allowed_fields = {"description", "expr", "column_type"}
-        old_item = {"name": "col1", "type": "string", "description": "A column"}
-        new_item = {"name": "col1", "type": "integer", "description": "A column"}
+        """column_type field maps from 'type' key in source data — verified via real method."""
+        updater = self._make_updater()
+        calls = []
 
-        changed = {}
-        for field in allowed_fields:
-            new_key = field
-            old_key = "type" if field == "column_type" else field
-            new_val = new_item.get("type" if field == "column_type" else field)
-            old_val = old_item.get(old_key)
-            if new_val != old_val:
-                changed[new_key] = new_val
+        class FakeStorage:
+            def update(self, where, values, unique_filter=None):
+                calls.append(values)
 
-        assert "column_type" in changed
-        assert changed["column_type"] == "integer"
-        assert "description" not in changed  # unchanged
+        old = [{"name": "col1", "type": "string", "description": "A column"}]
+        new = [{"name": "col1", "type": "integer", "description": "A column"}]
+
+        updater._update_columns(
+            storages=[FakeStorage()],
+            catalog_name="cat",
+            database_name="db",
+            schema_name="sch",
+            table_name="t",
+            old_columns=old,
+            new_columns=new,
+            kind_field="is_dimension",
+            allowed_fields={"description", "expr", "column_type"},
+        )
+        assert len(calls) == 1
+        assert calls[0].get("column_type") == "integer"
+        assert "description" not in calls[0]  # unchanged
 
     def test_no_changes_when_values_identical(self):
-        """When old and new values are identical, no changes should be detected."""
-        allowed_fields = {"description", "expr", "column_type"}
-        item = {"name": "col1", "type": "string", "description": "desc", "expr": "x"}
+        """When old and new columns are identical, _update_columns makes no updates."""
+        updater = self._make_updater()
+        calls = []
 
-        changed = {}
-        for field in allowed_fields:
-            new_key = field
-            old_key = "type" if field == "column_type" else field
-            new_val = item.get("type" if field == "column_type" else field)
-            old_val = item.get(old_key)
-            if new_val != old_val:
-                changed[new_key] = new_val
+        class FakeStorage:
+            def update(self, where, values, unique_filter=None):
+                calls.append(values)
 
-        assert changed == {}
+        item = [{"name": "col1", "type": "string", "description": "desc", "expr": "x"}]
+
+        updater._update_columns(
+            storages=[FakeStorage()],
+            catalog_name="cat",
+            database_name="db",
+            schema_name="sch",
+            table_name="t",
+            old_columns=item,
+            new_columns=item,
+            kind_field="is_dimension",
+            allowed_fields={"description", "expr", "column_type"},
+        )
+        assert calls == []
 
     def test_description_change_detected(self):
-        """A changed description field should be detected."""
-        allowed_fields = {"description", "expr", "column_type"}
-        old_item = {"name": "col1", "type": "string", "description": "old desc"}
-        new_item = {"name": "col1", "type": "string", "description": "new desc"}
+        """A changed description field triggers an update with only the changed value."""
+        updater = self._make_updater()
+        calls = []
 
-        changed = {}
-        for field in allowed_fields:
-            new_key = field
-            old_key = "type" if field == "column_type" else field
-            new_val = new_item.get("type" if field == "column_type" else field)
-            old_val = old_item.get(old_key)
-            if new_val != old_val:
-                changed[new_key] = new_val
+        class FakeStorage:
+            def update(self, where, values, unique_filter=None):
+                calls.append(values)
 
-        assert changed == {"description": "new desc"}
+        old = [{"name": "col1", "type": "string", "description": "old desc"}]
+        new = [{"name": "col1", "type": "string", "description": "new desc"}]
+
+        updater._update_columns(
+            storages=[FakeStorage()],
+            catalog_name="cat",
+            database_name="db",
+            schema_name="sch",
+            table_name="t",
+            old_columns=old,
+            new_columns=new,
+            kind_field="is_dimension",
+            allowed_fields={"description", "expr", "column_type"},
+        )
+        assert len(calls) == 1
+        assert calls[0] == {"description": "new desc"}
 
     def test_missing_old_field_detected_as_change(self):
-        """If old_item lacks a field that new_item has, it should be detected as a change."""
-        allowed_fields = {"description", "expr", "column_type"}
-        old_item = {"name": "col1"}
-        new_item = {"name": "col1", "description": "new desc", "type": "string"}
+        """If old_item lacks a field that new_item has, _update_columns detects it as a change."""
+        updater = self._make_updater()
+        calls = []
 
-        changed = {}
-        for field in allowed_fields:
-            new_key = field
-            old_key = "type" if field == "column_type" else field
-            new_val = new_item.get("type" if field == "column_type" else field)
-            old_val = old_item.get(old_key)
-            if new_val != old_val:
-                changed[new_key] = new_val
+        class FakeStorage:
+            def update(self, where, values, unique_filter=None):
+                calls.append(values)
 
-        assert "description" in changed
-        assert "column_type" in changed
+        old = [{"name": "col1"}]
+        new = [{"name": "col1", "description": "new desc", "type": "string"}]
+
+        updater._update_columns(
+            storages=[FakeStorage()],
+            catalog_name="cat",
+            database_name="db",
+            schema_name="sch",
+            table_name="t",
+            old_columns=old,
+            new_columns=new,
+            kind_field="is_dimension",
+            allowed_fields={"description", "expr", "column_type"},
+        )
+        assert len(calls) == 1
+        assert "description" in calls[0]
+        assert "column_type" in calls[0]
 
 
 # ---------------------------------------------------------------------------

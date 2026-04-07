@@ -252,10 +252,19 @@ class TestSearchTablesNameParsing:
         table_name = parts[-1]
         # SQLite: cat=catalog_name(default), db=parts[0], sch=""
         cat, db, sch = "default_catalog", parts[0], ""
-        assert cat == "default_catalog"
-        assert db == "mydb"
-        assert sch == ""
         assert table_name == "orders"
+
+        where = _build_where_clause(
+            table_name=table_name,
+            catalog_name=cat,
+            database_name=db,
+            schema_name=sch,
+            table_type="full",
+        )
+        clause = build_where(where)
+        assert "table_name = 'orders'" in clause
+        assert "catalog_name = 'default_catalog'" in clause
+        assert "database_name = 'mydb'" in clause
 
     def test_parse_2_part_name_postgresql_dialect(self):
         """Two-part name (e.g., 'schema.table') with PostgreSQL dialect: schema = parts[0]."""
@@ -265,9 +274,18 @@ class TestSearchTablesNameParsing:
         table_name = parts[-1]
         # PostgreSQL: cat=catalog, db=database, sch=parts[0]
         db, sch = "default_db", parts[0]
-        assert sch == "public"
-        assert db == "default_db"
         assert table_name == "orders"
+
+        where = _build_where_clause(
+            table_name=table_name,
+            database_name=db,
+            schema_name=sch,
+            table_type="full",
+        )
+        clause = build_where(where)
+        assert "table_name = 'orders'" in clause
+        assert "schema_name = 'public'" in clause
+        assert "database_name = 'default_db'" in clause
 
     def test_parse_3_part_name_default_dialect(self):
         """Three-part name (e.g., 'db.schema.table') with non-StarRocks dialect."""
@@ -277,9 +295,18 @@ class TestSearchTablesNameParsing:
         table_name = parts[-1]
         # Non-StarRocks: cat=catalog_name, db=parts[0], sch=parts[1]
         db, sch = parts[0], parts[1]
-        assert db == "mydb"
-        assert sch == "public"
         assert table_name == "orders"
+
+        where = _build_where_clause(
+            table_name=table_name,
+            database_name=db,
+            schema_name=sch,
+            table_type="full",
+        )
+        clause = build_where(where)
+        assert "table_name = 'orders'" in clause
+        assert "database_name = 'mydb'" in clause
+        assert "schema_name = 'public'" in clause
 
     def test_parse_3_part_name_starrocks_dialect(self):
         """Three-part name with StarRocks-like dialect (catalog+database, no schema)."""
@@ -331,9 +358,17 @@ class TestSearchTablesNameParsing:
         table_name = parts[-1]
         # MySQL falls into SQLite/MySQL/StarRocks branch: db=parts[0], sch=""
         db, sch = parts[0], ""
-        assert db == "mydb"
-        assert sch == ""
         assert table_name == "orders"
+
+        where = _build_where_clause(
+            table_name=table_name,
+            database_name=db,
+            schema_name=sch,
+            table_type="full",
+        )
+        clause = build_where(where)
+        assert "table_name = 'orders'" in clause
+        assert "database_name = 'mydb'" in clause
 
     def test_parse_2_part_starrocks_dialect(self):
         """Two-part name with StarRocks dialect: db=parts[0], sch=''."""
@@ -342,9 +377,17 @@ class TestSearchTablesNameParsing:
         table_name = parts[-1]
         # StarRocks falls into SQLite/MySQL/StarRocks branch: db=parts[0], sch=""
         db, sch = parts[0], ""
-        assert db == "mydb"
-        assert sch == ""
         assert table_name == "orders"
+
+        where = _build_where_clause(
+            table_name=table_name,
+            database_name=db,
+            schema_name=sch,
+            table_type="full",
+        )
+        clause = build_where(where)
+        assert "table_name = 'orders'" in clause
+        assert "database_name = 'mydb'" in clause
 
 
 # ---------------------------------------------------------------------------
@@ -375,7 +418,7 @@ class TestSearchSimilar:
         store.store_batch([self._make_row(i) for i in range(5)])
 
         result = store.search_similar("table with amount", catalog_name="cat", top_n=3)
-        assert result.num_rows >= 0
+        assert result.num_rows > 0
         assert "vector" not in result.column_names
 
     def test_search_similar_with_filters(self, tmp_path):
@@ -385,7 +428,7 @@ class TestSearchSimilar:
         store.store_batch([self._make_row(i + 10, db_name="db2") for i in range(2)])
 
         result = store.search_similar("table", database_name="db1", top_n=10)
-        assert result.num_rows >= 0
+        assert result.num_rows > 0
 
     def test_do_search_similar_delegates_to_search(self, tmp_path):
         """do_search_similar calls search() with correct parameters."""
@@ -393,7 +436,7 @@ class TestSearchSimilar:
         store.store_batch([self._make_row(i) for i in range(3)])
 
         result = store.do_search_similar("table", top_n=2)
-        assert result.num_rows >= 0
+        assert result.num_rows > 0
         assert "vector" not in result.column_names
 
 
@@ -456,10 +499,9 @@ class TestGetSchema:
         store.store_batch([self._make_row(1), self._make_row(2)])
 
         result = store.get_schema("table_1", catalog_name="cat", database_name="db", schema_name="public")
-        assert result.num_rows >= 0
-        if result.num_rows > 0:
-            assert "definition" in result.column_names
-            assert "table_name" in result.column_names
+        assert result.num_rows > 0, "Expected at least one matching row"
+        assert "definition" in result.column_names
+        assert "table_name" in result.column_names
 
     def test_get_schema_no_match(self, tmp_path):
         """get_schema returns empty result for non-existent table."""

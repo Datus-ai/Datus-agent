@@ -29,6 +29,8 @@ class TestFilesystemConfig:
             # Remove env var if set
             os.environ.pop("FILESYSTEM_MCP_PATH", None)
             cfg = FilesystemConfig()
+        # os.path.expanduser("~") is the only portable way to get the home directory
+        # at test time — it matches the same call in FilesystemConfig's default_factory.
         assert cfg.root_path == os.path.expanduser("~")
 
     def test_explicit_root_path(self, tmp_path):

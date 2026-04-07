@@ -22,7 +22,7 @@ class TestGenReferenceTemplateId:
     def test_returns_hex_string(self):
         result = gen_reference_template_id("SELECT 1")
         assert len(result) == 32
-        int(result, 16)  # Should not raise
+        assert all(c in "0123456789abcdef" for c in result), f"Not valid hex: {result}"
 
 
 class TestExistsReferenceTemplates:

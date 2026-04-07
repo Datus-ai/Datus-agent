@@ -89,7 +89,7 @@ class TestRAGPhysicalModeSharedStorage:
         rag = SemanticModelRAG(real_agent_config)
         rag.store_batch([_make_table_object("x1"), _make_table_object("x2")])
         results = rag.search_all()
-        assert len(results) >= 2
+        assert len(results) == 2
 
     def test_semantic_model_truncate(self, real_agent_config):
         """SemanticModelRAG truncate clears data."""

@@ -164,7 +164,19 @@ class TestClaudeModelInit:
         assert model.use_native_api is True
 
     def test_anthropic_client_initialized(self):
-        model = _make_claude_model()
+        with (
+            patch("datus.models.openai_compatible.setup_tracing"),
+            patch("datus.models.openai_compatible.LiteLLMAdapter"),
+            patch("anthropic.Anthropic") as mock_anthropic_cls,
+            patch("langsmith.wrappers.wrap_anthropic", side_effect=lambda c: c),
+            patch(
+                "os.environ.get",
+                side_effect=lambda key, default=None: "sk-ant-test" if key == "ANTHROPIC_API_KEY" else default,
+            ),
+        ):
+            model = ClaudeModel(_make_model_config())
+        # Verify anthropic.Anthropic constructor was called (client is not merely assigned)
+        mock_anthropic_cls.assert_called_once()
         assert model.anthropic_client is not None
 
     def test_model_specs_contains_expected_models(self):
@@ -390,8 +402,13 @@ class TestClaudeModelClose:
     def test_close_handles_exception_gracefully(self):
         model = _make_claude_model()
         model.anthropic_client.close.side_effect = RuntimeError("already closed")
-        # Should not raise
-        model.close()
+        with patch("datus.models.claude_model.logger") as mock_logger:
+            # Should not raise — exception is swallowed and logged
+            model.close()
+        # Exception must be logged as a warning (see claude_model.py close())
+        mock_logger.warning.assert_called_once()
+        logged_msg = mock_logger.warning.call_args[0][0]
+        assert "already closed" in logged_msg
 
 
 # ---------------------------------------------------------------------------

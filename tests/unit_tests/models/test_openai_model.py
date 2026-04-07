@@ -67,20 +67,9 @@ class TestOpenAIModel:
         with pytest.raises(ValueError, match="OPENAI_API_KEY"):
             instance._get_api_key()
 
-    def test_uses_completion_tokens_o1(self):
-        node = self._make(model_name="o1-mini")
-        assert node._uses_completion_tokens_parameter() is True
-
-    def test_uses_completion_tokens_o3(self):
-        node = self._make(model_name="o3-mini")
-        assert node._uses_completion_tokens_parameter() is True
-
-    def test_uses_completion_tokens_o4(self):
-        node = self._make(model_name="o4-mini")
-        assert node._uses_completion_tokens_parameter() is True
-
-    def test_uses_completion_tokens_gpt_o4(self):
-        node = self._make(model_name="gpt-o4-mini")
+    @pytest.mark.parametrize("model_name", ["o1-mini", "o3-mini", "o4-mini", "gpt-o4-mini"])
+    def test_uses_completion_tokens_for_reasoning_models(self, model_name):
+        node = self._make(model_name=model_name)
         assert node._uses_completion_tokens_parameter() is True
 
     def test_does_not_use_completion_tokens_gpt4(self):

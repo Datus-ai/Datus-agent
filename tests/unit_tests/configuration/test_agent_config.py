@@ -160,8 +160,7 @@ class TestDbConfigFilterKwargs:
         kwargs = {"type": "sqlite", "uri": "x.db", "some_none_field": None}
         cfg = DbConfig.filter_kwargs(DbConfig, kwargs)
         # None values should not be added to extra
-        if cfg.extra:
-            assert "some_none_field" not in cfg.extra
+        assert cfg.extra is None or "some_none_field" not in cfg.extra
 
 
 # ---------------------------------------------------------------------------
