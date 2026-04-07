@@ -198,6 +198,34 @@ class SkillCreatorAgenticNode(AgenticNode):
         except Exception as e:
             logger.warning(f"Failed to setup skill validate tool, continuing without: {e}")
 
+    def _load_companion_skill_content(self) -> str:
+        """Load the companion skill-creator SKILL.md content for injection into system prompt.
+
+        Searches the SkillRegistry for the 'skill-creator' skill and returns its
+        markdown body (without frontmatter). Returns empty string if not found.
+        """
+        if not self.skill_func_tool_instance or not self.skill_func_tool_instance.manager:
+            return ""
+        try:
+            registry = self.skill_func_tool_instance.manager.registry
+            skills = registry.list_skills()
+            metadata = skills.get("skill-creator")
+            if not metadata:
+                return ""
+            content = registry.load_skill_content("skill-creator")
+            if not content:
+                return ""
+            # Strip YAML frontmatter — return only the markdown body
+            import re
+
+            match = re.match(r"^---\s*\n.*?\n---\s*\n", content, re.DOTALL)
+            if match:
+                return content[match.end() :].strip()
+            return content.strip()
+        except Exception as e:
+            logger.debug(f"Could not load companion skill-creator content: {e}")
+            return ""
+
     def _get_system_prompt(
         self, conversation_summary: Optional[str] = None, prompt_version: Optional[str] = None
     ) -> str:
@@ -241,6 +269,12 @@ class SkillCreatorAgenticNode(AgenticNode):
 
         try:
             base_prompt = prompt_manager.render_template(template_name=template_name, version=version, **context)
+
+            # Auto-load the companion skill-creator SKILL.md for deep knowledge
+            companion_content = self._load_companion_skill_content()
+            if companion_content:
+                base_prompt += "\n\n## Skill Creator Reference Guide\n\n" + companion_content
+
             return self._finalize_system_prompt(base_prompt)
         except Exception as e:
             logger.error(f"Template loading error for '{template_name}': {e}")

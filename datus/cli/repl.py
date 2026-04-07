@@ -647,6 +647,9 @@ class DatusCLI:
                     # Regular chat: /message (first part is not a valid subagent)
                     return CommandType.CHAT, "", message
             else:
+                # Single token: check if it's a subagent name
+                if parts[0] in self.available_subagents:
+                    return CommandType.CHAT, parts[0], ""
                 # Regular chat: /message
                 return CommandType.CHAT, "", message
 
