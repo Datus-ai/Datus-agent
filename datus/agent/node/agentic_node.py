@@ -1045,7 +1045,7 @@ class AgenticNode(Node):
 
     def _resolve_workspace_root(self) -> str:
         """
-        Resolve workspace_root with priority: node-specific > global storage > legacy > default.
+        Resolve workspace_root with priority: node-specific > cwd (project dir) > global storage > default.
         Expands ~ to user home directory if present.
 
         Returns:
@@ -1055,31 +1055,17 @@ class AgenticNode(Node):
 
         workspace_root = None
 
-        # Priority: node-specific workspace_root > global storage.workspace_root > legacy > default "."
+        # Priority 1: node-specific workspace_root (explicit per-node config)
         node_workspace_root = self.node_config.get("workspace_root")
         if node_workspace_root:
             workspace_root = node_workspace_root
             logger.debug(f"Using node-specific workspace_root: {workspace_root}")
-        elif (
-            self.agent_config
-            and hasattr(self.agent_config, "storage")
-            and hasattr(self.agent_config.storage, "workspace_root")
-        ):
-            global_workspace_root = self.agent_config.storage.workspace_root
-            if global_workspace_root:
-                workspace_root = global_workspace_root
-                logger.debug(f"Using global workspace_root: {workspace_root}")
-        elif self.agent_config and hasattr(self.agent_config, "workspace_root"):
-            # Fallback to old workspace_root location
-            legacy_workspace_root = self.agent_config.workspace_root
-            if legacy_workspace_root is not None:
-                workspace_root = legacy_workspace_root
-                logger.debug(f"Using legacy workspace_root: {workspace_root}")
 
-        # Default to current directory if not configured
+        # Priority 2: current working directory (project directory)
+        # This enables init skill and filesystem_tools to operate on the project
         if workspace_root is None:
-            workspace_root = "."
-            logger.debug("Using default workspace_root: .")
+            workspace_root = os.getcwd()
+            logger.debug(f"Using current directory as workspace_root: {workspace_root}")
 
         # Expand ~ to user home directory
         expanded_path = os.path.expanduser(workspace_root)
