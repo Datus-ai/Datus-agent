@@ -813,6 +813,79 @@ class TestProcessMetricWithSemanticModel:
 
 
 # ---------------------------------------------------------------------------
+# Tests: _get_sync_confirmation_for_pair
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestGetSyncConfirmationForPair:
+    async def test_accept_syncs_both_files(self, hooks):
+        """Choosing 'y' calls _sync_to_storage for both files."""
+        callback = AsyncMock()
+        hooks.broker.request = AsyncMock(return_value=("y", callback))
+        hooks._sync_to_storage = AsyncMock(return_value="Synced OK")
+
+        await hooks._get_sync_confirmation_for_pair(
+            "/tmp/sem.yaml",
+            "data_source:\n  name: orders\n",
+            "/tmp/met.yaml",
+            "metric: revenue\n",
+        )
+
+        assert hooks._sync_to_storage.await_count == 2
+        hooks._sync_to_storage.assert_any_await("/tmp/sem.yaml", "semantic")
+        hooks._sync_to_storage.assert_any_await("/tmp/met.yaml", "semantic")
+        callback.assert_awaited_once()
+
+    async def test_reject_skips_sync(self, hooks):
+        """Choosing 'n' does not call _sync_to_storage."""
+        callback = AsyncMock()
+        hooks.broker.request = AsyncMock(return_value=("n", callback))
+        hooks._sync_to_storage = AsyncMock()
+
+        await hooks._get_sync_confirmation_for_pair(
+            "/tmp/sem.yaml",
+            "data_source:\n  name: orders\n",
+            "/tmp/met.yaml",
+            "metric: revenue\n",
+        )
+
+        hooks._sync_to_storage.assert_not_called()
+        callback.assert_awaited_once()
+
+    async def test_interaction_cancelled_raises_generation_cancelled(self, hooks):
+        """InteractionCancelled is wrapped in GenerationCancelledException."""
+        hooks.broker.request = AsyncMock(side_effect=InteractionCancelled())
+
+        with pytest.raises(GenerationCancelledException, match="User interrupted"):
+            await hooks._get_sync_confirmation_for_pair(
+                "/tmp/sem.yaml",
+                "sem content",
+                "/tmp/met.yaml",
+                "met content",
+            )
+
+    async def test_display_content_includes_both_files(self, hooks):
+        """Request content includes both semantic model and metric YAML."""
+        callback = AsyncMock()
+        hooks.broker.request = AsyncMock(return_value=("n", callback))
+
+        await hooks._get_sync_confirmation_for_pair(
+            "/tmp/sem.yaml",
+            "data_source:\n  name: orders\n",
+            "/tmp/met.yaml",
+            "metric: revenue\n",
+        )
+
+        request_content = hooks.broker.request.call_args[1].get("contents") or hooks.broker.request.call_args[0][0]
+        content_str = str(request_content)
+        assert "sem.yaml" in content_str
+        assert "met.yaml" in content_str
+        assert "data_source" in content_str
+        assert "revenue" in content_str
+
+
+# ---------------------------------------------------------------------------
 # Tests: _parse_subject_tree_from_tags (static method)
 # ---------------------------------------------------------------------------
 

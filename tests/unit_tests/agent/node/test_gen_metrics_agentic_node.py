@@ -313,8 +313,10 @@ class TestGenMetricsAgenticNodeExecution:
         # In interactive mode, the final action output should be present
         last_output = actions[-1].output
         assert last_output is not None
-        # Verify output is a dict (interactive mode returns structured output)
         assert isinstance(last_output, dict), f"Expected dict output in interactive mode, got {type(last_output)}"
+        # Interactive mode must report token usage for cost tracking
+        assert "tokens_used" in last_output, f"Expected 'tokens_used' in output keys, got: {list(last_output.keys())}"
+        assert last_output["tokens_used"] >= 0
 
     @pytest.mark.asyncio
     async def test_metrics_with_thinking(self, real_agent_config, mock_llm_create):
