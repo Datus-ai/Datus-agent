@@ -142,14 +142,12 @@ class ChatTaskManager:
             try:
                 task.node.interrupt_controller.interrupt()
                 logger.info(f"Interrupted running task: {session_id}")
-                return True
             except Exception as e:
                 logger.error(f"Failed to interrupt task {session_id}: {e}")
-                return False
 
-        # No node yet — cancel the asyncio task
         if task.asyncio_task and not task.asyncio_task.done():
             task.asyncio_task.cancel()
+            logger.info(f"Cancelled asyncio task: {session_id}")
             return True
 
         return False
