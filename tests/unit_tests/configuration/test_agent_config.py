@@ -368,3 +368,40 @@ class TestLoadModelConfig:
         d = cfg.to_dict()
         assert d["type"] == "openai"
         assert d["model"] == "gpt-4"
+
+
+# ---------------------------------------------------------------------------
+# AgentConfig.api_config
+# ---------------------------------------------------------------------------
+
+
+class TestAgentConfigApiSection:
+    def _make(self, tmp_path, api=None):
+        from datus.configuration.agent_config import AgentConfig, NodeConfig
+
+        kwargs = dict(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            target="mock",
+            models={
+                "mock": {
+                    "type": "openai",
+                    "api_key": "k",
+                    "model": "m",
+                    "base_url": "http://localhost:0",
+                }
+            },
+            skip_init_dirs=True,
+        )
+        if api is not None:
+            kwargs["api"] = api
+        return AgentConfig(**kwargs)
+
+    def test_default_api_config_empty(self, tmp_path):
+        cfg = self._make(tmp_path)
+        assert cfg.api_config == {}
+
+    def test_api_config_parsed(self, tmp_path):
+        api = {"auth_provider": {"class": "pkg.mod.Cls", "kwargs": {"a": 1}}}
+        cfg = self._make(tmp_path, api=api)
+        assert cfg.api_config == api

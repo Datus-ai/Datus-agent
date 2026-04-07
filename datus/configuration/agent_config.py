@@ -274,6 +274,7 @@ class AgentConfig:
         self._current_database = ""
         self.nodes = nodes
         self.export_config: Dict[str, Any] = kwargs.get("export", {})
+        self.api_config: Dict[str, Any] = kwargs.get("api", {}) or {}
         self.agentic_nodes = kwargs.get("agentic_nodes", {})
         self.dashboard_config: Dict[str, DashboardConfig] = {}
         self.init_dashboard(kwargs.get("dashboard", {}))

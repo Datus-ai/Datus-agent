@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from datus.agent.agent import Agent
-from datus.api.auth import NoAuthProvider
+from datus.api.auth import NoAuthProvider, load_auth_provider
 from datus.api.deps import init_deps
 from datus.api.services.datus_service_cache import DatusServiceCache
 from datus.configuration.agent_config_loader import load_agent_config, parse_config_path
@@ -429,7 +429,8 @@ async def lifespan(app: FastAPI):
 
     # Initialize plugin-based auth and service cache for new API routes
     namespace = getattr(args, "namespace", None) or os.getenv("DATUS_NAMESPACE", "default")
-    auth_provider = NoAuthProvider(namespace=namespace)
+    api_config = getattr(service.agent_config, "api_config", {}) if service.agent_config else {}
+    auth_provider = load_auth_provider(api_config, namespace=namespace)
     service_cache = DatusServiceCache(max_size=128)
     init_deps(auth_provider, service_cache, namespace=namespace)
 
