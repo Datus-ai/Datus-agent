@@ -207,7 +207,7 @@ class TestCmdSchemas:
         cli = _make_cli(db_type="snowflake")
         with patch("datus.cli.metadata_commands.connector_registry") as mock_reg:
             mock_reg.support_schema.return_value = True
-            cli.db_connector.update_database_context.return_value = []
+            cli.db_connector.get_schemas.return_value = []
             meta = MetadataCommands(cli)
             meta.cmd_schemas("")
         cli.console.print.assert_called_with("[yellow]Empty set.[/]")
@@ -216,12 +216,12 @@ class TestCmdSchemas:
         cli = _make_cli(db_type="snowflake")
         with patch("datus.cli.metadata_commands.connector_registry") as mock_reg:
             mock_reg.support_schema.return_value = True
-            cli.db_connector.update_database_context.return_value = ["public", "private"]
+            cli.db_connector.get_schemas.return_value = ["public", "private"]
             meta = MetadataCommands(cli)
             meta.cmd_schemas("")
         cli.console.print.assert_called()
-        cli.db_connector.update_database_context.assert_called_once_with(
-            catalog=cli.cli_context.current_catalog, schema=cli.cli_context.current_db_name
+        cli.db_connector.get_schemas.assert_called_once_with(
+            catalog_name=cli.cli_context.current_catalog, database_name=cli.cli_context.current_db_name
         )
 
 

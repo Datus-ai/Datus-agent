@@ -403,8 +403,8 @@ class TestExecuteSql:
         # Should print update message
         assert len(output) > 0
 
-    def test_content_set_sql_rebuilds_cli_context(self, cli):
-        """USE/SET SQL rebuilds cli_context from connector state."""
+    def test_content_set_sql_updates_cli_context_in_place(self, cli):
+        """USE/SET SQL updates cli_context in-place, preserving accumulated state."""
         from datus.utils.constants import SQLType
 
         mock_result = MagicMock()
@@ -419,20 +419,26 @@ class TestExecuteSql:
         cli.db_connector.schema_name = "new_schema"
         cli.db_connector.dialect = "snowflake"
 
-        # Ensure initial context is different
+        # Set initial context and accumulated state
         cli.cli_context.current_catalog = "old_catalog"
         cli.cli_context.current_db_name = "old_db"
         cli.cli_context.current_schema = "old_schema"
+        cli.cli_context.current_logic_db_name = "my_logic_name"
+        original_context = cli.cli_context
 
         with patch("datus.cli.repl.parse_sql_type", return_value=SQLType.CONTENT_SET):
             cli._execute_sql("USE DATABASE new_db")
 
+        # Context updated in-place (same object, not replaced)
+        assert cli.cli_context is original_context
         assert cli.cli_context.current_catalog == "new_catalog"
         assert cli.cli_context.current_db_name == "new_db"
         assert cli.cli_context.current_schema == "new_schema"
+        # Accumulated state preserved
+        assert cli.cli_context.current_logic_db_name == "my_logic_name"
 
-    def test_non_content_set_sql_does_not_rebuild_context(self, cli):
-        """Non-CONTENT_SET SQL does not rebuild cli_context."""
+    def test_non_content_set_sql_does_not_update_context(self, cli):
+        """Non-CONTENT_SET SQL does not update cli_context."""
         from datus.utils.constants import SQLType
 
         mock_result = MagicMock()

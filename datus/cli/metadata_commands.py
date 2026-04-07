@@ -85,6 +85,7 @@ class MetadataCommands:
             self.cli.last_result = result
             if not result:
                 self.cli.console.print("[yellow]Empty set.[/]")
+                return
 
             # Display results
             table = Table(title="Databases", show_header=True, header_style="bold green")
@@ -197,8 +198,8 @@ class MetadataCommands:
         if not connector_registry.support_schema(dialect):
             self.cli.console.print(f"[bold red]The {dialect} database does not support schema[/]")
             return
-        result = self.cli.db_connector.update_database_context(
-            catalog=self.cli.cli_context.current_catalog, schema=self.cli.cli_context.current_db_name
+        result = self.cli.db_connector.get_schemas(
+            catalog_name=self.cli.cli_context.current_catalog, database_name=self.cli.cli_context.current_db_name
         )
         self.cli.last_result = result
         if result:

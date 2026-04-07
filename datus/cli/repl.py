@@ -123,7 +123,6 @@ class DatusCLI:
         self.actions = ActionHistoryManager()
 
         # Initialize CLI context for state management
-        from datus.cli.cli_context import CliContext
 
         self.cli_context = CliContext(
             current_db_name=getattr(args, "database", ""),
@@ -745,10 +744,10 @@ class DatusCLI:
                     elif result.sql_return:
                         self.console.print(f"[dim]SQL execution successful in {exec_time:.2f} seconds[/]")
                         if parse_sql_type(sql, self.db_connector.dialect) == SQLType.CONTENT_SET:
-                            self.cli_context = CliContext(
-                                current_catalog=self.db_connector.catalog_name or "",
-                                current_db_name=self.db_connector.database_name or "",
-                                current_schema=self.db_connector.schema_name or "",
+                            self.cli_context.update_database_context(
+                                catalog=self.db_connector.catalog_name or "",
+                                db_name=self.db_connector.database_name or "",
+                                schema=self.db_connector.schema_name or "",
                             )
 
                         # Update action with success
