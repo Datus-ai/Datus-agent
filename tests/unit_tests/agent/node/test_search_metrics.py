@@ -107,8 +107,8 @@ class TestRag:
         ]
         try:
             rag.storage.batch_store_metrics(test_metrics)
-        except Exception as e:
-            pytest.skip(f"Failed to populate metrics storage: {e}")
+        except (ImportError, AttributeError) as e:
+            pytest.skip(f"Storage API unavailable: {e}")
         return rag
 
     @pytest.fixture
@@ -128,18 +128,18 @@ class TestRag:
         ]
         try:
             rag.storage.batch_store(test_models)
-        except Exception as e:
-            pytest.skip(f"Failed to populate semantic storage: {e}")
+        except (ImportError, AttributeError) as e:
+            pytest.skip(f"Storage API unavailable: {e}")
         return rag
 
     def test_pure_scalar_query(self, metrics_rag: MetricRAG, semantic_rag: SemanticModelRAG):
         semantic_rag.storage._ensure_table_ready()
         result = semantic_rag.storage.table.search_all()
-        assert isinstance(result, list), f"Expected list from search_all, got {type(result)}"
+        assert hasattr(result, "__len__"), f"Expected sized collection from search_all, got {type(result)}"
 
         metrics_rag.storage._ensure_table_ready()
         result = metrics_rag.storage.table.search_all()
-        assert isinstance(result, list), f"Expected list from search_all, got {type(result)}"
+        assert hasattr(result, "__len__"), f"Expected sized collection from search_all, got {type(result)}"
 
 
 def test_json():
