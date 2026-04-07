@@ -187,8 +187,14 @@ class BIFuncTool:
                 )
 
             extra = {}
+            dash_id = dashboard_id.strip() or None
             # Auto-resolve Grafana datasource UID when sql is provided
             if sql:
+                if not dash_id:
+                    return FuncToolResult(
+                        success=0,
+                        error="dashboard_id is required when using sql (Grafana). Create a dashboard first.",
+                    )
                 ds_uid = self._resolve_grafana_datasource_uid()
                 if ds_uid:
                     extra["datasource_uid"] = ds_uid
@@ -204,7 +210,6 @@ class BIFuncTool:
                 dimensions=dims_list,
                 extra=extra,
             )
-            dash_id = dashboard_id.strip() or None
             result = self.adaptor.create_chart(spec, dashboard_id=dash_id)
             return FuncToolResult(result=result.model_dump())
         except Exception as exc:
@@ -232,10 +237,10 @@ class BIFuncTool:
             spec = ChartSpec(
                 chart_type=chart_type or existing.chart_type,
                 title=title or existing.name,
-                description=description,
-                sql=sql or None,
-                x_axis=x_axis or None,
-                metrics=metrics_list,
+                description=description or getattr(existing, "description", "") or "",
+                sql=sql or getattr(existing, "sql", None),
+                x_axis=x_axis or getattr(existing, "x_axis", None),
+                metrics=metrics_list or getattr(existing, "metrics", None),
             )
             result = self.adaptor.update_chart(chart_id, spec)
             return FuncToolResult(result=result.model_dump())
@@ -340,9 +345,13 @@ class BIFuncTool:
             return FuncToolResult(success=0, error="Invalid table_name: must match [a-zA-Z_][a-zA-Z0-9_]{0,62}")
         if if_exists not in _VALID_IF_EXISTS:
             return FuncToolResult(success=0, error=f"if_exists must be one of: {sorted(_VALID_IF_EXISTS)}")
-        sql_stripped = sql.strip().upper()
-        if not (sql_stripped.startswith("SELECT") or sql_stripped.startswith("WITH")):
+        sql_stripped = sql.strip()
+        sql_upper = sql_stripped.upper()
+        if not (sql_upper.startswith("SELECT") or sql_upper.startswith("WITH")):
             return FuncToolResult(success=0, error="Only SELECT/WITH queries are allowed in write_query")
+        # Reject multi-statement SQL to prevent piggy-backed writes (e.g., "SELECT 1; DROP TABLE x")
+        if ";" in sql_stripped.rstrip(";"):
+            return FuncToolResult(success=0, error="Multi-statement SQL is not allowed in write_query")
         try:
             if self._read_connector is None:
                 return FuncToolResult(success=0, error="No source database connector available for write_query")

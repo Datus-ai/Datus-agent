@@ -302,6 +302,14 @@ class TestBIFuncToolWriteOps:
         assert result.success == 0
         assert "dataset_id" in result.error.lower() or "sql" in result.error.lower()
 
+    def test_create_chart_sql_rejects_missing_dashboard_id(self):
+        """Grafana path requires dashboard_id when sql is provided."""
+        tool = self._make_tool()
+        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock, "datus_bi_core.models": _bi_core_mock.models}):
+            result = tool.create_chart(chart_type="line", title="Test", sql="SELECT 1")
+        assert result.success == 0
+        assert "dashboard_id" in result.error.lower()
+
     def test_create_chart_rejects_zero_dataset_id(self):
         tool = self._make_tool()
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock, "datus_bi_core.models": _bi_core_mock.models}):
@@ -434,6 +442,20 @@ class TestBIFuncToolWriteQuery:
         result = tool.write_query("DROP TABLE users", "my_table")
         assert result.success == 0
         assert "SELECT" in result.error
+
+    def test_write_query_rejects_multi_statement_sql(self):
+        tool = self._make_tool_with_dataset_db()
+        result = tool.write_query("SELECT 1; DROP TABLE users", "my_table")
+        assert result.success == 0
+        assert "Multi-statement" in result.error
+
+    def test_write_query_allows_trailing_semicolon(self):
+        """A single trailing semicolon is harmless and should be allowed."""
+        tool = self._make_tool_with_dataset_db()
+        tool._read_connector = None  # will fail at connector check, not SQL check
+        result = tool.write_query("SELECT 1;", "my_table")
+        # Should pass SQL validation but fail at connector check
+        assert "connector" in result.error.lower()
 
     def test_write_query_rejects_invalid_table_name(self):
         tool = self._make_tool_with_dataset_db()

@@ -29,7 +29,7 @@ write_query(sql="SELECT ... FROM source_table ...", table_name="materialized_tab
 
 - The SQL runs on the source (namespace) database via the active connector.
 - Results are written as a physical table in Superset's dataset database.
-- Returns `database_id` — save it for Step 2.
+- Returns `database_id` (when resolvable) — save it for Step 2. If not returned, use `list_bi_databases()` to find the correct ID.
 
 ### Step 2: Register Dataset (`create_dataset`)
 
