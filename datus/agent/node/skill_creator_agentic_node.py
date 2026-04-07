@@ -15,6 +15,8 @@ import os
 from pathlib import Path
 from typing import AsyncGenerator, Dict, List, Optional
 
+from agents import FunctionTool
+
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.workflow import Workflow
 from datus.cli.execution_state import ExecutionInterrupted
@@ -28,8 +30,8 @@ from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
-# Read-only filesystem methods (use workspace root — can read anything)
-READONLY_FILESYSTEM_METHODS = [
+# Workspace filesystem methods (read-only, root = workspace)
+WORKSPACE_READONLY_METHODS = [
     "read_file",
     "read_multiple_files",
     "list_directory",
@@ -37,8 +39,13 @@ READONLY_FILESYSTEM_METHODS = [
     "search_files",
 ]
 
-# Write filesystem methods (restricted to skills directory only)
-WRITE_FILESYSTEM_METHODS = [
+# Skills filesystem methods (read + write, root = skills directory)
+SKILLS_ALL_METHODS = [
+    "read_file",
+    "read_multiple_files",
+    "list_directory",
+    "directory_tree",
+    "search_files",
     "write_file",
     "edit_file",
     "create_directory",
@@ -82,7 +89,7 @@ class SkillCreatorAgenticNode(AgenticNode):
         # Initialize tool attributes before parent constructor
         self.db_func_tool: Optional[DBFuncTool] = None
         self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
-        self._write_filesystem_tool: Optional[FilesystemFuncTool] = None
+        self._skills_filesystem_tool: Optional[FilesystemFuncTool] = None
         self.skill_func_tool_instance = None
         self.skill_validate_tool = None
 
@@ -134,25 +141,34 @@ class SkillCreatorAgenticNode(AgenticNode):
         return fallback
 
     def _setup_full_filesystem_tools(self):
-        """Setup filesystem tools: read from workspace root, write restricted to skills directory."""
+        """Setup two filesystem tool sets: workspace (read-only) and skills (read+write)."""
         try:
-            # Read tools — use home dir so we can browse both workspace and ~/.datus/skills
-            read_root = os.path.expanduser("~")
+            # Workspace tools — read-only, rooted at workspace
+            read_root = self._resolve_workspace_root()
             self.filesystem_func_tool = FilesystemFuncTool(root_path=read_root)
-            for method_name in READONLY_FILESYSTEM_METHODS:
+            for method_name in WORKSPACE_READONLY_METHODS:
                 if hasattr(self.filesystem_func_tool, method_name):
                     method = getattr(self.filesystem_func_tool, method_name)
                     self.tools.append(trans_to_function_tool(method))
-            logger.debug(f"Setup read-only filesystem tools with root: {read_root}")
+            logger.debug(f"Setup workspace read-only tools with root: {read_root}")
 
-            # Write tools — restricted to skills directory only
-            write_root = self._resolve_skills_write_root()
-            self._write_filesystem_tool = FilesystemFuncTool(root_path=write_root)
-            for method_name in WRITE_FILESYSTEM_METHODS:
-                if hasattr(self._write_filesystem_tool, method_name):
-                    method = getattr(self._write_filesystem_tool, method_name)
-                    self.tools.append(trans_to_function_tool(method))
-            logger.info(f"Setup write filesystem tools restricted to: {write_root}")
+            # Skills tools — read+write, rooted at skills directory, prefixed with skill_
+            skills_root = self._resolve_skills_write_root()
+            self._skills_filesystem_tool = FilesystemFuncTool(root_path=skills_root)
+            for method_name in SKILLS_ALL_METHODS:
+                if hasattr(self._skills_filesystem_tool, method_name):
+                    method = getattr(self._skills_filesystem_tool, method_name)
+                    tool = trans_to_function_tool(method)
+                    # Prefix with skill_ to distinguish from workspace tools
+                    tool = FunctionTool(
+                        name=f"skill_{tool.name}",
+                        description=f"[Skills directory: {skills_root}] {tool.description}",
+                        params_json_schema=tool.params_json_schema,
+                        on_invoke_tool=tool.on_invoke_tool,
+                        strict_json_schema=False,
+                    )
+                    self.tools.append(tool)
+            logger.info(f"Setup skills filesystem tools (skill_*) restricted to: {skills_root}")
         except Exception as e:
             logger.warning(f"Failed to setup filesystem tools, continuing without: {e}")
 

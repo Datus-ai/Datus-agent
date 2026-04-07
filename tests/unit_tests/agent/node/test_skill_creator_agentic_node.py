@@ -94,8 +94,8 @@ class TestSkillCreatorAgenticNodeInit:
 class TestSkillCreatorAgenticNodeTools:
     """Tests for SkillCreatorAgenticNode tool setup."""
 
-    def test_has_filesystem_write_tools(self, real_agent_config, mock_llm_create):
-        """Node should have full filesystem tools including write."""
+    def test_has_skills_write_tools(self, real_agent_config, mock_llm_create):
+        """Node should have skill_* prefixed write tools for skills directory."""
         from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
 
         node = SkillCreatorAgenticNode(
@@ -106,13 +106,13 @@ class TestSkillCreatorAgenticNodeTools:
             node_name="create_skill",
         )
         tool_names = [t.name for t in node.tools]
-        assert "write_file" in tool_names
-        assert "edit_file" in tool_names
-        assert "create_directory" in tool_names
-        assert "move_file" in tool_names
+        assert "skill_write_file" in tool_names
+        assert "skill_edit_file" in tool_names
+        assert "skill_create_directory" in tool_names
+        assert "skill_move_file" in tool_names
 
-    def test_has_read_tools(self, real_agent_config, mock_llm_create):
-        """Node should have read filesystem tools."""
+    def test_has_workspace_read_tools(self, real_agent_config, mock_llm_create):
+        """Node should have workspace read-only tools (unprefixed)."""
         from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
 
         node = SkillCreatorAgenticNode(
@@ -128,6 +128,22 @@ class TestSkillCreatorAgenticNodeTools:
         assert "list_directory" in tool_names
         assert "directory_tree" in tool_names
         assert "search_files" in tool_names
+
+    def test_has_skills_read_tools(self, real_agent_config, mock_llm_create):
+        """Node should have skill_* prefixed read tools for skills directory."""
+        from datus.agent.node.skill_creator_agentic_node import SkillCreatorAgenticNode
+
+        node = SkillCreatorAgenticNode(
+            node_id="test_skill_creator_tools_2b",
+            description="Test Skill Creator node",
+            node_type=NodeType.TYPE_SKILL_CREATOR,
+            agent_config=real_agent_config,
+            node_name="create_skill",
+        )
+        tool_names = [t.name for t in node.tools]
+        assert "skill_read_file" in tool_names
+        assert "skill_list_directory" in tool_names
+        assert "skill_directory_tree" in tool_names
 
     def test_has_db_tools(self, real_agent_config, mock_llm_create):
         """Node should have database tools."""
