@@ -138,6 +138,7 @@ class SkillCommands:
         table.add_column("Name", style="cyan")
         table.add_column("Version")
         table.add_column("Source")
+        table.add_column("Path", max_width=50)
         table.add_column("Tags")
         table.add_column("Description", max_width=40)
 
@@ -145,10 +146,12 @@ class SkillCommands:
             source = skill.source or "local"
             tags = ", ".join(skill.tags) if skill.tags else ""
             desc = skill.description or ""
+            location = str(skill.location) if skill.location else "-"
             table.add_row(
                 skill.name,
                 skill.version or "-",
                 source,
+                location,
                 tags,
                 (desc[:37] + "...") if len(desc) > 40 else desc,
             )
