@@ -131,14 +131,17 @@ class SessionSearchTool:
                         }
                     )
 
-                # Collect tool results with errors
+                # Collect tool results with actual errors (not just 'error': None)
                 if msg_type == "function_call_output":
-                    output = msg.get("output", "")
-                    if "error" in str(output).lower() or "'success': 0" in str(output):
+                    output_str = str(msg.get("output", ""))
+                    is_error = "'success': 0" in output_str or (
+                        "'error':" in output_str and "'error': None" not in output_str
+                    )
+                    if is_error:
                         errors.append(
                             {
                                 "id": msg_id,
-                                "output_preview": str(output)[:300],
+                                "output_preview": output_str[:300],
                             }
                         )
 
