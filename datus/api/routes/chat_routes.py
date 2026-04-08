@@ -11,16 +11,20 @@ asyncio.Task so that client disconnects do not cancel the computation.
 """
 
 import json
-from typing import Annotated, Optional
+from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Path, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
 
 from datus.api.constants import BUILTIN_SUBAGENTS
 from datus.api.deps import AppContextDep, ServiceDep
 from datus.api.models.base_models import Result
-from datus.api.models.chat_models import ToolResultData, ToolResultInput
+from datus.api.models.chat_models import (
+    ResumeChatInput,
+    StopChatInput,
+    ToolResultData,
+    ToolResultInput,
+)
 from datus.api.models.cli_models import (
     ChatHistoryData,
     ChatSessionData,
@@ -31,23 +35,6 @@ from datus.api.models.cli_models import (
 )
 
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
-
-
-# ========== Request Models ==========
-
-
-class ResumeChatInput(BaseModel):
-    """Input for reconnecting to a running chat task."""
-
-    session_id: str = Field(..., description="Session ID to reconnect to")
-    source: Optional[str] = Field(None, description="chat source, web/vscode")
-    from_event_id: Optional[int] = Field(None, ge=0, description="Event cursor to resume from; omit to auto-resume")
-
-
-class StopChatInput(BaseModel):
-    """Input for stopping a running chat session."""
-
-    session_id: str = Field(..., description="Session ID to stop")
 
 
 # ========== Stream Chat ==========
@@ -65,11 +52,6 @@ async def stream_chat(
     ctx: AppContextDep,
 ):
     sub_agent_id = request.subagent_id
-
-    if sub_agent_id and sub_agent_id not in BUILTIN_SUBAGENTS:
-        # Validate custom subagent exists in agentic_nodes (already loaded at cache time)
-        if sub_agent_id not in (svc.agent_config.agentic_nodes or {}):
-            raise HTTPException(status_code=404, detail=f"Subagent '{sub_agent_id}' not found")
 
     async def generate_sse():
         async for event in svc.chat.stream_chat(request, sub_agent_id=sub_agent_id, user_id=ctx.user_id):

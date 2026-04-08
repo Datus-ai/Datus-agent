@@ -42,6 +42,11 @@ nav:
       - Nodes: workflow/nodes.md
       - Orchestration: workflow/orchestration.md
       - API: workflow/api.md
+    - REST API:
+      - Introduction: API/introduction.md
+      - Deployment: API/deployment.md
+      - Chat: API/chat.md
+      - Reference: API/reference.md
     - Configuration:
       - Introduction: configuration/introduction.md
       - Agent: configuration/agent.md
@@ -112,6 +117,9 @@ plugins:
             Nodes: 节点
             Orchestration: 编排
             API: API
+            REST API: REST API
+            Deployment: 部署
+            Chat: Chat
             Configuration: 配置
             Adapters: 适配器
             Database Adapters: 数据库适配器

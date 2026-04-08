@@ -31,6 +31,20 @@ class ToolResultInput(BaseModel):
     )
 
 
+class ResumeChatInput(BaseModel):
+    """Input for reconnecting to a running chat task."""
+
+    session_id: str = Field(..., description="Session ID to reconnect to")
+    source: Optional[str] = Field(None, description="chat source, web/vscode")
+    from_event_id: Optional[int] = Field(None, ge=0, description="Event cursor to resume from; omit to auto-resume")
+
+
+class StopChatInput(BaseModel):
+    """Input for stopping a running chat session."""
+
+    session_id: str = Field(..., description="Session ID to stop")
+
+
 class ToolResultData(BaseModel):
     """Data for tool result submission response."""
 
