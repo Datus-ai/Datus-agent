@@ -188,6 +188,7 @@ class ChatTaskManager:
                                 data=SSEPingData(),
                                 timestamp=datetime.now().isoformat() + "Z",
                             )
+                            break  # exit inner loop so ping can be yielded
                 new_events = task.events[cursor:]
                 is_done = task.status != "running"
 

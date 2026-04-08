@@ -250,6 +250,41 @@ class TestStartChat:
         await manager.wait_all_tasks()
         await manager.shutdown()
 
+    async def test_consume_events_yields_ping_when_idle(self, monkeypatch):
+        """consume_events yields a ping event when idle past HEARTBEAT_INTERVAL."""
+        from datus.api.models.cli_models import SSEEvent, SSEPingData
+        from datus.api.services import chat_task_manager as ctm
+
+        monkeypatch.setattr(ctm, "HEARTBEAT_INTERVAL", 0.05)
+
+        manager = ChatTaskManager()
+        task = ChatTask(session_id="ping-test", asyncio_task=MagicMock())
+        task.status = "running"
+        manager._tasks["ping-test"] = task
+
+        gen = manager.consume_events(task, start_from=0)
+
+        # First yield should be a ping triggered by timeout
+        first = await asyncio.wait_for(gen.__anext__(), timeout=1.0)
+        assert first.event == "ping"
+
+        # Now push a real event and ensure it is consumed next
+        real_event = SSEEvent(id=1, event="message", data=SSEPingData(), timestamp="2025-01-01T00:00:00Z")
+        await manager._push_event(task, real_event)
+
+        nxt = await asyncio.wait_for(gen.__anext__(), timeout=1.0)
+        # May get another ping first if timing races; loop until we see the real event
+        while nxt.event == "ping":
+            nxt = await asyncio.wait_for(gen.__anext__(), timeout=1.0)
+        assert nxt.event == "message"
+        assert nxt.id == 1
+
+        # Mark task done so generator exits
+        async with task.condition:
+            task.status = "completed"
+            task.condition.notify_all()
+        await gen.aclose()
+
     async def test_consume_events_from_completed_task(self, real_agent_config, mock_llm_create):
         """consume_events yields buffered events from completed task."""
         from datus.api.models.cli_models import SSEEvent, SSEPingData
