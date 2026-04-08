@@ -19,7 +19,6 @@ Chat 相关接口驱动 Agent 的对话循环。流式接口以 Server-Sent Even
 | `session_id`     | string?  | 复用以延续已有会话 |
 | `subagent_id`    | string?  | 内置 subagent 名(`gen_metrics`、`gen_semantic_model` 等)或自定义 id |
 | `plan_mode`      | bool     | 是否启用 plan 模式 |
-| `source`         | string?  | `web` / `vscode` — 切换文件系统工具的代理模式 |
 | `catalog`/`database`/`db_schema` | string? | 数据库上下文 |
 | `table_paths`/`metric_paths`/`sql_paths`/`knowledge_paths` | string[]? | `@` 引用路径 |
 | `max_turns`      | int      | 默认 `30` |
@@ -37,7 +36,6 @@ Chat 相关接口驱动 Agent 的对话循环。流式接口以 Server-Sent Even
 |-----------------|------|------|
 | `session_id`    | str  | 必填 |
 | `from_event_id` | int? | 事件游标,省略则自动恢复 |
-| `source`        | str? | `web`/`vscode` |
 
 **响应**:`text/event-stream`。任务不存在或已过期时,返回 JSON 形式的 `Result[dict]`,
 `errorCode = "TASK_NOT_FOUND"`;此时请使用 `GET /chat/history` 获取持久化的对话内容。
@@ -115,76 +113,192 @@ X-Accel-Buffering: no
 
 ### 事件类型
 
-| 事件      | `data` 类型       | 含义 |
-|-----------|-------------------|------|
-| `session` | `SessionData`     | 会话开始后立即发送,携带 `session_id` 与 `llm_session_id` |
-| `message` | `MessageData`     | 创建 / 追加 / 整体更新一段助手消息 |
-| `action`  | `MessageData`     | 工具调用 / 子动作进度,包括交互式提问 |
-| `error`   | `ErrorData`       | 致命错误,任务终止 |
-| `ping`    | `{}`              | 心跳,可忽略 |
-| `end`     | `EndData`         | 终止事件,含本次运行的统计信息 |
+流上共有 5 种顶层事件。绝大多数对话内容通过 `message` 事件下发,其余为基础设施事件。
 
-### `data` 类型定义
+| 事件      | 何时发送 | `data` 类型 |
+|-----------|---------|-------------|
+| `session` | 会话创建后立即发送一次 | `SessionData` |
+| `message` | 每个 Agent action 都会下发一条 | `MessageData` |
+| `error`   | 致命错误时发送一次,流终止 | `ErrorData` |
+| `ping`    | 任务空闲但仍在运行时,每 ~10 秒一次 | `{}` |
+| `end`     | 成功结束时作为最后一个事件 | `EndData` |
 
-**SessionData** — 流开始时发送一次。
+#### `SessionData`
 
 ```json
 {
-  "session_id": "chat_session_a1b2c3d4",
+  "session_id":     "chat_session_a1b2c3d4",
   "llm_session_id": "sess_7f1c..."
 }
 ```
 
-**MessageData** — 被 `message` 与 `action` 两种事件复用。通过 `type` 字段区分三种子操作:
-
-| `type`           | `payload` 结构                                                     |
-|------------------|--------------------------------------------------------------------|
-| `createMessage`  | `{ message_id, role, content[] }` — 新建一条消息                   |
-| `appendMessage`  | `{ message_id, type, content }` — 向消息追加内容                   |
-| `updateMessage`  | `{ message_id, payload }` — 整体替换消息内容                       |
-
-每个 `content` 元素形如:
+#### `EndData`
 
 ```json
-{ "type": "markdown", "payload": { "content": "你好,我可以帮你..." } }
+{
+  "session_id":     "chat_session_a1b2c3d4",
+  "llm_session_id": "sess_7f1c...",
+  "total_events":   42,
+  "action_count":   7,
+  "duration":       8.31
+}
 ```
 
-`type` 取值为 `markdown`、`code`(payload 为 `{ code_type, content }`)或 `csv`(payload 为 `{ content }`)。
+#### `ErrorData`
 
-一个完整的 `message` 事件帧:
+```json
+{
+  "error":          "LLM call timed out",
+  "error_type":     "TimeoutError",
+  "session_id":     "chat_session_a1b2c3d4",
+  "llm_session_id": "sess_7f1c..."
+}
+```
+
+#### `MessageData`
+
+`MessageData` 是每个 `message` 事件的统一外层结构:
+
+```json
+{
+  "type":    "createMessage",
+  "payload": {
+    "message_id": "act_0001",
+    "role":       "assistant",
+    "content":    [ /* 一个或多个 content 项,见下 */ ]
+  }
+}
+```
+
+- 流式下发的 `type` 当前固定为 `createMessage`(协议保留 `appendMessage` / `updateMessage` 以备后用,
+  客户端遇到未知 `type` 应优雅忽略)。
+- 流式期间 `role` 始终为 `assistant`;`GET /chat/history` 拉取时,用户消息会以 `role: "user"` 出现。
+- `message_id` 即 action id;当 content 为用户交互时,**它同时也是 `interactionKey`**(详见下文)。
+
+### content 元素类型
+
+`content[]` 的每一项形如 `{ "type": <类型>, "payload": <类型相关> }`。Agent 可能下发以下类型:
+
+#### `markdown`
+
+助手生成或工具回显的 Markdown/纯文本片段。
+
+```json
+{
+  "type": "markdown",
+  "payload": { "content": "销售额前 5 的客户如下..." }
+}
+```
+
+#### `thinking`
+
+LLM 中间推理内容,UI 通常折叠展示。
+
+```json
+{
+  "type": "thinking",
+  "payload": { "content": "需要按 customer_id 把 orders 与 customers 关联..." }
+}
+```
+
+#### `code`
+
+代码块,通常是生成的 SQL,`codeType` 标识语言。
+
+```json
+{
+  "type": "code",
+  "payload": {
+    "codeType": "sql",
+    "content":  "SELECT customer_id, SUM(amount) FROM orders GROUP BY 1"
+  }
+}
+```
+
+#### `call-tool`
+
+Agent 开始调用某个工具时下发。`callToolId` 用于和后续的 `call-tool-result` 关联。
+
+```json
+{
+  "type": "call-tool",
+  "payload": {
+    "callToolId": "tool_call_8f2e",
+    "toolName":   "execute_sql",
+    "toolParams": { "sql": "SELECT 1" }
+  }
+}
+```
+
+#### `call-tool-result`
+
+工具执行完成后下发,`callToolId` 与对应的 `call-tool` 一致。`result` 是工具原始输出,`shortDesc` 是简短摘要(如有)。
+
+```json
+{
+  "type": "call-tool-result",
+  "payload": {
+    "callToolId": "tool_call_8f2e",
+    "toolName":   "execute_sql",
+    "duration":   0.42,
+    "shortDesc":  "返回 5 行",
+    "result":     { "columns": ["customer_id", "total"], "rows": [["c1", 1234], ...] }
+  }
+}
+```
+
+#### `error`
+
+某个 action 失败时下发(整体任务可能仍在继续)。注意与顶层 `error` 事件区分,后者会终止整个流。
+
+```json
+{
+  "type": "error",
+  "payload": { "content": "execute_sql 失败:relation \"orderz\" does not exist" }
+}
+```
+
+#### `user-interaction`
+
+Agent 需要用户做决策才能继续时下发。SSE 流随后暂停,直到通过
+[`POST /chat/user_interaction`](#post-apiv1chatuser_interaction) 回传答案。
+**外层 `MessageData` 的 `message_id` 与 `payload.interactionKey` 数值相同**,任一作为 `interaction_key` 回传均可。
+
+```json
+{
+  "type": "user-interaction",
+  "payload": {
+    "interactionKey": "act_0007",
+    "actionType":     "choose_table",
+    "requests": [
+      {
+        "content":       "`customers` 命中多张表,请选择:",
+        "contentType":   "markdown",
+        "options": [
+          { "key": "1", "title": "sales.customers" },
+          { "key": "2", "title": "crm.customers"   }
+        ],
+        "defaultChoice": "1",
+        "allowFreeText": false
+      }
+    ]
+  }
+}
+```
+
+`requests` 字段说明:
+
+- 它是**数组**:一次交互可能同时提多个问题,用户需按顺序全部回答。
+- 自由文本类问题的 `options` 为 `null`;否则是 `{ key, title }` 列表,用户的回答应填所选项的 `key`(如 `"1"`)。
+- `allowFreeText: true` 表示即使有 `options`,也允许用户输入自定义答案。
+- `contentType` 通常为 `markdown`。
+
+### 完整事件帧示例
 
 ```
 id: 5
 event: message
-data: {"type":"appendMessage","payload":{"message_id":"m-1","type":"markdown","content":{"content":"销售额前 5 的客户:\n"}}}
-```
-
-**带交互请求的 action 事件** — 当 Agent 需要用户做决策(例如消歧表名、在多条 SQL 候选中二选一)时,
-会发送一个 `action` 事件,其 `payload` 即交互提问本体。该事件的 `message_id` 就是后续调用
-[`POST /chat/user_interaction`](#post-apiv1chatuser_interaction) 所需的 **`interaction_key`**。
-此时 SSE 流会暂停,直到收到用户回答。
-
-**ErrorData**:
-
-```json
-{
-  "error": "LLM call timed out",
-  "error_type": "TimeoutError",
-  "session_id": "chat_session_a1b2c3d4",
-  "llm_session_id": "sess_7f1c..."
-}
-```
-
-**EndData** — 成功执行结束时作为最后一个事件:
-
-```json
-{
-  "session_id": "chat_session_a1b2c3d4",
-  "llm_session_id": "sess_7f1c...",
-  "total_events": 42,
-  "action_count": 7,
-  "duration": 8.31
-}
+data: {"type":"createMessage","payload":{"message_id":"act_0005","role":"assistant","content":[{"type":"markdown","payload":{"content":"销售额前 5 的客户:\n"}}]}}
 ```
 
 ### 按游标续传
@@ -256,18 +370,19 @@ curl -N -X POST http://127.0.0.1:8000/api/v1/chat/stream \
 
 ### 4. 响应交互请求
 
-有时 Agent 需要用户临时做决策(例如消歧表名、在多条 SQL 候选中二选一)。此时会下发一个 `action` 事件,
-其 `payload` 描述提问及选项,**该事件的 `message_id` 即作为 `interaction_key` 回传**。
+有时 Agent 需要用户临时做决策(例如消歧表名)。此时会下发一个 `message` 事件,其 `content[]` 中包含一个
+`user-interaction` 元素,SSE 流随后暂停,直到收到回答。
 
 示例 — 假设你收到:
 
 ```
 id: 23
-event: action
-data: {"type":"createMessage","payload":{"message_id":"act-need-table-choice","role":"assistant","content":[{"type":"markdown","payload":{"content":"`customers` 命中多张表,请选择:\n1. sales.customers\n2. crm.customers"}}]}}
+event: message
+data: {"type":"createMessage","payload":{"message_id":"act_0007","role":"assistant","content":[{"type":"user-interaction","payload":{"interactionKey":"act_0007","actionType":"choose_table","requests":[{"content":"`customers` 命中多张表,请选择:","contentType":"markdown","options":[{"key":"1","title":"sales.customers"},{"key":"2","title":"crm.customers"}],"defaultChoice":"1","allowFreeText":false}]}}]}}
 ```
 
-此时 SSE 流暂停,客户端提交用户的回答:
+读取 `payload.interactionKey`(此处为 `"act_0007"`),将 `requests[0].content` 与 `options` 展示给用户。
+用户选择 `sales.customers` 后,提交其 `key`:
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/v1/chat/user_interaction \
@@ -275,13 +390,13 @@ curl -X POST http://127.0.0.1:8000/api/v1/chat/user_interaction \
   -H 'X-Datus-User-Id: alice' \
   -d '{
         "session_id":      "chat_session_a1b2c3d4",
-        "interaction_key": "act-need-table-choice",
+        "interaction_key": "act_0007",
         "input":           ["1"]
       }'
 ```
 
-回答被接受后,SSE 流恢复,继续下发 `message` / `action`,最终以 `end` 事件收尾。`input` 是数组,
-多答案提问(例如一次填写多个参数)可在一次调用中一并提交。
+回答被接受后,SSE 流恢复,最终以 `end` 事件收尾。`input` 是数组,多问题提问(每个 `requests[]` 项一个回答)
+可以在一次调用中一并提交。自由文本回答时,直接传用户输入的字符串即可,无需 option key。
 
 ---
 

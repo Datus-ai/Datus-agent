@@ -19,7 +19,6 @@ Send a chat message and stream the response as Server-Sent Events.
 | `session_id`     | string?  | Reuse to continue an existing session |
 | `subagent_id`    | string?  | Built-in name (`gen_metrics`, `gen_semantic_model`, …) or custom subagent id |
 | `plan_mode`      | bool     | Enable plan mode |
-| `source`         | string?  | `web` / `vscode` — switches filesystem tools to proxy mode |
 | `catalog`/`database`/`db_schema` | string? | Database context |
 | `table_paths`/`metric_paths`/`sql_paths`/`knowledge_paths` | string[]? | `@`-reference paths |
 | `max_turns`      | int      | Default `30` |
@@ -37,7 +36,6 @@ Reconnect to a still-running task and continue consuming events from a cursor.
 |-----------------|------|-------|
 | `session_id`    | str  | Required |
 | `from_event_id` | int? | Event cursor; omit to auto-resume |
-| `source`        | str? | `web`/`vscode` |
 
 **Response**: `text/event-stream`. If the task is unknown or expired, the response is a JSON `Result[dict]` with
 `errorCode = "TASK_NOT_FOUND"`; use `GET /chat/history` to fetch the persisted conversation.
@@ -116,76 +114,200 @@ X-Accel-Buffering: no
 
 ### Event types
 
-| Event     | `data` shape              | Meaning |
-|-----------|---------------------------|---------|
-| `session` | `SessionData`             | Sent right after the session starts; carries `session_id` and `llm_session_id` |
-| `message` | `MessageData`             | Create / append / update an assistant message segment |
-| `action`  | `MessageData`             | Tool call / sub-action progress, including interactive prompts |
-| `error`   | `ErrorData`               | A fatal error occurred; the task is terminated |
-| `ping`    | `{}`                      | Heartbeat; safe to ignore |
-| `end`     | `EndData`                 | Final event with summary counters |
+The stream emits five top-level event types. Most of the conversation flows through `message` events; the others
+are infrastructure.
 
-### `data` type schemas
+| Event     | When | `data` shape |
+|-----------|------|--------------|
+| `session` | Once, immediately after the session is created | `SessionData` |
+| `message` | Repeatedly, for every action produced by the agent | `MessageData` |
+| `error`   | Once, on fatal failure (terminates the task) | `ErrorData` |
+| `ping`    | Every ~10 s while the task is idle but still running | `{}` |
+| `end`     | Once, as the final event of a successful run | `EndData` |
 
-**SessionData** — emitted once at the start of the stream.
+#### `SessionData`
 
 ```json
 {
-  "session_id": "chat_session_a1b2c3d4",
+  "session_id":     "chat_session_a1b2c3d4",
   "llm_session_id": "sess_7f1c..."
 }
 ```
 
-**MessageData** — used by both `message` and `action` events. The `type` field selects one of three sub-operations:
-
-| `type`           | `payload` shape                                                   |
-|------------------|-------------------------------------------------------------------|
-| `createMessage`  | `{ message_id, role, content[] }` — start a new message           |
-| `appendMessage`  | `{ message_id, type, content }` — stream more content into it     |
-| `updateMessage`  | `{ message_id, payload }` — replace message content wholesale     |
-
-Each `content` item takes the form:
+#### `EndData`
 
 ```json
-{ "type": "markdown", "payload": { "content": "Hello, I can help..." } }
+{
+  "session_id":     "chat_session_a1b2c3d4",
+  "llm_session_id": "sess_7f1c...",
+  "total_events":   42,
+  "action_count":   7,
+  "duration":       8.31
+}
 ```
 
-`type` is one of `markdown`, `code` (with `{ code_type, content }`), or `csv` (with `{ content }`).
+#### `ErrorData`
 
-A complete `message` event looks like:
+```json
+{
+  "error":          "LLM call timed out",
+  "error_type":     "TimeoutError",
+  "session_id":     "chat_session_a1b2c3d4",
+  "llm_session_id": "sess_7f1c..."
+}
+```
+
+#### `MessageData`
+
+`MessageData` is the wrapper used by every `message` event:
+
+```json
+{
+  "type":    "createMessage",
+  "payload": {
+    "message_id": "act_0001",
+    "role":       "assistant",
+    "content":    [ /* one or more content items, see below */ ]
+  }
+}
+```
+
+- `type` is currently always `createMessage` for streamed actions. (`appendMessage` and `updateMessage` exist in
+  the protocol for future use; clients should treat unknown `type` values gracefully.)
+- `role` is `assistant` while streaming. When fetching `GET /chat/history`, user-authored turns appear with
+  `role: "user"`.
+- `message_id` is the action id; it is **also the `interactionKey`** when the content describes a user interaction
+  (see below).
+
+### Content item types
+
+Each entry of `content[]` is `{ "type": <kind>, "payload": <kind-specific> }`. The agent can emit any of the
+following kinds:
+
+#### `markdown`
+
+Plain text/markdown chunk produced by the assistant (or surfaced from a tool).
+
+```json
+{
+  "type": "markdown",
+  "payload": { "content": "Here are the top 5 customers..." }
+}
+```
+
+#### `thinking`
+
+Intermediate reasoning emitted by the LLM. Many UIs render this in a collapsed "thinking" block.
+
+```json
+{
+  "type": "thinking",
+  "payload": { "content": "Need to join orders with customers on customer_id..." }
+}
+```
+
+#### `code`
+
+A code block, typically generated SQL. `codeType` indicates the language.
+
+```json
+{
+  "type": "code",
+  "payload": {
+    "codeType": "sql",
+    "content":  "SELECT customer_id, SUM(amount) FROM orders GROUP BY 1"
+  }
+}
+```
+
+#### `call-tool`
+
+Emitted when the agent starts calling a tool. Use `callToolId` to correlate with the matching `call-tool-result`.
+
+```json
+{
+  "type": "call-tool",
+  "payload": {
+    "callToolId": "tool_call_8f2e",
+    "toolName":   "execute_sql",
+    "toolParams": { "sql": "SELECT 1" }
+  }
+}
+```
+
+#### `call-tool-result`
+
+Emitted when a tool finishes. `callToolId` matches the prior `call-tool`. `result` is the raw tool output, and
+`shortDesc` is a brief human-readable summary when available.
+
+```json
+{
+  "type": "call-tool-result",
+  "payload": {
+    "callToolId": "tool_call_8f2e",
+    "toolName":   "execute_sql",
+    "duration":   0.42,
+    "shortDesc":  "5 rows returned",
+    "result":     { "columns": ["customer_id", "total"], "rows": [["c1", 1234], ...] }
+  }
+}
+```
+
+#### `error`
+
+Emitted when an action fails (the overall task may still continue). Distinct from the top-level `error` event,
+which terminates the stream.
+
+```json
+{
+  "type": "error",
+  "payload": { "content": "execute_sql failed: relation \"orderz\" does not exist" }
+}
+```
+
+#### `user-interaction`
+
+Emitted when the agent needs the user to make a decision before continuing. The stream pauses until the answer is
+posted back via [`POST /chat/user_interaction`](#post-apiv1chatuser_interaction). The `message_id` of the enclosing
+`MessageData` is the same value as `payload.interactionKey`; either can be used as `interaction_key` in the reply.
+
+```json
+{
+  "type": "user-interaction",
+  "payload": {
+    "interactionKey": "act_0007",
+    "actionType":     "choose_table",
+    "requests": [
+      {
+        "content":       "Multiple tables match `customers`. Pick one:",
+        "contentType":   "markdown",
+        "options": [
+          { "key": "1", "title": "sales.customers" },
+          { "key": "2", "title": "crm.customers"   }
+        ],
+        "defaultChoice": "1",
+        "allowFreeText": false
+      }
+    ]
+  }
+}
+```
+
+Notes on `requests`:
+
+- It is an **array**: a single interaction may ask several questions at once. The user must answer all of them
+  in order.
+- `options` is `null` for free-text questions; otherwise it is a list of `{ key, title }`. The user's reply is
+  expected to be the `key` of the chosen option (e.g. `"1"`).
+- `allowFreeText: true` means the user may type a custom answer even when `options` is non-empty.
+- `contentType` is usually `markdown`.
+
+### A complete frame example
 
 ```
 id: 5
 event: message
-data: {"type":"appendMessage","payload":{"message_id":"m-1","type":"markdown","content":{"content":"Here are the top 5 customers:\n"}}}
-```
-
-**Action events with interaction requests** — when the agent needs the user to pick among options or answer a
-question, an `action` event arrives whose `payload` carries an interaction prompt. The `message_id` of that
-action acts as the `interaction_key` that must be posted back via
-[`POST /chat/user_interaction`](#post-apiv1chatuser_interaction). The stream pauses until the answer arrives.
-
-**ErrorData**:
-
-```json
-{
-  "error": "LLM call timed out",
-  "error_type": "TimeoutError",
-  "session_id": "chat_session_a1b2c3d4",
-  "llm_session_id": "sess_7f1c..."
-}
-```
-
-**EndData** — always the last event of a successful run:
-
-```json
-{
-  "session_id": "chat_session_a1b2c3d4",
-  "llm_session_id": "sess_7f1c...",
-  "total_events": 42,
-  "action_count": 7,
-  "duration": 8.31
-}
+data: {"type":"createMessage","payload":{"message_id":"act_0005","role":"assistant","content":[{"type":"markdown","payload":{"content":"Here are the top 5 customers:\n"}}]}}
 ```
 
 ### Resume by cursor
@@ -264,19 +386,19 @@ The assistant reuses the full conversation context. You can list all active sess
 
 ### 4. Respond to an interaction request
 
-Occasionally the agent needs a user decision mid-flight (e.g. disambiguating a table, choosing between SQL
-candidates). It emits an `action` event whose message payload describes the question and lists the options. The
-`message_id` of that event is the **`interaction_key`** you must submit back.
+Occasionally the agent needs a user decision mid-flight (e.g. disambiguating a table). It emits a `message` event
+whose `content[]` contains a `user-interaction` item. The stream then pauses until the answer arrives.
 
 Example — assume you received:
 
 ```
 id: 23
-event: action
-data: {"type":"createMessage","payload":{"message_id":"act-need-table-choice","role":"assistant","content":[{"type":"markdown","payload":{"content":"Multiple tables match `customers`. Pick one:\n1. sales.customers\n2. crm.customers"}}]}}
+event: message
+data: {"type":"createMessage","payload":{"message_id":"act_0007","role":"assistant","content":[{"type":"user-interaction","payload":{"interactionKey":"act_0007","actionType":"choose_table","requests":[{"content":"Multiple tables match `customers`. Pick one:","contentType":"markdown","options":[{"key":"1","title":"sales.customers"},{"key":"2","title":"crm.customers"}],"defaultChoice":"1","allowFreeText":false}]}}]}}
 ```
 
-The SSE stream now pauses. Post the user's answer:
+Read `payload.interactionKey` (= `"act_0007"`) and present the `requests[0].content` plus its `options` to the
+user. When the user picks `sales.customers`, post their `key`:
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/v1/chat/user_interaction \
@@ -284,14 +406,14 @@ curl -X POST http://127.0.0.1:8000/api/v1/chat/user_interaction \
   -H 'X-Datus-User-Id: alice' \
   -d '{
         "session_id":      "chat_session_a1b2c3d4",
-        "interaction_key": "act-need-table-choice",
+        "interaction_key": "act_0007",
         "input":           ["1"]
       }'
 ```
 
-As soon as the answer is accepted, the stream resumes emitting `message` and `action` events and eventually an
-`end` event. `input` is a list so multi-answer prompts (e.g. filling in several parameters at once) can be
-submitted in a single call.
+As soon as the answer is accepted, the stream resumes and eventually emits an `end` event. `input` is a list so
+multi-question prompts (one entry per `requests[]` item) can be answered in a single call. For free-text answers,
+send the typed string instead of an option key.
 
 ---
 
