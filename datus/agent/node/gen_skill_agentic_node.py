@@ -121,24 +121,40 @@ class SkillCreatorAgenticNode(AgenticNode):
 
         self.tools = []
         self._setup_full_filesystem_tools()
+        if not self._skills_filesystem_tool:
+            from datus.utils.exceptions import DatusException, ErrorCode
+
+            raise DatusException(
+                code=ErrorCode.COMMON_CONFIG_ERROR,
+                message_args={"config_error": "Failed to setup skills filesystem tools — cannot create skills"},
+            )
         self._setup_db_tools()
         if self.execution_mode == "interactive":
             self._setup_ask_user_tool()
         self._setup_skill_loading_tools()
         self._setup_validate_tool()
+        if not self.skill_validate_tool:
+            logger.warning("validate_skill tool unavailable — skill validation will be skipped")
         self._setup_session_search_tool()
 
         logger.debug(f"Setup {len(self.tools)} skill creator tools: {[tool.name for tool in self.tools]}")
 
     def _resolve_skills_write_root(self) -> str:
-        """Resolve the root path for write operations — restricted to the first skills directory."""
+        """Resolve the root path for write operations — restricted to the first skills directory.
+
+        Relative paths are anchored to the workspace root (not process CWD)
+        to prevent the sandbox from drifting outside the project.
+        """
         if self.agent_config:
             skills_config = getattr(self.agent_config, "skills_config", None)
             if skills_config and hasattr(skills_config, "directories") and skills_config.directories:
                 first_dir = skills_config.directories[0]
                 expanded = os.path.expanduser(first_dir)
+                # Anchor relative paths to workspace root, not CWD
+                if not os.path.isabs(expanded):
+                    workspace = self._resolve_workspace_root()
+                    expanded = os.path.join(workspace, expanded)
                 resolved = str(Path(expanded).resolve())
-                # Ensure the directory exists
                 Path(resolved).mkdir(parents=True, exist_ok=True)
                 return resolved
         # Fallback: ~/.datus/skills/

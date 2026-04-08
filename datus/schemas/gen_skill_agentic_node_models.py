@@ -10,7 +10,7 @@ providing structured validation for interactive skill creation, editing, and
 evaluation workflows.
 """
 
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import Field
 
@@ -23,7 +23,7 @@ class SkillCreatorNodeInput(BaseInput):
     """
 
     user_message: str = Field(..., description="User request describing the skill to create or edit")
-    storage_location: Optional[str] = Field(
+    storage_location: Optional[Literal["project", "user"]] = Field(
         default=None, description="Storage location: 'project' (./skills/) or 'user' (~/.datus/skills/)"
     )
     target_skill: Optional[str] = Field(default=None, description="Name of existing skill to edit (edit mode)")

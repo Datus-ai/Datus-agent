@@ -45,7 +45,11 @@ def validate_skill(skill_path: str) -> list:
     if not path.name == "SKILL.md":
         issues.append(f"WARNING: Expected filename 'SKILL.md', got '{path.name}'")
 
-    content = path.read_text(encoding="utf-8")
+    try:
+        content = path.read_text(encoding="utf-8")
+    except Exception as e:
+        issues.append(f"ERROR: Cannot read file: {e}")
+        return issues
 
     # Check frontmatter exists
     match = FRONTMATTER_PATTERN.match(content)
@@ -114,7 +118,7 @@ def validate_skill(skill_path: str) -> list:
     # Check body content
     body = content[match.end() :]
     if not body.strip():
-        issues.append("WARNING: SKILL.md body is empty. Add instructions for the agent.")
+        issues.append("ERROR: SKILL.md body is empty. Add instructions for the agent.")
     else:
         line_count = len(body.strip().splitlines())
         if line_count > 500:

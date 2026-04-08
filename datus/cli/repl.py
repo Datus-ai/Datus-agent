@@ -647,11 +647,11 @@ class DatusCLI:
                     # Regular chat: /message (first part is not a valid subagent)
                     return CommandType.CHAT, "", message
             else:
-                # Single token: check if it's a subagent name
-                if parts[0] in self.available_subagents:
+                # Single token or empty: check if it's a subagent name
+                if parts and parts[0] in self.available_subagents:
                     return CommandType.CHAT, parts[0], "Start interactive session"
-                # Regular chat: /message
-                return CommandType.CHAT, "", message
+                # Regular chat: /message (or just "/" with no content)
+                return CommandType.CHAT, "", message or "/"
 
         # Internal commands (.prefix)
         if text.startswith("."):
