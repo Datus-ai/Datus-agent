@@ -1462,6 +1462,16 @@ class TestChatAgenticNodeExecutionMode:
 # ===========================================================================
 
 
+def _mock_bi_core(mock_adaptor_cls):
+    """Build a mock datus_bi_core module for testing without the real package."""
+    from unittest.mock import MagicMock
+
+    mock_module = MagicMock()
+    mock_module.adaptor_registry.get.return_value = mock_adaptor_cls
+    mock_module.AuthParam = MagicMock()
+    return mock_module
+
+
 class TestChatAgenticNodeBITools:
     """Verify _setup_bi_tools correctly initializes BI tools from config."""
 
@@ -1486,6 +1496,7 @@ class TestChatAgenticNodeBITools:
 
     def test_bi_tools_loaded_when_configured(self, real_agent_config, mock_llm_create):
         """BI tools should be loaded when bi_platform and dashboard config are set."""
+        import sys
         from unittest.mock import MagicMock, patch
 
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
@@ -1493,14 +1504,13 @@ class TestChatAgenticNodeBITools:
 
         cfg = self._make_bi_agent_config(real_agent_config)
 
-        mock_adaptor = MagicMock()
-        mock_adaptor_cls = MagicMock(return_value=mock_adaptor)
+        mock_adaptor_cls = MagicMock(return_value=MagicMock())
+        bi_core_mock = _mock_bi_core(mock_adaptor_cls)
 
         with (
             patch("datus.agent.node.chat_agentic_node.BIFuncTool") as mock_bi_tool_cls,
-            patch("datus_bi_core.adaptor_registry") as mock_registry,
+            patch.dict(sys.modules, {"datus_bi_core": bi_core_mock}),
         ):
-            mock_registry.get.return_value = mock_adaptor_cls
             mock_bi_instance = MagicMock()
             mock_bi_instance.available_tools.return_value = []
             mock_bi_tool_cls.return_value = mock_bi_instance
@@ -1514,7 +1524,6 @@ class TestChatAgenticNodeBITools:
 
         assert node.bi_func_tool is not None
         mock_bi_tool_cls.assert_called_once()
-        # Verify dataset_db params were passed
         call_kwargs = mock_bi_tool_cls.call_args
         assert call_kwargs[1]["dataset_db_uri"] == "postgresql+psycopg2://user:pass@localhost/db"
         assert call_kwargs[1]["dataset_db_schema"] == "public"
@@ -1522,6 +1531,7 @@ class TestChatAgenticNodeBITools:
 
     def test_bi_tools_passes_datasource_name(self, real_agent_config, mock_llm_create):
         """datasource_name from dataset_db config is passed to BIFuncTool."""
+        import sys
         from unittest.mock import MagicMock, patch
 
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
@@ -1530,14 +1540,13 @@ class TestChatAgenticNodeBITools:
         cfg = self._make_bi_agent_config(real_agent_config)
         cfg.dashboard_config["superset"].dataset_db["datasource_name"] = "My-PostgreSQL"
 
-        mock_adaptor = MagicMock()
-        mock_adaptor_cls = MagicMock(return_value=mock_adaptor)
+        mock_adaptor_cls = MagicMock(return_value=MagicMock())
+        bi_core_mock = _mock_bi_core(mock_adaptor_cls)
 
         with (
             patch("datus.agent.node.chat_agentic_node.BIFuncTool") as mock_bi_tool_cls,
-            patch("datus_bi_core.adaptor_registry") as mock_registry,
+            patch.dict(sys.modules, {"datus_bi_core": bi_core_mock}),
         ):
-            mock_registry.get.return_value = mock_adaptor_cls
             mock_bi_instance = MagicMock()
             mock_bi_instance.available_tools.return_value = []
             mock_bi_tool_cls.return_value = mock_bi_instance
@@ -1568,6 +1577,7 @@ class TestChatAgenticNodeBITools:
 
     def test_bi_tools_read_connector_rebound_on_db_switch(self, real_agent_config, mock_llm_create):
         """_read_connector should be rebound when database connection changes."""
+        import sys
         from unittest.mock import MagicMock, patch
 
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
@@ -1575,14 +1585,13 @@ class TestChatAgenticNodeBITools:
 
         cfg = self._make_bi_agent_config(real_agent_config)
 
-        mock_adaptor = MagicMock()
-        mock_adaptor_cls = MagicMock(return_value=mock_adaptor)
+        mock_adaptor_cls = MagicMock(return_value=MagicMock())
+        bi_core_mock = _mock_bi_core(mock_adaptor_cls)
 
         with (
             patch("datus.agent.node.chat_agentic_node.BIFuncTool") as mock_bi_tool_cls,
-            patch("datus_bi_core.adaptor_registry") as mock_registry,
+            patch.dict(sys.modules, {"datus_bi_core": bi_core_mock}),
         ):
-            mock_registry.get.return_value = mock_adaptor_cls
             mock_bi_instance = MagicMock()
             mock_bi_instance.available_tools.return_value = []
             mock_bi_tool_cls.return_value = mock_bi_instance
