@@ -7,9 +7,14 @@
 from unittest.mock import MagicMock
 
 import pytest
-from datus_bi_core import ChartInfo, DashboardInfo, DatasetInfo, QuerySpec
 
-from datus.tools.bi_tools.dashboard_assembler import (
+datus_bi_core = pytest.importorskip("datus_bi_core")
+ChartInfo = datus_bi_core.ChartInfo
+DashboardInfo = datus_bi_core.DashboardInfo
+DatasetInfo = datus_bi_core.DatasetInfo
+QuerySpec = datus_bi_core.QuerySpec
+
+from datus.tools.bi_tools.dashboard_assembler import (  # noqa: E402
     ChartSelection,
     DashboardAssembler,
     DashboardAssemblyResult,
@@ -18,8 +23,8 @@ from datus.tools.bi_tools.dashboard_assembler import (
     parts_match,
     split_table_parts,
 )
-from datus.tools.db_tools import connector_registry
-from datus.utils.constants import DBType
+from datus.tools.db_tools import connector_registry  # noqa: E402
+from datus.utils.constants import DBType  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

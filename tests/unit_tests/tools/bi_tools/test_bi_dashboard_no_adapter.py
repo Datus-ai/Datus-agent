@@ -7,7 +7,9 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-from datus_bi_core import AuthParam
+
+datus_bi_core = pytest.importorskip("datus_bi_core")
+AuthParam = datus_bi_core.AuthParam
 
 
 class TestNoAdapterInstalled:
