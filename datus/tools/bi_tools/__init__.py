@@ -15,7 +15,6 @@ try:
         DatasetInfo,
         DatasetWriteMixin,
         DimensionDef,
-        ListDashboardsMixin,
         MetricDef,
         QuerySpec,
         adapter_registry,

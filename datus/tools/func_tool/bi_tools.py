@@ -468,24 +468,18 @@ class BIFuncTool:
                 ChartWriteMixin,
                 DashboardWriteMixin,
                 DatasetWriteMixin,
-                ListDashboardsMixin,
             )
 
-            has_list = isinstance(self.adapter, ListDashboardsMixin)
             has_dash_write = isinstance(self.adapter, DashboardWriteMixin)
             has_chart_write = isinstance(self.adapter, ChartWriteMixin)
             has_dataset_write = isinstance(self.adapter, DatasetWriteMixin)
         except ImportError:
             # Fallback: check by method existence
-            has_list = hasattr(self.adapter, "list_dashboards")
             has_dash_write = hasattr(self.adapter, "create_dashboard")
             has_chart_write = hasattr(self.adapter, "create_chart")
             has_dataset_write = hasattr(self.adapter, "create_dataset")
 
-        methods: List = [self.get_dashboard, self.list_charts, self.list_datasets]
-
-        if has_list:
-            methods.insert(0, self.list_dashboards)
+        methods: List = [self.list_dashboards, self.get_dashboard, self.list_charts, self.list_datasets]
 
         if has_dash_write:
             methods += [self.create_dashboard, self.update_dashboard, self.delete_dashboard]

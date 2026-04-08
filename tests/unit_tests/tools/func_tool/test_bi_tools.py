@@ -40,11 +40,6 @@ class _DatasetInfo:
         return self.__dict__
 
 
-class MockListDashboardsMixin:
-    def list_dashboards(self, search="", page_size=20):
-        return [_DashboardInfo(id=1, name="Test Dashboard")]
-
-
 class MockDashboardWriteMixin:
     def create_dashboard(self, spec):
         return _DashboardInfo(id=10, name=spec.title)
@@ -74,9 +69,6 @@ class MockDatasetWriteMixin:
     def create_dataset(self, spec):
         return _DatasetInfo(id=3, name=spec.name, dialect="postgresql")
 
-    def update_dataset(self, dataset_id, spec):
-        return _DatasetInfo(id=dataset_id, name=spec.name, dialect="postgresql")
-
     def delete_dataset(self, dataset_id):
         return True
 
@@ -84,8 +76,11 @@ class MockDatasetWriteMixin:
         return [{"id": 1, "name": "PostgreSQL"}]
 
 
-class FullMockAdapter(MockListDashboardsMixin, MockDashboardWriteMixin, MockChartWriteMixin, MockDatasetWriteMixin):
+class FullMockAdapter(MockDashboardWriteMixin, MockChartWriteMixin, MockDatasetWriteMixin):
     """Mock adapter implementing all mixins."""
+
+    def list_dashboards(self, search="", page_size=20):
+        return [_DashboardInfo(id=1, name="Test Dashboard")]
 
     def get_dashboard_info(self, dashboard_id):
         return _DashboardInfo(id=dashboard_id, name="Test", description="", chart_ids=[])
@@ -103,6 +98,9 @@ class FullMockAdapter(MockListDashboardsMixin, MockDashboardWriteMixin, MockChar
 class ReadOnlyMockAdapter:
     """Mock adapter with only read operations."""
 
+    def list_dashboards(self, search="", page_size=20):
+        return []
+
     def get_dashboard_info(self, dashboard_id):
         return _DashboardInfo(id=dashboard_id, name="Read Only Dashboard")
 
@@ -116,7 +114,6 @@ class ReadOnlyMockAdapter:
 # ---- Build a mock datus_bi_core module ----
 
 _bi_core_mock = MagicMock()
-_bi_core_mock.ListDashboardsMixin = MockListDashboardsMixin
 _bi_core_mock.DashboardWriteMixin = MockDashboardWriteMixin
 _bi_core_mock.ChartWriteMixin = MockChartWriteMixin
 _bi_core_mock.DatasetWriteMixin = MockDatasetWriteMixin
@@ -178,8 +175,8 @@ class TestBIFuncToolAvailableTools:
             tool = BIFuncTool(adapter)
             tools = tool.available_tools()
             tool_names = {t.name for t in tools}
-            # No list_dashboards method on this adapter
-            assert "list_dashboards" not in tool_names
+            # list_dashboards is now part of BIAdapterBase — always present
+            assert "list_dashboards" in tool_names
             assert "get_dashboard" in tool_names
             # No write tools
             assert "create_dashboard" not in tool_names
@@ -372,14 +369,15 @@ class TestBIFuncToolWriteOps:
         assert result.success == 1
         assert result.result["name"] == "my_ds"
 
-    def test_list_dashboards_no_support(self):
+    def test_list_dashboards_read_only_adapter(self):
+        """list_dashboards is now in BIAdapterBase and always available."""
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
             from datus.tools.func_tool.bi_tools import BIFuncTool
 
             tool = BIFuncTool(ReadOnlyMockAdapter())
         result = tool.list_dashboards()
-        assert result.success == 0
-        assert "not support" in result.error.lower()
+        assert result.success == 1
+        assert isinstance(result.result, list)
 
     def test_get_dashboard_not_found(self):
         tool = self._make_tool()
