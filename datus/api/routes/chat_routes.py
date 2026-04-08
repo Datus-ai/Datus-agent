@@ -13,10 +13,9 @@ asyncio.Task so that client disconnects do not cancel the computation.
 import json
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Path, Query
+from fastapi import APIRouter, Path, Query
 from fastapi.responses import StreamingResponse
 
-from datus.api.constants import BUILTIN_SUBAGENTS
 from datus.api.deps import AppContextDep, ServiceDep
 from datus.api.models.base_models import Result
 from datus.api.models.chat_models import (
