@@ -30,7 +30,7 @@ Follow these steps **in order**.
 
 Run the analytical SQL on the **source database** and write results to **Grafana's dataset database**.
 
-```
+```python
 write_query(sql="SELECT ... FROM source_table ...", table_name="materialized_table_name")
 ```
 
@@ -42,7 +42,7 @@ write_query(sql="SELECT ... FROM source_table ...", table_name="materialized_tab
 
 Create the dashboard first — Grafana requires `dashboard_id` to add panels.
 
-```
+```python
 create_dashboard(title="Dashboard Title", description="Optional description")
 ```
 
@@ -52,7 +52,7 @@ Returns `dashboard_id` — save it for Step 3.
 
 Create panels with SQL that queries the **materialized table** from Step 1.
 
-```
+```python
 create_chart(
     chart_type="line",           # bar, line, pie, table, big_number, scatter
     title="Chart Title",

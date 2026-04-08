@@ -353,7 +353,8 @@ class BIFuncTool:
         if ";" in sql_stripped.rstrip(";"):
             return FuncToolResult(success=0, error="Multi-statement SQL is not allowed in write_query")
         try:
-            if self._read_connector is None:
+            read_connector = self._read_connector
+            if read_connector is None:
                 return FuncToolResult(success=0, error="No source database connector available for write_query")
 
             from sqlalchemy import create_engine
@@ -361,7 +362,7 @@ class BIFuncTool:
             if self._write_engine is None:
                 self._write_engine = create_engine(self._dataset_db_uri)
 
-            result = self._read_connector.execute_query(sql, result_format="pandas")
+            result = read_connector.execute_query(sql, result_format="pandas")
             if not result.success:
                 return FuncToolResult(success=0, error=result.error)
 

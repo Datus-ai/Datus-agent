@@ -23,7 +23,7 @@ Follow these steps **in order**. Each step depends on the output of the previous
 
 Run the analytical SQL on the **source database** and write results to **Superset's own database**.
 
-```
+```python
 write_query(sql="SELECT ... FROM source_table ...", table_name="materialized_table_name")
 ```
 
@@ -36,12 +36,12 @@ write_query(sql="SELECT ... FROM source_table ...", table_name="materialized_tab
 Register the materialized table as a Superset dataset.
 
 **Physical dataset** (table created by `write_query`):
-```
+```python
 create_dataset(name="materialized_table_name", database_id="<from step 1>")
 ```
 
 **Virtual dataset** (aggregated/transformed view):
-```
+```python
 create_dataset(name="view_name", database_id="<from step 1>", sql="SELECT ... FROM materialized_table_name")
 ```
 
@@ -52,7 +52,7 @@ create_dataset(name="view_name", database_id="<from step 1>", sql="SELECT ... FR
 
 Create visualization charts referencing the dataset.
 
-```
+```python
 create_chart(
     chart_type="bar",        # bar, line, pie, table, big_number, scatter
     title="Chart Title",
@@ -74,7 +74,7 @@ create_chart(
 
 ### Step 4: Create Dashboard (`create_dashboard`)
 
-```
+```python
 create_dashboard(title="Dashboard Title", description="Optional description")
 ```
 
@@ -82,7 +82,7 @@ Returns `dashboard_id` — save it for Step 5.
 
 ### Step 5: Add Charts to Dashboard (`add_chart_to_dashboard`)
 
-```
+```python
 add_chart_to_dashboard(chart_id="<from step 3>", dashboard_id="<from step 4>")
 ```
 
