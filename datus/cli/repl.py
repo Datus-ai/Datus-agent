@@ -649,7 +649,7 @@ class DatusCLI:
             else:
                 # Single token: check if it's a subagent name
                 if parts[0] in self.available_subagents:
-                    return CommandType.CHAT, parts[0], ""
+                    return CommandType.CHAT, parts[0], "Start interactive session"
                 # Regular chat: /message
                 return CommandType.CHAT, "", message
 

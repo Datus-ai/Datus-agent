@@ -12,6 +12,7 @@ higher max_turns budget for extended multi-step interactions.
 """
 
 import os
+import re
 from pathlib import Path
 from typing import AsyncGenerator, Dict, List, Optional
 
@@ -72,8 +73,10 @@ class SkillCreatorAgenticNode(AgenticNode):
         agent_config: Optional[AgentConfig] = None,
         tools: Optional[list] = None,
         node_name: Optional[str] = None,
+        execution_mode: str = "interactive",
     ):
         self.configured_node_name = node_name
+        self.execution_mode = execution_mode
 
         # Default max_turns = 30, can be overridden by agent.yml
         self.max_turns = 30
@@ -119,7 +122,8 @@ class SkillCreatorAgenticNode(AgenticNode):
         self.tools = []
         self._setup_full_filesystem_tools()
         self._setup_db_tools()
-        self._setup_ask_user_tool()
+        if self.execution_mode == "interactive":
+            self._setup_ask_user_tool()
         self._setup_skill_loading_tools()
         self._setup_validate_tool()
         self._setup_session_search_tool()
@@ -265,8 +269,6 @@ class SkillCreatorAgenticNode(AgenticNode):
             if not content:
                 return ""
             # Strip YAML frontmatter
-            import re
-
             match = re.match(r"^---\s*\n.*?\n---\s*\n", content, re.DOTALL)
             if match:
                 return content[match.end() :].strip()

@@ -83,6 +83,11 @@ class SessionSearchTool:
             }
         )
 
+    @staticmethod
+    def _escape_like(value: str) -> str:
+        """Escape LIKE metacharacters to prevent unintended pattern matching."""
+        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
     def _search_single_session(self, db_path: str, skill_name: str) -> Optional[dict]:
         """Search a single session DB for skill usage."""
         conn = None
@@ -90,10 +95,11 @@ class SessionSearchTool:
             conn = sqlite3.connect(db_path, timeout=2)
             cursor = conn.cursor()
 
-            # Search for messages containing the skill name
+            # Search for messages containing the skill name (escape LIKE metacharacters)
+            escaped_name = self._escape_like(skill_name)
             cursor.execute(
-                "SELECT id, message_data FROM agent_messages WHERE message_data LIKE ? ORDER BY id",
-                (f"%{skill_name}%",),
+                "SELECT id, message_data FROM agent_messages WHERE message_data LIKE ? ESCAPE '\\' ORDER BY id LIMIT 500",
+                (f"%{escaped_name}%",),
             )
             rows = cursor.fetchall()
             if not rows:
@@ -103,12 +109,12 @@ class SessionSearchTool:
             tool_calls = []
             errors = []
             skill_loaded = False
+            total_messages = 0
 
-            # Also get ALL messages to understand full tool call sequence
-            cursor.execute("SELECT id, message_data FROM agent_messages ORDER BY id")
-            all_rows = cursor.fetchall()
-
-            for msg_id, msg_data in all_rows:
+            # Stream messages with cursor instead of loading all into memory
+            cursor.execute("SELECT id, message_data FROM agent_messages ORDER BY id LIMIT 1000")
+            for msg_id, msg_data in cursor:
+                total_messages += 1
                 try:
                     msg = json.loads(msg_data)
                 except (json.JSONDecodeError, TypeError):
@@ -131,17 +137,24 @@ class SessionSearchTool:
                         }
                     )
 
-                # Collect tool results with actual errors (not just 'error': None)
+                # Collect tool results with actual errors — parse output dict first
                 if msg_type == "function_call_output":
-                    output_str = str(msg.get("output", ""))
-                    is_error = "'success': 0" in output_str or (
-                        "'error':" in output_str and "'error': None" not in output_str
-                    )
+                    output_raw = msg.get("output", "")
+                    is_error = False
+                    if isinstance(output_raw, dict):
+                        is_error = output_raw.get("success") == 0 or (
+                            output_raw.get("error") is not None and output_raw.get("error") != "None"
+                        )
+                    else:
+                        output_str = str(output_raw)
+                        is_error = "'success': 0" in output_str or (
+                            "'error':" in output_str and "'error': None" not in output_str
+                        )
                     if is_error:
                         errors.append(
                             {
                                 "id": msg_id,
-                                "output_preview": output_str[:300],
+                                "output_preview": str(output_raw)[:300],
                             }
                         )
 
@@ -158,7 +171,7 @@ class SessionSearchTool:
                 "session_id": session_id,
                 "db_file": Path(db_path).name,
                 "created_at": created_at,
-                "total_messages": len(all_rows),
+                "total_messages": total_messages,
                 "tool_calls": tool_calls,
                 "errors": errors,
                 "tool_call_count": len(tool_calls),

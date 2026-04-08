@@ -319,9 +319,11 @@ class SkillCommands:
             self.console.print(f"[yellow]Skill '{name}' not found locally.[/]")
             return
 
-        # Confirm deletion
+        # Confirm deletion (skip prompt in non-interactive contexts)
+        import sys
+
         skill_path = skill.location
-        if skill_path and skill_path.exists():
+        if skill_path and skill_path.exists() and sys.stdin.isatty():
             confirm = input(f"Delete skill files at {skill_path}? [y/N] ").strip().lower()
             if confirm != "y":
                 self.console.print("[yellow]Cancelled.[/]")
