@@ -31,7 +31,7 @@ def load_auth_provider(api_config: Optional[Dict[str, Any]], namespace: str) -> 
     spec = (api_config or {}).get("auth_provider") or {}
     class_path = spec.get("class")
     if not class_path:
-        return NoAuthProvider(namespace=namespace)
+        return NoAuthProvider()
 
     normalized = class_path.replace(":", ".")
     module_name, _, class_name = normalized.rpartition(".")

@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from datus.agent.agent import Agent
-from datus.api.auth import NoAuthProvider, load_auth_provider
+from datus.api.auth import load_auth_provider
 from datus.api.deps import init_deps
 from datus.api.services.datus_service_cache import DatusServiceCache
 from datus.configuration.agent_config_loader import load_agent_config, parse_config_path

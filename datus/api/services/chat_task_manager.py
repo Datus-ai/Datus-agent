@@ -103,6 +103,7 @@ class ChatTaskManager:
         agent_config: AgentConfig,
         request: StreamChatInput,
         sub_agent_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> ChatTask:
         """Create a background task for the agentic loop.
             :param sub_agent_id: builtin name or custom sub-agent DB ID
@@ -128,7 +129,9 @@ class ChatTaskManager:
         task = ChatTask(session_id=session_id, asyncio_task=None)  # type: ignore[arg-type]
         self._tasks[session_id] = task
 
-        asyncio_task = asyncio.create_task(self._run_loop(task, agent_config, request, sub_agent_id=sub_agent_id))
+        asyncio_task = asyncio.create_task(
+            self._run_loop(task, agent_config, request, sub_agent_id=sub_agent_id, user_id=user_id)
+        )
         task.asyncio_task = asyncio_task
         return task
 
@@ -227,6 +230,7 @@ class ChatTaskManager:
         agent_config: AgentConfig,
         request: StreamChatInput,
         sub_agent_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Execute the full agentic loop, pushing SSE events to the task buffer."""
         session_id = task.session_id
@@ -264,7 +268,7 @@ class ChatTaskManager:
             #    operations (psycopg ConnectionPool creation, PG DDL for table
             #    creation via get_storage()) that would freeze the event loop.
             def _init_node():
-                n = self._create_node(agent_config, subagent_id=sub_agent_id, session_id=session_id)
+                n = self._create_node(agent_config, subagent_id=sub_agent_id, session_id=session_id, user_id=user_id)
                 n.session_id = session_id
                 return n
 
@@ -397,8 +401,18 @@ class ChatTaskManager:
     # Node factory
     # ------------------------------------------------------------------
 
-    def _create_node(self, agent_config: AgentConfig, subagent_id: Optional[str], session_id: str) -> AgenticNode:
-        """Create a fresh AgenticNode based on subagent_id (builtin name or custom DB ID)."""
+    def _create_node(
+        self,
+        agent_config: AgentConfig,
+        subagent_id: Optional[str],
+        session_id: str,
+        user_id: Optional[str] = None,
+    ) -> AgenticNode:
+        """Create a fresh AgenticNode based on subagent_id (builtin name or custom DB ID).
+
+        ``user_id`` is propagated as the node ``scope`` so that session files
+        are isolated per user under ``{session_dir}/{user_id}/``.
+        """
         if subagent_id:
             if subagent_id == "gen_semantic_model":
                 from datus.agent.node.gen_semantic_model_agentic_node import (
@@ -408,6 +422,7 @@ class ChatTaskManager:
                 return GenSemanticModelAgenticNode(
                     agent_config=agent_config,
                     execution_mode="interactive",
+                    scope=user_id,
                 )
             elif subagent_id == "gen_metrics":
                 from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
@@ -415,6 +430,7 @@ class ChatTaskManager:
                 return GenMetricsAgenticNode(
                     agent_config=agent_config,
                     execution_mode="interactive",
+                    scope=user_id,
                 )
             elif subagent_id == "gen_sql_summary":
                 from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
@@ -423,6 +439,7 @@ class ChatTaskManager:
                     node_name=subagent_id,
                     agent_config=agent_config,
                     execution_mode="interactive",
+                    scope=user_id,
                 )
             elif subagent_id == "gen_ext_knowledge":
                 from datus.agent.node.gen_ext_knowledge_agentic_node import (
@@ -433,6 +450,7 @@ class ChatTaskManager:
                     node_name=subagent_id,
                     agent_config=agent_config,
                     execution_mode="interactive",
+                    scope=user_id,
                 )
             else:
                 return GenSQLAgenticNode(
@@ -443,6 +461,7 @@ class ChatTaskManager:
                     agent_config=agent_config,
                     tools=None,
                     node_name=subagent_id,
+                    scope=user_id,
                 )
         else:
             return ChatAgenticNode(
@@ -452,6 +471,7 @@ class ChatTaskManager:
                 input_data=None,
                 agent_config=agent_config,
                 tools=None,
+                scope=user_id,
             )
 
     # ------------------------------------------------------------------

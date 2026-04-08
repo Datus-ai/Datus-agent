@@ -1,5 +1,7 @@
 """Tests for datus.api.services.chat_service — chat session management."""
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from datus.api.services.chat_service import ChatService
@@ -111,6 +113,47 @@ class TestChatServiceGetHistory:
 
         result = chat_svc.get_history("empty-hist")
         assert result.success is True
+
+
+class TestChatServiceScopePropagation:
+    """user_id is propagated as SessionManager.scope for isolation."""
+
+    def _patched_sm(self):
+        fake = MagicMock()
+        fake.session_exists.return_value = False
+        fake.list_sessions.return_value = []
+        fake.get_session_messages.return_value = []
+        return fake
+
+    def test_session_exists_passes_scope(self, chat_svc):
+        fake = self._patched_sm()
+        with patch("datus.api.services.chat_service.SessionManager", return_value=fake) as cls:
+            chat_svc.session_exists("sid", user_id="alice")
+            cls.assert_called_once_with(session_dir=chat_svc._session_dir, scope="alice")
+
+    def test_list_sessions_passes_scope(self, chat_svc):
+        fake = self._patched_sm()
+        with patch("datus.api.services.chat_service.SessionManager", return_value=fake) as cls:
+            chat_svc.list_sessions(user_id="bob")
+            cls.assert_called_once_with(session_dir=chat_svc._session_dir, scope="bob")
+
+    def test_delete_session_passes_scope(self, chat_svc):
+        fake = self._patched_sm()
+        with patch("datus.api.services.chat_service.SessionManager", return_value=fake) as cls:
+            chat_svc.delete_session("sid", user_id="carol")
+            cls.assert_called_once_with(session_dir=chat_svc._session_dir, scope="carol")
+
+    def test_get_history_passes_scope(self, chat_svc):
+        fake = self._patched_sm()
+        with patch("datus.api.services.chat_service.SessionManager", return_value=fake) as cls:
+            chat_svc.get_history("sid", user_id="dave")
+            cls.assert_called_once_with(session_dir=chat_svc._session_dir, scope="dave")
+
+    def test_none_user_id_falls_back_to_default_scope(self, chat_svc):
+        fake = self._patched_sm()
+        with patch("datus.api.services.chat_service.SessionManager", return_value=fake) as cls:
+            chat_svc.list_sessions()
+            cls.assert_called_once_with(session_dir=chat_svc._session_dir, scope=None)
 
 
 @pytest.mark.asyncio

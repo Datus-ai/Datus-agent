@@ -51,7 +51,10 @@ class ChatService:
     # ------------------------------------------------------------------
 
     async def stream_chat(
-        self, request: StreamChatInput, sub_agent_id: Optional[str] = None
+        self,
+        request: StreamChatInput,
+        sub_agent_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> AsyncGenerator[SSEEvent, None]:
         """Start a background chat task and yield SSE events."""
         task_manager = self._task_manager
@@ -60,6 +63,7 @@ class ChatService:
                 self.agent_config,
                 request,
                 sub_agent_id=sub_agent_id,
+                user_id=user_id,
             )
         except (ValueError, DatusException) as e:
             error_code = e.error_code.name if isinstance(e, DatusException) else ErrorCode.COMMON_VALIDATION_FAILED.name
@@ -77,15 +81,15 @@ class ChatService:
     # Session management (stateless — reads from disk each time)
     # ------------------------------------------------------------------
 
-    def session_exists(self, session_id: str) -> bool:
+    def session_exists(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """Check if a session exists on disk."""
-        session_mgr = SessionManager(session_dir=self._session_dir)
+        session_mgr = SessionManager(session_dir=self._session_dir, scope=user_id)
         return session_mgr.session_exists(session_id)
 
-    def list_sessions(self) -> Result[ChatSessionData]:
+    def list_sessions(self, user_id: Optional[str] = None) -> Result[ChatSessionData]:
         """List all chat sessions from disk."""
         try:
-            session_mgr = SessionManager(session_dir=self._session_dir)
+            session_mgr = SessionManager(session_dir=self._session_dir, scope=user_id)
             all_ids = session_mgr.list_sessions()
             sessions = []
 
@@ -124,10 +128,10 @@ class ChatService:
             logger.error(f"Failed to list sessions: {e}")
             return Result[ChatSessionData](success=False, errorCode="SESSION_LIST_ERROR", errorMessage=str(e))
 
-    def delete_session(self, session_id: str) -> Result[ChatSessionData]:
+    def delete_session(self, session_id: str, user_id: Optional[str] = None) -> Result[ChatSessionData]:
         """Delete a session from disk."""
         try:
-            session_mgr = SessionManager(session_dir=self._session_dir)
+            session_mgr = SessionManager(session_dir=self._session_dir, scope=user_id)
             if session_mgr.session_exists(session_id):
                 session_mgr.delete_session(session_id)
 
@@ -147,7 +151,9 @@ class ChatService:
             logger.error(f"Failed to delete session {session_id}: {e}")
             return Result[ChatSessionData](success=False, errorCode="SESSION_DELETE_ERROR", errorMessage=str(e))
 
-    async def compact_session(self, request: CompactSessionInput) -> Result[CompactSessionData]:
+    async def compact_session(
+        self, request: CompactSessionInput, user_id: Optional[str] = None
+    ) -> Result[CompactSessionData]:
         """Compact a session by loading it into a temporary node and running compaction."""
         session_id = request.session_id
         try:
@@ -159,6 +165,7 @@ class ChatService:
                 input_data=None,
                 agent_config=self.agent_config,
                 tools=None,
+                scope=user_id,
             )
             node.session_id = session_id
 
@@ -187,11 +194,11 @@ class ChatService:
             logger.error(f"Failed to compact session {session_id}: {e}")
             return Result[CompactSessionData](success=False, errorCode="SESSION_COMPACT_ERROR", errorMessage=str(e))
 
-    def get_history(self, session_id: str) -> Result[ChatHistoryData]:
+    def get_history(self, session_id: str, user_id: Optional[str] = None) -> Result[ChatHistoryData]:
         """Get chat history messages for a session."""
         try:
             # Use SessionManager to get messages from SQLite
-            session_manager = SessionManager(session_dir=self._session_dir)
+            session_manager = SessionManager(session_dir=self._session_dir, scope=user_id)
             raw_messages = session_manager.get_session_messages(session_id)
 
             if not raw_messages:

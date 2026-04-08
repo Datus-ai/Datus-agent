@@ -77,23 +77,17 @@ def test_invalid_class_path():
 
 def test_missing_module():
     with pytest.raises(DatusException):
-        load_auth_provider(
-            {"auth_provider": {"class": "nonexistent_pkg_xyz.SomeClass"}}, namespace="ns"
-        )
+        load_auth_provider({"auth_provider": {"class": "nonexistent_pkg_xyz.SomeClass"}}, namespace="ns")
 
 
 def test_missing_class(fake_module):
     with pytest.raises(DatusException):
-        load_auth_provider(
-            {"auth_provider": {"class": f"{fake_module}.MissingClass"}}, namespace="ns"
-        )
+        load_auth_provider({"auth_provider": {"class": f"{fake_module}.MissingClass"}}, namespace="ns")
 
 
 def test_not_implementing_protocol(fake_module):
     with pytest.raises(DatusException):
-        load_auth_provider(
-            {"auth_provider": {"class": f"{fake_module}.NotAnAuth"}}, namespace="ns"
-        )
+        load_auth_provider({"auth_provider": {"class": f"{fake_module}.NotAnAuth"}}, namespace="ns")
 
 
 def test_constructor_failure(fake_module):

@@ -1,4 +1,4 @@
-"""Tests for datus.api.auth.no_auth_provider — bypass authentication."""
+"""Tests for datus.api.auth.no_auth_provider — header-based identification."""
 
 from unittest.mock import MagicMock
 
@@ -6,64 +6,62 @@ import pytest
 
 from datus.api.auth.context import AppContext
 from datus.api.auth.no_auth_provider import NoAuthProvider
+from datus.api.constants import HEADER_USER_ID
+from datus.utils.exceptions import DatusException
+
+
+def _make_request(headers: dict | None = None) -> MagicMock:
+    request = MagicMock()
+    request.headers = headers or {}
+    return request
 
 
 class TestNoAuthProviderInit:
-    """Tests for NoAuthProvider construction."""
-
-    def test_default_namespace(self):
-        """Default namespace is 'default'."""
-        provider = NoAuthProvider()
-        assert provider._namespace == "default"
-
-    def test_custom_namespace(self):
-        """Custom namespace is respected."""
-        provider = NoAuthProvider(namespace="production")
-        assert provider._namespace == "production"
-
-    def test_evict_callbacks_empty_on_init(self):
-        """Evict callbacks list is empty after init."""
+    def test_init_is_stateless(self):
         provider = NoAuthProvider()
         assert provider._evict_callbacks == []
 
 
 @pytest.mark.asyncio
 class TestNoAuthProviderAuthenticate:
-    """Tests for authenticate — bypass auth returning AppContext."""
-
-    async def test_returns_app_context(self):
-        """authenticate returns AppContext with correct fields."""
-        provider = NoAuthProvider(namespace="test_ns")
-        request = MagicMock()
-        ctx = await provider.authenticate(request)
-
+    async def test_no_header_returns_none_user(self):
+        """Missing header → user_id is None, project_id is None."""
+        provider = NoAuthProvider()
+        ctx = await provider.authenticate(_make_request({}))
         assert isinstance(ctx, AppContext)
-        assert ctx.user_id == "anonymous"
-        assert ctx.project_id == "test_ns"
+        assert ctx.user_id is None
+        assert ctx.project_id is None
         assert ctx.config is None
 
-    async def test_default_namespace_in_context(self):
-        """Default namespace provider uses 'default' as project_id."""
+    async def test_valid_header_populates_user_id(self):
+        """Valid header → user_id reflects the header value."""
         provider = NoAuthProvider()
-        ctx = await provider.authenticate(MagicMock())
-        assert ctx.project_id == "default"
+        ctx = await provider.authenticate(_make_request({HEADER_USER_ID: "alice"}))
+        assert ctx.user_id == "alice"
+        assert ctx.project_id is None
+
+    async def test_whitespace_header_treated_as_missing(self):
+        provider = NoAuthProvider()
+        ctx = await provider.authenticate(_make_request({HEADER_USER_ID: "   "}))
+        assert ctx.user_id is None
+
+    async def test_invalid_header_raises(self):
+        """Header with disallowed characters → DatusException."""
+        provider = NoAuthProvider()
+        with pytest.raises(DatusException):
+            await provider.authenticate(_make_request({HEADER_USER_ID: "bad user!"}))
 
 
 class TestNoAuthProviderOnEvict:
-    """Tests for on_evict — callback registration."""
-
     def test_registers_callback(self):
-        """on_evict appends callback to the list."""
         provider = NoAuthProvider()
         callback = MagicMock()
         provider.on_evict(callback)
-        assert len(provider._evict_callbacks) == 1
-        assert provider._evict_callbacks[0] is callback
+        assert provider._evict_callbacks == [callback]
 
     def test_registers_multiple_callbacks(self):
-        """Multiple on_evict calls append all callbacks."""
         provider = NoAuthProvider()
         cb1, cb2 = MagicMock(), MagicMock()
         provider.on_evict(cb1)
         provider.on_evict(cb2)
-        assert len(provider._evict_callbacks) == 2
+        assert provider._evict_callbacks == [cb1, cb2]

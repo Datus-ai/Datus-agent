@@ -18,7 +18,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from datus.api.constants import BUILTIN_SUBAGENTS
-from datus.api.deps import ServiceDep
+from datus.api.deps import AppContextDep, ServiceDep
 from datus.api.models.base_models import Result
 from datus.api.models.chat_models import ToolResultData, ToolResultInput
 from datus.api.models.cli_models import (
@@ -62,6 +62,7 @@ class StopChatInput(BaseModel):
 async def stream_chat(
     request: StreamChatInput,
     svc: ServiceDep,
+    ctx: AppContextDep,
 ):
     sub_agent_id = request.subagent_id
 
@@ -71,7 +72,7 @@ async def stream_chat(
             raise HTTPException(status_code=404, detail=f"Subagent '{sub_agent_id}' not found")
 
     async def generate_sse():
-        async for event in svc.chat.stream_chat(request, sub_agent_id=sub_agent_id):
+        async for event in svc.chat.stream_chat(request, sub_agent_id=sub_agent_id, user_id=ctx.user_id):
             yield f"id: {event.id}\nevent: {event.event}\ndata: {event.data.model_dump_json()}\n\n"
 
     return StreamingResponse(generate_sse(), media_type="text/event-stream", headers=_sse_headers())
@@ -140,8 +141,9 @@ async def stop_chat(
 async def compact_chat_session(
     session_id: Annotated[str, Path(description="Session ID to compact")],
     svc: ServiceDep,
+    ctx: AppContextDep,
 ) -> Result[CompactSessionData]:
-    return await svc.chat.compact_session(CompactSessionInput(session_id=session_id))
+    return await svc.chat.compact_session(CompactSessionInput(session_id=session_id), user_id=ctx.user_id)
 
 
 @router.get(
@@ -152,8 +154,9 @@ async def compact_chat_session(
 )
 async def list_sessions(
     svc: ServiceDep,
+    ctx: AppContextDep,
 ) -> Result[ChatSessionData]:
-    return svc.chat.list_sessions()
+    return svc.chat.list_sessions(user_id=ctx.user_id)
 
 
 @router.delete(
@@ -165,8 +168,9 @@ async def list_sessions(
 async def delete_session(
     session_id: Annotated[str, Path(description="Session ID to delete")],
     svc: ServiceDep,
+    ctx: AppContextDep,
 ) -> Result[ChatSessionData]:
-    return svc.chat.delete_session(session_id)
+    return svc.chat.delete_session(session_id, user_id=ctx.user_id)
 
 
 # ========== Chat History (GET /api/v1/history/chat?session_id=xxx) ==========
@@ -180,9 +184,10 @@ async def delete_session(
 )
 async def get_chat_history(
     svc: ServiceDep,
+    ctx: AppContextDep,
     session_id: str = Query(..., description="Session ID to retrieve history for"),
 ) -> Result[ChatHistoryData]:
-    return svc.chat.get_history(session_id)
+    return svc.chat.get_history(session_id, user_id=ctx.user_id)
 
 
 # ========== User Interaction ==========

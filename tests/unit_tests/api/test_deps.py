@@ -70,6 +70,7 @@ class TestGetDatusService:
         deps._auth_provider = MagicMock()
         deps._auth_provider.authenticate = AsyncMock()
         request = MagicMock()
+        request.state = MagicMock()
         with pytest.raises(RuntimeError, match="Service cache not initialized"):
             await get_datus_service(request)
 
@@ -89,6 +90,7 @@ class TestGetDatusService:
         deps._service_cache = mock_cache
 
         request = MagicMock()
+        request.state = MagicMock()
         with patch(
             "datus.api.deps.DatusService.compute_fingerprint",
             return_value="fp-xyz",
@@ -115,7 +117,9 @@ class TestGetDatusService:
         deps._auth_provider = mock_auth
         deps._service_cache = mock_cache
 
-        await get_datus_service(MagicMock())
+        request = MagicMock()
+        request.state = MagicMock()
+        await get_datus_service(request)
         call_args = mock_cache.get_or_create.call_args
         assert call_args.kwargs["expected_fingerprint"] is None
 
@@ -124,13 +128,15 @@ class TestGetDatusService:
         from datus.api.auth.no_auth_provider import NoAuthProvider
         from datus.api.services.datus_service import DatusService
 
-        auth_provider = NoAuthProvider(namespace="test_ns")
+        auth_provider = NoAuthProvider()
         cache = DatusServiceCache()
         deps._auth_provider = auth_provider
         deps._service_cache = cache
         deps._namespace = "test_ns"
 
         request = MagicMock()
+        request.state = MagicMock()
+        request.headers = {}
         # NoAuthProvider returns AppContext with config=None
         # Factory should call load_agent_config(namespace="test_ns")
         # This will fail because test_ns config doesn't exist in default paths,
