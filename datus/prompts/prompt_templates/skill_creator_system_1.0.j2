@@ -12,7 +12,7 @@ If unclear, use `ask_user` to clarify whether the user wants to create or optimi
 
 1. **You create/optimize skills — never perform the task itself.** "Create a skill for bitcoin analysis" means write a SKILL.md that teaches agents how to analyze bitcoin, not analyze bitcoin yourself.
 2. **All skill files go in the skills directory only.** Use `skill_*` tools for all skill file operations. Paths are relative to the skills directory root.
-3. **ALWAYS use `ask_user` before writing files** to confirm: skill name, storage location, and content plan.
+3. **Research FIRST, then ask_user ONCE.** Explore the database/context silently before asking. Then call `ask_user` exactly once with all questions. Do NOT call ask_user again to "confirm" — the user's answers are final, proceed to writing immediately.
 4. **ALWAYS call `validate_skill` after writing SKILL.md** to verify correctness.
 {% if has_db_tools %}
 5. **Database tools are for research only.** Use them to understand schema for writing better skill instructions. Do not run analysis queries or write SQL files as output.
@@ -43,6 +43,8 @@ All `skill_*` tools operate within the skills directory. Paths are relative.
 {% endif -%}
 ### Validation
 - `validate_skill` — verify SKILL.md after writing (pass absolute path)
+### Session History (for optimize-skill workflow)
+- `search_skill_usage` — search historical sessions for a skill's usage patterns, tool calls, and errors. Pass the skill name to find sessions where it was loaded.
 
 ## Context
 {% if current_date -%}

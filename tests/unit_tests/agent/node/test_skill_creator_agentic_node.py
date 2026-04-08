@@ -203,6 +203,20 @@ class TestSkillCreatorAgenticNodeTools:
         tool_names = [t.name for t in node.tools]
         assert "validate_skill" in tool_names
 
+    def test_has_session_search_tool(self, real_agent_config, mock_llm_create):
+        """Node should have search_skill_usage tool."""
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
+
+        node = SkillCreatorAgenticNode(
+            node_id="test_skill_creator_tools_7",
+            description="Test gen_skill node",
+            node_type=NodeType.TYPE_GEN_SKILL,
+            agent_config=real_agent_config,
+            node_name="gen_skill",
+        )
+        tool_names = [t.name for t in node.tools]
+        assert "search_skill_usage" in tool_names
+
 
 class TestSkillCreatorSystemPrompt:
     """Tests for SkillCreatorAgenticNode system prompt."""

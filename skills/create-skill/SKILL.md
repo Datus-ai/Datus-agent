@@ -12,23 +12,28 @@ allowed_commands:
 
 Guide for creating new Datus skills from scratch.
 
-## Capture Intent
+## Step 1: Research First
 
-Start by understanding the user's intent. The conversation might already contain a workflow to capture.
+Before asking the user anything, gather context silently:
 
-Key questions (use `ask_user`):
-1. What should this skill enable the agent to do?
-2. When should this skill trigger? (user phrases/contexts)
-3. What's the expected output format?
-4. Should it have script execution capabilities?
+- If creating a data-related skill, **explore the database first**: use `list_tables`, `describe_table`, `read_query` (with LIMIT) to understand available tables, columns, data types, sample data, and time ranges.
+- If the conversation already contains a workflow the user wants to capture (e.g., "turn this into a skill"), extract the key steps, tools used, and patterns from the conversation history.
+- Check existing skills via `skill_list_directory` to avoid duplicates.
 
-Don't ask all at once — start with the most important, follow up based on answers.
+This research informs your questions and your SKILL.md — it is NOT skill output.
 
-## Interview and Research
+## Step 2: Confirm with User
 
-Probe for: edge cases, input/output formats, dependencies, success criteria.
+After you have context, call `ask_user` **exactly once** with all questions in a single call. You MUST include these questions (the first two are required, others are optional):
 
-If creating a data-related skill, use database tools to explore schema — this research informs what you write, it is NOT skill output.
+1. **[Required]** Skill name — suggest a default based on your research (e.g., "bitcoin-analysis"), let user confirm or change
+2. **[Required]** Storage location — offer choices: project-level (`./skills/`) or user-level (`~/.datus/skills/`)
+3. What should this skill enable the agent to do? (propose based on your findings)
+4. What's the expected output format?
+
+The "when should this skill trigger" (description field) should be auto-generated based on the user's answers — do NOT ask the user to write trigger phrases.
+
+**Do NOT call ask_user a second time to "confirm".** The user's answers are final — proceed directly to writing the SKILL.md. No confirmation round.
 
 ## Write the SKILL.md
 
@@ -93,26 +98,29 @@ skill_create_directory(path="<skill-name>")
 skill_write_file(path="<skill-name>/SKILL.md", content=...)
 ```
 
-If `allowed_commands` configured:
+If the user explicitly requested scripts, also create scripts/:
 ```
 skill_create_directory(path="<skill-name>/scripts")
 skill_write_file(path="<skill-name>/scripts/<script>.py", content=...)
 ```
 
-Full structure:
+**Default behavior**: Only create the SKILL.md file. Do NOT generate scripts or references unless the user specifically asks for them.
+
 ```
 skill-name/
-├── SKILL.md          (required)
-├── scripts/          (if allowed_commands)
-├── references/       (if additional docs)
-└── assets/           (if templates/icons)
+├── SKILL.md          (always created)
+├── scripts/          (only if user requested)
+└── references/       (only if user requested)
 ```
 
-## Validate
+## Validate and Finish
 
-After writing, call `validate_skill` with the absolute path from write_file result.
+Immediately after `skill_write_file`, do these two steps and STOP:
 
-Checks: YAML frontmatter, required fields, allowed_commands format, non-empty body.
+1. Call `validate_skill` with the absolute path from the write_file result
+2. Report to the user: skill name, path, files created, how to use (`load_skill("<name>")` or `.skill list`)
+
+Do NOT continue exploring, writing more files, or asking more questions. The skill is done.
 
 ## Storage Location
 

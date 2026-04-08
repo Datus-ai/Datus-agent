@@ -319,15 +319,21 @@ class SkillCommands:
             self.console.print(f"[yellow]Skill '{name}' not found locally.[/]")
             return
 
+        # Confirm deletion
+        skill_path = skill.location
+        if skill_path and skill_path.exists():
+            confirm = input(f"Delete skill files at {skill_path}? [y/N] ").strip().lower()
+            if confirm != "y":
+                self.console.print("[yellow]Cancelled.[/]")
+                return
+
         # Remove from registry
         removed = manager.registry.remove_skill(name)
         if removed:
-            # Optionally delete files if marketplace-installed
-            if skill.source == "marketplace":
-                skill_path = skill.location
-                if skill_path.exists():
-                    shutil.rmtree(str(skill_path), ignore_errors=True)
-                    self.console.print(f"[dim]Deleted files at {skill_path}[/]")
+            # Delete skill files from disk
+            if skill_path and skill_path.exists():
+                shutil.rmtree(str(skill_path), ignore_errors=True)
+                self.console.print(f"[dim]Deleted files at {skill_path}[/]")
             self.console.print(f"[bold green]Removed skill '{name}'[/]")
         else:
             self.console.print(f"[bold red]Failed to remove skill '{name}'[/]")

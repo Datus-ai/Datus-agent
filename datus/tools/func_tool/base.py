@@ -65,8 +65,19 @@ def trans_to_function_tool(bound_method: Callable) -> FunctionTool:
                     args_dict = json.loads(args_str) if isinstance(args_str, str) else dict(args_str or {})
                 else:
                     args_dict = {}
-            except (TypeError, json.JSONDecodeError):
-                return {"success": 0, "error": "Invalid JSON arguments", "result": None}
+            except (TypeError, json.JSONDecodeError) as e:
+                args_len = len(args_str) if isinstance(args_str, str) else 0
+                truncated_hint = ""
+                if isinstance(args_str, str) and args_len > 0:
+                    # Check if it looks like truncated output (no closing brace)
+                    stripped = args_str.rstrip()
+                    if not stripped.endswith("}") and not stripped.endswith("]"):
+                        truncated_hint = " Output appears truncated — likely hit model max_output_tokens limit."
+                return {
+                    "success": 0,
+                    "error": f"Invalid JSON arguments ({e}). Args length: {args_len} chars.{truncated_hint}",
+                    "result": None,
+                }
 
             # Call sync or async bound methods transparently
             if inspect.ismethod(method_to_call):

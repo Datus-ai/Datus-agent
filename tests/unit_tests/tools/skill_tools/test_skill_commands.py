@@ -374,7 +374,8 @@ class TestSkillCommandsRemove:
             mock_mgr.return_value.registry.remove_skill.return_value = True
             cmds.cmd_skill_remove("test-skill")
 
-    def test_remove_marketplace_skill_deletes_files(self, tmp_path):
+    @patch("builtins.input", return_value="y")
+    def test_remove_marketplace_skill_deletes_files(self, mock_input, tmp_path):
         from datus.cli.skill_commands import SkillCommands
 
         cli = _make_cli_mock()

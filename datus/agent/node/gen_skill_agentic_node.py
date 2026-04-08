@@ -91,6 +91,7 @@ class SkillCreatorAgenticNode(AgenticNode):
         self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
         self._skills_filesystem_tool: Optional[FilesystemFuncTool] = None
         self.skill_func_tool_instance = None
+        self._session_search_tool = None
         self.skill_validate_tool = None
 
         super().__init__(
@@ -121,6 +122,7 @@ class SkillCreatorAgenticNode(AgenticNode):
         self._setup_ask_user_tool()
         self._setup_skill_loading_tools()
         self._setup_validate_tool()
+        self._setup_session_search_tool()
 
         logger.debug(f"Setup {len(self.tools)} skill creator tools: {[tool.name for tool in self.tools]}")
 
@@ -213,6 +215,26 @@ class SkillCreatorAgenticNode(AgenticNode):
             logger.debug("Setup skill validate tool")
         except Exception as e:
             logger.warning(f"Failed to setup skill validate tool, continuing without: {e}")
+
+    def _setup_session_search_tool(self):
+        """Setup session search tool for finding historical skill usage patterns."""
+        try:
+            from datus.tools.func_tool.session_search_tool import SessionSearchTool
+
+            sessions_dir = None
+            if self.agent_config:
+                try:
+                    from datus.utils.path_manager import get_path_manager
+
+                    pm = get_path_manager(agent_config=self.agent_config)
+                    sessions_dir = str(pm.sessions_dir)
+                except Exception:
+                    pass
+            self._session_search_tool = SessionSearchTool(sessions_dir=sessions_dir)
+            self.tools.extend(self._session_search_tool.available_tools())
+            logger.debug(f"Setup session search tool with sessions_dir: {sessions_dir}")
+        except Exception as e:
+            logger.warning(f"Failed to setup session search tool, continuing without: {e}")
 
     # Companion skills loaded into system prompt
     COMPANION_SKILLS = ("create-skill", "optimize-skill")
