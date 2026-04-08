@@ -36,8 +36,8 @@ class TestCanQualifyTable:
 
     @pytest.fixture
     def assembler(self):
-        # _can_qualify_table doesn't use the adaptor, so None is fine
-        return DashboardAssembler(adaptor=None)
+        # _can_qualify_table doesn't use the adapter, so None is fine
+        return DashboardAssembler(adapter=None)
 
     def test_sqlite_with_database(self, assembler):
         assert assembler._can_qualify_table(DBType.SQLITE, "", "main", "") is True
@@ -85,14 +85,14 @@ def _register_dialects():
 
 
 @pytest.fixture
-def mock_adaptor():
+def mock_adapter():
     return MagicMock()
 
 
 @pytest.fixture
-def assembler(mock_adaptor):
+def assembler(mock_adapter):
     return DashboardAssembler(
-        adaptor=mock_adaptor,
+        adapter=mock_adapter,
         default_dialect="sqlite",
         default_database="main",
         default_schema="public",
@@ -486,16 +486,16 @@ class TestResolveChartDataset:
 
 
 class TestHydrateDatasets:
-    def test_hydrate_success(self, assembler, mock_adaptor):
+    def test_hydrate_success(self, assembler, mock_adapter):
         ds = make_dataset(1, "sales")
         hydrated = make_dataset(1, "sales_hydrated")
-        mock_adaptor.get_dataset.return_value = hydrated
+        mock_adapter.get_dataset.return_value = hydrated
         result = assembler.hydrate_datasets([ds])
         assert result[0].name == "sales_hydrated"
 
-    def test_hydrate_fallback_on_error(self, assembler, mock_adaptor):
+    def test_hydrate_fallback_on_error(self, assembler, mock_adapter):
         ds = make_dataset(1, "sales")
-        mock_adaptor.get_dataset.side_effect = Exception("API error")
+        mock_adapter.get_dataset.side_effect = Exception("API error")
         result = assembler.hydrate_datasets([ds])
         # Should fall back to original
         assert result[0] is ds
@@ -511,33 +511,33 @@ class TestHydrateDatasets:
 
 
 class TestExtractDashboard:
-    def test_extract_dashboard(self, assembler, mock_adaptor):
+    def test_extract_dashboard(self, assembler, mock_adapter):
         dashboard = DashboardInfo(id=1, name="D", chart_ids=[10])
-        mock_adaptor.parse_dashboard_id.return_value = 1
-        mock_adaptor.get_dashboard_info.return_value = dashboard
-        mock_adaptor.list_charts.return_value = [make_chart(10, "C")]
-        mock_adaptor.get_chart.return_value = make_chart(10, "C")
-        mock_adaptor.list_datasets.return_value = [make_dataset(1, "sales")]
+        mock_adapter.parse_dashboard_id.return_value = 1
+        mock_adapter.get_dashboard_info.return_value = dashboard
+        mock_adapter.list_charts.return_value = [make_chart(10, "C")]
+        mock_adapter.get_chart.return_value = make_chart(10, "C")
+        mock_adapter.list_datasets.return_value = [make_dataset(1, "sales")]
 
         result = assembler.extract_dashboard("http://localhost/dashboard/1")
         assert result.dashboard_id == 1
         assert len(result.charts) == 1
 
-    def test_extract_dashboard_not_found_raises(self, assembler, mock_adaptor):
-        mock_adaptor.parse_dashboard_id.return_value = 999
-        mock_adaptor.get_dashboard_info.return_value = None
+    def test_extract_dashboard_not_found_raises(self, assembler, mock_adapter):
+        mock_adapter.parse_dashboard_id.return_value = 999
+        mock_adapter.get_dashboard_info.return_value = None
         with pytest.raises(ValueError, match="not found"):
             assembler.extract_dashboard("http://localhost/dashboard/999")
 
-    def test_load_charts_fallback_to_meta(self, assembler, mock_adaptor):
+    def test_load_charts_fallback_to_meta(self, assembler, mock_adapter):
         """If get_chart fails, falls back to chart meta."""
         dashboard = DashboardInfo(id=1, name="D", chart_ids=[5])
         chart_meta = make_chart(5, "FallbackChart")
-        mock_adaptor.parse_dashboard_id.return_value = 1
-        mock_adaptor.get_dashboard_info.return_value = dashboard
-        mock_adaptor.list_charts.return_value = [chart_meta]
-        mock_adaptor.get_chart.side_effect = Exception("Not found")
-        mock_adaptor.list_datasets.return_value = []
+        mock_adapter.parse_dashboard_id.return_value = 1
+        mock_adapter.get_dashboard_info.return_value = dashboard
+        mock_adapter.list_charts.return_value = [chart_meta]
+        mock_adapter.get_chart.side_effect = Exception("Not found")
+        mock_adapter.list_datasets.return_value = []
 
         result = assembler.extract_dashboard("http://localhost/dashboard/1")
         assert len(result.charts) == 1

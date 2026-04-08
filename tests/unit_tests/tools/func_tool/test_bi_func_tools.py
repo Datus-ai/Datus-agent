@@ -84,8 +84,8 @@ class MockDatasetWriteMixin:
         return [{"id": 1, "name": "PostgreSQL"}]
 
 
-class FullMockAdaptor(MockListDashboardsMixin, MockDashboardWriteMixin, MockChartWriteMixin, MockDatasetWriteMixin):
-    """Mock adaptor implementing all mixins."""
+class FullMockAdapter(MockListDashboardsMixin, MockDashboardWriteMixin, MockChartWriteMixin, MockDatasetWriteMixin):
+    """Mock adapter implementing all mixins."""
 
     def get_dashboard_info(self, dashboard_id):
         return _DashboardInfo(id=dashboard_id, name="Test", description="", chart_ids=[])
@@ -100,8 +100,8 @@ class FullMockAdaptor(MockListDashboardsMixin, MockDashboardWriteMixin, MockChar
         return _ChartInfo(id=chart_id, name="Test Chart", chart_type="bar")
 
 
-class ReadOnlyMockAdaptor:
-    """Mock adaptor with only read operations."""
+class ReadOnlyMockAdapter:
+    """Mock adapter with only read operations."""
 
     def get_dashboard_info(self, dashboard_id):
         return _DashboardInfo(id=dashboard_id, name="Read Only Dashboard")
@@ -146,12 +146,12 @@ _bi_core_mock.models.DashboardSpec = _MockDashboardSpec
 
 
 class TestBIFuncToolAvailableTools:
-    def test_full_adaptor_all_tools(self):
+    def test_full_adapter_all_tools(self):
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
             from datus.tools.func_tool.bi_func_tools import BIFuncTool
 
-            adaptor = FullMockAdaptor()
-            tool = BIFuncTool(adaptor)
+            adapter = FullMockAdapter()
+            tool = BIFuncTool(adapter)
             tools = tool.available_tools()
             tool_names = {t.name for t in tools}
             # Base read tools
@@ -170,15 +170,15 @@ class TestBIFuncToolAvailableTools:
             assert "delete_chart" in tool_names
             assert "delete_dataset" in tool_names
 
-    def test_read_only_adaptor_limited_tools(self):
+    def test_read_only_adapter_limited_tools(self):
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
             from datus.tools.func_tool.bi_func_tools import BIFuncTool
 
-            adaptor = ReadOnlyMockAdaptor()
-            tool = BIFuncTool(adaptor)
+            adapter = ReadOnlyMockAdapter()
+            tool = BIFuncTool(adapter)
             tools = tool.available_tools()
             tool_names = {t.name for t in tools}
-            # No list_dashboards method on this adaptor
+            # No list_dashboards method on this adapter
             assert "list_dashboards" not in tool_names
             assert "get_dashboard" in tool_names
             # No write tools
@@ -191,7 +191,7 @@ class TestBIFuncToolReadOps:
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
             from datus.tools.func_tool.bi_func_tools import BIFuncTool
 
-            return BIFuncTool(FullMockAdaptor())
+            return BIFuncTool(FullMockAdapter())
 
     def test_list_dashboards_success(self):
         tool = self._make_tool()
@@ -217,7 +217,7 @@ class TestBIFuncToolWriteOps:
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock, "datus_bi_core.models": _bi_core_mock.models}):
             from datus.tools.func_tool.bi_func_tools import BIFuncTool
 
-            return BIFuncTool(FullMockAdaptor())
+            return BIFuncTool(FullMockAdapter())
 
     def test_create_dashboard(self):
         tool = self._make_tool()
@@ -267,7 +267,7 @@ class TestBIFuncToolWriteOps:
 
     def test_update_dashboard_not_found(self):
         tool = self._make_tool()
-        tool.adaptor.get_dashboard_info = lambda dashboard_id: None
+        tool.adapter.get_dashboard_info = lambda dashboard_id: None
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock, "datus_bi_core.models": _bi_core_mock.models}):
             result = tool.update_dashboard("999", title="New Title")
         assert result.success == 0
@@ -275,7 +275,7 @@ class TestBIFuncToolWriteOps:
 
     def test_update_chart_not_found(self):
         tool = self._make_tool()
-        tool.adaptor.get_chart = lambda chart_id, **kwargs: None
+        tool.adapter.get_chart = lambda chart_id, **kwargs: None
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock, "datus_bi_core.models": _bi_core_mock.models}):
             result = tool.update_chart("999", title="New Title")
         assert result.success == 0
@@ -376,33 +376,33 @@ class TestBIFuncToolWriteOps:
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
             from datus.tools.func_tool.bi_func_tools import BIFuncTool
 
-            tool = BIFuncTool(ReadOnlyMockAdaptor())
+            tool = BIFuncTool(ReadOnlyMockAdapter())
         result = tool.list_dashboards()
         assert result.success == 0
         assert "not support" in result.error.lower()
 
     def test_get_dashboard_not_found(self):
         tool = self._make_tool()
-        tool.adaptor.get_dashboard_info = lambda dashboard_id: None
+        tool.adapter.get_dashboard_info = lambda dashboard_id: None
         result = tool.get_dashboard("999")
         assert result.success == 0
         assert "not found" in result.error
 
     def test_list_charts_exception(self):
         tool = self._make_tool()
-        tool.adaptor.list_charts = lambda dashboard_id: (_ for _ in ()).throw(RuntimeError("fail"))
+        tool.adapter.list_charts = lambda dashboard_id: (_ for _ in ()).throw(RuntimeError("fail"))
         result = tool.list_charts("1")
         assert result.success == 0
 
     def test_list_datasets_exception(self):
         tool = self._make_tool()
-        tool.adaptor.list_datasets = lambda dashboard_id="": (_ for _ in ()).throw(RuntimeError("fail"))
+        tool.adapter.list_datasets = lambda dashboard_id="": (_ for _ in ()).throw(RuntimeError("fail"))
         result = tool.list_datasets()
         assert result.success == 0
 
     def test_error_handling(self):
         tool = self._make_tool()
-        tool.adaptor.list_dashboards = lambda **kwargs: (_ for _ in ()).throw(RuntimeError("connection failed"))
+        tool.adapter.list_dashboards = lambda **kwargs: (_ for _ in ()).throw(RuntimeError("connection failed"))
         result = tool.list_dashboards()
         assert result.success == 0
         assert "connection failed" in result.error
@@ -416,7 +416,7 @@ class TestBIFuncToolWriteQuery:
             from datus.tools.func_tool.bi_func_tools import BIFuncTool
 
             return BIFuncTool(
-                FullMockAdaptor(),
+                FullMockAdapter(),
                 dataset_db_uri="postgresql+psycopg2://superset:superset@localhost:5432/superset",
                 dataset_db_schema="public",
             )
@@ -425,7 +425,7 @@ class TestBIFuncToolWriteQuery:
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
             from datus.tools.func_tool.bi_func_tools import BIFuncTool
 
-            tool = BIFuncTool(FullMockAdaptor())
+            tool = BIFuncTool(FullMockAdapter())
             result = tool.write_query("SELECT 1", "my_table")
         assert result.success == 0
         assert "dataset_db" in result.error
@@ -527,7 +527,7 @@ class TestBIFuncToolResolveGrafanaDatasource:
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
             from datus.tools.func_tool.bi_func_tools import BIFuncTool
 
-            tool = BIFuncTool(FullMockAdaptor())
+            tool = BIFuncTool(FullMockAdapter())
             tool._grafana_ds_uid = "cached-uid-123"
             assert tool._resolve_grafana_datasource_uid() == "cached-uid-123"
 
@@ -535,8 +535,8 @@ class TestBIFuncToolResolveGrafanaDatasource:
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
             from datus.tools.func_tool.bi_func_tools import BIFuncTool
 
-            adaptor = MagicMock(spec=[])  # no list_datasets
-            tool = BIFuncTool(adaptor)
+            adapter = MagicMock(spec=[])  # no list_datasets
+            tool = BIFuncTool(adapter)
             assert tool._resolve_grafana_datasource_uid() is None
 
     def test_matches_by_datasource_name(self):
@@ -547,10 +547,10 @@ class TestBIFuncToolResolveGrafanaDatasource:
             ds_info.name = "My-PostgreSQL"
             ds_info.extra = {"grafana_ds": {"uid": "matched-uid"}}
 
-            adaptor = MagicMock()
-            adaptor.list_datasets.return_value = [ds_info]
+            adapter = MagicMock()
+            adapter.list_datasets.return_value = [ds_info]
 
-            tool = BIFuncTool(adaptor, datasource_name="My-PostgreSQL")
+            tool = BIFuncTool(adapter, datasource_name="My-PostgreSQL")
             uid = tool._resolve_grafana_datasource_uid()
             assert uid == "matched-uid"
             assert tool._grafana_ds_uid == "matched-uid"
@@ -563,11 +563,11 @@ class TestBIFuncToolResolveGrafanaDatasource:
             ds_info.name = "some-other-name"
             ds_info.extra = {"grafana_ds": {"uid": "fallback-uid", "jsonData": {"database": "grafana_data"}}}
 
-            adaptor = MagicMock()
-            adaptor.list_datasets.return_value = [ds_info]
+            adapter = MagicMock()
+            adapter.list_datasets.return_value = [ds_info]
 
             tool = BIFuncTool(
-                adaptor,
+                adapter,
                 dataset_db_uri="postgresql+psycopg2://user:pass@localhost:5434/grafana_data",
             )
             uid = tool._resolve_grafana_datasource_uid()
@@ -581,11 +581,11 @@ class TestBIFuncToolResolveGrafanaDatasource:
             ds_info.name = "unrelated"
             ds_info.extra = {"grafana_ds": {"uid": "some-uid", "jsonData": {"database": "other_db"}}}
 
-            adaptor = MagicMock()
-            adaptor.list_datasets.return_value = [ds_info]
+            adapter = MagicMock()
+            adapter.list_datasets.return_value = [ds_info]
 
             tool = BIFuncTool(
-                adaptor,
+                adapter,
                 datasource_name="NonExistent",
                 dataset_db_uri="postgresql+psycopg2://user:pass@localhost/my_db",
             )
@@ -601,7 +601,7 @@ class TestBIFuncToolWriteQueryContinued:
             from datus.tools.func_tool.bi_func_tools import BIFuncTool
 
             return BIFuncTool(
-                FullMockAdaptor(),
+                FullMockAdapter(),
                 dataset_db_uri="postgresql+psycopg2://superset:superset@localhost:5432/superset",
                 dataset_db_schema="public",
             )
@@ -610,7 +610,7 @@ class TestBIFuncToolWriteQueryContinued:
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
             from datus.tools.func_tool.bi_func_tools import BIFuncTool
 
-            tool = BIFuncTool(FullMockAdaptor())
+            tool = BIFuncTool(FullMockAdapter())
             tools = tool.available_tools()
         tool_names = {t.name for t in tools}
         assert "write_query" not in tool_names

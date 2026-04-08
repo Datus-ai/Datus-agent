@@ -4,8 +4,8 @@
 from datus_bi_core import (  # noqa: F401
     AuthParam,
     AuthType,
-    BIAdaptorBase,
-    BIAdaptorRegistry,
+    BIAdapterBase,
+    BIAdapterRegistry,
     ChartInfo,
     ChartWriteMixin,
     ColumnInfo,
@@ -17,5 +17,5 @@ from datus_bi_core import (  # noqa: F401
     ListDashboardsMixin,
     MetricDef,
     QuerySpec,
-    adaptor_registry,
+    adapter_registry,
 )

@@ -179,11 +179,11 @@ class ChatAgenticNode(AgenticNode):
                 logger.warning(f"bi_platform '{bi_platform}' configured but no dashboard config found")
                 return
 
-            from datus_bi_core import AuthParam, adaptor_registry
+            from datus_bi_core import AuthParam, adapter_registry
 
-            adaptor_cls = adaptor_registry.get(bi_platform)
-            if not adaptor_cls:
-                logger.warning(f"No BI adaptor registered for platform '{bi_platform}'")
+            adapter_cls = adapter_registry.get(bi_platform)
+            if not adapter_cls:
+                logger.warning(f"No BI adapter registered for platform '{bi_platform}'")
                 return
 
             api_url = dash_cfg.api_url
@@ -206,7 +206,7 @@ class ChatAgenticNode(AgenticNode):
                             dialect = make_url(ds_uri).get_backend_name()
                         except Exception:
                             pass
-            adaptor = adaptor_cls(api_base_url=api_url, auth_params=auth_params, dialect=dialect)
+            adapter = adapter_cls(api_base_url=api_url, auth_params=auth_params, dialect=dialect)
             dataset_db_uri = ""
             dataset_db_schema = ""
             if dash_cfg.dataset_db:
@@ -219,7 +219,7 @@ class ChatAgenticNode(AgenticNode):
             if self.db_func_tool and hasattr(self.db_func_tool, "connector"):
                 read_connector = self.db_func_tool.connector
             self.bi_func_tool = BIFuncTool(
-                adaptor,
+                adapter,
                 dataset_db_uri=dataset_db_uri,
                 dataset_db_schema=dataset_db_schema,
                 read_connector=read_connector,
@@ -228,7 +228,7 @@ class ChatAgenticNode(AgenticNode):
             self.tools.extend(self.bi_func_tool.available_tools())
             logger.info(f"BI tools initialized for platform '{bi_platform}'")
         except ImportError as e:
-            logger.warning(f"BI adaptor package not installed for '{bi_platform}': {e}")
+            logger.warning(f"BI adapter package not installed for '{bi_platform}': {e}")
         except Exception as e:
             logger.error(f"Failed to setup BI tools: {e}")
 

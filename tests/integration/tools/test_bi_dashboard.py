@@ -115,14 +115,14 @@ def input_data() -> List[Dict[str, Any]]:
 # ============================================================================
 
 
-def _create_adaptor(bi_commands, agent_config, dashboard_item):
-    """Create a BI adaptor from dashboard_item config."""
+def _create_adapter(bi_commands, agent_config, dashboard_item):
+    """Create a BI adapter from dashboard_item config."""
     platform = dashboard_item["platform"]
     dashboard_config = agent_config.dashboard_config.get(platform)
     if not dashboard_config:
         pytest.skip(f"Dashboard config for platform '{platform}' not found")
 
-    return bi_commands._create_adaptor(
+    return bi_commands._create_adapter(
         DashboardCliOptions(
             platform=platform,
             dashboard_url=dashboard_item["dashboard_url"],
@@ -140,7 +140,7 @@ def _create_adaptor(bi_commands, agent_config, dashboard_item):
 
 def _extract_and_select_charts(
     bi_commands,
-    bi_adaptor,
+    bi_adapter,
     dashboard_item,
 ) -> Tuple[Any, List[ChartSelection], List[Any], List[Any]]:
     """Extract dashboard, select charts with SQL validation, and assemble.
@@ -150,15 +150,15 @@ def _extract_and_select_charts(
     """
     dashboard_url = dashboard_item["dashboard_url"]
 
-    dashboard_id = bi_adaptor.parse_dashboard_id(dashboard_url)
-    dashboard = bi_adaptor.get_dashboard_info(dashboard_id)
+    dashboard_id = bi_adapter.parse_dashboard_id(dashboard_url)
+    dashboard = bi_adapter.get_dashboard_info(dashboard_id)
     assert dashboard is not None, "Failed to get dashboard"
     assert dashboard.name, "Dashboard should have name"
 
-    chart_metas = bi_adaptor.list_charts(dashboard_id)
+    chart_metas = bi_adapter.list_charts(dashboard_id)
     assert len(chart_metas) > 0, "Dashboard should have charts"
 
-    charts = bi_commands._hydrate_charts(bi_adaptor, dashboard_id, chart_metas)
+    charts = bi_commands._hydrate_charts(bi_adapter, dashboard_id, chart_metas)
     charts_with_sql = [c for c in charts if c.query and c.query.sql]
     assert len(charts_with_sql) > 0, "Should have charts with SQL"
 
@@ -192,14 +192,14 @@ def _extract_and_select_charts(
 
     assert len(chart_selections) > 0, "Should have at least one chart selected"
 
-    datasets = bi_adaptor.list_datasets(dashboard_id)
+    datasets = bi_adapter.list_datasets(dashboard_id)
 
     return dashboard, chart_selections, charts, datasets
 
 
-def _assemble(bi_adaptor, dashboard, chart_selections, datasets, dialect):
+def _assemble(bi_adapter, dashboard, chart_selections, datasets, dialect):
     """Run the DashboardAssembler and verify results."""
-    assembler = DashboardAssembler(bi_adaptor, default_dialect=dialect)
+    assembler = DashboardAssembler(bi_adapter, default_dialect=dialect)
     result = assembler.assemble(dashboard, chart_selections, chart_selections, datasets)
 
     assert len(result.reference_sqls) > 0, "Should have reference SQLs"
@@ -235,13 +235,13 @@ class TestPartialIntegration:
         for dashboard_item in input_data:
             platform = dashboard_item["platform"]
             dialect = dashboard_item.get("dialect", "postgresql")
-            bi_adaptor = _create_adaptor(bi_commands, agent_config, dashboard_item)
+            bi_adapter = _create_adapter(bi_commands, agent_config, dashboard_item)
 
             try:
                 dashboard, chart_selections, charts, datasets = _extract_and_select_charts(
-                    bi_commands, bi_adaptor, dashboard_item
+                    bi_commands, bi_adapter, dashboard_item
                 )
-                result = _assemble(bi_adaptor, dashboard, chart_selections, datasets, dialect)
+                result = _assemble(bi_adapter, dashboard, chart_selections, datasets, dialect)
 
                 # Mock ONLY the LLM calls and slow initialization
                 with (
@@ -304,8 +304,8 @@ class TestPartialIntegration:
                 print("  - Mocked LLM calls: 3 calls avoided")
 
             finally:
-                if hasattr(bi_adaptor, "close"):
-                    bi_adaptor.close()
+                if hasattr(bi_adapter, "close"):
+                    bi_adapter.close()
 
 
 # ============================================================================
@@ -356,7 +356,7 @@ class TestE2EIntegration:
         for dashboard_item in input_data:
             platform = dashboard_item["platform"]
             dialect = dashboard_item.get("dialect", "postgresql")
-            bi_adaptor = _create_adaptor(bi_commands, agent_config, dashboard_item)
+            bi_adapter = _create_adapter(bi_commands, agent_config, dashboard_item)
 
             test_result = {
                 "platform": platform,
@@ -374,7 +374,7 @@ class TestE2EIntegration:
 
             try:
                 dashboard, chart_selections, charts, datasets = _extract_and_select_charts(
-                    bi_commands, bi_adaptor, dashboard_item
+                    bi_commands, bi_adapter, dashboard_item
                 )
 
                 sub_agent_name = bi_commands._build_sub_agent_name(platform, dashboard.name or "")
@@ -386,7 +386,7 @@ class TestE2EIntegration:
                     if os.path.exists(sa_path):
                         shutil.rmtree(sa_path)
 
-                result = _assemble(bi_adaptor, dashboard, chart_selections, datasets, dialect)
+                result = _assemble(bi_adapter, dashboard, chart_selections, datasets, dialect)
 
                 # Save sub-agent (complete flow: gen + save + bootstrap)
                 bi_commands._save_sub_agent(platform, dashboard, result)
@@ -461,8 +461,8 @@ class TestE2EIntegration:
 
             finally:
                 test_results.append(test_result)
-                if hasattr(bi_adaptor, "close"):
-                    bi_adaptor.close()
+                if hasattr(bi_adapter, "close"):
+                    bi_adapter.close()
 
         # Print summary
         print("-" * 80)

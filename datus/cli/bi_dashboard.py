@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 
 import pandas as pd
 import yaml
-from datus_bi_core import AuthParam, AuthType, BIAdaptorBase, ChartInfo, DashboardInfo, DatasetInfo, adaptor_registry
+from datus_bi_core import AuthParam, AuthType, BIAdapterBase, ChartInfo, DashboardInfo, DatasetInfo, adapter_registry
 from rich.console import Console
 from rich.syntax import Syntax
 from rich.table import Table
@@ -85,7 +85,7 @@ class BiDashboardCommands:
             self.agent_config = agent_config
             self.console = console or Console(log_path=False)
             self._configuration_manager = None
-        self._adaptor_registry = self._discover_adaptors()
+        self._adapter_registry = self._discover_adapters()
         self._force = force
         self.db_manager = db_manager_instance(self.agent_config.namespaces)
 
@@ -109,10 +109,10 @@ class BiDashboardCommands:
             self.console.print(f"[bold red]Error:[/] {exc}")
             return
 
-        adaptor = self._create_adaptor(options)
+        adapter = self._create_adapter(options)
         default_catalog, default_database, default_schema = self._resolve_default_table_context()
         assembler = DashboardAssembler(
-            adaptor,
+            adapter,
             default_dialect=options.dialect,
             default_catalog=default_catalog,
             default_database=default_database,
@@ -120,17 +120,17 @@ class BiDashboardCommands:
         )
 
         try:
-            dashboard, dashboard_id = self._confirm_dashboard(adaptor, options.dashboard_url)
+            dashboard, dashboard_id = self._confirm_dashboard(adapter, options.dashboard_url)
             if dashboard is None:
                 return
 
             with self.console.status("Loading charts..."):
-                chart_metas = adaptor.list_charts(dashboard_id)
+                chart_metas = adapter.list_charts(dashboard_id)
             if not chart_metas:
                 self.console.print("[yellow]No charts found in this dashboard.[/]")
                 return
 
-            chart_details = self._hydrate_charts(adaptor, dashboard_id, chart_metas)
+            chart_details = self._hydrate_charts(adapter, dashboard_id, chart_metas)
 
             if not chart_details:
                 self.console.print("[yellow]No charts found in this dashboard.[/]")
@@ -165,7 +165,7 @@ class BiDashboardCommands:
                 return
 
             with self.console.status("Loading datasets..."):
-                datasets = adaptor.list_datasets(dashboard_id)
+                datasets = adapter.list_datasets(dashboard_id)
 
             result = assembler.assemble(dashboard, chart_selections_ref, chart_selections_metrics, datasets)
 
@@ -177,16 +177,16 @@ class BiDashboardCommands:
             self.console.print("\n[yellow]Cancelled.[/]")
         finally:
             try:
-                adaptor.close()
+                adapter.close()
             except Exception:
                 pass
 
     def _prompt_options(self) -> DashboardCliOptions:
-        platforms = sorted(self._adaptor_registry)
+        platforms = sorted(self._adapter_registry)
         if not platforms:
-            raise ValueError("No BI adaptor implementations found. Install one with: pip install datus-agent[bi]")
+            raise ValueError("No BI adapter implementations found. Install one with: pip install datus-agent[bi]")
         platform = self._prompt_input("Select BI platform", default=platforms[0], choices=platforms)
-        if platform not in self._adaptor_registry:
+        if platform not in self._adapter_registry:
             raise ValueError(f"Unsupported platform '{platform}'")
 
         dashboard_url = self._prompt_input("Dashboard URL")
@@ -197,9 +197,9 @@ class BiDashboardCommands:
         api_base_url = self._prompt_input("API base URL (e.g. https://host)", default=api_base_url)
         if not api_base_url:
             raise ValueError("API base URL is required.")
-        metadata = adaptor_registry.get_metadata(platform)
+        metadata = adapter_registry.get_metadata(platform)
         if metadata is None:
-            raise ValueError(f"Missing BI adaptor metadata for '{platform}'")
+            raise ValueError(f"Missing BI adapter metadata for '{platform}'")
         auth_param = self._resolve_auth_params(platform, metadata.auth_type)
         if auth_param is None:
             auth_param = self._prompt_auth_params(platform, metadata.auth_type)
@@ -276,13 +276,13 @@ class BiDashboardCommands:
         return auth_param
 
     def _confirm_dashboard(
-        self, adaptor: BIAdaptorBase, dashboard_url: str
+        self, adapter: BIAdapterBase, dashboard_url: str
     ) -> tuple[Optional[DashboardInfo], Optional[Union[int, str]]]:
         while True:
-            dashboard_id = adaptor.parse_dashboard_id(dashboard_url)
+            dashboard_id = adapter.parse_dashboard_id(dashboard_url)
             try:
                 with self.console.status("Loading dashboard..."):
-                    dashboard = adaptor.get_dashboard_info(dashboard_id)
+                    dashboard = adapter.get_dashboard_info(dashboard_id)
             except Exception as exc:
                 # Sanitize URL to avoid leaking sensitive query parameters in logs
                 parsed = urlparse(dashboard_url)
@@ -309,13 +309,13 @@ class BiDashboardCommands:
                     continue
             return None, None
 
-    def _create_adaptor(self, options: DashboardCliOptions) -> BIAdaptorBase:
-        adaptor_cls = self._adaptor_registry.get(options.platform)
-        if adaptor_cls is None:
+    def _create_adapter(self, options: DashboardCliOptions) -> BIAdapterBase:
+        adapter_cls = self._adapter_registry.get(options.platform)
+        if adapter_cls is None:
             raise ValueError(
                 f"Unsupported platform '{options.platform}'. Install it with: pip install datus-bi-{options.platform}"
             )
-        return adaptor_cls(
+        return adapter_cls(
             api_base_url=options.api_base_url, auth_params=options.auth_params, dialect=self.agent_config.db_type
         )
 
@@ -384,7 +384,7 @@ class BiDashboardCommands:
 
     def _hydrate_charts(
         self,
-        adaptor: BIAdaptorBase,
+        adapter: BIAdapterBase,
         dashboard_id: Union[int, str],
         chart_metas: Sequence[ChartInfo],
     ) -> List[ChartInfo]:
@@ -394,7 +394,7 @@ class BiDashboardCommands:
             for idx, chart_meta in enumerate(chart_metas, start=1):
                 status.update(f"Loading chart {idx}/{total}...")
                 try:
-                    chart_detail = adaptor.get_chart(chart_meta.id, dashboard_id)
+                    chart_detail = adapter.get_chart(chart_meta.id, dashboard_id)
                 except Exception as exc:
                     logger.warning(f"Failed to load chart {chart_meta.id}: {exc}")
                     self.console.print(f"[yellow]Failed to load chart {chart_meta.id}:[/] {exc}")
@@ -1065,8 +1065,8 @@ class BiDashboardCommands:
 
         self.console.print(table)
 
-    def _discover_adaptors(self) -> dict[str, type[BIAdaptorBase]]:
-        return adaptor_registry.list_adaptors()
+    def _discover_adapters(self) -> dict[str, type[BIAdapterBase]]:
+        return adapter_registry.list_adapters()
 
     def _hydrate_datasets(
         self,

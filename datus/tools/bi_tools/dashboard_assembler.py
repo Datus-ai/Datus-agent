@@ -7,7 +7,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Union
 
-from datus_bi_core import BIAdaptorBase, ChartInfo, DashboardInfo, DatasetInfo
+from datus_bi_core import BIAdapterBase, ChartInfo, DashboardInfo, DatasetInfo
 
 from datus.tools.db_tools import connector_registry
 from datus.utils.constants import DBType
@@ -74,26 +74,26 @@ class DashboardAssemblyResult:
 class DashboardAssembler:
     def __init__(
         self,
-        adaptor: BIAdaptorBase,
+        adapter: BIAdapterBase,
         default_dialect: Optional[str] = None,
         default_catalog: str = "",
         default_database: str = "",
         default_schema: str = "",
     ) -> None:
-        self.adaptor = adaptor
+        self.adapter = adapter
         self.default_dialect = default_dialect
         self.default_catalog = (default_catalog or "").strip()
         self.default_database = (default_database or "").strip()
         self.default_schema = (default_schema or "").strip()
 
     def extract_dashboard(self, dashboard_url: str) -> DashboardExtraction:
-        dashboard_id = self.adaptor.parse_dashboard_id(dashboard_url)
-        dashboard = self.adaptor.get_dashboard_info(dashboard_id)
+        dashboard_id = self.adapter.parse_dashboard_id(dashboard_url)
+        dashboard = self.adapter.get_dashboard_info(dashboard_id)
         if not dashboard:
             raise ValueError(f"Dashboard {dashboard_id} not found")
 
         charts = self._load_charts(dashboard_id, dashboard)
-        datasets = self.adaptor.list_datasets(dashboard_id)
+        datasets = self.adapter.list_datasets(dashboard_id)
 
         return DashboardExtraction(
             dashboard_id=dashboard_id,
@@ -108,7 +108,7 @@ class DashboardAssembler:
         hydrated: List[DatasetInfo] = []
         for dataset in datasets:
             try:
-                detail = self.adaptor.get_dataset(dataset.id, dashboard_id)
+                detail = self.adapter.get_dataset(dataset.id, dashboard_id)
             except Exception as exc:
                 logger.warning("Failed to fetch dataset %s: %s", dataset.id, exc)
                 detail = None
@@ -181,7 +181,7 @@ class DashboardAssembler:
         return result
 
     def _load_charts(self, dashboard_id: Union[int, str], dashboard: DashboardInfo) -> List[ChartInfo]:
-        chart_metas = self.adaptor.list_charts(dashboard_id)
+        chart_metas = self.adapter.list_charts(dashboard_id)
         chart_meta_map = {str(chart.id): chart for chart in chart_metas}
 
         chart_ids = list(dashboard.chart_ids or [])
@@ -191,7 +191,7 @@ class DashboardAssembler:
         charts: List[ChartInfo] = []
         for chart_id in chart_ids:
             try:
-                chart = self.adaptor.get_chart(chart_id, dashboard_id)
+                chart = self.adapter.get_chart(chart_id, dashboard_id)
             except Exception as exc:
                 logger.warning("Failed to fetch chart %s: %s", chart_id, exc)
                 chart = None

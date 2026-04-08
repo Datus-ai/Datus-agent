@@ -1462,12 +1462,12 @@ class TestChatAgenticNodeExecutionMode:
 # ===========================================================================
 
 
-def _mock_bi_core(mock_adaptor_cls):
+def _mock_bi_core(mock_adapter_cls):
     """Build a mock datus_bi_core module for testing without the real package."""
     from unittest.mock import MagicMock
 
     mock_module = MagicMock()
-    mock_module.adaptor_registry.get.return_value = mock_adaptor_cls
+    mock_module.adapter_registry.get.return_value = mock_adapter_cls
     mock_module.AuthParam = MagicMock()
     return mock_module
 
@@ -1504,8 +1504,8 @@ class TestChatAgenticNodeBITools:
 
         cfg = self._make_bi_agent_config(real_agent_config)
 
-        mock_adaptor_cls = MagicMock(return_value=MagicMock())
-        bi_core_mock = _mock_bi_core(mock_adaptor_cls)
+        mock_adapter_cls = MagicMock(return_value=MagicMock())
+        bi_core_mock = _mock_bi_core(mock_adapter_cls)
 
         with (
             patch("datus.agent.node.chat_agentic_node.BIFuncTool") as mock_bi_tool_cls,
@@ -1540,8 +1540,8 @@ class TestChatAgenticNodeBITools:
         cfg = self._make_bi_agent_config(real_agent_config)
         cfg.dashboard_config["superset"].dataset_db["datasource_name"] = "My-PostgreSQL"
 
-        mock_adaptor_cls = MagicMock(return_value=MagicMock())
-        bi_core_mock = _mock_bi_core(mock_adaptor_cls)
+        mock_adapter_cls = MagicMock(return_value=MagicMock())
+        bi_core_mock = _mock_bi_core(mock_adapter_cls)
 
         with (
             patch("datus.agent.node.chat_agentic_node.BIFuncTool") as mock_bi_tool_cls,
@@ -1585,8 +1585,8 @@ class TestChatAgenticNodeBITools:
 
         cfg = self._make_bi_agent_config(real_agent_config)
 
-        mock_adaptor_cls = MagicMock(return_value=MagicMock())
-        bi_core_mock = _mock_bi_core(mock_adaptor_cls)
+        mock_adapter_cls = MagicMock(return_value=MagicMock())
+        bi_core_mock = _mock_bi_core(mock_adapter_cls)
 
         with (
             patch("datus.agent.node.chat_agentic_node.BIFuncTool") as mock_bi_tool_cls,

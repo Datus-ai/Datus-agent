@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""BIFuncTool: LLM function calling layer for BI adaptors."""
+"""BIFuncTool: LLM function calling layer for BI adapters."""
 
 from __future__ import annotations
 
@@ -22,10 +22,10 @@ logger = get_logger(__name__)
 
 class BIFuncTool:
     """
-    LLM function calling layer for BI adaptors.
+    LLM function calling layer for BI adapters.
 
-    Dynamically exposes tools based on adaptor capabilities:
-    - All adaptors: list_dashboards, get_dashboard, list_charts, list_datasets
+    Dynamically exposes tools based on adapter capabilities:
+    - All adapters: list_dashboards, get_dashboard, list_charts, list_datasets
     - DashboardWriteMixin: create_dashboard, update_dashboard
     - ChartWriteMixin: create_chart, update_chart, add_chart_to_dashboard
     - DatasetWriteMixin: create_dataset, list_bi_databases
@@ -34,13 +34,13 @@ class BIFuncTool:
 
     def __init__(
         self,
-        adaptor: Any,
+        adapter: Any,
         dataset_db_uri: str = "",
         dataset_db_schema: str = "",
         read_connector: Any = None,
         datasource_name: str = "",
     ) -> None:
-        self.adaptor = adaptor
+        self.adapter = adapter
         self._dataset_db_uri = dataset_db_uri
         self._dataset_db_schema = dataset_db_schema
         self._read_connector = read_connector
@@ -50,16 +50,16 @@ class BIFuncTool:
         self._grafana_ds_uid = None  # lazy-resolved Grafana datasource UID
 
     # ------------------------------------------------------------------ #
-    # Read operations (available on all adaptors)
+    # Read operations (available on all adapters)
     # ------------------------------------------------------------------ #
 
     def list_dashboards(self, search: str = "") -> FuncToolResult:
         """List dashboards in the BI platform. Optionally filter by search keyword."""
         try:
-            if hasattr(self.adaptor, "list_dashboards"):
-                results = self.adaptor.list_dashboards(search=search)
+            if hasattr(self.adapter, "list_dashboards"):
+                results = self.adapter.list_dashboards(search=search)
                 return FuncToolResult(result=[r.model_dump() for r in results])
-            return FuncToolResult(success=0, error="This adaptor does not support list_dashboards")
+            return FuncToolResult(success=0, error="This adapter does not support list_dashboards")
         except Exception as exc:
             logger.warning(f"list_dashboards failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
@@ -67,7 +67,7 @@ class BIFuncTool:
     def get_dashboard(self, dashboard_id: str) -> FuncToolResult:
         """Get detailed information about a specific dashboard by its ID."""
         try:
-            result = self.adaptor.get_dashboard_info(dashboard_id)
+            result = self.adapter.get_dashboard_info(dashboard_id)
             if result is None:
                 return FuncToolResult(success=0, error=f"Dashboard {dashboard_id} not found")
             return FuncToolResult(result=result.model_dump())
@@ -78,7 +78,7 @@ class BIFuncTool:
     def list_charts(self, dashboard_id: str) -> FuncToolResult:
         """List all charts/panels in a dashboard."""
         try:
-            results = self.adaptor.list_charts(dashboard_id)
+            results = self.adapter.list_charts(dashboard_id)
             return FuncToolResult(result=[r.model_dump() for r in results])
         except Exception as exc:
             logger.warning(f"list_charts failed: {exc}")
@@ -87,7 +87,7 @@ class BIFuncTool:
     def list_datasets(self, dashboard_id: str = "") -> FuncToolResult:
         """List datasets available in the BI platform. For Superset, pass dashboard_id to scope results."""
         try:
-            results = self.adaptor.list_datasets(dashboard_id)
+            results = self.adapter.list_datasets(dashboard_id)
             return FuncToolResult(result=[r.model_dump() for r in results])
         except Exception as exc:
             logger.warning(f"list_datasets failed: {exc}")
@@ -103,7 +103,7 @@ class BIFuncTool:
             from datus_bi_core.models import DashboardSpec
 
             spec = DashboardSpec(title=title, description=description)
-            result = self.adaptor.create_dashboard(spec)
+            result = self.adapter.create_dashboard(spec)
             return FuncToolResult(result=result.model_dump())
         except Exception as exc:
             logger.warning(f"create_dashboard failed: {exc}")
@@ -114,14 +114,14 @@ class BIFuncTool:
         try:
             from datus_bi_core.models import DashboardSpec
 
-            existing = self.adaptor.get_dashboard_info(dashboard_id)
+            existing = self.adapter.get_dashboard_info(dashboard_id)
             if existing is None:
                 return FuncToolResult(success=0, error=f"Dashboard {dashboard_id} not found")
             spec = DashboardSpec(
                 title=title or existing.name,
                 description=description or (existing.description or ""),
             )
-            result = self.adaptor.update_dashboard(dashboard_id, spec)
+            result = self.adapter.update_dashboard(dashboard_id, spec)
             return FuncToolResult(result=result.model_dump())
         except Exception as exc:
             logger.warning(f"update_dashboard failed: {exc}")
@@ -130,7 +130,7 @@ class BIFuncTool:
     def delete_dashboard(self, dashboard_id: str) -> FuncToolResult:
         """Delete a dashboard by its ID."""
         try:
-            success = self.adaptor.delete_dashboard(dashboard_id)
+            success = self.adapter.delete_dashboard(dashboard_id)
             return FuncToolResult(result={"deleted": success, "dashboard_id": dashboard_id})
         except Exception as exc:
             logger.warning(f"delete_dashboard failed: {exc}")
@@ -210,7 +210,7 @@ class BIFuncTool:
                 dimensions=dims_list,
                 extra=extra,
             )
-            result = self.adaptor.create_chart(spec, dashboard_id=dash_id)
+            result = self.adapter.create_chart(spec, dashboard_id=dash_id)
             return FuncToolResult(result=result.model_dump())
         except Exception as exc:
             logger.warning(f"create_chart failed: {exc}")
@@ -231,7 +231,7 @@ class BIFuncTool:
             from datus_bi_core.models import ChartSpec
 
             metrics_list = [m.strip() for m in metrics.split(",") if m.strip()] if metrics else None
-            existing = self.adaptor.get_chart(chart_id)
+            existing = self.adapter.get_chart(chart_id)
             if existing is None:
                 return FuncToolResult(success=0, error=f"Chart {chart_id} not found")
             spec = ChartSpec(
@@ -242,7 +242,7 @@ class BIFuncTool:
                 x_axis=x_axis or getattr(existing, "x_axis", None),
                 metrics=metrics_list or getattr(existing, "metrics", None),
             )
-            result = self.adaptor.update_chart(chart_id, spec)
+            result = self.adapter.update_chart(chart_id, spec)
             return FuncToolResult(result=result.model_dump())
         except Exception as exc:
             logger.warning(f"update_chart failed: {exc}")
@@ -251,7 +251,7 @@ class BIFuncTool:
     def add_chart_to_dashboard(self, chart_id: str, dashboard_id: str) -> FuncToolResult:
         """Add an existing chart to a dashboard."""
         try:
-            success = self.adaptor.add_chart_to_dashboard(dashboard_id, chart_id)
+            success = self.adapter.add_chart_to_dashboard(dashboard_id, chart_id)
             return FuncToolResult(result={"success": success, "chart_id": chart_id, "dashboard_id": dashboard_id})
         except Exception as exc:
             logger.warning(f"add_chart_to_dashboard failed: {exc}")
@@ -260,7 +260,7 @@ class BIFuncTool:
     def delete_chart(self, chart_id: str) -> FuncToolResult:
         """Delete a chart by its ID."""
         try:
-            success = self.adaptor.delete_chart(chart_id)
+            success = self.adapter.delete_chart(chart_id)
             return FuncToolResult(result={"deleted": success, "chart_id": chart_id})
         except Exception as exc:
             logger.warning(f"delete_chart failed: {exc}")
@@ -292,7 +292,7 @@ class BIFuncTool:
             from datus_bi_core.models import DatasetSpec
 
             spec = DatasetSpec(name=name, sql=sql or None, database_id=int(database_id), description=description)
-            result = self.adaptor.create_dataset(spec)
+            result = self.adapter.create_dataset(spec)
             return FuncToolResult(result=result.model_dump())
         except Exception as exc:
             logger.warning(f"create_dataset failed: {exc}")
@@ -301,7 +301,7 @@ class BIFuncTool:
     def list_bi_databases(self) -> FuncToolResult:
         """List available database connections in the BI platform. Call this before create_dataset."""
         try:
-            results = self.adaptor.list_bi_databases()
+            results = self.adapter.list_bi_databases()
             return FuncToolResult(result=results)
         except Exception as exc:
             logger.warning(f"list_bi_databases failed: {exc}")
@@ -310,7 +310,7 @@ class BIFuncTool:
     def delete_dataset(self, dataset_id: str) -> FuncToolResult:
         """Delete a dataset by its ID."""
         try:
-            success = self.adaptor.delete_dataset(dataset_id)
+            success = self.adapter.delete_dataset(dataset_id)
             return FuncToolResult(result={"deleted": success, "dataset_id": dataset_id})
         except Exception as exc:
             logger.warning(f"delete_dataset failed: {exc}")
@@ -392,10 +392,10 @@ class BIFuncTool:
         """
         if self._grafana_ds_uid is not None:
             return self._grafana_ds_uid
-        if not hasattr(self.adaptor, "list_datasets"):
+        if not hasattr(self.adapter, "list_datasets"):
             return None
         try:
-            datasets = self.adaptor.list_datasets("")
+            datasets = self.adapter.list_datasets("")
             target_name = self._datasource_name
             # Try matching by configured datasource_name first
             if target_name:
@@ -441,7 +441,7 @@ class BIFuncTool:
             if not target_db_name:
                 return None
 
-            databases = self.adaptor.list_bi_databases()
+            databases = self.adapter.list_bi_databases()
             for db in databases:
                 name = db.get("name", "") if isinstance(db, dict) else getattr(db, "name", "")
                 if name == target_db_name:
@@ -461,7 +461,7 @@ class BIFuncTool:
     # ------------------------------------------------------------------ #
 
     def available_tools(self) -> List[Tool]:
-        """Return tools based on what capabilities the adaptor supports."""
+        """Return tools based on what capabilities the adapter supports."""
         # Try to import Mixin types from datus_bi_core
         try:
             from datus_bi_core import (
@@ -471,16 +471,16 @@ class BIFuncTool:
                 ListDashboardsMixin,
             )
 
-            has_list = isinstance(self.adaptor, ListDashboardsMixin)
-            has_dash_write = isinstance(self.adaptor, DashboardWriteMixin)
-            has_chart_write = isinstance(self.adaptor, ChartWriteMixin)
-            has_dataset_write = isinstance(self.adaptor, DatasetWriteMixin)
+            has_list = isinstance(self.adapter, ListDashboardsMixin)
+            has_dash_write = isinstance(self.adapter, DashboardWriteMixin)
+            has_chart_write = isinstance(self.adapter, ChartWriteMixin)
+            has_dataset_write = isinstance(self.adapter, DatasetWriteMixin)
         except ImportError:
             # Fallback: check by method existence
-            has_list = hasattr(self.adaptor, "list_dashboards")
-            has_dash_write = hasattr(self.adaptor, "create_dashboard")
-            has_chart_write = hasattr(self.adaptor, "create_chart")
-            has_dataset_write = hasattr(self.adaptor, "create_dataset")
+            has_list = hasattr(self.adapter, "list_dashboards")
+            has_dash_write = hasattr(self.adapter, "create_dashboard")
+            has_chart_write = hasattr(self.adapter, "create_chart")
+            has_dataset_write = hasattr(self.adapter, "create_dataset")
 
         methods: List = [self.get_dashboard, self.list_charts, self.list_datasets]
 
