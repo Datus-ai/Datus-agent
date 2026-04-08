@@ -46,7 +46,6 @@ nav:
       - Introduction: API/introduction.md
       - Deployment: API/deployment.md
       - Chat: API/chat.md
-      - Reference: API/reference.md
     - Configuration:
       - Introduction: configuration/introduction.md
       - Agent: configuration/agent.md

@@ -10,7 +10,7 @@
 
 - **[Datus-CLI](cli/introduction.md)**：面向数据工程师的 AI 驱动命令行界面——就像“专为数据工程打造的 Claude Code”。你可以交互式地编写 SQL、构建子代理并维护上下文。
 - **[Datus-Chat](web_chatbot/introduction.md)**：面向数据分析师的网页聊天机器人，支持多轮对话以及内置反馈机制（点赞、问题反馈、成功案例）。
-- **[Datus-API](API/introduction.zh.md)**:为其他智能体或应用提供稳定、准确的数据服务的 RESTful API。详见 [部署](API/deployment.zh.md)、[Chat](API/chat.zh.md) 与 [接口参考](API/reference.zh.md)。
+- **[Datus-API](API/introduction.zh.md)**:为其他智能体或应用提供稳定、准确的数据服务的 RESTful API。详见 [部署](API/deployment.zh.md) 与 [Chat](API/chat.zh.md)。
 
 **两种执行模式**
 

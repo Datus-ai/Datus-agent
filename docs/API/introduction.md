@@ -57,4 +57,3 @@ sit at the application root.
 
 - [Deployment](deployment.md) — install and launch the API server
 - [Chat](chat.md) — chat endpoints and SSE streaming
-- [Reference](reference.md) — database, table, and explorer endpoints
