@@ -273,6 +273,86 @@ class MetricStorage(BaseSubjectEmbeddingStore):
 
         return result
 
+    def update_entry(
+        self,
+        subject_path: List[str],
+        name: str,
+        update_values: Dict[str, Any],
+        extra_conditions: Optional[List] = None,
+    ) -> bool:
+        """Update a metric in the vector DB and sync changes back to the YAML file.
+
+        Args:
+            subject_path: Subject hierarchy path (e.g., ['Finance', 'Revenue'])
+            name: Name of the metric to update
+            update_values: Dict of field names to new values
+            extra_conditions: Additional filter conditions
+
+        Returns:
+            True if the update succeeded, False otherwise
+        """
+        # Query yaml_path BEFORE the update (same pattern as delete_metric)
+        full_path = subject_path.copy()
+        full_path.append(name)
+        metrics = self.search_all_metrics(
+            subject_path=full_path,
+            select_fields=["name", "yaml_path"],
+            extra_conditions=extra_conditions,
+        )
+        yaml_paths = list({m.get("yaml_path") for m in metrics if m.get("yaml_path")})
+
+        # Update in vector store using base class method
+        result = super().update_entry(subject_path, name, update_values, extra_conditions)
+
+        # Sync changes to each yaml file
+        for yaml_path in yaml_paths:
+            self._sync_metric_update_to_yaml(yaml_path, name, update_values)
+
+        return result
+
+    def _sync_metric_update_to_yaml(self, yaml_path: str, name: str, update_values: Dict[str, Any]) -> None:
+        """Sync metric field updates back to the YAML file.
+
+        Args:
+            yaml_path: Path to the YAML file containing the metric
+            name: Name of the metric to update
+            update_values: Dict of vector DB field names to new values
+        """
+        import os
+
+        import yaml
+
+        _METRIC_DB_TO_YAML = {
+            "description": "description",
+            "metric_type": "type",
+        }
+
+        if not os.path.exists(yaml_path):
+            return
+
+        try:
+            with open(yaml_path, "r", encoding="utf-8") as f:
+                docs = list(yaml.safe_load_all(f))
+
+            # Filter out None docs (empty sections in multi-doc YAML)
+            docs = [doc for doc in docs if doc is not None]
+
+            updated = False
+            for doc in docs:
+                if doc.get("metric", {}).get("name") == name:
+                    for db_key, yaml_key in _METRIC_DB_TO_YAML.items():
+                        if db_key in update_values:
+                            doc["metric"][yaml_key] = update_values[db_key]
+                    updated = True
+
+            if updated:
+                with open(yaml_path, "w", encoding="utf-8") as f:
+                    yaml.safe_dump_all(docs, f, allow_unicode=True, sort_keys=False)
+                logger.info(f"Updated metric '{name}' in yaml file: {yaml_path}")
+
+        except Exception as e:
+            logger.error(f"Failed to update yaml file {yaml_path}: {e}")
+
 
 class MetricRAG:
     """RAG interface for metric operations.

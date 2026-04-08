@@ -240,3 +240,116 @@ class TestDeleteMetricYaml:
         result = metric_storage.delete_metric(["Finance", "Revenue"], "no_yaml_metric")
         assert result["success"] is True
         assert result.get("yaml_updated", False) is False
+
+
+# ---------------------------------------------------------------------------
+# YAML update logic in update_entry
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateMetricYaml:
+    """Tests for YAML file sync in update_entry."""
+
+    def test_update_metric_syncs_to_yaml_file(self, metric_storage: MetricStorage):
+        """update_entry should write the updated description back to the yaml file."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False, encoding="utf-8") as f:
+            yaml_path = f.name
+            docs = [
+                {"metric": {"name": "to_update", "description": "original description"}},
+                {"metric": {"name": "other_metric", "description": "should stay unchanged"}},
+            ]
+            yaml.safe_dump_all(docs, f, allow_unicode=True, sort_keys=False)
+
+        try:
+            metric = _make_metric(1, subject_path=["Finance", "Revenue"], yaml_path=yaml_path)
+            metric["name"] = "to_update"
+            metric["id"] = "metric:to_update"
+            metric_storage.batch_store_metrics([metric])
+
+            result = metric_storage.update_entry(
+                ["Finance", "Revenue"], "to_update", {"description": "Updated description"}
+            )
+            assert result is True
+
+            with open(yaml_path, "r", encoding="utf-8") as f:
+                remaining = [d for d in yaml.safe_load_all(f) if d is not None]
+
+            updated_doc = next(d for d in remaining if d["metric"]["name"] == "to_update")
+            other_doc = next(d for d in remaining if d["metric"]["name"] == "other_metric")
+
+            assert updated_doc["metric"]["description"] == "Updated description"
+            assert other_doc["metric"]["description"] == "should stay unchanged"
+        finally:
+            if os.path.exists(yaml_path):
+                os.remove(yaml_path)
+
+    def test_update_metric_maps_metric_type_to_yaml(self, metric_storage: MetricStorage):
+        """update_entry should map metric_type (DB) -> type (YAML)."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False, encoding="utf-8") as f:
+            yaml_path = f.name
+            docs = [{"metric": {"name": "typed_metric", "type": "simple"}}]
+            yaml.safe_dump_all(docs, f, allow_unicode=True, sort_keys=False)
+
+        try:
+            metric = _make_metric(2, subject_path=["Finance"], yaml_path=yaml_path)
+            metric["name"] = "typed_metric"
+            metric["id"] = "metric:typed_metric"
+            metric["metric_type"] = "simple"
+            metric_storage.batch_store_metrics([metric])
+
+            result = metric_storage.update_entry(["Finance"], "typed_metric", {"metric_type": "derived"})
+            assert result is True
+
+            with open(yaml_path, "r", encoding="utf-8") as f:
+                docs_out = [d for d in yaml.safe_load_all(f) if d is not None]
+
+            assert docs_out[0]["metric"]["type"] == "derived"
+        finally:
+            if os.path.exists(yaml_path):
+                os.remove(yaml_path)
+
+    def test_update_metric_no_yaml_path_still_succeeds(self, metric_storage: MetricStorage):
+        """update_entry without yaml_path should update vector DB and return True."""
+        metric = _make_metric(3, subject_path=["Finance", "Revenue"])
+        metric["name"] = "no_yaml_update"
+        metric["id"] = "metric:no_yaml_update"
+        metric["yaml_path"] = ""
+        metric_storage.batch_store_metrics([metric])
+
+        result = metric_storage.update_entry(["Finance", "Revenue"], "no_yaml_update", {"description": "new desc"})
+        assert result is True
+
+    def test_update_metric_nonexistent_yaml_file_still_succeeds(self, metric_storage: MetricStorage):
+        """update_entry with a yaml_path pointing to a missing file should still return True."""
+        metric = _make_metric(4, subject_path=["Finance"], yaml_path="/nonexistent/path/metrics.yml")
+        metric["name"] = "ghost_metric"
+        metric["id"] = "metric:ghost_metric"
+        metric_storage.batch_store_metrics([metric])
+
+        result = metric_storage.update_entry(["Finance"], "ghost_metric", {"description": "updated"})
+        assert result is True
+
+    def test_update_metric_skips_unmapped_fields_in_yaml(self, metric_storage: MetricStorage):
+        """update_entry with fields not in the YAML mapping should leave the file unchanged."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False, encoding="utf-8") as f:
+            yaml_path = f.name
+            original_docs = [{"metric": {"name": "stable_metric", "description": "stays the same"}}]
+            yaml.safe_dump_all(original_docs, f, allow_unicode=True, sort_keys=False)
+
+        try:
+            metric = _make_metric(5, subject_path=["Finance"], yaml_path=yaml_path)
+            metric["name"] = "stable_metric"
+            metric["id"] = "metric:stable_metric"
+            metric_storage.batch_store_metrics([metric])
+
+            result = metric_storage.update_entry(["Finance"], "stable_metric", {"sql": "SELECT 1"})
+            assert result is True
+
+            with open(yaml_path, "r", encoding="utf-8") as f:
+                docs_out = [d for d in yaml.safe_load_all(f) if d is not None]
+
+            assert docs_out[0]["metric"]["description"] == "stays the same"
+            assert "sql" not in docs_out[0]["metric"]
+        finally:
+            if os.path.exists(yaml_path):
+                os.remove(yaml_path)

@@ -111,6 +111,115 @@ class SemanticModelStorage(BaseEmbeddingStore):
         """
         return self._search_all(where=where, select_fields=select_fields).to_pylist()
 
+    # ------------------------------------------------------------------
+    # Field mappings: vector DB field → YAML key
+    # ------------------------------------------------------------------
+    _TABLE_DB_TO_YAML: Dict[str, str] = {"description": "description"}
+    _COLUMN_DB_TO_YAML: Dict[str, str] = {
+        "description": "description",
+        "expr": "expr",
+        "column_type": "type",
+    }
+
+    def update_entry(self, entry_id: str, update_values: Dict[str, Any]) -> bool:
+        """Update a semantic model entry by ID and sync changes to the YAML file.
+
+        Args:
+            entry_id: Unique entry ID (e.g., "table:orders", "column:orders.amount")
+            update_values: Dictionary of field names and new values
+
+        Returns:
+            True if update successful
+
+        Raises:
+            ValueError: If entry not found or update_values is empty
+        """
+        if not entry_id:
+            raise ValueError("entry_id must not be empty")
+        if not update_values:
+            raise ValueError("update_values must not be empty")
+
+        entries = self._search_all(
+            where=eq("id", entry_id), select_fields=["id", "kind", "name", "yaml_path"]
+        ).to_pylist()
+        if not entries:
+            raise ValueError(f"Entry not found: {entry_id}")
+        entry = entries[0]
+        yaml_path = entry.get("yaml_path", "")
+
+        self.update(where=eq("id", entry_id), update_values=update_values)
+
+        if yaml_path:
+            self._sync_semantic_update_to_yaml(yaml_path, entry["kind"], entry["name"], update_values)
+
+        logger.info(f"Updated semantic model entry '{entry['name']}' (kind={entry['kind']})")
+        return True
+
+    def _sync_semantic_update_to_yaml(
+        self, yaml_path: str, kind: str, name: str, update_values: Dict[str, Any]
+    ) -> None:
+        """Sync update_values for a semantic model entry back to its YAML file.
+
+        Args:
+            yaml_path: Path to the YAML file containing the data_source document
+            kind: Entry kind — "table" or "column"
+            name: Short name of the entry (table name or column name)
+            update_values: Dictionary of vector-DB field names and new values
+        """
+        import os
+
+        import yaml
+
+        if not os.path.exists(yaml_path):
+            return
+
+        try:
+            with open(yaml_path, encoding="utf-8") as f:
+                docs = [doc for doc in yaml.safe_load_all(f) if doc is not None]
+
+            data_source = None
+            for doc in docs:
+                if "data_source" in doc:
+                    data_source = doc["data_source"]
+                    break
+
+            if data_source is None:
+                return
+
+            updated = False
+            if kind == "table":
+                for db_key, yaml_key in self._TABLE_DB_TO_YAML.items():
+                    if db_key in update_values:
+                        data_source[yaml_key] = update_values[db_key]
+                        updated = True
+
+            elif kind == "column":
+                target_item = None
+                for section in ("dimensions", "measures", "identifiers"):
+                    for item in data_source.get(section, []):
+                        if item.get("name") == name:
+                            target_item = item
+                            break
+                    if target_item is not None:
+                        break
+
+                if target_item is not None:
+                    for db_key, yaml_key in self._COLUMN_DB_TO_YAML.items():
+                        if db_key in update_values:
+                            target_item[yaml_key] = update_values[db_key]
+                            updated = True
+
+            if not updated:
+                return
+
+            with open(yaml_path, "w", encoding="utf-8") as f:
+                yaml.safe_dump_all(docs, f, allow_unicode=True, sort_keys=False)
+
+            logger.info(f"Updated semantic model entry '{name}' (kind={kind}) in yaml file: {yaml_path}")
+
+        except Exception as e:
+            logger.error(f"Failed to update yaml file {yaml_path}: {e}")
+
 
 class SemanticModelRAG:
     """RAG interface for semantic model operations.

@@ -12,6 +12,7 @@ from datus.api.models.explorer_models import (
     DeleteSubjectInput,
     EditKnowledgeInput,
     EditMetricInput,
+    EditSemanticModelInput,
     KnowledgeInfo,
     MetricInfo,
     ReferenceSQLInfo,
@@ -164,6 +165,20 @@ async def edit_metric(
 ) -> Result[dict]:
     """Edit metric YAML."""
     return await svc.explorer.edit_metric(request)
+
+
+@router.post(
+    "/subject/semantic_model/edit",
+    response_model=Result[dict],
+    summary="Edit Semantic Model",
+    description="Update a semantic model entry (table or column) by entry ID",
+)
+async def edit_semantic_model(
+    request: EditSemanticModelInput,
+    svc: ServiceDep,
+) -> Result[dict]:
+    """Edit semantic model entry."""
+    return await svc.explorer.edit_semantic_model(request)
 
 
 # ========== Knowledge Endpoints ==========

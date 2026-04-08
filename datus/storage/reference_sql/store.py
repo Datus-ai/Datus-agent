@@ -188,6 +188,80 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
         """
         return self.delete_entry(subject_path, name, extra_conditions=extra_conditions)
 
+    def update_entry(
+        self,
+        subject_path: List[str],
+        name: str,
+        update_values: Dict[str, Any],
+        extra_conditions: Optional[List] = None,
+    ) -> bool:
+        """Update a reference SQL entry in the vector DB and sync changes to the source YAML file.
+
+        Args:
+            subject_path: Subject hierarchy path (e.g., ['Analytics', 'Reports'])
+            name: Name of the reference SQL entry to update
+            update_values: Dictionary of fields to update
+            extra_conditions: Additional filter conditions
+
+        Returns:
+            True if updated successfully, False if entry not found
+        """
+        full_path = list(subject_path) + [name]
+        entries = self.search_all_reference_sql(
+            subject_path=full_path,
+            select_fields=["name", "filepath"],
+            extra_conditions=extra_conditions,
+        )
+        filepaths = list({e.get("filepath") for e in entries if e.get("filepath")})
+
+        result = super().update_entry(subject_path, name, update_values, extra_conditions)
+
+        for filepath in filepaths:
+            self._sync_reference_sql_update_to_yaml(filepath, update_values)
+
+        return result
+
+    _SYNCABLE_FIELDS = {"sql", "comment", "summary", "search_text", "tags"}
+
+    def _sync_reference_sql_update_to_yaml(self, filepath: str, update_values: Dict[str, Any]) -> None:
+        """Sync update_values to the source YAML file for a reference SQL entry.
+
+        Only fields in _SYNCABLE_FIELDS are written back to the YAML file.
+
+        Args:
+            filepath: Path to the YAML file to update
+            update_values: Dictionary of fields to sync
+        """
+        import os
+
+        import yaml
+
+        if not os.path.exists(filepath):
+            return
+
+        try:
+            with open(filepath, encoding="utf-8") as f:
+                doc = yaml.safe_load(f)
+
+            if not isinstance(doc, dict):
+                return
+
+            updated = False
+            for key, value in update_values.items():
+                if key in self._SYNCABLE_FIELDS:
+                    doc[key] = value
+                    updated = True
+
+            if not updated:
+                return
+
+            with open(filepath, "w", encoding="utf-8") as f:
+                yaml.safe_dump(doc, f, allow_unicode=True, sort_keys=False)
+
+            logger.info(f"Updated reference SQL in yaml file: {filepath}")
+        except Exception as e:
+            logger.error(f"Failed to update yaml file {filepath}: {e}")
+
 
 class ReferenceSqlRAG:
     """RAG interface for reference SQL operations.

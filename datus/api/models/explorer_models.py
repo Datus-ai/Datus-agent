@@ -1,7 +1,7 @@
 """Data models for Explorer API endpoints."""
 
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -112,6 +112,13 @@ class EditMetricInput(BaseModel):
 
     subject_path: List[str] = Field(..., description="Path to the metric")
     yaml: str = Field(..., description="Updated YAML content")
+
+
+class EditSemanticModelInput(BaseModel):
+    """Edit semantic model entry (table or column)."""
+
+    entry_id: str = Field(..., description="Entry ID (e.g., 'table:orders', 'column:orders.amount')")
+    update_values: Dict[str, Any] = Field(..., description="Fields to update (e.g., {'description': 'new desc'})")
 
 
 # ========== Reference SQL Create/Get/Edit ==========

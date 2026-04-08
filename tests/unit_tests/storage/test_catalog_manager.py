@@ -241,15 +241,14 @@ class TestUpdateColumnsMethod:
         calls = []
 
         class FakeStorage:
-            def update(self, where, values, unique_filter=None):
-                calls.append((where, values))
+            def update_entry(self, entry_id, values):
+                calls.append((entry_id, values))
+
+        updater.semantic_model_storage = FakeStorage()
 
         updater._update_columns(
-            storages=[FakeStorage()],
-            catalog_name="cat",
-            database_name="db",
-            schema_name="sch",
             table_name="t",
+            semantic_model_name="t_model",
             old_columns=[{"name": "col1", "description": "old"}],
             new_columns=[{"description": "new"}],  # no 'name'
             kind_field="is_dimension",
@@ -258,29 +257,29 @@ class TestUpdateColumnsMethod:
         assert len(calls) == 0
 
     def test_update_columns_with_matching_names(self):
-        """Matching columns with changed fields trigger storage.update."""
+        """Matching columns with changed fields trigger storage.update_entry."""
         updater = self._make_updater()
         calls = []
 
         class FakeStorage:
-            def update(self, where, values, unique_filter=None):
-                calls.append((where, values))
+            def update_entry(self, entry_id, values):
+                calls.append((entry_id, values))
+
+        updater.semantic_model_storage = FakeStorage()
 
         old = [{"name": "col1", "description": "old desc"}]
         new = [{"name": "col1", "description": "new desc"}]
 
         updater._update_columns(
-            storages=[FakeStorage()],
-            catalog_name="cat",
-            database_name="db",
-            schema_name="sch",
             table_name="t",
+            semantic_model_name="t_model",
             old_columns=old,
             new_columns=new,
             kind_field="is_dimension",
             allowed_fields={"description"},
         )
         assert len(calls) == 1
+        assert calls[0][0] == "column:t_model.col1"
         assert calls[0][1] == {"description": "new desc"}
 
     def test_update_columns_no_changes_means_no_update(self):
@@ -289,17 +288,16 @@ class TestUpdateColumnsMethod:
         calls = []
 
         class FakeStorage:
-            def update(self, where, values, unique_filter=None):
-                calls.append((where, values))
+            def update_entry(self, entry_id, values):
+                calls.append(values)
+
+        updater.semantic_model_storage = FakeStorage()
 
         identical = [{"name": "col1", "description": "same", "type": "string"}]
 
         updater._update_columns(
-            storages=[FakeStorage()],
-            catalog_name="cat",
-            database_name="db",
-            schema_name="sch",
             table_name="t",
+            semantic_model_name="t_model",
             old_columns=identical,
             new_columns=identical,
             kind_field="is_measure",
@@ -307,36 +305,29 @@ class TestUpdateColumnsMethod:
         )
         assert len(calls) == 0
 
-    def test_update_columns_multiple_storages(self):
-        """Update is called on each storage in the list."""
+    def test_update_columns_falls_back_to_table_name_when_no_semantic_model_name(self):
+        """entry_id uses table_name when semantic_model_name is empty."""
         updater = self._make_updater()
-        calls_1 = []
-        calls_2 = []
+        calls = []
 
-        class FakeStorage1:
-            def update(self, where, values, unique_filter=None):
-                calls_1.append(values)
+        class FakeStorage:
+            def update_entry(self, entry_id, values):
+                calls.append(entry_id)
 
-        class FakeStorage2:
-            def update(self, where, values, unique_filter=None):
-                calls_2.append(values)
+        updater.semantic_model_storage = FakeStorage()
 
         old = [{"name": "col1", "description": "old"}]
         new = [{"name": "col1", "description": "new"}]
 
         updater._update_columns(
-            storages=[FakeStorage1(), FakeStorage2()],
-            catalog_name="cat",
-            database_name="db",
-            schema_name="sch",
-            table_name="t",
+            table_name="orders",
+            semantic_model_name="",
             old_columns=old,
             new_columns=new,
             kind_field="is_dimension",
             allowed_fields={"description"},
         )
-        assert len(calls_1) == 1
-        assert len(calls_2) == 1
+        assert calls == ["column:orders.col1"]
 
     def test_update_columns_none_inputs_handled(self):
         """None old_columns and new_columns are handled gracefully."""
@@ -344,15 +335,14 @@ class TestUpdateColumnsMethod:
         calls = []
 
         class FakeStorage:
-            def update(self, where, values, unique_filter=None):
+            def update_entry(self, entry_id, values):
                 calls.append(values)
 
+        updater.semantic_model_storage = FakeStorage()
+
         updater._update_columns(
-            storages=[FakeStorage()],
-            catalog_name="cat",
-            database_name="db",
-            schema_name="sch",
             table_name="t",
+            semantic_model_name="t_model",
             old_columns=None,
             new_columns=None,
             kind_field="is_dimension",
@@ -366,18 +356,17 @@ class TestUpdateColumnsMethod:
         calls = []
 
         class FakeStorage:
-            def update(self, where, values, unique_filter=None):
+            def update_entry(self, entry_id, values):
                 calls.append(values)
+
+        updater.semantic_model_storage = FakeStorage()
 
         old_json = json.dumps([{"name": "col1", "description": "old"}])
         new_json = json.dumps([{"name": "col1", "description": "new"}])
 
         updater._update_columns(
-            storages=[FakeStorage()],
-            catalog_name="cat",
-            database_name="db",
-            schema_name="sch",
             table_name="t",
+            semantic_model_name="t_model",
             old_columns=old_json,
             new_columns=new_json,
             kind_field="is_entity_key",
@@ -385,6 +374,29 @@ class TestUpdateColumnsMethod:
         )
         assert len(calls) == 1
         assert calls[0] == {"description": "new"}
+
+    def test_update_columns_value_error_is_handled(self):
+        """ValueError from update_entry (entry not found) is caught and logged, not raised."""
+        updater = self._make_updater()
+
+        class FakeStorage:
+            def update_entry(self, entry_id, values):
+                raise ValueError(f"Entry not found: {entry_id}")
+
+        updater.semantic_model_storage = FakeStorage()
+
+        old = [{"name": "col1", "description": "old"}]
+        new = [{"name": "col1", "description": "new"}]
+
+        # Should not raise
+        updater._update_columns(
+            table_name="t",
+            semantic_model_name="t_model",
+            old_columns=old,
+            new_columns=new,
+            kind_field="is_dimension",
+            allowed_fields={"description"},
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -402,20 +414,17 @@ class TestUpdateSemanticModel:
         return obj
 
     def test_update_semantic_model_description(self):
-        """update_semantic_model updates table description across storages."""
+        """update_semantic_model calls update_entry with the correct table entry_id."""
         updater = self._make_updater()
         calls = []
 
         class FakeStorage:
-            def update(self, where, values, unique_filter=None):
-                calls.append(("update", values))
+            def update_entry(self, entry_id, values):
+                calls.append((entry_id, values))
 
-        updater._get_all_storages = lambda: [FakeStorage()]
+        updater.semantic_model_storage = FakeStorage()
 
         old_values = {
-            "catalog_name": "cat",
-            "database_name": "db",
-            "schema_name": "sch",
             "table_name": "orders",
             "semantic_model_name": "orders_model",
         }
@@ -423,24 +432,59 @@ class TestUpdateSemanticModel:
 
         updater.update_semantic_model(old_values, update_values)
 
-        # Should have at least one update call for the description
-        assert any(v[1].get("description") == "Updated description" for v in calls)
+        assert any(
+            entry_id == "table:orders_model" and v.get("description") == "Updated description" for entry_id, v in calls
+        )
 
-    def test_update_semantic_model_dimensions(self):
-        """update_semantic_model updates dimension columns."""
+    def test_update_semantic_model_description_uses_table_name_fallback(self):
+        """When semantic_model_name is empty, table_name is used for the entry_id."""
         updater = self._make_updater()
         calls = []
 
         class FakeStorage:
-            def update(self, where, values, unique_filter=None):
-                calls.append(values)
+            def update_entry(self, entry_id, values):
+                calls.append((entry_id, values))
 
-        updater._get_all_storages = lambda: [FakeStorage()]
+        updater.semantic_model_storage = FakeStorage()
 
         old_values = {
-            "catalog_name": "cat",
-            "database_name": "db",
-            "schema_name": "sch",
+            "table_name": "orders",
+            "semantic_model_name": "",
+        }
+        update_values = {"description": "Updated description"}
+
+        updater.update_semantic_model(old_values, update_values)
+
+        assert any(entry_id == "table:orders" for entry_id, _ in calls)
+
+    def test_update_semantic_model_description_value_error_handled(self):
+        """ValueError from update_entry for table is caught and does not raise."""
+        updater = self._make_updater()
+
+        class FakeStorage:
+            def update_entry(self, entry_id, values):
+                raise ValueError("not found")
+
+        updater.semantic_model_storage = FakeStorage()
+
+        old_values = {"table_name": "orders", "semantic_model_name": "orders_model"}
+        update_values = {"description": "desc"}
+
+        # Should not raise
+        updater.update_semantic_model(old_values, update_values)
+
+    def test_update_semantic_model_dimensions(self):
+        """update_semantic_model updates dimension columns via update_entry."""
+        updater = self._make_updater()
+        calls = []
+
+        class FakeStorage:
+            def update_entry(self, entry_id, values):
+                calls.append((entry_id, values))
+
+        updater.semantic_model_storage = FakeStorage()
+
+        old_values = {
             "table_name": "orders",
             "semantic_model_name": "orders_model",
             "dimensions": [{"name": "region", "description": "old region desc"}],
@@ -451,23 +495,23 @@ class TestUpdateSemanticModel:
 
         updater.update_semantic_model(old_values, update_values)
 
-        assert any("description" in v and v["description"] == "new region desc" for v in calls)
+        assert any(
+            entry_id == "column:orders_model.region" and v.get("description") == "new region desc"
+            for entry_id, v in calls
+        )
 
     def test_update_semantic_model_measures(self):
-        """update_semantic_model updates measure columns."""
+        """update_semantic_model updates measure columns via update_entry."""
         updater = self._make_updater()
         calls = []
 
         class FakeStorage:
-            def update(self, where, values, unique_filter=None):
-                calls.append(values)
+            def update_entry(self, entry_id, values):
+                calls.append((entry_id, values))
 
-        updater._get_all_storages = lambda: [FakeStorage()]
+        updater.semantic_model_storage = FakeStorage()
 
         old_values = {
-            "catalog_name": "cat",
-            "database_name": "db",
-            "schema_name": "sch",
             "table_name": "orders",
             "semantic_model_name": "orders_model",
             "measures": [{"name": "total_amount", "agg": "SUM"}],
@@ -478,23 +522,22 @@ class TestUpdateSemanticModel:
 
         updater.update_semantic_model(old_values, update_values)
 
-        assert any("agg" in v and v["agg"] == "AVERAGE" for v in calls)
+        assert any(
+            entry_id == "column:orders_model.total_amount" and v.get("agg") == "AVERAGE" for entry_id, v in calls
+        )
 
     def test_update_semantic_model_identifiers(self):
-        """update_semantic_model updates identifier columns."""
+        """update_semantic_model updates identifier columns via update_entry."""
         updater = self._make_updater()
         calls = []
 
         class FakeStorage:
-            def update(self, where, values, unique_filter=None):
-                calls.append(values)
+            def update_entry(self, entry_id, values):
+                calls.append((entry_id, values))
 
-        updater._get_all_storages = lambda: [FakeStorage()]
+        updater.semantic_model_storage = FakeStorage()
 
         old_values = {
-            "catalog_name": "cat",
-            "database_name": "db",
-            "schema_name": "sch",
             "table_name": "orders",
             "semantic_model_name": "orders_model",
             "identifiers": [{"name": "order_id", "entity": "order"}],
@@ -505,4 +548,6 @@ class TestUpdateSemanticModel:
 
         updater.update_semantic_model(old_values, update_values)
 
-        assert any("entity" in v and v["entity"] == "transaction" for v in calls)
+        assert any(
+            entry_id == "column:orders_model.order_id" and v.get("entity") == "transaction" for entry_id, v in calls
+        )

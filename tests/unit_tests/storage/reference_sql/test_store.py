@@ -5,8 +5,11 @@
 """Tests for datus/storage/reference_sql/store.py -- ReferenceSqlStorage."""
 
 import hashlib
+import os
+import tempfile
 
 import pytest
+import yaml
 
 from datus.storage.embedding_models import get_db_embedding_model
 from datus.storage.reference_sql.store import ReferenceSqlStorage
@@ -397,3 +400,115 @@ class TestReferenceSqlStorageCreateIndices:
         # Verify search still works after index creation
         results = ref_sql_storage.search_all_reference_sql()
         assert len(results) == 3
+
+
+# ============================================================
+# ReferenceSqlStorage.update_entry (YAML sync)
+# ============================================================
+
+
+class TestUpdateReferenceSqlYaml:
+    """Tests for update_entry YAML sync in ReferenceSqlStorage."""
+
+    def test_update_reference_sql_syncs_to_yaml_file(self, ref_sql_storage):
+        """update_entry should write changed fields back to the source YAML file."""
+        original_doc = {
+            "id": "abc123",
+            "name": "Daily Sales",
+            "sql": "SELECT * FROM sales",
+            "comment": "Original comment",
+            "summary": "Original summary",
+            "search_text": "daily sales revenue",
+            "filepath": "",
+            "subject_tree": "finance/revenue",
+            "tags": "finance, sales",
+        }
+
+        tmp_file = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8")
+        try:
+            yaml.safe_dump(original_doc, tmp_file, allow_unicode=True, sort_keys=False)
+            tmp_file.close()
+
+            item = _make_sql_item(1, subject_path=["Finance", "Revenue"])
+            item["filepath"] = tmp_file.name
+            ref_sql_storage.batch_store_sql([item])
+
+            ref_sql_storage.update_entry(
+                subject_path=["Finance", "Revenue"],
+                name="query_1",
+                update_values={"sql": "SELECT 1 FROM new_table", "summary": "Updated summary"},
+            )
+
+            with open(tmp_file.name, encoding="utf-8") as f:
+                updated_doc = yaml.safe_load(f)
+
+            assert updated_doc["sql"] == "SELECT 1 FROM new_table"
+            assert updated_doc["summary"] == "Updated summary"
+        finally:
+            os.unlink(tmp_file.name)
+
+    def test_update_reference_sql_no_filepath_still_succeeds(self, ref_sql_storage):
+        """update_entry should return True even when filepath is empty."""
+        item = _make_sql_item(1, subject_path=["Finance", "Revenue"])
+        item["filepath"] = ""
+        ref_sql_storage.batch_store_sql([item])
+
+        result = ref_sql_storage.update_entry(
+            subject_path=["Finance", "Revenue"],
+            name="query_1",
+            update_values={"summary": "New summary"},
+        )
+        assert result is True
+
+    def test_update_reference_sql_nonexistent_file_still_succeeds(self, ref_sql_storage):
+        """update_entry should return True even when the YAML file does not exist."""
+        item = _make_sql_item(1, subject_path=["Finance", "Revenue"])
+        item["filepath"] = "/nonexistent/path/query.yaml"
+        ref_sql_storage.batch_store_sql([item])
+
+        result = ref_sql_storage.update_entry(
+            subject_path=["Finance", "Revenue"],
+            name="query_1",
+            update_values={"summary": "New summary"},
+        )
+        assert result is True
+
+    def test_update_reference_sql_preserves_other_yaml_fields(self, ref_sql_storage):
+        """update_entry should only modify the specified syncable fields and leave others intact."""
+        original_doc = {
+            "id": "abc123",
+            "name": "Daily Sales",
+            "sql": "SELECT * FROM sales",
+            "comment": "Keep this comment",
+            "summary": "Original summary",
+            "search_text": "daily sales revenue",
+            "filepath": "",
+            "subject_tree": "finance/revenue",
+            "tags": "finance, sales",
+        }
+
+        tmp_file = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8")
+        try:
+            yaml.safe_dump(original_doc, tmp_file, allow_unicode=True, sort_keys=False)
+            tmp_file.close()
+
+            item = _make_sql_item(1, subject_path=["Finance", "Revenue"])
+            item["filepath"] = tmp_file.name
+            ref_sql_storage.batch_store_sql([item])
+
+            ref_sql_storage.update_entry(
+                subject_path=["Finance", "Revenue"],
+                name="query_1",
+                update_values={"summary": "New summary"},
+            )
+
+            with open(tmp_file.name, encoding="utf-8") as f:
+                updated_doc = yaml.safe_load(f)
+
+            assert updated_doc["summary"] == "New summary"
+            assert updated_doc["comment"] == "Keep this comment"
+            assert updated_doc["subject_tree"] == "finance/revenue"
+            assert updated_doc["name"] == "Daily Sales"
+            assert updated_doc["sql"] == "SELECT * FROM sales"
+        finally:
+            os.unlink(tmp_file.name)

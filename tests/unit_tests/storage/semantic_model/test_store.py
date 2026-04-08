@@ -4,7 +4,11 @@
 
 """Tests for datus/storage/semantic_model/store.py -- SemanticModelStorage and SemanticModelRAG."""
 
+import os
+import tempfile
+
 import pytest
+import yaml
 from pandas import Timestamp
 
 from datus.storage.embedding_models import get_db_embedding_model
@@ -298,6 +302,141 @@ class TestSemanticModelStorageSearchObjects:
         for r in results:
             assert r["kind"] == "column"
             assert r["table_name"] == "orders"
+
+
+# ============================================================
+# SemanticModelStorage.update_entry / _sync_semantic_update_to_yaml
+# ============================================================
+
+
+class TestUpdateEntryYamlSync:
+    """Tests for update_entry and _sync_semantic_update_to_yaml."""
+
+    def _make_yaml_with_table_only(self, f, description="Original table description"):
+        """Write a minimal single-table YAML (no columns) to file f."""
+        docs = [
+            {
+                "data_source": {
+                    "name": "orders",
+                    "description": description,
+                    "sql_table": "analytics.public.orders",
+                }
+            }
+        ]
+        yaml.safe_dump_all(docs, f, allow_unicode=True, sort_keys=False)
+        f.flush()
+
+    def _make_yaml_with_columns(self, f, dim_description="Region dimension", dim_type="CATEGORICAL"):
+        """Write a YAML with a data_source containing dimensions, measures, identifiers."""
+        docs = [
+            {
+                "data_source": {
+                    "name": "orders",
+                    "description": "Original table description",
+                    "sql_table": "analytics.public.orders",
+                    "dimensions": [
+                        {"name": "region", "type": dim_type, "description": dim_description, "expr": "region"}
+                    ],
+                    "measures": [{"name": "amount", "description": "Total amount", "agg": "SUM", "expr": "amount"}],
+                    "identifiers": [
+                        {"name": "order_id", "type": "PRIMARY", "description": "Primary key", "expr": "order_id"}
+                    ],
+                }
+            }
+        ]
+        yaml.safe_dump_all(docs, f, allow_unicode=True, sort_keys=False)
+        f.flush()
+
+    def test_update_table_description_syncs_to_yaml(self, sem_storage):
+        """update_entry on a table entry syncs the description back to the YAML file."""
+        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False, encoding="utf-8")
+        try:
+            self._make_yaml_with_table_only(tmp, description="Original")
+            tmp.close()
+
+            table_obj = _make_table_object("orders", description="Original", yaml_path=tmp.name)
+            sem_storage.store_batch([table_obj])
+
+            result = sem_storage.update_entry("table:orders", {"description": "Updated table description"})
+            assert result is True
+
+            with open(tmp.name, encoding="utf-8") as f:
+                docs = list(yaml.safe_load_all(f))
+            data_source = next(d["data_source"] for d in docs if d and "data_source" in d)
+            assert data_source["description"] == "Updated table description"
+        finally:
+            os.unlink(tmp.name)
+
+    def test_update_column_description_syncs_to_yaml(self, sem_storage):
+        """update_entry on a column entry syncs the description to the matching dimension item."""
+        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False, encoding="utf-8")
+        try:
+            self._make_yaml_with_columns(tmp, dim_description="Original region desc")
+            tmp.close()
+
+            table_obj = _make_table_object("orders", yaml_path=tmp.name)
+            col_obj = _make_column_object(
+                "orders", "region", description="Original region desc", is_dimension=True, column_type="CATEGORICAL"
+            )
+            col_obj["yaml_path"] = tmp.name
+            sem_storage.store_batch([table_obj, col_obj])
+
+            result = sem_storage.update_entry("column:orders.region", {"description": "Updated region desc"})
+            assert result is True
+
+            with open(tmp.name, encoding="utf-8") as f:
+                docs = list(yaml.safe_load_all(f))
+            data_source = next(d["data_source"] for d in docs if d and "data_source" in d)
+            dim = next(item for item in data_source["dimensions"] if item["name"] == "region")
+            assert dim["description"] == "Updated region desc"
+        finally:
+            os.unlink(tmp.name)
+
+    def test_update_column_type_syncs_to_yaml(self, sem_storage):
+        """update_entry with column_type maps to 'type' key in YAML."""
+        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False, encoding="utf-8")
+        try:
+            self._make_yaml_with_columns(tmp, dim_type="CATEGORICAL")
+            tmp.close()
+
+            table_obj = _make_table_object("orders", yaml_path=tmp.name)
+            col_obj = _make_column_object(
+                "orders", "region", description="Region dimension", is_dimension=True, column_type="CATEGORICAL"
+            )
+            col_obj["yaml_path"] = tmp.name
+            sem_storage.store_batch([table_obj, col_obj])
+
+            result = sem_storage.update_entry("column:orders.region", {"column_type": "TIME"})
+            assert result is True
+
+            with open(tmp.name, encoding="utf-8") as f:
+                docs = list(yaml.safe_load_all(f))
+            data_source = next(d["data_source"] for d in docs if d and "data_source" in d)
+            dim = next(item for item in data_source["dimensions"] if item["name"] == "region")
+            assert dim["type"] == "TIME"
+        finally:
+            os.unlink(tmp.name)
+
+    def test_update_entry_no_yaml_path_still_succeeds(self, sem_storage):
+        """update_entry succeeds and returns True when yaml_path is empty."""
+        table_obj = _make_table_object("orders", description="A table", yaml_path="")
+        sem_storage.store_batch([table_obj])
+
+        result = sem_storage.update_entry("table:orders", {"description": "No yaml sync"})
+        assert result is True
+
+    def test_update_entry_nonexistent_raises(self, sem_storage):
+        """update_entry raises ValueError when the entry_id does not exist."""
+        with pytest.raises(ValueError, match="Entry not found"):
+            sem_storage.update_entry("table:nonexistent", {"description": "x"})
+
+    def test_update_entry_empty_values_raises(self, sem_storage):
+        """update_entry raises ValueError when update_values is empty."""
+        table_obj = _make_table_object("orders")
+        sem_storage.store_batch([table_obj])
+
+        with pytest.raises(ValueError, match="update_values must not be empty"):
+            sem_storage.update_entry("table:orders", {})
 
 
 # ============================================================
