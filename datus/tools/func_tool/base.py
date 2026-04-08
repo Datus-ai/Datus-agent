@@ -103,7 +103,7 @@ def trans_to_function_tool(bound_method: Callable) -> FunctionTool:
             else:
                 result = method_to_call(**args_dict)
             if isinstance(result, FuncToolResult):
-                return result.model_dump()
+                return result.model_dump(mode="json")
             return result
 
         return final_invoker
