@@ -68,10 +68,15 @@ Examples:
 
 ## Commit Workflow
 
-1. **Coverage gate**: Before committing, run `uv run pytest tests/unit_tests/ --cov=datus --cov-report=term-missing --cov-fail-under=80`. If coverage < 80%, add tests for uncovered lines in modified files until it passes. Do NOT commit until coverage passes.
-2. **Pre-commit hook failures**: Never stop or use `--no-verify`. Auto-fix all issues (run `uv run ruff format . && uv run ruff check --fix .`), re-stage, and retry the commit until it succeeds.
-3. **Push target**: Always push to `origin` only. Never push directly to `upstream`.
-4. **PR body**: Creating a PR MUST strictly follow `.github/PULL_REQUEST_TEMPLATE.md`. All three sections (Why / Solution / Test Cases) are mandatory — never leave any section empty or skip it.
+1. **Pre-format**: Run `uv run ruff format . && uv run ruff check --fix .` before staging and committing, to avoid pre-commit hook failures.
+2. **Coverage gate (two dimensions — both must pass)**:
+   - **Overall coverage**: `uv run pytest tests/unit_tests/ --cov=datus --cov-report=xml:coverage.xml --cov-fail-under=80`
+   - **Diff coverage** (new/changed lines): `uv run diff-cover coverage.xml --compare-branch=upstream/main --fail-under=80`
+   - If diff coverage < 80%, run `uv run diff-cover coverage.xml --compare-branch=upstream/main --show-uncovered` to see exactly which new lines need tests, then add tests for those lines specifically.
+   - Do NOT commit until both pass.
+3. **Pre-commit hook failures**: Never stop or use `--no-verify`. Auto-fix all issues, re-stage, and retry the commit until it succeeds.
+4. **Push target**: Always push to `origin` only. Never push directly to `upstream`.
+5. **PR body**: Creating a PR MUST strictly follow `.github/PULL_REQUEST_TEMPLATE.md`. All three sections (Why / Solution / Test Cases) are mandatory — never leave any section empty or skip it.
 
 ## Guardrails
 
@@ -99,9 +104,13 @@ Examples:
 
 | Tier | Strategy |
 |------|----------|
-| CI | **Must** mock all external calls (LLM, remote databases, network requests) |
+| CI | **Must** mock all external calls (LLM, remote databases, network requests, optional packages) |
 | Nightly | Real LLM APIs allowed; still mock unstable external services |
 | Regression | Use real services; handle missing API keys with `@pytest.mark.skipif` |
+
+### Optional Package Isolation
+
+CI tests run without optional packages (e.g., `datus-bi-core`). Tests that exercise code importing optional packages must work **regardless of whether the package is installed** — never assume the package exists in the environment.
 
 ### Test File Naming
 
