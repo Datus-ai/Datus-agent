@@ -36,6 +36,7 @@ def mock_agent_config():
     config = MagicMock()
     config.current_namespace = "test_ns"
     config.rag_base_path = "/tmp/test_rag"
+    config.api_config = {}
     return config
 
 
