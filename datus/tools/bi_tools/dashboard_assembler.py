@@ -7,7 +7,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Union
 
-from datus.tools.bi_tools.base_adaptor import BIAdaptorBase, ChartInfo, DashboardInfo, DatasetInfo
+from datus_bi_core import BIAdaptorBase, ChartInfo, DashboardInfo, DatasetInfo
+
 from datus.tools.db_tools import connector_registry
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger

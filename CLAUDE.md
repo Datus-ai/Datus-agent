@@ -110,7 +110,7 @@ Examples:
 
 ### Optional Package Isolation
 
-CI tests run without optional packages (e.g., `datus-bi-core`). Tests that exercise code importing optional packages must work **regardless of whether the package is installed** — never assume the package exists in the environment.
+CI tests run without optional packages (e.g., `datus-bi-superset`, `datus-bi-grafana`). Tests that exercise code importing optional packages must work **regardless of whether the package is installed** — never assume the package exists in the environment. Note: `datus-bi-core` is a hard dependency and always available.
 
 ### Test File Naming
 

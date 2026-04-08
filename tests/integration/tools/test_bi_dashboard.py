@@ -16,12 +16,12 @@ from typing import Any, Dict, List, Tuple
 
 import pytest
 import yaml
+from datus_bi_core import AuthParam
 from rich.console import Console
 
 from datus.cli.bi_dashboard import BiDashboardCommands, DashboardCliOptions
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
-from datus.tools.bi_tools.base_adaptor import AuthParam
 from datus.tools.bi_tools.dashboard_assembler import ChartSelection, DashboardAssembler
 from datus.utils.loggings import configure_logging
 from tests.conftest import TEST_CONF_DIR, TEST_DATA_DIR

@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 
 import pandas as pd
 import yaml
+from datus_bi_core import AuthParam, AuthType, BIAdaptorBase, ChartInfo, DashboardInfo, DatasetInfo, adaptor_registry
 from rich.console import Console
 from rich.syntax import Syntax
 from rich.table import Table
@@ -27,14 +28,12 @@ from datus.storage.reference_sql.reference_sql_init import init_reference_sql
 from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.storage.schema_metadata.local_init import init_local_schema
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
-from datus.tools.bi_tools.base_adaptor import AuthParam, AuthType, BIAdaptorBase, ChartInfo, DashboardInfo, DatasetInfo
 from datus.tools.bi_tools.dashboard_assembler import (
     ChartSelection,
     DashboardAssembler,
     DashboardAssemblyResult,
     SelectedSqlCandidate,
 )
-from datus.tools.bi_tools.registry import adaptor_registry
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.utils.constants import SYS_SUB_AGENTS
@@ -185,7 +184,7 @@ class BiDashboardCommands:
     def _prompt_options(self) -> DashboardCliOptions:
         platforms = sorted(self._adaptor_registry)
         if not platforms:
-            raise ValueError("No BI adaptor implementations found.")
+            raise ValueError("No BI adaptor implementations found. Install one with: pip install datus-agent[bi]")
         platform = self._prompt_input("Select BI platform", default=platforms[0], choices=platforms)
         if platform not in self._adaptor_registry:
             raise ValueError(f"Unsupported platform '{platform}'")
@@ -313,7 +312,9 @@ class BiDashboardCommands:
     def _create_adaptor(self, options: DashboardCliOptions) -> BIAdaptorBase:
         adaptor_cls = self._adaptor_registry.get(options.platform)
         if adaptor_cls is None:
-            raise ValueError(f"Unsupported platform '{options.platform}'")
+            raise ValueError(
+                f"Unsupported platform '{options.platform}'. Install it with: pip install datus-bi-{options.platform}"
+            )
         return adaptor_cls(
             api_base_url=options.api_base_url, auth_params=options.auth_params, dialect=self.agent_config.db_type
         )

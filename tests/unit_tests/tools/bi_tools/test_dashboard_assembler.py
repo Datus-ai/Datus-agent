@@ -7,8 +7,8 @@
 from unittest.mock import MagicMock
 
 import pytest
+from datus_bi_core import ChartInfo, DashboardInfo, DatasetInfo, QuerySpec
 
-from datus.tools.bi_tools.base_adaptor import ChartInfo, DashboardInfo, DatasetInfo, QuerySpec
 from datus.tools.bi_tools.dashboard_assembler import (
     ChartSelection,
     DashboardAssembler,
