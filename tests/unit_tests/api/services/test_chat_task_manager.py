@@ -428,3 +428,41 @@ class TestCreateNodeInput:
         assert result.catalog == "cat"
         assert result.database == "db"
         assert result.db_schema == "schema"
+
+
+class _StubGenSQLNode:
+    def __init__(self, **kwargs):
+        self.node_name = kwargs.get("node_name")
+        self.kwargs = kwargs
+
+
+class TestCreateNodeCustomSubAgent:
+    """Tests for _create_node custom sub_agent branch — node_name resolution."""
+
+    def test_custom_subagent_resolves_sanitized_key(self, monkeypatch):
+        """Custom sub_agent UUID resolves to sanitized node_name via agentic_nodes."""
+        monkeypatch.setattr(
+            "datus.api.services.chat_task_manager.GenSQLAgenticNode",
+            _StubGenSQLNode,
+        )
+        agent_config = MagicMock()
+        agent_config.agentic_nodes = {
+            "my_sanitized_name": {"id": "uuid-123", "system_prompt": "my_sanitized_name"},
+        }
+        node = ChatTaskManager()._create_node(agent_config, "uuid-123", "s1")
+        assert isinstance(node, _StubGenSQLNode)
+        assert node.node_name == "my_sanitized_name"
+
+    def test_custom_subagent_unknown_falls_back_to_id(self, monkeypatch):
+        """Unknown subagent_id is used as-is when no matching entry exists."""
+        monkeypatch.setattr(
+            "datus.api.services.chat_task_manager.GenSQLAgenticNode",
+            _StubGenSQLNode,
+        )
+        agent_config = MagicMock()
+        agent_config.agentic_nodes = {
+            "my_sanitized_name": {"id": "uuid-123", "system_prompt": "my_sanitized_name"},
+        }
+        node = ChatTaskManager()._create_node(agent_config, "unknown", "s1")
+        assert isinstance(node, _StubGenSQLNode)
+        assert node.node_name == "unknown"

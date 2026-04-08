@@ -453,14 +453,24 @@ class ChatTaskManager:
                     scope=user_id,
                 )
             else:
+                # Custom sub_agent: agentic_nodes is keyed by sanitized node_name
+                # (not the UUID subagent_id). Each entry carries its original
+                # sub_agent id under the "id" field — use it to resolve the key
+                # so downstream tools can look up scoped_context via
+                # sub_agent_config().
+                node_name = subagent_id
+                for key, entry in (agent_config.agentic_nodes or {}).items():
+                    if isinstance(entry, dict) and entry.get("id") == subagent_id:
+                        node_name = key
+                        break
                 return GenSQLAgenticNode(
                     node_id=session_id,
-                    description=f"SQL generation node for {subagent_id}",
+                    description=f"SQL generation node for {node_name}",
                     node_type="gensql",
                     input_data=None,
                     agent_config=agent_config,
                     tools=None,
-                    node_name=subagent_id,
+                    node_name=node_name,
                     scope=user_id,
                 )
         else:
