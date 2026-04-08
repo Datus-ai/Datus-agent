@@ -7,7 +7,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Union
 
-from datus_bi_core import BIAdapterBase, ChartInfo, DashboardInfo, DatasetInfo
+try:
+    from datus_bi_core import BIAdapterBase, ChartInfo, DashboardInfo, DatasetInfo
+except ImportError:
+    BIAdapterBase = ChartInfo = DashboardInfo = DatasetInfo = None  # type: ignore[assignment,misc]
 
 from datus.tools.db_tools import connector_registry
 from datus.utils.constants import DBType

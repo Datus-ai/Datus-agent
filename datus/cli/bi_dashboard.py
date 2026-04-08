@@ -13,7 +13,19 @@ from urllib.parse import urlparse
 
 import pandas as pd
 import yaml
-from datus_bi_core import AuthParam, AuthType, BIAdapterBase, ChartInfo, DashboardInfo, DatasetInfo, adapter_registry
+
+try:
+    from datus_bi_core import (
+        AuthParam,
+        AuthType,
+        BIAdapterBase,
+        ChartInfo,
+        DashboardInfo,
+        DatasetInfo,
+        adapter_registry,
+    )
+except ImportError:
+    AuthParam = AuthType = BIAdapterBase = ChartInfo = DashboardInfo = DatasetInfo = adapter_registry = None  # type: ignore[assignment,misc]
 from rich.console import Console
 from rich.syntax import Syntax
 from rich.table import Table

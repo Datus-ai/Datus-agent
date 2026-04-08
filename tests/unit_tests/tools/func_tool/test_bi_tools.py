@@ -148,7 +148,7 @@ _bi_core_mock.models.DashboardSpec = _MockDashboardSpec
 class TestBIFuncToolAvailableTools:
     def test_full_adapter_all_tools(self):
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
-            from datus.tools.func_tool.bi_func_tools import BIFuncTool
+            from datus.tools.func_tool.bi_tools import BIFuncTool
 
             adapter = FullMockAdapter()
             tool = BIFuncTool(adapter)
@@ -172,7 +172,7 @@ class TestBIFuncToolAvailableTools:
 
     def test_read_only_adapter_limited_tools(self):
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
-            from datus.tools.func_tool.bi_func_tools import BIFuncTool
+            from datus.tools.func_tool.bi_tools import BIFuncTool
 
             adapter = ReadOnlyMockAdapter()
             tool = BIFuncTool(adapter)
@@ -189,7 +189,7 @@ class TestBIFuncToolAvailableTools:
 class TestBIFuncToolReadOps:
     def _make_tool(self):
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
-            from datus.tools.func_tool.bi_func_tools import BIFuncTool
+            from datus.tools.func_tool.bi_tools import BIFuncTool
 
             return BIFuncTool(FullMockAdapter())
 
@@ -215,7 +215,7 @@ class TestBIFuncToolReadOps:
 class TestBIFuncToolWriteOps:
     def _make_tool(self):
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock, "datus_bi_core.models": _bi_core_mock.models}):
-            from datus.tools.func_tool.bi_func_tools import BIFuncTool
+            from datus.tools.func_tool.bi_tools import BIFuncTool
 
             return BIFuncTool(FullMockAdapter())
 
@@ -374,7 +374,7 @@ class TestBIFuncToolWriteOps:
 
     def test_list_dashboards_no_support(self):
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
-            from datus.tools.func_tool.bi_func_tools import BIFuncTool
+            from datus.tools.func_tool.bi_tools import BIFuncTool
 
             tool = BIFuncTool(ReadOnlyMockAdapter())
         result = tool.list_dashboards()
@@ -413,7 +413,7 @@ class TestBIFuncToolWriteQuery:
 
     def _make_tool_with_dataset_db(self):
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
-            from datus.tools.func_tool.bi_func_tools import BIFuncTool
+            from datus.tools.func_tool.bi_tools import BIFuncTool
 
             return BIFuncTool(
                 FullMockAdapter(),
@@ -423,7 +423,7 @@ class TestBIFuncToolWriteQuery:
 
     def test_write_query_no_dataset_db_uri_returns_error(self):
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
-            from datus.tools.func_tool.bi_func_tools import BIFuncTool
+            from datus.tools.func_tool.bi_tools import BIFuncTool
 
             tool = BIFuncTool(FullMockAdapter())
             result = tool.write_query("SELECT 1", "my_table")
@@ -525,7 +525,7 @@ class TestBIFuncToolResolveGrafanaDatasource:
 
     def test_returns_cached_uid(self):
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
-            from datus.tools.func_tool.bi_func_tools import BIFuncTool
+            from datus.tools.func_tool.bi_tools import BIFuncTool
 
             tool = BIFuncTool(FullMockAdapter())
             tool._grafana_ds_uid = "cached-uid-123"
@@ -533,7 +533,7 @@ class TestBIFuncToolResolveGrafanaDatasource:
 
     def test_returns_none_when_no_list_datasets(self):
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
-            from datus.tools.func_tool.bi_func_tools import BIFuncTool
+            from datus.tools.func_tool.bi_tools import BIFuncTool
 
             adapter = MagicMock(spec=[])  # no list_datasets
             tool = BIFuncTool(adapter)
@@ -541,7 +541,7 @@ class TestBIFuncToolResolveGrafanaDatasource:
 
     def test_matches_by_datasource_name(self):
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
-            from datus.tools.func_tool.bi_func_tools import BIFuncTool
+            from datus.tools.func_tool.bi_tools import BIFuncTool
 
             ds_info = MagicMock()
             ds_info.name = "My-PostgreSQL"
@@ -557,7 +557,7 @@ class TestBIFuncToolResolveGrafanaDatasource:
 
     def test_fallback_matches_by_database_name(self):
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
-            from datus.tools.func_tool.bi_func_tools import BIFuncTool
+            from datus.tools.func_tool.bi_tools import BIFuncTool
 
             ds_info = MagicMock()
             ds_info.name = "some-other-name"
@@ -575,7 +575,7 @@ class TestBIFuncToolResolveGrafanaDatasource:
 
     def test_returns_none_when_no_match(self):
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
-            from datus.tools.func_tool.bi_func_tools import BIFuncTool
+            from datus.tools.func_tool.bi_tools import BIFuncTool
 
             ds_info = MagicMock()
             ds_info.name = "unrelated"
@@ -598,7 +598,7 @@ class TestBIFuncToolWriteQueryContinued:
 
     def _make_tool_with_dataset_db(self):
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
-            from datus.tools.func_tool.bi_func_tools import BIFuncTool
+            from datus.tools.func_tool.bi_tools import BIFuncTool
 
             return BIFuncTool(
                 FullMockAdapter(),
@@ -608,7 +608,7 @@ class TestBIFuncToolWriteQueryContinued:
 
     def test_write_query_absent_from_tools_when_no_dataset_db(self):
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
-            from datus.tools.func_tool.bi_func_tools import BIFuncTool
+            from datus.tools.func_tool.bi_tools import BIFuncTool
 
             tool = BIFuncTool(FullMockAdapter())
             tools = tool.available_tools()
