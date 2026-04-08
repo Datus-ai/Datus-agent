@@ -50,8 +50,8 @@ NODE_CLASS_MAP = {
     "semantic": NodeType.TYPE_SEMANTIC,
     "sql_summary": NodeType.TYPE_SQL_SUMMARY,
     "explore": NodeType.TYPE_EXPLORE,
-"gen_table": NodeType.TYPE_GEN_TABLE,
-"gen_skill": NodeType.TYPE_GEN_SKILL,
+    "gen_table": NodeType.TYPE_GEN_TABLE,
+    "gen_skill": NodeType.TYPE_GEN_SKILL,
 }
 
 # Descriptions for built-in system subagents (used in task tool description for LLM)
@@ -314,14 +314,14 @@ class SubAgentTaskTool:
                 tools=None,
                 node_name="gen_report",
             )
-elif subagent_type == "gen_table":
+        elif subagent_type == "gen_table":
             from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
 
             return GenTableAgenticNode(
                 agent_config=self.agent_config,
                 execution_mode="interactive",
             )
-elif subagent_type == "gen_skill":
+        elif subagent_type == "gen_skill":
             from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
             return SkillCreatorAgenticNode(
