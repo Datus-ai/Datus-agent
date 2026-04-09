@@ -19,6 +19,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.storage.metric.store import MetricStorage
 from datus.storage.semantic_model.store import SemanticModelStorage
 from datus.storage.subject_tree.store import SubjectTreeStore
+from datus.tools.semantic_tools.models import SemanticModelInfo
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -67,13 +68,13 @@ class SemanticStorageManager:
 
     def store_semantic_model(
         self,
-        model_data: Dict[str, Any],
+        model_data,
     ) -> None:
         """
         Store semantic model to unified storage.
 
         Args:
-            model_data: Semantic model data with structure:
+            model_data: Either a SemanticModelInfo object or a dict with structure:
                 {
                     "semantic_model_name": str,
                     "description": str,
@@ -86,6 +87,18 @@ class SemanticStorageManager:
                     "identifiers": List[{name, description, expr}] (optional),
                 }
         """
+        # Convert SemanticModelInfo to dict format for storage
+        if isinstance(model_data, SemanticModelInfo):
+            model_data = {
+                "semantic_model_name": model_data.name,
+                "description": model_data.description or "",
+                "table_name": model_data.name,
+                "dimensions": [
+                    {"name": d.name, "description": d.description or "", "expr": ""} for d in model_data.dimensions
+                ],
+                "measures": [{"name": m, "description": "", "expr": ""} for m in model_data.measures],
+            }
+
         # Validate required field
         if "semantic_model_name" not in model_data:
             raise ValueError("model_data must contain 'semantic_model_name' field")
@@ -311,14 +324,19 @@ class SemanticStorageManager:
                 logger.error(f"Failed to list semantic models from {adapter.service_type}: {e}")
                 models = []
 
-            for model_name in models:
+            for model_entry in models:
                 try:
-                    model_data = adapter.get_semantic_model(table_name=model_name)
-                    if model_data:
-                        self.store_semantic_model(model_data)
+                    if isinstance(model_entry, SemanticModelInfo):
+                        self.store_semantic_model(model_entry)
                         stats["semantic_models_synced"] += 1
+                    else:
+                        model_data = adapter.get_semantic_model(table_name=model_entry)
+                        if model_data:
+                            self.store_semantic_model(model_data)
+                            stats["semantic_models_synced"] += 1
                 except Exception as e:
-                    logger.error(f"Failed to sync semantic model '{model_name}' from {adapter.service_type}: {e}")
+                    model_id = model_entry.name if isinstance(model_entry, SemanticModelInfo) else model_entry
+                    logger.error(f"Failed to sync semantic model '{model_id}' from {adapter.service_type}: {e}")
                     continue
 
         # Sync metrics

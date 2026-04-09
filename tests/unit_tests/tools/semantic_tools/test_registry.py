@@ -6,9 +6,9 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from datus_semantic_core.exceptions import SemanticCoreException
 
 from datus.tools.semantic_tools.registry import AdapterMetadata, SemanticAdapterRegistry
-from datus.utils.exceptions import DatusException
 
 
 def _make_adapter_class(service_type="test_service"):
@@ -135,7 +135,7 @@ class TestSemanticAdapterRegistry:
 
     def test_create_adapter_raises_for_unknown_service(self):
         with patch.object(SemanticAdapterRegistry, "_try_load_adapter"):
-            with pytest.raises(DatusException):
+            with pytest.raises(SemanticCoreException):
                 SemanticAdapterRegistry.create_adapter("nonexistent", MagicMock())
 
     def test_create_adapter_case_insensitive(self):
