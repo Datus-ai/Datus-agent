@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from datus.tools.semantic_tools.models import DimensionInfo, SemanticModelInfo
 from datus.tools.semantic_tools.storage_sync import SemanticStorageManager
 
 
@@ -671,3 +672,137 @@ class TestSyncFromAdapter:
 
         mock_store_sm.assert_not_called()
         assert stats["semantic_models_synced"] == 0
+
+
+class TestSyncFromAdapterWithSemanticModelInfo:
+    """Tests for sync_from_adapter when list_semantic_models returns List[SemanticModelInfo]."""
+
+    def test_sync_with_semantic_model_info_list(self):
+        """sync_from_adapter should handle list_semantic_models returning SemanticModelInfo objects."""
+        manager = _make_manager()
+        mock_adapter = MagicMock()
+        mock_adapter.service_type = "test_service"
+
+        # New-style: list_semantic_models returns List[SemanticModelInfo]
+        model_infos = [
+            SemanticModelInfo(
+                name="orders",
+                description="Order cube",
+                platform_type="cube",
+                dimensions=[DimensionInfo(name="status", type="string")],
+                measures=["orders.count"],
+            ),
+            SemanticModelInfo(
+                name="customers",
+                description="Customer cube",
+                platform_type="cube",
+                dimensions=[DimensionInfo(name="name", type="string")],
+                measures=["customers.count"],
+            ),
+        ]
+        mock_adapter.list_semantic_models.return_value = model_infos
+        mock_adapter.list_metrics = AsyncMock(return_value=[])
+
+        with patch.object(manager, "store_semantic_model") as mock_store_sm:
+            stats = asyncio.run(
+                manager.sync_from_adapter(
+                    adapter=mock_adapter,
+                    sync_semantic_models=True,
+                    sync_metrics=False,
+                )
+            )
+
+        assert stats["semantic_models_synced"] == 2
+        assert mock_store_sm.call_count == 2
+
+    def test_sync_semantic_model_info_extracts_data_for_store(self):
+        """When list_semantic_models returns SemanticModelInfo, sync should convert and store correctly."""
+        manager = _make_manager()
+        mock_adapter = MagicMock()
+        mock_adapter.service_type = "test_service"
+
+        model_info = SemanticModelInfo(
+            name="orders",
+            description="Order data",
+            platform_type="cube",
+            dimensions=[
+                DimensionInfo(name="status", type="string"),
+                DimensionInfo(name="created_at", type="time"),
+            ],
+            measures=["orders.count", "orders.total"],
+            extra={"connectedComponent": 1},
+        )
+        mock_adapter.list_semantic_models.return_value = [model_info]
+        mock_adapter.list_metrics = AsyncMock(return_value=[])
+
+        stored_args = []
+
+        def capture_store(data):
+            stored_args.append(data)
+
+        with patch.object(manager, "store_semantic_model", side_effect=capture_store):
+            asyncio.run(
+                manager.sync_from_adapter(
+                    adapter=mock_adapter,
+                    sync_semantic_models=True,
+                    sync_metrics=False,
+                )
+            )
+
+        assert len(stored_args) == 1
+        stored = stored_args[0]
+        # Should be a dict or SemanticModelInfo — store_semantic_model must handle it
+        if isinstance(stored, dict):
+            assert stored["semantic_model_name"] == "orders"
+        elif isinstance(stored, SemanticModelInfo):
+            assert stored.name == "orders"
+
+
+class TestStoreSemanticModelWithSemanticModelInfo:
+    """Tests for store_semantic_model accepting SemanticModelInfo objects."""
+
+    def test_store_accepts_semantic_model_info(self):
+        """store_semantic_model should accept SemanticModelInfo, not just dict."""
+        manager = _make_manager()
+        mock_store = MagicMock()
+
+        model_info = SemanticModelInfo(
+            name="orders",
+            description="Order data",
+            platform_type="cube",
+            dimensions=[
+                DimensionInfo(name="status", type="string", description="Order status"),
+                DimensionInfo(name="id", type="number", is_primary_key=True),
+            ],
+            measures=["orders.count"],
+        )
+
+        with patch.object(manager, "_ensure_semantic_model_store", return_value=mock_store):
+            manager.store_semantic_model(model_info)
+
+        # Should have stored table + columns
+        assert mock_store.batch_store.call_count >= 1
+        all_stored = []
+        for call in mock_store.batch_store.call_args_list:
+            all_stored.extend(call[0][0])
+
+        table_objs = [obj for obj in all_stored if obj.get("kind") == "table"]
+        assert len(table_objs) == 1
+        assert table_objs[0]["table_name"] == "orders"
+
+        dim_objs = [obj for obj in all_stored if obj.get("is_dimension") is True]
+        assert len(dim_objs) == 2
+
+    def test_store_semantic_model_info_preserves_table_name(self):
+        """SemanticModelInfo.name should map to both semantic_model_name and table_name."""
+        manager = _make_manager()
+        mock_store = MagicMock()
+
+        model_info = SemanticModelInfo(name="user_events", dimensions=[], measures=[])
+
+        with patch.object(manager, "_ensure_semantic_model_store", return_value=mock_store):
+            manager.store_semantic_model(model_info)
+
+        first_call = mock_store.batch_store.call_args_list[0][0][0]
+        table_obj = first_call[0]
+        assert table_obj["table_name"] == "user_events"

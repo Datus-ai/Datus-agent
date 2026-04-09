@@ -362,6 +362,7 @@ class SemanticStorageManager:
                                     f"{adapter.service_type}: missing physical table_name metadata"
                                 )
                     else:
+                        # Legacy: list_semantic_models returns List[str]
                         model_data = adapter.get_semantic_model(table_name=model_entry)
                         if model_data:
                             self.store_semantic_model(model_data)

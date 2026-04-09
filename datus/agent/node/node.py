@@ -140,6 +140,13 @@ class Node(ABC):
             from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
             return SkillCreatorAgenticNode(node_id, description, node_type, input_data, agent_config, tools, node_name)
+        elif node_type == NodeType.TYPE_GEN_ADAPTER:
+            from datus.agent.node.gen_adapter_agentic_node import GenAdapterAgenticNode
+
+            node = GenAdapterAgenticNode(agent_config=agent_config, execution_mode="workflow")
+            if input_data is not None:
+                node.input = input_data
+            return node
         else:
             raise ValueError(f"Invalid node type: {node_type}")
 

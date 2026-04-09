@@ -52,6 +52,7 @@ NODE_CLASS_MAP = {
     "explore": NodeType.TYPE_EXPLORE,
     "gen_table": NodeType.TYPE_GEN_TABLE,
     "gen_skill": NodeType.TYPE_GEN_SKILL,
+    "gen_adapter": NodeType.TYPE_GEN_ADAPTER,
 }
 
 # Descriptions for built-in system subagents (used in task tool description for LLM)
@@ -134,6 +135,12 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "Both modes: the agent analyzes the input, proposes a table schema, asks for confirmation, "
         "and executes the DDL. For semantic model generation on the new table, "
         "use gen_semantic_model separately. Returns JSON with {response, tokens_used}."
+    ),
+    "gen_adapter": (
+        "Generate adapter project scaffolding for integrating external platforms "
+        "(BI, DB, Scheduler, Semantic Layer). Supports Cube, Looker, dbt, etc. "
+        "Prompt: describe the platform and adapter type to generate. "
+        "Returns JSON with {response, tokens_used}."
     ),
 }
 
@@ -343,6 +350,13 @@ class SubAgentTaskTool:
                 tools=None,
                 node_name="gen_skill",
                 execution_mode=self._resolve_execution_mode(),
+            )
+        elif subagent_type == "gen_adapter":
+            from datus.agent.node.gen_adapter_agentic_node import GenAdapterAgenticNode
+
+            return GenAdapterAgenticNode(
+                agent_config=self.agent_config,
+                execution_mode="interactive",
             )
         else:
             raise ValueError(f"Unknown builtin subagent type: {subagent_type}")
