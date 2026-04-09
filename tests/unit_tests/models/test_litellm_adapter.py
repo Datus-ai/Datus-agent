@@ -313,6 +313,37 @@ class TestAutoDetectWithBaseUrl:
         )
         assert adapter.provider == "deepseek"
 
+    def test_vllm_custom_endpoint_openai_prefix(self):
+        """type: openai + custom vLLM base_url + Qwen3.5-397B → openai/Qwen3.5-397B (#532)."""
+        adapter = LiteLLMAdapter(
+            provider="openai",
+            model="Qwen3.5-397B",
+            api_key="key",
+            base_url="http://192.168.1.100:8015/v1",
+        )
+        assert adapter.provider == "openai"
+        assert adapter.litellm_model_name == "openai/Qwen3.5-397B"
+
+    def test_native_openai_no_extra_prefix(self):
+        """type: openai + api.openai.com → no openai/ prefix for native models."""
+        adapter = LiteLLMAdapter(
+            provider="openai",
+            model="gpt-4o",
+            api_key="key",
+            base_url="https://api.openai.com/v1",
+        )
+        assert adapter.litellm_model_name == "gpt-4o"
+
+    def test_localhost_vllm_openai_prefix(self):
+        """type: openai + localhost vLLM → openai/ prefix for unknown model."""
+        adapter = LiteLLMAdapter(
+            provider="openai",
+            model="my-custom-model",
+            api_key="key",
+            base_url="http://localhost:8000/v1",
+        )
+        assert adapter.litellm_model_name == "openai/my-custom-model"
+
 
 class TestDefaultHeaders:
     """Tests for default_headers passthrough to LiteLLM and Anthropic clients."""

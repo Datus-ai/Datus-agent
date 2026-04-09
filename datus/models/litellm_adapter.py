@@ -218,6 +218,7 @@ class LiteLLMAdapter:
             - openai/gpt-4o -> gpt-4o (no prefix for OpenAI)
             - claude/claude-sonnet-4 -> anthropic/claude-sonnet-4
             - deepseek/deepseek-chat -> deepseek/deepseek-chat
+            - openai + custom base_url + Qwen3.5-397B -> openai/Qwen3.5-397B
         """
         prefix = self.MODEL_PREFIX_MAP.get(self.provider, "")
 
@@ -230,7 +231,16 @@ class LiteLLMAdapter:
         if "/" in self.model:
             return self.model
 
-        # For OpenAI, no prefix needed
+        # For OpenAI provider with custom base_url (e.g. self-hosted vLLM),
+        # add "openai/" prefix so LiteLLM uses OpenAI-compatible API format
+        # for model names not in its built-in list (e.g. Qwen3.5-397B).
+        if self.provider == "openai" and not prefix and self.base_url:
+            parsed = urlparse(self.base_url)
+            domain = parsed.hostname or ""
+            if domain not in ("api.openai.com",):
+                return f"openai/{self.model}"
+
+        # For OpenAI native models (gpt-4o, o3, etc.), no prefix needed
         if not prefix:
             return self.model
 
