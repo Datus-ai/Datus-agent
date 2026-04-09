@@ -1060,11 +1060,55 @@ class TestChatAgenticNodeExecuteStreamWithTools:
         assert isinstance(final_action.output["response"], str)
 
     @pytest.mark.asyncio
+    async def test_execute_stream_extracts_string_content_from_action(self, real_agent_config, mock_llm_create):
+        """execute_stream correctly extracts string content from action output's content key.
+
+        Covers the isinstance(candidate, str) branch in the stream loop extraction.
+        """
+        from unittest.mock import patch
+
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+        from datus.schemas.action_history import ActionHistory
+
+        node = ChatAgenticNode(
+            node_id="test_str_content",
+            description="Test string content extraction",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
+        node.input = ChatNodeInput(user_message="Hello", database="california_schools")
+
+        async def mock_execute(prompt, execution_mode, original_input, action_history_manager, session):
+            action = ActionHistory(
+                action_id="msg_str",
+                role=ActionRole.ASSISTANT,
+                messages="Text response",
+                action_type="message",
+                input={},
+                output={"content": "Here are your results in markdown."},
+                status=ActionStatus.SUCCESS,
+            )
+            action_history_manager.add_action(action)
+            yield action
+
+        with patch.object(node, "_execute_with_recursive_replan", mock_execute):
+            ahm = ActionHistoryManager()
+            actions = []
+            async for action in node.execute_stream(ahm):
+                actions.append(action)
+
+        final_action = actions[-1]
+        assert final_action.status == ActionStatus.SUCCESS
+        assert final_action.output["response"] == "Here are your results in markdown."
+
+    @pytest.mark.asyncio
     async def test_execute_stream_summary_report_dict_does_not_crash(self, real_agent_config, mock_llm_create):
         """execute_stream handles dict values in summary_report action outputs.
 
         Regression test: when a summary_report action has "markdown" or "content"
         as a dict, the fallback extraction must convert it to string.
+        The summary_report is added to action_history_manager without being yielded
+        through the stream so that earlier extraction points don't intercept it.
         """
         from unittest.mock import patch
 
@@ -1079,9 +1123,11 @@ class TestChatAgenticNodeExecuteStreamWithTools:
         )
         node.input = ChatNodeInput(user_message="Summarize", database="california_schools")
 
-        # Simulate: no message actions yield content, but a summary_report has dict "markdown"
         async def mock_execute(prompt, execution_mode, original_input, action_history_manager, session):
-            action = ActionHistory(
+            # Add summary_report directly to action_history_manager (simulates sub-component adding it).
+            # Do NOT yield it, so last_successful_output stays None and the summary_report
+            # fallback loop is actually reached.
+            summary_action = ActionHistory(
                 action_id="summary_1",
                 role=ActionRole.ASSISTANT,
                 messages="Summary report",
@@ -1093,8 +1139,19 @@ class TestChatAgenticNodeExecuteStreamWithTools:
                 },
                 status=ActionStatus.SUCCESS,
             )
-            action_history_manager.add_action(action)
-            yield action
+            action_history_manager.add_action(summary_action)
+
+            # Yield a non-dict output action so the stream has at least one item
+            empty_action = ActionHistory(
+                action_id="empty_1",
+                role=ActionRole.ASSISTANT,
+                messages="Processing",
+                action_type="thinking",
+                input={},
+                output="",
+                status=ActionStatus.SUCCESS,
+            )
+            yield empty_action
 
         with patch.object(node, "_execute_with_recursive_replan", mock_execute):
             ahm = ActionHistoryManager()
