@@ -62,8 +62,8 @@ class ChatAgenticNode(AgenticNode):
         input_data: Optional[ChatNodeInput] = None,
         agent_config: Optional[AgentConfig] = None,
         tools: Optional[list] = None,
-        execution_mode: Literal["interactive", "workflow"] = "interactive",
         scope: Optional[str] = None,
+        execution_mode: Literal["interactive", "workflow"] = "interactive",
     ):
         """
         Initialize the ChatAgenticNode.
