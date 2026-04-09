@@ -198,6 +198,7 @@ class TestResolveNodeType:
             "sql_summary": NodeType.TYPE_SQL_SUMMARY,
             "explore": NodeType.TYPE_EXPLORE,
             "gen_table": NodeType.TYPE_GEN_TABLE,
+            "gen_skill": NodeType.TYPE_GEN_SKILL,
         }
         assert set(NODE_CLASS_MAP.keys()) == set(expected_map.keys()), (
             f"NODE_CLASS_MAP keys differ: got {set(NODE_CLASS_MAP.keys())}"
