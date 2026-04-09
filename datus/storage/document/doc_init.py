@@ -17,8 +17,9 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Callable, List, Optional, Set, Tuple
 
+from datus.schemas.batch_events import BatchEventEmitter, BatchEventHelper
 from datus.storage.document.fetcher import GitHubFetcher, LocalFetcher, RateLimiter, WebFetcher
 from datus.storage.document.schemas import SOURCE_TYPE_GITHUB, SOURCE_TYPE_LOCAL
 from datus.storage.document.store import document_store
@@ -203,6 +204,8 @@ def init_platform_docs(
     build_mode: str = "overwrite",
     pool_size: int = 4,
     db_path: str = "",
+    emit: Optional[BatchEventEmitter] = None,
+    cancel_check: Optional[Callable[[], bool]] = None,
 ) -> InitResult:
     """Initialize platform documentation knowledge base.
 
@@ -246,10 +249,15 @@ def init_platform_docs(
 
     logger.info(f"Initializing {platform} documentation from {source} ({source_type})")
 
+    helper = BatchEventHelper("platform_doc_init", emit)
+
     try:
         store = document_store(platform)
     except DatusException as exc:
+        helper.task_failed(error=str(exc))
         return _make_empty_result(platform, version, source, start_time, errors=[str(exc)])
+
+    helper.task_started(platform=platform, source=source, source_type=source_type)
 
     # ==================================================================
     # Check mode: return existing store stats without any I/O or fetching
@@ -287,12 +295,22 @@ def init_platform_docs(
             version_details=version_details,
         )
 
+    # Cancel check before processing
+    if cancel_check and cancel_check():
+        helper.task_failed(error="Cancelled by user")
+        return _make_empty_result(platform, version, source, start_time, errors=["Cancelled"])
+
     # Initialize components
     rate_limiter = RateLimiter()
+
+    def _on_doc_done(doc_path: str, chunk_count: int) -> None:
+        helper.item_completed(item_id=doc_path, chunks=chunk_count)
+
     processor = StreamingDocProcessor(
         store=store,
         chunk_size=cfg.chunk_size,
         pool_size=pool_size,
+        on_doc_complete=_on_doc_done if emit else None,
     )
 
     # Track versions from path-based directories (e.g., paths=["1.3.0", "1.2.0"])
@@ -338,6 +356,11 @@ def init_platform_docs(
                     version = github_metadata.version
 
             logger.info(f"Found {len(github_metadata.file_paths)} files, version='{version}'")
+            helper.task_validated(total_items=len(github_metadata.file_paths), version=version)
+
+            if cancel_check and cancel_check():
+                helper.task_failed(error="Cancelled by user")
+                return _make_empty_result(platform, version, source, start_time, errors=["Cancelled"])
 
             # Phase 2: Delete existing data
             _delete_existing_versions(store, version, path_versions)
@@ -367,6 +390,11 @@ def init_platform_docs(
                 version = documents[0].version
 
             logger.info(f"Found {len(documents)} documents, version='{version}'")
+            helper.task_validated(total_items=len(documents), version=version)
+
+            if cancel_check and cancel_check():
+                helper.task_failed(error="Cancelled by user")
+                return _make_empty_result(platform, version, source, start_time, errors=["Cancelled"])
 
             # Phase 2: Delete existing data
             _delete_existing_versions(store, version, path_versions)
@@ -393,6 +421,11 @@ def init_platform_docs(
                 version = fetcher._detect_version_from_url(source)
 
             logger.info(f"Starting website crawl from {source}, version='{version}'")
+            helper.task_processing(total_items=0, version=version, source=source)
+
+            if cancel_check and cancel_check():
+                helper.task_failed(error="Cancelled by user")
+                return _make_empty_result(platform, version, source, start_time, errors=["Cancelled"])
 
             # Phase 2: Delete existing data
             _delete_existing_versions(store, version, path_versions)
@@ -410,6 +443,7 @@ def init_platform_docs(
 
     except Exception as e:
         logger.error(f"Failed to process documents: {e}")
+        helper.task_failed(error=str(e), exception_type=type(e).__name__)
         duration = (datetime.now(timezone.utc) - start_time).total_seconds()
         error_version = ", ".join(sorted(path_versions)) if path_versions else (version or "unknown")
         return InitResult(
@@ -440,6 +474,13 @@ def init_platform_docs(
 
     logger.info(
         f"Platform documentation initialized: {stats.total_docs} docs, {stats.total_chunks} chunks, {duration:.1f}s"
+    )
+
+    helper.task_completed(
+        total_items=stats.total_docs,
+        completed_items=stats.total_docs - len(stats.errors),
+        failed_items=len(stats.errors),
+        total_chunks=stats.total_chunks,
     )
 
     return InitResult(

@@ -15,7 +15,7 @@ import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, List, Optional, Set
+from typing import TYPE_CHECKING, Callable, List, Optional, Set
 from urllib.parse import urlparse
 
 from datus.storage.document.chunker import SemanticChunker
@@ -88,6 +88,7 @@ class StreamingDocProcessor:
         store: "DocumentStore",
         chunk_size: int = 1024,
         pool_size: int = 4,
+        on_doc_complete: Optional[Callable[[str, int], None]] = None,
     ):
         """Initialize the streaming processor.
 
@@ -95,9 +96,13 @@ class StreamingDocProcessor:
             store: DocumentStore for storing chunks
             chunk_size: Target chunk size in characters
             pool_size: Number of worker threads
+            on_doc_complete: Optional callback invoked after each document is
+                processed.  Receives ``(doc_path, chunk_count)`` where
+                *chunk_count* is 0 on failure.  Called from worker threads.
         """
         self.store = store
         self.pool_size = pool_size
+        self._on_doc_complete = on_doc_complete
 
         # Processing components
         self.cleaner = DocumentCleaner()
@@ -172,6 +177,12 @@ class StreamingDocProcessor:
             # Update stats
             stats.increment(docs=1, chunks=len(chunks))
 
+            if self._on_doc_complete:
+                try:
+                    self._on_doc_complete(doc.doc_path, len(chunks))
+                except Exception:
+                    logger.debug(f"on_doc_complete callback failed for {doc.doc_path}")
+
             logger.debug(f"Processed: {doc.doc_path} -> {len(chunks)} chunks")
 
             return chunks
@@ -179,6 +190,11 @@ class StreamingDocProcessor:
         except Exception as e:
             logger.warning(f"Failed to process {doc.doc_path}: {e}")
             stats.add_error(f"Process error ({doc.doc_path}): {str(e)}")
+            if self._on_doc_complete:
+                try:
+                    self._on_doc_complete(doc.doc_path, 0)
+                except Exception:
+                    pass
             return []
 
     def _mark_visited(self, url: str) -> bool:

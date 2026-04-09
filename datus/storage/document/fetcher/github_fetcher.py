@@ -523,13 +523,90 @@ class GitHubFetcher(BaseFetcher):
             logger.debug(f"Error discovering version directories: {e}")
             return []
 
+    # ------------------------------------------------------------------
+    # File path collection — fast (Git Trees API) with recursive fallback
+    # ------------------------------------------------------------------
+
+    def _get_full_tree(self, repo: "Repository", branch: str) -> Optional[List]:
+        """Fetch the full recursive tree for a branch in a single API call.
+
+        Uses ``GET /repos/{owner}/{repo}/git/trees/{sha}?recursive=1``
+        which returns up to 100 000 entries — far faster than walking
+        directories one-by-one with the Contents API.
+
+        Returns:
+            List of tree elements, or None on failure.
+        """
+        if not hasattr(self, "_tree_cache"):
+            self._tree_cache: Dict[str, Optional[List]] = {}
+
+        cache_key = f"{repo.full_name}:{branch}"
+        if cache_key in self._tree_cache:
+            return self._tree_cache[cache_key]
+
+        try:
+            self.rate_limiter.wait("api.github.com")
+            git_tree = repo.get_git_tree(branch, recursive=True)
+            if git_tree.raw_data.get("truncated"):
+                logger.warning("Git tree is truncated (>100k entries); falling back to recursive walk")
+                self._tree_cache[cache_key] = None
+                return None
+            self._tree_cache[cache_key] = git_tree.tree
+            logger.info(f"Fetched full git tree: {len(git_tree.tree)} entries in 1 API call")
+            return git_tree.tree
+        except GithubException as e:
+            logger.debug(f"Git Trees API failed, will use recursive walk: {e}")
+            self._tree_cache[cache_key] = None
+            return None
+
     def _collect_file_paths(
         self,
         repo: "Repository",
         path: str,
         branch: str,
     ) -> List[str]:
-        """Recursively collect file paths from a directory.
+        """Collect documentation file paths under *path*.
+
+        Fast path: uses the Git Trees API (single request for the whole repo).
+        Fallback: recursive ``get_contents`` walk (one request per directory).
+
+        Args:
+            repo: Repository object
+            path: Path to explore (directory or single file)
+            branch: Branch name
+
+        Returns:
+            List of file paths
+        """
+        # --- fast path: filter the full tree ---
+        tree = self._get_full_tree(repo, branch)
+        if tree is not None:
+            return self._filter_tree(tree, path)
+
+        # --- fallback: recursive Contents API walk ---
+        return self._collect_file_paths_recursive(repo, path, branch)
+
+    def _filter_tree(self, tree: List, path: str) -> List[str]:
+        """Filter the pre-fetched git tree for doc files under *path*."""
+        # Normalise: "docs" should match "docs/..." and "docs" itself
+        prefix = path.rstrip("/") + "/"
+        file_paths = []
+        for item in tree:
+            if item.type != "blob":
+                continue
+            # Match: exact path OR starts with prefix
+            if item.path == path or item.path.startswith(prefix):
+                if self._is_doc_file(item.path.split("/")[-1]):
+                    file_paths.append(item.path)
+        return file_paths
+
+    def _collect_file_paths_recursive(
+        self,
+        repo: "Repository",
+        path: str,
+        branch: str,
+    ) -> List[str]:
+        """Recursively collect file paths using the Contents API (slow fallback).
 
         Args:
             repo: Repository object
@@ -549,9 +626,8 @@ class GitHubFetcher(BaseFetcher):
 
         for content in contents:
             if content.type == "dir":
-                # Recurse into directory
                 try:
-                    sub_paths = self._collect_file_paths(repo, content.path, branch)
+                    sub_paths = self._collect_file_paths_recursive(repo, content.path, branch)
                     file_paths.extend(sub_paths)
                 except GithubException as e:
                     logger.debug(f"Could not access directory {content.path}: {e}")

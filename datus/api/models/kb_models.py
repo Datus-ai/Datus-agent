@@ -104,6 +104,35 @@ class BootstrapKbInput(BaseModel):
     )
 
 
+class BootstrapDocInput(BaseModel):
+    """POST body for /api/v1/kb/bootstrap-docs.
+
+    Only ``platform`` is required.  Every other field falls back to the
+    matching ``DocumentConfig`` in ``agent.yml`` (``agent.document.<platform>``).
+    """
+
+    model_config = ConfigDict(use_enum_values=True)
+
+    platform: str = Field(..., description="Platform name, e.g. 'snowflake', 'duckdb', 'postgresql'.")
+    build_mode: Literal["overwrite", "check"] = Field(
+        default="overwrite",
+        description="'check' returns existing store stats; 'overwrite' clears and rebuilds.",
+    )
+    pool_size: int = Field(default=4, ge=1, le=16, description="Thread pool size for parallel processing.")
+
+    # Optional overrides — if omitted, resolved from AgentConfig.document_configs[platform]
+    source_type: Optional[str] = Field(default=None, description="Source type: 'github', 'website', or 'local'.")
+    source: Optional[str] = Field(default=None, description="GitHub repo 'owner/repo', URL, or local path.")
+    version: Optional[str] = Field(default=None, description="Document version (auto-detected if omitted).")
+    github_ref: Optional[str] = Field(default=None, description="Git branch / tag / commit for GitHub sources.")
+    github_token: Optional[str] = Field(default=None, description="GitHub API token for authenticated access.")
+    paths: Optional[list[str]] = Field(default=None, description="File/directory paths to include.")
+    chunk_size: Optional[int] = Field(default=None, description="Target chunk size in characters.")
+    max_depth: Optional[int] = Field(default=None, description="Max crawl depth for website sources.")
+    include_patterns: Optional[list[str]] = Field(default=None, description="File/URL patterns to include (regex).")
+    exclude_patterns: Optional[list[str]] = Field(default=None, description="File/URL patterns to exclude (regex).")
+
+
 class BootstrapKbEvent(BaseModel):
     """SSE event envelope sent to the client."""
 

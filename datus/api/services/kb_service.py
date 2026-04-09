@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import AsyncGenerator, Optional
 
 from datus.api.models.kb_models import (
+    BootstrapDocInput,
     BootstrapKbEvent,
     BootstrapKbInput,
     KbComponent,
@@ -328,6 +329,147 @@ class KbService:
             emit=emit,
         )
         return result if isinstance(result, dict) else {"status": "success", "message": str(result)}
+
+    # ------------------------------------------------------------------
+    # Platform document bootstrap
+    # ------------------------------------------------------------------
+
+    async def bootstrap_doc_stream(
+        self,
+        request: BootstrapDocInput,
+        stream_id: str,
+        cancel_event: asyncio.Event,
+    ) -> AsyncGenerator[BootstrapKbEvent, None]:
+        """Run platform doc bootstrap, yielding SSE events."""
+        queue: asyncio.Queue = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+        component = "platform_doc"
+
+        future = loop.run_in_executor(
+            None,
+            self._run_doc_init,
+            request,
+            queue,
+            loop,
+            cancel_event,
+        )
+
+        # Drain queue (same pattern as bootstrap_stream)
+        while True:
+            if future.done() and queue.empty():
+                break
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=0.5)
+            except asyncio.TimeoutError:
+                if future.done():
+                    break
+                continue
+            if item is _COMPONENT_DONE:
+                break
+            yield self._batch_event_to_sse(stream_id, component, item)
+
+        # Collect result
+        result = None
+        component_error = None
+        try:
+            result = await future
+        except Exception as exc:
+            logger.exception("Platform doc bootstrap failed")
+            component_error = exc
+
+        # Drain remaining events
+        while not queue.empty():
+            try:
+                item = queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if item is _COMPONENT_DONE:
+                break
+            yield self._batch_event_to_sse(stream_id, component, item)
+
+        # Final event
+        if component_error:
+            yield self._make_event(stream_id, component, BatchStage.TASK_FAILED, error=str(component_error))
+        elif result and result.success:
+            yield self._make_event(
+                stream_id,
+                component,
+                BatchStage.TASK_COMPLETED,
+                message=f"Processed {result.total_docs} docs, {result.total_chunks} chunks",
+                payload={
+                    "platform": result.platform,
+                    "version": result.version,
+                    "total_docs": result.total_docs,
+                    "total_chunks": result.total_chunks,
+                    "duration_seconds": result.duration_seconds,
+                    "errors": result.errors,
+                },
+            )
+        else:
+            error_msg = "; ".join(result.errors) if result and result.errors else "Unknown error"
+            yield self._make_event(stream_id, component, BatchStage.TASK_FAILED, error=error_msg)
+
+    def _run_doc_init(
+        self,
+        request: BootstrapDocInput,
+        queue: asyncio.Queue,
+        loop: asyncio.AbstractEventLoop,
+        cancel_event: asyncio.Event,
+    ):
+        """Sync worker for platform doc bootstrap (runs in executor thread)."""
+        from datus.configuration.agent_config import DocumentConfig
+        from datus.storage.document.doc_init import init_platform_docs
+
+        config = self.agent_config
+        platform = request.platform
+
+        # Resolve DocumentConfig: YAML base + API overrides
+        base_cfg = config.document_configs.get(platform, DocumentConfig())
+        merged_cfg = self._merge_doc_overrides(base_cfg, request)
+
+        # Thread-safe emit bridging to async queue
+        def emit(event: BatchEvent) -> None:
+            loop.call_soon_threadsafe(queue.put_nowait, event)
+
+        # Cancel bridge: asyncio.Event -> sync callable
+        def cancel_check() -> bool:
+            return cancel_event.is_set()
+
+        try:
+            return init_platform_docs(
+                platform=platform,
+                cfg=merged_cfg,
+                build_mode=request.build_mode,
+                pool_size=request.pool_size,
+                emit=emit,
+                cancel_check=cancel_check,
+            )
+        finally:
+            loop.call_soon_threadsafe(queue.put_nowait, _COMPONENT_DONE)
+
+    @staticmethod
+    def _merge_doc_overrides(base, request: BootstrapDocInput):
+        """Overlay non-None API request fields onto the YAML-based DocumentConfig."""
+        import dataclasses
+
+        field_map = {
+            "source_type": "type",
+            "source": "source",
+            "version": "version",
+            "github_ref": "github_ref",
+            "github_token": "github_token",
+            "paths": "paths",
+            "chunk_size": "chunk_size",
+            "max_depth": "max_depth",
+            "include_patterns": "include_patterns",
+            "exclude_patterns": "exclude_patterns",
+        }
+        overrides = {}
+        for req_field, cfg_field in field_map.items():
+            val = getattr(request, req_field, None)
+            if val is not None:
+                overrides[cfg_field] = val
+        return dataclasses.replace(base, **overrides)
 
     # ------------------------------------------------------------------
     # Helpers

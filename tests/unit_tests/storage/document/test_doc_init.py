@@ -442,3 +442,107 @@ class TestInitPlatformDocsDbPathDeprecation:
 
             deprecation_warnings = [x for x in w if issubclass(x.category, DeprecationWarning)]
             assert len(deprecation_warnings) == 0
+
+
+# ---------------------------------------------------------------------------
+# init_platform_docs — emit callback + cancel_check
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.ci
+class TestInitPlatformDocsEmit:
+    """Tests for emit callback and cancel_check in init_platform_docs."""
+
+    def _mock_cfg(self, source="/some/path", source_type="local", version="v1"):
+        cfg = MagicMock()
+        cfg.source = source
+        cfg.type = source_type
+        cfg.version = version
+        cfg.paths = []
+        cfg.chunk_size = 512
+        cfg.include_patterns = []
+        cfg.exclude_patterns = []
+        return cfg
+
+    @patch("datus.storage.document.doc_init.document_store")
+    def test_emit_none_backward_compatible(self, mock_store_fn):
+        """init_platform_docs with emit=None works identically to before."""
+        mock_store = MagicMock()
+        mock_store.get_stats.return_value = {"versions": [], "total_chunks": 0, "doc_count": 0}
+        mock_store_fn.return_value = mock_store
+
+        result = init_platform_docs(
+            platform="test_compat",
+            cfg=self._mock_cfg(),
+            build_mode="check",
+            emit=None,
+        )
+        assert result.success is True
+
+    @patch("datus.storage.document.doc_init.document_store")
+    def test_emit_receives_task_started(self, mock_store_fn):
+        """emit callback receives task_started event."""
+        mock_store = MagicMock()
+        mock_store.get_stats.return_value = {"versions": ["v1"], "total_chunks": 5, "doc_count": 2}
+        mock_store_fn.return_value = mock_store
+
+        events = []
+        result = init_platform_docs(
+            platform="test_emit",
+            cfg=self._mock_cfg(),
+            build_mode="check",
+            emit=lambda e: events.append(e),
+        )
+        assert result.success is True
+        # Should have received at least a task_started event
+        stages = [e.stage for e in events]
+        assert "task_started" in stages
+
+    @patch("datus.storage.document.doc_init.document_store")
+    def test_cancel_check_before_processing(self, mock_store_fn):
+        """cancel_check returning True causes early return."""
+        mock_store = MagicMock()
+        mock_store_fn.return_value = mock_store
+
+        events = []
+        result = init_platform_docs(
+            platform="test_cancel",
+            cfg=self._mock_cfg(),
+            build_mode="overwrite",
+            emit=lambda e: events.append(e),
+            cancel_check=lambda: True,
+        )
+        assert "Cancelled" in result.errors
+
+    @patch("datus.storage.document.doc_init.document_store")
+    def test_cancel_check_false_continues(self, mock_store_fn):
+        """cancel_check returning False allows normal processing."""
+        mock_store = MagicMock()
+        mock_store.get_stats.return_value = {"versions": [], "total_chunks": 0, "doc_count": 0}
+        mock_store_fn.return_value = mock_store
+
+        result = init_platform_docs(
+            platform="test_no_cancel",
+            cfg=self._mock_cfg(),
+            build_mode="check",
+            cancel_check=lambda: False,
+        )
+        assert result.success is True
+
+    @patch("datus.storage.document.doc_init.document_store")
+    def test_emit_task_failed_on_store_error(self, mock_store_fn):
+        """emit receives task_failed when document_store raises."""
+        from datus.utils.exceptions import DatusException, ErrorCode
+
+        mock_store_fn.side_effect = DatusException(ErrorCode.COMMON_VALIDATION_FAILED)
+
+        events = []
+        result = init_platform_docs(
+            platform="test_store_err",
+            cfg=self._mock_cfg(),
+            build_mode="check",
+            emit=lambda e: events.append(e),
+        )
+        assert result.success is True  # _make_empty_result sets success=True
+        stages = [e.stage for e in events]
+        assert "task_failed" in stages
