@@ -548,8 +548,8 @@ class TestInitPlatformDocsEmit:
         assert "task_failed" in stages
 
     @patch("datus.storage.document.doc_init.document_store")
-    def test_emit_task_completed_with_totals_after_check(self, mock_store_fn):
-        """emit receives task_completed event with total_items/completed_items after check mode."""
+    def test_check_mode_emits_no_task_failed(self, mock_store_fn):
+        """Check mode emits task_started and does not emit task_failed."""
         mock_store = MagicMock()
         mock_store.get_stats.return_value = {"versions": ["v1", "v2"], "total_chunks": 30, "doc_count": 6}
         mock_store.get_stats_by_version.return_value = {"doc_count": 3, "total_chunks": 15}
@@ -598,9 +598,11 @@ class TestInitPlatformDocsEmit:
         assert result.success is False
         stages = [e.stage for e in events]
         assert "task_failed" in stages
-        # Verify the exception type was captured in the event
+        # Verify the exception type and error message were captured in the event
         failed_events = [e for e in events if e.stage == "task_failed"]
         assert len(failed_events) >= 1
+        assert failed_events[0].exception_type == "ValueError"
+        assert "disk read error" in (failed_events[0].error or "")
 
     @patch("datus.storage.document.doc_init.document_store")
     def test_cancel_check_true_in_overwrite_emits_task_failed(self, mock_store_fn):
@@ -878,7 +880,8 @@ class TestInitPlatformDocsOverwrite:
         )
 
         assert "Cancelled" in result.errors
-        # Processing must not have happened
+        # Cancellation must skip both deletion and processing
+        mock_store.delete_docs.assert_not_called()
         mock_processor_cls.return_value.process_local.assert_not_called()
         stages = [e.stage for e in events]
         assert "task_failed" in stages
