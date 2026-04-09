@@ -1158,57 +1158,38 @@ class TestChatSystemPromptCurrentDate:
         assert "2025-06-15" in prompt
 
 
-class TestChatAgenticNodeInteractiveFlag:
-    """Verify the `interactive` constructor parameter controls ask_user_tool setup."""
+class TestChatAgenticNodeExecutionMode:
+    """Verify the `execution_mode` constructor parameter controls ask_user_tool setup."""
 
-    def _build(self, real_agent_config, interactive):
+    def _build(self, real_agent_config, execution_mode):
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
 
         return ChatAgenticNode(
-            node_id="test_interactive",
-            description="Test interactive flag",
+            node_id="test_execution_mode",
+            description="Test execution_mode flag",
             node_type=NodeType.TYPE_CHAT,
             agent_config=real_agent_config,
-            interactive=interactive,
+            execution_mode=execution_mode,
         )
 
-    def test_interactive_default_is_true(self, real_agent_config, mock_llm_create):
+    def test_execution_mode_default_is_interactive(self, real_agent_config, mock_llm_create):
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
 
         node = ChatAgenticNode(
-            node_id="test_default_interactive",
+            node_id="test_default_execution_mode",
             description="Default",
             node_type=NodeType.TYPE_CHAT,
             agent_config=real_agent_config,
         )
-        assert node.interactive_enabled is True
+        assert node.execution_mode == "interactive"
+        assert node.ask_user_tool is not None
 
-    def test_interactive_false_disables_ask_user_tool(self, real_agent_config, mock_llm_create):
-        node = self._build(real_agent_config, interactive=False)
-        assert node.interactive_enabled is False
+    def test_workflow_mode_disables_ask_user_tool(self, real_agent_config, mock_llm_create):
+        node = self._build(real_agent_config, execution_mode="workflow")
+        assert node.execution_mode == "workflow"
         assert node.ask_user_tool is None
 
-    def test_interactive_true_keeps_default_behavior(self, real_agent_config, mock_llm_create):
-        node = self._build(real_agent_config, interactive=True)
-        assert node.interactive_enabled is True
-
-
-class TestAgenticNodeSetupAskUserToolSkipped:
-    """Directly exercise AgenticNode._setup_ask_user_tool early-return branch."""
-
-    def test_setup_ask_user_tool_early_return_when_disabled(self, real_agent_config, mock_llm_create):
-        """When interactive_enabled=False, _setup_ask_user_tool clears tool and returns."""
-        from datus.agent.node.chat_agentic_node import ChatAgenticNode
-
-        node = ChatAgenticNode(
-            node_id="test_early_return",
-            description="early return",
-            node_type=NodeType.TYPE_CHAT,
-            agent_config=real_agent_config,
-            interactive=True,
-        )
-        # Simulate a previously-set ask_user_tool
-        node.ask_user_tool = object()
-        node.interactive_enabled = False
-        node._setup_ask_user_tool()
-        assert node.ask_user_tool is None
+    def test_interactive_mode_keeps_ask_user_tool(self, real_agent_config, mock_llm_create):
+        node = self._build(real_agent_config, execution_mode="interactive")
+        assert node.execution_mode == "interactive"
+        assert node.ask_user_tool is not None
