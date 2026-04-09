@@ -5,6 +5,7 @@
 import json
 import os
 import tempfile
+from unittest.mock import patch
 
 import pytest
 
@@ -398,7 +399,8 @@ class TestProcessTemplateFiles:
             finally:
                 os.unlink(f.name)
 
-    def test_directory_with_invalid_templates(self):
+    @patch("datus.storage.reference_template.template_file_processor.log_invalid_entries")
+    def test_directory_with_invalid_templates(self, mock_log):
         """Invalid templates should be reported in invalid list."""
         with tempfile.TemporaryDirectory() as tmpdir:
             with open(os.path.join(tmpdir, "good.j2"), "w") as f:
@@ -409,6 +411,7 @@ class TestProcessTemplateFiles:
             valid, invalid = process_template_files(tmpdir)
             assert len(valid) == 1
             assert len(invalid) == 1
+            mock_log.assert_called_once()
 
 
 class TestLogInvalidEntries:
