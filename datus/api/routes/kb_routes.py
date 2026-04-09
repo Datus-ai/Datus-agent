@@ -126,7 +126,7 @@ async def bootstrap_docs(
         project_files_root = os.path.join(svc.agent_config.home, "files")
         try:
             safe_resolve(P(project_files_root), request.source)
-        except ValueError as e:
+        except DatusException as e:
             raise HTTPException(status_code=422, detail=str(e)) from e
 
     async def generate_sse():
