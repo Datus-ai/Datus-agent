@@ -977,6 +977,57 @@ class TestChatAgenticNodeExecuteStreamWithTools:
         assert stats.get("tool_calls_count", 0) >= 1
         assert "list_tables" in stats.get("tools_used", [])
 
+    @pytest.mark.asyncio
+    async def test_execute_stream_dict_response_value_does_not_crash(self, real_agent_config, mock_llm_create):
+        """execute_stream converts dict response values to string, preventing Pydantic ValidationError.
+
+        Regression test: when a tool result dict (e.g. from execute_sql) is stored under the
+        "response" key in an action output, the or-chain extraction must not pass the raw dict
+        to ChatNodeResult(response=...) which expects a str.
+        """
+        from unittest.mock import patch
+
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+        from datus.schemas.action_history import ActionHistory
+
+        node = ChatAgenticNode(
+            node_id="test_dict_response",
+            description="Test dict response handling",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
+        node.input = ChatNodeInput(user_message="Show me data", database="california_schools")
+
+        # Simulate the problematic scenario: the last successful action's output
+        # has "response" as a dict (e.g. DB tool result) and no string "content".
+        async def mock_execute(prompt, execution_mode, original_input, action_history_manager, session):
+            action = ActionHistory(
+                action_id="msg_dict",
+                role=ActionRole.ASSISTANT,
+                messages="Query result",
+                action_type="message",
+                input={},
+                output={
+                    "content": "",
+                    "response": {"success": 1, "error": None, "expression_type": "rows"},
+                },
+                status=ActionStatus.SUCCESS,
+            )
+            action_history_manager.add_action(action)
+            yield action
+
+        with patch.object(node, "_execute_with_recursive_replan", mock_execute):
+            ahm = ActionHistoryManager()
+            actions = []
+            async for action in node.execute_stream(ahm):
+                actions.append(action)
+
+        final_action = actions[-1]
+        assert final_action.status == ActionStatus.SUCCESS
+        assert final_action.action_type == "chat_response"
+        # Key assertion: response must be a string, not a dict
+        assert isinstance(final_action.output["response"], str)
+
 
 # ===========================================================================
 # Plan Mode Tests
