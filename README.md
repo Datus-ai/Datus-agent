@@ -94,7 +94,7 @@ workflow:
 | Category | Nodes |
 |----------|-------|
 | **Core** | `schema_linking`, `generate_sql`, `execute_sql`, `reasoning`, `reflect`, `output` |
-| **Agentic** | `chat`, `explore`, `gen_semantic_model`, `gen_metrics`, `gen_ext_knowledge`, `gen_sql_summary`, `compare` |
+| **Agentic** | `chat`, `explore`, `gen_semantic_model`, `gen_metrics`, `gen_ext_knowledge`, `gen_sql_summary`, `gen_skill`, `gen_table`, `compare` |
 | **Control Flow** | `parallel`, `selection`, `subworkflow` |
 | **Utility** | `date_parser`, `doc_search`, `fix` |
 
@@ -144,7 +144,7 @@ API keys are injected via environment variables using `${ENV_VAR}` syntax.
 | Moonshot Kimi | `kimi` | Kimi models |
 | MiniMax | `minimax` | MiniMax models |
 | GLM (Zhipu) | `glm` | GLM-4 series |
-| OpenAI Codex | `codex` | ChatGPT subscription via OAuth |
+| OpenAI Codex | `codex` | OAuth-based Codex models (gpt-5.3-codex, o3-codex) |
 | OpenRouter | `openrouter` | 300+ models via a single API key |
 
 **Embedding models:** OpenAI, Sentence-Transformers, FastEmbed, Hugging Face.
@@ -177,7 +177,7 @@ See [Database Adapters documentation](https://docs.datus.ai/adapters/db_adapters
 
 ```bash
 datus-cli --namespace demo
-/Check the top 10 banks by assets lost @Table duckdb-demo.main.bank_failures
+/Check the top 10 banks by assets lost @table duckdb-demo.main.bank_failures
 ```
 
 **Build Context** — Generate semantic models, import SQL history, define metrics. Each piece becomes reusable context for future queries.
