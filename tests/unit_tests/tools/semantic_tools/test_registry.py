@@ -170,11 +170,14 @@ class TestSemanticAdapterRegistry:
         SemanticAdapterRegistry.register("casetest", adapter_class)
         meta = SemanticAdapterRegistry.get_metadata("CaseTest")
         assert meta is not None
+        assert meta.display_name == "Casetest"
+        assert meta.adapter_class is adapter_class
 
     def test_list_available_adapters_runs_discover(self):
         with patch.object(SemanticAdapterRegistry, "discover_adapters") as mock_discover:
-            SemanticAdapterRegistry.list_available_adapters()
+            result = SemanticAdapterRegistry.list_available_adapters()
         mock_discover.assert_called_once()
+        assert isinstance(result, dict)
 
     def test_list_available_adapters_returns_metadata_copy(self):
         adapter_class = _make_adapter_class()
@@ -192,11 +195,13 @@ class TestSemanticAdapterRegistry:
     def test_try_load_adapter_handles_import_error(self):
         # Should not raise even when import fails
         SemanticAdapterRegistry._try_load_adapter("nonexistent_plugin_xyz")
+        assert not SemanticAdapterRegistry.is_registered("nonexistent_plugin_xyz")
 
     def test_try_load_adapter_handles_generic_exception(self):
         with patch("importlib.import_module", side_effect=Exception("weird error")):
             # Should not raise
             SemanticAdapterRegistry._try_load_adapter("errorplugin")
+        assert not SemanticAdapterRegistry.is_registered("errorplugin")
 
     def test_discover_adapters_handles_entry_point_failure(self):
         mock_ep = MagicMock()
@@ -207,3 +212,5 @@ class TestSemanticAdapterRegistry:
             SemanticAdapterRegistry._initialized = False
             # Should not raise
             SemanticAdapterRegistry.discover_adapters()
+        assert not SemanticAdapterRegistry.is_registered("failplugin")
+        assert SemanticAdapterRegistry._initialized is True

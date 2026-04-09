@@ -17,16 +17,18 @@ def _make_manager():
 
 
 def _make_metric(name="revenue", path=None, description="Total revenue"):
-    metric = MagicMock()
-    metric.name = name
-    metric.description = description
-    metric.type = "simple"
-    metric.dimensions = ["region"]
-    metric.measures = ["total"]
-    metric.unit = "USD"
-    metric.format = "currency"
-    metric.path = path
-    return metric
+    from datus.tools.semantic_tools.models import MetricDefinition
+
+    return MetricDefinition(
+        name=name,
+        description=description,
+        type="simple",
+        dimensions=["region"],
+        measures=["total"],
+        unit="USD",
+        format="currency",
+        path=path,
+    )
 
 
 class TestSemanticStorageManagerInit:
@@ -262,6 +264,51 @@ class TestStoreSemanticModel:
         first_call = mock_store.batch_store.call_args_list[0][0][0]
         table_obj = first_call[0]
         assert table_obj["fq_name"] == "simple_table"
+
+    def test_stores_semantic_model_info_with_extra_metadata(self):
+        from datus.tools.semantic_tools.models import DimensionInfo, SemanticModelInfo
+
+        manager = _make_manager()
+        mock_store = MagicMock()
+        model = SemanticModelInfo(
+            name="orders_cube",
+            description="Orders",
+            platform_type="cube",
+            dimensions=[DimensionInfo(name="region", description="Region")],
+            measures=["orders.count"],
+            extra={"table_name": "orders", "database_name": "analytics", "connectedComponent": 1},
+        )
+        with patch.object(manager, "_ensure_semantic_model_store", return_value=mock_store):
+            manager.store_semantic_model(model)
+
+        all_stored = []
+        for call in mock_store.batch_store.call_args_list:
+            all_stored.extend(call[0][0])
+        table_obj = [o for o in all_stored if o["kind"] == "table"][0]
+        assert table_obj["table_name"] == "orders"  # from extra, not model.name
+        assert table_obj["database_name"] == "analytics"
+        assert table_obj["semantic_model_name"] == "orders_cube"
+        dim_objects = [o for o in all_stored if o.get("is_dimension")]
+        assert len(dim_objects) == 1
+        assert dim_objects[0]["name"] == "region"
+
+    def test_skips_non_dict_dimensions(self):
+        manager = _make_manager()
+        mock_store = MagicMock()
+        with patch.object(manager, "_ensure_semantic_model_store", return_value=mock_store):
+            manager.store_semantic_model(
+                {
+                    "semantic_model_name": "model",
+                    "table_name": "table",
+                    "dimensions": ["just_a_string", None, {"name": "valid"}],
+                    "measures": [],
+                }
+            )
+        all_stored = []
+        for call in mock_store.batch_store.call_args_list:
+            all_stored.extend(call[0][0])
+        dim_objects = [obj for obj in all_stored if obj.get("is_dimension") is True]
+        assert len(dim_objects) == 1
 
 
 class TestStoreMetric:
@@ -503,6 +550,24 @@ class TestSyncFromAdapter:
             )
 
         assert stored_calls[0] == ["Default", "Category"]
+
+    def test_sync_semantic_models_with_semantic_model_info_entries(self):
+        from datus.tools.semantic_tools.models import SemanticModelInfo
+
+        manager = _make_manager()
+        mock_adapter = MagicMock()
+        mock_adapter.service_type = "test_service"
+        model_info = SemanticModelInfo(name="orders", description="Orders cube")
+        mock_adapter.list_semantic_models.return_value = [model_info]
+        mock_adapter.list_metrics = AsyncMock(return_value=[])
+
+        with patch.object(manager, "store_semantic_model") as mock_store_sm:
+            stats = asyncio.run(
+                manager.sync_from_adapter(adapter=mock_adapter, sync_semantic_models=True, sync_metrics=False)
+            )
+        assert stats["semantic_models_synced"] == 1
+        mock_store_sm.assert_called_once_with(model_info)
+        mock_adapter.get_semantic_model.assert_not_called()
 
     def test_skip_none_semantic_model(self):
         manager = _make_manager()
