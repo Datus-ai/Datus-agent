@@ -11,7 +11,7 @@ import asyncio
 import copy
 import uuid
 from datetime import datetime
-from typing import AsyncGenerator, Dict, List, Optional
+from typing import AsyncGenerator, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
@@ -424,7 +424,7 @@ class ChatTaskManager:
         ``user_id`` is propagated as the node ``scope`` so that session files
         are isolated per user under ``{session_dir}/{user_id}/``.
         """
-        execution_mode = "interactive" if interactive else "workflow"
+        execution_mode: Literal["interactive", "workflow"] = "interactive" if interactive else "workflow"
         if subagent_id:
             if subagent_id == "gen_semantic_model":
                 from datus.agent.node.gen_semantic_model_agentic_node import (
