@@ -1,63 +1,62 @@
-# Namespace
+# Service Configuration
 
-Configure database namespaces and connections for different data sources
+Configure database connections and services for your data sources.
 
 ## Overview
 
-Namespaces in Datus Agent provide a comprehensive data connectivity framework that abstracts and organizes database connections across diverse data ecosystems. Each namespace serves as a logical container that encapsulates database connection configurations, enabling seamless multi-database operations within a unified interface.
+The service configuration in Datus Agent organizes database connections under `service.databases` in `agent.yml`. Each database is an independent entry with its own connection parameters.
 
-The namespace configuration system is built on a **polymorphic architecture** that supports heterogeneous resource types through a unified abstraction layer. This design pattern enables:
+Key features:
 
-- **Universal Connectivity**: Support for cloud data warehouses (Snowflake, StarRocks), local databases (SQLite, DuckDB), and specialized benchmark datasets
-- **Environment Isolation**: Logical separation of development, staging, and production environments
-- **Credential Security**: Environment variable-based credential management with secure connection protocols
-- **Dynamic Discovery**: Pattern-based database discovery for automated inclusion of multiple database files
-- **Scalable Organization**: Hierarchical namespace structure that grows with organizational complexity
+- **Universal Connectivity**: Support for cloud data warehouses (Snowflake, StarRocks), local databases (SQLite, DuckDB), and more
+- **Credential Security**: Environment variable-based credential management (`${ENV_VAR}` syntax)
+- **Default Database**: Mark one database as `default: true` for auto-selection
+- **Plugin Adapters**: Install additional database adapters via `datus-agent configure`
+- **Dynamic Discovery**: Glob pattern-based database discovery for multiple database files
 
-The namespace system operates as a **configuration-driven abstraction layer** that translates high-level business requirements into specific database connection parameters, providing developers and analysts with a consistent interface regardless of the underlying database technology.
+> **Migration note**: The old `namespace:` config format is auto-migrated to `service.databases` at runtime. You can also run `python -m datus.configuration.config_migrator --config conf/agent.yml` to migrate offline.
 
-## Namespace Structure
+## Configuration Structure
 
-Namespaces are configured under the `namespace` section and contain resource connection details for different service types:
+Databases are configured under `agent.service.databases`. Each entry is an independent database connection:
 
 ```yaml
-namespace:
-  # service configuration
+agent:
   service:
-    type: cloud_provider
-    endpoint: ${SERVICE_ENDPOINT}
-    access_key: ${ACCESS_KEY}
-    secret_key: ${SECRET_KEY}
-    region: ${SERVICE_REGION}
-    
-  # Local resource configuration
-  local_resource:
-    type: local_service
-    resources:
-      - name: primary
-        uri: protocol://path/to/resource
-      - name: secondary
-        uri: protocol://path/to/backup
+    databases:
+      my_snowflake:
+        type: snowflake
+        account: ${SNOWFLAKE_ACCOUNT}
+        username: ${SNOWFLAKE_USER}
+        password: ${SNOWFLAKE_PASSWORD}
+        default: true
+
+      my_duckdb:
+        type: duckdb
+        uri: ./data/analytics.duckdb
+
+    bi_tools: {}       # Future: BI tool connections
+    schedulers: {}     # Future: Scheduler connections
 ```
 
 ## Supported Database Types
 
 ### Snowflake
 ```yaml
-snowflake:
+my_snowflake:
   type: snowflake
-  # Option 1: Using individual parameters
   account: ${SNOWFLAKE_ACCOUNT}
   username: ${SNOWFLAKE_USER}
   password: ${SNOWFLAKE_PASSWORD}
   database: ${SNOWFLAKE_DATABASE}    # Optional
   schema: ${SNOWFLAKE_SCHEMA}        # Optional
   warehouse: ${SNOWFLAKE_WAREHOUSE}  # Optional
+  default: true                      # Optional: mark as default
 ```
 
 ### StarRocks
 ```yaml
-starrocks:
+my_starrocks:
   type: starrocks
   host: ${STARROCKS_HOST}
   port: ${STARROCKS_PORT}
@@ -69,296 +68,119 @@ starrocks:
 
 ### SQLite
 ```yaml
-# Single database configuration
-local_sqlite:
+my_sqlite:
   type: sqlite
-  name: ssb                          # Required for SQLite
-  uri: sqlite:////Users/xxx/benchmark/SSB.db
-
-# Multiple databases configuration
-local_sqlite_multi:
-  type: sqlite
-  dbs:
-    - name: ssb
-      uri: sqlite:////Users/xxx/benchmark/SSB.db
-    - name: northwind
-      uri: sqlite:////Users/xxx/data/northwind.db
+  uri: sqlite:////Users/xxx/data/orders.db
 ```
 
 ### DuckDB
 ```yaml
-# Single database configuration
-local_duckdb:
+my_duckdb:
   type: duckdb
-  name: analytics
-  uri: duckdb:////absolute/path/to/analytics.db
-
-# Multiple databases configuration
-local_duckdb_multi:
-  type: duckdb
-  dbs:
-    - name: ssb
-      uri: duckdb:////absolute/path/to/ssb.db
-    - name: tpch
-      uri: duckdb:///relative/path/to/tpch.duckdb  # Relative path
+  uri: ./data/analytics.duckdb
 ```
 
+### Path Pattern (Multiple Files)
+
+Use glob patterns to auto-discover database files:
+
+```yaml
+bird_benchmark:
+  type: sqlite
+  path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite
+```
+
+Supported patterns: `*.sqlite`, `**/*.sqlite`, `data/2024/*.db`
 
 ## Configuration Parameters
 
 ### Common Parameters
 
-- **type**: Database dialect/type (required)
-- **name**: Database identifier (required for SQLite and DuckDB)
-- **uri**: Connection URI for local databases
-- **host**: Database server hostname
-- **port**: Database server port
-- **username**: Database username
-- **password**: Database password
-- **database**: Database name
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `type` | Yes | Database type: `sqlite`, `duckdb`, `snowflake`, `starrocks`, `mysql`, `postgresql` |
+| `default` | No | Set to `true` to mark as default database |
+| `uri` | For file DBs | Connection URI for SQLite/DuckDB |
+| `host` | For server DBs | Database server hostname |
+| `port` | For server DBs | Database server port |
+| `username` | For server DBs | Database username |
+| `password` | For server DBs | Database password |
+| `database` | No | Database/schema name |
 
 ### Database-Specific Parameters
 
-#### Snowflake Parameters
-- **account**: Snowflake account identifier (top-level container)
-- **warehouse**: Compute warehouse to use
-- **role**: User role for permissions
-- **schema**: Default schema
+- **Snowflake**: `account`, `warehouse`, `role`, `schema`
+- **StarRocks**: `catalog`
+- **SQLite/DuckDB**: `path_pattern` for glob-based discovery
 
-#### StarRocks Parameters
-- **catalog**: Catalog name for multi-catalog setups
-- **ssl**: Enable SSL connection
+## Managing Databases
 
-#### SQLite/DuckDB Parameters
-- **path_pattern**: Glob pattern for multiple database files
-- **dbs**: Array of database configurations for multi-database setup
+### Interactive Configuration
 
-
-## Complete Namespace Configuration
-
-```yaml
-namespace:
-  # Production Snowflake
-  production_snowflake:
-    type: snowflake
-    account: ${SNOWFLAKE_ACCOUNT}
-    username: ${SNOWFLAKE_USER}
-    password: ${SNOWFLAKE_PASSWORD}
-    database: ANALYTICS
-    schema: PUBLIC
-    warehouse: COMPUTE_WH
-    
-  # Development StarRocks
-  dev_starrocks:
-    type: starrocks
-    host: ${STARROCKS_HOST}
-    port: ${STARROCKS_PORT}
-    username: ${STARROCKS_USER}
-    password: ${STARROCKS_PASSWORD}
-    database: dev_analytics
-    
-  # Local SQLite for testing
-  test_sqlite:
-    type: sqlite
-    dbs:
-      - name: orders
-        uri: sqlite:////Users/data/orders.db
-      - name: customers
-        uri: sqlite:////Users/data/customers.db
-      - name: products
-        uri: sqlite:////Users/data/products.db
-        
-  # Local DuckDB for analytics
-  analytics_duckdb:
-    type: duckdb
-    dbs:
-      - name: sales
-        uri: duckdb:////opt/data/sales.db
-      - name: marketing
-        uri: duckdb:///data/marketing.duckdb
-        
-  # BIRD benchmark databases
-  bird_benchmark:
-    type: sqlite
-    path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite
-```
-
-## Multi-Database Configuration
-
-### SQLite Multi-Database Setup
-
-For SQLite and DuckDB, you can configure multiple databases within a single namespace:
-
-```yaml
-multi_sqlite:
-  type: sqlite
-  dbs:
-    - name: sales_2023        # Each database must have a unique name
-      uri: sqlite:////data/sales_2023.db
-    - name: sales_2024
-      uri: sqlite:////data/sales_2024.db
-    - name: customer_master
-      uri: sqlite:////data/customers.db
-```
-
-### Path Pattern Configuration
-
-Use glob patterns to automatically include multiple database files:
-
-```yaml
-benchmark_dbs:
-  type: sqlite
-  path_pattern: benchmarks/**/*.sqlite  # Includes all .sqlite files recursively
-```
-
-**Supported patterns:**
-- `*.sqlite` - All SQLite files in current directory
-- `**/*.sqlite` - All SQLite files recursively
-- `data/2024/*.db` - All .db files in data/2024 directory
-- `benchmark/bird/**/*.sqlite` - All SQLite files under benchmark/bird
-
-## URI Formats
-
-### SQLite URI Format
-```text
-sqlite:////absolute/path/to/database.db      # Absolute path
-sqlite:///relative/path/to/database.db       # Relative path
-```
-
-### DuckDB URI Format
-```text
-duckdb:////absolute/path/to/database.db      # Absolute path
-duckdb:///relative/path/to/database.db       # Relative path
-```
-
-## Namespace Manager CLI
-
-Datus Agent provides an interactive CLI tool for managing namespace configurations without manually editing YAML files.
-
-### Commands
-
-#### List Namespaces
-
-View all configured namespaces and their connection details:
+Use `datus-agent configure` to add, delete, or manage databases interactively:
 
 ```bash
-datus-agent namespace list
+datus-agent configure
 ```
 
-Output example:
+This shows your current models and databases, then offers a menu:
+
 ```
-Configured namespaces:
+Current Databases:
+┏━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┓
+┃ Name         ┃ Type      ┃ Connection              ┃ Default ┃
+┡━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━┩
+│ demo         │ duckdb    │ ./demo.duckdb           │ *       │
+│ prod_sf      │ snowflake │ account=my_account      │         │
+└──────────────┴───────────┴─────────────────────────┴─────────┘
 
-Namespace: production_snowflake
-  Database: ANALYTICS
-    Type: snowflake
-    Account: my_account
-    Warehouse: COMPUTE_WH
-    Database: ANALYTICS
-    Schema: PUBLIC
-    Username: admin
-
-Namespace: local_duckdb
-  Database: analytics
-    Type: duckdb
-    URI: duckdb:////data/analytics.db
+What would you like to do?
+  → [add_database] Add a database
+    [delete_database] Delete a database
+    [done] Done
 ```
 
-#### Add Namespace
+Database adapter plugins are auto-installed when you select an uninstalled type (e.g., snowflake, mysql).
 
-Interactively add a new namespace configuration:
+### CLI Commands
 
 ```bash
-datus-agent namespace add
+# List all databases
+datus-agent service list
+
+# Add a database interactively
+datus-agent service add
+
+# Delete a database interactively
+datus-agent service delete
 ```
 
-The command will prompt you for:
-
-1. **Namespace name**: Unique identifier for the namespace
-2. **Database type**: Choose from sqlite, duckdb, snowflake, mysql, starrocks
-3. **Connection parameters**: Varies by database type
-
-**For file-based databases (SQLite, DuckDB):**
-- Connection string (file path)
-
-**For host-based databases (MySQL, StarRocks):**
-- Host
-- Port
-- Username
-- Password
-- Database name
-
-**For Snowflake:**
-- Username
-- Account
-- Warehouse
-- Password
-- Database (optional)
-- Schema (optional)
-
-After entering the configuration, the tool will:
-- Test database connectivity
-- Save the configuration to `conf/agent.yml` if successful
-
-Example session:
-```text
-Add New Namespace
-- Namespace name: my_analytics
-- Database type [sqlite/duckdb/snowflake/mysql/starrocks] (duckdb): snowflake
-- Username: admin
-- Account: my_account
-- Warehouse: COMPUTE_WH
-- Password: ********
-- Database (optional): ANALYTICS
-- Schema (optional): PUBLIC
-→ Testing database connectivity...
-✔ Database connection test successful
-
-Configuration saved to conf/agent.yml
-✔ Namespace 'my_analytics' added successfully
-```
-
-#### Delete Namespace
-
-Interactively delete an existing namespace:
+### Specify a Custom Config
 
 ```bash
-datus-agent namespace delete
+datus-agent service list --config /path/to/agent.yml
+datus-agent configure --config /path/to/agent.yml
 ```
 
-The command will:
-1. Display available namespaces
-2. Prompt for the namespace name to delete
-3. Ask for confirmation before deletion
+## Default Database Selection
 
-Example session:
-```
-Delete Namespace
-Available namespaces:
-  - production_snowflake
-  - local_duckdb
-  - test_sqlite
-- Namespace name to delete: test_sqlite
-Are you sure you want to delete namespace 'test_sqlite'? This action cannot be undone. [y/N]: y
-Configuration saved to conf/agent.yml
-✔ Namespace 'test_sqlite' deleted successfully
-```
-
-### Usage with Custom Config
-
-Specify a custom configuration file:
+When running CLI commands, specify which database to use:
 
 ```bash
-datus-agent namespace list --config /path/to/agent.yml
-datus-agent namespace add --config /path/to/agent.yml
-datus-agent namespace delete --config /path/to/agent.yml
+datus-cli --database my_duckdb
+datus-agent run --database my_snowflake --task "..." --task_db_name ANALYTICS
 ```
+
+If `--database` is not specified:
+1. If a database has `default: true` → auto-selected
+2. If only one database configured → auto-selected
+3. If multiple without default → shows available list
 
 ## Security Considerations
 
 ### Credential Management
 ```yaml
-# Good: Using environment variables
+# Recommended: Using environment variables
 username: ${DB_USERNAME}
 password: ${DB_PASSWORD}
 
@@ -370,3 +192,4 @@ password: "actual_password"
 ## See Also
 
 - [Database Adapters](../adapters/db_adapters.md) - Install plugin adapters for MySQL, Snowflake, StarRocks, and more
+- [CLI Commands](../cli-commands.md) - Full CLI reference including configure, init, and service commands

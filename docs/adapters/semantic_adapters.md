@@ -140,7 +140,7 @@ asyncio.run(dry_run_example())
 ### Bootstrap from Adapter
 
 ```bash
-datus-agent bootstrap-kb --namespace my_project --components metrics \
+datus-agent bootstrap-kb --database my_project --components metrics \
   --from_adapter metricflow --kb-update-strategy overwrite
 ```
 

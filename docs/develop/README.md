@@ -145,7 +145,7 @@ Final Result: {"status": "success", "message": "LLM model test successful", "res
 ```
 
 ```bash
-python -m datus.main check-db --namespace local_duckdb
+python -m datus.main check-db --database local_duckdb
 ```
 
 ---
@@ -153,7 +153,7 @@ python -m datus.main check-db --namespace local_duckdb
 ## Run SQL
 
 ```bash
-python -m datus.cli.main --namespace local_duckdb --config conf/agent.yml
+python -m datus.cli.main --database local_duckdb --config conf/agent.yml
 
 Datus> select * from tree;
 ┏━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━┓
@@ -205,7 +205,7 @@ namespace:
 ### Bootstrap Knowledge Base
 
 ```bash
-python -m datus.main bootstrap-kb --namespace spidersnow --benchmark spider2 --kb_update_strategy overwrite
+python -m datus.main bootstrap-kb --database spidersnow --benchmark spider2 --kb_update_strategy overwrite
 ```
 
 > ⚠️ May take hours (approx. 14,000 tables).
@@ -213,11 +213,11 @@ python -m datus.main bootstrap-kb --namespace spidersnow --benchmark spider2 --k
 ### Run Test by IDs
 
 ```bash
-python -m datus.main benchmark --namespace spidersnow --benchmark spider2 --benchmark_task_ids sf_bq104
+python -m datus.main benchmark --database spidersnow --benchmark spider2 --benchmark_task_ids sf_bq104
 ```
 
 ```bash
-python -m datus.cli.main --namespace spidersnow  --config conf/agent.yml
+python -m datus.cli.main --database spidersnow  --config conf/agent.yml
 
 Datus> !darun_screen
 Creating a new SQL task
@@ -264,27 +264,27 @@ cd ../../..
 ### Bootstrap Knowledge Base
 
 ```bash
-python -m datus.main bootstrap-kb --namespace bird_sqlite --benchmark bird_dev --kb_update_strategy overwrite
+python -m datus.main bootstrap-kb --database bird_sqlite --benchmark bird_dev --kb_update_strategy overwrite
 ```
 
 ### Run Tests
 
 ```bash
-python -m datus.main benchmark --namespace bird_sqlite --benchmark bird_dev --plan fixed --schema_linking_rate medium --benchmark_task_ids 14 15
+python -m datus.main benchmark --database bird_sqlite --benchmark bird_dev --plan fixed --schema_linking_rate medium --benchmark_task_ids 14 15
 ```
 
 ```bash
-python -m datus.main benchmark --namespace bird_sqlite --benchmark bird_dev --schema_linking_rate fast --benchmark_task_ids 32
+python -m datus.main benchmark --database bird_sqlite --benchmark bird_dev --schema_linking_rate fast --benchmark_task_ids 32
 ```
 
 ```bash
-python -m datus.main benchmark --namespace bird_sqlite --benchmark bird_dev --plan fixed --schema_linking_rate medium
+python -m datus.main benchmark --database bird_sqlite --benchmark bird_dev --plan fixed --schema_linking_rate medium
 ```
 
 ### Using cli to develop
 
 ```bash
-python -m datus.cli.main --namespace bird_sqlite  --config conf/agent.yml
+python -m datus.cli.main --database bird_sqlite  --config conf/agent.yml
 ```
 
 # Semantic Layer Benchmark
@@ -338,11 +338,11 @@ export MF_MODEL_PATH=</path/to/semantic-models-dir>
 ### Bootstrap Metrics Generation
 
 ```bash
-python -m datus.main bootstrap-kb --namespace duckdb --components metrics --kb_update_strategy overwrite
+python -m datus.main bootstrap-kb --database duckdb --components metrics --kb_update_strategy overwrite
 ```
 
 ### Run Tests
 
 ```bash
-python -m datus.main benchmark --namespace duckdb --benchmark semantic_layer --plan metric_to_sql
+python -m datus.main benchmark --database duckdb --benchmark semantic_layer --plan metric_to_sql
 ```

@@ -49,13 +49,13 @@ Semantic model objects are stored at field level:
 ```bash
 # From CSV (historical SQLs)
 datus-agent bootstrap-kb \
-    --namespace <your_namespace> \
+    --database <your_namespace> \
     --components semantic_model \
     --success_story path/to/success_story.csv
 
 # From YAML (existing semantic model files)
 datus-agent bootstrap-kb \
-    --namespace <your_namespace> \
+    --database <your_namespace> \
     --components semantic_model \
     --semantic_yaml path/to/semantic_model.yaml
 ```
@@ -64,7 +64,7 @@ datus-agent bootstrap-kb \
 
 | Parameter | Required | Description | Example |
 |-----------|----------|-------------|---------|
-| `--namespace` | ✅ | Database namespace | `sales_db` |
+| `--database` | ✅ | Database namespace | `sales_db` |
 | `--components` | ✅ | Components to initialize | `semantic_model` |
 | `--success_story` | ⚠️ | CSV file with historical SQLs (required if no `--semantic_yaml`) | `success_story.csv` |
 | `--semantic_yaml` | ⚠️ | Semantic model YAML file (required if no `--success_story`) | `semantic_model.yaml` |

@@ -21,7 +21,7 @@ datus-api --host 0.0.0.0 --port 8000
 | Flag             | Default                  | Description |
 |------------------|--------------------------|-------------|
 | `--config`       | (auto-resolved)          | Path to `agent.yml` |
-| `--namespace`    | `default`                | Namespace from `agent.yml` |
+| `--database`    | `default`                | Namespace from `agent.yml` |
 | `--output-dir`   | `./output`               | Directory for generated artifacts |
 | `--log-level`    | `INFO`                   | `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL` |
 | `--host`         | `127.0.0.1`              | Bind address |
@@ -37,7 +37,7 @@ datus-api --host 0.0.0.0 --port 8000
 | Variable             | Equivalent flag | Notes |
 |----------------------|-----------------|-------|
 | `DATUS_CONFIG`       | `--config`      | Empty string triggers default lookup |
-| `DATUS_NAMESPACE`    | `--namespace`   | Defaults to `default` |
+| `DATUS_NAMESPACE`    | `--database`   | Defaults to `default` |
 | `DATUS_OUTPUT_DIR`   | `--output-dir`  | Defaults to `./output` |
 | `DATUS_LOG_LEVEL`    | `--log-level`   | Defaults to `INFO` |
 | `DATUS_CORS_ORIGINS` | —               | Comma-separated origins, default `*` |

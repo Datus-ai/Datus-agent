@@ -18,7 +18,7 @@ With this structure, agents in Datus remain modular, portable, and easy to maint
 
 ## Configuration Overview
 
-The Datus Agent configuration is the heart of how your system behaves—it governs which models to use, how different components (nodes, workflows, storage, namespaces, benchmarks) connect, and how queries get processed end-to-end.
+The Datus Agent configuration is the heart of how your system behaves—it governs which models to use, how different components (nodes, workflows, storage, databases, benchmarks) connect, and how queries get processed end-to-end.
 
 Here's a high-level summary of each module and how they relate:
 
@@ -28,7 +28,7 @@ Here's a high-level summary of each module and how they relate:
 | **[Nodes](nodes.md)** | Task-level processing units | Each "node" handles a specific step (schema linking, SQL generation, reasoning, reflection, output formatting, chat, utilities) in the data-to-SQL pipeline |
 | **[Workflow](workflow.md)** | Orchestration of nodes | Defines execution plans (sequential, parallel, sub-workflows, reflection paths) that specify how nodes are chained to answer a user's query |
 | **[Storage](storage.md)** | Embeddings & vector store configuration | Manages embedding models, device settings, embedding storage paths, and how metadata / documents / metrics are embedded and retrieved |
-| **[Namespace](namespace.md)** | Database connection abstraction | Encapsulates configurations for different databases (Snowflake, StarRocks, SQLite, DuckDB, etc.), allowing multi-database support under logical "namespaces" |
+| **[Database](namespace.md)** | Database connection abstraction | Encapsulates configurations for different databases (Snowflake, StarRocks, SQLite, DuckDB, etc.), allowing multi-database support under logical "databases" |
 | **[Benchmark](benchmark.md)** | Evaluation & testing setup | Defines benchmark datasets (e.g. BIRD-DEV, Spider2, semantic layer) and paths to evaluate the SQL-generation performance of the agent |
 
 ## Configuration Structure
@@ -124,7 +124,7 @@ conf/
 Explore the detailed configuration for each component:
 
 - **[Agent Settings](agent.md)**: Configure models, providers, and global settings
-- **[Database Namespaces](namespace.md)**: Set up multi-database connections
+- **[Database Databases](namespace.md)**: Set up multi-database connections
 - **[Database Adapters](../adapters/db_adapters.md)**: Install additional database connectors
 - **[Workflow Definitions](workflow.md)**: Define custom execution patterns
 - **[Node Configuration](nodes.md)**: Customize individual node behavior

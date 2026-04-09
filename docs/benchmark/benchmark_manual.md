@@ -78,7 +78,7 @@ After extraction, the directory structure should look like:
 Then bootstrap the knowledge base for the BIRD dataset:
 
 ```bash title="Terminal"
-datus-agent bootstrap-kb --namespace bird_sqlite --benchmark bird_dev
+datus-agent bootstrap-kb --database bird_sqlite --benchmark bird_dev
 ```
 
 ### Step 4: Run Benchmark Tests
@@ -94,7 +94,7 @@ datus-agent bootstrap-kb --namespace bird_sqlite --benchmark bird_dev
 === "Run by Task ID"
     ```bash title="Terminal"
     datus-agent benchmark \
-    --namespace bird_sqlite \
+    --database bird_sqlite \
     --benchmark bird_dev \
     --benchmark_task_ids <task_id1> <task_id2>
     ```
@@ -102,7 +102,7 @@ datus-agent bootstrap-kb --namespace bird_sqlite --benchmark bird_dev
 === "Run All Tasks"
     ```bash title="Terminal"
     datus-agent benchmark \
-    --namespace bird_sqlite \
+    --database bird_sqlite \
     --benchmark bird_dev
     ```
 
@@ -117,7 +117,7 @@ datus-agent bootstrap-kb --namespace bird_sqlite --benchmark bird_dev
 === "Run by Task ID"
     ```bash title="Terminal"
     datus-agent benchmark \
-    --namespace snowflake \
+    --database snowflake \
     --benchmark spider2 \
     --benchmark_task_ids <task_id1> <task_id2>
     ```
@@ -125,7 +125,7 @@ datus-agent bootstrap-kb --namespace bird_sqlite --benchmark bird_dev
 === "Run All Tasks"
     ```bash title="Terminal"
     datus-agent benchmark \
-    --namespace snowflake \
+    --database snowflake \
     --benchmark spider2
     ```
 
@@ -135,7 +135,7 @@ datus-agent bootstrap-kb --namespace bird_sqlite --benchmark bird_dev
 === "Evaluate by Task IDs"
 ```bash title="Run Evaluation"
 datus-agent eval \
-  --namespace snowflake \
+  --database snowflake \
   --benchmark spider2 \
   --output_file evaluation.json \
   --task_ids <task_id1> <task_id2>
@@ -143,7 +143,7 @@ datus-agent eval \
 === "Evaluate All"
 ```bash title="Run Evaluation"
 datus-agent eval \
-  --namespace snowflake \
+  --database snowflake \
   --output_file evaluation.json \
   --benchmark spider2
 ```
@@ -310,12 +310,12 @@ This step does the following:
 
 ### Benchmarking and evaluation
 ```bash
-datus-agent benchmark --namespace california_schools --benchmark california_schools --benchmark_task_ids 0 1 2 --workflow <your workflow>
+datus-agent benchmark --database california_schools --benchmark california_schools --benchmark_task_ids 0 1 2 --workflow <your workflow>
 ```
 👉 See [Step 4: Run Benchmark Tests](#step-4-run-benchmark-tests)
 
 ```bash
-datus-agent eval --namespace california_schools --benchmark california_schools --task_ids 0 1 2 
+datus-agent eval --database california_schools --benchmark california_schools --task_ids 0 1 2 
 ```
 👉 See [Step 5: Evaluate Results](#step-5-evaluate-results)
 
@@ -384,7 +384,7 @@ Execute repeated benchmark + evaluation cycles (as described in [Step 4](#step-4
 === "datus-agent subcommand"
     ```bash title="Terminal"
     datus-agent multi-round-benchmark \
-      --namespace bird_sqlite \
+      --database bird_sqlite \
       --benchmark bird_dev \
       --workflow chat_agentic \
       --round 4 \
@@ -394,7 +394,7 @@ Execute repeated benchmark + evaluation cycles (as described in [Step 4](#step-4
 === "Standalone CLI"
     ```bash title="Terminal"
     datus-multi-benchmark \
-      --namespace bird_sqlite \
+      --database bird_sqlite \
       --benchmark bird_dev \
       --workflow chat_agentic \
       --round 4 \
@@ -404,7 +404,7 @@ Execute repeated benchmark + evaluation cycles (as described in [Step 4](#step-4
 === "Python module"
     ```bash title="Terminal"
     python -m datus.multi_round_benchmark \
-      --namespace bird_sqlite \
+      --database bird_sqlite \
       --benchmark bird_dev \
       --workflow chat_agentic \
       --round 4 \
@@ -415,7 +415,7 @@ Execute repeated benchmark + evaluation cycles (as described in [Step 4](#step-4
 
 | Option                  | Required | Default                                       | Description                                                          |
 |-------------------------|----------|-----------------------------------------------|----------------------------------------------------------------------|
-| `--namespace`           | Yes      | —                                             | Namespace to benchmark, e.g. `bird_sqlite`                           |
+| `--database`           | Yes      | —                                             | Namespace to benchmark, e.g. `bird_sqlite`                           |
 | `--benchmark`           | Yes      | —                                             | Benchmark name, e.g. `bird_dev`                                      |
 | `--workflow`            | No       | `reflection`                                  | Workflow plan to execute                                             |
 | `--round`               | No       | `4`                                           | Number of benchmark iterations to run                                |

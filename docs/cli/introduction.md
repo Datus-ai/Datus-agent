@@ -45,5 +45,5 @@ A CLI provides tighter control over context (not just code), making it easier to
 You first need to install and initialize Datus-CLI through the installation process, and then you can start Datus-CLI by running:
 
 ```bash
-datus-cli --namespace duckdb-demo
+datus-cli --database duckdb-demo
 ```

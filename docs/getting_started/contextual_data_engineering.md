@@ -181,7 +181,7 @@ Limit to selected catalogs/tables and enable only relevant tools/MCPs (DB tools,
 Serve the subagent as a lightweight chatbot UI for analysts to perform multi-turn analysis and report preview.
 
 ```bash
-datus-agent --namespace schools --web
+datus-agent --database schools --web
 ```
 
 You can then access `http://localhost:8501/?subagent=california_schools` (change `localhost` to your IP address if you're deploying the subagent to your stakeholders).

@@ -10,12 +10,12 @@ The Datus Web Chatbot provides a user-friendly web interface for interacting wit
 
 **With Namespace**:
 ```bash
-datus --web --namespace <your_namespace>
+datus --web --database <your_namespace>
 ```
 
 **With Custom Configuration**:
 ```bash
-datus --web --config path/to/agent.yml --namespace snowflake
+datus --web --config path/to/agent.yml --database snowflake
 ```
 
 **Custom Port and Host**:

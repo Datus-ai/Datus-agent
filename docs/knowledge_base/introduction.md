@@ -86,9 +86,9 @@ Datus Agent supports pluggable storage backends via a Registry + entry-point mec
 - Production-grade backend, automatically registered after installing `datus-storage-postgresql`
 - Vector: pgvector extension provides vector search
 - RDB: Native PostgreSQL relational storage
-- Namespace isolation via PostgreSQL schemas
+- Database isolation via PostgreSQL schemas
 
-### Namespace Isolation
+### Database Isolation
 - Each namespace is stored independently with no cross-contamination
   - LanceDB: One directory per namespace
   - PostgreSQL: One schema per namespace

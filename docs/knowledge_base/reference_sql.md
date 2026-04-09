@@ -27,7 +27,7 @@ Bootstrap-KB Reference SQL is a powerful component that processes, analyzes, and
 ```bash
 # Initialize Reference SQL component
 datus-agent bootstrap-kb \
-    --namespace <your_namespace> \
+    --database <your_namespace> \
     --components reference_sql \
     --sql_dir /path/to/sql/directory \
     --kb_update_strategy overwrite
@@ -37,7 +37,7 @@ datus-agent bootstrap-kb \
 
 | Parameter | Required | Description | Example |
 |-----------|----------|-------------|---------|
-| `--namespace` | ✅ | Database namespace | `analytics_db` |
+| `--database` | ✅ | Database namespace | `analytics_db` |
 | `--components` | ✅ | Components to initialize | `reference_sql` |
 | `--sql_dir` | ✅ | Directory containing SQL files | `/sql/queries` |
 | `--kb_update_strategy` | ✅ | Update strategy | `overwrite`/`incremental` |
@@ -63,7 +63,7 @@ When you provide predefined categories, SQL queries will be classified using onl
 
 ```bash
 datus-agent bootstrap-kb \
-    --namespace analytics_db \
+    --database analytics_db \
     --components reference_sql \
     --sql_dir /path/to/sql/queries \
     --kb_update_strategy overwrite \
@@ -81,7 +81,7 @@ When no subject_tree is provided, the system operates in learning mode:
 
 ```bash
 datus-agent bootstrap-kb \
-    --namespace analytics_db \
+    --database analytics_db \
     --components reference_sql \
     --sql_dir /path/to/sql/queries \
     --kb_update_strategy overwrite

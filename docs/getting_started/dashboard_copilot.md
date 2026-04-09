@@ -158,7 +158,7 @@ Now use the `bootstrap-bi` command to automatically generate context and subagen
 ### Run Bootstrap Command
 
 ```bash
-datus-agent bootstrap-bi --namespace superset
+datus-agent bootstrap-bi --database superset
 ```
 
 ### Interactive Flow

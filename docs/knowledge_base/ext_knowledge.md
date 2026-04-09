@@ -27,14 +27,14 @@ Bootstrap-KB External Knowledge is a component that processes, stores, and index
 ```bash
 # From CSV (direct import)
 datus-agent bootstrap-kb \
-    --namespace <your_namespace> \
+    --database <your_namespace> \
     --components ext_knowledge \
     --ext_knowledge /path/to/knowledge.csv \
     --kb_update_strategy overwrite
 
 # From success story (AI generation)
 datus-agent bootstrap-kb \
-    --namespace <your_namespace> \
+    --database <your_namespace> \
     --components ext_knowledge \
     --success_story /path/to/success_story.csv \
     --kb_update_strategy overwrite
@@ -44,7 +44,7 @@ datus-agent bootstrap-kb \
 
 | Parameter              | Required | Description                                                       | Example                           |
 | ---------------------- | -------- | ----------------------------------------------------------------- | --------------------------------- |
-| `--namespace`          | ✅       | Database namespace                                                | `analytics_db`                    |
+| `--database`          | ✅       | Database namespace                                                | `analytics_db`                    |
 | `--components`         | ✅       | Components to initialize                                          | `ext_knowledge`                   |
 | `--ext_knowledge`      | ⚠️       | Path to knowledge CSV file (required if no `--success_story`)     | `/data/knowledge.csv`             |
 | `--success_story`      | ⚠️       | Path to success story CSV file (required if no `--ext_knowledge`) | `/data/success_story.csv`         |
@@ -121,7 +121,7 @@ Clears existing knowledge and loads fresh data:
 
 ```bash
 datus-agent bootstrap-kb \
-    --namespace analytics_db \
+    --database analytics_db \
     --components ext_knowledge \
     --ext_knowledge /path/to/knowledge.csv \
     --kb_update_strategy overwrite
@@ -133,7 +133,7 @@ Adds new knowledge entries while preserving existing ones. Entries with the same
 
 ```bash
 datus-agent bootstrap-kb \
-    --namespace analytics_db \
+    --database analytics_db \
     --components ext_knowledge \
     --success_story /path/to/success_story.csv \
     --kb_update_strategy incremental
@@ -147,7 +147,7 @@ Subject tree provides a hierarchical taxonomy for organizing knowledge entries.
 
 ```bash
 datus-agent bootstrap-kb \
-    --namespace analytics_db \
+    --database analytics_db \
     --components ext_knowledge \
     --success_story /path/to/success_story.csv \
     --kb_update_strategy overwrite \
@@ -239,7 +239,7 @@ question,sql,subject_path
 
 ```bash
 datus-agent bootstrap-kb \
-    --namespace california_schools \
+    --database california_schools \
     --components ext_knowledge \
     --success_story /path/to/success_story.csv \
     --kb_update_strategy overwrite \
@@ -292,7 +292,7 @@ created_at: "2025-01-15T10:00:00Z"
 Start the cli, first use `@subject` to browse the generated knowledge entries, then test with the original question:
 
 ```bash
-datus-agent --namespace california_schools
+datus-agent --database california_schools
 ```
 
 ```
@@ -319,7 +319,7 @@ Best for ad-hoc knowledge creation, exploring and debugging, or refining individ
 #### Step 1: Start the REPL
 
 ```bash
-datus-agent --namespace california_schools
+datus-agent --database california_schools
 ```
 
 #### Step 2: Invoke the Subagent

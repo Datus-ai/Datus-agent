@@ -22,7 +22,7 @@ default unscoped session; when present, the user id is used to isolate chat sess
 X-Datus-User-Id: alice
 ```
 
-Namespace isolation is controlled separately by the `--namespace` CLI flag (or `DATUS_NAMESPACE` env var) and selects
+Namespace isolation is controlled separately by the `--database` CLI flag (or `DATUS_NAMESPACE` env var) and selects
 which namespace from `agent.yml` is used to load databases and knowledge.
 
 ## Response envelope

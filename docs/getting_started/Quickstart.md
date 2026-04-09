@@ -64,7 +64,7 @@ The setup will guide you through:
 
 **1. LLM Configuration** - Configure your preferred LLM provider (OpenAI, DeepSeek, Claude, Kimi, Qwen)
 
-**2. Namespace Setup** - Connect to your database. For a quick start, use the demo database:
+**2. Database Setup** - Connect to your database. For a quick start, use the demo database:
 
 !!! tip "Demo Database"
     Datus provides a pre-configured demo DuckDB database for testing.
@@ -79,13 +79,13 @@ After setup completes, you're ready to launch Datus!
 
 ## Step 2: Launch Datus CLI
 
-Start the Datus CLI with your configured namespace:
+Start the Datus CLI with your configured database:
 
 !!! tip "Configuration"
-    You can connect to different databases by adding namespaces in `agent.yml`. See our [Configuration guide](../configuration/introduction.md) for details.
+    You can connect to different databases by adding them via `datus-agent configure` or editing `agent.yml`. See our [Configuration guide](../configuration/introduction.md) for details.
 
 ```bash title="Terminal"
-datus-cli --namespace duckdb-demo
+datus-cli --database duckdb-demo
 ```
 ```{ .yaml .no-copy }
 Initializing AI capabilities in background...
@@ -93,7 +93,7 @@ Initializing AI capabilities in background...
 Datus - AI-powered SQL command-line interface
 Type '.help' for a list of commands or '.exit' to quit.
 
-Namespace duckdb-demo selected
+Database duckdb-demo selected
 Connected to duckdb-demo using database duckdb-demo
 Context: Current: database: duckdb-demo
 Type SQL statements or use ! @ . commands to interact.

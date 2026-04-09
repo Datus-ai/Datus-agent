@@ -120,7 +120,7 @@ datus bootstrap-kb --database my_duckdb --components metadata
 - If only one database is configured, it's auto-selected
 - Otherwise, a list of available databases is shown
 
-**Legacy support:** `--namespace` still works as an alias for `--database`.
+**Legacy support:** `--database` still works as an alias for `--database`.
 
 ---
 

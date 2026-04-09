@@ -190,7 +190,7 @@ agentic_nodes:
 Use the slash command to launch a subagent:
 
 ```bash
-datus --namespace production
+datus --database production
 
 # Launch subagent with specific task
 /gen_metrics Generate a revenue metric
@@ -208,7 +208,7 @@ datus --namespace production
 Access subagents through the web chatbot:
 
 ```bash
-datus web --namespace production
+datus web --database production
 ```
 
 **Steps**:
