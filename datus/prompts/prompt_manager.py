@@ -355,17 +355,10 @@ def get_prompt_manager(
     if prompt_manager is not None:
         return prompt_manager
 
-    if agent_config is not None:
-        config_pm = getattr(agent_config, "prompt_manager", None)
-        if config_pm is not None:
-            return config_pm
-        config_path_manager = getattr(agent_config, "path_manager", None)
-        return PromptManager(path_manager=config_path_manager, agent_config=agent_config)
-
     if path_manager is not None:
         return PromptManager(path_manager=path_manager)
 
-    return PromptManager()
+    return PromptManager(path_manager=getattr(agent_config, "path_manager", None), agent_config=agent_config)
 
 
 # Backward-compatible global instance.

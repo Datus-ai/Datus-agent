@@ -135,7 +135,7 @@ class SubAgentWizard:
     def _load_reserved_template_names(self) -> Set[str]:
         """Collect template base names that would conflict with agent names."""
         try:
-            templates = get_prompt_manager().list_templates()
+            templates = get_prompt_manager(agent_config=self.cli_instance.agent_config).list_templates()
         except Exception:
             return set()
 
