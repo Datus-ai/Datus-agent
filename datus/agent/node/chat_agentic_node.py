@@ -62,8 +62,8 @@ class ChatAgenticNode(AgenticNode):
         input_data: Optional[ChatNodeInput] = None,
         agent_config: Optional[AgentConfig] = None,
         tools: Optional[list] = None,
-        scope: Optional[str] = None,
         execution_mode: Literal["interactive", "workflow"] = "interactive",
+        scope: Optional[str] = None,
     ):
         """
         Initialize the ChatAgenticNode.
@@ -75,7 +75,10 @@ class ChatAgenticNode(AgenticNode):
             input_data: Chat input data
             agent_config: Agent configuration
             tools: List of tools (will be populated in setup_tools)
+            execution_mode: Execution mode - "interactive" (default) or "workflow"
         """
+        self.execution_mode = execution_mode
+
         # Node name for config lookup and template resolution
         self.configured_node_name = "chat"
 
@@ -150,6 +153,7 @@ class ChatAgenticNode(AgenticNode):
         self._setup_filesystem_tools()
         self._setup_skill_tools()
         self._setup_sub_agent_task_tool()
+        # Setup ask_user tool for clarification questions (interactive mode only)
         if self.execution_mode == "interactive":
             self._setup_ask_user_tool()
         self._setup_scheduler_tools()

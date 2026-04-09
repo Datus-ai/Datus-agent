@@ -112,7 +112,9 @@ class Node(ABC):
         elif node_type == NodeType.TYPE_DATE_PARSER:
             return DateParserNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_CHAT:
-            return ChatAgenticNode(node_id, description, node_type, input_data, agent_config, tools)
+            return ChatAgenticNode(
+                node_id, description, node_type, input_data, agent_config, tools, execution_mode="workflow"
+            )
         elif node_type == NodeType.TYPE_GENSQL:
             return GenSQLAgenticNode(
                 node_id, description, node_type, input_data, agent_config, tools, node_name, execution_mode="workflow"
