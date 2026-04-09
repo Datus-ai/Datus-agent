@@ -89,15 +89,23 @@ class SemanticStorageManager:
         """
         # Convert SemanticModelInfo to dict format for storage
         if isinstance(model_data, SemanticModelInfo):
-            model_data = {
+            converted = {
                 "semantic_model_name": model_data.name,
                 "description": model_data.description or "",
-                "table_name": model_data.name,
+                "table_name": model_data.extra.get("table_name", model_data.name),
+                "catalog_name": model_data.extra.get("catalog_name", ""),
+                "database_name": model_data.extra.get("database_name", ""),
+                "schema_name": model_data.extra.get("schema_name", ""),
                 "dimensions": [
                     {"name": d.name, "description": d.description or "", "expr": ""} for d in model_data.dimensions
                 ],
                 "measures": [{"name": m, "description": "", "expr": ""} for m in model_data.measures],
             }
+            if model_data.platform_type:
+                converted["platform_type"] = model_data.platform_type
+            if model_data.extra:
+                converted["extra"] = model_data.extra
+            model_data = converted
 
         # Validate required field
         if "semantic_model_name" not in model_data:

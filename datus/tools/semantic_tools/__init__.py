@@ -17,7 +17,13 @@ Core Components:
 
 from datus.tools.semantic_tools.base import BaseSemanticAdapter
 from datus.tools.semantic_tools.config import SemanticAdapterConfig
-from datus.tools.semantic_tools.models import MetricDefinition, QueryResult, ValidationResult
+from datus.tools.semantic_tools.models import (
+    DimensionInfo,
+    MetricDefinition,
+    QueryResult,
+    SemanticModelInfo,
+    ValidationResult,
+)
 from datus.tools.semantic_tools.registry import AdapterMetadata, SemanticAdapterRegistry, semantic_adapter_registry
 from datus.tools.semantic_tools.storage_sync import SemanticStorageManager
 
@@ -36,7 +42,9 @@ __all__ = [
     # Storage
     "SemanticStorageManager",
     # Models
+    "DimensionInfo",
     "MetricDefinition",
     "QueryResult",
+    "SemanticModelInfo",
     "ValidationResult",
 ]
