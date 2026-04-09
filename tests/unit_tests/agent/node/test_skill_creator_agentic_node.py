@@ -588,8 +588,7 @@ class TestSkillCreatorSystemPromptEdgeCases:
             node_name="gen_skill",
         )
 
-        with patch(
-            "datus.prompts.prompt_manager.prompt_manager.render_template", side_effect=Exception("bad template")
-        ):
+        with patch("datus.prompts.prompt_manager.get_prompt_manager") as mock_gpm:
+            mock_gpm.return_value.render_template.side_effect = Exception("bad template")
             with pytest.raises(DatusException):
                 node._get_system_prompt()
