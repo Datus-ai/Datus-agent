@@ -12,8 +12,9 @@ No configuration file needed - versions are determined by scanning files.
 
 import re
 import shutil
+from collections import OrderedDict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
 
 from jinja2 import Environment, FileSystemLoader, Template
 
@@ -30,7 +31,10 @@ class PromptManager:
 
     # Class-level Jinja2 environment cache, shared across instances.
     # Keyed by template directory path so different tenants get separate environments.
-    _env_cache: Dict[str, Environment] = {}
+    # Uses OrderedDict with LRU eviction to prevent unbounded growth in long-running
+    # SaaS servers where tenants come and go.
+    _MAX_ENV_CACHE_SIZE: int = 128
+    _env_cache: OrderedDict[str, Environment] = OrderedDict()
 
     def __init__(
         self,
@@ -61,15 +65,34 @@ class PromptManager:
 
         Cached per ``user_templates_dir`` so different homes (SaaS tenants)
         get separate Jinja2 environments without re-creating on every call.
+        Uses LRU eviction when the cache exceeds ``_MAX_ENV_CACHE_SIZE``.
         """
         cache_key = str(self.user_templates_dir)
         env = self._env_cache.get(cache_key)
-        if env is None:
-            search_paths = [cache_key, str(self.default_templates_dir)]
-            env = Environment(loader=FileSystemLoader(search_paths), trim_blocks=True, lstrip_blocks=True)
-            self._env_cache[cache_key] = env
-            logger.debug(f"Template search paths: {search_paths}")
+        if env is not None:
+            self._env_cache.move_to_end(cache_key)
+            return env
+        search_paths = [cache_key, str(self.default_templates_dir)]
+        env = Environment(loader=FileSystemLoader(search_paths), trim_blocks=True, lstrip_blocks=True)
+        self._env_cache[cache_key] = env
+        if len(self._env_cache) > self._MAX_ENV_CACHE_SIZE:
+            self._env_cache.popitem(last=False)
+        logger.debug(f"Template search paths: {search_paths}")
         return env
+
+    @classmethod
+    def clear_env_cache(cls) -> None:
+        """Remove all cached Jinja2 environments."""
+        cls._env_cache.clear()
+
+    @classmethod
+    def invalidate_env(cls, user_templates_dir: str) -> None:
+        """Remove a single tenant's cached Jinja2 environment.
+
+        Args:
+            user_templates_dir: The template directory path used as cache key.
+        """
+        cls._env_cache.pop(user_templates_dir, None)
 
     def _get_template_path(self, template_name: str, version: Optional[str] = None) -> Path:
         """
@@ -355,10 +378,17 @@ def get_prompt_manager(
     if prompt_manager is not None:
         return prompt_manager
 
+    if agent_config is not None:
+        config_pm = getattr(agent_config, "prompt_manager", None)
+        if config_pm is not None:
+            return config_pm
+        config_path_manager = path_manager or getattr(agent_config, "path_manager", None)
+        return PromptManager(path_manager=config_path_manager, agent_config=agent_config)
+
     if path_manager is not None:
         return PromptManager(path_manager=path_manager)
 
-    return PromptManager(path_manager=getattr(agent_config, "path_manager", None), agent_config=agent_config)
+    return PromptManager()
 
 
 # Backward-compatible global instance.
