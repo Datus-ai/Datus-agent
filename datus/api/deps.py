@@ -17,19 +17,29 @@ logger = get_logger(__name__)
 _auth_provider: Optional[AuthProvider] = None
 _service_cache: Optional[DatusServiceCache] = None
 _namespace: str = "default"
+_default_source: Optional[str] = None
+_default_interactive: bool = True
 
 _DEFAULT_PROJECT_KEY = "default"
 
 
-def init_deps(auth_provider: AuthProvider, cache: DatusServiceCache, namespace: str = "default") -> None:
+def init_deps(
+    auth_provider: AuthProvider,
+    cache: DatusServiceCache,
+    namespace: str = "default",
+    default_source: Optional[str] = None,
+    default_interactive: bool = True,
+) -> None:
     """Initialize global auth provider and service cache.
 
     Called from main.py lifespan to inject dependencies.
     """
-    global _auth_provider, _service_cache, _namespace
+    global _auth_provider, _service_cache, _namespace, _default_source, _default_interactive
     _auth_provider = auth_provider
     _service_cache = cache
     _namespace = namespace
+    _default_source = default_source
+    _default_interactive = default_interactive
     # Wire eviction callback: auth config changes trigger cache eviction
     auth_provider.on_evict(cache.evict)
 
@@ -63,7 +73,12 @@ async def get_datus_service(request: Request) -> DatusService:
                 logger.error(f"Failed to load agent config for namespace '{_namespace}': {e}")
                 raise RuntimeError(f"Failed to load agent config: {e}") from e
 
-        return DatusService(agent_config=agent_config, project_id=cache_key)
+        return DatusService(
+            agent_config=agent_config,
+            project_id=cache_key,
+            default_source=_default_source,
+            default_interactive=_default_interactive,
+        )
 
     return await _service_cache.get_or_create(cache_key, _factory, expected_fingerprint=expected_fp)
 

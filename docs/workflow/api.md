@@ -10,13 +10,13 @@ The Datus Agent Workflow API Service is a RESTful API that exposes the power of 
 
 ```bash
 # Start the API service
-python -m datus.api.server --host 0.0.0.0 --port 8000
+python -m datus.api.main --host 0.0.0.0 --port 8000
 
 # Start with multiple workers
-python -m datus.api.server --workers 4 --port 8000
+python -m datus.api.main --workers 4 --port 8000
 
 # Start in daemon mode (background)
-python -m datus.api.server --daemon --port 8000
+python -m datus.api.main --daemon --port 8000
 ```
 
 ## Authentication
@@ -260,7 +260,7 @@ Submit feedback on workflow execution quality.
 ### Server Configuration
 
 ```bash
-python -m datus.api.server \
+python -m datus.api.main \
   --host 0.0.0.0 \
   --port 8000 \
   --workers 4 \

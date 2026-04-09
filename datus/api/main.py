@@ -3,168 +3,377 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
-
 """
-Datus API Server: FastAPI-based REST API for Datus Agent.
-Command-line entry point for starting the API service.
+Datus Agent FastAPI server startup script.
+
+Single entry point for both the ``datus-api`` console script and
+``python -m datus.api.main``. Supports foreground and daemon
+(background) modes with start/stop/restart/status actions.
 """
 
 import argparse
+import atexit
+import multiprocessing
 import os
+import signal
 import sys
+import time
+from pathlib import Path
+from typing import Optional, Tuple
 
 import uvicorn
 
 from datus import __version__
 from datus.configuration.agent_config_loader import parse_config_path
-from datus.utils.loggings import get_logger
+from datus.utils.loggings import configure_logging, get_logger
 
 logger = get_logger(__name__)
 
 
-class APIServerArgumentParser:
-    """Argument parser for Datus API Server."""
+def _default_paths(config_path: str = "") -> Tuple[Path, Path]:
+    """Return default pid and log file paths."""
+    from datus.configuration.agent_config_loader import get_agent_home
+    from datus.utils.path_manager import DatusPathManager
 
-    def __init__(self):
-        self.parser = argparse.ArgumentParser(description="Datus API Server: FastAPI-based REST API for Datus Agent")
-        self._setup_arguments()
+    path_manager = DatusPathManager(get_agent_home(config_path))
+    pid_file = path_manager.pid_file_path("datus-agent-api")
+    log_file = Path("logs") / "datus-agent-api.log"
+    return pid_file, log_file
 
-    def _setup_arguments(self):
-        """Setup command-line arguments."""
-        # Version
-        self.parser.add_argument("-v", "--version", action="version", version=f"Datus API {__version__}")
 
-        # Configuration
-        self.parser.add_argument(
-            "--config",
-            dest="config",
-            type=str,
-            default=None,
-            help="Agent configuration file (default: ./conf/agent.yml > ~/.datus/conf/agent.yml)",
-        )
-        self.parser.add_argument(
-            "--namespace",
-            dest="namespace",
-            type=str,
-            default=os.getenv("DATUS_NAMESPACE", "default"),
-            help="Namespace to use (default: default or DATUS_NAMESPACE env var)",
-        )
+def _ensure_parent_dir(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Output and logging
-        self.parser.add_argument(
-            "--output-dir",
-            dest="output_dir",
-            type=str,
-            default=os.getenv("DATUS_OUTPUT_DIR", "./output"),
-            help="Output directory for results (default: ./output)",
-        )
-        self.parser.add_argument(
-            "--log-level",
-            dest="log_level",
-            type=str,
-            default=os.getenv("DATUS_LOG_LEVEL", "INFO"),
-            choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-            help="Log level (default: INFO or DATUS_LOG_LEVEL env var)",
-        )
 
-        # Server settings
-        self.parser.add_argument(
-            "--host",
-            dest="host",
-            type=str,
-            default="127.0.0.1",
-            help="Server host (default: 127.0.0.1)",
-        )
-        self.parser.add_argument(
-            "--port",
-            dest="port",
-            type=int,
-            default=8000,
-            help="Server port (default: 8000)",
-        )
-        self.parser.add_argument(
-            "--reload",
-            dest="reload",
-            action="store_true",
-            help="Enable auto-reload on file changes (development mode)",
-        )
-        self.parser.add_argument(
-            "--workers",
-            dest="workers",
-            type=int,
-            default=1,
-            help="Number of worker processes (default: 1)",
-        )
+def _read_pid(pid_file: Path) -> Optional[int]:
+    if not pid_file.exists():
+        return None
+    try:
+        pid_text = pid_file.read_text().strip()
+        return int(pid_text) if pid_text else None
+    except Exception:
+        return None
 
-    def parse_args(self):
-        """Parse and return command-line arguments."""
-        return self.parser.parse_args()
+
+def _is_process_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    else:
+        return True
+
+
+def _write_pid_file(pid_file: Path, pid: int) -> None:
+    _ensure_parent_dir(pid_file)
+    pid_file.write_text(str(pid))
+
+
+def _remove_pid_file(pid_file: Path) -> None:
+    try:
+        if pid_file.exists():
+            pid_file.unlink()
+    except Exception:
+        pass
+
+
+def _redirect_stdio(log_file: Path) -> None:
+    _ensure_parent_dir(log_file)
+    si = open(os.devnull, "rb", buffering=0)
+    so = open(log_file, "ab", buffering=0)
+    se = open(log_file, "ab", buffering=0)
+    os.dup2(si.fileno(), sys.stdin.fileno())
+    os.dup2(so.fileno(), sys.stdout.fileno())
+    os.dup2(se.fileno(), sys.stderr.fileno())
+
+
+def _daemon_worker(args: argparse.Namespace, agent_args: argparse.Namespace, pid_file: Path, log_file: Path) -> None:
+    """Worker function that runs in the daemon process."""
+    os.setsid()
+    os.umask(0)
+
+    configure_logging(args.debug, log_dir="logs", console_output=False)
+    _redirect_stdio(log_file)
+    _write_pid_file(pid_file, os.getpid())
+
+    def _cleanup(*_args):
+        _remove_pid_file(pid_file)
+
+    atexit.register(_cleanup)
+    signal.signal(signal.SIGTERM, lambda *_a: (_cleanup(), os._exit(0)))
+
+    _run_server(args, agent_args)
+
+
+def _stop(pid_file: Path, timeout_seconds: float = 10.0) -> int:
+    pid = _read_pid(pid_file)
+    if not pid:
+        logger.info("No PID file found; server not running?")
+        return 0
+    if not _is_process_running(pid):
+        logger.info("Stale PID file found; process not running. Cleaning up.")
+        _remove_pid_file(pid_file)
+        return 0
+
+    logger.info(f"Stopping server (pid={pid}) ...")
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        _remove_pid_file(pid_file)
+        return 0
+
+    start = time.time()
+    while time.time() - start < timeout_seconds:
+        if not _is_process_running(pid):
+            _remove_pid_file(pid_file)
+            logger.info("Stopped.")
+            return 0
+        time.sleep(0.2)
+
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    _remove_pid_file(pid_file)
+    logger.info("Force killed.")
+    return 0
+
+
+def _status(pid_file: Path) -> int:
+    pid = _read_pid(pid_file)
+    if pid and _is_process_running(pid):
+        print(f"running (pid={pid})")
+        return 0
+    print("stopped")
+    return 1
+
+
+def _build_agent_args(args: argparse.Namespace) -> argparse.Namespace:
+    return argparse.Namespace(
+        namespace=args.namespace,
+        config=args.config,
+        max_steps=args.max_steps,
+        workflow=args.workflow,
+        load_cp=args.load_cp,
+        debug=args.debug,
+        source=args.source,
+        interactive=args.interactive,
+        output_dir=args.output_dir,
+        log_level=args.log_level,
+    )
+
+
+def _run_server(args: argparse.Namespace, agent_args: argparse.Namespace) -> None:
+    from datus.api.service import create_app
+
+    # reload / multi-worker modes require a string import target, not an app instance.
+    if args.reload:
+        uvicorn.run(
+            "datus.api.service:app",
+            host=args.host,
+            port=args.port,
+            reload=True,
+            log_level=args.log_level.lower(),
+            access_log=True,
+        )
+        return
+
+    if args.workers and args.workers > 1:
+        uvicorn.run(
+            "datus.api.service:app",
+            host=args.host,
+            port=args.port,
+            workers=args.workers,
+            log_level=args.log_level.lower(),
+            access_log=True,
+        )
+        return
+
+    app = create_app(agent_args)
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=args.port,
+        workers=1,
+        log_level=args.log_level.lower(),
+        access_log=True,
+    )
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Datus Agent FastAPI Server")
+    parser.add_argument("-v", "--version", action="version", version=f"Datus API {__version__}")
+
+    # Server
+    parser.add_argument("--host", default="0.0.0.0", help="Host to bind the server to (default: 0.0.0.0)")
+    parser.add_argument("--port", type=int, default=8000, help="Port to bind the server to (default: 8000)")
+    parser.add_argument("--reload", action="store_true", help="Enable auto-reload for development")
+    parser.add_argument("--workers", type=int, default=1, help="Number of worker processes (default: 1)")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+
+    # Configuration
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Agent configuration file (default: ./conf/agent.yml > ~/.datus/conf/agent.yml)",
+    )
+    parser.add_argument(
+        "--namespace",
+        type=str,
+        default=os.getenv("DATUS_NAMESPACE", "default"),
+        help="Namespace of databases or benchmark (default: DATUS_NAMESPACE env or 'default')",
+    )
+    parser.add_argument(
+        "--output-dir",
+        dest="output_dir",
+        type=str,
+        default=os.getenv("DATUS_OUTPUT_DIR", "./output"),
+        help="Output directory for results (default: ./output)",
+    )
+    parser.add_argument(
+        "--log-level",
+        dest="log_level",
+        type=str,
+        default=os.getenv("DATUS_LOG_LEVEL", "INFO"),
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Log level (default: INFO or DATUS_LOG_LEVEL env var)",
+    )
+
+    # Agent
+    parser.add_argument("--max_steps", type=int, default=20, help="Maximum workflow steps")
+    parser.add_argument("--workflow", type=str, default="fixed", help="Workflow plan type")
+    parser.add_argument("--load_cp", type=str, help="Load workflow from checkpoint file")
+    parser.add_argument(
+        "--source",
+        type=str,
+        default=None,
+        choices=["web", "vscode"],
+        help=(
+            "Default proxy tool source shortcut. 'vscode' -> proxy filesystem_tools.*, "
+            "'web' -> proxy write_file/edit_file/move_file/create_directory. "
+            "Overridable per request via ChatInput.source."
+        ),
+    )
+    parser.add_argument(
+        "--interactive",
+        dest="interactive",
+        action="store_true",
+        default=True,
+        help="Enable ask_user interactive tool by default (default: enabled)",
+    )
+    parser.add_argument(
+        "--no-interactive",
+        dest="interactive",
+        action="store_false",
+        help="Disable ask_user (workflow / non-interactive mode)",
+    )
+
+    # Daemon control
+    parser.add_argument(
+        "--action",
+        choices=["start", "stop", "restart", "status"],
+        default="start",
+        help="Daemon action (default: start)",
+    )
+    parser.add_argument("--daemon", action="store_true", help="Run in background as a daemon")
+    parser.add_argument(
+        "--pid-file",
+        type=str,
+        help="PID file path (default: ~/.datus/run/datus-agent-api.pid)",
+    )
+    parser.add_argument(
+        "--daemon-log-file",
+        type=str,
+        help="Daemon log file path (default: logs/datus-agent-api.log)",
+    )
+    return parser
 
 
 def main():
-    """Main entry point for Datus API Server."""
-    parser = APIServerArgumentParser()
+    """Main entry point for starting the Datus Agent API server."""
+    if hasattr(multiprocessing, "set_start_method"):
+        try:
+            multiprocessing.set_start_method("spawn", force=True)
+        except RuntimeError:
+            pass
+
+    parser = _build_parser()
     args = parser.parse_args()
 
-    # Parse config file path (priority: explicit > ./conf/agent.yml > ~/.datus/conf/agent.yml)
+    # --debug is a shortcut for --log-level DEBUG; unify early so all
+    # downstream consumers (uvicorn, configure_logging, agent_args) agree.
+    if args.debug:
+        args.log_level = "DEBUG"
+
+    # Resolve defaults for pid/log
+    default_pid, default_log = _default_paths(args.config or "")
+    pid_file = Path(args.pid_file) if args.pid_file else default_pid
+    log_file = Path(args.daemon_log_file) if args.daemon_log_file else default_log
+
+    if args.action in {"status", "stop"}:
+        configure_logging(args.debug)
+        if args.action == "status":
+            raise SystemExit(_status(pid_file))
+        if args.action == "stop":
+            raise SystemExit(_stop(pid_file))
+
+    if args.action == "restart":
+        configure_logging(args.debug)
+        _stop(pid_file)
+        # fall-through to start
+
+    # Resolve config file path and export env vars for lifespan / module-level app.
     try:
         config_path = str(parse_config_path(args.config or ""))
     except Exception as e:
         logger.error(f"Failed to locate configuration file: {e}")
-        sys.exit(1)
+        raise SystemExit(1) from e
+    args.config = config_path
 
-    logger.info("Starting Datus API Server")
-    logger.info(f"  Config: {config_path}")
-    logger.info(f"  Namespace: {args.namespace}")
-    logger.info(f"  Server: {args.host}:{args.port}")
-
-    # Set environment variables for lifespan to use
     os.environ["DATUS_CONFIG"] = config_path
     os.environ["DATUS_NAMESPACE"] = args.namespace
     os.environ["DATUS_OUTPUT_DIR"] = args.output_dir
     os.environ["DATUS_LOG_LEVEL"] = args.log_level
 
-    # Create app with CLI args (don't import the module-level app)
-    from datus.api.service import create_app
+    if args.daemon and args.reload:
+        print("--daemon mode is mutually exclusive with --reload. Remove --reload.", file=sys.stderr)
+        raise SystemExit(2)
 
-    cli_args = argparse.Namespace(
-        config=config_path,
-        namespace=args.namespace,
-        output_dir=args.output_dir,
-        log_level=args.log_level,
-    )
-    app = create_app(cli_args)
+    if args.daemon:
+        if (pid := _read_pid(pid_file)) and _is_process_running(pid):
+            print(f"Already running (pid={pid})", file=sys.stderr)
+            raise SystemExit(0)
 
-    # Run uvicorn
-    if args.reload and args.workers > 1:
-        logger.warning("--reload is incompatible with --workers > 1; using single worker process")
-        args.workers = 1
-
-    if args.reload:
-        # reload requires an import string, not an app instance
-        uvicorn.run(
-            "datus.api.service:app",
-            host=args.host,
-            port=args.port,
-            log_level=args.log_level.lower(),
-            reload=True,
+        configure_logging(args.debug, log_dir="logs", console_output=False)
+        logger.info(
+            f"Starting Datus Agent API server (daemon) on {args.host}:{args.port} | "
+            f"Workers: {args.workers}, Debug: {args.debug}"
         )
-    elif args.workers > 1:
-        # multi-worker mode also requires an import string
-        uvicorn.run(
-            "datus.api.service:app",
-            host=args.host,
-            port=args.port,
-            log_level=args.log_level.lower(),
-            workers=args.workers,
+
+        agent_args = _build_agent_args(args)
+        daemon_process = multiprocessing.Process(
+            target=_daemon_worker, args=(args, agent_args, pid_file, log_file), daemon=False
         )
+        daemon_process.start()
+
+        time.sleep(0.5)
+
+        if daemon_process.is_alive():
+            print(f"Daemon started successfully (pid={daemon_process.pid})")
+            os._exit(0)
+        else:
+            print("Failed to start daemon process", file=sys.stderr)
+            daemon_process.join()
+            os._exit(1)
     else:
-        uvicorn.run(
-            app,
-            host=args.host,
-            port=args.port,
-            log_level=args.log_level.lower(),
-        )
+        configure_logging(args.debug)
+
+    logger.info(f"Starting Datus Agent API server on {args.host}:{args.port}")
+    logger.info(f"Workers: {args.workers}, Reload: {args.reload}, Debug: {args.debug}")
+    logger.info(f"Agent config - Namespace: {args.namespace}, Config: {args.config}")
+    agent_args = _build_agent_args(args)
+    _run_server(args, agent_args)
 
 
 if __name__ == "__main__":

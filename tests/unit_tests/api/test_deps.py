@@ -16,10 +16,14 @@ def _reset_deps():
     deps._auth_provider = None
     deps._service_cache = None
     deps._namespace = "default"
+    deps._default_source = None
+    deps._default_interactive = True
     yield
     deps._auth_provider = None
     deps._service_cache = None
     deps._namespace = "default"
+    deps._default_source = None
+    deps._default_interactive = True
 
 
 class TestInitDeps:
@@ -45,6 +49,32 @@ class TestInitDeps:
 
         init_deps(mock_auth, mock_cache)
         assert deps._namespace == "default"
+
+    def test_default_source_and_interactive_defaults(self):
+        """Without explicit args, default_source is None and default_interactive is True."""
+        mock_auth = MagicMock()
+        mock_auth.on_evict = MagicMock()
+        mock_cache = MagicMock(spec=DatusServiceCache)
+
+        init_deps(mock_auth, mock_cache)
+        assert deps._default_source is None
+        assert deps._default_interactive is True
+
+    def test_default_source_and_interactive_stored(self):
+        """init_deps stores explicit default_source and default_interactive."""
+        mock_auth = MagicMock()
+        mock_auth.on_evict = MagicMock()
+        mock_cache = MagicMock(spec=DatusServiceCache)
+
+        init_deps(
+            mock_auth,
+            mock_cache,
+            namespace="ns",
+            default_source="vscode",
+            default_interactive=False,
+        )
+        assert deps._default_source == "vscode"
+        assert deps._default_interactive is False
 
     def test_wires_eviction_callback(self):
         """init_deps wires auth_provider.on_evict to cache.evict."""
@@ -122,6 +152,44 @@ class TestGetDatusService:
         await get_datus_service(request)
         call_args = mock_cache.get_or_create.call_args
         assert call_args.kwargs["expected_fingerprint"] is None
+
+    async def test_factory_propagates_default_source_and_interactive(self):
+        """Factory passes module-level defaults through to DatusService constructor."""
+        from unittest.mock import patch
+
+        mock_auth = MagicMock()
+        ctx = AppContext(user_id="u1", project_id="p1", config=MagicMock())
+        mock_auth.authenticate = AsyncMock(return_value=ctx)
+
+        mock_cache = MagicMock(spec=DatusServiceCache)
+        captured = {}
+
+        async def fake_get_or_create(key, factory, expected_fingerprint=None):
+            captured["svc"] = await factory()
+            return captured["svc"]
+
+        mock_cache.get_or_create = AsyncMock(side_effect=fake_get_or_create)
+
+        deps._auth_provider = mock_auth
+        deps._service_cache = mock_cache
+        deps._default_source = "web"
+        deps._default_interactive = False
+
+        request = MagicMock()
+        request.state = MagicMock()
+
+        with (
+            patch("datus.api.deps.DatusService.compute_fingerprint", return_value="fp"),
+            patch("datus.api.deps.DatusService") as mock_svc_cls,
+        ):
+            mock_svc_cls.compute_fingerprint = MagicMock(return_value="fp")
+            mock_svc_cls.return_value = MagicMock()
+            await get_datus_service(request)
+
+        call_kwargs = mock_svc_cls.call_args.kwargs
+        assert call_kwargs["default_source"] == "web"
+        assert call_kwargs["default_interactive"] is False
+        assert call_kwargs["project_id"] == "p1"
 
     async def test_factory_loads_config_when_none(self, real_agent_config):
         """Factory in get_datus_service loads config when ctx.config is None."""

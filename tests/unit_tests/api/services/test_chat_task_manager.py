@@ -73,6 +73,47 @@ class TestChatTaskManagerInit:
         manager = ChatTaskManager()
         assert manager._tasks == {}
 
+    def test_default_source_and_interactive_defaults(self):
+        """Defaults: source=None, interactive=True."""
+        manager = ChatTaskManager()
+        assert manager._default_source is None
+        assert manager._default_interactive is True
+
+    def test_default_source_and_interactive_stored(self):
+        """Constructor stores explicit defaults."""
+        manager = ChatTaskManager(default_source="web", default_interactive=False)
+        assert manager._default_source == "web"
+        assert manager._default_interactive is False
+
+
+class TestChatTaskManagerCreateNodeInteractive:
+    """Verify _create_node forwards interactive flag to ChatAgenticNode."""
+
+    def test_create_node_passes_interactive_false(self, real_agent_config, mock_llm_create):
+        """interactive=False reaches ChatAgenticNode and disables ask_user_tool."""
+        manager = ChatTaskManager(default_interactive=False)
+        node = manager._create_node(
+            real_agent_config,
+            subagent_id=None,
+            session_id="sess-1",
+            user_id=None,
+            interactive=False,
+        )
+        assert node.execution_mode == "workflow"
+        assert node.ask_user_tool is None
+
+    def test_create_node_passes_interactive_true(self, real_agent_config, mock_llm_create):
+        """interactive=True retains ask_user_tool setup."""
+        manager = ChatTaskManager()
+        node = manager._create_node(
+            real_agent_config,
+            subagent_id=None,
+            session_id="sess-2",
+            user_id=None,
+            interactive=True,
+        )
+        assert node.execution_mode == "interactive"
+
     def test_has_active_tasks_returns_false_when_empty(self):
         """has_active_tasks is False when no tasks exist."""
         manager = ChatTaskManager()

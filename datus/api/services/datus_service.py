@@ -22,7 +22,13 @@ class DatusService:
     checks are sufficient (no locking needed).
     """
 
-    def __init__(self, agent_config: AgentConfig, project_id: str):
+    def __init__(
+        self,
+        agent_config: AgentConfig,
+        project_id: str,
+        default_source: "str | None" = None,
+        default_interactive: bool = True,
+    ):
         self._agent_config = agent_config
         self._project_id = project_id
         self._config_fingerprint = self.compute_fingerprint(agent_config)
@@ -30,7 +36,10 @@ class DatusService:
         # ChatTaskManager — project-scoped (not process-level singleton)
         from datus.api.services.chat_task_manager import ChatTaskManager
 
-        self._task_manager = ChatTaskManager()
+        self._task_manager = ChatTaskManager(
+            default_source=default_source,
+            default_interactive=default_interactive,
+        )
 
         # Lazy service slots
         self._chat = None

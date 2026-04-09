@@ -432,7 +432,13 @@ async def lifespan(app: FastAPI):
     api_config = getattr(service.agent_config, "api_config", {}) if service.agent_config else {}
     auth_provider = load_auth_provider(api_config, namespace=namespace)
     service_cache = DatusServiceCache(max_size=128)
-    init_deps(auth_provider, service_cache, namespace=namespace)
+    init_deps(
+        auth_provider,
+        service_cache,
+        namespace=namespace,
+        default_source=getattr(args, "source", None),
+        default_interactive=getattr(args, "interactive", True),
+    )
 
     logger.info("Datus API Service started")
     yield

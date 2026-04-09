@@ -1156,3 +1156,59 @@ class TestChatSystemPromptCurrentDate:
         ):
             prompt = node._get_system_prompt()
         assert "2025-06-15" in prompt
+
+
+class TestChatAgenticNodeInteractiveFlag:
+    """Verify the `interactive` constructor parameter controls ask_user_tool setup."""
+
+    def _build(self, real_agent_config, interactive):
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        return ChatAgenticNode(
+            node_id="test_interactive",
+            description="Test interactive flag",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+            interactive=interactive,
+        )
+
+    def test_interactive_default_is_true(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        node = ChatAgenticNode(
+            node_id="test_default_interactive",
+            description="Default",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
+        assert node.interactive_enabled is True
+
+    def test_interactive_false_disables_ask_user_tool(self, real_agent_config, mock_llm_create):
+        node = self._build(real_agent_config, interactive=False)
+        assert node.interactive_enabled is False
+        assert node.ask_user_tool is None
+
+    def test_interactive_true_keeps_default_behavior(self, real_agent_config, mock_llm_create):
+        node = self._build(real_agent_config, interactive=True)
+        assert node.interactive_enabled is True
+
+
+class TestAgenticNodeSetupAskUserToolSkipped:
+    """Directly exercise AgenticNode._setup_ask_user_tool early-return branch."""
+
+    def test_setup_ask_user_tool_early_return_when_disabled(self, real_agent_config, mock_llm_create):
+        """When interactive_enabled=False, _setup_ask_user_tool clears tool and returns."""
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        node = ChatAgenticNode(
+            node_id="test_early_return",
+            description="early return",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+            interactive=True,
+        )
+        # Simulate a previously-set ask_user_tool
+        node.ask_user_tool = object()
+        node.interactive_enabled = False
+        node._setup_ask_user_tool()
+        assert node.ask_user_tool is None

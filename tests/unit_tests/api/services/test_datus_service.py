@@ -19,6 +19,23 @@ class TestDatusServiceInit:
         svc = DatusService(agent_config=real_agent_config, project_id="p1")
         assert svc.task_manager is not None
 
+    def test_init_default_source_and_interactive_forwarded(self, real_agent_config):
+        """default_source / default_interactive are forwarded to ChatTaskManager."""
+        svc = DatusService(
+            agent_config=real_agent_config,
+            project_id="p1",
+            default_source="vscode",
+            default_interactive=False,
+        )
+        assert svc.task_manager._default_source == "vscode"
+        assert svc.task_manager._default_interactive is False
+
+    def test_init_default_source_and_interactive_defaults(self, real_agent_config):
+        """When not passed, ChatTaskManager defaults to source=None, interactive=True."""
+        svc = DatusService(agent_config=real_agent_config, project_id="p1")
+        assert svc.task_manager._default_source is None
+        assert svc.task_manager._default_interactive is True
+
     def test_lazy_slots_are_none_on_init(self, real_agent_config):
         """All lazy service slots are None after construction."""
         svc = DatusService(agent_config=real_agent_config, project_id="p1")

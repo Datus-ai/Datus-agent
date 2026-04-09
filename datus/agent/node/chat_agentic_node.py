@@ -10,7 +10,7 @@ chat interactions with markdown output, database/filesystem tool support,
 skills, and permissions. This node is fully independent from GenSQLAgenticNode.
 """
 
-from typing import Any, AsyncGenerator, Dict, Optional
+from typing import Any, AsyncGenerator, Dict, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.gen_sql_agentic_node import build_enhanced_message, prepare_template_context
@@ -63,6 +63,7 @@ class ChatAgenticNode(AgenticNode):
         agent_config: Optional[AgentConfig] = None,
         tools: Optional[list] = None,
         scope: Optional[str] = None,
+        execution_mode: Literal["interactive", "workflow"] = "interactive",
     ):
         """
         Initialize the ChatAgenticNode.
@@ -118,6 +119,10 @@ class ChatAgenticNode(AgenticNode):
             scope=scope,
         )
 
+        # Execution mode: "interactive" enables ask_user tool; "workflow"
+        # disables it so the agent never pauses for user input.
+        self.execution_mode = execution_mode
+
         # Initialize MCP servers based on configuration
         self.mcp_servers = self._setup_mcp_servers()
 
@@ -145,7 +150,8 @@ class ChatAgenticNode(AgenticNode):
         self._setup_filesystem_tools()
         self._setup_skill_tools()
         self._setup_sub_agent_task_tool()
-        self._setup_ask_user_tool()
+        if self.execution_mode == "interactive":
+            self._setup_ask_user_tool()
         self._setup_scheduler_tools()
         self._rebuild_tools()
         self._setup_platform_doc_tools()
