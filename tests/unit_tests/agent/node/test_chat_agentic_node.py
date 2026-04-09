@@ -202,6 +202,37 @@ class TestChatAgenticNodeToolSetup:
         tool_names = [t.name for t in node.ask_user_tool.available_tools()]
         assert "ask_user" in tool_names
 
+    def test_workflow_mode_excludes_ask_user_tool(self, real_agent_config, mock_llm_create):
+        """In workflow mode, ask_user tool is not registered to avoid blocking pipelines."""
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        node = ChatAgenticNode(
+            node_id="test_workflow",
+            description="Test workflow mode",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+            execution_mode="workflow",
+        )
+
+        assert node.execution_mode == "workflow"
+        assert node.ask_user_tool is None
+        tool_names = [t.name for t in node.tools]
+        assert "ask_user" not in tool_names
+
+    def test_interactive_mode_is_default(self, real_agent_config, mock_llm_create):
+        """Default execution_mode is 'interactive' with ask_user tool registered."""
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        node = ChatAgenticNode(
+            node_id="test_interactive_default",
+            description="Test interactive default",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
+
+        assert node.execution_mode == "interactive"
+        assert node.ask_user_tool is not None
+
 
 # ===========================================================================
 # ChatAgenticNode execute_stream Tests
@@ -1027,6 +1058,54 @@ class TestChatAgenticNodeExecuteStreamWithTools:
         assert final_action.action_type == "chat_response"
         # Key assertion: response must be a string, not a dict
         assert isinstance(final_action.output["response"], str)
+
+    @pytest.mark.asyncio
+    async def test_execute_stream_summary_report_dict_does_not_crash(self, real_agent_config, mock_llm_create):
+        """execute_stream handles dict values in summary_report action outputs.
+
+        Regression test: when a summary_report action has "markdown" or "content"
+        as a dict, the fallback extraction must convert it to string.
+        """
+        from unittest.mock import patch
+
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+        from datus.schemas.action_history import ActionHistory
+
+        node = ChatAgenticNode(
+            node_id="test_summary_dict",
+            description="Test summary report dict handling",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
+        node.input = ChatNodeInput(user_message="Summarize", database="california_schools")
+
+        # Simulate: no message actions yield content, but a summary_report has dict "markdown"
+        async def mock_execute(prompt, execution_mode, original_input, action_history_manager, session):
+            action = ActionHistory(
+                action_id="summary_1",
+                role=ActionRole.ASSISTANT,
+                messages="Summary report",
+                action_type="summary_report",
+                input={},
+                output={
+                    "markdown": {"title": "Report", "sections": ["a", "b"]},
+                    "content": "",
+                },
+                status=ActionStatus.SUCCESS,
+            )
+            action_history_manager.add_action(action)
+            yield action
+
+        with patch.object(node, "_execute_with_recursive_replan", mock_execute):
+            ahm = ActionHistoryManager()
+            actions = []
+            async for action in node.execute_stream(ahm):
+                actions.append(action)
+
+        final_action = actions[-1]
+        assert final_action.status == ActionStatus.SUCCESS
+        assert isinstance(final_action.output["response"], str)
+        assert len(final_action.output["response"]) > 0
 
 
 # ===========================================================================
