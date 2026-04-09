@@ -57,4 +57,4 @@ ci/.coverage
 test.py
 
 # Test evaluation output
-evaluation_details.json
+evaluation_details.jsonconf/agent.yml.bak

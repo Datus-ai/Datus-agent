@@ -1045,7 +1045,7 @@ class AgenticNode(Node):
 
     def _resolve_workspace_root(self) -> str:
         """
-        Resolve workspace_root with priority: node-specific > cwd (project dir) > global storage > default.
+        Resolve workspace_root with priority: node-specific > global storage > legacy > cwd.
         Expands ~ to user home directory if present.
 
         Returns:
@@ -1060,9 +1060,22 @@ class AgenticNode(Node):
         if node_workspace_root:
             workspace_root = node_workspace_root
             logger.debug(f"Using node-specific workspace_root: {workspace_root}")
+        elif (
+            self.agent_config
+            and hasattr(self.agent_config, "storage")
+            and hasattr(self.agent_config.storage, "workspace_root")
+        ):
+            global_workspace_root = self.agent_config.storage.workspace_root
+            if global_workspace_root:
+                workspace_root = global_workspace_root
+                logger.debug(f"Using global workspace_root: {workspace_root}")
+        elif self.agent_config and hasattr(self.agent_config, "workspace_root"):
+            legacy_workspace_root = self.agent_config.workspace_root
+            if legacy_workspace_root is not None:
+                workspace_root = legacy_workspace_root
+                logger.debug(f"Using legacy workspace_root: {workspace_root}")
 
-        # Priority 2: current working directory (project directory)
-        # This enables init skill and filesystem_tools to operate on the project
+        # Default to current working directory (project directory)
         if workspace_root is None:
             workspace_root = os.getcwd()
             logger.debug(f"Using current directory as workspace_root: {workspace_root}")
