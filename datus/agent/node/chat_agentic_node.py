@@ -776,8 +776,8 @@ class ChatAgenticNode(AgenticNode):
                 )
                 if isinstance(candidate, str) and candidate:
                     response_content = candidate
-                else:
-                    response_content = str(last_successful_output)
+                elif candidate and not isinstance(candidate, str):
+                    response_content = str(candidate)
 
             # Check summary_report actions for content if still empty
             if not response_content:

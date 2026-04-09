@@ -1102,6 +1102,59 @@ class TestChatAgenticNodeExecuteStreamWithTools:
         assert final_action.output["response"] == "Here are your results in markdown."
 
     @pytest.mark.asyncio
+    async def test_execute_stream_fallback_dict_in_text_key(self, real_agent_config, mock_llm_create):
+        """Fallback extraction stringifies non-string candidate from last_successful_output.
+
+        When the stream loop finds no content but last_successful_output has a dict
+        in the "text" key (only checked in fallback, not in stream loop), the fallback
+        must convert it to string rather than skipping it.
+        """
+        from unittest.mock import patch
+
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+        from datus.schemas.action_history import ActionHistory
+
+        node = ChatAgenticNode(
+            node_id="test_fallback_dict_text",
+            description="Test fallback dict text",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
+        node.input = ChatNodeInput(user_message="Query", database="california_schools")
+
+        async def mock_execute(prompt, execution_mode, original_input, action_history_manager, session):
+            # Action with "text" as dict — stream loop doesn't check "text",
+            # so response_content stays empty. Fallback checks "text" and finds the dict.
+            action = ActionHistory(
+                action_id="tool_result",
+                role=ActionRole.ASSISTANT,
+                messages="Result",
+                action_type="tool_output",
+                input={},
+                output={
+                    "content": "",
+                    "response": "",
+                    "text": {"rows": [1, 2, 3], "total": 3},
+                    "raw_output": "",
+                },
+                status=ActionStatus.SUCCESS,
+            )
+            action_history_manager.add_action(action)
+            yield action
+
+        with patch.object(node, "_execute_with_recursive_replan", mock_execute):
+            ahm = ActionHistoryManager()
+            actions = []
+            async for action in node.execute_stream(ahm):
+                actions.append(action)
+
+        final_action = actions[-1]
+        assert final_action.status == ActionStatus.SUCCESS
+        response = final_action.output["response"]
+        assert isinstance(response, str)
+        assert "rows" in response
+
+    @pytest.mark.asyncio
     async def test_execute_stream_summary_report_dict_does_not_crash(self, real_agent_config, mock_llm_create):
         """execute_stream handles dict values in summary_report action outputs.
 
