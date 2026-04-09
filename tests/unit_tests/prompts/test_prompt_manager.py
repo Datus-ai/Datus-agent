@@ -278,6 +278,83 @@ class TestGetPromptManager:
         assert isinstance(result, PromptManager)
         assert result.user_templates_dir == path_manager.template_dir
 
+    def test_explicit_path_manager_overrides_agent_config_path_manager(self, tmp_path):
+        explicit_pm = DatusPathManager(tmp_path / "explicit")
+        config_pm = DatusPathManager(tmp_path / "from_config")
+        agent_config = SimpleNamespace(path_manager=config_pm)
+
+        result = get_prompt_manager(path_manager=explicit_pm, agent_config=agent_config)
+
+        assert isinstance(result, PromptManager)
+        assert result.user_templates_dir == explicit_pm.template_dir
+
+    def test_agent_config_without_prompt_manager_attr(self, tmp_path):
+        path_manager = DatusPathManager(tmp_path / "tenant")
+        # agent_config has no prompt_manager attribute at all
+        agent_config = SimpleNamespace(path_manager=path_manager)
+
+        result = get_prompt_manager(agent_config=agent_config)
+
+        assert isinstance(result, PromptManager)
+        assert result.user_templates_dir == path_manager.template_dir
+
+    def test_agent_config_prompt_manager_takes_priority_over_path_manager(self, tmp_path):
+        pm = PromptManager(path_manager=DatusPathManager(tmp_path / "pm"))
+        explicit_path = DatusPathManager(tmp_path / "explicit")
+        agent_config = SimpleNamespace(prompt_manager=pm, path_manager=None)
+
+        result = get_prompt_manager(path_manager=explicit_path, agent_config=agent_config)
+
+        assert result is pm
+
     def test_falls_back_to_default(self):
         result = get_prompt_manager()
         assert isinstance(result, PromptManager)
+
+
+class TestEnvCacheBehavior:
+    def test_cache_hit_returns_same_environment_object(self, tmp_path):
+        pm = DatusPathManager(tmp_path / "home")
+        manager = _make_manager(tmp_path, path_manager=pm)
+
+        env1 = manager._get_env()
+        env2 = manager._get_env()
+
+        assert env1 is env2
+
+    def test_clear_env_cache_empties_all_entries(self, tmp_path):
+        for i in range(3):
+            pm = DatusPathManager(tmp_path / f"home_{i}")
+            _make_manager(tmp_path, path_manager=pm)._get_env()
+
+        assert len(PromptManager._env_cache) == 3
+        PromptManager.clear_env_cache()
+        assert len(PromptManager._env_cache) == 0
+
+    def test_no_eviction_at_exact_max_size(self, tmp_path):
+        original_max = PromptManager._MAX_ENV_CACHE_SIZE
+        PromptManager._MAX_ENV_CACHE_SIZE = 3
+        try:
+            managers = []
+            for i in range(3):
+                pm = DatusPathManager(tmp_path / f"home_{i}")
+                m = _make_manager(tmp_path, path_manager=pm)
+                m._get_env()
+                managers.append(m)
+
+            # At exact max — no eviction
+            assert len(PromptManager._env_cache) == 3
+            for m in managers:
+                assert str(m.user_templates_dir) in PromptManager._env_cache
+        finally:
+            PromptManager._MAX_ENV_CACHE_SIZE = original_max
+
+    def test_invalidate_then_reinsert_creates_fresh_env(self, tmp_path):
+        pm = DatusPathManager(tmp_path / "home")
+        manager = _make_manager(tmp_path, path_manager=pm)
+
+        env_before = manager._get_env()
+        PromptManager.invalidate_env(str(manager.user_templates_dir))
+        env_after = manager._get_env()
+
+        assert env_before is not env_after
