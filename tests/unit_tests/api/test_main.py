@@ -15,12 +15,14 @@ import pytest
 from datus.api.main import (
     _build_agent_args,
     _build_parser,
+    _daemon_worker,
     _default_paths,
     _ensure_parent_dir,
     _is_process_running,
     _read_pid,
     _redirect_stdio,
     _remove_pid_file,
+    _run_server,
     _status,
     _stop,
     _write_pid_file,
@@ -389,3 +391,296 @@ class TestMainDispatch:
             "source": "web",
             "interactive": False,
         }
+
+
+# ---------------------------------------------------------------------------
+# _remove_pid_file error path
+# ---------------------------------------------------------------------------
+
+
+class TestRemovePidFileErrorPath:
+    def test_remove_swallows_unlink_exception(self, tmp_path):
+        """_remove_pid_file returns silently when unlink raises."""
+        pid_file = tmp_path / "x.pid"
+        pid_file.write_text("1")
+        with patch.object(Path, "unlink", side_effect=OSError("denied")):
+            _remove_pid_file(pid_file)  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# _stop force-kill path
+# ---------------------------------------------------------------------------
+
+
+class TestStopForceKill:
+    def test_stop_force_kills_when_sigterm_ignored(self, tmp_path):
+        """_stop escalates to SIGKILL when process stays alive after timeout."""
+        pid_file = tmp_path / "r.pid"
+        pid_file.write_text("4242")
+
+        kill_signals = []
+
+        def fake_kill(pid, sig):
+            kill_signals.append(sig)
+
+        with (
+            patch("datus.api.main.os.kill", side_effect=fake_kill),
+            patch("datus.api.main._is_process_running", return_value=True),
+            patch("datus.api.main.time.sleep"),
+        ):
+            result = _stop(pid_file, timeout_seconds=0.05)
+
+        assert result == 0
+        assert signal.SIGTERM in kill_signals
+        assert signal.SIGKILL in kill_signals
+        assert not pid_file.exists()
+
+    def test_stop_force_kill_ignores_process_lookup_error(self, tmp_path):
+        """_stop swallows ProcessLookupError from SIGKILL escalation."""
+        pid_file = tmp_path / "r.pid"
+        pid_file.write_text("4242")
+
+        def fake_kill(pid, sig):
+            if sig == signal.SIGKILL:
+                raise ProcessLookupError()
+
+        with (
+            patch("datus.api.main.os.kill", side_effect=fake_kill),
+            patch("datus.api.main._is_process_running", return_value=True),
+            patch("datus.api.main.time.sleep"),
+        ):
+            assert _stop(pid_file, timeout_seconds=0.05) == 0
+        assert not pid_file.exists()
+
+
+# ---------------------------------------------------------------------------
+# _run_server branches
+# ---------------------------------------------------------------------------
+
+
+def _server_args(**overrides):
+    base = dict(
+        host="127.0.0.1",
+        port=8000,
+        reload=False,
+        workers=1,
+        log_level="INFO",
+    )
+    base.update(overrides)
+    return argparse.Namespace(**base)
+
+
+class TestRunServer:
+    def test_reload_uses_import_string(self):
+        """--reload passes import target to uvicorn and skips create_app."""
+        args = _server_args(reload=True)
+        with (
+            patch("datus.api.service.create_app") as mock_create,
+            patch("datus.api.main.uvicorn.run") as mock_run,
+        ):
+            _run_server(args, argparse.Namespace())
+        mock_create.assert_not_called()
+        kwargs = mock_run.call_args.kwargs
+        assert mock_run.call_args.args[0] == "datus.api.service:app"
+        assert kwargs["reload"] is True
+
+    def test_workers_gt_one_uses_import_string(self):
+        """--workers >1 passes import target to uvicorn and skips create_app."""
+        args = _server_args(workers=4)
+        with (
+            patch("datus.api.service.create_app") as mock_create,
+            patch("datus.api.main.uvicorn.run") as mock_run,
+        ):
+            _run_server(args, argparse.Namespace())
+        mock_create.assert_not_called()
+        assert mock_run.call_args.args[0] == "datus.api.service:app"
+        assert mock_run.call_args.kwargs["workers"] == 4
+
+    def test_single_worker_creates_app_instance(self):
+        """Default single-worker mode creates an app instance and passes it to uvicorn."""
+        args = _server_args()
+        agent_args = argparse.Namespace(namespace="x")
+        sentinel_app = object()
+        with (
+            patch("datus.api.service.create_app", return_value=sentinel_app) as mock_create,
+            patch("datus.api.main.uvicorn.run") as mock_run,
+        ):
+            _run_server(args, agent_args)
+        mock_create.assert_called_once_with(agent_args)
+        assert mock_run.call_args.args[0] is sentinel_app
+        assert mock_run.call_args.kwargs["workers"] == 1
+
+
+# ---------------------------------------------------------------------------
+# _daemon_worker
+# ---------------------------------------------------------------------------
+
+
+class TestDaemonWorker:
+    def test_daemon_worker_writes_pid_and_runs_server(self, tmp_path):
+        """_daemon_worker sets up session, writes PID, and invokes _run_server."""
+        pid_file = tmp_path / "d.pid"
+        log_file = tmp_path / "d.log"
+        args = argparse.Namespace(debug=False)
+        agent_args = argparse.Namespace()
+
+        with (
+            patch("datus.api.main.os.setsid") as mock_setsid,
+            patch("datus.api.main.os.umask") as mock_umask,
+            patch("datus.api.main.configure_logging") as mock_conf,
+            patch("datus.api.main._redirect_stdio") as mock_redir,
+            patch("datus.api.main._run_server") as mock_run,
+            patch("datus.api.main.atexit.register") as mock_atexit,
+            patch("datus.api.main.signal.signal") as mock_signal,
+        ):
+            _daemon_worker(args, agent_args, pid_file, log_file)
+
+        mock_setsid.assert_called_once()
+        mock_umask.assert_called_once_with(0)
+        mock_conf.assert_called_once()
+        mock_redir.assert_called_once_with(log_file)
+        mock_run.assert_called_once_with(args, agent_args)
+        mock_atexit.assert_called_once()
+        mock_signal.assert_called_once()
+        assert pid_file.exists()
+        assert pid_file.read_text() == str(os.getpid())
+
+
+# ---------------------------------------------------------------------------
+# main() — restart / debug / daemon branches
+# ---------------------------------------------------------------------------
+
+
+class TestMainExtraBranches:
+    def test_debug_flag_sets_log_level(self, tmp_path):
+        """--debug unifies log_level to DEBUG before running the server."""
+        from datus.api.main import main
+
+        captured = {}
+
+        def fake_run_server(args, agent_args):
+            captured["log_level"] = args.log_level
+
+        with (
+            patch("datus.api.main._default_paths", return_value=(tmp_path / "p.pid", tmp_path / "p.log")),
+            patch("datus.api.main.configure_logging"),
+            patch("datus.api.main.parse_config_path", return_value="/tmp/a.yml"),
+            patch("datus.api.main._run_server", side_effect=fake_run_server),
+            patch.object(sys, "argv", ["datus-api", "--debug"]),
+        ):
+            main()
+        assert captured["log_level"] == "DEBUG"
+
+    def test_restart_action_invokes_stop_then_start(self, tmp_path):
+        """--action restart calls _stop and then proceeds to start the server."""
+        from datus.api.main import main
+
+        with (
+            patch("datus.api.main._default_paths", return_value=(tmp_path / "p.pid", tmp_path / "p.log")),
+            patch("datus.api.main.configure_logging"),
+            patch("datus.api.main.parse_config_path", return_value="/tmp/a.yml"),
+            patch("datus.api.main._stop") as mock_stop,
+            patch("datus.api.main._run_server") as mock_run,
+            patch.object(sys, "argv", ["datus-api", "--action", "restart"]),
+        ):
+            main()
+        mock_stop.assert_called_once()
+        mock_run.assert_called_once()
+
+    def test_daemon_with_reload_exits_two(self, tmp_path):
+        """--daemon combined with --reload exits with code 2."""
+        from datus.api.main import main
+
+        with (
+            patch("datus.api.main._default_paths", return_value=(tmp_path / "p.pid", tmp_path / "p.log")),
+            patch("datus.api.main.configure_logging"),
+            patch("datus.api.main.parse_config_path", return_value="/tmp/a.yml"),
+            patch.object(sys, "argv", ["datus-api", "--daemon", "--reload"]),
+        ):
+            with pytest.raises(SystemExit) as exc:
+                main()
+        assert exc.value.code == 2
+
+    def test_daemon_already_running_exits_zero(self, tmp_path):
+        """--daemon with a live existing PID exits with code 0 and does not spawn."""
+        from datus.api.main import main
+
+        pid_file = tmp_path / "live.pid"
+        pid_file.write_text("1234")
+
+        with (
+            patch("datus.api.main._default_paths", return_value=(pid_file, tmp_path / "p.log")),
+            patch("datus.api.main.configure_logging"),
+            patch("datus.api.main.parse_config_path", return_value="/tmp/a.yml"),
+            patch("datus.api.main._is_process_running", return_value=True),
+            patch("datus.api.main.multiprocessing.Process") as mock_proc,
+            patch.object(sys, "argv", ["datus-api", "--daemon"]),
+        ):
+            with pytest.raises(SystemExit) as exc:
+                main()
+        assert exc.value.code == 0
+        mock_proc.assert_not_called()
+
+    def test_daemon_spawns_successfully(self, tmp_path):
+        """--daemon spawns a child process when none is running and reports its pid."""
+        from datus.api.main import main
+
+        pid_file = tmp_path / "n.pid"
+
+        class FakeProcess:
+            def __init__(self, *args, **kwargs):
+                self.pid = 5555
+
+            def start(self):
+                pass
+
+            def is_alive(self):
+                return True
+
+            def join(self):
+                pass
+
+        with (
+            patch("datus.api.main._default_paths", return_value=(pid_file, tmp_path / "p.log")),
+            patch("datus.api.main.configure_logging"),
+            patch("datus.api.main.parse_config_path", return_value="/tmp/a.yml"),
+            patch("datus.api.main.time.sleep"),
+            patch("datus.api.main.multiprocessing.Process", FakeProcess),
+            patch("datus.api.main.os._exit", side_effect=SystemExit(0)) as mock_exit,
+            patch.object(sys, "argv", ["datus-api", "--daemon"]),
+        ):
+            with pytest.raises(SystemExit):
+                main()
+        mock_exit.assert_called_with(0)
+
+    def test_daemon_spawn_failure_exits_one(self, tmp_path):
+        """--daemon exits with code 1 when the child process dies immediately."""
+        from datus.api.main import main
+
+        pid_file = tmp_path / "n.pid"
+
+        class DeadProcess:
+            def __init__(self, *args, **kwargs):
+                self.pid = 7777
+
+            def start(self):
+                pass
+
+            def is_alive(self):
+                return False
+
+            def join(self):
+                pass
+
+        with (
+            patch("datus.api.main._default_paths", return_value=(pid_file, tmp_path / "p.log")),
+            patch("datus.api.main.configure_logging"),
+            patch("datus.api.main.parse_config_path", return_value="/tmp/a.yml"),
+            patch("datus.api.main.time.sleep"),
+            patch("datus.api.main.multiprocessing.Process", DeadProcess),
+            patch("datus.api.main.os._exit", side_effect=SystemExit(1)) as mock_exit,
+            patch.object(sys, "argv", ["datus-api", "--daemon"]),
+        ):
+            with pytest.raises(SystemExit):
+                main()
+        mock_exit.assert_called_with(1)
