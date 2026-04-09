@@ -635,3 +635,215 @@ class TestFetchBatch:
         assert len(docs) == 1
         assert docs[0].metadata["nav_path"] == ["User Guide", "Getting Started"]
         assert docs[0].metadata["group_name"] == "User Guide"
+
+
+# ---------------------------------------------------------------------------
+# _get_full_tree
+# ---------------------------------------------------------------------------
+
+
+class TestGetFullTree:
+    """Tests for _get_full_tree."""
+
+    def test_cache_hit_skips_api_call(self):
+        """Second call with the same repo+branch should return cached result without calling the API."""
+        import types
+
+        f = _make_fetcher()
+        mock_repo = MagicMock()
+        mock_repo.full_name = "owner/repo"
+
+        item = types.SimpleNamespace(type="blob", path="docs/guide.md")
+        mock_git_tree = MagicMock()
+        mock_git_tree.raw_data = {"truncated": False}
+        mock_git_tree.tree = [item]
+        mock_repo.get_git_tree.return_value = mock_git_tree
+
+        # First call — populates cache
+        result1 = f._get_full_tree(mock_repo, "main")
+        assert result1 == [item]
+        assert mock_repo.get_git_tree.call_count == 1
+
+        # Second call — must return cached value without a new API call
+        result2 = f._get_full_tree(mock_repo, "main")
+        assert result2 == [item]
+        assert mock_repo.get_git_tree.call_count == 1  # still 1
+
+    def test_successful_tree_fetch(self):
+        """Should return the tree list on a non-truncated response."""
+        import types
+
+        f = _make_fetcher()
+        mock_repo = MagicMock()
+        mock_repo.full_name = "owner/repo"
+
+        items = [
+            types.SimpleNamespace(type="blob", path="docs/guide.md"),
+            types.SimpleNamespace(type="blob", path="README.md"),
+        ]
+        mock_git_tree = MagicMock()
+        mock_git_tree.raw_data = {"truncated": False}
+        mock_git_tree.tree = items
+        mock_repo.get_git_tree.return_value = mock_git_tree
+
+        result = f._get_full_tree(mock_repo, "main")
+        assert result == items
+
+    def test_truncated_tree_returns_none(self):
+        """When the tree response is truncated, should return None to trigger fallback."""
+        f = _make_fetcher()
+        mock_repo = MagicMock()
+        mock_repo.full_name = "owner/repo"
+
+        mock_git_tree = MagicMock()
+        mock_git_tree.raw_data = {"truncated": True}
+        mock_git_tree.tree = []
+        mock_repo.get_git_tree.return_value = mock_git_tree
+
+        result = f._get_full_tree(mock_repo, "main")
+        assert result is None
+
+    def test_github_exception_returns_none(self):
+        """GithubException from the API should be caught and None returned."""
+        from github import GithubException
+
+        f = _make_fetcher()
+        mock_repo = MagicMock()
+        mock_repo.full_name = "owner/repo"
+        mock_repo.get_git_tree.side_effect = GithubException(500, {"message": "Server error"}, None)
+
+        result = f._get_full_tree(mock_repo, "main")
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# _filter_tree
+# ---------------------------------------------------------------------------
+
+
+class TestFilterTree:
+    """Tests for _filter_tree."""
+
+    def _make_tree(self, items):
+        """Build a list of SimpleNamespace tree items from (type, path) pairs."""
+        import types
+
+        return [types.SimpleNamespace(type=t, path=p) for t, p in items]
+
+    def test_filters_files_under_directory_prefix(self):
+        """Files whose path starts with 'docs/' should be included."""
+        f = _make_fetcher()
+        tree = self._make_tree(
+            [
+                ("blob", "docs/guide.md"),
+                ("blob", "docs/intro.md"),
+                ("blob", "src/main.py"),
+            ]
+        )
+        result = f._filter_tree(tree, "docs")
+        assert "docs/guide.md" in result
+        assert "docs/intro.md" in result
+        assert "src/main.py" not in result
+
+    def test_matches_exact_file_path(self):
+        """An exact file path like 'README.md' should be included."""
+        f = _make_fetcher()
+        tree = self._make_tree(
+            [
+                ("blob", "README.md"),
+                ("blob", "CONTRIBUTING.md"),
+            ]
+        )
+        result = f._filter_tree(tree, "README.md")
+        assert "README.md" in result
+        assert "CONTRIBUTING.md" not in result
+
+    def test_excludes_non_doc_files(self):
+        """Files with non-doc extensions (.py, .csv) should be excluded even if under the path."""
+        f = _make_fetcher()
+        tree = self._make_tree(
+            [
+                ("blob", "docs/guide.md"),
+                ("blob", "docs/script.py"),
+                ("blob", "docs/data.csv"),
+            ]
+        )
+        result = f._filter_tree(tree, "docs")
+        assert "docs/guide.md" in result
+        assert "docs/script.py" not in result
+        assert "docs/data.csv" not in result
+
+    def test_excludes_files_outside_path_prefix(self):
+        """Files under a different prefix should not be matched even if they share a partial name."""
+        f = _make_fetcher()
+        tree = self._make_tree(
+            [
+                ("blob", "docs/guide.md"),
+                ("blob", "docs_extra/other.md"),
+                ("blob", "other/docs/nested.md"),
+            ]
+        )
+        result = f._filter_tree(tree, "docs")
+        assert "docs/guide.md" in result
+        # "docs_extra/..." starts with "docs_extra/", not "docs/" — must be excluded
+        assert "docs_extra/other.md" not in result
+        # "other/docs/nested.md" does not start with "docs/" — must be excluded
+        assert "other/docs/nested.md" not in result
+
+    def test_tree_items_not_blob_are_skipped(self):
+        """Non-blob tree items (trees/commits) should be skipped."""
+        f = _make_fetcher()
+        tree = self._make_tree(
+            [
+                ("tree", "docs"),
+                ("blob", "docs/guide.md"),
+            ]
+        )
+        result = f._filter_tree(tree, "docs")
+        assert result == ["docs/guide.md"]
+
+
+# ---------------------------------------------------------------------------
+# _collect_file_paths (dispatch logic)
+# ---------------------------------------------------------------------------
+
+
+class TestCollectFilePathsDispatch:
+    """Tests for the fast-path / fallback dispatch in _collect_file_paths."""
+
+    def test_uses_fast_path_when_tree_available(self):
+        """When _get_full_tree returns a tree, _filter_tree should be used and
+        the recursive walk (_collect_file_paths_recursive) should NOT be called."""
+        import types
+
+        f = _make_fetcher()
+        mock_repo = MagicMock()
+
+        tree_items = [
+            types.SimpleNamespace(type="blob", path="docs/guide.md"),
+        ]
+
+        with (
+            patch.object(f, "_get_full_tree", return_value=tree_items) as mock_tree,
+            patch.object(f, "_collect_file_paths_recursive") as mock_recursive,
+        ):
+            result = f._collect_file_paths(mock_repo, "docs", "main")
+
+        mock_tree.assert_called_once_with(mock_repo, "main")
+        mock_recursive.assert_not_called()
+        assert "docs/guide.md" in result
+
+    def test_falls_back_to_recursive_when_tree_is_none(self):
+        """When _get_full_tree returns None, _collect_file_paths_recursive should be called."""
+        f = _make_fetcher()
+        mock_repo = MagicMock()
+
+        with (
+            patch.object(f, "_get_full_tree", return_value=None) as mock_tree,
+            patch.object(f, "_collect_file_paths_recursive", return_value=["docs/guide.md"]) as mock_recursive,
+        ):
+            result = f._collect_file_paths(mock_repo, "docs", "main")
+
+        mock_tree.assert_called_once_with(mock_repo, "main")
+        mock_recursive.assert_called_once_with(mock_repo, "docs", "main")
+        assert result == ["docs/guide.md"]

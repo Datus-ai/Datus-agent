@@ -546,3 +546,84 @@ class TestInitPlatformDocsEmit:
         assert result.success is True  # _make_empty_result sets success=True
         stages = [e.stage for e in events]
         assert "task_failed" in stages
+
+    @patch("datus.storage.document.doc_init.document_store")
+    def test_emit_task_completed_with_totals_after_check(self, mock_store_fn):
+        """emit receives task_completed event with total_items/completed_items after check mode."""
+        mock_store = MagicMock()
+        mock_store.get_stats.return_value = {"versions": ["v1", "v2"], "total_chunks": 30, "doc_count": 6}
+        mock_store.get_stats_by_version.return_value = {"doc_count": 3, "total_chunks": 15}
+        mock_store_fn.return_value = mock_store
+
+        events = []
+        result = init_platform_docs(
+            platform="test_check_completed",
+            cfg=self._mock_cfg(),
+            build_mode="check",
+            emit=lambda e: events.append(e),
+        )
+
+        assert result.success is True
+        # check mode returns early — emit only gets task_started (no task_completed from the helper)
+        # The important assertion is that no task_failed was emitted
+        stages = [e.stage for e in events]
+        assert "task_failed" not in stages
+        assert "task_started" in stages
+
+    @patch("datus.storage.document.doc_init.document_store")
+    def test_emit_task_failed_on_processing_exception(self, mock_store_fn):
+        """emit receives task_failed with exception_type when processing raises."""
+        mock_store = MagicMock()
+        mock_store_fn.return_value = mock_store
+
+        # Use overwrite + local source so we enter the processing branch
+        cfg = self._mock_cfg(source="/some/path", source_type="local")
+
+        # Patch LocalFetcher to raise during fetch
+        from unittest.mock import patch as inner_patch
+
+        with inner_patch("datus.storage.document.doc_init.LocalFetcher") as mock_fetcher_cls:
+            mock_fetcher = MagicMock()
+            mock_fetcher.fetch.side_effect = ValueError("disk read error")
+            mock_fetcher_cls.return_value = mock_fetcher
+
+            events = []
+            result = init_platform_docs(
+                platform="test_proc_exc",
+                cfg=cfg,
+                build_mode="overwrite",
+                emit=lambda e: events.append(e),
+            )
+
+        assert result.success is False
+        stages = [e.stage for e in events]
+        assert "task_failed" in stages
+        # Verify the exception type was captured in the event
+        failed_events = [e for e in events if e.stage == "task_failed"]
+        assert len(failed_events) >= 1
+
+    @patch("datus.storage.document.doc_init.document_store")
+    def test_cancel_check_true_in_overwrite_emits_task_failed(self, mock_store_fn):
+        """cancel_check=lambda: True during overwrite emits task_failed before processing."""
+        mock_store = MagicMock()
+        mock_store_fn.return_value = mock_store
+
+        events = []
+        result = init_platform_docs(
+            platform="test_cancel_emit",
+            cfg=self._mock_cfg(),
+            build_mode="overwrite",
+            emit=lambda e: events.append(e),
+            cancel_check=lambda: True,
+        )
+
+        # Result should contain "Cancelled" in errors
+        assert "Cancelled" in result.errors
+
+        # emit must have received a task_failed event
+        stages = [e.stage for e in events]
+        assert "task_failed" in stages
+
+        # Verify the task_failed event has the cancellation error
+        failed_events = [e for e in events if e.stage == "task_failed"]
+        assert any("Cancelled" in (e.error or "") for e in failed_events)

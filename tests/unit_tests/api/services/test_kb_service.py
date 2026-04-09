@@ -558,3 +558,114 @@ class TestKbServiceBootstrapDocStream:
 
         # Should produce events (may fail due to no source, but shouldn't crash)
         assert len(events) >= 1
+
+    async def test_init_platform_docs_failure_yields_task_failed(self, real_agent_config):
+        """bootstrap_doc_stream yields TASK_FAILED when init_platform_docs returns success=False."""
+        import asyncio
+        from unittest.mock import patch
+
+        from datus.storage.document.doc_init import InitResult
+
+        real_agent_config.document_configs["fail_platform"] = DocumentConfig(type="local", source="/nonexistent")
+        svc = KbService(agent_config=real_agent_config)
+        cancel_event = asyncio.Event()
+        request = BootstrapDocInput(platform="fail_platform", build_mode="check")
+
+        failed_result = InitResult(
+            platform="fail_platform",
+            version="unknown",
+            source="/nonexistent",
+            total_docs=0,
+            total_chunks=0,
+            success=False,
+            errors=["Source not found", "Index missing"],
+            duration_seconds=0.1,
+        )
+
+        with patch("datus.api.services.kb_service.KbService._run_doc_init", return_value=failed_result):
+            events = []
+            async for event in svc.bootstrap_doc_stream(request, "fail-stream", cancel_event):
+                events.append(event)
+
+        assert len(events) >= 1
+        last = events[-1]
+        assert last.component == "platform_doc"
+        from datus.schemas.batch_events import BatchStage
+
+        assert last.stage == BatchStage.TASK_FAILED.value
+        assert "Source not found" in (last.error or "")
+
+    async def test_run_doc_init_exception_yields_task_failed(self, real_agent_config):
+        """bootstrap_doc_stream yields TASK_FAILED when _run_doc_init raises an exception."""
+        import asyncio
+        from unittest.mock import patch
+
+        real_agent_config.document_configs["exc_platform"] = DocumentConfig(type="local", source="/nonexistent")
+        svc = KbService(agent_config=real_agent_config)
+        cancel_event = asyncio.Event()
+        request = BootstrapDocInput(platform="exc_platform", build_mode="overwrite")
+
+        def _raise(*args, **kwargs):
+            raise RuntimeError("unexpected doc init failure")
+
+        with patch.object(svc, "_run_doc_init", side_effect=_raise):
+            events = []
+            async for event in svc.bootstrap_doc_stream(request, "exc-stream", cancel_event):
+                events.append(event)
+
+        assert len(events) >= 1
+        last = events[-1]
+        assert last.component == "platform_doc"
+        from datus.schemas.batch_events import BatchStage
+
+        assert last.stage == BatchStage.TASK_FAILED.value
+        assert "unexpected doc init failure" in (last.error or "")
+
+
+@pytest.mark.asyncio
+class TestKbServiceRunDocInitCancelBridge:
+    """Tests for _run_doc_init cancel bridge behavior."""
+
+    async def test_cancel_bridge_propagates_to_init_platform_docs(self, real_agent_config):
+        """_run_doc_init bridges cancel_event.is_set() as cancel_check callable."""
+        import asyncio
+        from unittest.mock import patch
+
+        real_agent_config.document_configs["cancel_bridge"] = DocumentConfig(type="local", source="/nonexistent")
+        svc = KbService(agent_config=real_agent_config)
+        cancel_event = asyncio.Event()
+        cancel_event.set()  # Pre-cancel so cancel_check() returns True immediately
+
+        request = BootstrapDocInput(platform="cancel_bridge", build_mode="overwrite")
+
+        captured_cancel_check = []
+
+        def _capture_cancel(platform, cfg, build_mode, pool_size, emit, cancel_check):
+            captured_cancel_check.append(cancel_check)
+            # Return a minimal result so the function doesn't blow up
+            from datus.storage.document.doc_init import InitResult
+
+            return InitResult(
+                platform=platform,
+                version="unknown",
+                source="",
+                total_docs=0,
+                total_chunks=0,
+                success=True,
+                errors=[],
+                duration_seconds=0.0,
+            )
+
+        with patch("datus.storage.document.doc_init.init_platform_docs", side_effect=_capture_cancel):
+            async for _ in svc.bootstrap_doc_stream(request, "bridge-stream", cancel_event):
+                pass
+
+        # Verify the cancel_check callable correctly reflects cancel_event state
+        assert len(captured_cancel_check) == 1
+        cancel_fn = captured_cancel_check[0]
+        assert callable(cancel_fn)
+        assert cancel_fn() is True  # cancel_event is set → True
+
+        # Verify that when cancel_event is cleared, cancel_check returns False
+        cancel_event.clear()
+        assert cancel_fn() is False
