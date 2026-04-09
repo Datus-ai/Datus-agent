@@ -79,12 +79,12 @@ def _remove_pid_file(pid_file: Path) -> None:
 
 def _redirect_stdio(log_file: Path) -> None:
     _ensure_parent_dir(log_file)
-    si = open(os.devnull, "rb", buffering=0)
-    so = open(log_file, "ab", buffering=0)
-    se = open(log_file, "ab", buffering=0)
-    os.dup2(si.fileno(), sys.stdin.fileno())
-    os.dup2(so.fileno(), sys.stdout.fileno())
-    os.dup2(se.fileno(), sys.stderr.fileno())
+    with open(os.devnull, "rb", buffering=0) as si:
+        os.dup2(si.fileno(), sys.stdin.fileno())
+    with open(log_file, "ab", buffering=0) as so:
+        os.dup2(so.fileno(), sys.stdout.fileno())
+    with open(log_file, "ab", buffering=0) as se:
+        os.dup2(se.fileno(), sys.stderr.fileno())
 
 
 def _daemon_worker(args: argparse.Namespace, agent_args: argparse.Namespace, pid_file: Path, log_file: Path) -> None:

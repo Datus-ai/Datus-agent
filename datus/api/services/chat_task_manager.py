@@ -323,8 +323,10 @@ class ChatTaskManager:
             effective_source = request.source or self._default_source
             if effective_source == "vscode":
                 apply_proxy_tools(node, ["filesystem_tools.*"])
-            elif effective_source:
+            elif effective_source == "web":
                 apply_proxy_tools(node, ["write_file", "edit_file", "move_file", "create_directory"])
+            elif effective_source:
+                logger.warning("Unsupported source '%s'; skipping proxy shortcut", effective_source)
 
             # 6. Execute streaming
             action_history = ActionHistoryManager()
