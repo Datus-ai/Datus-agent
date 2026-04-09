@@ -12,7 +12,6 @@ No configuration file needed - versions are determined by scanning files.
 
 import re
 import shutil
-from contextvars import ContextVar, Token
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -330,39 +329,6 @@ class PromptManager:
         return str(target_path)
 
 
-# Context-local prompt manager for code that does not receive one explicitly.
-# Unlike the previous process-wide singleton, this does not leak across threads/tasks.
-_current_prompt_manager: ContextVar[Optional["PromptManager"]] = ContextVar(
-    "datus_current_prompt_manager", default=None
-)
-
-
-def set_current_prompt_manager(
-    prompt_manager: Optional["PromptManager"] = None,
-    *,
-    path_manager: Optional[Any] = None,
-    agent_config: Optional[Any] = None,
-) -> Token:
-    """Set the current context-local prompt manager used by ``get_prompt_manager()``.
-
-    Accepts an explicit ``PromptManager``, or builds one from *path_manager* /
-    *agent_config* when provided.
-    """
-    if prompt_manager is None and agent_config is not None:
-        prompt_manager = getattr(agent_config, "prompt_manager", None)
-
-    if prompt_manager is None:
-        _pm = None
-        if agent_config is not None:
-            _pm = getattr(agent_config, "path_manager", None)
-        elif path_manager is not None:
-            _pm = path_manager
-        if _pm is not None or agent_config is not None:
-            prompt_manager = PromptManager(path_manager=_pm, agent_config=agent_config)
-
-    return _current_prompt_manager.set(prompt_manager)
-
-
 def get_prompt_manager(
     *,
     prompt_manager: Optional["PromptManager"] = None,
@@ -376,8 +342,7 @@ def get_prompt_manager(
     1. Explicit ``prompt_manager`` argument
     2. Explicit ``agent_config.prompt_manager``
     3. Explicit ``path_manager`` or ``agent_config.path_manager``
-    4. Context-local instance set via ``set_current_prompt_manager()``
-    5. Default ``PromptManager()`` (uses path_manager's ContextVar internally)
+    4. Default ``PromptManager()`` (uses path_manager's ContextVar internally)
 
     Args:
         prompt_manager: Optional explicit prompt manager instance to reuse.
@@ -400,19 +365,7 @@ def get_prompt_manager(
     if path_manager is not None:
         return PromptManager(path_manager=path_manager)
 
-    current = _current_prompt_manager.get()
-    if current is not None:
-        return current
-
     return PromptManager()
-
-
-def reset_prompt_manager(token: Optional[Token] = None) -> None:
-    """Reset context-local prompt-manager defaults. Primarily for testing."""
-    if token is not None:
-        _current_prompt_manager.reset(token)
-        return
-    _current_prompt_manager.set(None)
 
 
 # Backward-compatible global instance.
