@@ -16,6 +16,7 @@ from datus.api.utils.stream_cancellation import (
     cleanup_cancel_token,
     create_cancel_token,
 )
+from datus.utils.exceptions import DatusException
 
 router = APIRouter(prefix="/api/v1/kb", tags=["knowledge-base"])
 
@@ -39,7 +40,7 @@ async def bootstrap_kb(
     # Validate user-supplied paths against the project root
     try:
         _validate_paths(request, project_files_root)
-    except ValueError as e:
+    except DatusException as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
 
     async def generate_sse():
