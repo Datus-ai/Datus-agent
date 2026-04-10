@@ -422,6 +422,7 @@ class ClaudeModel(OpenAICompatibleModel):
                 cumulative_output_tokens = 0
                 cache_creation_tokens = 0
                 cache_read_tokens = 0
+                last_call_input_tokens = 0
 
                 # Execute conversation loop
                 turn = -1
@@ -448,6 +449,7 @@ class ClaudeModel(OpenAICompatibleModel):
                         cumulative_output_tokens += getattr(response.usage, "output_tokens", 0)
                         cache_creation_tokens += getattr(response.usage, "cache_creation_input_tokens", 0)
                         cache_read_tokens += getattr(response.usage, "cache_read_input_tokens", 0)
+                        last_call_input_tokens = getattr(response.usage, "input_tokens", 0)
 
                     message = response.content
 
@@ -605,10 +607,6 @@ class ClaudeModel(OpenAICompatibleModel):
                 logger.debug("Agent execution completed")
                 total_tokens = cumulative_input_tokens + cumulative_output_tokens
                 cached_tokens = cache_read_tokens
-                # Last model call's input_tokens = real context window usage
-                last_call_input_tokens = 0
-                if hasattr(response, "usage") and response.usage:
-                    last_call_input_tokens = getattr(response.usage, "input_tokens", 0)
                 usage_info = {
                     "requests": turn + 1,
                     "input_tokens": cumulative_input_tokens,

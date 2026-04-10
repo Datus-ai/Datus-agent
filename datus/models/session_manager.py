@@ -540,9 +540,15 @@ class SessionManager:
 
     def get_detailed_usage(self, session_id: str) -> Dict[str, Any]:
         """Query turn_usage table and return aggregated + per-turn token usage."""
+        self._validate_session_id(session_id)
         db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        empty_result = {
+            "total": {"requests": 0, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cached_tokens": 0},
+            "turns": [],
+            "turn_count": 0,
+        }
         if not os.path.exists(db_path):
-            return {"total": {}, "turns": [], "turn_count": 0}
+            return empty_result
 
         total = {
             "requests": 0,

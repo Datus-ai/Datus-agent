@@ -1222,6 +1222,64 @@ class TestGetLastTurnUsage:
         assert result is not None
         assert result.input_tokens == 500
 
+    def test_ignores_sub_agent_usage(self):
+        """Usage from sub-agent actions (depth > 0) should be skipped."""
+        node = _make_node(context_length=128000)
+        sub_agent_action = ActionHistory.create_action(
+            role=ActionRole.ASSISTANT,
+            action_type="sub_response",
+            messages="sub",
+            input_data={},
+            output_data={"usage": {"input_tokens": 9999, "output_tokens": 100, "total_tokens": 10099}},
+            status=ActionStatus.SUCCESS,
+        )
+        sub_agent_action.depth = 1
+        root_action = ActionHistory.create_action(
+            role=ActionRole.ASSISTANT,
+            action_type="chat_response",
+            messages="main",
+            input_data={},
+            output_data={"usage": {"input_tokens": 500, "output_tokens": 50, "total_tokens": 550}},
+            status=ActionStatus.SUCCESS,
+        )
+        node.actions = [root_action, sub_agent_action]
+        result = asyncio.run(node.get_last_turn_usage())
+        assert result is not None
+        assert result.input_tokens == 500  # root action, not sub-agent
+
+    def test_scoped_to_current_turn(self):
+        """Should stop at the last root-level user message to avoid returning stale usage."""
+        node = _make_node(context_length=128000)
+        old_usage = ActionHistory.create_action(
+            role=ActionRole.ASSISTANT,
+            action_type="chat_response",
+            messages="old",
+            input_data={},
+            output_data={"usage": {"input_tokens": 1000, "output_tokens": 200, "total_tokens": 1200}},
+            status=ActionStatus.SUCCESS,
+        )
+        user_msg = ActionHistory.create_action(
+            role=ActionRole.USER,
+            action_type="message",
+            messages="new question",
+            input_data={},
+            output_data={},
+            status=ActionStatus.SUCCESS,
+        )
+        # Current turn has a tool action but no assistant usage yet
+        tool_action = ActionHistory.create_action(
+            role=ActionRole.TOOL,
+            action_type="db_query",
+            messages="SELECT 1",
+            input_data={},
+            output_data={"result": "ok"},
+            status=ActionStatus.SUCCESS,
+        )
+        node.actions = [old_usage, user_msg, tool_action]
+        result = asyncio.run(node.get_last_turn_usage())
+        # Should return None because old_usage is from a previous turn
+        assert result is None
+
     def test_context_length_none_defaults_to_zero(self):
         node = _make_node(context_length=None)
         action = ActionHistory.create_action(

@@ -1364,12 +1364,31 @@ class TestSessionManagerScope:
             manager.close_all_sessions()
 
 
+_TURN_USAGE_DDL = (
+    "CREATE TABLE IF NOT EXISTS turn_usage ("
+    "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+    "session_id TEXT NOT NULL, "
+    "branch_id TEXT, "
+    "user_turn_number INTEGER NOT NULL, "
+    "requests INTEGER DEFAULT 0, "
+    "input_tokens INTEGER DEFAULT 0, "
+    "output_tokens INTEGER DEFAULT 0, "
+    "total_tokens INTEGER DEFAULT 0, "
+    "input_tokens_details TEXT, "
+    "output_tokens_details TEXT, "
+    "created_at TEXT)"
+)
+
+
 class TestGetDetailedUsage:
     """Tests for SessionManager.get_detailed_usage()."""
 
     def test_nonexistent_session_returns_empty(self, sm):
         result = sm.get_detailed_usage("nonexistent-session-id")
-        assert result == {"total": {}, "turns": [], "turn_count": 0}
+        assert result["total"]["input_tokens"] == 0
+        assert result["total"]["output_tokens"] == 0
+        assert result["turns"] == []
+        assert result["turn_count"] == 0
 
     def test_no_turn_usage_table(self, sm):
         """Session DB exists but has no turn_usage table."""
@@ -1384,20 +1403,7 @@ class TestGetDetailedUsage:
         sm.get_session(session_id)
         db_path = os.path.join(sm.session_dir, f"{session_id}.db")
         with sqlite3.connect(db_path) as conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS turn_usage ("
-                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-                "session_id TEXT NOT NULL, "
-                "branch_id TEXT, "
-                "user_turn_number INTEGER NOT NULL, "
-                "requests INTEGER DEFAULT 0, "
-                "input_tokens INTEGER DEFAULT 0, "
-                "output_tokens INTEGER DEFAULT 0, "
-                "total_tokens INTEGER DEFAULT 0, "
-                "input_tokens_details TEXT, "
-                "output_tokens_details TEXT, "
-                "created_at TEXT)"
-            )
+            conn.execute(_TURN_USAGE_DDL)
             conn.execute(
                 "INSERT INTO turn_usage (session_id, user_turn_number, requests, input_tokens, "
                 "output_tokens, total_tokens, input_tokens_details, output_tokens_details) "
@@ -1422,20 +1428,7 @@ class TestGetDetailedUsage:
         sm.get_session(session_id)
         db_path = os.path.join(sm.session_dir, f"{session_id}.db")
         with sqlite3.connect(db_path) as conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS turn_usage ("
-                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-                "session_id TEXT NOT NULL, "
-                "branch_id TEXT, "
-                "user_turn_number INTEGER NOT NULL, "
-                "requests INTEGER DEFAULT 0, "
-                "input_tokens INTEGER DEFAULT 0, "
-                "output_tokens INTEGER DEFAULT 0, "
-                "total_tokens INTEGER DEFAULT 0, "
-                "input_tokens_details TEXT, "
-                "output_tokens_details TEXT, "
-                "created_at TEXT)"
-            )
+            conn.execute(_TURN_USAGE_DDL)
             for turn in range(1, 4):
                 conn.execute(
                     "INSERT INTO turn_usage (session_id, user_turn_number, requests, input_tokens, "

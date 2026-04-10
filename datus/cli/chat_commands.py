@@ -962,7 +962,8 @@ class ChatCommands:
                     self.console.print(f"  Token Count: {token_count}")
 
                 ctx_length = session_info.get("context_length", 0)
-                ctx_tokens = session_info.get("token_count", 0)
+                last_turn_usage = asyncio.run(self.current_node.get_last_turn_usage())
+                ctx_tokens = last_turn_usage.session_total_tokens if last_turn_usage else 0
                 if ctx_length and ctx_tokens:
                     ratio = ctx_tokens / ctx_length * 100
                     self.console.print(f"  Context: {ctx_tokens:,}/{ctx_length:,} ({ratio:.1f}%)")

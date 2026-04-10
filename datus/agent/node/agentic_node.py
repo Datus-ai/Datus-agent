@@ -994,7 +994,15 @@ class AgenticNode(Node):
         from datus.schemas.token_usage import TokenUsage as _TokenUsage
 
         for action in reversed(self.actions):
-            if action.role == ActionRole.ASSISTANT and isinstance(action.output, dict) and "usage" in action.output:
+            # Stop at the last root-level user message to scope to the current turn
+            if action.role == ActionRole.USER and action.depth == 0:
+                break
+            if (
+                action.role == ActionRole.ASSISTANT
+                and action.depth == 0
+                and isinstance(action.output, dict)
+                and isinstance(action.output.get("usage"), dict)
+            ):
                 usage_dict = action.output["usage"]
                 return _TokenUsage.from_usage_dict(
                     usage_dict,

@@ -4,7 +4,6 @@
 
 """Unit tests for datus/schemas/token_usage.py."""
 
-
 from datus.schemas.token_usage import TokenUsage
 
 
