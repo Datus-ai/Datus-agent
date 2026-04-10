@@ -437,6 +437,9 @@ class AgentConfig:
         # Initialize skills configuration
         self.skills_config = self._init_skills_config(kwargs.get("skills", {}))
 
+        # Initialize channels configuration for Claw IM gateway
+        self.channels_config: Dict[str, Any] = kwargs.get("channels", {})
+
         # Platform documentation fetch configs (namespace-independent)
         document_raw = kwargs.get("document", {}) or {}
         # Extract tavily_api_key from document config (top-level, not a platform)

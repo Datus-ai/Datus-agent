@@ -28,6 +28,10 @@ nav:
       - Generate Semantic Model: subagent/gen_semantic_model.md
       - Generate SQL Summary: subagent/gen_sql_summary.md
     - Chatbot: web_chatbot/introduction.md
+    - IM Gateway (Claw):
+      - Introduction: claw/introduction.md
+      - Slack: claw/slack.md
+      - Feishu: claw/feishu.md
     - Knowledge Base:
       - Introduction: knowledge_base/introduction.md
       - External Knowledge: knowledge_base/ext_knowledge.md
@@ -107,6 +111,10 @@ plugins:
             Built-in subagents: 内置 subagent
             Customized subagents: 自定义 subagent
             Chatbot: chatbot
+            IM Gateway (Claw): IM 网关 (Claw)
+            Slack: Slack
+            Feishu: 飞书
+
             Knowledge Base: 知识库
             External Knowledge: 外部知识
             Platform Documentation: 平台文档

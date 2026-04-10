@@ -99,6 +99,7 @@ datus-cli = "datus.cli.main:main"
 datus = "datus.cli.main:main"
 datus-api = "datus.api.main:main"
 datus-mcp = "datus.mcp_server:main"
+datus-claw = "datus.claw.main:main"
 
 [build-system]
 requires = ["setuptools>=80.9.0", "wheel"]
