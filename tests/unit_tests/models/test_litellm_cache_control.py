@@ -7,8 +7,9 @@
 from __future__ import annotations
 
 import copy
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
+import litellm
 import pytest
 
 from datus.models.litellm_cache_control import (
@@ -83,66 +84,128 @@ def test_apply_cache_control_tool_message_tagged():
 
 
 @pytest.mark.asyncio
-async def test_cache_control_model_anthropic_patches_acompletion():
-    model = CacheControlLitellmModel(model="anthropic/claude-sonnet-4", api_key="sk-test")
+async def test_cache_control_wrapper_applies_markers_when_flag_set():
+    """The globally-installed wrapper injects cache markers when _apply_cache is True."""
+    from datus.models.litellm_cache_control import _apply_cache
 
     captured: dict = {}
 
-    async def fake_acompletion(**kwargs):
+    async def fake_original(*args, **kwargs):
         captured.update(kwargs)
         return "ret"
 
-    # Patch parent _fetch_response to invoke litellm.acompletion with known payload
-    async def fake_super_fetch(self_inner, *args, **kwargs):
-        import litellm
+    # Replace the wrapper's delegate with our fake
+    wrapper = litellm.acompletion
+    with patch("datus.models.litellm_cache_control._install_cache_control_wrapper") as _:
+        pass  # prevent re-install
 
-        return await litellm.acompletion(
-            messages=[
-                {"role": "system", "content": "sys"},
-                {"role": "user", "content": "hi"},
-            ],
-            tools=[{"name": "t"}],
-        )
+    # Temporarily re-install wrapper around our fake
+    import datus.models.litellm_cache_control as ccmod
 
-    with patch("litellm.acompletion", new=AsyncMock(side_effect=fake_acompletion)):
-        with patch(
-            "agents.extensions.models.litellm_model.LitellmModel._fetch_response",
-            new=fake_super_fetch,
-        ):
-            await model._fetch_response()
+    saved = litellm.acompletion
+    litellm._datus_cache_control_installed = False  # type: ignore[attr-defined]
+    litellm.acompletion = fake_original
+    ccmod._install_cache_control_wrapper()
+    wrapper_fn = litellm.acompletion
 
-    assert isinstance(captured["messages"][0]["content"], list)
-    assert captured["messages"][0]["content"][-1]["cache_control"] == EPHEMERAL
-    assert captured["messages"][-1]["content"][-1]["cache_control"] == EPHEMERAL
-    assert captured["tools"][-1]["cache_control"] == EPHEMERAL
+    try:
+        # With flag set: should apply cache markers
+        token = _apply_cache.set(True)
+        try:
+            await wrapper_fn(
+                messages=[{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}],
+                tools=[{"name": "t"}],
+            )
+        finally:
+            _apply_cache.reset(token)
 
+        assert isinstance(captured["messages"][0]["content"], list)
+        assert captured["messages"][0]["content"][-1]["cache_control"] == EPHEMERAL
+        assert captured["messages"][-1]["content"][-1]["cache_control"] == EPHEMERAL
+        assert captured["tools"][-1]["cache_control"] == EPHEMERAL
 
-@pytest.mark.asyncio
-async def test_cache_control_model_non_anthropic_passthrough():
-    model = CacheControlLitellmModel(model="openai/gpt-4", api_key="sk-test")
-
-    captured: dict = {}
-
-    async def fake_acompletion(**kwargs):
-        captured.update(kwargs)
-        return "ret"
-
-    async def fake_super_fetch(self_inner, *args, **kwargs):
-        import litellm
-
-        return await litellm.acompletion(
+        # Without flag: should pass through unchanged
+        captured.clear()
+        await wrapper_fn(
             messages=[{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}],
             tools=[{"name": "t"}],
         )
+        assert captured["messages"][0]["content"] == "sys"
+        assert captured["messages"][-1]["content"] == "hi"
+        assert "cache_control" not in captured["tools"][-1]
+    finally:
+        litellm.acompletion = saved
+        litellm._datus_cache_control_installed = True  # type: ignore[attr-defined]
 
-    with patch("litellm.acompletion", new=AsyncMock(side_effect=fake_acompletion)):
-        with patch(
-            "agents.extensions.models.litellm_model.LitellmModel._fetch_response",
-            new=fake_super_fetch,
-        ):
-            await model._fetch_response()
 
-    # No cache_control anywhere
-    assert captured["messages"][0]["content"] == "sys"
-    assert captured["messages"][-1]["content"] == "hi"
-    assert "cache_control" not in captured["tools"][-1]
+@pytest.mark.asyncio
+async def test_fetch_response_sets_flag_for_anthropic():
+    """CacheControlLitellmModel sets _apply_cache=True for anthropic models."""
+    from datus.models.litellm_cache_control import _apply_cache
+
+    model = CacheControlLitellmModel(model="anthropic/claude-sonnet-4", api_key="sk-test")
+    observed_flag: list = []
+
+    async def fake_super_fetch(self_inner, *args, **kwargs):
+        observed_flag.append(_apply_cache.get(False))
+        return "ret"
+
+    with patch(
+        "agents.extensions.models.litellm_model.LitellmModel._fetch_response",
+        new=fake_super_fetch,
+    ):
+        await model._fetch_response()
+
+    assert observed_flag == [True]
+    # After _fetch_response returns, flag should be reset
+    assert _apply_cache.get(False) is False
+
+
+@pytest.mark.asyncio
+async def test_fetch_response_skips_flag_for_non_anthropic():
+    """CacheControlLitellmModel does NOT set _apply_cache for non-anthropic models."""
+    from datus.models.litellm_cache_control import _apply_cache
+
+    model = CacheControlLitellmModel(model="openai/gpt-4", api_key="sk-test")
+    observed_flag: list = []
+
+    async def fake_super_fetch(self_inner, *args, **kwargs):
+        observed_flag.append(_apply_cache.get(False))
+        return "ret"
+
+    with patch(
+        "agents.extensions.models.litellm_model.LitellmModel._fetch_response",
+        new=fake_super_fetch,
+    ):
+        await model._fetch_response()
+
+    assert observed_flag == [False]
+
+
+@pytest.mark.asyncio
+async def test_context_var_isolation_between_tasks():
+    """Concurrent tasks with different models should not interfere via ContextVar."""
+    import asyncio
+
+    from datus.models.litellm_cache_control import _apply_cache
+
+    observed: dict = {}
+
+    async def check_flag(label: str, expected: bool):
+        await asyncio.sleep(0)
+        observed[label] = _apply_cache.get(False)
+        assert _apply_cache.get(False) == expected
+
+    async def anthropic_task():
+        token = _apply_cache.set(True)
+        try:
+            await check_flag("anthropic", True)
+        finally:
+            _apply_cache.reset(token)
+
+    async def openai_task():
+        await check_flag("openai", False)
+
+    await asyncio.gather(anthropic_task(), openai_task())
+    assert observed["anthropic"] is True
+    assert observed["openai"] is False

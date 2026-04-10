@@ -14,6 +14,7 @@ configured), which otherwise pays full input cost on every turn.
 
 from __future__ import annotations
 
+import contextvars
 import copy
 from typing import Any, List
 
@@ -25,6 +26,10 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 _EPHEMERAL = {"type": "ephemeral"}
+
+# Per-task flag: when True the wrapper applies cache_control markers.
+# ContextVar is inherently per-async-task, so concurrent requests never interfere.
+_apply_cache: contextvars.ContextVar[bool] = contextvars.ContextVar("_apply_cache", default=False)
 
 
 def _tag_last_block(content: Any) -> Any:
@@ -79,12 +84,45 @@ def apply_cache_control(messages: list | None, tools: list | None) -> tuple[list
     return new_messages, new_tools
 
 
+def _install_cache_control_wrapper() -> None:
+    """Install a one-time wrapper around ``litellm.acompletion``.
+
+    The wrapper checks the per-task ``_apply_cache`` ContextVar and, when set,
+    injects cache_control markers into messages and tools.  Because ContextVar
+    is per-async-task, concurrent requests never interfere with each other.
+    """
+    if getattr(litellm, "_datus_cache_control_installed", False):
+        return
+
+    original_acompletion = litellm.acompletion
+
+    async def _cache_aware_acompletion(*args: Any, **ll_kwargs: Any) -> Any:
+        if _apply_cache.get():
+            try:
+                messages = ll_kwargs.get("messages")
+                tools = ll_kwargs.get("tools")
+                new_messages, new_tools = apply_cache_control(messages, tools)
+                ll_kwargs["messages"] = new_messages
+                if tools is not None:
+                    ll_kwargs["tools"] = new_tools
+            except Exception as exc:  # defensive: never break the request
+                logger.warning(f"Failed to apply Anthropic cache_control markers: {exc}")
+        return await original_acompletion(*args, **ll_kwargs)
+
+    litellm.acompletion = _cache_aware_acompletion
+    litellm._datus_cache_control_installed = True  # type: ignore[attr-defined]
+
+
+# Install the wrapper once at import time.
+_install_cache_control_wrapper()
+
+
 class CacheControlLitellmModel(LitellmModel):
     """``LitellmModel`` subclass that injects Anthropic prompt-caching markers.
 
-    Transparently wraps ``litellm.acompletion`` during ``_fetch_response`` to
-    add ephemeral ``cache_control`` annotations on the system prompt, the last
-    user/tool message, and the last tool definition — but only when the
+    Sets the per-task ``_apply_cache`` ContextVar so that the globally-installed
+    wrapper applies ephemeral ``cache_control`` annotations on the system prompt,
+    the last user/tool message, and the last tool definition — but only when the
     configured model routes to the Anthropic provider (``anthropic/*``).
     """
 
@@ -95,22 +133,8 @@ class CacheControlLitellmModel(LitellmModel):
         if not self._is_anthropic():
             return await super()._fetch_response(*args, **kwargs)
 
-        original_acompletion = litellm.acompletion
-
-        async def patched_acompletion(**ll_kwargs):
-            try:
-                messages = ll_kwargs.get("messages")
-                tools = ll_kwargs.get("tools")
-                new_messages, new_tools = apply_cache_control(messages, tools)
-                ll_kwargs["messages"] = new_messages
-                if tools is not None:
-                    ll_kwargs["tools"] = new_tools
-            except Exception as exc:  # defensive: never break the request
-                logger.warning(f"Failed to apply Anthropic cache_control markers: {exc}")
-            return await original_acompletion(**ll_kwargs)
-
-        litellm.acompletion = patched_acompletion
+        token = _apply_cache.set(True)
         try:
             return await super()._fetch_response(*args, **kwargs)
         finally:
-            litellm.acompletion = original_acompletion
+            _apply_cache.reset(token)
