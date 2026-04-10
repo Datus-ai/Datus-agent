@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from collections import OrderedDict
 from typing import Any, Dict, Optional
 
 import pandas as pd
@@ -25,13 +26,16 @@ _CHART_TYPE_MAP = {
 }
 
 
+_MAX_CACHE_SIZE = 1000
+
+
 class DataVisualizationService:
     """Wraps VisualizationTool with result caching and DataFrame conversion."""
 
     def __init__(self, agent_config: AgentConfig):
         self._agent_config = agent_config
         self._tool: Optional[VisualizationTool] = None
-        self._cache: Dict[str, Dict[str, Any]] = {}
+        self._cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
 
     # ------------------------------------------------------------------
     # Tool (lazy, cached by config identity)
@@ -87,8 +91,14 @@ class DataVisualizationService:
             return cached
 
         result = self._generate_uncached(csv_data, chart_type)
-        self._cache[key] = result
+        self._cache_set(key, result)
         return result
+
+    def _cache_set(self, key: str, value: Dict[str, Any]) -> None:
+        """Insert into cache, evicting the oldest entry if over capacity."""
+        self._cache[key] = value
+        if len(self._cache) > _MAX_CACHE_SIZE:
+            self._cache.popitem(last=False)
 
     # ------------------------------------------------------------------
     # Internal

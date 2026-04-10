@@ -196,3 +196,30 @@ class TestCaching:
             result2 = svc.generate(csv_data)
         assert result1 is result2
         assert result1["success"] is False
+
+    def test_evicts_oldest_when_over_capacity(self, mock_agent_config):
+        import datus.api.services.visualization_service as viz_mod
+
+        original = viz_mod._MAX_CACHE_SIZE
+        viz_mod._MAX_CACHE_SIZE = 2
+        try:
+            with patch(_LLM_PATH), patch(_VIZ_TOOL_PATH) as mock_cls:
+                mock_cls.return_value.execute.return_value = _mock_tool_result()
+                svc = DataVisualizationService(agent_config=mock_agent_config)
+
+                data_a = CsvData(columns=["a", "v"], data=[{"a": 1, "v": 2}])
+                data_b = CsvData(columns=["b", "v"], data=[{"b": 1, "v": 2}])
+                data_c = CsvData(columns=["c", "v"], data=[{"c": 1, "v": 2}])
+
+                svc.generate(data_a)
+                svc.generate(data_b)
+                assert len(svc._cache) == 2
+
+                svc.generate(data_c)  # should evict data_a
+                assert len(svc._cache) == 2
+
+                # data_a was evicted, so re-generating it calls tool again
+                svc.generate(data_a)
+                assert mock_cls.return_value.execute.call_count == 4
+        finally:
+            viz_mod._MAX_CACHE_SIZE = original
