@@ -84,8 +84,11 @@ class TestGenerateSuccess:
             result = svc.generate(csv_data)
 
         assert result["success"] is True
-        assert result["data"]["data"]["chart_type"] == "Line"
-        assert result["data"]["data"]["x_col"] == "date"
+        chart = result["data"]["data"]
+        assert chart["chart_type"] == "Line"
+        assert chart["x_col"] == "date"
+        assert chart["columns"] == ["date", "sales", "profit"]
+        assert chart["numeric_columns"] == ["sales", "profit"]
 
     def test_returns_unknown_without_axes(self, mock_agent_config, csv_data):
         with patch(_LLM_PATH), patch(_VIZ_TOOL_PATH) as mock_cls:
@@ -99,6 +102,9 @@ class TestGenerateSuccess:
         assert chart["chart_type"] == "Unknown"
         assert chart["reason"] == "Cannot determine"
         assert "x_col" not in chart
+        # columns metadata still present for Unknown
+        assert chart["columns"] == ["date", "sales", "profit"]
+        assert chart["numeric_columns"] == ["sales", "profit"]
 
     def test_caller_overrides_chart_type(self, mock_agent_config, csv_data):
         with patch(_LLM_PATH), patch(_VIZ_TOOL_PATH) as mock_cls:

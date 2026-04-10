@@ -136,12 +136,22 @@ class DataVisualizationService:
                 "errorMessage": result.error or "Visualization analysis failed.",
             }
 
+        # ── Column metadata for frontend axis mapping ─────────────
+        from pandas.api.types import is_numeric_dtype
+
+        all_columns = df.columns.tolist()
+        numeric_columns = [col for col in all_columns if is_numeric_dtype(df[col])]
+
         # ── Build response payload ────────────────────────────────
         mapped_type = _CHART_TYPE_MAP.get(result.chart_type, "Unknown")
         if chart_type is not None:
             mapped_type = chart_type
 
-        chart_data: Dict[str, Any] = {"chart_type": mapped_type}
+        chart_data: Dict[str, Any] = {
+            "chart_type": mapped_type,
+            "columns": all_columns,
+            "numeric_columns": numeric_columns,
+        }
 
         if mapped_type == "Unknown":
             chart_data["reason"] = result.reason

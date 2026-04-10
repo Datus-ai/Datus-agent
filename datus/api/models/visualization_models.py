@@ -24,35 +24,42 @@ class DataVisualizationRequest(BaseModel):
 # ── Response payloads ────────────────────────────────────────────────
 
 
-class LineChartData(BaseModel):
+class BaseChartData(BaseModel):
+    """Fields shared by all chart type payloads."""
+
+    columns: List[str] = Field(..., description="All column names in the dataset")
+    numeric_columns: List[str] = Field(..., description="Numeric column names (eligible for Y-axis)")
+
+
+class LineChartData(BaseChartData):
     chart_type: Literal["Line"] = "Line"
     x_col: str = Field(..., description="X-axis (dimension) column")
     y_cols: List[str] = Field(..., description="Y-axis (metric) columns")
     reason: str = ""
 
 
-class BarChartData(BaseModel):
+class BarChartData(BaseChartData):
     chart_type: Literal["Bar"] = "Bar"
     x_col: str = Field(..., description="X-axis (dimension) column")
     y_cols: List[str] = Field(..., description="Y-axis (metric) columns")
     reason: str = ""
 
 
-class PieChartData(BaseModel):
+class PieChartData(BaseChartData):
     chart_type: Literal["Pie"] = "Pie"
     x_col: str = Field(..., description="Category column")
     y_cols: List[str] = Field(..., description="Value column(s)")
     reason: str = ""
 
 
-class ScatterChartData(BaseModel):
+class ScatterChartData(BaseChartData):
     chart_type: Literal["Scatter"] = "Scatter"
     x_col: str = Field(..., description="X-axis column")
     y_cols: List[str] = Field(..., description="Y-axis column(s)")
     reason: str = ""
 
 
-class UnknownChartData(BaseModel):
+class UnknownChartData(BaseChartData):
     chart_type: Literal["Unknown"] = "Unknown"
     reason: str = Field(..., description="Why no chart type could be determined")
 
