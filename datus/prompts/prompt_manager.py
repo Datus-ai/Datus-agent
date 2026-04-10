@@ -352,43 +352,32 @@ class PromptManager:
         return str(target_path)
 
 
-def get_prompt_manager(
-    *,
-    prompt_manager: Optional["PromptManager"] = None,
-    path_manager: Optional[Any] = None,
-    agent_config: Optional[Any] = None,
-) -> "PromptManager":
+def get_prompt_manager(agent_config: Optional[Any] = None) -> "PromptManager":
     """
-    Get a prompt manager instance.
+    Get a prompt manager instance for the given agent context.
 
     Resolution order:
-    1. Explicit ``prompt_manager`` argument
-    2. Explicit ``agent_config.prompt_manager``
-    3. Explicit ``path_manager`` or ``agent_config.path_manager``
-    4. Default ``PromptManager()`` (uses path_manager's ContextVar internally)
+    1. ``agent_config.prompt_manager`` if already attached
+    2. A new ``PromptManager`` bound to ``agent_config`` (and its path_manager)
+    3. Default ``PromptManager()`` (falls back to the path_manager ContextVar)
 
     Args:
-        prompt_manager: Optional explicit prompt manager instance to reuse.
-        path_manager: Optional explicit path manager for template directory resolution.
         agent_config: Optional config object exposing ``prompt_manager`` or ``path_manager``.
 
     Returns:
         PromptManager instance
     """
-    if prompt_manager is not None:
-        return prompt_manager
+    if agent_config is None:
+        return PromptManager()
 
-    if agent_config is not None:
-        config_pm = getattr(agent_config, "prompt_manager", None)
-        if config_pm is not None:
-            return config_pm
-        config_path_manager = path_manager or getattr(agent_config, "path_manager", None)
-        return PromptManager(path_manager=config_path_manager, agent_config=agent_config)
+    config_pm = getattr(agent_config, "prompt_manager", None)
+    if config_pm is not None:
+        return config_pm
 
-    if path_manager is not None:
-        return PromptManager(path_manager=path_manager)
-
-    return PromptManager()
+    return PromptManager(
+        path_manager=getattr(agent_config, "path_manager", None),
+        agent_config=agent_config,
+    )
 
 
 # Backward-compatible global instance.

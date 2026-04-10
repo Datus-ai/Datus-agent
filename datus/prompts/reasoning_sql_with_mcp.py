@@ -74,6 +74,7 @@ def get_reasoning_prompt(
     max_value_length: int = 500,
     max_text_mark_length: int = 16,
     knowledge_content: str = "",
+    agent_config=None,
 ) -> List[Dict[str, str]]:
     if isinstance(table_schemas, str):
         processed_schemas = table_schemas
@@ -111,7 +112,7 @@ def get_reasoning_prompt(
             "When referencing table names in Snowflake SQL, you must include both the database_name and schema_name."
         )
 
-    user_content = get_prompt_manager().render_template(
+    user_content = get_prompt_manager(agent_config=agent_config).render_template(
         "reasoning_user",
         database_type=database_type,
         database_notes=database_notes,

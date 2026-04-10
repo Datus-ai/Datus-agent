@@ -50,7 +50,7 @@ class OutputNode(Node):
 
     def _execute_output(self) -> Any:
         """Execute output action to present the results."""
-        tool = OutputTool()
+        tool = OutputTool(agent_config=self.agent_config)
         return tool.execute(self.input, sql_connector=self._sql_connector(self.input.database_name), model=self.model)
         # return BaseResult(success=True, error="")
 

@@ -62,7 +62,7 @@ class FixNode(Node):
             logger.debug(f"Fix SQL input: {type(self.input)} {self.input}")
 
             # ToDo: add docs from search tools
-            return autofix_sql(self.model, self.input, docs=[])
+            return autofix_sql(self.model, self.input, docs=[], agent_config=self.agent_config)
         except Exception as e:
             logger.error(f"SQL fix execution error: {str(e)}")
             return FixResult(success=False, error=str(e), sql_query="", explanation="")

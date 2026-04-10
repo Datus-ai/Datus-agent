@@ -1668,10 +1668,11 @@ class SubAgentWizard:
         # Select template based on node_class for preview
         node_class = self.data.node_class or "gen_sql"
         preview_template = "gen_report_system" if node_class == "gen_report" else "sql_system"
+        pm = get_prompt_manager(agent_config=self.cli_instance.agent_config)
         try:
-            prompt_text = get_prompt_manager().render_template(preview_template, **prompt_context)
+            prompt_text = pm.render_template(preview_template, **prompt_context)
         except FileNotFoundError:
-            prompt_text = get_prompt_manager().render_template("sql_system", **prompt_context)
+            prompt_text = pm.render_template("sql_system", **prompt_context)
         try:
             self.prompt_preview_buffer.text = prompt_text
         except Exception:

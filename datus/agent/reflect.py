@@ -13,7 +13,7 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
-def evaluate_with_model(task: SqlTask, node_input: BaseInput, model: LLMBaseModel) -> Dict:
+def evaluate_with_model(task: SqlTask, node_input: BaseInput, model: LLMBaseModel, agent_config=None) -> Dict:
     """
     Use a language model to evaluate SQL execution results.
     """
@@ -35,6 +35,7 @@ def evaluate_with_model(task: SqlTask, node_input: BaseInput, model: LLMBaseMode
             f"Rows_returned: {sql_context.row_count}"
         ),
         prompt_version=prompt_version,
+        agent_config=agent_config,
     )
 
     try:

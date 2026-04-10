@@ -171,7 +171,7 @@ class NamespaceManager:
                 # Handle file path inputs
                 sample_file = field_info.get("default_sample")
                 if sample_file:
-                    default_path = str(get_path_manager().sample_dir / sample_file)
+                    default_path = str(get_path_manager(agent_config=self.agent_config).sample_dir / sample_file)
                     value = Prompt.ask(label, default=default_path)
                 else:
                     value = Prompt.ask(label, default=str(default_value) if default_value else "")

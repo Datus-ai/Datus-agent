@@ -24,10 +24,11 @@ logger = get_logger(__name__)
 
 
 class MatchSchemaTool(BaseTool):
-    def __init__(self, model: LLMBaseModel, storage: SchemaStorage, **kwargs):
+    def __init__(self, model: LLMBaseModel, storage: SchemaStorage, agent_config=None, **kwargs):
         super().__init__(**kwargs)
         self.model = model
         self.storage = storage
+        self.agent_config = agent_config
 
     def validate_input(self, input_data: Any) -> bool:
         if not isinstance(input_data, SchemaLinkingInput):
@@ -182,6 +183,7 @@ class MatchSchemaTool(BaseTool):
             table_metadata.to_pylist(),
             input_data.prompt_version,
             # input_data.top_n,
+            agent_config=self.agent_config,
         )
         task_size = self.count_task_size(self.model, input_data.input_text, str(messages))
         if task_size == 1:
@@ -246,6 +248,7 @@ class MatchSchemaTool(BaseTool):
             input_data.input_text,
             summary_metadata,
             # input_data.top_n,
+            agent_config=self.agent_config,
         )
         # todo truncate
         summary_response = self.model.generate(summary_prompt)

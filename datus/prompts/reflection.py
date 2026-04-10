@@ -1,7 +1,7 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
-from typing import Optional
+from typing import Any, Optional
 
 from .prompt_manager import get_prompt_manager
 
@@ -11,6 +11,7 @@ def get_evaluation_prompt(
     sql_generation_result: str,
     sql_execution_result: str,
     prompt_version: Optional[str] = None,
+    agent_config: Optional[Any] = None,
 ) -> str:
     """
     Generate a prompt for evaluating SQL execution results.
@@ -23,7 +24,7 @@ def get_evaluation_prompt(
     Returns:
         A formatted prompt string
     """
-    return get_prompt_manager().render_template(
+    return get_prompt_manager(agent_config=agent_config).render_template(
         "evaluation",
         task_description=task_description,
         sql_generation_result=sql_generation_result,

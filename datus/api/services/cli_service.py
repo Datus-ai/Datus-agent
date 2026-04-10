@@ -95,7 +95,7 @@ class CLIService:
         self.output_tool = None
         if self.agent_config:
             self.context_search_tools = ContextSearchTools(self.agent_config)
-            self.output_tool = OutputTool()
+            self.output_tool = OutputTool(agent_config=self.agent_config)
 
     def _initialize_connection(self):
         """Initialize the current database connection."""
@@ -550,7 +550,7 @@ class CLIService:
 
             # Initialize output tool if not exists
             if not self.output_tool:
-                self.output_tool = OutputTool()
+                self.output_tool = OutputTool(agent_config=self.agent_config)
 
             # Execute output tool to save results
             output_input = OutputInput(

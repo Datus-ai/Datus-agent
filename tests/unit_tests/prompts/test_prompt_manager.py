@@ -250,12 +250,6 @@ class TestPromptManager:
 
 
 class TestGetPromptManager:
-    def test_returns_explicit_prompt_manager(self, tmp_path):
-        explicit = PromptManager(path_manager=DatusPathManager(tmp_path / "explicit"))
-        result = get_prompt_manager(prompt_manager=explicit)
-
-        assert result is explicit
-
     def test_returns_from_agent_config_prompt_manager_attr(self, tmp_path):
         pm = PromptManager(path_manager=DatusPathManager(tmp_path / "config"))
         agent_config = SimpleNamespace(prompt_manager=pm, path_manager=None)
@@ -271,23 +265,6 @@ class TestGetPromptManager:
         assert isinstance(result, PromptManager)
         assert result.user_templates_dir == path_manager.template_dir
 
-    def test_builds_from_explicit_path_manager(self, tmp_path):
-        path_manager = DatusPathManager(tmp_path / "tenant")
-        result = get_prompt_manager(path_manager=path_manager)
-
-        assert isinstance(result, PromptManager)
-        assert result.user_templates_dir == path_manager.template_dir
-
-    def test_explicit_path_manager_overrides_agent_config_path_manager(self, tmp_path):
-        explicit_pm = DatusPathManager(tmp_path / "explicit")
-        config_pm = DatusPathManager(tmp_path / "from_config")
-        agent_config = SimpleNamespace(path_manager=config_pm)
-
-        result = get_prompt_manager(path_manager=explicit_pm, agent_config=agent_config)
-
-        assert isinstance(result, PromptManager)
-        assert result.user_templates_dir == explicit_pm.template_dir
-
     def test_agent_config_without_prompt_manager_attr(self, tmp_path):
         path_manager = DatusPathManager(tmp_path / "tenant")
         # agent_config has no prompt_manager attribute at all
@@ -298,16 +275,19 @@ class TestGetPromptManager:
         assert isinstance(result, PromptManager)
         assert result.user_templates_dir == path_manager.template_dir
 
-    def test_agent_config_prompt_manager_takes_priority_over_path_manager(self, tmp_path):
+    def test_agent_config_prompt_manager_takes_priority(self, tmp_path):
         pm = PromptManager(path_manager=DatusPathManager(tmp_path / "pm"))
-        explicit_path = DatusPathManager(tmp_path / "explicit")
-        agent_config = SimpleNamespace(prompt_manager=pm, path_manager=None)
+        # Both prompt_manager and path_manager set — prompt_manager wins
+        agent_config = SimpleNamespace(
+            prompt_manager=pm,
+            path_manager=DatusPathManager(tmp_path / "other"),
+        )
 
-        result = get_prompt_manager(path_manager=explicit_path, agent_config=agent_config)
+        result = get_prompt_manager(agent_config=agent_config)
 
         assert result is pm
 
-    def test_falls_back_to_default(self):
+    def test_falls_back_to_default_when_no_agent_config(self):
         result = get_prompt_manager()
         assert isinstance(result, PromptManager)
 

@@ -176,6 +176,7 @@ class ReasonSQLNode(Node):
                 tools=self.tools,
                 tool_config={"max_turns": self.input.max_turns},
                 action_history_manager=action_history_manager,
+                agent_config=self.agent_config,
             ):
                 yield action
 
@@ -190,7 +191,11 @@ class ReasonSQLNode(Node):
         """
         try:
             result = reasoning_sql_with_mcp(
-                self.model, self.input, self.tools, tool_config={"max_turns": self.input.max_turns}
+                self.model,
+                self.input,
+                self.tools,
+                tool_config={"max_turns": self.input.max_turns},
+                agent_config=self.agent_config,
             )
             logger.debug(
                 f"_reason_sql got result from tool: type={type(result)}, success={getattr(result, 'success', 'N/A')}"

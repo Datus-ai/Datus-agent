@@ -178,7 +178,7 @@ class SelectionNode(Node):
     def _llm_based_selection(self, candidates: Dict[str, Any]) -> SelectionResult:
         """Use LLM to select the best candidate"""
         prompt_version = self.input.prompt_version if self.input else None
-        prompt = create_selection_prompt(candidates, prompt_version=prompt_version)
+        prompt = create_selection_prompt(candidates, prompt_version=prompt_version, agent_config=self.agent_config)
 
         try:
             logger.info("Calling LLM for candidate selection...")

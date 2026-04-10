@@ -76,7 +76,7 @@ class ReflectNode(Node):
             return ReflectionResult(success=False, error="No SQL context provided", strategy="UNKNOWN", details={})
 
         # TODO: use all the sql_contexts to evaluate
-        eval_result = evaluate_with_model(task, self.input, self.model)
+        eval_result = evaluate_with_model(task, self.input, self.model, agent_config=self.agent_config)
 
         # Explicitly create ReflectionResult with required fields
         return ReflectionResult(

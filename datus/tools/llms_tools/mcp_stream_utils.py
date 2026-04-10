@@ -23,6 +23,7 @@ async def base_mcp_stream(
     instruction_template: str,
     tools: Optional[List[Tool]] = None,
     action_history_manager: Optional[ActionHistoryManager] = None,
+    agent_config=None,
 ) -> AsyncGenerator[ActionHistory, None]:
     """Base MCP streaming function that yields only function call actions.
 
@@ -44,7 +45,9 @@ async def base_mcp_stream(
 
     try:
         # Get instruction and generate prompt
-        instruction = get_prompt_manager().get_raw_template(instruction_template, input_data.prompt_version)
+        instruction = get_prompt_manager(agent_config=agent_config).get_raw_template(
+            instruction_template, input_data.prompt_version
+        )
         max_turns = tool_config.get("max_turns", 10)
 
         logger.info(f"Starting MCP stream with {len(mcp_servers)} servers, max_turns={max_turns}")

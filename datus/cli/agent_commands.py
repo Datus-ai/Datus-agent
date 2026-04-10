@@ -666,7 +666,7 @@ class AgentCommands:
         try:
             with self.console.status("[bold green]Saving SQL...[/]"):
                 if not self.output_tool:
-                    self.output_tool = OutputTool()
+                    self.output_tool = OutputTool(agent_config=self.cli.agent_config)
                 result = self.output_tool.execute(
                     OutputInput(
                         task="",

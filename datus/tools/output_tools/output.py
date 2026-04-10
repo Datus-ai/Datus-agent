@@ -20,8 +20,9 @@ logger = get_logger(__name__)
 
 
 class OutputTool(BaseTool):
-    def __init__(self, **kwargs):
+    def __init__(self, agent_config=None, **kwargs):
         super().__init__(**kwargs)
+        self.agent_config = agent_config
 
     def validate_input(self, input_data: Any):
         """"""
@@ -111,6 +112,7 @@ class OutputTool(BaseTool):
             metrics=input_data.metrics,
             external_knowledge=input_data.external_knowledge,
             prompt_version=input_data.prompt_version,
+            agent_config=self.agent_config,
         )
         llm_result = model.generate_with_json_output(prompt)
         if llm_result.get("is_correct", True):

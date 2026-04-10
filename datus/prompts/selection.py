@@ -12,7 +12,7 @@ logger = get_logger(__name__)
 
 
 def create_selection_prompt(
-    candidates: Dict[str, Any], prompt_version: Optional[str] = None, max_text_length: int = 500
+    candidates: Dict[str, Any], prompt_version: Optional[str] = None, max_text_length: int = 500, agent_config=None
 ) -> str:
     """
     Create prompt for LLM-based candidate selection.
@@ -54,7 +54,7 @@ def create_selection_prompt(
         processed_candidates[candidate_id] = processed_candidate
 
     # Render the template
-    prompt = get_prompt_manager().render_template(
+    prompt = get_prompt_manager(agent_config=agent_config).render_template(
         "selection_analysis", candidates=processed_candidates, version=prompt_version
     )
 

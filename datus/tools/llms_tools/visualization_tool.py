@@ -123,7 +123,7 @@ class VisualizationTool(BaseTool):
     # ------------------------------------------------------------------ #
     def _llm_based_recommendation(self, df: pd.DataFrame) -> Optional[VisualizationOutput]:
         """Use LLM to recommend visualization configuration."""
-        prompt = get_prompt_manager().render_template(
+        prompt = get_prompt_manager(agent_config=self.agent_config).render_template(
             self.PROMPT_TEMPLATE,
             version=self.prompt_version,
             columns_info=self._format_columns_info(df),
