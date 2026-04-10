@@ -140,9 +140,7 @@ class TestGenerateErrors:
 
     def test_tool_returns_failure(self, mock_agent_config, csv_data):
         with patch(_LLM_PATH), patch(_VIZ_TOOL_PATH) as mock_cls:
-            mock_cls.return_value.execute.return_value = _mock_tool_result(
-                success=False, error="LLM unavailable"
-            )
+            mock_cls.return_value.execute.return_value = _mock_tool_result(success=False, error="LLM unavailable")
             svc = DataVisualizationService(agent_config=mock_agent_config)
             result = svc.generate(csv_data)
         assert result["success"] is False
