@@ -61,6 +61,8 @@ class TestDataVisualizationSuccess:
                 "data": {
                     "data": {
                         "chart_type": "Line",
+                        "columns": ["date", "sales", "profit"],
+                        "numeric_columns": ["sales", "profit"],
                         "x_col": "date",
                         "y_cols": ["sales", "profit"],
                         "reason": "Datetime column detected",
@@ -72,22 +74,35 @@ class TestDataVisualizationSuccess:
         assert resp.status_code == 200
         body = resp.json()
         assert body["success"] is True
-        assert body["data"]["data"]["chart_type"] == "Line"
-        assert body["data"]["data"]["x_col"] == "date"
-        assert body["data"]["data"]["y_cols"] == ["sales", "profit"]
+        chart = body["data"]["data"]
+        assert chart["chart_type"] == "Line"
+        assert chart["x_col"] == "date"
+        assert chart["y_cols"] == ["sales", "profit"]
+        assert chart["columns"] == ["date", "sales", "profit"]
+        assert chart["numeric_columns"] == ["sales", "profit"]
 
     def test_returns_unknown_with_reason(self, valid_payload):
         client = _client_with(
             {
                 "success": True,
-                "data": {"data": {"chart_type": "Unknown", "reason": "Cannot determine chart"}},
+                "data": {
+                    "data": {
+                        "chart_type": "Unknown",
+                        "columns": ["date", "sales", "profit"],
+                        "numeric_columns": ["sales", "profit"],
+                        "reason": "Cannot determine chart",
+                    }
+                },
             }
         )
         resp = client.post("/api/v1/data_visualization", json=valid_payload)
         body = resp.json()
         assert body["success"] is True
-        assert body["data"]["data"]["chart_type"] == "Unknown"
-        assert body["data"]["data"]["reason"] == "Cannot determine chart"
+        chart = body["data"]["data"]
+        assert chart["chart_type"] == "Unknown"
+        assert chart["reason"] == "Cannot determine chart"
+        assert chart["x_col"] is None
+        assert chart["y_cols"] is None
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -132,7 +147,16 @@ class TestServiceDelegation:
         svc = _mock_svc(
             {
                 "success": True,
-                "data": {"data": {"chart_type": "Bar", "x_col": "date", "y_cols": ["sales"], "reason": "ok"}},
+                "data": {
+                    "data": {
+                        "chart_type": "Bar",
+                        "columns": ["date", "sales"],
+                        "numeric_columns": ["sales"],
+                        "x_col": "date",
+                        "y_cols": ["sales"],
+                        "reason": "ok",
+                    }
+                },
             }
         )
         app = _make_app()

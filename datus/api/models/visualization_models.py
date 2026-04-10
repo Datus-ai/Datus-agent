@@ -24,47 +24,18 @@ class DataVisualizationRequest(BaseModel):
 # ── Response payloads ────────────────────────────────────────────────
 
 
-class BaseChartData(BaseModel):
-    """Fields shared by all chart type payloads."""
+class ChartData(BaseModel):
+    """Chart recommendation payload returned by the visualization API."""
 
+    chart_type: ChartType = Field(..., description="Recommended chart type")
     columns: List[str] = Field(..., description="All column names in the dataset")
     numeric_columns: List[str] = Field(..., description="Numeric column names (eligible for Y-axis)")
-
-
-class LineChartData(BaseChartData):
-    chart_type: Literal["Line"] = "Line"
-    x_col: str = Field(..., description="X-axis (dimension) column")
-    y_cols: List[str] = Field(..., description="Y-axis (metric) columns")
-    reason: str = ""
-
-
-class BarChartData(BaseChartData):
-    chart_type: Literal["Bar"] = "Bar"
-    x_col: str = Field(..., description="X-axis (dimension) column")
-    y_cols: List[str] = Field(..., description="Y-axis (metric) columns")
-    reason: str = ""
-
-
-class PieChartData(BaseChartData):
-    chart_type: Literal["Pie"] = "Pie"
-    x_col: str = Field(..., description="Category column")
-    y_cols: List[str] = Field(..., description="Value column(s)")
-    reason: str = ""
-
-
-class ScatterChartData(BaseChartData):
-    chart_type: Literal["Scatter"] = "Scatter"
-    x_col: str = Field(..., description="X-axis column")
-    y_cols: List[str] = Field(..., description="Y-axis column(s)")
-    reason: str = ""
-
-
-class UnknownChartData(BaseChartData):
-    chart_type: Literal["Unknown"] = "Unknown"
-    reason: str = Field(..., description="Why no chart type could be determined")
+    x_col: Optional[str] = Field(None, description="X-axis column (absent when chart_type is Unknown)")
+    y_cols: Optional[List[str]] = Field(None, description="Y-axis column(s) (absent when chart_type is Unknown)")
+    reason: str = Field("", description="Explanation for the recommendation")
 
 
 class DataVisualizationData(BaseModel):
     """Wrapper returned in ``Result.data``."""
 
-    data: Dict[str, Any] = Field(..., description="Chart-type-specific payload")
+    data: ChartData = Field(..., description="Chart recommendation payload")

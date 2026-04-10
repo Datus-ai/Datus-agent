@@ -10,6 +10,7 @@ from fastapi import APIRouter
 from datus.api.deps import ServiceDep
 from datus.api.models.base_models import Result
 from datus.api.models.visualization_models import (
+    ChartData,
     DataVisualizationData,
     DataVisualizationRequest,
 )
@@ -42,5 +43,5 @@ async def data_visualization(
 
     return Result(
         success=True,
-        data=DataVisualizationData(data=result["data"]["data"]),
+        data=DataVisualizationData(data=ChartData(**result["data"]["data"])),
     )
