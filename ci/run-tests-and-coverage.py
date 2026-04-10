@@ -359,8 +359,6 @@ def extract_coverage(base_ref):
                 "--exclude",
                 "datus/cli/web/chatbot.py",
                 "--exclude",
-                "datus/cli/web/ui_components.py",
-                "--exclude",
                 "datus/cli/screen/subject_screen.py",
             ],
             DIFF_COVER_TIMEOUT,

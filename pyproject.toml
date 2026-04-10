@@ -205,7 +205,6 @@ dev = [
 source = ["datus"]
 omit = [
     "datus/prompts/prompt_templates/*",
-    "datus/cli/web/ui_components.py",
     "datus/cli/screen/*",
     "datus/cli/sub_agent_wizard.py",
     "datus/cli/bi_dashboard.py",
