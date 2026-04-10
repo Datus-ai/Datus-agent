@@ -371,6 +371,9 @@ def _get_current_log_file() -> Path | None:
     try:
         from datus.utils.path_manager import get_path_manager
 
+        # Utility helper exemption: called from deep exception-printing contexts
+        # that have no access to agent_config; fall back to the context-local
+        # path manager so at least the currently-active tenant's log dir is used.
         log_dir = get_path_manager().logs_dir
         if not log_dir.exists():
             return None

@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 import json
-from typing import AsyncGenerator, Dict, List, Optional, Tuple
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 from agents import Tool
 
@@ -233,7 +233,11 @@ class GenerateSQLNode(Node):
             raise
 
 
-def generate_sql(model: LLMBaseModel, input_data: GenerateSQLInput, agent_config=None) -> GenerateSQLResult:
+def generate_sql(
+    model: LLMBaseModel,
+    input_data: GenerateSQLInput,
+    agent_config: Optional[Any] = None,
+) -> GenerateSQLResult:
     """Generate SQL query using the provided model."""
     if not isinstance(input_data, GenerateSQLInput):
         raise TypeError("Input data must be a GenerateSQLInput instance")

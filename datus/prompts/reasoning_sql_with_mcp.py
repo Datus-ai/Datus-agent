@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -74,7 +74,7 @@ def get_reasoning_prompt(
     max_value_length: int = 500,
     max_text_mark_length: int = 16,
     knowledge_content: str = "",
-    agent_config=None,
+    agent_config: Optional[Any] = None,
 ) -> List[Dict[str, str]]:
     if isinstance(table_schemas, str):
         processed_schemas = table_schemas

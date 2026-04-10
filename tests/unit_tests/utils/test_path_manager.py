@@ -58,6 +58,33 @@ class TestDatusPathManagerInit:
         pm = DatusPathManager(datus_home=str(tmp_path), knowledge_home="~/custom_kb")
         assert "~" not in str(pm.knowledge_home)
 
+    def test_knowledge_home_accepts_path_object(self, tmp_path):
+        kb_home = tmp_path / "kb"
+        pm = DatusPathManager(datus_home=str(tmp_path), knowledge_home=kb_home)
+        assert pm.knowledge_home == kb_home.resolve()
+
+    def test_knowledge_home_empty_string_falls_back_to_datus_home(self, tmp_path):
+        pm = DatusPathManager(datus_home=str(tmp_path / "datus"), knowledge_home="")
+        assert pm.knowledge_home == pm.datus_home
+
+    def test_update_home_resets_knowledge_home_and_warns(self, tmp_path):
+        import warnings
+
+        kb_home = tmp_path / "old_kb"
+        pm = DatusPathManager(datus_home=str(tmp_path / "old_datus"), knowledge_home=str(kb_home))
+        assert pm.knowledge_home == kb_home.resolve()
+
+        new_home = tmp_path / "new_datus"
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            pm.update_home(str(new_home))
+
+        # Deprecation warning emitted
+        assert any(issubclass(warning.category, DeprecationWarning) for warning in w)
+        # knowledge_home is reset to track the new datus_home (no cross-tenant leak)
+        assert pm.knowledge_home == new_home.resolve()
+        assert pm.datus_home == new_home.resolve()
+
 
 class TestDatusPathManagerProperties:
     """Tests for DatusPathManager directory properties."""

@@ -23,7 +23,7 @@ async def base_mcp_stream(
     instruction_template: str,
     tools: Optional[List[Tool]] = None,
     action_history_manager: Optional[ActionHistoryManager] = None,
-    agent_config=None,
+    agent_config: Optional[Any] = None,
 ) -> AsyncGenerator[ActionHistory, None]:
     """Base MCP streaming function that yields only function call actions.
 

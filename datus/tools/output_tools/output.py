@@ -20,8 +20,10 @@ logger = get_logger(__name__)
 
 
 class OutputTool(BaseTool):
-    def __init__(self, agent_config=None, **kwargs):
+    def __init__(self, agent_config: Optional[Any] = None, **kwargs):
         super().__init__(**kwargs)
+        # agent_config is stored only for prompt-rendering context (used by check_sql);
+        # intentionally not forwarded to BaseTool which has no agent_config slot.
         self.agent_config = agent_config
 
     def validate_input(self, input_data: Any):

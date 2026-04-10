@@ -60,13 +60,24 @@ class DatusPathManager:
 
         Deprecated compatibility helper.
         Prefer creating a new ``DatusPathManager(new_home)`` and passing it explicitly.
-        Note: this keeps ``knowledge_home`` untouched; callers that need to move
-        the knowledge root should create a new ``DatusPathManager`` instance.
+
+        Also resets ``knowledge_home`` to track ``new_home`` to avoid stale cross-tenant
+        state in long-running processes. Callers that need a separate knowledge root
+        must construct a new ``DatusPathManager(new_home, knowledge_home=...)`` instead.
 
         Args:
             new_home: New home directory path (can include ~)
         """
+        import warnings
+
+        warnings.warn(
+            "DatusPathManager.update_home is deprecated; construct a new DatusPathManager instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._datus_home = self.resolve_home(new_home)
+        # Reset knowledge_home to match so stale KB paths from a prior tenant don't leak.
+        self._knowledge_home = self._datus_home
 
     @property
     def datus_home(self) -> Path:

@@ -4,7 +4,7 @@
 
 import math
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Union
 
 import pyarrow as pa
 
@@ -24,7 +24,13 @@ logger = get_logger(__name__)
 
 
 class MatchSchemaTool(BaseTool):
-    def __init__(self, model: LLMBaseModel, storage: SchemaStorage, agent_config=None, **kwargs):
+    def __init__(
+        self,
+        model: LLMBaseModel,
+        storage: SchemaStorage,
+        agent_config: Optional[Any] = None,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.model = model
         self.storage = storage

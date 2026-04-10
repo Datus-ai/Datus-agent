@@ -296,7 +296,7 @@ class PromptManager:
 
         # Copy content
         shutil.copy2(source_path, new_path)
-        print(f"Created {new_filename} based on {source_path.name}")
+        logger.info(f"Created {new_filename} based on {source_path.name}")
 
     def template_exists(self, template_name: str, version: Optional[str] = None) -> bool:
         """
@@ -360,6 +360,18 @@ def get_prompt_manager(agent_config: Optional[Any] = None) -> "PromptManager":
     1. ``agent_config.prompt_manager`` if already attached
     2. A new ``PromptManager`` bound to ``agent_config`` (and its path_manager)
     3. Default ``PromptManager()`` (falls back to the path_manager ContextVar)
+
+    Calling convention in prompt utility functions:
+
+    * If a function renders exactly **one** template, call inline:
+      ``get_prompt_manager(agent_config=agent_config).render_template(...)``
+    * If a function renders **two or more** templates, bind a local first:
+      ``pm = get_prompt_manager(agent_config=agent_config)``
+      then reuse ``pm.render_template(...)`` at each call site.
+
+    Both forms are functionally equivalent because the Jinja2 environment is
+    cached on the class-level ``_env_cache``; this split is a readability
+    convention only.
 
     Args:
         agent_config: Optional config object exposing ``prompt_manager`` or ``path_manager``.

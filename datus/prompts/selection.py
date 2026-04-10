@@ -12,7 +12,10 @@ logger = get_logger(__name__)
 
 
 def create_selection_prompt(
-    candidates: Dict[str, Any], prompt_version: Optional[str] = None, max_text_length: int = 500, agent_config=None
+    candidates: Dict[str, Any],
+    prompt_version: Optional[str] = None,
+    max_text_length: int = 500,
+    agent_config: Optional[Any] = None,
 ) -> str:
     """
     Create prompt for LLM-based candidate selection.

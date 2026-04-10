@@ -21,7 +21,7 @@ class DateParserTool(BaseTool):
     tool_name = "date_parser_tool"
     tool_description = "Tool for extracting and parsing temporal expressions from natural language"
 
-    def __init__(self, language: str = "en", agent_config=None, **kwargs):
+    def __init__(self, language: str = "en", agent_config: Optional[Any] = None, **kwargs):
         super().__init__(**kwargs)
         self.language = language
         self.agent_config = agent_config

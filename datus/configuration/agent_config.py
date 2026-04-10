@@ -666,10 +666,11 @@ class AgentConfig:
     def override_by_args(self, **kwargs):
         home_override = kwargs.get("home")
         knowledge_home_override = kwargs.get("knowledge_home")
-        if home_override or knowledge_home_override is not None:
+        # Use truthy checks for both so empty strings are consistently ignored.
+        if home_override or knowledge_home_override:
             if home_override:
                 self.home = home_override
-            if knowledge_home_override is not None:
+            if knowledge_home_override:
                 self.knowledge_home = knowledge_home_override
             self._set_path_manager(self.home, self.knowledge_home)
             self._init_dirs()

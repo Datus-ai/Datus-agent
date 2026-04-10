@@ -41,7 +41,9 @@ class InteractiveInit:
         self.user_home = user_home if user_home else Path.home()
         self.console = Console(log_path=False)
 
-        # Use path manager for directory paths
+        # Use path manager for directory paths.
+        # Entry-point exemption: interactive init runs *before* any AgentConfig exists,
+        # so we fall back to the context-local path manager / default ~/.datus here.
         path_manager = get_path_manager()
         self.conf_dir = path_manager.conf_dir
         self.template_dir = path_manager.template_dir
@@ -66,6 +68,7 @@ class InteractiveInit:
     def _init_dirs(self):
         from datus.utils.path_manager import get_path_manager
 
+        # Entry-point exemption: see __init__ above — no AgentConfig exists yet during init.
         path_manager = get_path_manager()
         path_manager.ensure_dirs("conf", "data", "logs", "sessions", "template", "sample")
 

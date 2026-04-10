@@ -39,6 +39,8 @@ def load_auth_config(config_path: Optional[str] = None) -> Dict:
     """
     from datus.utils.path_manager import get_path_manager
 
+    # Entry-point exemption: auth config loading happens at module init before
+    # any AgentConfig instance exists, so we rely on the context-local path manager.
     path_manager = get_path_manager()
 
     # Use explicit path if provided, otherwise use fixed path from path_manager

@@ -27,7 +27,7 @@ async def reasoning_sql_with_mcp_stream(
     tool_config: Dict[str, Any],
     tools: List[Tool],
     action_history_manager: Optional[ActionHistoryManager] = None,
-    agent_config=None,
+    agent_config: Optional[Any] = None,
 ) -> AsyncGenerator[ActionHistory, None]:
     """Generate SQL reasoning with streaming support and action history tracking."""
     if not isinstance(input_data, ReasoningInput):
@@ -138,7 +138,7 @@ def reasoning_sql_with_mcp(
     input_data: ReasoningInput,
     tools: List[Tool],
     tool_config: Dict[str, Any],
-    agent_config=None,
+    agent_config: Optional[Any] = None,
 ) -> ReasoningResult:
     """Generate SQL via MCP, execute it, and return the execution result."""
     if not isinstance(input_data, ReasoningInput):
