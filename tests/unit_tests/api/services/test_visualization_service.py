@@ -136,7 +136,7 @@ class TestGenerateErrors:
             result = svc.generate(csv_data)
         assert result["success"] is False
         assert result["errorCode"] == "VISUALIZATION_FAILED"
-        assert "boom" in result["errorMessage"]
+        assert result["errorMessage"] == "Visualization analysis failed."
 
     def test_tool_returns_failure(self, mock_agent_config, csv_data):
         with patch(_LLM_PATH), patch(_VIZ_TOOL_PATH) as mock_cls:

@@ -113,10 +113,11 @@ class DataVisualizationService:
         try:
             df = pd.DataFrame(csv_data.data, columns=csv_data.columns)
         except Exception as exc:
+            logger.error(f"Failed to parse csv_data into DataFrame: {exc}")
             return {
                 "success": False,
                 "errorCode": "INVALID_DATA",
-                "errorMessage": f"Failed to parse csv_data into DataFrame: {exc}",
+                "errorMessage": "Failed to parse the provided CSV data.",
             }
 
         if df.empty or df.shape[1] == 0:
@@ -136,7 +137,7 @@ class DataVisualizationService:
             return {
                 "success": False,
                 "errorCode": "VISUALIZATION_FAILED",
-                "errorMessage": f"Visualization analysis failed: {exc}",
+                "errorMessage": "Visualization analysis failed.",
             }
 
         if not result.success:
