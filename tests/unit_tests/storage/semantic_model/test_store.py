@@ -417,6 +417,54 @@ class TestUpdateEntryYamlSync:
         finally:
             os.unlink(tmp.name)
 
+    def test_update_measure_agg_syncs_to_yaml(self, sem_storage):
+        """update_entry on a measure column syncs 'agg' back to the YAML file."""
+        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False, encoding="utf-8")
+        try:
+            self._make_yaml_with_columns(tmp)
+            tmp.close()
+
+            table_obj = _make_table_object("orders", yaml_path=tmp.name)
+            col_obj = _make_column_object("orders", "amount", description="Total amount", is_measure=True, agg="SUM")
+            col_obj["yaml_path"] = tmp.name
+            sem_storage.store_batch([table_obj, col_obj])
+
+            result = sem_storage.update_entry("column:orders.amount", {"agg": "AVERAGE"})
+            assert result is True
+
+            with open(tmp.name, encoding="utf-8") as f:
+                docs = list(yaml.safe_load_all(f))
+            data_source = next(d["data_source"] for d in docs if d and "data_source" in d)
+            measure = next(item for item in data_source["measures"] if item["name"] == "amount")
+            assert measure["agg"] == "AVERAGE"
+        finally:
+            os.unlink(tmp.name)
+
+    def test_update_identifier_entity_syncs_to_yaml(self, sem_storage):
+        """update_entry on an identifier column syncs 'entity' back to the YAML file."""
+        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False, encoding="utf-8")
+        try:
+            self._make_yaml_with_columns(tmp)
+            tmp.close()
+
+            table_obj = _make_table_object("orders", yaml_path=tmp.name)
+            col_obj = _make_column_object(
+                "orders", "order_id", description="Primary key", is_entity_key=True, entity="order"
+            )
+            col_obj["yaml_path"] = tmp.name
+            sem_storage.store_batch([table_obj, col_obj])
+
+            result = sem_storage.update_entry("column:orders.order_id", {"entity": "transaction"})
+            assert result is True
+
+            with open(tmp.name, encoding="utf-8") as f:
+                docs = list(yaml.safe_load_all(f))
+            data_source = next(d["data_source"] for d in docs if d and "data_source" in d)
+            ident = next(item for item in data_source["identifiers"] if item["name"] == "order_id")
+            assert ident["entity"] == "transaction"
+        finally:
+            os.unlink(tmp.name)
+
     def test_update_entry_no_yaml_path_still_succeeds(self, sem_storage):
         """update_entry succeeds and returns True when yaml_path is empty."""
         table_obj = _make_table_object("orders", description="A table", yaml_path="")

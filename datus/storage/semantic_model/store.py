@@ -121,6 +121,12 @@ class SemanticModelStorage(BaseEmbeddingStore):
         "description": "description",
         "expr": "expr",
         "column_type": "type",
+        "agg": "agg",
+        "create_metric": "create_metric",
+        "agg_time_dimension": "agg_time_dimension",
+        "is_partition": "is_partition",
+        "time_granularity": "time_granularity",
+        "entity": "entity",
     }
 
     def update_entry(self, entry_id: str, update_values: Dict[str, Any]) -> bool:
