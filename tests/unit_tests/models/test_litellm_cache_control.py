@@ -94,11 +94,6 @@ async def test_cache_control_wrapper_applies_markers_when_flag_set():
         captured.update(kwargs)
         return "ret"
 
-    # Replace the wrapper's delegate with our fake
-    wrapper = litellm.acompletion
-    with patch("datus.models.litellm_cache_control._install_cache_control_wrapper") as _:
-        pass  # prevent re-install
-
     # Temporarily re-install wrapper around our fake
     import datus.models.litellm_cache_control as ccmod
 
