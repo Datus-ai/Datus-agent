@@ -88,6 +88,7 @@ class DataVisualizationService:
 
         cached = self._cache.get(key)
         if cached is not None:
+            self._cache.move_to_end(key)
             return cached
 
         result = self._generate_uncached(csv_data, chart_type)
@@ -95,8 +96,9 @@ class DataVisualizationService:
         return result
 
     def _cache_set(self, key: str, value: Dict[str, Any]) -> None:
-        """Insert into cache, evicting the oldest entry if over capacity."""
+        """Insert into cache, evicting the least-recently-used entry if over capacity."""
         self._cache[key] = value
+        self._cache.move_to_end(key)
         if len(self._cache) > _MAX_CACHE_SIZE:
             self._cache.popitem(last=False)
 

@@ -197,7 +197,7 @@ class TestCaching:
         assert result1 is result2
         assert result1["success"] is False
 
-    def test_evicts_oldest_when_over_capacity(self, mock_agent_config):
+    def test_evicts_lru_when_over_capacity(self, mock_agent_config):
         import datus.api.services.visualization_service as viz_mod
 
         original = viz_mod._MAX_CACHE_SIZE
@@ -211,15 +211,24 @@ class TestCaching:
                 data_b = CsvData(columns=["b", "v"], data=[{"b": 1, "v": 2}])
                 data_c = CsvData(columns=["c", "v"], data=[{"c": 1, "v": 2}])
 
-                svc.generate(data_a)
-                svc.generate(data_b)
+                svc.generate(data_a)  # cache: [a]
+                svc.generate(data_b)  # cache: [a, b]
                 assert len(svc._cache) == 2
 
-                svc.generate(data_c)  # should evict data_a
+                # Access data_a again to promote it (LRU: b is now oldest)
+                svc.generate(data_a)  # cache: [b, a] — cache hit, no tool call
+                assert mock_cls.return_value.execute.call_count == 2
+
+                # Insert data_c: should evict data_b (LRU), not data_a
+                svc.generate(data_c)  # cache: [a, c]
                 assert len(svc._cache) == 2
 
-                # data_a was evicted, so re-generating it calls tool again
-                svc.generate(data_a)
+                # data_a should still be cached (not evicted)
+                svc.generate(data_a)  # cache hit
+                assert mock_cls.return_value.execute.call_count == 3
+
+                # data_b was evicted, re-generating it calls tool again
+                svc.generate(data_b)  # cache miss
                 assert mock_cls.return_value.execute.call_count == 4
         finally:
             viz_mod._MAX_CACHE_SIZE = original
