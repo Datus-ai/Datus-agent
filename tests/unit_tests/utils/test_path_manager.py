@@ -43,6 +43,21 @@ class TestDatusPathManagerInit:
         pm.update_home(str(new_home))
         assert pm.datus_home == new_home.resolve()
 
+    def test_knowledge_home_defaults_to_datus_home(self, tmp_path):
+        pm = DatusPathManager(datus_home=str(tmp_path / "datus"))
+        assert pm.knowledge_home == pm.datus_home
+
+    def test_knowledge_home_custom_path(self, tmp_path):
+        datus_home = tmp_path / "datus"
+        kb_home = tmp_path / "shared_kb"
+        pm = DatusPathManager(datus_home=str(datus_home), knowledge_home=str(kb_home))
+        assert pm.datus_home == datus_home.resolve()
+        assert pm.knowledge_home == kb_home.resolve()
+
+    def test_knowledge_home_tilde_expansion(self, tmp_path):
+        pm = DatusPathManager(datus_home=str(tmp_path), knowledge_home="~/custom_kb")
+        assert "~" not in str(pm.knowledge_home)
+
 
 class TestDatusPathManagerProperties:
     """Tests for DatusPathManager directory properties."""
@@ -72,6 +87,21 @@ class TestDatusPathManagerProperties:
     )
     def test_directory_property(self, pm, attr, suffix):
         assert getattr(pm, attr) == pm.datus_home / suffix
+
+    def test_knowledge_dirs_follow_knowledge_home_override(self, tmp_path):
+        datus_home = tmp_path / "datus"
+        kb_home = tmp_path / "shared_kb"
+        pm = DatusPathManager(datus_home=str(datus_home), knowledge_home=str(kb_home))
+
+        # These three should live under the custom knowledge_home
+        assert pm.semantic_models_dir == kb_home.resolve() / "semantic_models"
+        assert pm.sql_summaries_dir == kb_home.resolve() / "sql_summaries"
+        assert pm.ext_knowledge_dir == kb_home.resolve() / "ext_knowledge"
+
+        # Other dirs should still live under datus_home
+        assert pm.data_dir == datus_home.resolve() / "data"
+        assert pm.logs_dir == datus_home.resolve() / "logs"
+        assert pm.sessions_dir == datus_home.resolve() / "sessions"
 
 
 class TestDatusPathManagerConfigPaths:

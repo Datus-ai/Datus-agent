@@ -30,14 +30,22 @@ class DatusPathManager:
         >>> sessions_dir = pm.sessions_dir
     """
 
-    def __init__(self, datus_home: Optional[PathLike] = None):
+    def __init__(
+        self,
+        datus_home: Optional[PathLike] = None,
+        knowledge_home: Optional[PathLike] = None,
+    ):
         """
         Initialize the path manager.
 
         Args:
             datus_home: Custom .datus root directory. If None, defaults to ~/.datus
+            knowledge_home: Custom root for knowledge-base directories
+                (``semantic_models``, ``sql_summaries``, ``ext_knowledge``).
+                If None, falls back to ``datus_home`` so behavior is unchanged.
         """
         self._datus_home = self.resolve_home(datus_home)
+        self._knowledge_home = Path(knowledge_home).expanduser().resolve() if knowledge_home else self._datus_home
 
     @staticmethod
     def resolve_home(datus_home: Optional[PathLike] = None) -> Path:
@@ -52,6 +60,8 @@ class DatusPathManager:
 
         Deprecated compatibility helper.
         Prefer creating a new ``DatusPathManager(new_home)`` and passing it explicitly.
+        Note: this keeps ``knowledge_home`` untouched; callers that need to move
+        the knowledge root should create a new ``DatusPathManager`` instance.
 
         Args:
             new_home: New home directory path (can include ~)
@@ -62,6 +72,11 @@ class DatusPathManager:
     def datus_home(self) -> Path:
         """Root .datus directory path"""
         return self._datus_home
+
+    @property
+    def knowledge_home(self) -> Path:
+        """Root directory for knowledge-base data (semantic_models, sql_summaries, ext_knowledge)."""
+        return self._knowledge_home
 
     @property
     def conf_dir(self) -> Path:
@@ -138,18 +153,18 @@ class DatusPathManager:
 
     @property
     def semantic_models_dir(self) -> Path:
-        """Semantic models directory: ~/.datus/semantic_models"""
-        return self._datus_home / "semantic_models"
+        """Semantic models directory: {knowledge_home}/semantic_models"""
+        return self._knowledge_home / "semantic_models"
 
     @property
     def sql_summaries_dir(self) -> Path:
-        """SQL summaries directory: ~/.datus/sql_summaries"""
-        return self._datus_home / "sql_summaries"
+        """SQL summaries directory: {knowledge_home}/sql_summaries"""
+        return self._knowledge_home / "sql_summaries"
 
     @property
     def ext_knowledge_dir(self) -> Path:
-        """ext knowledge directory: ~/.datus/ext_knowledge"""
-        return self._datus_home / "ext_knowledge"
+        """ext knowledge directory: {knowledge_home}/ext_knowledge"""
+        return self._knowledge_home / "ext_knowledge"
 
     # Valid directory names mapping
     _VALID_DIR_NAMES = {

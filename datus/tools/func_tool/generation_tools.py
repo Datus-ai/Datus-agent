@@ -213,9 +213,11 @@ class GenerationTools:
                 f"metric_sqls={metric_sqls}"
             )
 
-            # Resolve absolute paths
+            # Resolve absolute paths — use agent_config so knowledge_home override is respected
             base_dir = str(
-                get_path_manager(self.agent_config.home).semantic_model_path(self.agent_config.current_namespace)
+                get_path_manager(agent_config=self.agent_config).semantic_model_path(
+                    self.agent_config.current_namespace
+                )
             )
             abs_metric = os.path.join(base_dir, metric_file) if not os.path.isabs(metric_file) else metric_file
             abs_semantic = (
