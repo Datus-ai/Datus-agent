@@ -368,7 +368,7 @@ class TestResetPathManager:
         reset_path_manager()
         from datus.utils import path_manager
 
-        assert path_manager._current_datus_home.get() is None
+        assert path_manager._current_path_manager.get() is None
 
     def test_reset_is_safe_from_multiple_threads(self):
         """reset_path_manager can be called from multiple threads without error."""
@@ -397,3 +397,22 @@ class TestResetPathManager:
 
         reset_path_manager(outer_token)
         assert get_path_manager().datus_home == (Path.home() / ".datus").resolve()
+
+    def test_context_var_preserves_knowledge_home_round_trip(self, tmp_path):
+        """Regression: ContextVar used to store only datus_home string, losing knowledge_home."""
+        datus_home = tmp_path / "tenant"
+        kb_home = tmp_path / "shared_kb"
+        pm = DatusPathManager(datus_home=str(datus_home), knowledge_home=str(kb_home))
+
+        token = set_current_path_manager(pm)
+        try:
+            # get_path_manager() must return a manager whose knowledge_home matches the original
+            retrieved = get_path_manager()
+            assert retrieved.knowledge_home == kb_home.resolve()
+            assert retrieved.datus_home == datus_home.resolve()
+            # And the three KB dirs must reflect the stored knowledge_home, not fall back to datus_home
+            assert retrieved.semantic_models_dir == kb_home.resolve() / "semantic_models"
+            assert retrieved.sql_summaries_dir == kb_home.resolve() / "sql_summaries"
+            assert retrieved.ext_knowledge_dir == kb_home.resolve() / "ext_knowledge"
+        finally:
+            reset_path_manager(token)
