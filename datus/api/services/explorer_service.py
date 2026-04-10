@@ -1077,15 +1077,6 @@ class ExplorerService:
             logger.info(f"Successfully updated semantic model entry: {request.entry_id}")
             return Result[dict](success=True, data={})
 
-        except ValueError as e:
-            logger.error(f"Failed to edit semantic model: {e}")
-            from datus.api.models.config_models import ErrorCode
-
-            return Result[dict](
-                success=False,
-                errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                errorMessage=str(e),
-            )
         except Exception as e:
             logger.error(f"Failed to edit semantic model: {e}")
             from datus.api.models.config_models import ErrorCode

@@ -2,9 +2,11 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import os
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import pyarrow as pa
+import yaml
 from datus_storage_base.conditions import And, WhereExpr, eq, in_
 
 from datus.storage.base import BaseEmbeddingStore, EmbeddingModel
@@ -166,10 +168,6 @@ class SemanticModelStorage(BaseEmbeddingStore):
             name: Short name of the entry (table name or column name)
             update_values: Dictionary of vector-DB field names and new values
         """
-        import os
-
-        import yaml
-
         if not os.path.exists(yaml_path):
             return
 

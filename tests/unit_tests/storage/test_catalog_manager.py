@@ -279,7 +279,7 @@ class TestUpdateColumnsMethod:
             allowed_fields={"description"},
         )
         assert len(calls) == 1
-        assert calls[0][0] == "column:t_model.col1"
+        assert calls[0][0] == "column:t.col1"
         assert calls[0][1] == {"description": "new desc"}
 
     def test_update_columns_no_changes_means_no_update(self):
@@ -433,7 +433,7 @@ class TestUpdateSemanticModel:
         updater.update_semantic_model(old_values, update_values)
 
         assert any(
-            entry_id == "table:orders_model" and v.get("description") == "Updated description" for entry_id, v in calls
+            entry_id == "table:orders" and v.get("description") == "Updated description" for entry_id, v in calls
         )
 
     def test_update_semantic_model_description_uses_table_name_fallback(self):
@@ -496,8 +496,7 @@ class TestUpdateSemanticModel:
         updater.update_semantic_model(old_values, update_values)
 
         assert any(
-            entry_id == "column:orders_model.region" and v.get("description") == "new region desc"
-            for entry_id, v in calls
+            entry_id == "column:orders.region" and v.get("description") == "new region desc" for entry_id, v in calls
         )
 
     def test_update_semantic_model_measures(self):
@@ -522,9 +521,7 @@ class TestUpdateSemanticModel:
 
         updater.update_semantic_model(old_values, update_values)
 
-        assert any(
-            entry_id == "column:orders_model.total_amount" and v.get("agg") == "AVERAGE" for entry_id, v in calls
-        )
+        assert any(entry_id == "column:orders.total_amount" and v.get("agg") == "AVERAGE" for entry_id, v in calls)
 
     def test_update_semantic_model_identifiers(self):
         """update_semantic_model updates identifier columns via update_entry."""
@@ -548,6 +545,4 @@ class TestUpdateSemanticModel:
 
         updater.update_semantic_model(old_values, update_values)
 
-        assert any(
-            entry_id == "column:orders_model.order_id" and v.get("entity") == "transaction" for entry_id, v in calls
-        )
+        assert any(entry_id == "column:orders.order_id" and v.get("entity") == "transaction" for entry_id, v in calls)

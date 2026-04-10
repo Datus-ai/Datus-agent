@@ -2,9 +2,11 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import os
 from typing import Any, Dict, List, Optional
 
 import pyarrow as pa
+import yaml
 
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.base import EmbeddingModel
@@ -232,10 +234,6 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
             filepath: Path to the YAML file to update
             update_values: Dictionary of fields to sync
         """
-        import os
-
-        import yaml
-
         if not os.path.exists(filepath):
             return
 

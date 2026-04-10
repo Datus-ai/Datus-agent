@@ -2,9 +2,11 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import os
 from typing import Any, Dict, List, Optional
 
 import pyarrow as pa
+import yaml
 from datus_storage_base.conditions import WhereExpr, in_
 
 from datus.configuration.agent_config import AgentConfig
@@ -16,6 +18,11 @@ logger = get_logger(__name__)
 
 
 class MetricStorage(BaseSubjectEmbeddingStore):
+    _METRIC_DB_TO_YAML = {
+        "description": "description",
+        "metric_type": "type",
+    }
+
     def __init__(self, embedding_model: EmbeddingModel, **kwargs):
         super().__init__(
             table_name="metrics",
@@ -318,15 +325,6 @@ class MetricStorage(BaseSubjectEmbeddingStore):
             name: Name of the metric to update
             update_values: Dict of vector DB field names to new values
         """
-        import os
-
-        import yaml
-
-        _METRIC_DB_TO_YAML = {
-            "description": "description",
-            "metric_type": "type",
-        }
-
         if not os.path.exists(yaml_path):
             return
 
@@ -340,7 +338,7 @@ class MetricStorage(BaseSubjectEmbeddingStore):
             updated = False
             for doc in docs:
                 if doc.get("metric", {}).get("name") == name:
-                    for db_key, yaml_key in _METRIC_DB_TO_YAML.items():
+                    for db_key, yaml_key in self._METRIC_DB_TO_YAML.items():
                         if db_key in update_values:
                             doc["metric"][yaml_key] = update_values[db_key]
                     updated = True

@@ -47,7 +47,7 @@ class CatalogUpdater:
 
         # 1. Update table-level record (description)
         if "description" in update_values:
-            entry_id = f"table:{semantic_model_name or table_name}"
+            entry_id = f"table:{table_name}"
             try:
                 self.semantic_model_storage.update_entry(entry_id, {"description": update_values["description"]})
             except ValueError:
@@ -117,7 +117,7 @@ class CatalogUpdater:
             if not changed:
                 continue
 
-            entry_id = f"column:{semantic_model_name or table_name}.{col_name}"
+            entry_id = f"column:{table_name}.{col_name}"
             try:
                 self.semantic_model_storage.update_entry(entry_id, changed)
             except ValueError:
