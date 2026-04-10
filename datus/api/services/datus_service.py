@@ -48,6 +48,7 @@ class DatusService:
         self._explorer = None
         self._mcp = None
         self._kb = None
+        self._visualization = None
 
     # ------------------------------------------------------------------
     # Read-only properties
@@ -142,6 +143,14 @@ class DatusService:
 
             self._kb = KbService(agent_config=self._agent_config)
         return self._kb
+
+    @property
+    def visualization(self):
+        if self._visualization is None:
+            from datus.api.services.visualization_service import DataVisualizationService
+
+            self._visualization = DataVisualizationService(agent_config=self._agent_config)
+        return self._visualization
 
     # ------------------------------------------------------------------
     # Lifecycle

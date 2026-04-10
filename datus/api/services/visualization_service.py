@@ -1,0 +1,156 @@
+"""Service for data visualization chart recommendations with caching."""
+
+import hashlib
+import json
+from typing import Any, Dict, Optional
+
+import pandas as pd
+
+from datus.api.models.visualization_models import CsvData
+from datus.configuration.agent_config import AgentConfig
+from datus.models.base import LLMBaseModel
+from datus.schemas.visualization import VisualizationInput, VisualizationOutput
+from datus.tools.llms_tools.visualization_tool import VisualizationTool
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
+
+# Map VisualizationTool output chart_type → short frontend key
+_CHART_TYPE_MAP = {
+    "Bar Chart": "Bar",
+    "Line Chart": "Line",
+    "Pie Chart": "Pie",
+    "Scatter Plot": "Scatter",
+    "Unknown": "Unknown",
+}
+
+
+class DataVisualizationService:
+    """Wraps VisualizationTool with result caching and DataFrame conversion."""
+
+    def __init__(self, agent_config: AgentConfig):
+        self._agent_config = agent_config
+        self._tool: Optional[VisualizationTool] = None
+        self._cache: Dict[str, Dict[str, Any]] = {}
+
+    # ------------------------------------------------------------------
+    # Tool (lazy, cached by config identity)
+    # ------------------------------------------------------------------
+
+    def _get_tool(self) -> VisualizationTool:
+        """Return (and cache) a VisualizationTool backed by the project's LLM."""
+        if self._tool is not None:
+            return self._tool
+
+        model = None
+        try:
+            model = LLMBaseModel.create_model(agent_config=self._agent_config)
+        except Exception as exc:
+            logger.warning(f"Unable to initialize visualization model, using heuristics: {exc}")
+
+        self._tool = VisualizationTool(agent_config=self._agent_config, model=model)
+        return self._tool
+
+    # ------------------------------------------------------------------
+    # Cache key
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _cache_key(csv_data: CsvData, chart_type: Optional[str]) -> str:
+        """Compute a stable hash for the request payload."""
+        payload = json.dumps(
+            {"columns": csv_data.columns, "data": csv_data.data, "chart_type": chart_type},
+            sort_keys=True,
+            default=str,
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def generate(
+        self,
+        csv_data: CsvData,
+        chart_type: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Return a chart recommendation dict, using cache when available.
+
+        Returns
+        -------
+        dict with keys ``success``, and either ``data`` or ``errorCode``/``errorMessage``.
+        """
+        key = self._cache_key(csv_data, chart_type)
+
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
+
+        result = self._generate_uncached(csv_data, chart_type)
+        self._cache[key] = result
+        return result
+
+    # ------------------------------------------------------------------
+    # Internal
+    # ------------------------------------------------------------------
+
+    def _generate_uncached(
+        self,
+        csv_data: CsvData,
+        chart_type: Optional[str],
+    ) -> Dict[str, Any]:
+        # ── Build DataFrame ───────────────────────────────────────
+        try:
+            df = pd.DataFrame(csv_data.data, columns=csv_data.columns)
+        except Exception as exc:
+            return {
+                "success": False,
+                "errorCode": "INVALID_DATA",
+                "errorMessage": f"Failed to parse csv_data into DataFrame: {exc}",
+            }
+
+        if df.empty or df.shape[1] == 0:
+            return {
+                "success": False,
+                "errorCode": "EMPTY_DATA",
+                "errorMessage": "Provided dataset is empty or has no columns.",
+            }
+
+        # ── Run VisualizationTool ─────────────────────────────────
+        tool = self._get_tool()
+        try:
+            viz_input = VisualizationInput(data=df)
+            result: VisualizationOutput = tool.execute(viz_input)
+        except Exception as exc:
+            logger.error(f"Visualization tool execution failed: {exc}")
+            return {
+                "success": False,
+                "errorCode": "VISUALIZATION_FAILED",
+                "errorMessage": f"Visualization analysis failed: {exc}",
+            }
+
+        if not result.success:
+            return {
+                "success": False,
+                "errorCode": "VISUALIZATION_FAILED",
+                "errorMessage": result.error or "Visualization analysis failed.",
+            }
+
+        # ── Build response payload ────────────────────────────────
+        mapped_type = _CHART_TYPE_MAP.get(result.chart_type, "Unknown")
+        if chart_type is not None:
+            mapped_type = chart_type
+
+        chart_data: Dict[str, Any] = {"chart_type": mapped_type}
+
+        if mapped_type == "Unknown":
+            chart_data["reason"] = result.reason
+        else:
+            chart_data["x_col"] = result.x_col
+            chart_data["y_cols"] = result.y_cols
+            chart_data["reason"] = result.reason
+
+        return {
+            "success": True,
+            "data": {"data": chart_data},
+        }
