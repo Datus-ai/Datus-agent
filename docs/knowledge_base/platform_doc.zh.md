@@ -189,6 +189,26 @@ titles=["DDL", "CREATE TABLE"]
 
 用于交互式执行 `search_document` 并查看命中文档片段。
 
+## REST API
+
+平台文档也可以通过 REST API 构建，支持 SSE 实时进度推送。这是 Web 前端和自动化场景下的推荐方式。
+
+```bash
+curl -N -X POST http://localhost:8000/api/v1/kb/bootstrap-docs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "platform": "starrocks",
+    "source": "StarRocks/starrocks",
+    "source_type": "github",
+    "paths": ["docs/en"],
+    "build_mode": "overwrite"
+  }'
+```
+
+API 接受与 CLI 相同的参数（映射为 JSON 字段），并以 SSE 事件流推送进度。未提供的字段从 `agent.yml` 中读取。
+
+完整的接口定义、请求/响应格式和 SSE 事件说明请参见 [知识库 API](../API/knowledge_base.zh.md#平台文档构建)。
+
 ## 注意事项与排错
 
 - **GitHub 速率限制**：建议设置 `GITHUB_TOKEN`（或在配置里写 `github_token`）。

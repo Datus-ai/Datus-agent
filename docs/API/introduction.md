@@ -57,3 +57,4 @@ sit at the application root.
 
 - [Deployment](deployment.md) — install and launch the API server
 - [Chat](chat.md) — chat endpoints and SSE streaming
+- [Knowledge Base](knowledge_base.md) — KB bootstrap and platform doc endpoints with SSE

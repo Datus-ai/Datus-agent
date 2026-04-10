@@ -55,3 +55,4 @@ Namespace 隔离由 `--namespace` CLI 参数(或 `DATUS_NAMESPACE` 环境变量)
 
 - [部署](deployment.zh.md) — 安装并启动 API 服务
 - [Chat](chat.zh.md) — Chat 接口与 SSE 流式协议
+- [知识库](knowledge_base.zh.md) — 知识库构建与平台文档接口（SSE 流式）

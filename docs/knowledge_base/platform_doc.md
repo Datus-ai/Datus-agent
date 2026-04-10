@@ -190,6 +190,29 @@ Inside `datus-cli`, use:
 
 This runs `search_document` interactively and shows matched chunks.
 
+## REST API
+
+Platform documentation can also be bootstrapped via the REST API with real-time SSE progress streaming. This is the
+recommended approach for web frontends and automation.
+
+```bash
+curl -N -X POST http://localhost:8000/api/v1/kb/bootstrap-docs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "platform": "starrocks",
+    "source": "StarRocks/starrocks",
+    "source_type": "github",
+    "paths": ["docs/en"],
+    "build_mode": "overwrite"
+  }'
+```
+
+The API accepts the same parameters as the CLI (mapped to JSON fields) and streams progress events as SSE. If a
+field is omitted, the value from `agent.yml` is used.
+
+See [Knowledge Base API](../API/knowledge_base.md#platform-documentation-bootstrap) for the full endpoint reference,
+request/response schema, and SSE event format.
+
 ## Notes and Troubleshooting
 
 - **GitHub API limits**: set `GITHUB_TOKEN` (or `github_token` in config) to avoid rate limiting.
