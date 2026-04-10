@@ -169,7 +169,7 @@ class ChatService:
             )
             node.session_id = session_id
 
-            old_tokens = node._count_session_tokens()
+            old_tokens = await node._count_session_tokens()
             result = await node._manual_compact()
 
             if not result.get("success", False):

@@ -331,6 +331,21 @@ class ChatTaskManager:
                     event_id += 1
 
             # 7. End event
+            token_kwargs: dict = {}
+            try:
+                turn_usage = await node.get_last_turn_usage()
+                if turn_usage:
+                    token_kwargs = {
+                        "requests": turn_usage.requests,
+                        "input_tokens": turn_usage.input_tokens,
+                        "output_tokens": turn_usage.output_tokens,
+                        "total_tokens": turn_usage.total_tokens,
+                        "cached_tokens": turn_usage.cached_tokens,
+                        "session_total_tokens": turn_usage.session_total_tokens,
+                        "context_length": turn_usage.context_length,
+                    }
+            except Exception:
+                logger.debug("Failed to extract turn token usage for end event", exc_info=True)
 
             await self._push_event(
                 task,
@@ -343,6 +358,7 @@ class ChatTaskManager:
                         total_events=event_id,
                         action_count=action_count,
                         duration=(datetime.now() - start_time).total_seconds(),
+                        **token_kwargs,
                     ),
                     timestamp=datetime.now().isoformat() + "Z",
                 ),

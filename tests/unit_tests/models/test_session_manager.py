@@ -1363,6 +1363,97 @@ class TestSessionManagerScope:
         finally:
             manager.close_all_sessions()
 
+
+class TestGetDetailedUsage:
+    """Tests for SessionManager.get_detailed_usage()."""
+
+    def test_nonexistent_session_returns_empty(self, sm):
+        result = sm.get_detailed_usage("nonexistent-session-id")
+        assert result == {"total": {}, "turns": [], "turn_count": 0}
+
+    def test_no_turn_usage_table(self, sm):
+        """Session DB exists but has no turn_usage table."""
+        session_id = "no-usage-table"
+        sm.get_session(session_id)
+        result = sm.get_detailed_usage(session_id)
+        assert result["turn_count"] == 0
+        assert result["turns"] == []
+
+    def test_single_turn(self, sm):
+        session_id = "single-turn"
+        sm.get_session(session_id)
+        db_path = os.path.join(sm.session_dir, f"{session_id}.db")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS turn_usage ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "session_id TEXT NOT NULL, "
+                "branch_id TEXT, "
+                "user_turn_number INTEGER NOT NULL, "
+                "requests INTEGER DEFAULT 0, "
+                "input_tokens INTEGER DEFAULT 0, "
+                "output_tokens INTEGER DEFAULT 0, "
+                "total_tokens INTEGER DEFAULT 0, "
+                "input_tokens_details TEXT, "
+                "output_tokens_details TEXT, "
+                "created_at TEXT)"
+            )
+            conn.execute(
+                "INSERT INTO turn_usage (session_id, user_turn_number, requests, input_tokens, "
+                "output_tokens, total_tokens, input_tokens_details, output_tokens_details) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (session_id, 1, 2, 1000, 200, 1200, '{"cached_tokens": 500}', '{"reasoning_tokens": 10}'),
+            )
+            conn.commit()
+
+        result = sm.get_detailed_usage(session_id)
+        assert result["turn_count"] == 1
+        assert result["total"]["input_tokens"] == 1000
+        assert result["total"]["output_tokens"] == 200
+        assert result["total"]["total_tokens"] == 1200
+        assert result["total"]["cached_tokens"] == 500
+        assert result["total"]["requests"] == 2
+        assert len(result["turns"]) == 1
+        assert result["turns"][0]["input_tokens_details"] == {"cached_tokens": 500}
+        assert result["turns"][0]["output_tokens_details"] == {"reasoning_tokens": 10}
+
+    def test_multiple_turns_aggregated(self, sm):
+        session_id = "multi-turn"
+        sm.get_session(session_id)
+        db_path = os.path.join(sm.session_dir, f"{session_id}.db")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS turn_usage ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "session_id TEXT NOT NULL, "
+                "branch_id TEXT, "
+                "user_turn_number INTEGER NOT NULL, "
+                "requests INTEGER DEFAULT 0, "
+                "input_tokens INTEGER DEFAULT 0, "
+                "output_tokens INTEGER DEFAULT 0, "
+                "total_tokens INTEGER DEFAULT 0, "
+                "input_tokens_details TEXT, "
+                "output_tokens_details TEXT, "
+                "created_at TEXT)"
+            )
+            for turn in range(1, 4):
+                conn.execute(
+                    "INSERT INTO turn_usage (session_id, user_turn_number, requests, input_tokens, "
+                    "output_tokens, total_tokens, input_tokens_details) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (session_id, turn, 1, 100 * turn, 50 * turn, 150 * turn, '{"cached_tokens": 30}'),
+                )
+            conn.commit()
+
+        result = sm.get_detailed_usage(session_id)
+        assert result["turn_count"] == 3
+        assert result["total"]["input_tokens"] == 600  # 100+200+300
+        assert result["total"]["output_tokens"] == 300  # 50+100+150
+        assert result["total"]["total_tokens"] == 900  # 150+300+450
+        assert result["total"]["cached_tokens"] == 90  # 30*3
+        assert len(result["turns"]) == 3
+        assert result["turns"][0]["turn_number"] == 1
+        assert result["turns"][2]["turn_number"] == 3
+
     def test_scope_whitespace_only_uses_session_dir_directly(self, tmp_path):
         """Passing scope='  ' (whitespace only) uses session_dir directly (no subdirectory)."""
         base_dir = str(tmp_path / "sessions")

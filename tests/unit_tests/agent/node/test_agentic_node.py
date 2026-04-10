@@ -1119,3 +1119,120 @@ class TestAutoCompactExtended:
 
         result = asyncio.run(node._auto_compact())
         assert result is True
+
+
+# ---------------------------------------------------------------------------
+# TestGetLastTurnUsage
+# ---------------------------------------------------------------------------
+
+
+class TestGetLastTurnUsage:
+    def test_returns_none_when_no_actions(self):
+        node = _make_node()
+        node.actions = []
+        result = asyncio.run(node.get_last_turn_usage())
+        assert result is None
+
+    def test_returns_none_when_no_usage_in_actions(self):
+        node = _make_node()
+        action = ActionHistory.create_action(
+            role=ActionRole.ASSISTANT,
+            action_type="test",
+            messages="hello",
+            input_data={},
+            output_data={"response": "ok"},
+            status=ActionStatus.SUCCESS,
+        )
+        node.actions = [action]
+        result = asyncio.run(node.get_last_turn_usage())
+        assert result is None
+
+    def test_returns_usage_from_last_assistant_action(self):
+        node = _make_node(context_length=128000)
+        usage_dict = {
+            "requests": 2,
+            "input_tokens": 1000,
+            "output_tokens": 200,
+            "total_tokens": 1200,
+            "cached_tokens": 500,
+            "cache_hit_rate": 0.5,
+            "last_call_input_tokens": 600,
+        }
+        action = ActionHistory.create_action(
+            role=ActionRole.ASSISTANT,
+            action_type="chat_response",
+            messages="result",
+            input_data={},
+            output_data={"response": "ok", "usage": usage_dict},
+            status=ActionStatus.SUCCESS,
+        )
+        node.actions = [action]
+        result = asyncio.run(node.get_last_turn_usage())
+        assert result is not None
+        assert result.input_tokens == 1000
+        assert result.output_tokens == 200
+        assert result.cached_tokens == 500
+        # session_total_tokens should use last_call_input_tokens, not cumulative input_tokens
+        assert result.session_total_tokens == 600
+        assert result.context_length == 128000
+
+    def test_session_total_tokens_falls_back_to_input_tokens(self):
+        """When last_call_input_tokens is missing/zero, fallback to input_tokens."""
+        node = _make_node(context_length=128000)
+        usage_dict = {
+            "requests": 1,
+            "input_tokens": 1000,
+            "output_tokens": 200,
+            "total_tokens": 1200,
+        }
+        action = ActionHistory.create_action(
+            role=ActionRole.ASSISTANT,
+            action_type="chat_response",
+            messages="result",
+            input_data={},
+            output_data={"response": "ok", "usage": usage_dict},
+            status=ActionStatus.SUCCESS,
+        )
+        node.actions = [action]
+        result = asyncio.run(node.get_last_turn_usage())
+        assert result is not None
+        assert result.session_total_tokens == 1000
+
+    def test_skips_tool_actions(self):
+        node = _make_node(context_length=64000)
+        tool_action = ActionHistory.create_action(
+            role=ActionRole.TOOL,
+            action_type="db_query",
+            messages="SELECT 1",
+            input_data={},
+            output_data={"result": "ok"},
+            status=ActionStatus.SUCCESS,
+        )
+        assistant_action = ActionHistory.create_action(
+            role=ActionRole.ASSISTANT,
+            action_type="chat_response",
+            messages="done",
+            input_data={},
+            output_data={"response": "done", "usage": {"input_tokens": 500, "output_tokens": 100, "total_tokens": 600}},
+            status=ActionStatus.SUCCESS,
+        )
+        node.actions = [assistant_action, tool_action]
+        result = asyncio.run(node.get_last_turn_usage())
+        # Should find the assistant action even though tool action is last
+        assert result is not None
+        assert result.input_tokens == 500
+
+    def test_context_length_none_defaults_to_zero(self):
+        node = _make_node(context_length=None)
+        action = ActionHistory.create_action(
+            role=ActionRole.ASSISTANT,
+            action_type="test",
+            messages="r",
+            input_data={},
+            output_data={"usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15}},
+            status=ActionStatus.SUCCESS,
+        )
+        node.actions = [action]
+        result = asyncio.run(node.get_last_turn_usage())
+        assert result is not None
+        assert result.context_length == 0

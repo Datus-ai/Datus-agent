@@ -1102,6 +1102,11 @@ class OpenAICompatibleModel(LLMBaseModel):
         if max_context and total_tokens > 0:
             context_usage_ratio = round(total_tokens / max_context, 3)
 
+        # Last model call's input_tokens = real context window usage
+        last_call_input_tokens = 0
+        if hasattr(usage, "request_usage_entries") and usage.request_usage_entries:
+            last_call_input_tokens = getattr(usage.request_usage_entries[-1], "input_tokens", 0)
+
         return {
             "requests": getattr(usage, "requests", 0),
             "input_tokens": input_tokens,
@@ -1111,6 +1116,7 @@ class OpenAICompatibleModel(LLMBaseModel):
             "reasoning_tokens": reasoning_tokens,
             "cache_hit_rate": cache_hit_rate,
             "context_usage_ratio": context_usage_ratio,
+            "last_call_input_tokens": last_call_input_tokens,
         }
 
     async def _extract_and_distribute_token_usage(self, result, action_history_manager: ActionHistoryManager) -> None:

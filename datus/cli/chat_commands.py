@@ -27,6 +27,7 @@ from datus.cli.action_display.display import ActionHistoryDisplay
 from datus.cli.execution_state import ExecutionInterrupted, auto_submit_interaction
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
+from datus.schemas.token_usage import TokenUsage
 from datus.utils.loggings import get_logger
 from datus.utils.terminal_utils import interrupt_on_escape
 
@@ -391,6 +392,7 @@ class ChatCommands:
                         self.add_in_sql_context(sql, clean_output, incremental_actions)
 
                     self._render_final_response(final_action)
+                    self._display_turn_token_usage(final_action, current_node)
 
                     # Merge node_final_action back for history tracking
                     all_actions = incremental_actions + ([node_final_action] if node_final_action else [])
@@ -457,6 +459,60 @@ class ChatCommands:
 
         if clean_output:
             self._display_markdown_response(clean_output)
+
+    def _get_turn_token_usage(self, final_action: "ActionHistory", node) -> Optional[TokenUsage]:
+        """Extract token usage from the final action or fall back to node lookup."""
+        usage_dict = None
+        if final_action and isinstance(final_action.output, dict) and "usage" in final_action.output:
+            usage_dict = final_action.output["usage"]
+
+        if not usage_dict:
+            try:
+                turn_usage = asyncio.run(node.get_last_turn_usage())
+                return turn_usage
+            except Exception:
+                return None
+
+        tu = TokenUsage.from_usage_dict(usage_dict)
+        tu.session_total_tokens = usage_dict.get("last_call_input_tokens", 0) or tu.input_tokens
+        tu.context_length = getattr(node, "context_length", 0) or 0
+        return tu
+
+    def _get_turn_token_usage_from_node(self, node) -> Optional[dict]:
+        """Get detailed token usage from the node's session manager."""
+        try:
+            if (
+                hasattr(node, "session_manager")
+                and node.session_manager
+                and hasattr(node, "session_id")
+                and node.session_id
+            ):
+                return node.session_manager.get_detailed_usage(node.session_id)
+        except Exception:
+            pass
+        return None
+
+    def _display_turn_token_usage(self, final_action: "ActionHistory", node) -> None:
+        """Display a compact one-line token usage summary after each turn."""
+        tu = self._get_turn_token_usage(final_action, node)
+        if not tu or tu.total_tokens == 0:
+            return
+
+        parts = [f"Tokens: {tu.input_tokens:,} in / {tu.output_tokens:,} out"]
+
+        if tu.cached_tokens > 0:
+            rate = tu.cache_hit_rate * 100
+            parts.append(f"({tu.cached_tokens:,} cached, {rate:.1f}%)")
+
+        if tu.context_length > 0 and tu.session_total_tokens > 0:
+            ratio = tu.session_total_tokens / tu.context_length * 100
+            parts.append(f"| Context: {tu.session_total_tokens:,}/{tu.context_length:,} ({ratio:.1f}%)")
+
+        if tu.requests > 0:
+            parts.append(f"| {tu.requests} calls")
+
+        line = " ".join(parts)
+        self.console.print(f"[dim]{line}[/dim]")
 
     def _find_node_final_action(self, actions: List["ActionHistory"]) -> Optional["ActionHistory"]:
         """Find the node final action (e.g. chat_response) from an action list."""
@@ -886,9 +942,30 @@ class ChatCommands:
 
                 self.console.print(f"[bold green]{node_type} Session Info:[/]")
                 self.console.print(f"  Session ID: {session_info['session_id']}")
-                self.console.print(f"  Token Count: {session_info['token_count']}")
                 self.console.print(f"  Action Count: {session_info['action_count']}")
                 self.console.print(f"  Total Conversations: {len(self.chat_history)}")
+
+                # Detailed token usage
+                turn_usage = self._get_turn_token_usage_from_node(self.current_node)
+                if turn_usage:
+                    total = turn_usage.get("total", {})
+                    total_tokens = total.get("total_tokens", 0)
+                    inp = total.get("input_tokens", 0)
+                    out = total.get("output_tokens", 0)
+                    cached = total.get("cached_tokens", 0)
+                    self.console.print(f"  Token Usage: {total_tokens:,} total ({inp:,} in / {out:,} out)")
+                    if cached > 0:
+                        rate = cached / inp * 100 if inp > 0 else 0
+                        self.console.print(f"  Cached Tokens: {cached:,} ({rate:.1f}% hit rate)")
+                else:
+                    token_count = session_info.get("token_count", 0)
+                    self.console.print(f"  Token Count: {token_count}")
+
+                ctx_length = session_info.get("context_length", 0)
+                ctx_tokens = session_info.get("token_count", 0)
+                if ctx_length and ctx_tokens:
+                    ratio = ctx_tokens / ctx_length * 100
+                    self.console.print(f"  Context: {ctx_tokens:,}/{ctx_length:,} ({ratio:.1f}%)")
 
                 if self.chat_history:
                     self.console.print("\n[bold blue]Recent Conversations:[/]")

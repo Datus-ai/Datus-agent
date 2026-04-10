@@ -286,6 +286,11 @@ class LiteLLMAdapter:
 
         logger.debug(f"Creating LitellmModel with model={self.litellm_model_name}")
 
+        if self.provider == "claude":
+            from datus.models.litellm_cache_control import CacheControlLitellmModel
+
+            return CacheControlLitellmModel(**model_kwargs)
+
         return LitellmModel(**model_kwargs)
 
     def get_completion_kwargs(self) -> dict:

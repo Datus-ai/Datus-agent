@@ -538,6 +538,71 @@ class SessionManager:
             **session_metadata,
         }
 
+    def get_detailed_usage(self, session_id: str) -> Dict[str, Any]:
+        """Query turn_usage table and return aggregated + per-turn token usage."""
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if not os.path.exists(db_path):
+            return {"total": {}, "turns": [], "turn_count": 0}
+
+        total = {
+            "requests": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "cached_tokens": 0,
+        }
+        turns: List[Dict[str, Any]] = []
+
+        try:
+            with sqlite3.connect(db_path, timeout=5.0) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT user_turn_number, requests, input_tokens, output_tokens, "
+                    "total_tokens, input_tokens_details, output_tokens_details, created_at "
+                    "FROM turn_usage WHERE session_id = ? ORDER BY user_turn_number",
+                    (session_id,),
+                )
+                for row in cursor.fetchall():
+                    turn_number, requests, inp, out, tot, inp_details, out_details, created_at = row
+                    total["requests"] += requests or 0
+                    total["input_tokens"] += inp or 0
+                    total["output_tokens"] += out or 0
+                    total["total_tokens"] += tot or 0
+
+                    # Parse JSON detail fields
+                    inp_detail_dict = {}
+                    out_detail_dict = {}
+                    if inp_details:
+                        try:
+                            inp_detail_dict = json.loads(inp_details)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                    if out_details:
+                        try:
+                            out_detail_dict = json.loads(out_details)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+
+                    cached = inp_detail_dict.get("cached_tokens", 0)
+                    total["cached_tokens"] += cached or 0
+
+                    turns.append(
+                        {
+                            "turn_number": turn_number,
+                            "requests": requests or 0,
+                            "input_tokens": inp or 0,
+                            "output_tokens": out or 0,
+                            "total_tokens": tot or 0,
+                            "input_tokens_details": inp_detail_dict,
+                            "output_tokens_details": out_detail_dict,
+                            "created_at": created_at,
+                        }
+                    )
+        except sqlite3.OperationalError:
+            logger.debug(f"turn_usage table not found for session {session_id}")
+
+        return {"total": total, "turns": turns, "turn_count": len(turns)}
+
     @staticmethod
     def _parse_final_output(actions: List[ActionHistory], current_assistant_group: Dict) -> Optional[ActionHistory]:
         """Try to parse sql/output from the last assistant action's messages and update assistant group.

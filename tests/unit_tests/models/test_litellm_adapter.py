@@ -205,13 +205,12 @@ class TestGetAgentsSdkModel:
         headers = {"User-Agent": "datus-agent (cli)"}
         adapter = LiteLLMAdapter(provider="claude", model="claude-sonnet-4", api_key="key", default_headers=headers)
         mock_model = MagicMock()
-        mock_litellm_model_cls = MagicMock(return_value=mock_model)
-        mock_module = MagicMock()
-        mock_module.LitellmModel = mock_litellm_model_cls
-
-        with patch.dict("sys.modules", {"agents.extensions.models.litellm_model": mock_module}):
+        with patch(
+            "datus.models.litellm_cache_control.CacheControlLitellmModel",
+            return_value=mock_model,
+        ) as mock_cls:
             adapter.get_agents_sdk_model()
-        call_kwargs = mock_litellm_model_cls.call_args
+        call_kwargs = mock_cls.call_args
         assert "extra_headers" not in (call_kwargs.kwargs or {})
 
 
@@ -406,3 +405,25 @@ class TestCreateLiteLLMAdapter:
             default_headers=headers,
         )
         assert adapter.default_headers == headers
+
+
+class TestGetAgentsSdkModelRouting:
+    def test_claude_returns_cache_control_subclass(self):
+        from agents.extensions.models.litellm_model import LitellmModel
+
+        from datus.models.litellm_cache_control import CacheControlLitellmModel
+
+        adapter = LiteLLMAdapter(provider="claude", model="claude-sonnet-4", api_key="sk-test")
+        model = adapter.get_agents_sdk_model()
+        assert isinstance(model, CacheControlLitellmModel)
+        assert isinstance(model, LitellmModel)
+
+    def test_openai_returns_plain_litellm_model(self):
+        from agents.extensions.models.litellm_model import LitellmModel
+
+        from datus.models.litellm_cache_control import CacheControlLitellmModel
+
+        adapter = LiteLLMAdapter(provider="openai", model="gpt-4o", api_key="sk-test")
+        model = adapter.get_agents_sdk_model()
+        assert isinstance(model, LitellmModel)
+        assert not isinstance(model, CacheControlLitellmModel)

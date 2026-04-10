@@ -659,6 +659,13 @@ class SSEEndData(BaseModel):
     total_events: int = Field(..., description="Total events sent")
     action_count: int = Field(..., description="Total actions performed")
     duration: float = Field(..., description="Duration in seconds")
+    requests: int = Field(0, description="Number of LLM calls in this turn")
+    input_tokens: int = Field(0, description="Turn input tokens")
+    output_tokens: int = Field(0, description="Turn output tokens")
+    total_tokens: int = Field(0, description="Turn total tokens")
+    cached_tokens: int = Field(0, description="Cache hit tokens")
+    session_total_tokens: int = Field(0, description="Current context window usage (last model call input_tokens)")
+    context_length: int = Field(0, description="Model max context window")
 
 
 class SSEPingData(BaseModel):

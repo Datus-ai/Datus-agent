@@ -3584,6 +3584,7 @@ class TestCmdChatInfoExtended:
 
         mock_node = MagicMock()
         mock_node.get_session_info = mock_get_info
+        mock_node.session_manager = None  # Prevent MagicMock auto-chain for get_detailed_usage
         chat_cmd.current_node = mock_node
         chat_cmd.current_subagent_name = "gensql"
 

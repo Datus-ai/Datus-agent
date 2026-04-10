@@ -32,6 +32,7 @@ from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
     from datus.agent.workflow import Workflow
+    from datus.schemas.token_usage import TokenUsage
     from datus.tools.permission.permission_manager import PermissionManager
     from datus.tools.skill_tools.skill_manager import SkillManager
 
@@ -987,6 +988,21 @@ class AgenticNode(Node):
             "context_remaining": self.context_length - current_tokens if self.context_length else 0,
             "context_length": self.context_length,
         }
+
+    async def get_last_turn_usage(self) -> Optional[TokenUsage]:
+        """Get token usage from the last assistant action that contains usage data."""
+        from datus.schemas.token_usage import TokenUsage as _TokenUsage
+
+        for action in reversed(self.actions):
+            if action.role == ActionRole.ASSISTANT and isinstance(action.output, dict) and "usage" in action.output:
+                usage_dict = action.output["usage"]
+                return _TokenUsage.from_usage_dict(
+                    usage_dict,
+                    session_total_tokens=usage_dict.get("last_call_input_tokens", 0)
+                    or usage_dict.get("input_tokens", 0),
+                    context_length=self.context_length or 0,
+                )
+        return None
 
     def _resolve_workspace_root(self) -> str:
         """

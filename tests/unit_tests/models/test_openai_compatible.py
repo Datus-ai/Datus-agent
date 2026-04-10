@@ -1242,6 +1242,7 @@ class TestExtractUsageInfo:
         usage.input_tokens_details.cached_tokens = 20
         usage.output_tokens_details = MagicMock()
         usage.output_tokens_details.reasoning_tokens = 10
+        usage.request_usage_entries = None
 
         with patch.object(model, "context_length", return_value=128000):
             info = model._extract_usage_info(usage)
@@ -1254,6 +1255,7 @@ class TestExtractUsageInfo:
         assert info["reasoning_tokens"] == 10
         assert info["cache_hit_rate"] == round(20 / 100, 3)
         assert info["context_usage_ratio"] == round(150 / 128000, 3)
+        assert info["last_call_input_tokens"] == 0
 
     def test_zero_input_tokens_no_division_error(self):
         model = _make_model()
@@ -1301,3 +1303,46 @@ class TestExtractUsageInfo:
             info = model._extract_usage_info(usage)
 
         assert info["context_usage_ratio"] == 0
+
+    def test_last_call_input_tokens_from_request_usage_entries(self):
+        """last_call_input_tokens should come from the last request_usage_entry."""
+        model = _make_model()
+        usage = MagicMock()
+        usage.requests = 3
+        usage.input_tokens = 3000  # Cumulative across all calls
+        usage.output_tokens = 500
+        usage.total_tokens = 3500
+        usage.input_tokens_details = None
+        usage.output_tokens_details = None
+
+        # Simulate 3 model calls with increasing input_tokens (context grows)
+        entry1 = MagicMock()
+        entry1.input_tokens = 800
+        entry2 = MagicMock()
+        entry2.input_tokens = 1000
+        entry3 = MagicMock()
+        entry3.input_tokens = 1200  # Last call = real context window usage
+        usage.request_usage_entries = [entry1, entry2, entry3]
+
+        with patch.object(model, "context_length", return_value=128000):
+            info = model._extract_usage_info(usage)
+
+        assert info["last_call_input_tokens"] == 1200
+        assert info["input_tokens"] == 3000  # Cumulative is unchanged
+
+    def test_last_call_input_tokens_empty_entries(self):
+        """last_call_input_tokens should be 0 when request_usage_entries is empty."""
+        model = _make_model()
+        usage = MagicMock()
+        usage.requests = 1
+        usage.input_tokens = 500
+        usage.output_tokens = 100
+        usage.total_tokens = 600
+        usage.input_tokens_details = None
+        usage.output_tokens_details = None
+        usage.request_usage_entries = []
+
+        with patch.object(model, "context_length", return_value=128000):
+            info = model._extract_usage_info(usage)
+
+        assert info["last_call_input_tokens"] == 0
