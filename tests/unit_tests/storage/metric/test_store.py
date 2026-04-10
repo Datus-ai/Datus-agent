@@ -283,31 +283,6 @@ class TestUpdateMetricYaml:
             if os.path.exists(yaml_path):
                 os.remove(yaml_path)
 
-    def test_update_metric_maps_metric_type_to_yaml(self, metric_storage: MetricStorage):
-        """update_entry should map metric_type (DB) -> type (YAML)."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False, encoding="utf-8") as f:
-            yaml_path = f.name
-            docs = [{"metric": {"name": "typed_metric", "type": "simple"}}]
-            yaml.safe_dump_all(docs, f, allow_unicode=True, sort_keys=False)
-
-        try:
-            metric = _make_metric(2, subject_path=["Finance"], yaml_path=yaml_path)
-            metric["name"] = "typed_metric"
-            metric["id"] = "metric:typed_metric"
-            metric["metric_type"] = "simple"
-            metric_storage.batch_store_metrics([metric])
-
-            result = metric_storage.update_entry(["Finance"], "typed_metric", {"metric_type": "derived"})
-            assert result is True
-
-            with open(yaml_path, "r", encoding="utf-8") as f:
-                docs_out = [d for d in yaml.safe_load_all(f) if d is not None]
-
-            assert docs_out[0]["metric"]["type"] == "derived"
-        finally:
-            if os.path.exists(yaml_path):
-                os.remove(yaml_path)
-
     def test_update_metric_no_yaml_path_still_succeeds(self, metric_storage: MetricStorage):
         """update_entry without yaml_path should update vector DB and return True."""
         metric = _make_metric(3, subject_path=["Finance", "Revenue"])
@@ -353,3 +328,287 @@ class TestUpdateMetricYaml:
         finally:
             if os.path.exists(yaml_path):
                 os.remove(yaml_path)
+
+
+# ---------------------------------------------------------------------------
+# YAML subject_tree sync on rename
+# ---------------------------------------------------------------------------
+
+
+class TestRenameMetricSubjectTreeYaml:
+    """Tests for YAML subject_tree sync in rename."""
+
+    def test_rename_move_replaces_subject_tree_tag(self, metric_storage: MetricStorage):
+        """Moving a metric to a new parent path should replace subject_tree in locked_metadata.tags."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False, encoding="utf-8") as f:
+            yaml_path = f.name
+            docs = [
+                {
+                    "metric": {
+                        "name": "move_me",
+                        "description": "to be moved",
+                        "locked_metadata": {"tags": ["subject_tree: Finance/Revenue", "other_tag"]},
+                    }
+                }
+            ]
+            yaml.safe_dump_all(docs, f, allow_unicode=True, sort_keys=False)
+
+        try:
+            # Pre-create the destination subject path so rename() can resolve it
+            metric_storage.subject_tree.find_or_create_path(["Finance", "Costs"])
+
+            metric = _make_metric(1, subject_path=["Finance", "Revenue"], yaml_path=yaml_path)
+            metric["name"] = "move_me"
+            metric["id"] = "metric:move_me"
+            metric_storage.batch_store_metrics([metric])
+
+            result = metric_storage.rename(
+                ["Finance", "Revenue", "move_me"],
+                ["Finance", "Costs", "move_me"],
+            )
+            assert result is True
+
+            with open(yaml_path, "r", encoding="utf-8") as f:
+                docs_out = [d for d in yaml.safe_load_all(f) if d is not None]
+            tags = docs_out[0]["metric"]["locked_metadata"]["tags"]
+            assert "subject_tree: Finance/Costs" in tags
+            assert "subject_tree: Finance/Revenue" not in tags
+            assert "other_tag" in tags  # unrelated tag preserved
+        finally:
+            if os.path.exists(yaml_path):
+                os.remove(yaml_path)
+
+    def test_rename_move_appends_subject_tree_tag_when_missing(self, metric_storage: MetricStorage):
+        """Moving a metric with no existing subject_tree tag should append a new one."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False, encoding="utf-8") as f:
+            yaml_path = f.name
+            docs = [{"metric": {"name": "untagged", "description": "no subject tree tag"}}]
+            yaml.safe_dump_all(docs, f, allow_unicode=True, sort_keys=False)
+
+        try:
+            metric_storage.subject_tree.find_or_create_path(["Finance", "Costs"])
+
+            metric = _make_metric(2, subject_path=["Finance", "Revenue"], yaml_path=yaml_path)
+            metric["name"] = "untagged"
+            metric["id"] = "metric:untagged"
+            metric_storage.batch_store_metrics([metric])
+
+            result = metric_storage.rename(
+                ["Finance", "Revenue", "untagged"],
+                ["Finance", "Costs", "untagged"],
+            )
+            assert result is True
+
+            with open(yaml_path, "r", encoding="utf-8") as f:
+                docs_out = [d for d in yaml.safe_load_all(f) if d is not None]
+            tags = docs_out[0]["metric"]["locked_metadata"]["tags"]
+            assert tags == ["subject_tree: Finance/Costs"]
+        finally:
+            if os.path.exists(yaml_path):
+                os.remove(yaml_path)
+
+    def test_rename_only_does_not_touch_subject_tree_tag(self, metric_storage: MetricStorage):
+        """Renaming without moving should leave YAML subject_tree untouched."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False, encoding="utf-8") as f:
+            yaml_path = f.name
+            docs = [
+                {
+                    "metric": {
+                        "name": "old_name",
+                        "description": "same parent",
+                        "locked_metadata": {"tags": ["subject_tree: Finance/Revenue"]},
+                    }
+                }
+            ]
+            yaml.safe_dump_all(docs, f, allow_unicode=True, sort_keys=False)
+
+        try:
+            metric = _make_metric(3, subject_path=["Finance", "Revenue"], yaml_path=yaml_path)
+            metric["name"] = "old_name"
+            metric["id"] = "metric:old_name"
+            metric_storage.batch_store_metrics([metric])
+
+            result = metric_storage.rename(
+                ["Finance", "Revenue", "old_name"],
+                ["Finance", "Revenue", "new_name"],
+            )
+            assert result is True
+
+            with open(yaml_path, "r", encoding="utf-8") as f:
+                docs_out = [d for d in yaml.safe_load_all(f) if d is not None]
+            tags = docs_out[0]["metric"]["locked_metadata"]["tags"]
+            # YAML subject_tree tag unchanged — rename() does not touch it when parent is unchanged
+            assert tags == ["subject_tree: Finance/Revenue"]
+        finally:
+            if os.path.exists(yaml_path):
+                os.remove(yaml_path)
+
+    def test_rename_move_without_yaml_path_still_succeeds(self, metric_storage: MetricStorage):
+        """Moving a metric without a yaml_path should still return True."""
+        metric_storage.subject_tree.find_or_create_path(["Finance", "Costs"])
+
+        metric = _make_metric(4, subject_path=["Finance", "Revenue"])
+        metric["name"] = "no_yaml_move"
+        metric["id"] = "metric:no_yaml_move"
+        metric["yaml_path"] = ""
+        metric_storage.batch_store_metrics([metric])
+
+        result = metric_storage.rename(
+            ["Finance", "Revenue", "no_yaml_move"],
+            ["Finance", "Costs", "no_yaml_move"],
+        )
+        assert result is True
+
+
+# ---------------------------------------------------------------------------
+# YAML subject_tree sync when a subject_node is renamed/moved
+# ---------------------------------------------------------------------------
+
+
+class TestSyncYamlSubjectTreeForSubtree:
+    """Tests for sync_yaml_subject_tree_for_subtree — triggered after a
+    subject_tree node is renamed/moved, to sync YAML files of all descendants.
+    """
+
+    def _write_metric_yaml(self, tmp_path, metric_name: str, subject_tree_tag: str) -> str:
+        """Write a simple metric YAML with a subject_tree tag and return its path."""
+        yaml_path = os.path.join(tmp_path, f"{metric_name}.yml")
+        docs = [
+            {
+                "metric": {
+                    "name": metric_name,
+                    "description": f"desc for {metric_name}",
+                    "locked_metadata": {"tags": [f"subject_tree: {subject_tree_tag}", "keep_me"]},
+                }
+            }
+        ]
+        with open(yaml_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump_all(docs, f, allow_unicode=True, sort_keys=False)
+        return yaml_path
+
+    def _read_subject_tree_tags(self, yaml_path: str, metric_name: str) -> list:
+        with open(yaml_path, "r", encoding="utf-8") as f:
+            docs = [d for d in yaml.safe_load_all(f) if d is not None]
+        for doc in docs:
+            if doc.get("metric", {}).get("name") == metric_name:
+                return doc["metric"]["locked_metadata"]["tags"]
+        return []
+
+    def test_rename_node_syncs_yaml_for_direct_and_descendant_metrics(self, metric_storage: MetricStorage, tmp_path):
+        """Renaming an intermediate subject_node should update YAML subject_tree for
+        metrics under that node AND metrics under descendant nodes."""
+        tmp_path_str = str(tmp_path)
+
+        # Create subject tree:  Finance / Revenue / Q1
+        #                                         \ Detail (sub-folder of Q1)
+        metric_storage.subject_tree.find_or_create_path(["Finance", "Revenue", "Q1"])
+        metric_storage.subject_tree.find_or_create_path(["Finance", "Revenue", "Q1", "Detail"])
+
+        # Write YAML files referencing the OLD subject_tree paths
+        top_yaml = self._write_metric_yaml(tmp_path_str, "top_metric", "Finance/Revenue/Q1")
+        deep_yaml = self._write_metric_yaml(tmp_path_str, "deep_metric", "Finance/Revenue/Q1/Detail")
+
+        # Insert metrics pointing at each path
+        top_metric = _make_metric(10, subject_path=["Finance", "Revenue", "Q1"], yaml_path=top_yaml)
+        top_metric["name"] = "top_metric"
+        top_metric["id"] = "metric:top_metric"
+
+        deep_metric = _make_metric(11, subject_path=["Finance", "Revenue", "Q1", "Detail"], yaml_path=deep_yaml)
+        deep_metric["name"] = "deep_metric"
+        deep_metric["id"] = "metric:deep_metric"
+
+        metric_storage.batch_store_metrics([top_metric, deep_metric])
+
+        # Capture node_id BEFORE rename (stable across rename)
+        q1_node = metric_storage.subject_tree.get_node_by_path(["Finance", "Revenue", "Q1"])
+        assert q1_node is not None
+        root_id = q1_node["node_id"]
+
+        # Rename Q1 -> Quarter1 (in place)
+        metric_storage.subject_tree.rename(
+            ["Finance", "Revenue", "Q1"],
+            ["Finance", "Revenue", "Quarter1"],
+        )
+
+        # Sync YAML files for the renamed subtree
+        metric_storage.sync_yaml_subject_tree_for_subtree(root_id)
+
+        # Both YAMLs should reflect the new path
+        top_tags = self._read_subject_tree_tags(top_yaml, "top_metric")
+        assert "subject_tree: Finance/Revenue/Quarter1" in top_tags
+        assert "subject_tree: Finance/Revenue/Q1" not in top_tags
+        assert "keep_me" in top_tags
+
+        deep_tags = self._read_subject_tree_tags(deep_yaml, "deep_metric")
+        assert "subject_tree: Finance/Revenue/Quarter1/Detail" in deep_tags
+        assert "subject_tree: Finance/Revenue/Q1/Detail" not in deep_tags
+        assert "keep_me" in deep_tags
+
+        try:
+            pass
+        finally:
+            for p in (top_yaml, deep_yaml):
+                if os.path.exists(p):
+                    os.remove(p)
+
+    def test_move_node_syncs_yaml_for_descendant_metrics(self, metric_storage: MetricStorage, tmp_path):
+        """Moving a subject_node to a different parent should update YAML subject_tree
+        for all descendant metrics."""
+        tmp_path_str = str(tmp_path)
+
+        metric_storage.subject_tree.find_or_create_path(["Finance", "Revenue", "Q1"])
+        metric_storage.subject_tree.find_or_create_path(["Finance", "Costs"])
+
+        yaml_path = self._write_metric_yaml(tmp_path_str, "movable", "Finance/Revenue/Q1")
+
+        metric = _make_metric(12, subject_path=["Finance", "Revenue", "Q1"], yaml_path=yaml_path)
+        metric["name"] = "movable"
+        metric["id"] = "metric:movable"
+        metric_storage.batch_store_metrics([metric])
+
+        q1_node = metric_storage.subject_tree.get_node_by_path(["Finance", "Revenue", "Q1"])
+        assert q1_node is not None
+        root_id = q1_node["node_id"]
+
+        # Move Q1 from Finance/Revenue to Finance/Costs
+        metric_storage.subject_tree.rename(
+            ["Finance", "Revenue", "Q1"],
+            ["Finance", "Costs", "Q1"],
+        )
+
+        metric_storage.sync_yaml_subject_tree_for_subtree(root_id)
+
+        tags = self._read_subject_tree_tags(yaml_path, "movable")
+        assert "subject_tree: Finance/Costs/Q1" in tags
+        assert "subject_tree: Finance/Revenue/Q1" not in tags
+
+        try:
+            pass
+        finally:
+            if os.path.exists(yaml_path):
+                os.remove(yaml_path)
+
+    def test_sync_skips_entries_without_yaml_path(self, metric_storage: MetricStorage, tmp_path):
+        """Metrics with an empty yaml_path should be silently skipped."""
+        metric_storage.subject_tree.find_or_create_path(["Finance", "Revenue", "Q1"])
+
+        metric = _make_metric(13, subject_path=["Finance", "Revenue", "Q1"])
+        metric["name"] = "no_yaml"
+        metric["id"] = "metric:no_yaml"
+        metric["yaml_path"] = ""
+        metric_storage.batch_store_metrics([metric])
+
+        q1_node = metric_storage.subject_tree.get_node_by_path(["Finance", "Revenue", "Q1"])
+        root_id = q1_node["node_id"]
+
+        # Should not raise
+        metric_storage.sync_yaml_subject_tree_for_subtree(root_id)
+
+    def test_sync_handles_subtree_with_no_metrics(self, metric_storage: MetricStorage):
+        """A subtree with no metric entries should be a no-op (no errors)."""
+        metric_storage.subject_tree.find_or_create_path(["Empty", "Branch"])
+        node = metric_storage.subject_tree.get_node_by_path(["Empty", "Branch"])
+        assert node is not None
+
+        # Should not raise
+        metric_storage.sync_yaml_subject_tree_for_subtree(node["node_id"])

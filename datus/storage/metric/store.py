@@ -18,9 +18,10 @@ logger = get_logger(__name__)
 
 
 class MetricStorage(BaseSubjectEmbeddingStore):
+    # Only fields editable through the CLI panel (MetricsPanel) are synced to YAML.
+    # Other metric fields (metric_type, type_params, etc.) are not exposed for UI edits.
     _METRIC_DB_TO_YAML = {
         "description": "description",
-        "metric_type": "type",
     }
 
     def __init__(self, embedding_model: EmbeddingModel, **kwargs):
@@ -350,6 +351,134 @@ class MetricStorage(BaseSubjectEmbeddingStore):
 
         except Exception as e:
             logger.error(f"Failed to update yaml file {yaml_path}: {e}")
+
+    def rename(self, old_path: List[str], new_path: List[str]) -> bool:
+        """Rename or move a metric entry and sync subject_tree to the YAML file.
+
+        When the parent subject path changes, update the metric's
+        ``locked_metadata.tags`` entry to reflect the new subject_tree.
+
+        Args:
+            old_path: Current full path (subject_path + name)
+            new_path: Target full path (subject_path + name)
+
+        Returns:
+            True on successful rename.
+        """
+        # Pre-query yaml_paths BEFORE the rename, using the old path
+        yaml_paths: List[str] = []
+        if len(old_path) >= 2:
+            try:
+                metrics = self.search_all_metrics(
+                    subject_path=old_path,
+                    select_fields=["name", "yaml_path"],
+                )
+                yaml_paths = list({m.get("yaml_path") for m in metrics if m.get("yaml_path")})
+            except Exception as e:
+                logger.warning(f"Failed to query yaml_path before metric rename: {e}")
+
+        result = super().rename(old_path, new_path)
+
+        # Sync subject_tree to YAML only when the parent path actually changes
+        old_parent = old_path[:-1] if len(old_path) >= 2 else []
+        new_parent = new_path[:-1] if len(new_path) >= 2 else []
+        if result and old_parent != new_parent and yaml_paths:
+            new_name = new_path[-1]
+            for yaml_path in yaml_paths:
+                self._sync_metric_subject_tree_to_yaml(yaml_path, new_name, new_parent)
+
+        return result
+
+    def _sync_metric_subject_tree_to_yaml(self, yaml_path: str, metric_name: str, new_parent_path: List[str]) -> None:
+        """Update the metric's locked_metadata.tags subject_tree entry in YAML.
+
+        Tag format: ``"subject_tree: path/component1/component2"``.
+        Replaces an existing subject_tree tag if present, otherwise appends it.
+
+        Args:
+            yaml_path: Path to the YAML file containing the metric
+            metric_name: Name of the metric to locate in the YAML
+            new_parent_path: New subject path components (excluding the metric name)
+        """
+        if not os.path.exists(yaml_path):
+            return
+
+        try:
+            with open(yaml_path, "r", encoding="utf-8") as f:
+                docs = list(yaml.safe_load_all(f))
+
+            docs = [doc for doc in docs if doc is not None]
+            new_tag = f"subject_tree: {'/'.join(new_parent_path)}"
+
+            updated = False
+            for doc in docs:
+                if doc.get("metric", {}).get("name") != metric_name:
+                    continue
+                metric = doc["metric"]
+                locked_metadata = metric.setdefault("locked_metadata", {})
+                tags = locked_metadata.setdefault("tags", [])
+
+                replaced = False
+                for i, tag in enumerate(tags):
+                    if isinstance(tag, str) and tag.startswith("subject_tree:"):
+                        tags[i] = new_tag
+                        replaced = True
+                        break
+                if not replaced:
+                    tags.append(new_tag)
+                updated = True
+
+            if updated:
+                with open(yaml_path, "w", encoding="utf-8") as f:
+                    yaml.safe_dump_all(docs, f, allow_unicode=True, sort_keys=False)
+                logger.info(f"Updated subject_tree for metric '{metric_name}' in yaml file: {yaml_path}")
+
+        except Exception as e:
+            logger.error(f"Failed to sync subject_tree to yaml {yaml_path}: {e}")
+
+    def sync_yaml_subject_tree_for_subtree(self, root_node_id: int) -> None:
+        """Sync the ``subject_tree`` tag in metric YAML files for a whole subtree.
+
+        Intended to be called AFTER a subject_tree node has been renamed or moved
+        (via ``SubjectTreeStore.rename``). Walks ``root_node_id`` and all descendant
+        nodes, re-computes each node's full path from the (already updated)
+        subject_tree, and rewrites the ``locked_metadata.tags`` subject_tree entry
+        for every metric whose ``subject_node_id`` matches.
+
+        Vector DB rows are not touched here -- only the YAML files on disk.
+
+        Args:
+            root_node_id: ID of the renamed/moved subject node.
+        """
+        try:
+            descendants = self.subject_tree.get_descendants(root_node_id)
+        except Exception as e:
+            logger.warning(f"Failed to enumerate descendants of node {root_node_id}: {e}")
+            return
+
+        node_ids = [root_node_id] + [d["node_id"] for d in descendants]
+
+        for node_id in node_ids:
+            try:
+                new_parent_path = self.subject_tree.get_full_path(node_id)
+            except Exception as e:
+                logger.warning(f"Failed to compute full path for node {node_id}: {e}")
+                continue
+
+            if not new_parent_path:
+                continue
+
+            try:
+                entries = self.list_entries(node_id)
+            except Exception as e:
+                logger.warning(f"Failed to list metrics under node {node_id}: {e}")
+                continue
+
+            for entry in entries:
+                yaml_path = entry.get("yaml_path")
+                name = entry.get("name")
+                if yaml_path and name:
+                    self._sync_metric_subject_tree_to_yaml(yaml_path, name, new_parent_path)
 
 
 class MetricRAG:

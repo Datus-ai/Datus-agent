@@ -260,6 +260,113 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
         except Exception as e:
             logger.error(f"Failed to update yaml file {filepath}: {e}")
 
+    def rename(self, old_path: List[str], new_path: List[str]) -> bool:
+        """Rename or move a reference SQL entry and sync subject_tree to YAML.
+
+        When the parent subject path changes, update the top-level
+        ``subject_tree`` field in the YAML file to reflect the new path.
+
+        Args:
+            old_path: Current full path (subject_path + name)
+            new_path: Target full path (subject_path + name)
+
+        Returns:
+            True on successful rename.
+        """
+        # Pre-query filepaths BEFORE the rename, using the old path
+        filepaths: List[str] = []
+        if len(old_path) >= 2:
+            try:
+                entries = self.search_all_reference_sql(
+                    subject_path=old_path,
+                    select_fields=["name", "filepath"],
+                )
+                filepaths = list({e.get("filepath") for e in entries if e.get("filepath")})
+            except Exception as e:
+                logger.warning(f"Failed to query filepath before reference sql rename: {e}")
+
+        result = super().rename(old_path, new_path)
+
+        # Sync subject_tree to YAML only when the parent path actually changes
+        old_parent = old_path[:-1] if len(old_path) >= 2 else []
+        new_parent = new_path[:-1] if len(new_path) >= 2 else []
+        if result and old_parent != new_parent and filepaths:
+            for filepath in filepaths:
+                self._sync_reference_sql_subject_tree_to_yaml(filepath, new_parent)
+
+        return result
+
+    def _sync_reference_sql_subject_tree_to_yaml(self, filepath: str, new_parent_path: List[str]) -> None:
+        """Update the top-level ``subject_tree`` field in a reference SQL YAML file.
+
+        Args:
+            filepath: Path to the YAML file
+            new_parent_path: New subject path components (excluding the entry name)
+        """
+        if not os.path.exists(filepath):
+            return
+
+        try:
+            with open(filepath, encoding="utf-8") as f:
+                doc = yaml.safe_load(f)
+
+            if not isinstance(doc, dict):
+                return
+
+            doc["subject_tree"] = "/".join(new_parent_path)
+
+            with open(filepath, "w", encoding="utf-8") as f:
+                yaml.safe_dump(doc, f, allow_unicode=True, sort_keys=False)
+
+            logger.info(f"Updated subject_tree in reference SQL yaml file: {filepath}")
+        except Exception as e:
+            logger.error(f"Failed to sync subject_tree to yaml {filepath}: {e}")
+
+    def sync_yaml_subject_tree_for_subtree(self, root_node_id: int) -> None:
+        """Sync the ``subject_tree`` field in reference SQL YAML files for a subtree.
+
+        Intended to be called AFTER a subject_tree node has been renamed or moved
+        (via ``SubjectTreeStore.rename``). Walks ``root_node_id`` and all descendant
+        nodes, re-computes each node's full path from the (already updated)
+        subject_tree, and rewrites the top-level ``subject_tree`` field for every
+        reference SQL whose ``subject_node_id`` matches.
+
+        Vector DB rows are not touched here -- only the YAML files on disk.
+
+        Args:
+            root_node_id: ID of the renamed/moved subject node.
+        """
+        try:
+            descendants = self.subject_tree.get_descendants(root_node_id)
+        except Exception as e:
+            logger.warning(f"Failed to enumerate descendants of node {root_node_id}: {e}")
+            return
+
+        node_ids = [root_node_id] + [d["node_id"] for d in descendants]
+
+        for node_id in node_ids:
+            try:
+                new_parent_path = self.subject_tree.get_full_path(node_id)
+            except Exception as e:
+                logger.warning(f"Failed to compute full path for node {node_id}: {e}")
+                continue
+
+            if not new_parent_path:
+                continue
+
+            try:
+                entries = self.list_entries(node_id)
+            except Exception as e:
+                logger.warning(f"Failed to list reference SQL entries under node {node_id}: {e}")
+                continue
+
+            seen: set = set()
+            for entry in entries:
+                filepath = entry.get("filepath")
+                if filepath and filepath not in seen:
+                    seen.add(filepath)
+                    self._sync_reference_sql_subject_tree_to_yaml(filepath, new_parent_path)
+
 
 class ReferenceSqlRAG:
     """RAG interface for reference SQL operations.

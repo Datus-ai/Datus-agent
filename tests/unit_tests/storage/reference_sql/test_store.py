@@ -512,3 +512,223 @@ class TestUpdateReferenceSqlYaml:
             assert updated_doc["sql"] == "SELECT * FROM sales"
         finally:
             os.unlink(tmp_file.name)
+
+
+# ---------------------------------------------------------------------------
+# YAML subject_tree sync on rename
+# ---------------------------------------------------------------------------
+
+
+class TestRenameReferenceSqlSubjectTreeYaml:
+    """Tests for YAML subject_tree sync in rename."""
+
+    def test_rename_move_rewrites_subject_tree(self, ref_sql_storage):
+        """Moving an entry to a new parent should rewrite the top-level subject_tree field."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8") as tmp_file:
+            yaml.dump(
+                {
+                    "name": "move_me",
+                    "sql": "SELECT 1",
+                    "summary": "summary",
+                    "search_text": "search",
+                    "tags": "tagA",
+                    "subject_tree": "Analytics/Reports",
+                    "comment": "untouched",
+                },
+                tmp_file,
+            )
+
+        try:
+            # Pre-create the target subject path so rename() can resolve it
+            ref_sql_storage.subject_tree.find_or_create_path(["Analytics", "Dashboards"])
+
+            item = _make_sql_item(1, subject_path=["Analytics", "Reports"], name="move_me")
+            item["filepath"] = tmp_file.name
+            ref_sql_storage.batch_store_sql([item])
+
+            result = ref_sql_storage.rename(
+                ["Analytics", "Reports", "move_me"],
+                ["Analytics", "Dashboards", "move_me"],
+            )
+            assert result is True
+
+            with open(tmp_file.name, encoding="utf-8") as f:
+                updated_doc = yaml.safe_load(f)
+            assert updated_doc["subject_tree"] == "Analytics/Dashboards"
+            # Unrelated fields preserved
+            assert updated_doc["comment"] == "untouched"
+            assert updated_doc["sql"] == "SELECT 1"
+        finally:
+            os.unlink(tmp_file.name)
+
+    def test_rename_only_does_not_touch_subject_tree(self, ref_sql_storage):
+        """Renaming without moving should leave YAML subject_tree untouched."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8") as tmp_file:
+            yaml.dump(
+                {
+                    "name": "old_name",
+                    "sql": "SELECT 1",
+                    "summary": "summary",
+                    "search_text": "search",
+                    "tags": "tagA",
+                    "subject_tree": "Analytics/Reports",
+                },
+                tmp_file,
+            )
+
+        try:
+            item = _make_sql_item(2, subject_path=["Analytics", "Reports"], name="old_name")
+            item["filepath"] = tmp_file.name
+            ref_sql_storage.batch_store_sql([item])
+
+            result = ref_sql_storage.rename(
+                ["Analytics", "Reports", "old_name"],
+                ["Analytics", "Reports", "new_name"],
+            )
+            assert result is True
+
+            with open(tmp_file.name, encoding="utf-8") as f:
+                updated_doc = yaml.safe_load(f)
+            # YAML subject_tree untouched when only the entry name changes
+            assert updated_doc["subject_tree"] == "Analytics/Reports"
+        finally:
+            os.unlink(tmp_file.name)
+
+    def test_rename_move_without_filepath_still_succeeds(self, ref_sql_storage):
+        """Moving an entry with no filepath should still return True."""
+        ref_sql_storage.subject_tree.find_or_create_path(["Analytics", "Dashboards"])
+
+        item = _make_sql_item(3, subject_path=["Analytics", "Reports"], name="no_filepath")
+        item["filepath"] = ""
+        ref_sql_storage.batch_store_sql([item])
+
+        result = ref_sql_storage.rename(
+            ["Analytics", "Reports", "no_filepath"],
+            ["Analytics", "Dashboards", "no_filepath"],
+        )
+        assert result is True
+
+
+# ---------------------------------------------------------------------------
+# YAML subject_tree sync when a subject_node is renamed/moved
+# ---------------------------------------------------------------------------
+
+
+class TestSyncYamlSubjectTreeForSubtreeRefSql:
+    """Tests for sync_yaml_subject_tree_for_subtree — triggered after a
+    subject_tree node is renamed/moved, to sync YAML files of all descendants.
+    """
+
+    def _write_ref_sql_yaml(self, tmp_path, name: str, subject_tree_value: str, sql: str) -> str:
+        filepath = os.path.join(tmp_path, f"{name}.yaml")
+        with open(filepath, "w", encoding="utf-8") as f:
+            yaml.safe_dump(
+                {
+                    "name": name,
+                    "sql": sql,
+                    "summary": f"summary for {name}",
+                    "search_text": f"search for {name}",
+                    "tags": "tagA",
+                    "subject_tree": subject_tree_value,
+                    "comment": "keep_me",
+                },
+                f,
+                allow_unicode=True,
+                sort_keys=False,
+            )
+        return filepath
+
+    def test_rename_node_syncs_yaml_for_direct_and_descendant_ref_sql(self, ref_sql_storage, tmp_path):
+        """Renaming an intermediate subject_node should update YAML subject_tree for
+        reference SQL entries under that node AND under descendant nodes."""
+        tmp_path_str = str(tmp_path)
+
+        # Create subject tree: Analytics / Reports / Q1 / Detail
+        ref_sql_storage.subject_tree.find_or_create_path(["Analytics", "Reports", "Q1"])
+        ref_sql_storage.subject_tree.find_or_create_path(["Analytics", "Reports", "Q1", "Detail"])
+
+        top_fp = self._write_ref_sql_yaml(tmp_path_str, "top_query", "Analytics/Reports/Q1", "SELECT 1")
+        deep_fp = self._write_ref_sql_yaml(tmp_path_str, "deep_query", "Analytics/Reports/Q1/Detail", "SELECT 2")
+
+        top_item = _make_sql_item(10, subject_path=["Analytics", "Reports", "Q1"], name="top_query", sql="SELECT 1")
+        top_item["filepath"] = top_fp
+        deep_item = _make_sql_item(
+            11, subject_path=["Analytics", "Reports", "Q1", "Detail"], name="deep_query", sql="SELECT 2"
+        )
+        deep_item["filepath"] = deep_fp
+        ref_sql_storage.batch_store_sql([top_item, deep_item])
+
+        q1_node = ref_sql_storage.subject_tree.get_node_by_path(["Analytics", "Reports", "Q1"])
+        assert q1_node is not None
+        root_id = q1_node["node_id"]
+
+        # Rename Q1 -> Quarter1 in place
+        ref_sql_storage.subject_tree.rename(
+            ["Analytics", "Reports", "Q1"],
+            ["Analytics", "Reports", "Quarter1"],
+        )
+
+        ref_sql_storage.sync_yaml_subject_tree_for_subtree(root_id)
+
+        with open(top_fp, encoding="utf-8") as f:
+            top_doc = yaml.safe_load(f)
+        assert top_doc["subject_tree"] == "Analytics/Reports/Quarter1"
+        assert top_doc["comment"] == "keep_me"
+
+        with open(deep_fp, encoding="utf-8") as f:
+            deep_doc = yaml.safe_load(f)
+        assert deep_doc["subject_tree"] == "Analytics/Reports/Quarter1/Detail"
+        assert deep_doc["comment"] == "keep_me"
+
+    def test_move_node_syncs_yaml_for_descendant_ref_sql(self, ref_sql_storage, tmp_path):
+        """Moving a subject_node to a different parent should update YAML subject_tree
+        for all descendant reference SQL entries."""
+        tmp_path_str = str(tmp_path)
+
+        ref_sql_storage.subject_tree.find_or_create_path(["Analytics", "Reports", "Q1"])
+        ref_sql_storage.subject_tree.find_or_create_path(["Analytics", "Dashboards"])
+
+        fp = self._write_ref_sql_yaml(tmp_path_str, "movable", "Analytics/Reports/Q1", "SELECT 1")
+
+        item = _make_sql_item(12, subject_path=["Analytics", "Reports", "Q1"], name="movable", sql="SELECT 1")
+        item["filepath"] = fp
+        ref_sql_storage.batch_store_sql([item])
+
+        q1_node = ref_sql_storage.subject_tree.get_node_by_path(["Analytics", "Reports", "Q1"])
+        assert q1_node is not None
+        root_id = q1_node["node_id"]
+
+        # Move Q1 from Analytics/Reports to Analytics/Dashboards
+        ref_sql_storage.subject_tree.rename(
+            ["Analytics", "Reports", "Q1"],
+            ["Analytics", "Dashboards", "Q1"],
+        )
+
+        ref_sql_storage.sync_yaml_subject_tree_for_subtree(root_id)
+
+        with open(fp, encoding="utf-8") as f:
+            doc = yaml.safe_load(f)
+        assert doc["subject_tree"] == "Analytics/Dashboards/Q1"
+
+    def test_sync_skips_entries_without_filepath(self, ref_sql_storage, tmp_path):
+        """Reference SQL entries with an empty filepath should be silently skipped."""
+        ref_sql_storage.subject_tree.find_or_create_path(["Analytics", "Reports", "Q1"])
+
+        item = _make_sql_item(13, subject_path=["Analytics", "Reports", "Q1"], name="no_fp")
+        item["filepath"] = ""
+        ref_sql_storage.batch_store_sql([item])
+
+        q1_node = ref_sql_storage.subject_tree.get_node_by_path(["Analytics", "Reports", "Q1"])
+        root_id = q1_node["node_id"]
+
+        # Should not raise
+        ref_sql_storage.sync_yaml_subject_tree_for_subtree(root_id)
+
+    def test_sync_handles_subtree_with_no_ref_sql(self, ref_sql_storage):
+        """A subtree with no reference SQL entries should be a no-op."""
+        ref_sql_storage.subject_tree.find_or_create_path(["Empty", "Branch"])
+        node = ref_sql_storage.subject_tree.get_node_by_path(["Empty", "Branch"])
+        assert node is not None
+
+        # Should not raise
+        ref_sql_storage.sync_yaml_subject_tree_for_subtree(node["node_id"])

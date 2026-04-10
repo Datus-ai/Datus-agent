@@ -188,15 +188,6 @@ class MetricsPanel(Vertical):
     def compose(self) -> ComposeResult:
         metric_name = self.entry.get("name", "Unnamed Metric")
         yield Label(f"📊 [bold cyan]Metric: {metric_name}[/]")
-        semantic_model_field = InputWithLabel(
-            "Semantic Model Name",
-            self.entry.get("semantic_model_name", ""),
-            lines=1,
-            readonly=self.readonly,
-            language="markdown",
-        )
-        self.fields.append(semantic_model_field)
-        yield semantic_model_field
 
         description_field = InputWithLabel(
             "Description",
@@ -235,14 +226,13 @@ class MetricsPanel(Vertical):
         yield sql_field
 
     def _fill_data(self):
-        self.fields[0].set_value(self.entry.get("semantic_model_name", ""))
-        self.fields[1].set_value(self.entry.get("description", ""))
+        self.fields[0].set_value(self.entry.get("description", ""))
         dimensions_value = self.entry.get("dimensions", [])
         dimensions_str = (
             ", ".join(dimensions_value) if isinstance(dimensions_value, list) else str(dimensions_value or "")
         )
-        self.fields[2].set_value(dimensions_str)
-        self.fields[3].set_value(self.entry.get("sql", ""))
+        self.fields[1].set_value(dimensions_str)
+        self.fields[2].set_value(self.entry.get("sql", ""))
 
     def set_readonly(self, readonly: bool) -> None:
         """
@@ -261,17 +251,8 @@ class MetricsPanel(Vertical):
     def get_value(self) -> Dict[str, str]:
         """
         Return a dictionary mapping field labels to their current values.
-
-        Maps field labels to their storage keys.
         """
-        values: Dict[str, str] = {}
-        for field in self.fields:
-            key = field.label_text.lower()
-            if key == "semantic model name":
-                key = "semantic_model_name"
-            # description remains as "description"
-            values[key] = field.get_value()
-        return values
+        return {field.label_text.lower(): field.get_value() for field in self.fields}
 
     def restore(self):
         for field in self.fields:
@@ -309,6 +290,11 @@ class ReferenceSqlPanel(Vertical):
         )
         self.fields.append(summary_field)
         yield summary_field
+        comment_field = InputWithLabel(
+            "Comment", self.entry.get("comment", ""), lines=2, readonly=self.readonly, language="markdown"
+        )
+        self.fields.append(comment_field)
+        yield comment_field
         search_text_field = InputWithLabel(
             "Search Text", self.entry.get("search_text", ""), lines=2, readonly=self.readonly, language="markdown"
         )
@@ -328,9 +314,10 @@ class ReferenceSqlPanel(Vertical):
 
     def _fill_data(self):
         self.fields[0].set_value(self.entry.get("summary", ""))
-        self.fields[1].set_value(self.entry.get("search_text", ""))
-        self.fields[2].set_value(self.entry.get("tags", ""))
-        self.fields[3].set_value(self.entry.get("sql", ""))
+        self.fields[1].set_value(self.entry.get("comment", ""))
+        self.fields[2].set_value(self.entry.get("search_text", ""))
+        self.fields[3].set_value(self.entry.get("tags", ""))
+        self.fields[4].set_value(self.entry.get("sql", ""))
 
     def update_data(self, summary_data: Dict[str, Any]):
         self.entry.update(summary_data)
@@ -392,7 +379,7 @@ class ExtKnowledgePanel(Vertical):
         knowledge_name = self.entry.get("name", "Unnamed Knowledge")
         yield Label(f"📚 [bold cyan]Knowledge: {knowledge_name}[/]")
         search_text_field = InputWithLabel(
-            "search_text",
+            "Search Text",
             self.entry.get("search_text", ""),
             lines=2,
             readonly=self.readonly,
@@ -1448,8 +1435,29 @@ class SubjectScreen(ContextScreen):
             # Apply the edit to SubjectTreeStore or vector store
 
             if node_type == "subject_node":
-                # Rename/move subject node in tree
+                # Capture the node_id BEFORE the rename so we can later walk its
+                # subtree to sync YAML files.
+                old_node = self.subject_tree_store.get_node_by_path(old_path)
+
+                # Rename/move subject node in tree. This updates the subject_tree
+                # table in place -- descendant entries keep their subject_node_id,
+                # so no vector DB changes are needed. However, YAML files on disk
+                # store the subject_tree path as a literal string and must be
+                # synced manually.
                 self.subject_tree_store.rename(old_path, new_path)
+
+                if old_node:
+                    root_id = old_node["node_id"]
+                    try:
+                        self.metrics_rag.storage.sync_yaml_subject_tree_for_subtree(root_id)
+                        _fetch_metrics_with_cache.cache_clear()
+                    except Exception as e:
+                        logger.warning(f"Failed to sync metric YAMLs after subject_node rename: {e}")
+                    try:
+                        self.sql_rag.reference_sql_storage.sync_yaml_subject_tree_for_subtree(root_id)
+                        _sql_details_cache.cache_clear()
+                    except Exception as e:
+                        logger.warning(f"Failed to sync reference_sql YAMLs after subject_node rename: {e}")
 
             elif node_type == "subject_entry":
                 # Rename subject_entry in vector store (storage)
@@ -1718,6 +1726,8 @@ class SubjectScreen(ContextScreen):
 
             if summary := sql_entry.get("summary"):
                 details.add_row("Summary", summary)
+            if comment := sql_entry.get("comment"):
+                details.add_row("Comment", comment)
             if search_text := sql_entry.get("search_text"):
                 details.add_row("Search Text", search_text)
             if tags := sql_entry.get("tags"):
