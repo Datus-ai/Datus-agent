@@ -96,6 +96,10 @@ class GenSQLAgenticNode(AgenticNode):
         self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
         self._platform_doc_tool: Optional[PlatformDocSearchTool] = None
         self.reference_template_tools: Optional[ReferenceTemplateTools] = None
+        # PlanTool instance when `plan_tools` is declared in the sub-agent's
+        # `tools:` list. Distinct from `plan_hooks` below, which is only
+        # active in full plan_mode workflows.
+        self.plan_tool = None
 
         # Initialize plan mode attributes
         self.plan_mode_active = False
@@ -321,6 +325,26 @@ class GenSQLAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup date parsing tools: {e}")
 
+    def _setup_plan_tools(self):
+        """Setup plan/todo tools so the agent can track multi-step work.
+
+        PlanTool exposes `todo_read`, `todo_write`, and `todo_update`, backed
+        by the agent's conversation session. Unlike plan_mode — which is a
+        full interactive replan workflow — this just makes the todo surface
+        available as regular function tools, so a long-horizon task (e.g.
+        generating a complex marts table with 30+ output columns) can write
+        a plan up front and check off items as it goes, avoiding
+        MaxTurnsExceeded and drift.
+        """
+        try:
+            from datus.tools.func_tool.plan_tools import PlanTool
+
+            session, _ = self._get_or_create_session()
+            self.plan_tool = PlanTool(session)
+            self.tools.extend(self.plan_tool.available_tools())
+        except Exception as e:
+            logger.error(f"Failed to setup plan tools: {e}")
+
     def _setup_filesystem_tools(self):
         """Setup filesystem tools (all available tools)."""
         try:
@@ -345,6 +369,8 @@ class GenSQLAgenticNode(AgenticNode):
                     self._setup_reference_template_tools()
                 elif base_type == "date_parsing_tools":
                     self._setup_date_parsing_tools()
+                elif base_type == "plan_tools":
+                    self._setup_plan_tools()
                 elif base_type == "filesystem_tools":
                     self._setup_filesystem_tools()
                 elif base_type == "platform_doc_tools":
@@ -361,6 +387,8 @@ class GenSQLAgenticNode(AgenticNode):
                 self._setup_reference_template_tools()
             elif pattern == "date_parsing_tools":
                 self._setup_date_parsing_tools()
+            elif pattern == "plan_tools":
+                self._setup_plan_tools()
             elif pattern == "filesystem_tools":
                 self._setup_filesystem_tools()
             elif pattern == "platform_doc_tools":
