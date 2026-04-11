@@ -12,7 +12,7 @@ from datus.api.services.visualization_service import DataVisualizationService
 
 _LLM_PATH = "datus.api.services.visualization_service.LLMBaseModel"
 _VIZ_TOOL_PATH = "datus.api.services.visualization_service.VisualizationTool"
-_TOOL_PROMPT_PATH = "datus.tools.llms_tools.visualization_tool.prompt_manager"
+_TOOL_PROMPT_PATH = "datus.tools.llms_tools.visualization_tool.get_prompt_manager"
 
 
 @pytest.fixture
