@@ -36,7 +36,7 @@ def _mock_tool_result(success=True, chart_type="Line Chart", x_col="date", y_col
     result.success = success
     result.chart_type = chart_type
     result.x_col = x_col
-    result.y_cols = y_cols or ["sales"]
+    result.y_cols = ["sales"] if y_cols is None else y_cols
     result.reason = reason
     result.error = error
     return result
