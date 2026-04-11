@@ -26,9 +26,9 @@ Based on ALL the information above, return ONLY a **JSON** object with the follo
 - "y_cols": A list of column names for the Y-axis (Metrics).
 - "reason": A short explanation for the chart recommendation.
 
-### Data Context (required when SQL is provided)
-- "period": The time range extracted from WHERE conditions, formatted as "YYYY-MM-DD ~ YYYY-MM-DD" or a readable period like "Q4 2025". Return null if no time condition exists.
-- "filters": A list of human-readable filter descriptions extracted from WHERE conditions (exclude time range conditions). Use the user's question language to describe filters when possible, e.g. "BP购买" instead of "purchasesource = BATTLEPASS_PROGRESS". Return an empty list if no filters.
+### Data Context (required when SQL or User Question is provided)
+- "period": The time range extracted from WHERE conditions, formatted as "YYYY-MM-DD ~ YYYY-MM-DD" or a readable period like "Q4 2025". Return null if no time condition exists or no SQL is provided.
+- "filters": A list of human-readable filter descriptions extracted from WHERE conditions (exclude time range conditions). Use the user's question language to describe filters when possible, e.g. "BP购买" instead of "purchasesource = BATTLEPASS_PROGRESS". Return an empty list if no filters or no SQL is provided.
 - "insight": A concise analytical summary (2-4 sentences) of the data. Highlight key findings, comparisons, anomalies, or trends. Use the same language as the user's question. Focus on what the data reveals, not how it was queried.
 
 ### Rules
@@ -38,4 +38,4 @@ Based on ALL the information above, return ONLY a **JSON** object with the follo
 - If it cannot be confirmed, "chart_type" returns "Unknown".
 - For "filters", translate technical SQL conditions into user-friendly descriptions.
 - For "insight", analyze the actual data values, not just describe the query structure.
-- If no SQL is provided, omit "period", "filters", and "insight" from the response.
+- If neither SQL nor User Question is provided, omit "period", "filters", and "insight" from the response.

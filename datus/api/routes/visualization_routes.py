@@ -5,6 +5,8 @@ Provides an endpoint that accepts tabular data and returns a chart
 configuration recommendation (chart type, axes, reason).
 """
 
+import asyncio
+
 from fastapi import APIRouter
 
 from datus.api.deps import ServiceDep
@@ -30,7 +32,8 @@ async def data_visualization(
     svc: ServiceDep,
 ) -> Result[DataVisualizationData]:
     """Return a chart recommendation for the uploaded CSV-style data."""
-    result = svc.visualization.generate(
+    result = await asyncio.to_thread(
+        svc.visualization.generate,
         csv_data=request.csv_data,
         chart_type=request.chart_type,
         sql=request.sql,
