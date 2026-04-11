@@ -258,6 +258,30 @@ class TestLlmResult2Json:
         assert result is not None
         assert result["sql"] == "SELECT 1"
 
+    def test_scrubs_bogus_backslash_escapes_in_sql_field(self):
+        # Some LLMs emit `\(`, `\)`, `\[`, `\]`, `\;` inside the `sql`
+        # field when they conflate SQL with regex or LaTeX contexts.
+        # These sequences are never valid in any SQL dialect; they must
+        # be sanitized to the bare character so downstream parsers don't
+        # crash. Backslash-n and backslash-t (real JSON escapes) must
+        # still be preserved as actual newline / tab characters.
+        raw = (
+            '{"sql": "WITH base AS \\n(\\n  SELECT * FROM raw.users'
+            '\\n  WHERE id IS NOT NULL\\\\)\\nSELECT * FROM base"}'
+        )
+        result = llm_result2json(raw)
+        assert result is not None
+        # `\)` must become `)`; newline must survive
+        assert "\\)" not in result["sql"]
+        assert ")" in result["sql"]
+        assert "\n" in result["sql"]
+
+    def test_scrubs_all_bogus_brackets_and_semicolons(self):
+        raw = r'{"sql": "SELECT \[a\]\;  FROM t\(x\)"}'
+        result = llm_result2json(raw)
+        assert result is not None
+        assert result["sql"] == "SELECT [a];  FROM t(x)"
+
 
 # ---------------------------------------------------------------------------
 # llm_result2sql

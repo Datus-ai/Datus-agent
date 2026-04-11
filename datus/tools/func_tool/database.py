@@ -882,9 +882,15 @@ class DBFuncTool:
                 )
 
             # 1. Get Physical Schema
-            connector = self._get_connector(database)
+            # Use parsed coordinate fields so that dotted names like "raw.stage"
+            # are correctly split into schema="raw", table="stage" before passing
+            # to the connector (avoids DuckDB treating "raw" as a catalog).
+            connector = self._get_connector(coordinate.database or database)
             column_result = connector.get_schema(
-                catalog_name=catalog, database_name=database, schema_name=schema_name, table_name=table_name
+                catalog_name=coordinate.catalog or catalog,
+                database_name=coordinate.database or database,
+                schema_name=coordinate.schema or schema_name,
+                table_name=coordinate.table,
             )
             logger.debug(f"Got {len(column_result)} columns from connector")
 

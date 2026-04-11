@@ -436,8 +436,9 @@ class TestDBFuncTool:
 
         allowed = tool.describe_table(table_name="orders")
         assert allowed.success == 1
+        # Fix: coordinate now propagates connector defaults (database_name="db1", schema_name="schema1")
         mock_connector.get_schema.assert_called_once_with(
-            catalog_name="", database_name="", schema_name="", table_name="orders"
+            catalog_name="", database_name="db1", schema_name="schema1", table_name="orders"
         )
 
         mock_connector.get_schema.reset_mock()
@@ -472,8 +473,9 @@ class TestDBFuncTool:
         result = db_func_tool.describe_table(table_name="users")
 
         assert result.success == 1
+        # Fix: coordinate now propagates connector defaults (database_name="db1", schema_name="schema1")
         mock_connector.get_schema.assert_called_once_with(
-            catalog_name="", database_name="", schema_name="", table_name="users"
+            catalog_name="", database_name="db1", schema_name="schema1", table_name="users"
         )
 
     def test_describe_table_failure(self, db_func_tool, mock_connector):

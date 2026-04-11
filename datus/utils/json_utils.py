@@ -209,6 +209,26 @@ def llm_result2json(llm_str: str, expected_type: type[Dict | List] = dict) -> Un
         if not isinstance(result, (dict, list)):
             return None
 
+        # Scrub bogus backslash escapes in the `sql` field. Some LLMs
+        # emit `\(` / `\)` / `\[` / `\]` / `\;` in JSON strings when they
+        # get confused between SQL, regex, and LaTeX contexts. These
+        # sequences are never valid in any SQL dialect; their presence
+        # is always a model mistake and left intact they cause
+        # downstream parser errors. Strip only the backslash, keep the
+        # character itself.
+        if isinstance(result, dict) and isinstance(result.get("sql"), str):
+            sql = result["sql"]
+            for bogus, fixed in (
+                ("\\(", "("),
+                ("\\)", ")"),
+                ("\\[", "["),
+                ("\\]", "]"),
+                ("\\;", ";"),
+            ):
+                if bogus in sql:
+                    sql = sql.replace(bogus, fixed)
+            result["sql"] = sql
+
         # If it's a dict, check if it has meaningful content
         if isinstance(result, dict):
 

@@ -208,3 +208,86 @@ class TestExecuteDDLStatementValidation:
         tool = self._make_tool()
         result = tool.execute_ddl("-- comment\nCREATE TABLE test (id INT)")
         assert result.success == 1
+
+
+class TestDescribeTableDuckDBSchemaPrefix:
+    """Verify that describe_table correctly splits 'schema.table' for DuckDB."""
+
+    def _make_duckdb_tool(self):
+        mock_connector = Mock()
+        mock_connector.dialect = "duckdb"
+        mock_connector.get_databases.return_value = []
+        # DuckDB get_schema returns column dicts
+        mock_connector.get_schema.return_value = [
+            {"name": "stage_id", "type": "INTEGER", "comment": ""},
+            {"name": "name", "type": "VARCHAR", "comment": ""},
+        ]
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            return DBFuncTool(mock_connector), mock_connector
+
+    def test_describe_table_dotted_name_splits_schema_and_table(self):
+        """describe_table('raw.stage') must call get_schema with schema_name='raw', table_name='stage'."""
+        tool, mock_connector = self._make_duckdb_tool()
+        result = tool.describe_table(table_name="raw.stage")
+
+        assert result.success == 1, f"Expected success but got error: {result.error}"
+        assert len(result.result.get("columns", [])) == 2
+
+        call_kwargs = mock_connector.get_schema.call_args
+        assert call_kwargs is not None, "get_schema was not called"
+        # Accept both positional and keyword invocation
+        kwargs = call_kwargs.kwargs if call_kwargs.kwargs else {}
+        args = call_kwargs.args if call_kwargs.args else ()
+        # Reconstruct as keyword map (get_schema signature: catalog, database, schema_name, table_name)
+        param_names = ["catalog_name", "database_name", "schema_name", "table_name"]
+        effective = dict(zip(param_names, args))
+        effective.update(kwargs)
+
+        assert effective.get("schema_name") == "raw", (
+            f"Expected schema_name='raw', got {effective.get('schema_name')!r}"
+        )
+        assert effective.get("table_name") == "stage", (
+            f"Expected table_name='stage', got {effective.get('table_name')!r}"
+        )
+
+    def test_describe_table_plain_name_uses_default_schema(self):
+        """describe_table('stage') must call get_schema with table_name='stage' (no schema split)."""
+        tool, mock_connector = self._make_duckdb_tool()
+        result = tool.describe_table(table_name="stage")
+
+        assert result.success == 1, f"Expected success but got error: {result.error}"
+
+        call_kwargs = mock_connector.get_schema.call_args
+        assert call_kwargs is not None, "get_schema was not called"
+        kwargs = call_kwargs.kwargs if call_kwargs.kwargs else {}
+        args = call_kwargs.args if call_kwargs.args else ()
+        param_names = ["catalog_name", "database_name", "schema_name", "table_name"]
+        effective = dict(zip(param_names, args))
+        effective.update(kwargs)
+
+        assert effective.get("table_name") == "stage", (
+            f"Expected table_name='stage', got {effective.get('table_name')!r}"
+        )
+
+    def test_describe_table_explicit_schema_name_overrides(self):
+        """describe_table('stage', schema_name='raw') must use schema_name='raw'."""
+        tool, mock_connector = self._make_duckdb_tool()
+        result = tool.describe_table(table_name="stage", schema_name="raw")
+
+        assert result.success == 1, f"Expected success but got error: {result.error}"
+
+        call_kwargs = mock_connector.get_schema.call_args
+        assert call_kwargs is not None, "get_schema was not called"
+        kwargs = call_kwargs.kwargs if call_kwargs.kwargs else {}
+        args = call_kwargs.args if call_kwargs.args else ()
+        param_names = ["catalog_name", "database_name", "schema_name", "table_name"]
+        effective = dict(zip(param_names, args))
+        effective.update(kwargs)
+
+        assert effective.get("schema_name") == "raw"
+        assert effective.get("table_name") == "stage"
