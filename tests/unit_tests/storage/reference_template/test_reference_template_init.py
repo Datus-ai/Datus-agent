@@ -6,7 +6,7 @@
 
 import inspect
 from enum import Enum
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -129,7 +129,8 @@ class TestInitReferenceTemplateValidateOnly:
         assert result["processed_entries"] == 0
         assert "validate-only" in result["message"].lower()
 
-    def test_validate_only_with_invalid_template(self, tmp_path):
+    @patch("datus.storage.reference_template.template_file_processor.log_invalid_entries")
+    def test_validate_only_with_invalid_template(self, mock_log, tmp_path):
         from datus.storage.reference_template.reference_template_init import init_reference_template
 
         tpl_file = tmp_path / "bad.j2"
@@ -175,7 +176,8 @@ class TestInitReferenceTemplateValidateOnly:
 
 
 class TestInitReferenceTemplateNoValidItems:
-    def test_all_invalid_returns_success(self, tmp_path):
+    @patch("datus.storage.reference_template.template_file_processor.log_invalid_entries")
+    def test_all_invalid_returns_success(self, mock_log, tmp_path):
         from datus.storage.reference_template.reference_template_init import init_reference_template
 
         tpl_file = tmp_path / "broken.j2"
@@ -195,6 +197,7 @@ class TestInitReferenceTemplateNoValidItems:
         assert result["status"] == "success"
         assert result["valid_entries"] == 0
         assert result["processed_entries"] == 0
+        mock_log.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

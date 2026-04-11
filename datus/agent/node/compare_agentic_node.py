@@ -5,7 +5,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 from datus.agent.node.agentic_node import AgenticNode
 from datus.cli.execution_state import ExecutionInterrupted
 from datus.configuration.agent_config import AgentConfig
-from datus.prompts.prompt_manager import prompt_manager
+from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.compare_node_models import CompareInput, CompareResult
 from datus.tools.db_tools.db_manager import db_manager_instance
@@ -106,13 +106,16 @@ class CompareAgenticNode(AgenticNode):
             self.tools = self.tools or []
 
     @staticmethod
-    def _prepare_prompt_components(input_data: CompareInput) -> tuple[str, str, List[Dict[str, str]]]:
+    def _prepare_prompt_components(
+        input_data: CompareInput, agent_config: Optional[Any] = None
+    ) -> tuple[str, str, List[Dict[str, str]]]:
         """
         Render the system instruction, user prompt, and message list for comparison.
         """
         prompt_version = input_data.prompt_version
 
-        system_instruction = prompt_manager.get_raw_template("compare_sql_system_mcp", version=prompt_version)
+        pm = get_prompt_manager(agent_config=agent_config)
+        system_instruction = pm.get_raw_template("compare_sql_system_mcp", version=prompt_version)
 
         sql_context = input_data.sql_context
         sql_query = getattr(sql_context, "sql_query", "")
@@ -120,7 +123,7 @@ class CompareAgenticNode(AgenticNode):
         sql_result = getattr(sql_context, "sql_return", "")
         sql_error = getattr(sql_context, "sql_error", "")
 
-        user_prompt = prompt_manager.render_template(
+        user_prompt = pm.render_template(
             "compare_sql_user",
             database_type=input_data.sql_task.database_type,
             database_name=input_data.sql_task.database_name,
@@ -210,7 +213,9 @@ class CompareAgenticNode(AgenticNode):
             await self._auto_compact()
             session, conversation_summary = self._get_or_create_session()
 
-            system_instruction, user_prompt, _ = self._prepare_prompt_components(user_input)
+            system_instruction, user_prompt, _ = self._prepare_prompt_components(
+                user_input, agent_config=self.agent_config
+            )
             if conversation_summary:
                 user_prompt = (
                     f"Previous conversation summary:\n{conversation_summary}\n\nNew comparison request:\n{user_prompt}"

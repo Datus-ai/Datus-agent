@@ -404,3 +404,104 @@ class TestAgentConfigApiSection:
         api = {"auth_provider": {"class": "pkg.mod.Cls", "kwargs": {"a": 1}}}
         cfg = self._make(tmp_path, api=api)
         assert cfg.api_config == api
+
+
+class TestAgentConfigKnowledgeHome:
+    """End-to-end tests for the knowledge_home config option."""
+
+    def _make(self, tmp_path, *, home=None, knowledge_home=None):
+        from datus.configuration.agent_config import AgentConfig, NodeConfig
+
+        kwargs = dict(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(home or (tmp_path / "datus")),
+            target="mock",
+            models={
+                "mock": {
+                    "type": "openai",
+                    "api_key": "k",
+                    "model": "m",
+                    "base_url": "http://localhost:0",
+                }
+            },
+            skip_init_dirs=True,
+        )
+        if knowledge_home is not None:
+            kwargs["knowledge_home"] = knowledge_home
+        return AgentConfig(**kwargs)
+
+    def test_knowledge_home_unset_falls_back_to_home(self, tmp_path):
+        cfg = self._make(tmp_path)
+        # When not configured, KB dirs should live under home
+        assert cfg.path_manager.knowledge_home == cfg.path_manager.datus_home
+        assert cfg.path_manager.semantic_models_dir == cfg.path_manager.datus_home / "semantic_models"
+
+    def test_knowledge_home_custom_path_propagates_to_path_manager(self, tmp_path):
+        datus_home = tmp_path / "datus"
+        kb_home = tmp_path / "shared_kb"
+        cfg = self._make(tmp_path, home=datus_home, knowledge_home=str(kb_home))
+
+        assert cfg.knowledge_home == str(kb_home)
+        assert cfg.path_manager.knowledge_home == kb_home.resolve()
+        # All three KB dirs should live under kb_home
+        assert cfg.path_manager.semantic_models_dir == kb_home.resolve() / "semantic_models"
+        assert cfg.path_manager.sql_summaries_dir == kb_home.resolve() / "sql_summaries"
+        assert cfg.path_manager.ext_knowledge_dir == kb_home.resolve() / "ext_knowledge"
+        # Non-KB dirs should stay under datus_home
+        assert cfg.path_manager.logs_dir == datus_home.resolve() / "logs"
+        assert cfg.path_manager.sessions_dir == datus_home.resolve() / "sessions"
+        assert cfg.path_manager.data_dir == datus_home.resolve() / "data"
+
+    def test_override_by_args_updates_knowledge_home(self, tmp_path):
+        cfg = self._make(tmp_path)
+        new_kb = tmp_path / "new_kb"
+        # action="namespace" keeps override_by_args from touching current_namespace
+        cfg.override_by_args(knowledge_home=str(new_kb), action="namespace")
+
+        assert cfg.knowledge_home == str(new_kb)
+        assert cfg.path_manager.knowledge_home == new_kb.resolve()
+        assert cfg.path_manager.semantic_models_dir == new_kb.resolve() / "semantic_models"
+
+    def test_load_agent_config_reads_knowledge_home_from_yaml(self, tmp_path, monkeypatch):
+        """End-to-end: YAML with knowledge_home → load_agent_config → path_manager."""
+        import yaml
+
+        from datus.configuration.agent_config_loader import load_agent_config
+
+        datus_home = tmp_path / "tenant_home"
+        kb_home = tmp_path / "tenant_kb"
+
+        yaml_content = {
+            "agent": {
+                "home": str(datus_home),
+                "knowledge_home": str(kb_home),
+                "target": "mock",
+                "models": {
+                    "mock": {
+                        "type": "openai",
+                        "api_key": "k",
+                        "model": "m",
+                        "base_url": "http://localhost:0",
+                    }
+                },
+                "namespace": {
+                    "dummy": {
+                        "type": "sqlite",
+                        "name": "dummy",
+                        "uri": f"sqlite:///{tmp_path}/dummy.db",
+                    }
+                },
+            }
+        }
+        config_path = tmp_path / "agent.yml"
+        config_path.write_text(yaml.safe_dump(yaml_content), encoding="utf-8")
+
+        cfg = load_agent_config(config=str(config_path), reload=True)
+
+        assert cfg.path_manager.knowledge_home == kb_home.resolve()
+        assert cfg.path_manager.semantic_models_dir == kb_home.resolve() / "semantic_models"
+        assert cfg.path_manager.sql_summaries_dir == kb_home.resolve() / "sql_summaries"
+        assert cfg.path_manager.ext_knowledge_dir == kb_home.resolve() / "ext_knowledge"
+        # Other dirs still under datus_home
+        assert cfg.path_manager.datus_home == datus_home.resolve()
+        assert cfg.path_manager.logs_dir == datus_home.resolve() / "logs"

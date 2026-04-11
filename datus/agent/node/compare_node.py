@@ -66,7 +66,7 @@ class CompareNode(Node):
             raise DatusException(ErrorCode.COMMON_VALIDATION_FAILED, "Model is not initialized for CompareAgenticNode")
 
         try:
-            _, _, messages = CompareAgenticNode._prepare_prompt_components(self.input)
+            _, _, messages = CompareAgenticNode._prepare_prompt_components(self.input, agent_config=self.agent_config)
             logger.debug("CompareAgenticNode executing with prompt messages: %s", messages)
 
             raw_result = self.model.generate_with_json_output(messages)

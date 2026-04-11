@@ -312,17 +312,18 @@ class GenReportAgenticNode(AgenticNode):
         template_name = f"{system_prompt_name}_system"
 
         # Use prompt manager to render the template
-        from datus.prompts.prompt_manager import prompt_manager
+        from datus.prompts.prompt_manager import get_prompt_manager
 
+        pm = get_prompt_manager(agent_config=self.agent_config)
         try:
-            base_prompt = prompt_manager.render_template(template_name=template_name, version=version, **context)
+            base_prompt = pm.render_template(template_name=template_name, version=version, **context)
 
         except FileNotFoundError:
             # Template not found - use default gen_report template
             logger.warning(
                 f"Failed to render system prompt '{system_prompt_name}', using the default gen_report template"
             )
-            base_prompt = prompt_manager.render_template(template_name="gen_report_system", version=version, **context)
+            base_prompt = pm.render_template(template_name="gen_report_system", version=version, **context)
 
         return self._finalize_system_prompt(base_prompt)
 

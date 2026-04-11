@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-from typing import Dict
+from typing import Any, Dict, Optional
 
 from datus.models.base import LLMBaseModel
 from datus.prompts.reflection import get_evaluation_prompt
@@ -13,7 +13,12 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
-def evaluate_with_model(task: SqlTask, node_input: BaseInput, model: LLMBaseModel) -> Dict:
+def evaluate_with_model(
+    task: SqlTask,
+    node_input: BaseInput,
+    model: LLMBaseModel,
+    agent_config: Optional[Any] = None,
+) -> Dict:
     """
     Use a language model to evaluate SQL execution results.
     """
@@ -35,6 +40,7 @@ def evaluate_with_model(task: SqlTask, node_input: BaseInput, model: LLMBaseMode
             f"Rows_returned: {sql_context.row_count}"
         ),
         prompt_version=prompt_version,
+        agent_config=agent_config,
     )
 
     try:

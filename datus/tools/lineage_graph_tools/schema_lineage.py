@@ -33,6 +33,7 @@ class SchemaLineageTool(BaseTool):
             db_path: Path to the vector store database directory
         """
         super().__init__(**kwargs)
+        self.agent_config = agent_config
         if storage:
             self.store = storage
         else:
@@ -71,7 +72,7 @@ class SchemaLineageTool(BaseTool):
 
         # Leave exceptions to the higher-ups to handle.
         if input_param.matching_rate == "from_llm":
-            tool = MatchSchemaTool(model, storage=self.store.schema_store)
+            tool = MatchSchemaTool(model, storage=self.store.schema_store, agent_config=self.agent_config)
             if not tool:
                 return SchemaLinkingResult(
                     success=False,

@@ -74,7 +74,7 @@ class DateParserNode(Node):
             from datus.utils.time_utils import get_default_current_date
 
             # Extract dates using DateParserTool
-            tool = DateParserTool(language=self._get_language_setting())
+            tool = DateParserTool(language=self._get_language_setting(), agent_config=self.agent_config)
             task_text = self.input.sql_task.task
             current_date = get_default_current_date(self.input.sql_task.current_date)
             extracted_dates = tool.execute(task_text, current_date, self.model)

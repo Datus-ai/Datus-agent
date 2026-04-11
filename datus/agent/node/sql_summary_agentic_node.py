@@ -305,9 +305,11 @@ class SqlSummaryAgenticNode(AgenticNode):
                 template_vars.update(template_context)
 
             # Use prompt manager to render the template
-            from datus.prompts.prompt_manager import prompt_manager
+            from datus.prompts.prompt_manager import get_prompt_manager
 
-            base_prompt = prompt_manager.render_template(template_name=template_name, **template_vars)
+            base_prompt = get_prompt_manager(agent_config=self.agent_config).render_template(
+                template_name=template_name, **template_vars
+            )
             return self._finalize_system_prompt(base_prompt)
 
         except FileNotFoundError as e:

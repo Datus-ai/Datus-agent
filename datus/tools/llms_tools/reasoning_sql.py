@@ -8,7 +8,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 from agents import Tool
 
 from datus.models.base import LLMBaseModel
-from datus.prompts.prompt_manager import prompt_manager
+from datus.prompts.prompt_manager import get_prompt_manager
 from datus.prompts.reasoning_sql_with_mcp import get_reasoning_prompt
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.reason_sql_node_models import ReasoningInput, ReasoningResult
@@ -27,6 +27,7 @@ async def reasoning_sql_with_mcp_stream(
     tool_config: Dict[str, Any],
     tools: List[Tool],
     action_history_manager: Optional[ActionHistoryManager] = None,
+    agent_config: Optional[Any] = None,
 ) -> AsyncGenerator[ActionHistory, None]:
     """Generate SQL reasoning with streaming support and action history tracking."""
     if not isinstance(input_data, ReasoningInput):
@@ -47,6 +48,7 @@ async def reasoning_sql_with_mcp_stream(
         max_value_length=input_data.max_value_length,
         max_text_mark_length=input_data.max_text_mark_length,
         knowledge_content=input_data.external_knowledge,
+        agent_config=agent_config,
     )
 
     # Setup MCP servers
@@ -63,6 +65,7 @@ async def reasoning_sql_with_mcp_stream(
         tools=tools,
         instruction_template="reasoning_system",
         action_history_manager=action_history_manager,
+        agent_config=agent_config,
     ):
         yield action
 
@@ -131,14 +134,20 @@ async def reasoning_sql_with_mcp_stream(
 
 
 def reasoning_sql_with_mcp(
-    model: LLMBaseModel, input_data: ReasoningInput, tools: List[Tool], tool_config: Dict[str, Any]
+    model: LLMBaseModel,
+    input_data: ReasoningInput,
+    tools: List[Tool],
+    tool_config: Dict[str, Any],
+    agent_config: Optional[Any] = None,
 ) -> ReasoningResult:
     """Generate SQL via MCP, execute it, and return the execution result."""
     if not isinstance(input_data, ReasoningInput):
         logger.error(f"Input type error: expected ReasoningInput, got {type(input_data)}")
         raise ValueError(f"Input must be a ReasoningInput instance, got {type(input_data)}")
 
-    instruction = prompt_manager.get_raw_template("reasoning_system", input_data.prompt_version)
+    instruction = get_prompt_manager(agent_config=agent_config).get_raw_template(
+        "reasoning_system", input_data.prompt_version
+    )
     # update to python 3.12 to enable structured output
     # output_type = tool_config.get(
     # "output_type", {"sql": str, "tables": list, "explanation": str})
@@ -159,6 +168,7 @@ def reasoning_sql_with_mcp(
         max_value_length=input_data.max_value_length,
         max_text_mark_length=input_data.max_text_mark_length,
         knowledge_content=input_data.external_knowledge,
+        agent_config=agent_config,
     )
     try:
         exec_result = asyncio.run(

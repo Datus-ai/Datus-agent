@@ -12,8 +12,9 @@ No configuration file needed - versions are determined by scanning files.
 
 import re
 import shutil
+from collections import OrderedDict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
 
 from jinja2 import Environment, FileSystemLoader, Template
 
@@ -27,6 +28,13 @@ if TYPE_CHECKING:
 
 class PromptManager:
     """Manages file-based versioned prompt templates with Jinja2 rendering support."""
+
+    # Class-level Jinja2 environment cache, shared across instances.
+    # Keyed by template directory path so different tenants get separate environments.
+    # Uses OrderedDict with LRU eviction to prevent unbounded growth in long-running
+    # SaaS servers where tenants come and go.
+    _MAX_ENV_CACHE_SIZE: int = 128
+    _env_cache: OrderedDict[str, Environment] = OrderedDict()
 
     def __init__(
         self,
@@ -42,7 +50,6 @@ class PromptManager:
         Configure agent.home in agent.yml to change the root directory.
         """
         self.default_templates_dir = Path(__file__).parent / "prompt_templates"
-        self._env_cache: Dict[str, Environment] = {}
         self._path_manager = path_manager
         self._agent_config = agent_config
 
@@ -58,15 +65,34 @@ class PromptManager:
 
         Cached per ``user_templates_dir`` so different homes (SaaS tenants)
         get separate Jinja2 environments without re-creating on every call.
+        Uses LRU eviction when the cache exceeds ``_MAX_ENV_CACHE_SIZE``.
         """
         cache_key = str(self.user_templates_dir)
         env = self._env_cache.get(cache_key)
-        if env is None:
-            search_paths = [cache_key, str(self.default_templates_dir)]
-            env = Environment(loader=FileSystemLoader(search_paths), trim_blocks=True, lstrip_blocks=True)
-            self._env_cache[cache_key] = env
-            logger.debug(f"Template search paths: {search_paths}")
+        if env is not None:
+            self._env_cache.move_to_end(cache_key)
+            return env
+        search_paths = [cache_key, str(self.default_templates_dir)]
+        env = Environment(loader=FileSystemLoader(search_paths), trim_blocks=True, lstrip_blocks=True)
+        self._env_cache[cache_key] = env
+        if len(self._env_cache) > self._MAX_ENV_CACHE_SIZE:
+            self._env_cache.popitem(last=False)
+        logger.debug(f"Template search paths: {search_paths}")
         return env
+
+    @classmethod
+    def clear_env_cache(cls) -> None:
+        """Remove all cached Jinja2 environments."""
+        cls._env_cache.clear()
+
+    @classmethod
+    def invalidate_env(cls, user_templates_dir: str) -> None:
+        """Remove a single tenant's cached Jinja2 environment.
+
+        Args:
+            user_templates_dir: The template directory path used as cache key.
+        """
+        cls._env_cache.pop(user_templates_dir, None)
 
     def _get_template_path(self, template_name: str, version: Optional[str] = None) -> Path:
         """
@@ -270,7 +296,7 @@ class PromptManager:
 
         # Copy content
         shutil.copy2(source_path, new_path)
-        print(f"Created {new_filename} based on {source_path.name}")
+        logger.info(f"Created {new_filename} based on {source_path.name}")
 
     def template_exists(self, template_name: str, version: Optional[str] = None) -> bool:
         """
@@ -326,5 +352,47 @@ class PromptManager:
         return str(target_path)
 
 
-# Global instance for easy access
+def get_prompt_manager(agent_config: Optional[Any] = None) -> "PromptManager":
+    """
+    Get a prompt manager instance for the given agent context.
+
+    Resolution order:
+    1. ``agent_config.prompt_manager`` if already attached
+    2. A new ``PromptManager`` bound to ``agent_config`` (and its path_manager)
+    3. Default ``PromptManager()`` (falls back to the path_manager ContextVar)
+
+    Calling convention in prompt utility functions:
+
+    * If a function renders exactly **one** template, call inline:
+      ``get_prompt_manager(agent_config=agent_config).render_template(...)``
+    * If a function renders **two or more** templates, bind a local first:
+      ``pm = get_prompt_manager(agent_config=agent_config)``
+      then reuse ``pm.render_template(...)`` at each call site.
+
+    Both forms are functionally equivalent because the Jinja2 environment is
+    cached on the class-level ``_env_cache``; this split is a readability
+    convention only.
+
+    Args:
+        agent_config: Optional config object exposing ``prompt_manager`` or ``path_manager``.
+
+    Returns:
+        PromptManager instance
+    """
+    if agent_config is None:
+        return PromptManager()
+
+    config_pm = getattr(agent_config, "prompt_manager", None)
+    if config_pm is not None:
+        return config_pm
+
+    return PromptManager(
+        path_manager=getattr(agent_config, "path_manager", None),
+        agent_config=agent_config,
+    )
+
+
+# Backward-compatible global instance.
+# Prefer ``get_prompt_manager()`` for new code so that SaaS multi-tenant
+# isolation is respected.
 prompt_manager = PromptManager()

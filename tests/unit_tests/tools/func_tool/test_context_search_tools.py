@@ -91,11 +91,15 @@ def build_context_tools(mock_agent_config):
         all_entries = metric_entries + sql_entries + knowledge_entries
         mock_subject_tree.get_tree_structure.return_value = _build_tree_structure(all_entries)
 
+        reference_template_rag = Mock()
+        reference_template_rag.get_reference_template_size.return_value = 0
+
         with (
             patch("datus.tools.func_tool.context_search.MetricRAG", return_value=metric_rag),
             patch("datus.tools.func_tool.context_search.SemanticModelRAG", return_value=semantic_rag),
             patch("datus.tools.func_tool.context_search.ReferenceSqlRAG", return_value=sql_rag),
             patch("datus.tools.func_tool.context_search.ExtKnowledgeRAG", return_value=ext_knowledge_rag),
+            patch("datus.tools.func_tool.context_search.ReferenceTemplateRAG", return_value=reference_template_rag),
             patch(
                 "datus.tools.func_tool.context_search.MetricRAG.storage.subject_tree", return_value=mock_subject_tree
             ),

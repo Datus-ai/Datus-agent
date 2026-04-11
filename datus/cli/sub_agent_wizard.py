@@ -31,7 +31,7 @@ from pygments.lexers.html import HtmlLexer
 
 from datus.agent.node.gen_sql_agentic_node import prepare_template_context
 from datus.cli.autocomplete import TableCompleter
-from datus.prompts.prompt_manager import prompt_manager
+from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.agent_models import ScopedContext, SubAgentConfig
 from datus.tools.func_tool import PlatformDocSearchTool
 from datus.tools.mcp_tools import MCPTool
@@ -68,14 +68,22 @@ class SubAgentWizard:
     def __init__(self, cli_instance: "DatusCLI", data: Optional[Union[SubAgentConfig, Dict[str, Any]]] = None):
         self.cli_instance = cli_instance
         if not data:
-            self.prompt_template_name = "sql_system"
             self.data = SubAgentConfig(system_prompt="", agent_description="", scoped_context=ScopedContext())
+            self._is_updated = False
+            self._pre_name = ""
+            # New sub-agent: no original node_class to preserve.
+            self._original_node_class: Optional[str] = None
         else:
+            self._is_updated = True
             if isinstance(data, SubAgentConfig):
                 self.data = data
             else:
                 self.data: SubAgentConfig = SubAgentConfig.model_validate(data)
-            self.prompt_template_name = f"{self.data.system_prompt}_system"
+            self._pre_name = f"{self.data.system_prompt}_system"
+            # Update mode: remember the original node_class so the preview can prefer
+            # the user's customized template only while the selection matches the original.
+            self._original_node_class = self.data.node_class or "gen_sql"
+        self.pm = get_prompt_manager(agent_config=self.cli_instance.agent_config)
         # Keep track of original name for edit-mode validation
         self._original_name: Optional[str] = self.data.system_prompt
         self._reserved_template_names = self._load_reserved_template_names()
@@ -135,7 +143,7 @@ class SubAgentWizard:
     def _load_reserved_template_names(self) -> Set[str]:
         """Collect template base names that would conflict with agent names."""
         try:
-            templates = prompt_manager.list_templates()
+            templates = get_prompt_manager(agent_config=self.cli_instance.agent_config).list_templates()
         except Exception:
             return set()
 
@@ -755,6 +763,12 @@ class SubAgentWizard:
             }
         except Exception:
             self._mcp_selection_snapshot = {}
+        # Snapshot the node_class radio value so _detect_selection_changes
+        # can notice keyboard- or mouse-driven radio switches and refresh the preview.
+        try:
+            self._node_class_snapshot = getattr(self.node_class_radio, "current_value", None)
+        except Exception:
+            self._node_class_snapshot = None
 
     def _detect_selection_changes(self) -> bool:
         changed = False
@@ -774,6 +788,10 @@ class SubAgentWizard:
                     if cur != prev:
                         changed = True
                         break
+            if not changed:
+                current_node_class = getattr(self.node_class_radio, "current_value", None)
+                if current_node_class != getattr(self, "_node_class_snapshot", None):
+                    changed = True
         except Exception:
             # Fail-safe: if anything goes wrong, assume no change
             changed = False
@@ -783,8 +801,11 @@ class SubAgentWizard:
         try:
             if self.done:
                 return
-            if self.step == 1 and self._detect_selection_changes():
-                # Update parent headers and previews to reflect latest checkbox states
+            # Step 0 hosts the node_class radio (affects prompt template preview),
+            # Step 1 hosts the native/MCP tool checkbox lists. Watch both so keyboard-
+            # and mouse-driven selection changes live-refresh the preview.
+            if self.step in (0, 1) and self._detect_selection_changes():
+                # Update parent headers and previews to reflect latest selection state
                 try:
                     self._sync_mcp_after_toggle()
                 except Exception:
@@ -1667,11 +1688,13 @@ class SubAgentWizard:
         )
         # Select template based on node_class for preview
         node_class = self.data.node_class or "gen_sql"
-        preview_template = "gen_report_system" if node_class == "gen_report" else "sql_system"
+        preview_template = self._parse_template_name(node_class)
+        fallback_template = "gen_report_system" if node_class == "gen_report" else "sql_system"
         try:
-            prompt_text = prompt_manager.render_template(preview_template, **prompt_context)
+            prompt_text = self.pm.render_template(preview_template, **prompt_context)
         except FileNotFoundError:
-            prompt_text = prompt_manager.render_template("sql_system", **prompt_context)
+            # Fall back to the built-in template matching the current node_class.
+            prompt_text = self.pm.render_template(fallback_template, **prompt_context)
         try:
             self.prompt_preview_buffer.text = prompt_text
         except Exception:
@@ -1679,6 +1702,27 @@ class SubAgentWizard:
 
         if hasattr(self, "app") and self.app:
             self.app.invalidate()
+
+    def _parse_template_name(self, node_class) -> str:
+        """Resolve which template to use for the prompt preview.
+
+        * New mode: always use the default system template for the current node_class
+          so the preview reacts to radio switches immediately.
+        * Update mode: when the user has NOT switched node_class away from the original,
+          prefer their customized template (``{name}_system``) if it actually exists on
+          disk. When the user switches node_class (or has no custom template), fall back
+          to the default system template for the currently-selected node_class. If they
+          switch back to the original node_class, the custom template is picked up again.
+        """
+        default_template = "gen_report_system" if node_class == "gen_report" else "sql_system"
+        if (
+            self._is_updated
+            and self._pre_name
+            and node_class == self._original_node_class
+            and self.pm.template_exists(self._pre_name)
+        ):
+            return self._pre_name
+        return default_template
 
     def _get_step_layout(self):
         """Return the layout for the current step."""

@@ -543,7 +543,8 @@ class TestChatAgenticNodeSystemPrompt:
         )
 
         # Patch render_template to raise a non-FileNotFoundError exception
-        with patch("datus.prompts.prompt_manager.prompt_manager.render_template", side_effect=RuntimeError("broken")):
+        with patch("datus.prompts.prompt_manager.get_prompt_manager") as mock_gpm:
+            mock_gpm.return_value.render_template.side_effect = RuntimeError("broken")
             with pytest.raises(DatusException):
                 node._get_system_prompt()
 
@@ -649,9 +650,8 @@ class TestChatAgenticNodeBuildPlanPrompt:
             agent_config=real_agent_config,
         )
 
-        with patch(
-            "datus.prompts.prompt_manager.prompt_manager.render_template", side_effect=FileNotFoundError("not found")
-        ):
+        with patch("datus.prompts.prompt_manager.get_prompt_manager") as mock_gpm:
+            mock_gpm.return_value.render_template.side_effect = FileNotFoundError("not found")
             result = node._build_plan_prompt("Analyze this")
 
         assert "PLAN MODE" in result

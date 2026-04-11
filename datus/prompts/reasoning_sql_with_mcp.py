@@ -2,14 +2,14 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
 from datus.schemas.node_models import TableSchema, TableValue
 from datus.utils.loggings import get_logger
 
-from .prompt_manager import prompt_manager
+from .prompt_manager import get_prompt_manager
 
 logger = get_logger(__name__)
 
@@ -74,6 +74,7 @@ def get_reasoning_prompt(
     max_value_length: int = 500,
     max_text_mark_length: int = 16,
     knowledge_content: str = "",
+    agent_config: Optional[Any] = None,
 ) -> List[Dict[str, str]]:
     if isinstance(table_schemas, str):
         processed_schemas = table_schemas
@@ -111,7 +112,7 @@ def get_reasoning_prompt(
             "When referencing table names in Snowflake SQL, you must include both the database_name and schema_name."
         )
 
-    user_content = prompt_manager.render_template(
+    user_content = get_prompt_manager(agent_config=agent_config).render_template(
         "reasoning_user",
         database_type=database_type,
         database_notes=database_notes,

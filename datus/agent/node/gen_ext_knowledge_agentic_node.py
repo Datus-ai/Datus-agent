@@ -433,7 +433,9 @@ Do NOT give up. Continue iterating until verify_sql returns success=1.
             )
 
             # Use CompareAgenticNode to generate suggestions
-            _, _, messages = CompareAgenticNode._prepare_prompt_components(compare_input)
+            _, _, messages = CompareAgenticNode._prepare_prompt_components(
+                compare_input, agent_config=self.agent_config
+            )
             raw_result = self.model.generate_with_json_output(messages)
             result_dict = CompareAgenticNode._parse_comparison_output(raw_result)
 
@@ -667,9 +669,9 @@ Rules:
                 template_vars.update(template_context)
 
             # Use prompt manager to render the template
-            from datus.prompts.prompt_manager import prompt_manager
+            from datus.prompts.prompt_manager import get_prompt_manager
 
-            base_prompt = prompt_manager.render_template(
+            base_prompt = get_prompt_manager(agent_config=self.agent_config).render_template(
                 template_name=template_name, version=prompt_version, **template_vars
             )
             return self._finalize_system_prompt(base_prompt)

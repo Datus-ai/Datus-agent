@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 import json
-from typing import AsyncGenerator, Dict, List, Optional, Tuple
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 from agents import Tool
 
@@ -116,7 +116,7 @@ class GenerateSQLNode(Node):
 
         try:
             logger.debug(f"Generate SQL input: {type(self.input)} {self.input}")
-            return generate_sql(self.model, self.input)
+            return generate_sql(self.model, self.input, agent_config=self.agent_config)
         except Exception as e:
             logger.error(f"SQL generation execution error: {str(e)}")
             return GenerateSQLResult(success=False, error=str(e), sql_query="", tables=[], explanation=None)
@@ -233,7 +233,11 @@ class GenerateSQLNode(Node):
             raise
 
 
-def generate_sql(model: LLMBaseModel, input_data: GenerateSQLInput) -> GenerateSQLResult:
+def generate_sql(
+    model: LLMBaseModel,
+    input_data: GenerateSQLInput,
+    agent_config: Optional[Any] = None,
+) -> GenerateSQLResult:
     """Generate SQL query using the provided model."""
     if not isinstance(input_data, GenerateSQLInput):
         raise TypeError("Input data must be a GenerateSQLInput instance")
@@ -258,6 +262,7 @@ def generate_sql(model: LLMBaseModel, input_data: GenerateSQLInput) -> GenerateS
             database_docs=input_data.database_docs,
             current_date=get_default_current_date(input_data.sql_task.current_date),
             date_ranges=getattr(input_data.sql_task, "date_ranges", ""),
+            agent_config=agent_config,
         )
 
         logger.debug(f"Generated SQL prompt:  {type(model)}, {prompt}")

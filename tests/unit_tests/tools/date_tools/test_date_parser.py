@@ -146,7 +146,8 @@ class TestParseWithLlm:
         }
         reference_date = datetime(2024, 1, 15)
 
-        with patch("datus.tools.date_tools.date_parser.prompt_manager") as mock_pm:
+        with patch("datus.tools.date_tools.date_parser.get_prompt_manager") as mock_gpm:
+            mock_pm = mock_gpm.return_value
             mock_pm.render_template.return_value = "prompt text"
             result = tool.parse_with_llm("last month", reference_date, mock_model)
 
@@ -161,7 +162,8 @@ class TestParseWithLlm:
         mock_model.generate_with_json_output.return_value = "not a dict"
         reference_date = datetime(2024, 1, 15)
 
-        with patch("datus.tools.date_tools.date_parser.prompt_manager") as mock_pm:
+        with patch("datus.tools.date_tools.date_parser.get_prompt_manager") as mock_gpm:
+            mock_pm = mock_gpm.return_value
             mock_pm.render_template.return_value = "prompt"
             result = tool.parse_with_llm("last month", reference_date, mock_model)
 
@@ -173,7 +175,8 @@ class TestParseWithLlm:
         mock_model.generate_with_json_output.side_effect = RuntimeError("LLM error")
         reference_date = datetime(2024, 1, 15)
 
-        with patch("datus.tools.date_tools.date_parser.prompt_manager") as mock_pm:
+        with patch("datus.tools.date_tools.date_parser.get_prompt_manager") as mock_gpm:
+            mock_pm = mock_gpm.return_value
             mock_pm.render_template.return_value = "prompt"
             result = tool.parse_with_llm("last month", reference_date, mock_model)
 

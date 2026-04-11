@@ -3,6 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import json
+from typing import Any, Optional
 
 from datus.models.base import LLMBaseModel
 from datus.prompts.fix_sql import fix_sql_prompt
@@ -12,7 +13,12 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
-def autofix_sql(model: LLMBaseModel, input_data: FixInput, docs: list[str]) -> FixResult:
+def autofix_sql(
+    model: LLMBaseModel,
+    input_data: FixInput,
+    docs: list[str],
+    agent_config: Optional[Any] = None,
+) -> FixResult:
     """Generate SQL query using the provided model."""
     if not isinstance(input_data, FixInput):
         raise ValueError("Input must be a FixInput instance")
@@ -31,6 +37,7 @@ def autofix_sql(model: LLMBaseModel, input_data: FixInput, docs: list[str]) -> F
             sql_context=sql_text,
             schemas=input_data.schemas,
             docs=docs,
+            agent_config=agent_config,
         )
 
         logger.debug(f"Fix SQL prompt:  {type(model)}, {prompt}")

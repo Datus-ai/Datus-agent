@@ -484,15 +484,16 @@ class ChatAgenticNode(AgenticNode):
         system_prompt_name = self.node_config.get("system_prompt") or self.get_node_name()
         template_name = f"{system_prompt_name}_system"
 
-        from datus.prompts.prompt_manager import prompt_manager
+        from datus.prompts.prompt_manager import get_prompt_manager
 
+        pm = get_prompt_manager(agent_config=self.agent_config)
         try:
-            base_prompt = prompt_manager.render_template(template_name=template_name, version=prompt_version, **context)
+            base_prompt = pm.render_template(template_name=template_name, version=prompt_version, **context)
             return self._finalize_system_prompt(base_prompt)
 
         except FileNotFoundError:
             logger.warning(f"Failed to render system prompt '{system_prompt_name}', using the default template instead")
-            base_prompt = prompt_manager.render_template(template_name="chat_system", version=None, **context)
+            base_prompt = pm.render_template(template_name="chat_system", version=None, **context)
             return self._finalize_system_prompt(base_prompt)
         except Exception as e:
             logger.error(f"Template loading error for '{template_name}': {e}")
@@ -539,13 +540,13 @@ class ChatAgenticNode(AgenticNode):
 
     def _build_plan_prompt(self, original_prompt: str) -> str:
         """Build enhanced prompt for plan mode based on current phase."""
-        from datus.prompts.prompt_manager import prompt_manager
+        from datus.prompts.prompt_manager import get_prompt_manager
 
         current_phase = getattr(self.plan_hooks, "plan_phase", "generating") if self.plan_hooks else "generating"
         replan_feedback = getattr(self.plan_hooks, "replan_feedback", "") if self.plan_hooks else ""
 
         try:
-            plan_prompt_addition = prompt_manager.render_template(
+            plan_prompt_addition = get_prompt_manager(agent_config=self.agent_config).render_template(
                 template_name="plan_mode_system",
                 version=None,
                 current_phase=current_phase,

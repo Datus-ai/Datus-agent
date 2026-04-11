@@ -23,7 +23,7 @@ class DateParsingTools:
         self.agent_config = agent_config
         self.model = model
         self.reference_date: Optional[str] = None
-        self.date_parser_tool = DateParserTool(language=self._get_language_setting())
+        self.date_parser_tool = DateParserTool(language=self._get_language_setting(), agent_config=agent_config)
 
     def set_reference_date(self, reference_date: Optional[str]):
         """

@@ -3,11 +3,11 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from datus.utils.json_utils import json2csv
 
-from .prompt_manager import prompt_manager
+from .prompt_manager import get_prompt_manager
 
 
 def gen_prompt(
@@ -17,6 +17,7 @@ def gen_prompt(
     table_metadata: List[Dict[str, str]],
     prompt_version: Optional[str] = None,
     top_n: int = 5,
+    agent_config: Optional[Any] = None,
 ) -> List[Dict[str, str]]:
     if len(table_metadata) == 0:
         return []
@@ -24,14 +25,15 @@ def gen_prompt(
     table_metadata_csv = json2csv(table_metadata, ["identifier", "definition"])
     current_date = datetime.datetime.now().strftime("%Y-%m-%d")
 
-    system_content = prompt_manager.render_template(
+    pm = get_prompt_manager(agent_config=agent_config)
+    system_content = pm.render_template(
         "schema_lineage_system",
         dialect=dialect,
         current_date=current_date,
         version=prompt_version,
     )
 
-    user_content = prompt_manager.render_template(
+    user_content = pm.render_template(
         "schema_lineage_user",
         database_name=database_name,
         user_question=user_question,
@@ -56,11 +58,12 @@ def gen_summary_prompt(
     table_metadata: List[Dict[str, str]],
     prompt_version: Optional[str] = None,
     top_n: int = 5,
+    agent_config: Optional[Any] = None,
 ) -> List[Dict[str, str]]:
     table_metadata_csv = json2csv(table_metadata, ["schema_name", "table_name", "schema_text", "score", "reasons"])
     current_date = datetime.datetime.now().strftime("%Y-%m-%d")
 
-    content = prompt_manager.render_template(
+    content = get_prompt_manager(agent_config=agent_config).render_template(
         "schema_lineage_summary",
         dialect=dialect,
         current_date=current_date,

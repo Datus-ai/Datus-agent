@@ -20,7 +20,7 @@ from pandas.api.types import (
 
 from datus.configuration.agent_config import AgentConfig
 from datus.models.base import LLMBaseModel
-from datus.prompts.prompt_manager import prompt_manager
+from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.visualization import VisualizationInput, VisualizationOutput, VisualizationWithContextOutput
 from datus.tools.base import BaseTool
 from datus.utils.loggings import get_logger
@@ -166,7 +166,7 @@ class VisualizationTool(BaseTool):
         user_question: Optional[str],
     ) -> Optional[VisualizationWithContextOutput]:
         """Single LLM call returning chart config + context metadata."""
-        prompt = prompt_manager.render_template(
+        prompt = get_prompt_manager(agent_config=self.agent_config).render_template(
             self.CONTEXT_PROMPT_TEMPLATE,
             version=self.prompt_version,
             columns_info=self._format_columns_info(df),
@@ -247,7 +247,7 @@ class VisualizationTool(BaseTool):
     # ------------------------------------------------------------------ #
     def _llm_based_recommendation(self, df: pd.DataFrame) -> Optional[VisualizationOutput]:
         """Use LLM to recommend visualization configuration."""
-        prompt = prompt_manager.render_template(
+        prompt = get_prompt_manager(agent_config=self.agent_config).render_template(
             self.PROMPT_TEMPLATE,
             version=self.prompt_version,
             columns_info=self._format_columns_info(df),

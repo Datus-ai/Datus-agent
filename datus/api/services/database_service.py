@@ -136,8 +136,8 @@ class DatabaseService:
             logger.exception("Connection test failed for %s", connector.database_name)
             return [_disconnected(connector.database_name)]
 
+        # 1) Enumerate databases — fatal if this fails since we have nothing to iterate.
         try:
-            # Enumerate databases — filter by request.database_name if specified
             if request.database_name:
                 db_names = [request.database_name]
             elif hasattr(connector, "get_databases"):
@@ -149,27 +149,52 @@ class DatabaseService:
                 db_names = [connector.database_name]
             else:
                 db_names = []
+        except Exception as e:
+            logger.warning("Failed to enumerate databases for %s: %s", connector.database_name, e)
+            return [_disconnected(connector.database_name)]
 
-            db_infos = []
-            for db_name in db_names:
-                if has_schema:
-                    # Filter by request.schema_name if specified
-                    if request.schema_name:
-                        schemas = [request.schema_name]
-                    elif hasattr(connector, "get_schemas"):
+        db_infos: List[DatabaseInfo] = []
+        for db_name in db_names:
+            if has_schema:
+                # 2) Resolve schemas for this db — a single failing db must not
+                # abort the whole listing. Report the db as disconnected and
+                # keep going.
+                if request.schema_name:
+                    schemas = [request.schema_name]
+                elif hasattr(connector, "get_schemas"):
+                    try:
                         schemas = connector.get_schemas(
                             catalog_name=request.catalog_name,
                             database_name=db_name,
                             include_sys=request.include_sys_schemas,
                         )
-                    else:
-                        schemas = ["public"]
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to get schemas for db=%s dialect=%s: %s",
+                            db_name,
+                            dialect,
+                            e,
+                        )
+                        db_infos.append(_disconnected(db_name))
+                        continue
+                else:
+                    schemas = ["public"]
 
-                    for schema in schemas:
+                for schema in schemas:
+                    # 3) Fetch tables for this (db, schema). A failure here only
+                    # invalidates this entry, not sibling schemas.
+                    try:
                         tables = connector.get_tables(
                             catalog_name=catalog_name, database_name=db_name, schema_name=schema
                         )
                         tables.sort()
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to get tables for db=%s schema=%s: %s",
+                            db_name,
+                            schema,
+                            e,
+                        )
                         db_infos.append(
                             DatabaseInfo(
                                 name=db_name,
@@ -178,18 +203,13 @@ class DatabaseService:
                                 current=(db_name == connector.database_name),
                                 catalog_name=catalog_name,
                                 schema_name=schema,
-                                connection_status="connected",
-                                tables_count=len(tables),
+                                connection_status="disconnected",
+                                tables_count=None,
                                 last_accessed=now,
-                                tables=tables,
                             )
                         )
-                else:
-                    # No schema support — get tables directly
-                    tables = connector.get_tables(
-                        catalog_name=catalog_name, database_name=db_name, schema_name=request.schema_name
-                    )
-                    tables.sort()
+                        continue
+
                     db_infos.append(
                         DatabaseInfo(
                             name=db_name,
@@ -197,19 +217,40 @@ class DatabaseService:
                             type=dialect,
                             current=(db_name == connector.database_name),
                             catalog_name=catalog_name,
-                            schema_name=None,
+                            schema_name=schema,
                             connection_status="connected",
                             tables_count=len(tables),
                             last_accessed=now,
                             tables=tables,
                         )
                     )
+            else:
+                # No schema support — get tables directly. Isolate per-db failures.
+                try:
+                    tables = connector.get_tables(
+                        catalog_name=catalog_name, database_name=db_name, schema_name=request.schema_name
+                    )
+                    tables.sort()
+                except Exception as e:
+                    logger.warning("Failed to get tables for db=%s: %s", db_name, e)
+                    db_infos.append(_disconnected(db_name))
+                    continue
 
-            return db_infos
-
-        except Exception as e:
-            logger.warning(f"Failed to enumerate databases for {connector.database_name}: {e}")
-            return [_disconnected(connector.database_name)]
+                db_infos.append(
+                    DatabaseInfo(
+                        name=db_name,
+                        uri=_get_uri(connector),
+                        type=dialect,
+                        current=(db_name == connector.database_name),
+                        catalog_name=catalog_name,
+                        schema_name=None,
+                        connection_status="connected",
+                        tables_count=len(tables),
+                        last_accessed=now,
+                        tables=tables,
+                    )
+                )
+        return db_infos
 
     def list_databases(self, request: ListDatabasesInput) -> Result[ListDatabasesData]:
         """

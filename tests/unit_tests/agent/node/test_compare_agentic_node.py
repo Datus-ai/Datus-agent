@@ -246,7 +246,10 @@ class TestCompareStaticMethods:
 
         compare_input = _create_compare_input()
 
-        system_instruction, user_prompt, messages = CompareAgenticNode._prepare_prompt_components(compare_input)
+        node = CompareAgenticNode(node_name="compare", agent_config=real_agent_config)
+        system_instruction, user_prompt, messages = node._prepare_prompt_components(
+            compare_input, agent_config=real_agent_config
+        )
 
         # System instruction should be a non-empty string from the real template
         assert isinstance(system_instruction, str)

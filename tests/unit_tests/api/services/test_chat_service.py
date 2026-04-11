@@ -203,17 +203,21 @@ class TestChatServiceStreamChat:
         tm = ChatTaskManager()
         svc = ChatService(agent_config=real_agent_config, task_manager=tm, project_id="test-proj")
 
-        # Start first chat
-        request1 = StreamChatInput(message="first", session_id="dup-stream")
-        async for _ in svc.stream_chat(request1):
-            break
+        # Mock _create_node to avoid real storage initialization in the background task
+        mock_node = MagicMock()
+        mock_node.session_id = "dup-stream"
+        with patch.object(tm, "_create_node", return_value=mock_node):
+            # Start first chat
+            request1 = StreamChatInput(message="first", session_id="dup-stream")
+            async for _ in svc.stream_chat(request1):
+                break
 
-        # Second should yield error event
-        request2 = StreamChatInput(message="second", session_id="dup-stream")
-        events = []
-        async for event in svc.stream_chat(request2):
-            events.append(event)
-            break
+            # Second should yield error event
+            request2 = StreamChatInput(message="second", session_id="dup-stream")
+            events = []
+            async for event in svc.stream_chat(request2):
+                events.append(event)
+                break
 
         assert len(events) >= 1
         # First event should be an error

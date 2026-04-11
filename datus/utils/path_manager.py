@@ -30,14 +30,22 @@ class DatusPathManager:
         >>> sessions_dir = pm.sessions_dir
     """
 
-    def __init__(self, datus_home: Optional[PathLike] = None):
+    def __init__(
+        self,
+        datus_home: Optional[PathLike] = None,
+        knowledge_home: Optional[PathLike] = None,
+    ):
         """
         Initialize the path manager.
 
         Args:
             datus_home: Custom .datus root directory. If None, defaults to ~/.datus
+            knowledge_home: Custom root for knowledge-base directories
+                (``semantic_models``, ``sql_summaries``, ``ext_knowledge``).
+                If None, falls back to ``datus_home`` so behavior is unchanged.
         """
         self._datus_home = self.resolve_home(datus_home)
+        self._knowledge_home = Path(knowledge_home).expanduser().resolve() if knowledge_home else self._datus_home
 
     @staticmethod
     def resolve_home(datus_home: Optional[PathLike] = None) -> Path:
@@ -53,15 +61,33 @@ class DatusPathManager:
         Deprecated compatibility helper.
         Prefer creating a new ``DatusPathManager(new_home)`` and passing it explicitly.
 
+        Also resets ``knowledge_home`` to track ``new_home`` to avoid stale cross-tenant
+        state in long-running processes. Callers that need a separate knowledge root
+        must construct a new ``DatusPathManager(new_home, knowledge_home=...)`` instead.
+
         Args:
             new_home: New home directory path (can include ~)
         """
+        import warnings
+
+        warnings.warn(
+            "DatusPathManager.update_home is deprecated; construct a new DatusPathManager instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._datus_home = self.resolve_home(new_home)
+        # Reset knowledge_home to match so stale KB paths from a prior tenant don't leak.
+        self._knowledge_home = self._datus_home
 
     @property
     def datus_home(self) -> Path:
         """Root .datus directory path"""
         return self._datus_home
+
+    @property
+    def knowledge_home(self) -> Path:
+        """Root directory for knowledge-base data (semantic_models, sql_summaries, ext_knowledge)."""
+        return self._knowledge_home
 
     @property
     def conf_dir(self) -> Path:
@@ -138,18 +164,18 @@ class DatusPathManager:
 
     @property
     def semantic_models_dir(self) -> Path:
-        """Semantic models directory: ~/.datus/semantic_models"""
-        return self._datus_home / "semantic_models"
+        """Semantic models directory: {knowledge_home}/semantic_models"""
+        return self._knowledge_home / "semantic_models"
 
     @property
     def sql_summaries_dir(self) -> Path:
-        """SQL summaries directory: ~/.datus/sql_summaries"""
-        return self._datus_home / "sql_summaries"
+        """SQL summaries directory: {knowledge_home}/sql_summaries"""
+        return self._knowledge_home / "sql_summaries"
 
     @property
     def ext_knowledge_dir(self) -> Path:
-        """ext knowledge directory: ~/.datus/ext_knowledge"""
-        return self._datus_home / "ext_knowledge"
+        """ext knowledge directory: {knowledge_home}/ext_knowledge"""
+        return self._knowledge_home / "ext_knowledge"
 
     # Valid directory names mapping
     _VALID_DIR_NAMES = {
@@ -362,9 +388,11 @@ class DatusPathManager:
         copy_data_file(resource_path="prompts/prompt_templates", target_dir=self.template_dir, replace=False)
 
 
-# Context-local home for legacy helpers that do not receive ``AgentConfig`` directly.
+# Context-local path manager for legacy helpers that do not receive ``AgentConfig`` directly.
 # Unlike the previous process-wide fallback, this does not leak across threads/tasks.
-_current_datus_home: ContextVar[Optional[str]] = ContextVar("datus_current_datus_home", default=None)
+# We store the full ``DatusPathManager`` instance (not just the home path string) so that
+# ``knowledge_home`` and any other instance-level state survives the ContextVar round-trip.
+_current_path_manager: ContextVar[Optional["DatusPathManager"]] = ContextVar("datus_current_path_manager", default=None)
 
 
 def set_current_path_manager(
@@ -372,22 +400,22 @@ def set_current_path_manager(
     *,
     agent_config: Optional[Any] = None,
 ) -> Token:
-    """Set the current context-local home used by ``get_path_manager()``.
+    """Set the current context-local path manager used by ``get_path_manager()``.
 
-    The value is stored as a resolved home path, so ``get_path_manager()`` still
-    returns fresh ``DatusPathManager`` instances for implicit callers.
+    The full ``DatusPathManager`` instance is stored, so ``knowledge_home`` and
+    any instance-level state is preserved for implicit callers.
     """
     if path_manager is None and agent_config is not None:
         path_manager = getattr(agent_config, "path_manager", None)
 
     if isinstance(path_manager, DatusPathManager):
-        resolved_home = str(path_manager.datus_home)
+        resolved: Optional["DatusPathManager"] = path_manager
     elif path_manager:
-        resolved_home = str(DatusPathManager.resolve_home(path_manager))
+        resolved = DatusPathManager(path_manager)
     else:
-        resolved_home = None
+        resolved = None
 
-    return _current_datus_home.set(resolved_home)
+    return _current_path_manager.set(resolved)
 
 
 def get_path_manager(
@@ -403,7 +431,7 @@ def get_path_manager(
     1. Explicit ``path_manager`` argument
     2. Explicit ``agent_config.path_manager``
     3. Explicit ``datus_home`` argument
-    4. Context-local home set via ``set_current_path_manager()``
+    4. Context-local ``DatusPathManager`` set via ``set_current_path_manager()``
     5. ``~/.datus``
 
     Args:
@@ -425,8 +453,10 @@ def get_path_manager(
     if datus_home is not None:
         return DatusPathManager(datus_home)
 
-    current_home = _current_datus_home.get()
-    return DatusPathManager(current_home)
+    current = _current_path_manager.get()
+    if current is not None:
+        return current
+    return DatusPathManager()
 
 
 def reset_path_manager(token: Optional[Token] = None) -> None:
@@ -434,6 +464,6 @@ def reset_path_manager(token: Optional[Token] = None) -> None:
     Reset context-local path-manager defaults. Primarily for testing.
     """
     if token is not None:
-        _current_datus_home.reset(token)
+        _current_path_manager.reset(token)
         return
-    _current_datus_home.set(None)
+    _current_path_manager.set(None)

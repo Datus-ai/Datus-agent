@@ -216,13 +216,14 @@ class TestReasoningSqlWithMcp:
 
         with (
             patch("datus.tools.llms_tools.reasoning_sql.get_reasoning_prompt", return_value="p"),
-            patch("datus.tools.llms_tools.reasoning_sql.prompt_manager") as mock_pm,
+            patch("datus.tools.llms_tools.reasoning_sql.get_prompt_manager") as mock_gpm,
             patch("datus.tools.llms_tools.reasoning_sql.asyncio") as mock_asyncio,
             patch(
                 "datus.tools.llms_tools.reasoning_sql.llm_result2json",
                 return_value={"sql": "SELECT * FROM users", "explanation": "all users"},
             ),
         ):
+            mock_pm = mock_gpm.return_value
             mock_pm.get_raw_template.return_value = "instruction"
             mock_asyncio.run.return_value = exec_result
 
@@ -248,11 +249,12 @@ class TestReasoningSqlWithMcp:
 
         with (
             patch("datus.tools.llms_tools.reasoning_sql.get_reasoning_prompt", return_value="p"),
-            patch("datus.tools.llms_tools.reasoning_sql.prompt_manager") as mock_pm,
+            patch("datus.tools.llms_tools.reasoning_sql.get_prompt_manager") as mock_gpm,
             patch("datus.tools.llms_tools.reasoning_sql.asyncio") as mock_asyncio,
             patch("datus.tools.llms_tools.reasoning_sql.llm_result2json", return_value=None),
             patch("datus.tools.llms_tools.reasoning_sql.llm_result2sql", return_value="SELECT id FROM users"),
         ):
+            mock_pm = mock_gpm.return_value
             mock_pm.get_raw_template.return_value = "instruction"
             mock_asyncio.run.return_value = exec_result
 
@@ -277,11 +279,12 @@ class TestReasoningSqlWithMcp:
 
         with (
             patch("datus.tools.llms_tools.reasoning_sql.get_reasoning_prompt", return_value="p"),
-            patch("datus.tools.llms_tools.reasoning_sql.prompt_manager") as mock_pm,
+            patch("datus.tools.llms_tools.reasoning_sql.get_prompt_manager") as mock_gpm,
             patch("datus.tools.llms_tools.reasoning_sql.asyncio") as mock_asyncio,
             patch("datus.tools.llms_tools.reasoning_sql.llm_result2json", return_value=None),
             patch("datus.tools.llms_tools.reasoning_sql.llm_result2sql", return_value=None),
         ):
+            mock_pm = mock_gpm.return_value
             mock_pm.get_raw_template.return_value = "instruction"
             mock_asyncio.run.return_value = exec_result
 
@@ -299,9 +302,10 @@ class TestReasoningSqlWithMcp:
 
         with (
             patch("datus.tools.llms_tools.reasoning_sql.get_reasoning_prompt", return_value="p"),
-            patch("datus.tools.llms_tools.reasoning_sql.prompt_manager") as mock_pm,
+            patch("datus.tools.llms_tools.reasoning_sql.get_prompt_manager") as mock_gpm,
             patch("datus.tools.llms_tools.reasoning_sql.asyncio") as mock_asyncio,
         ):
+            mock_pm = mock_gpm.return_value
             mock_pm.get_raw_template.return_value = "instruction"
             mock_asyncio.run.side_effect = RuntimeError("403 Forbidden access not allowed")
 
@@ -319,9 +323,10 @@ class TestReasoningSqlWithMcp:
 
         with (
             patch("datus.tools.llms_tools.reasoning_sql.get_reasoning_prompt", return_value="p"),
-            patch("datus.tools.llms_tools.reasoning_sql.prompt_manager") as mock_pm,
+            patch("datus.tools.llms_tools.reasoning_sql.get_prompt_manager") as mock_gpm,
             patch("datus.tools.llms_tools.reasoning_sql.asyncio") as mock_asyncio,
         ):
+            mock_pm = mock_gpm.return_value
             mock_pm.get_raw_template.return_value = "instruction"
             mock_asyncio.run.side_effect = RuntimeError("connection reset")
 
@@ -350,10 +355,11 @@ class TestReasoningSqlWithMcp:
 
         with (
             patch("datus.tools.llms_tools.reasoning_sql.get_reasoning_prompt", return_value="p"),
-            patch("datus.tools.llms_tools.reasoning_sql.prompt_manager") as mock_pm,
+            patch("datus.tools.llms_tools.reasoning_sql.get_prompt_manager") as mock_gpm,
             patch("datus.tools.llms_tools.reasoning_sql.asyncio") as mock_asyncio,
             patch("datus.tools.llms_tools.reasoning_sql.llm_result2json", return_value={"sql": "SELECT 1"}),
         ):
+            mock_pm = mock_gpm.return_value
             mock_pm.get_raw_template.return_value = "instruction"
             mock_asyncio.run.side_effect = capture_run
             mock_model.generate_with_tools.return_value = exec_result

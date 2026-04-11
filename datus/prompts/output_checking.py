@@ -2,12 +2,12 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-from typing import Dict, List, Union
+from typing import Any, Dict, List, Optional, Union
 
 from datus.schemas.node_models import Metric, TableSchema
 from datus.utils.constants import DBType
 
-from .prompt_manager import prompt_manager
+from .prompt_manager import get_prompt_manager
 
 
 def gen_prompt(
@@ -19,6 +19,7 @@ def gen_prompt(
     dialect: str = DBType.SQLITE,
     external_knowledge: str = "",
     prompt_version: str = "",
+    agent_config: Optional[Any] = None,
 ) -> List[Dict[str, str]]:
     """Generate a prompt for checking the output of a SQL query.
 
@@ -57,7 +58,7 @@ def gen_prompt(
         table_schemas_str = "\n".join([schema.to_prompt(dialect) for schema in table_schemas])
 
     # Render template
-    content = prompt_manager.render_template(
+    content = get_prompt_manager(agent_config=agent_config).render_template(
         "output_checking",
         dialect=dialect,
         user_question=user_question,

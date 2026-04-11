@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from datus.models.base import LLMBaseModel
 from datus.prompts.extract_dates import get_date_extraction_prompt, parse_date_extraction_response
-from datus.prompts.prompt_manager import prompt_manager
+from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.date_parser_node_models import ExtractedDate
 from datus.tools import BaseTool
 from datus.utils.loggings import get_logger
@@ -21,9 +21,10 @@ class DateParserTool(BaseTool):
     tool_name = "date_parser_tool"
     tool_description = "Tool for extracting and parsing temporal expressions from natural language"
 
-    def __init__(self, language: str = "en", **kwargs):
+    def __init__(self, language: str = "en", agent_config: Optional[Any] = None, **kwargs):
         super().__init__(**kwargs)
         self.language = language
+        self.agent_config = agent_config
 
     def execute(self, task_text: str, current_date: str, model: LLMBaseModel) -> List[ExtractedDate]:
         """
@@ -131,7 +132,7 @@ class DateParserTool(BaseTool):
         """Parse temporal expressions using LLM."""
         response = None
         try:
-            prompt = prompt_manager.render_template(
+            prompt = get_prompt_manager(agent_config=self.agent_config).render_template(
                 f"date_parser_{self.language}",
                 version="1.0",
                 text=text,
