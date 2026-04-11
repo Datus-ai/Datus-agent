@@ -21,7 +21,7 @@ from pandas.api.types import (
 from datus.configuration.agent_config import AgentConfig
 from datus.models.base import LLMBaseModel
 from datus.prompts.prompt_manager import prompt_manager
-from datus.schemas.visualization import VisualizationInput, VisualizationOutput
+from datus.schemas.visualization import VisualizationInput, VisualizationOutput, VisualizationWithContextOutput
 from datus.tools.base import BaseTool
 from datus.utils.loggings import get_logger
 
@@ -35,6 +35,7 @@ class VisualizationTool(BaseTool):
     tool_description = "Recommend a chart configuration (chart type, x axis, y axes) for a dataset."
 
     PROMPT_TEMPLATE = "visualization_system"
+    CONTEXT_PROMPT_TEMPLATE = "visualization_with_context"
 
     def __init__(
         self,
@@ -95,6 +96,139 @@ class VisualizationTool(BaseTool):
             result = self._rule_based_recommendation(dataframe)
 
         return result
+
+    def execute_with_context(
+        self,
+        input_data: VisualizationInput,
+        sql: Optional[str] = None,
+        user_question: Optional[str] = None,
+    ) -> VisualizationWithContextOutput:
+        """Generate visualization with data context (showing, period, filters, insight).
+
+        Uses a single merged LLM call. Falls back to rule-based heuristics
+        (without context metadata) if the LLM call fails.
+        """
+        if not isinstance(input_data, VisualizationInput):
+            raise TypeError("VisualizationTool expects VisualizationInput as input data.")
+
+        dataframe = self._convert_to_dataframe(input_data.data)
+        if dataframe is None:
+            error_msg = "VisualizationInput data must be a pandas.DataFrame, list, or pyarrow.Table."
+            logger.error(error_msg)
+            return VisualizationWithContextOutput(
+                success=False,
+                error=error_msg,
+                chart_type="Unknown",
+                x_col="",
+                y_cols=[],
+                reason=error_msg,
+            )
+
+        if dataframe.empty or dataframe.shape[1] == 0:
+            error_msg = "Provided dataset is empty or has no columns."
+            logger.error(error_msg)
+            return VisualizationWithContextOutput(
+                success=False,
+                error=error_msg,
+                chart_type="Unknown",
+                x_col="",
+                y_cols=[],
+                reason="Dataset does not contain any records",
+            )
+
+        # Try context-aware LLM call
+        if self.model:
+            try:
+                result = self._llm_with_context(dataframe, sql, user_question)
+                if result is not None:
+                    return result
+            except Exception as exc:
+                logger.warning(f"Context-aware LLM call failed, falling back to heuristics: {exc}")
+
+        # Fall back directly to rule-based heuristics (no second LLM call)
+        base = self._rule_based_recommendation(dataframe)
+        return VisualizationWithContextOutput(
+            success=base.success,
+            error=base.error,
+            chart_type=base.chart_type,
+            x_col=base.x_col,
+            y_cols=base.y_cols,
+            reason=base.reason,
+        )
+
+    # ------------------------------------------------------------------ #
+    # Context-aware LLM recommendation
+    # ------------------------------------------------------------------ #
+    def _llm_with_context(
+        self,
+        df: pd.DataFrame,
+        sql: Optional[str],
+        user_question: Optional[str],
+    ) -> Optional[VisualizationWithContextOutput]:
+        """Single LLM call returning chart config + context metadata."""
+        prompt = prompt_manager.render_template(
+            self.CONTEXT_PROMPT_TEMPLATE,
+            version=self.prompt_version,
+            columns_info=self._format_columns_info(df),
+            data_preview=self._format_data_preview(df),
+            sql=sql or "",
+            user_question=user_question or "",
+        )
+
+        response = self.model.generate_with_json_output(prompt)
+        if not isinstance(response, dict):
+            logger.warning("Context-aware LLM response is not a dict, ignoring it")
+            return None
+
+        # ── Parse chart config ────────────────────────────────────
+        chart_type = self._normalize_chart_type(response.get("chart_type", ""))
+        x_col = response.get("x_col") or ""
+        y_cols = response.get("y_cols") or []
+        if isinstance(y_cols, str):
+            y_cols = [y_cols]
+
+        x_col = x_col if x_col in df.columns else self._select_dimension(df, exclude=set(y_cols))
+        y_cols = self._sanitize_y_cols(df, y_cols, exclude={x_col})
+
+        reason = (response.get("reason") or "").strip()
+        if not reason:
+            reason = self._default_reason(chart_type, x_col, y_cols)
+
+        # ── Parse context metadata ────────────────────────────────
+        showing = response.get("showing")
+        if isinstance(showing, dict):
+            showing = {
+                "metrics": showing.get("metrics") or [],
+                "dimensions": showing.get("dimensions") or [],
+            }
+        else:
+            showing = None
+
+        period = response.get("period")
+        if not isinstance(period, str):
+            period = None
+
+        filters = response.get("filters")
+        if not isinstance(filters, list):
+            filters = []
+        filters = [f for f in filters if isinstance(f, str)]
+
+        insight = response.get("insight")
+        if not isinstance(insight, str):
+            insight = None
+
+        return VisualizationWithContextOutput(
+            success=True,
+            error=None,
+            chart_type=chart_type,
+            x_col=x_col or "",
+            y_cols=y_cols,
+            reason=reason,
+            showing=showing,
+            period=period,
+            filters=filters,
+            insight=insight,
+        )
 
     # ------------------------------------------------------------------ #
     # Data preparation

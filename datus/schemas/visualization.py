@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Union
 
 import pandas as pd
 import pyarrow as pa
@@ -21,3 +21,12 @@ class VisualizationOutput(BaseResult):
     x_col: str = Field(description="Column name for the X-axis")
     y_cols: list[str] = Field(description="List of column names for the Y-axis")
     reason: str = Field(description="A short explanation")
+
+
+class VisualizationWithContextOutput(VisualizationOutput):
+    """Extended output that includes data context metadata."""
+
+    showing: Optional[Dict[str, List[str]]] = Field(None, description="Metrics and dimensions")
+    period: Optional[str] = Field(None, description="Time range from SQL")
+    filters: Optional[List[str]] = Field(None, description="Human-readable filters")
+    insight: Optional[str] = Field(None, description="Analytical summary")
