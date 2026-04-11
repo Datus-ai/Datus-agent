@@ -43,7 +43,11 @@ class EmbeddingProvider(str, Enum):
     HUGGINGFACE = "huggingface"
 
 
-# System sub-agents that are built-in and not user-configurable
+# System sub-agents that are built-in and not user-configurable.
+# This set drives _build_task_description in sub_agent_task_tool — entries here
+# become available delegation targets exposed to the parent agent's LLM. A
+# subagent that is registered in NODE_CLASS_MAP and BUILTIN_SUBAGENT_DESCRIPTIONS
+# but missing from this set is effectively unreachable at runtime.
 SYS_SUB_AGENTS = {
     "gen_semantic_model",
     "gen_metrics",
@@ -53,6 +57,7 @@ SYS_SUB_AGENTS = {
     "gen_report",
     "gen_table",
     "gen_skill",
+    "gen_adapter",
 }
 
 

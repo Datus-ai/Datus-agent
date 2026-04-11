@@ -15,8 +15,15 @@ _TAVILY_PATH = "datus.tools.search_tools.search_tool.search_by_tavily"
 
 @pytest.fixture
 def mock_agent_config():
+    """Default mock config with a non-empty tavily_api_key so the
+    web_search_document short-circuit for missing keys does not fire
+    and mocks of ``search_by_tavily`` are actually invoked.
+
+    Tests that need to exercise the missing-key branch should override
+    ``config.tavily_api_key = None`` explicitly.
+    """
     config = Mock()
-    config.tavily_api_key = None
+    config.tavily_api_key = "test-tavily-key"
     return config
 
 
