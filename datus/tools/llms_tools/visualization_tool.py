@@ -195,15 +195,6 @@ class VisualizationTool(BaseTool):
             reason = self._default_reason(chart_type, x_col, y_cols)
 
         # ── Parse context metadata ────────────────────────────────
-        showing = response.get("showing")
-        if isinstance(showing, dict):
-            showing = {
-                "metrics": showing.get("metrics") or [],
-                "dimensions": showing.get("dimensions") or [],
-            }
-        else:
-            showing = None
-
         period = response.get("period")
         if not isinstance(period, str):
             period = None
@@ -224,7 +215,6 @@ class VisualizationTool(BaseTool):
             x_col=x_col or "",
             y_cols=y_cols,
             reason=reason,
-            showing=showing,
             period=period,
             filters=filters,
             insight=insight,

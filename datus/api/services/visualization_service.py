@@ -192,7 +192,6 @@ class DataVisualizationService:
         data_insight: Optional[Dict[str, Any]] = None
         if has_context:
             data_insight = {
-                "showing": getattr(result, "showing", None),
                 "period": getattr(result, "period", None),
                 "filters": getattr(result, "filters", None),
                 "insight": getattr(result, "insight", None),

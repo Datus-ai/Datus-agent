@@ -95,7 +95,6 @@ class TestDataVisualizationSuccess:
                     "reason": "ok",
                 },
                 data_insight={
-                    "showing": {"metrics": ["sales"], "dimensions": ["date"]},
                     "period": "2024-01-01 ~ 2024-01-02",
                     "filters": ["BP购买"],
                     "insight": "Sales grew.",
@@ -107,7 +106,6 @@ class TestDataVisualizationSuccess:
         assert body["success"] is True
         assert body["data"]["chart"]["chart_type"] == "Bar"
         di = body["data"]["data_insight"]
-        assert di["showing"] == {"metrics": ["sales"], "dimensions": ["date"]}
         assert di["period"] == "2024-01-01 ~ 2024-01-02"
         assert di["filters"] == ["BP购买"]
         assert di["insight"] == "Sales grew."

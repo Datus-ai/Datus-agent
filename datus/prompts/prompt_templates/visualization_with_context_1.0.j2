@@ -27,9 +27,6 @@ Based on ALL the information above, return ONLY a **JSON** object with the follo
 - "reason": A short explanation for the chart recommendation.
 
 ### Data Context (required when SQL is provided)
-- "showing": An object with:
-  - "metrics": List of metric names extracted from the SELECT aggregation columns (use the column aliases if available, e.g. "当前赛季使用人数")
-  - "dimensions": List of dimension names extracted from GROUP BY / non-aggregation columns (use the column aliases if available, e.g. "赛季名称")
 - "period": The time range extracted from WHERE conditions, formatted as "YYYY-MM-DD ~ YYYY-MM-DD" or a readable period like "Q4 2025". Return null if no time condition exists.
 - "filters": A list of human-readable filter descriptions extracted from WHERE conditions (exclude time range conditions). Use the user's question language to describe filters when possible, e.g. "BP购买" instead of "purchasesource = BATTLEPASS_PROGRESS". Return an empty list if no filters.
 - "insight": A concise analytical summary (2-4 sentences) of the data. Highlight key findings, comparisons, anomalies, or trends. Use the same language as the user's question. Focus on what the data reveals, not how it was queried.
@@ -39,7 +36,6 @@ Based on ALL the information above, return ONLY a **JSON** object with the follo
 - If comparing categories, use "Bar Chart".
 - If checking correlation between two numbers, use "Scatter Plot".
 - If it cannot be confirmed, "chart_type" returns "Unknown".
-- For "showing", extract from the SQL SELECT clause: aggregated columns are metrics, grouped/non-aggregated columns are dimensions.
 - For "filters", translate technical SQL conditions into user-friendly descriptions.
 - For "insight", analyze the actual data values, not just describe the query structure.
-- If no SQL is provided, omit "showing", "period", "filters", and "insight" from the response.
+- If no SQL is provided, omit "period", "filters", and "insight" from the response.

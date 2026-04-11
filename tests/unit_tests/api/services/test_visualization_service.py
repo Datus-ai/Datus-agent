@@ -127,7 +127,6 @@ class TestGenerateWithContext:
             "x_col": "date",
             "y_cols": ["sales", "profit"],
             "reason": "Categorical comparison",
-            "showing": {"metrics": ["sales", "profit"], "dimensions": ["date"]},
             "period": "2024-01-01 ~ 2024-01-02",
             "filters": ["BP购买"],
             "insight": "Sales increased by 50% from day 1 to day 2.",
@@ -156,7 +155,6 @@ class TestGenerateWithContext:
         assert chart["chart_type"] == "Bar"
         assert chart["x_col"] == "date"
         di = result["data"]["data_insight"]
-        assert di["showing"] == {"metrics": ["sales", "profit"], "dimensions": ["date"]}
         assert di["period"] == "2024-01-01 ~ 2024-01-02"
         assert di["filters"] == ["BP购买"]
         assert di["insight"] == "Sales increased by 50% from day 1 to day 2."
@@ -168,7 +166,6 @@ class TestGenerateWithContext:
 
         assert result["success"] is True
         di = result["data"]["data_insight"]
-        assert di["showing"] is not None
         assert di["insight"] is not None
 
     def test_chart_type_override_with_context(self, mock_agent_config, csv_data):
@@ -221,7 +218,6 @@ class TestGenerateWithContext:
             "x_col": "date",
             "y_cols": ["sales"],
             "reason": "ok",
-            "showing": "not a dict",
             "period": 12345,
             "filters": "not a list",
             "insight": ["not", "a", "string"],
@@ -231,7 +227,6 @@ class TestGenerateWithContext:
             result = svc.generate(csv_data, sql="SELECT ...")
 
         di = result["data"]["data_insight"]
-        assert di["showing"] is None
         assert di["period"] is None
         assert di["filters"] == []
         assert di["insight"] is None

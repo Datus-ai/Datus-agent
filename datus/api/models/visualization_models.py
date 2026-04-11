@@ -26,13 +26,6 @@ class DataVisualizationRequest(BaseModel):
 # ── Response payloads ────────────────────────────────────────────────
 
 
-class ShowingInfo(BaseModel):
-    """Describes what the data is showing (metrics and dimensions)."""
-
-    metrics: List[str] = Field(..., description="Metric names from aggregation columns")
-    dimensions: List[str] = Field(..., description="Dimension names from grouping columns")
-
-
 class ChartData(BaseModel):
     """Chart configuration for rendering."""
 
@@ -47,7 +40,6 @@ class ChartData(BaseModel):
 class DataInsight(BaseModel):
     """Context metadata extracted from SQL and data analysis."""
 
-    showing: Optional[ShowingInfo] = Field(None, description="What the data shows (metrics + dimensions)")
     period: Optional[str] = Field(None, description="Time range extracted from SQL")
     filters: Optional[List[str]] = Field(None, description="Human-readable filter descriptions")
     insight: Optional[str] = Field(None, description="AI-generated analytical summary")
