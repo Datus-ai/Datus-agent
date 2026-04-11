@@ -34,7 +34,7 @@ class ShowingInfo(BaseModel):
 
 
 class ChartData(BaseModel):
-    """Chart recommendation payload returned by the visualization API."""
+    """Chart configuration for rendering."""
 
     chart_type: ChartType = Field(..., description="Recommended chart type")
     columns: List[str] = Field(..., description="All column names in the dataset")
@@ -42,7 +42,11 @@ class ChartData(BaseModel):
     x_col: Optional[str] = Field(None, description="X-axis column (absent when chart_type is Unknown)")
     y_cols: Optional[List[str]] = Field(None, description="Y-axis column(s) (absent when chart_type is Unknown)")
     reason: str = Field("", description="Explanation for the recommendation")
-    # Context metadata (only present when sql is provided)
+
+
+class DataInsight(BaseModel):
+    """Context metadata extracted from SQL and data analysis."""
+
     showing: Optional[ShowingInfo] = Field(None, description="What the data shows (metrics + dimensions)")
     period: Optional[str] = Field(None, description="Time range extracted from SQL")
     filters: Optional[List[str]] = Field(None, description="Human-readable filter descriptions")
@@ -52,4 +56,5 @@ class ChartData(BaseModel):
 class DataVisualizationData(BaseModel):
     """Wrapper returned in ``Result.data``."""
 
-    data: ChartData = Field(..., description="Chart recommendation payload")
+    chart: ChartData = Field(..., description="Chart configuration for rendering")
+    data_insight: Optional[DataInsight] = Field(None, description="Context metadata (present when sql is provided)")

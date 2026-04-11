@@ -177,32 +177,38 @@ class DataVisualizationService:
         if chart_type is not None:
             chart_result["chart_type"] = chart_type
 
-        # ── Build response payload ────────────────────────────────
+        # ── Build chart payload ────────────────────────────────────
         mapped_type = chart_result["chart_type"]
 
-        chart_data: Dict[str, Any] = {
+        chart: Dict[str, Any] = {
             "chart_type": mapped_type,
             "columns": all_columns,
             "numeric_columns": numeric_columns,
         }
 
         if mapped_type == "Unknown":
-            chart_data["reason"] = chart_result.get("reason", "")
+            chart["reason"] = chart_result.get("reason", "")
         else:
-            chart_data["x_col"] = chart_result.get("x_col", "")
-            chart_data["y_cols"] = chart_result.get("y_cols", [])
-            chart_data["reason"] = chart_result.get("reason", "")
+            chart["x_col"] = chart_result.get("x_col", "")
+            chart["y_cols"] = chart_result.get("y_cols", [])
+            chart["reason"] = chart_result.get("reason", "")
 
-        # Add context metadata only when context was provided
+        # ── Build data_insight payload (only when context provided) ─
+        data_insight: Optional[Dict[str, Any]] = None
         if has_context:
-            chart_data["showing"] = chart_result.get("showing")
-            chart_data["period"] = chart_result.get("period")
-            chart_data["filters"] = chart_result.get("filters")
-            chart_data["insight"] = chart_result.get("insight")
+            data_insight = {
+                "showing": chart_result.get("showing"),
+                "period": chart_result.get("period"),
+                "filters": chart_result.get("filters"),
+                "insight": chart_result.get("insight"),
+            }
 
         return {
             "success": True,
-            "data": {"data": chart_data},
+            "data": {
+                "chart": chart,
+                "data_insight": data_insight,
+            },
         }
 
     # ------------------------------------------------------------------

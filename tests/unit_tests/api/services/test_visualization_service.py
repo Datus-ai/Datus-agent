@@ -85,16 +85,13 @@ class TestGenerateBasic:
             result = svc.generate(csv_data)
 
         assert result["success"] is True
-        chart = result["data"]["data"]
+        chart = result["data"]["chart"]
         assert chart["chart_type"] == "Line"
         assert chart["x_col"] == "date"
         assert chart["columns"] == ["date", "sales", "profit"]
         assert chart["numeric_columns"] == ["sales", "profit"]
-        # No context metadata when sql not provided
-        assert "showing" not in chart
-        assert "period" not in chart
-        assert "filters" not in chart
-        assert "insight" not in chart
+        # No data_insight when sql not provided
+        assert result["data"]["data_insight"] is None
 
     def test_returns_unknown_without_axes(self, mock_agent_config, csv_data):
         with patch(_LLM_PATH), patch(_VIZ_TOOL_PATH) as mock_cls:
@@ -104,7 +101,7 @@ class TestGenerateBasic:
             svc = DataVisualizationService(agent_config=mock_agent_config)
             result = svc.generate(csv_data)
 
-        chart = result["data"]["data"]
+        chart = result["data"]["chart"]
         assert chart["chart_type"] == "Unknown"
         assert chart["reason"] == "Cannot determine"
         assert "x_col" not in chart
@@ -115,7 +112,7 @@ class TestGenerateBasic:
             svc = DataVisualizationService(agent_config=mock_agent_config)
             result = svc.generate(csv_data, chart_type="Bar")
 
-        assert result["data"]["data"]["chart_type"] == "Bar"
+        assert result["data"]["chart"]["chart_type"] == "Bar"
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -157,13 +154,14 @@ class TestGenerateWithContext:
             result = svc.generate(csv_data, sql="SELECT date, sales FROM t")
 
         assert result["success"] is True
-        chart = result["data"]["data"]
+        chart = result["data"]["chart"]
         assert chart["chart_type"] == "Bar"
         assert chart["x_col"] == "date"
-        assert chart["showing"] == {"metrics": ["sales", "profit"], "dimensions": ["date"]}
-        assert chart["period"] == "2024-01-01 ~ 2024-01-02"
-        assert chart["filters"] == ["BP购买"]
-        assert chart["insight"] == "Sales increased by 50% from day 1 to day 2."
+        di = result["data"]["data_insight"]
+        assert di["showing"] == {"metrics": ["sales", "profit"], "dimensions": ["date"]}
+        assert di["period"] == "2024-01-01 ~ 2024-01-02"
+        assert di["filters"] == ["BP购买"]
+        assert di["insight"] == "Sales increased by 50% from day 1 to day 2."
 
     def test_with_user_question_only(self, mock_agent_config, csv_data):
         svc, _ = self._setup_context_svc(mock_agent_config, self._mock_llm_response())
@@ -171,16 +169,16 @@ class TestGenerateWithContext:
             result = svc.generate(csv_data, user_question="Show me sales trends")
 
         assert result["success"] is True
-        chart = result["data"]["data"]
-        assert chart["showing"] is not None
-        assert chart["insight"] is not None
+        di = result["data"]["data_insight"]
+        assert di["showing"] is not None
+        assert di["insight"] is not None
 
     def test_chart_type_override_with_context(self, mock_agent_config, csv_data):
         svc, _ = self._setup_context_svc(mock_agent_config, self._mock_llm_response())
         with patch(_PROMPT_PATH):
             result = svc.generate(csv_data, sql="SELECT ...", chart_type="Line")
 
-        assert result["data"]["data"]["chart_type"] == "Line"
+        assert result["data"]["chart"]["chart_type"] == "Line"
 
     def test_falls_back_to_basic_tool_on_llm_exception(self, mock_agent_config, csv_data):
         svc, mock_model = self._setup_context_svc(mock_agent_config, self._mock_llm_response())
@@ -191,9 +189,11 @@ class TestGenerateWithContext:
             result = svc.generate(csv_data, sql="SELECT ...")
 
         assert result["success"] is True
-        chart = result["data"]["data"]
+        chart = result["data"]["chart"]
         assert chart["chart_type"] == "Line"
-        assert chart.get("showing") is None
+        # Fallback produces no context metadata
+        di = result["data"]["data_insight"]
+        assert di["showing"] is None
 
     def test_falls_back_to_basic_tool_on_invalid_response(self, mock_agent_config, csv_data):
         svc, mock_model = self._setup_context_svc(mock_agent_config, self._mock_llm_response())
@@ -204,7 +204,7 @@ class TestGenerateWithContext:
             result = svc.generate(csv_data, sql="SELECT ...")
 
         assert result["success"] is True
-        assert result["data"]["data"]["chart_type"] == "Line"
+        assert result["data"]["chart"]["chart_type"] == "Line"
 
     def test_falls_back_to_basic_when_no_model(self, mock_agent_config, csv_data):
         """When LLM model cannot be created, should use basic tool even with sql."""
@@ -216,7 +216,7 @@ class TestGenerateWithContext:
             result = svc.generate(csv_data, sql="SELECT ...")
 
         assert result["success"] is True
-        assert result["data"]["data"]["chart_type"] == "Line"
+        assert result["data"]["chart"]["chart_type"] == "Line"
 
     def test_sanitizes_invalid_metadata_types(self, mock_agent_config, csv_data):
         """LLM returning wrong types for metadata should be handled gracefully."""
@@ -234,11 +234,11 @@ class TestGenerateWithContext:
         with patch(_PROMPT_PATH):
             result = svc.generate(csv_data, sql="SELECT ...")
 
-        chart = result["data"]["data"]
-        assert chart["showing"] is None
-        assert chart["period"] is None
-        assert chart["filters"] == []
-        assert chart["insight"] is None
+        di = result["data"]["data_insight"]
+        assert di["showing"] is None
+        assert di["period"] is None
+        assert di["filters"] == []
+        assert di["insight"] is None
 
 
 # ═══════════════════════════════════════════════════════════════════

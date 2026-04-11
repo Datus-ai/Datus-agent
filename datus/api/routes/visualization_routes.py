@@ -11,6 +11,7 @@ from datus.api.deps import ServiceDep
 from datus.api.models.base_models import Result
 from datus.api.models.visualization_models import (
     ChartData,
+    DataInsight,
     DataVisualizationData,
     DataVisualizationRequest,
 )
@@ -43,7 +44,13 @@ async def data_visualization(
             errorMessage=result["errorMessage"],
         )
 
+    data = result["data"]
+    data_insight = DataInsight(**data["data_insight"]) if data.get("data_insight") else None
+
     return Result(
         success=True,
-        data=DataVisualizationData(data=ChartData(**result["data"]["data"])),
+        data=DataVisualizationData(
+            chart=ChartData(**data["chart"]),
+            data_insight=data_insight,
+        ),
     )

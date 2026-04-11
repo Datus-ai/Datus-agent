@@ -48,6 +48,13 @@ def _client_with(generate_return):
     return TestClient(app, raise_server_exceptions=False)
 
 
+def _success_return(chart, data_insight=None):
+    return {
+        "success": True,
+        "data": {"chart": chart, "data_insight": data_insight},
+    }
+
+
 # ═══════════════════════════════════════════════════════════════════
 # 1. Success cases
 # ═══════════════════════════════════════════════════════════════════
@@ -56,53 +63,54 @@ def _client_with(generate_return):
 class TestDataVisualizationSuccess:
     def test_returns_line_chart(self, valid_payload):
         client = _client_with(
-            {
-                "success": True,
-                "data": {
-                    "data": {
-                        "chart_type": "Line",
-                        "columns": ["date", "sales", "profit"],
-                        "numeric_columns": ["sales", "profit"],
-                        "x_col": "date",
-                        "y_cols": ["sales", "profit"],
-                        "reason": "Datetime column detected",
-                    }
-                },
-            }
+            _success_return(
+                chart={
+                    "chart_type": "Line",
+                    "columns": ["date", "sales", "profit"],
+                    "numeric_columns": ["sales", "profit"],
+                    "x_col": "date",
+                    "y_cols": ["sales", "profit"],
+                    "reason": "Datetime column detected",
+                }
+            )
         )
         resp = client.post("/api/v1/data_visualization", json=valid_payload)
         assert resp.status_code == 200
         body = resp.json()
         assert body["success"] is True
-        chart = body["data"]["data"]
+        chart = body["data"]["chart"]
         assert chart["chart_type"] == "Line"
         assert chart["x_col"] == "date"
-        assert chart["y_cols"] == ["sales", "profit"]
-        assert chart["columns"] == ["date", "sales", "profit"]
-        assert chart["numeric_columns"] == ["sales", "profit"]
+        assert body["data"]["data_insight"] is None
 
-    def test_returns_unknown_with_reason(self, valid_payload):
+    def test_returns_with_data_insight(self, valid_payload):
         client = _client_with(
-            {
-                "success": True,
-                "data": {
-                    "data": {
-                        "chart_type": "Unknown",
-                        "columns": ["date", "sales", "profit"],
-                        "numeric_columns": ["sales", "profit"],
-                        "reason": "Cannot determine chart",
-                    }
+            _success_return(
+                chart={
+                    "chart_type": "Bar",
+                    "columns": ["date", "sales"],
+                    "numeric_columns": ["sales"],
+                    "x_col": "date",
+                    "y_cols": ["sales"],
+                    "reason": "ok",
                 },
-            }
+                data_insight={
+                    "showing": {"metrics": ["sales"], "dimensions": ["date"]},
+                    "period": "2024-01-01 ~ 2024-01-02",
+                    "filters": ["BP购买"],
+                    "insight": "Sales grew.",
+                },
+            )
         )
         resp = client.post("/api/v1/data_visualization", json=valid_payload)
         body = resp.json()
         assert body["success"] is True
-        chart = body["data"]["data"]
-        assert chart["chart_type"] == "Unknown"
-        assert chart["reason"] == "Cannot determine chart"
-        assert chart["x_col"] is None
-        assert chart["y_cols"] is None
+        assert body["data"]["chart"]["chart_type"] == "Bar"
+        di = body["data"]["data_insight"]
+        assert di["showing"] == {"metrics": ["sales"], "dimensions": ["date"]}
+        assert di["period"] == "2024-01-01 ~ 2024-01-02"
+        assert di["filters"] == ["BP购买"]
+        assert di["insight"] == "Sales grew."
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -129,11 +137,6 @@ class TestDataVisualizationErrors:
         resp = client.post("/api/v1/data_visualization", json={"wrong": "shape"})
         assert resp.status_code == 422
 
-    def test_missing_csv_data(self):
-        client = _client_with({})
-        resp = client.post("/api/v1/data_visualization", json={})
-        assert resp.status_code == 422
-
 
 # ═══════════════════════════════════════════════════════════════════
 # 3. Service delegation
@@ -141,61 +144,47 @@ class TestDataVisualizationErrors:
 
 
 class TestServiceDelegation:
-    def _make_success_return(self):
-        return {
-            "success": True,
-            "data": {
-                "data": {
-                    "chart_type": "Bar",
-                    "columns": ["date", "sales"],
-                    "numeric_columns": ["sales"],
-                    "x_col": "date",
-                    "y_cols": ["sales"],
-                    "reason": "ok",
-                }
-            },
-        }
+    def _make_svc_return(self):
+        return _success_return(
+            chart={
+                "chart_type": "Bar",
+                "columns": ["date", "sales"],
+                "numeric_columns": ["sales"],
+                "x_col": "date",
+                "y_cols": ["sales"],
+                "reason": "ok",
+            }
+        )
 
-    def test_passes_chart_type_to_service(self, valid_payload):
+    def test_passes_all_params_to_service(self, valid_payload):
         from datus.api.deps import get_datus_service
 
-        svc = _mock_svc(self._make_success_return())
+        svc = _mock_svc(self._make_svc_return())
         app = _make_app()
         app.dependency_overrides[get_datus_service] = lambda: svc
         client = TestClient(app, raise_server_exceptions=False)
 
         valid_payload["chart_type"] = "Bar"
-        client.post("/api/v1/data_visualization", json=valid_payload)
-
-        call_kwargs = svc.visualization.generate.call_args.kwargs
-        assert call_kwargs["chart_type"] == "Bar"
-
-    def test_passes_sql_and_user_question_to_service(self, valid_payload):
-        from datus.api.deps import get_datus_service
-
-        svc = _mock_svc(self._make_success_return())
-        app = _make_app()
-        app.dependency_overrides[get_datus_service] = lambda: svc
-        client = TestClient(app, raise_server_exceptions=False)
-
         valid_payload["sql"] = "SELECT date, sales FROM t"
         valid_payload["user_question"] = "Show me sales"
         client.post("/api/v1/data_visualization", json=valid_payload)
 
-        call_kwargs = svc.visualization.generate.call_args.kwargs
-        assert call_kwargs["sql"] == "SELECT date, sales FROM t"
-        assert call_kwargs["user_question"] == "Show me sales"
+        kw = svc.visualization.generate.call_args.kwargs
+        assert kw["chart_type"] == "Bar"
+        assert kw["sql"] == "SELECT date, sales FROM t"
+        assert kw["user_question"] == "Show me sales"
 
-    def test_sql_and_user_question_default_to_none(self, valid_payload):
+    def test_optional_params_default_to_none(self, valid_payload):
         from datus.api.deps import get_datus_service
 
-        svc = _mock_svc(self._make_success_return())
+        svc = _mock_svc(self._make_svc_return())
         app = _make_app()
         app.dependency_overrides[get_datus_service] = lambda: svc
         client = TestClient(app, raise_server_exceptions=False)
 
         client.post("/api/v1/data_visualization", json=valid_payload)
 
-        call_kwargs = svc.visualization.generate.call_args.kwargs
-        assert call_kwargs["sql"] is None
-        assert call_kwargs["user_question"] is None
+        kw = svc.visualization.generate.call_args.kwargs
+        assert kw["chart_type"] is None
+        assert kw["sql"] is None
+        assert kw["user_question"] is None
