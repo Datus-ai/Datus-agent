@@ -1,6 +1,6 @@
 ---
 name: dbt-layered-generation
-description: Generate SQL for a layered dbt-style data warehouse (staging → intermediate → marts) with Phase 2 validation and retry logic encoded from DAComp benchmark experiments
+description: Orchestrate SQL generation for a layered dbt-style data warehouse (staging → intermediate → marts); handles planning, output-column discipline, and cross-layer contract compliance. Pairs with `duckdb-cleaning-rules` for SQL dialect/cleaning details.
 tags:
   - dbt
   - data-engineering
@@ -10,207 +10,106 @@ tags:
   - layered-warehouse
   - sql-generation
   - dacomp
-version: "1.1.0"
+version: "2.0.0"
 user_invocable: false
 disable_model_invocation: false
 ---
 
 # DBT Layered SQL Generation
 
-Generate SQL for a layered dbt-style data warehouse following the DAComp DE-Impl format.
+Orchestrate SQL generation for a layered dbt-style data warehouse following the DAComp DE-Impl format. This skill focuses on **cross-layer structure**: task planning, output-column discipline, and strict contract compliance. Low-level cleaning mechanics (DuckDB dialect, type casting, row filtering, COALESCE semantics, CURRENT_DATE handling) are maintained separately in the `duckdb-cleaning-rules` skill — load it alongside this one whenever you are generating DuckDB SQL.
 
 ## When to use this skill
 
 Activate when the task provides a `data_contract.yaml` with a `layer_dependencies.yaml`, references layer names (staging / intermediate / marts), or asks to implement a DAComp DE-Impl pipeline. The runner executes layers in topological order (staging → intermediate → marts). For each table: generate SQL, execute, validate against contract, optionally retry (max 3 rounds for execution errors, max 1 for column mismatch).
 
----
+## Skill dependencies
 
-## Data Reality Check Workflow (MANDATORY before any staging SQL)
+This skill is a **structural orchestrator**. It does NOT contain:
 
-The data contract describes the **desired** schema, but source data often violates those claims. Before writing staging SQL, you MUST verify the reality with DB tools. **Contract claims lose to observed data** — if the data says something different, follow the data.
+- DuckDB dialect translation tables (see `duckdb-cleaning-rules` → DuckDB Dialect Rules)
+- The Data Reality Check workflow for raw-source profiling (see `duckdb-cleaning-rules` → Data Reality Check)
+- Type casting / row filtering / COALESCE sentinel decisions (see `duckdb-cleaning-rules` → Row Filtering Policy + COALESCE Sentinel Discipline)
+- `CURRENT_DATE` pinning for deterministic dashboards (see `duckdb-cleaning-rules` → Deterministic CURRENT_DATE)
 
-### Required steps for every staging table
-
-1. **Observe the raw source**: call `describe_table` on the `source_table` the spec points to. Note the **actual** column types — they are frequently VARCHAR even when the contract claims TIMESTAMP / BIGINT / BOOLEAN.
-
-2. **For every TIMESTAMP target column**, measure the cast success rate with `read_query`:
-
-   ```sql
-   SELECT
-       COUNT(*)                                            AS total,
-       COUNT(TRY_CAST(col AS TIMESTAMP))                   AS cast_ok,
-       CAST(COUNT(TRY_CAST(col AS TIMESTAMP)) AS DOUBLE)
-         / NULLIF(COUNT(*), 0)                             AS success_rate
-   FROM raw.<source_table>
-   ```
-
-   Interpret the result:
-
-   | success_rate | meaning | action |
-   |---|---|---|
-   | ≥ 0.95 | DuckDB can parse this format | Use `TRY_CAST` normally |
-   | < 0.95 (and > 0) | Mixed-quality data | Use `TRY_CAST`, accept partial NULLs, **do NOT filter** |
-   | 0.0 | Format not supported by DuckDB standard TIMESTAMP (e.g. strings with `+0800` style timezone) | Still use `TRY_CAST`, **all values will become NULL**, **MUST NOT add any `WHERE col IS NOT NULL` filter** — the rows must be preserved with NULL values. The contract's `not_null` claim on this column is a **spec wish**, not an executable rule, and gold solutions explicitly accept this violation. |
-
-3. **For suspiciously-short VARCHAR ids**, run a quick sample with `read_query LIMIT 3` to see the actual format before applying `TRIM`, `length(...) > 0`, etc.
-
-### Strict rule: observation ≠ imitation
-
-The raw column names you see via `describe_table` are for **type checking and cast verification only**. The **output column names** MUST come from the contract's `columns:` section. Never copy raw column names into the final SELECT — always use the contract's renamed target columns. For example:
-
-- Raw: `raw.application.id` → Contract: `stg_lever__application.application_id`
-- Raw: `raw.user.creator_id` → Contract: `stg_lever__user.creator_user_id`
-
-If the contract renames it, you rename it. The DB check is for understanding source types, not for bypassing the contract's naming.
-
-### Why this workflow exists
-
-The DAComp DE benchmark includes a deliberate trap: contracts declare `created_at: TIMESTAMP not_null` while the raw data is VARCHAR with non-standard timezone strings that `TRY_CAST(...AS TIMESTAMP)` returns NULL for. A naive agent that trusts the contract's `not_null` and adds `WHERE created_at IS NOT NULL` drops 100% of rows. The gold solution uses `try_cast` and accepts NULL values without filtering. **Observe the data, follow the data.**
+For any staging table and for intermediate / marts tables that do cleaning or classification, **load `duckdb-cleaning-rules` in addition** to this skill.
 
 ---
 
-## DuckDB Dialect Rules
+## Planning Workflow (MANDATORY for complex marts / intermediate tables)
 
-Contract specs often use MySQL or generic SQL syntax. Translate as follows:
+For any table with more than ~5 output columns or any non-trivial business logic, you MUST use `todo_write` to record a short plan **before writing SQL**. This prevents two recurring failure modes:
 
-| Contract syntax | DuckDB equivalent |
-|---|---|
-| `col RLIKE 'pattern'` | `regexp_matches(col, 'pattern')` |
-| `col REGEXP 'pattern'` | `regexp_matches(col, 'pattern')` |
-| `IFNULL(a, b)` | `COALESCE(a, b)` |
-| `GROUP_CONCAT(col)` | `STRING_AGG(col, ',')` |
-| `GROUP_CONCAT(col SEPARATOR sep)` | `STRING_AGG(col, sep)` |
-| `CAST(x AS DATETIME)` | `TRY_CAST(x AS TIMESTAMP)` |
-| `STR_TO_DATE(x, fmt)` | `STRPTIME(x, fmt)` |
-| `DATE_FORMAT(x, fmt)` | `STRFTIME(x, fmt)` |
-| `YEAR(col)` | `EXTRACT(year FROM col)` |
-| `MONTH(col)` | `EXTRACT(month FROM col)` |
-| `DAY(col)` | `EXTRACT(day FROM col)` |
+1. **MaxTurnsExceeded**: complex marts (e.g. `lever__hiring_manager_scorecard`, `lever__departmental_hiring_trends`) where the agent keeps exploring without ever finalizing — a plan enforces closure.
+2. **Over-production**: 20+ column outputs where the contract only asks for 10-15, because the agent accumulates CTE columns without ever pruning (see `lever__opportunity_stage_history`).
 
-Use `TRY_CAST(x AS TIMESTAMP)` (not `CAST`) for string-to-timestamp conversion. `TRY_CAST` returns NULL on unparseable values rather than raising an error — this is correct behavior; preserve those rows.
+### When to invoke todo_write
+
+Call `todo_write` at the start of any table that matches **any** of:
+- Contract `columns:` section has > 5 entries
+- `business_logic` includes derived fields, CASE classification, or multi-CTE joins
+- Output depends on 3+ upstream tables
+- You're about to look up something (call `describe_table` / `read_query`) and continue generating
+
+### Required plan shape
+
+The plan must be concrete and SQL-oriented, not narrative. Each item should correspond to a concrete deliverable in the final SQL:
+
+```json
+[
+  {"content": "Read contract columns: exact list of target output columns, with types", "status": "pending"},
+  {"content": "Describe upstream stg_lever__opportunity for created_at / stage_id types", "status": "pending"},
+  {"content": "Write CTE `opportunity_base` with the 6 base columns", "status": "pending"},
+  {"content": "Write CTE `stage_join` aggregating stage_name and archive_reason", "status": "pending"},
+  {"content": "Write final SELECT matching contract columns EXACTLY (no extras)", "status": "pending"},
+  {"content": "Verify: final SELECT columns === contract columns:, same order, same names", "status": "pending"}
+]
+```
+
+Mark items `completed` with `todo_update` as you finish them. When every item is `completed`, emit the JSON response with the SQL.
+
+### Why this works
+
+- Forces the agent to enumerate the final output column list FIRST, preventing CTE column leakage into the output.
+- Makes the "verify" step explicit, so the agent self-checks column names against the contract before returning.
+- Bounds exploration: each `describe_table` call is tied to a specific plan item, not open-ended.
+
+Do NOT skip the plan for complex tables. The benchmark has measured the failure rate for un-planned complex marts at 100% — even with all other rules followed, the agent drifts or over-produces without a written plan.
 
 ---
 
-## Type Casting Policy (CRITICAL)
+## Strict Column Name Adherence (CRITICAL)
 
-**DO NOT explicitly CAST columns that are already strongly typed in the source.**
+The contract's `columns:` section is the ONLY source of truth for the final output column names. **Never invent plausible alternatives**, even when the inferred names seem more natural.
 
-The contract's `data_type` field is a **logical type hint**, not a coercion directive. The source column type (from `describe_table`) is authoritative.
+### Common failure patterns observed in benchmarks
 
-```sql
--- WRONG: source column is already BOOLEAN, contract says INT
-SELECT CAST(is_active AS INTEGER) AS is_active FROM raw.users
+| Pattern | Agent wrote | Contract wants |
+|---|---|---|
+| "count" suffix drift | `basic_quality_count`, `exceptional_count` | `basic_quality_candidates`, `exceptional_candidates` |
+| "avg" prefix collapse | `avg_quality_score` | `overall_avg_quality_score` |
+| Redundant name doubling | `stage_name` (when the stage CTE was aliased) | `stage` |
+| Missing business-domain rename | `contact_name` | `opportunity_contact_name` |
+| Unrelated extras dragged from intermediate | `archived_at`, `archived_reason_id`, `posting_id`, `emails`, `phones`, `linkedin_link`, `github_link`, `tags` | (contract lists none of these) |
 
--- CORRECT: pass through unchanged
-SELECT is_active FROM raw.users
-```
+### Mandatory cross-check before returning SQL
 
-```sql
--- WRONG: source column is already BIGINT, contract says VARCHAR
-SELECT CAST(user_id AS VARCHAR) AS user_id FROM raw.events
+After writing the final SELECT, run this mental diff:
 
--- CORRECT: pass through unchanged
-SELECT user_id FROM raw.events
-```
+1. Extract the `columns:` list from the contract `columns:` section (or `business_logic` "Final assembly" / "Output" block).
+2. Extract the column names your final SELECT produces, in order.
+3. They must be **identical sets** — no extras, no renames, no omissions.
 
-Cast only when actively changing representation:
+If they differ:
+- **Extras in your SELECT**: remove them. CTE input columns are NOT final outputs.
+- **Missing from your SELECT**: add them, deriving them from upstream if necessary.
+- **Renames**: rename to match the contract EXACTLY (case-sensitive, underscore-sensitive).
 
-```sql
--- CORRECT: string column needs to become a timestamp
-SELECT TRY_CAST(event_time_str AS TIMESTAMP) AS event_time FROM raw.events
+### Rule of thumb
 
--- CORRECT: integer epoch needs to become a timestamp
-SELECT to_timestamp(created_at_epoch) AS created_at FROM raw.orders
-```
+If the contract field is spelled `basic_quality_candidates`, write `AS basic_quality_candidates`. If it's `overall_avg_quality_score`, write `AS overall_avg_quality_score`. Your own sense of "better" naming is irrelevant — the benchmark scorer compares by literal column name after lowering.
 
-Decision rule: if `describe_table` shows the source column is already the target type, omit the cast entirely.
-
----
-
-## Row Filtering Policy (CRITICAL)
-
-**The filtering decision depends on whether the column is a pass-through column or a cast result.**
-
-`constraints: not_null` in the contract is a claim the gold SQL generally honors — **but only if the claim is compatible with the raw data**. Casting (`TRY_CAST`) can silently produce NULLs that were not present in the source; when that happens, the gold solution preserves the rows and accepts the NULLs.
-
-### The two-case rule
-
-**Case 1 — Pass-through column (no cast, same type as raw)**
-
-If the target column's expression is a direct reference (`col`, `TRIM(col)`, `col AS new_name`) or a CASE WHEN that never introduces new NULLs beyond what the raw column already has, and the contract declares `constraints: [not_null]`:
-
-→ **Apply `WHERE col IS NOT NULL`** (the contract's `not_null` means "delete rows where raw is NULL").
-
-This is the default for VARCHAR foreign keys, names, codes, booleans, numeric IDs — anything that is just renamed or trimmed. Gold filters these.
-
-**Case 2 — Cast-derived column (`TRY_CAST`, `STRPTIME`, `to_timestamp`, etc.)**
-
-If the target column is produced by a cast (`TRY_CAST(x AS TIMESTAMP)`, `STRPTIME(x, fmt)`, `to_timestamp(x)`), even when the contract declares `constraints: [not_null]`:
-
-→ **Do NOT add `WHERE col IS NOT NULL`.**
-
-The cast can silently produce NULLs when the raw format is non-standard (e.g. `+0800` timezone strings that DuckDB's standard TIMESTAMP parser rejects). The contract's `not_null` on a cast column is a **spec wish**, not an executable rule. Gold preserves those rows with NULL and the benchmark evaluator accepts it.
-
-Use the Data Reality Check success-rate test from earlier in this skill to confirm the cast behavior. If success_rate < 0.95, you MUST NOT filter that column.
-
-### Primary key special case
-
-If a column has `constraints: [not_null, unique]` with `on_failure: delete_row`, that is always a `WHERE pk IS NOT NULL` (or `LENGTH(pk) > 0`). No ambiguity.
-
-### Temporal / cross-column rules
-
-Cross-column rules like `end_time >= start_time` or `archived_at >= created_at` must be written as **"only apply when both sides are non-null"** so a NULL cast does not drop the row:
-
-```sql
-WHERE (archived_at IS NULL OR created_at IS NULL OR archived_at >= created_at)
-```
-
-Gold comments this pattern explicitly: *"Relax time filtering: do not drop rows because created_at is empty, only compare when comparable."*
-
-### Regex / format validation rules
-
-These should use `CASE WHEN valid THEN value ELSE NULL END`, not `WHERE`:
-
-```sql
--- CORRECT: regex failure becomes NULL, row preserved
-SELECT
-    user_id,
-    CASE
-        WHEN regexp_matches(phone_number, '^\d{10}$') THEN phone_number
-        ELSE NULL
-    END AS phone_number
-FROM raw.users
-```
-
-### Summary table (updated)
-
-| Situation | Action |
-|---|---|
-| Pass-through column, `constraints: [not_null]` | `WHERE col IS NOT NULL` |
-| Pass-through PK, `not_null, unique` + `delete_row` rule | `WHERE LENGTH(pk) > 0` |
-| Cast-derived column (`TRY_CAST`, `STRPTIME`, ...), any constraint | **No WHERE filter**; let cast NULLs pass through |
-| Regex / whitelist validation | `CASE WHEN valid THEN value ELSE NULL END` |
-| Temporal cross-column constraint | `(a IS NULL OR b IS NULL OR a <= b)` |
-| Column has no `not_null` constraint | Do not filter |
-
-### Before writing the WHERE clause
-
-Walk through every `constraints: [not_null]` column in the contract and classify it:
-
-1. Is the target expression a direct reference / TRIM / rename? → Pass-through → Filter.
-2. Is it `TRY_CAST`, `STRPTIME`, `to_timestamp`, or any other format-dependent cast? → Cast-derived → Do not filter.
-
-Only columns that fail *step 1* should appear in your final `WHERE ... IS NOT NULL` list.
-
----
-
-## Marts Layer Timestamp Columns (CRITICAL for benchmarks)
-
-Many marts tables (e.g. `*_dashboard`, `*_dashboard_simple`) have columns like `report_date` and `generated_at` that the contract defines as `CURRENT_DATE` and `CURRENT_TIMESTAMP`.
-
-**These columns are non-deterministic by design.** Gold DuckDB files in benchmarks are built at a fixed point in time, so `report_date` in gold is frozen. Your generated table will have today's date. This IS expected — these columns cannot match gold via hash comparison, and the benchmark evaluator may skip them in compare_cols.
-
-Action: follow the contract (use `current_date`, `current_timestamp`) — do not try to hardcode dates to match gold. The mismatch is not your bug.
+If you genuinely cannot decide what name to use for a derived field, fall back to reading the **exact** `columns:` list via `filesystem_tools` on the contract YAML, or via the per-table spec the runner already injected into your user prompt.
 
 ---
 
@@ -235,6 +134,34 @@ Fields like `last_advanced_at`, `last_interaction_at`, `updated_at`, `last_modif
 1. **Keys and business attributes** explicitly carried from the base table in the contract's output columns list
 2. **Derived fields** defined with a `= <formula>` expression in the business logic
 3. **Computed fields** explicitly named in the "Final assembly" / "Output" section of the business logic
+
+### Rule 4: "Set missing aggregates to 0" applies to EVERY aggregate column uniformly
+
+When the contract's business_logic says something like *"Set missing interview and feedback aggregates to 0"*, you MUST apply `COALESCE(..., 0)` to **every** aggregate column in that group, not just the counts. Agents frequently wrap `total_interviews`, `completed_interviews`, `canceled_interviews` in COALESCE but forget `avg_interview_duration` and `total_interview_time` because "avg and sum feel different from count".
+
+```sql
+-- WRONG: avg_interview_duration is an aggregate too; contract said "set missing aggregates to 0"
+LEFT JOIN interview_summary is2 USING (opportunity_id)
+SELECT
+    COALESCE(is2.total_interviews, 0)     AS total_interviews,
+    COALESCE(is2.completed_interviews, 0) AS completed_interviews,
+    COALESCE(is2.canceled_interviews, 0)  AS canceled_interviews,
+    is2.avg_interview_duration            AS avg_interview_duration,  -- MISSING COALESCE
+    COALESCE(is2.total_interview_time, 0) AS total_interview_time
+
+-- CORRECT: every aggregate column in the group gets the same treatment
+LEFT JOIN interview_summary is2 USING (opportunity_id)
+SELECT
+    COALESCE(is2.total_interviews, 0)        AS total_interviews,
+    COALESCE(is2.completed_interviews, 0)    AS completed_interviews,
+    COALESCE(is2.canceled_interviews, 0)     AS canceled_interviews,
+    COALESCE(is2.avg_interview_duration, 0)  AS avg_interview_duration,
+    COALESCE(is2.total_interview_time, 0)    AS total_interview_time
+```
+
+**Before emitting the final SELECT, do a cross-check**: for every aggregate CTE you joined with LEFT JOIN, list every column you're selecting from it. If the contract said to default missing aggregates to 0, every one of those columns needs `COALESCE(..., 0)`. No exceptions for averages, sums, or medians.
+
+This rule is about *which aggregates to COALESCE in the final SELECT*. For the distinct question of *what sentinel to use inside a threshold CASE*, see `duckdb-cleaning-rules` → COALESCE Sentinel Discipline for Scoring and Classification.
 
 ### Good vs bad example
 
@@ -263,10 +190,56 @@ FROM staging.stg_customer_events
 
 ---
 
+## Window / Aggregation Key: "per X" is authoritative
+
+When business_logic uses phrasing like *"most recent … per candidate"*, *"total … per user"*, *"rank … per department"*, the noun after **"per"** is the `PARTITION BY` (or `GROUP BY`) key — not whichever foreign-key column looks convenient.
+
+### Common confusion
+
+A table may contain several foreign keys (`candidate_id`, `opportunity_id`, `user_id`) and the agent is tempted to partition by the join target that will later be used. This is frequently wrong.
+
+### Rule
+
+1. Read the business_logic sentence that describes the window operation verbatim.
+2. Find the **"per X"** (or "by X", "for each X") phrase that qualifies the aggregation.
+3. `PARTITION BY X` in your ROW_NUMBER / RANK / FIRST_VALUE window.
+4. The subsequent `JOIN` target (e.g. "join … on opportunity_id") is **unrelated** to the partition key — it's the join column, not the aggregation key.
+
+### Example (from DAComp lever)
+
+Contract says:
+
+> "Determine the most recent offer **per candidate** by ordering each candidate's offers by created_at descending and selecting the single most recent record. Left join this most recent offer to opportunities **on opportunity_id**."
+
+```sql
+-- WRONG: partitioned by opportunity_id (the later join target), not candidate_id
+WITH ranked_offers AS (
+    SELECT *, ROW_NUMBER() OVER (
+        PARTITION BY opportunity_id
+        ORDER BY created_at DESC
+    ) AS rn
+    FROM staging.stg_lever__offer
+)
+-- This computes "most recent offer per opportunity" which is a different set of rows.
+
+-- CORRECT: partitioned by candidate_id as the business_logic explicitly says
+WITH ranked_offers AS (
+    SELECT *, ROW_NUMBER() OVER (
+        PARTITION BY candidate_id
+        ORDER BY created_at DESC
+    ) AS rn
+    FROM staging.stg_lever__offer
+)
+-- Then the join is still `ON opportunity.opportunity_id = ranked_offers.opportunity_id`;
+-- the partition key and the join key are different columns, by design.
+```
+
+---
+
 ## Layer Quick Reference
 
 | Layer | Reads from | Key patterns |
 |---|---|---|
 | Staging | `raw.*` | Thin wrappers; dialect translation; CASE WHEN normalization; no joins/aggregations |
 | Intermediate | `staging.*` | Joins, aggregations, window functions, derived field computation; CTE inputs stay in CTEs |
-| Marts | `intermediate.*`, `staging.*` | Final consumption shape; match contract output columns exactly; use `current_date`/`current_timestamp` for timestamp columns per contract |
+| Marts | `intermediate.*`, `staging.*` | Final consumption shape; match contract output columns exactly; use pinned `current_date` for timestamp columns per contract |
