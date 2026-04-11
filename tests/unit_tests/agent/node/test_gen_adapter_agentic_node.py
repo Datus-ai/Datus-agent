@@ -63,6 +63,16 @@ class TestGenAdapterAgenticNodeInit:
         # PlatformDocSearchTool exposes these tools
         assert "web_search_document" in tool_names
 
+    def test_tools_include_adapter_test_runner(self, real_agent_config, mock_llm_create):
+        """gen_adapter node must mount run_adapter_pytest to close the loop
+        scaffold -> implement -> run tests -> fix."""
+        from datus.agent.node.gen_adapter_agentic_node import GenAdapterAgenticNode
+
+        node = GenAdapterAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        tool_names = [tool.name for tool in node.tools]
+        assert "run_adapter_pytest" in tool_names
+        assert node.adapter_test_runner_tool is not None
+
     def test_tools_include_ask_user_in_interactive_mode(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_adapter_agentic_node import GenAdapterAgenticNode
 

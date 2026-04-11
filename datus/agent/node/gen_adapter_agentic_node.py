@@ -19,6 +19,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SemanticNodeResult
 from datus.tools.func_tool.adapter_scaffold_tool import AdapterScaffoldTool
+from datus.tools.func_tool.adapter_test_runner_tool import AdapterTestRunnerTool
 from datus.tools.func_tool.base import trans_to_function_tool
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.utils.loggings import get_logger
@@ -65,6 +66,7 @@ class GenAdapterAgenticNode(AgenticNode):
         )
 
         self.adapter_scaffold_tool: Optional[AdapterScaffoldTool] = None
+        self.adapter_test_runner_tool: Optional[AdapterTestRunnerTool] = None
         self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
         self.ask_user_tool = None
         self.setup_tools()
@@ -81,6 +83,7 @@ class GenAdapterAgenticNode(AgenticNode):
         self._setup_scaffold_tools()
         self._setup_filesystem_tools()
         self._setup_platform_doc_tools()
+        self._setup_test_runner_tool()
         if self.execution_mode == "interactive":
             self._setup_ask_user_tool()
 
@@ -120,6 +123,15 @@ class GenAdapterAgenticNode(AgenticNode):
             logger.debug("Added platform doc search tools")
         except Exception as e:
             logger.error(f"Failed to setup platform doc search tools: {e}")
+
+    def _setup_test_runner_tool(self):
+        """Setup the pytest runner tool for executing adapter contract tests."""
+        try:
+            self.adapter_test_runner_tool = AdapterTestRunnerTool(self.agent_config)
+            self.tools.extend(self.adapter_test_runner_tool.available_tools())
+            logger.debug("Added adapter test runner tools: run_adapter_pytest")
+        except Exception as e:
+            logger.error(f"Failed to setup adapter test runner tool: {e}")
 
     def _prepare_template_context(self, user_input: SemanticNodeInput) -> dict:
         context = {}

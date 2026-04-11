@@ -250,6 +250,70 @@ class MyPlatformAdapter(BaseSemanticAdapter):
 
 ---
 
+## Testing with the Contract Suite
+
+`datus-semantic-core` ships a reusable contract test suite at
+`datus_semantic_core.testing.make_semantic_contract_suite`. The scaffold
+auto-generates `tests/unit/test_contract.py` wiring your adapter into this
+suite — you only need to supply a `factory()` that returns a test-ready
+adapter instance with mocked HTTP / CLI / SDK layers.
+
+The contract suite enforces (one test per clause):
+
+| Contract clause | Test |
+|---|---|
+| `list_metrics` returns `list[MetricDefinition]` | `test_list_metrics_returns_list_of_metric_definition` |
+| `MetricDefinition.dimensions` entries are `str` | (same test, nested assertion) |
+| `list_metrics(limit=1)` returns ≤1 item | `test_list_metrics_respects_limit` |
+| `get_dimensions` returns `list[DimensionInfo]` | `test_get_dimensions_returns_list_of_dimension_info` |
+| `query_metrics` returns a `QueryResult` | `test_query_metrics_returns_query_result` |
+| `QueryResult.data` rows are `dict[str, Any]` (not tuple / list) | `test_query_metrics_data_rows_are_dicts` |
+| `query_metrics(dry_run=True)` sets `metadata['dry_run']` OR includes a `'sql'` column | `test_query_metrics_dry_run_contract` |
+| `validate_semantic` returns `ValidationResult` with typed `issues` | `test_validate_semantic_returns_validation_result` |
+| `list_semantic_models` (optional) returns a list | `test_list_semantic_models_returns_list` |
+
+Example `tests/unit/test_contract.py`:
+
+```python
+from unittest.mock import AsyncMock
+
+from datus_semantic_core.testing import make_semantic_contract_suite
+
+from datus_semantic_cube.adapter import CubeAdapter
+from datus_semantic_cube.config import CubeConfig
+
+SAMPLE_METRIC_NAME = "orders.count"
+SAMPLE_DIMENSION_NAME = "orders.status"
+
+
+async def factory() -> CubeAdapter:
+    config = CubeConfig(api_base_url="http://mock.local", auth_token="test")
+    adapter = CubeAdapter(config)
+    adapter._http_get = AsyncMock(return_value={
+        "cubes": [
+            {
+                "name": "orders",
+                "measures": [{"name": "orders.count", "type": "count"}],
+                "dimensions": [{"name": "orders.status", "type": "string"}],
+            }
+        ]
+    })
+    return adapter
+
+
+TestCubeContract = make_semantic_contract_suite(
+    factory,
+    sample_metric_name=SAMPLE_METRIC_NAME,
+    sample_dimension_name=SAMPLE_DIMENSION_NAME,
+)
+```
+
+Run the contract tests during development with the `run_adapter_pytest` tool
+(available inside the `gen_adapter` node) or, for manual runs, with
+`pytest tests/unit/test_contract.py -v` from the project root.
+
+---
+
 ## Reference Implementation
 
 The MetricFlow adapter at `datus-semantic-adapter/datus_semantic_metricflow/` serves as reference:

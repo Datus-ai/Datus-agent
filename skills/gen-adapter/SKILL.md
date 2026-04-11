@@ -57,14 +57,68 @@ If the platform needs additional config fields (e.g., specific API endpoints, au
 1. Use `edit_file` to add fields to config.py.
 2. Update `__init__.py` if needed.
 
+### 3d. Fill in the Contract Test Factory (semantic adapters only)
+
+For **semantic adapters**, the scaffold auto-generates `tests/unit/test_contract.py`
+wired to `datus_semantic_core.testing.make_semantic_contract_suite`. You do NOT
+write contract assertions — they come from the shared suite. You DO need to fill
+in the factory:
+
+1. `read_file` the generated `tests/unit/test_contract.py` to see the `factory()`
+   stub and the `SAMPLE_METRIC_NAME` / `SAMPLE_DIMENSION_NAME` constants.
+2. Based on the fixture responses you derived from the platform's API docs,
+   `edit_file` the factory so it:
+   - Constructs the config with valid test values.
+   - Instantiates the adapter.
+   - Monkey-patches the HTTP / CLI / SDK layer with fixture data (commonly via
+     `unittest.mock.AsyncMock` or `patch.object`).
+   - Returns the adapter.
+3. Update the two sample-name constants to match metric/dimension names your
+   fixture actually exposes.
+4. Call `ask_user` to confirm the factory implementation before saving.
+
 ## Phase 4: Validate
 
-1. Call `validate_adapter(module_path)` to check implementation completeness.
-2. If issues are found:
-   - Show the issues to the user.
-   - Help fix each issue.
-   - Re-validate until all checks pass.
-3. Present a summary of the completed adapter.
+Validation is a two-step loop — static checks first, then dynamic test execution.
+
+### 4a. Static Validation
+
+1. Call `validate_adapter(module_path)` to check that:
+   - The module imports successfully.
+   - A `register()` function is exposed.
+   - An adapter class exists.
+   - No method still raises `NotImplementedError`.
+2. If issues are found: show them to the user, help fix, re-run `validate_adapter`.
+
+### 4b. Contract Test Execution (semantic adapters)
+
+Once static validation passes, run the contract test suite against the generated
+project using `run_adapter_pytest`:
+
+1. Call `run_adapter_pytest(project_dir="<absolute path to scaffolded project>",
+   test_subpath="tests/unit/test_contract.py")`.
+2. Interpret the result:
+   - `passed=True`: contract holds. Proceed to Phase 5.
+   - `passed=False` with `stdout` mentioning `NotImplementedError`: an abstract
+     method is still a stub — return to Phase 3b and implement it.
+   - `passed=False` with assertion errors: the contract is violated. Read the
+     failure message in `stdout` / `stderr`, determine whether the bug is in
+     `adapter.py` (wrong return type / field) or in `test_contract.py`'s
+     factory (wrong mock fixture shape), and fix the guilty file.
+   - `timed_out=True`: an implementation is blocking on real network I/O — the
+     factory fixture is incomplete. Strengthen the mocks.
+3. Re-run `run_adapter_pytest` after each fix. Loop until `passed=True` or up
+   to 5 iterations; if you hit the limit, `ask_user` for guidance.
+
+**Important**: `run_adapter_pytest` is restricted — it only accepts a project
+directory containing `pyproject.toml` and a test subpath under `tests/`. It
+does NOT accept arbitrary pytest arguments, so you cannot `-k` a specific test;
+always target the whole `test_contract.py` file.
+
+## Phase 5: Summary
+
+Present a summary of the completed adapter: files modified, contract tests
+passing, any remaining TODOs the user should review manually.
 
 ## Important Rules
 

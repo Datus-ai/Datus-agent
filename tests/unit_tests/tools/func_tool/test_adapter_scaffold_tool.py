@@ -309,3 +309,212 @@ class TestAvailableTools:
         assert len(tools) == 3
         tool_names = {t.name for t in tools}
         assert tool_names == {"scaffold_adapter", "validate_adapter", "list_adapter_types"}
+
+
+class TestScaffoldSemanticAdapterInstantiation:
+    """Regression tests for the generated semantic ``adapter.py``.
+
+    A prior indentation bug in _gen_adapter_py's init_block caused the
+    generated ``def __init__`` to land at module level instead of inside
+    the class body. That left the class body empty (just the docstring),
+    so ``CubeAdapter`` inherited all 4 abstract methods from
+    ``BaseSemanticAdapter`` and could not be instantiated (``TypeError:
+    Can't instantiate abstract class``). These tests catch any regression
+    by actually importing the generated module and attempting to build a
+    stub instance.
+    """
+
+    def test_generated_adapter_has_methods_in_class_namespace(self, tool, tmp_path):
+        """All 4 abstract methods must be defined in the class's own __dict__,
+        not merely inherited from BaseSemanticAdapter."""
+        import importlib
+
+        output_dir = str(tmp_path / "output")
+        tool.scaffold_adapter("semantic", "regtest", output_dir)
+
+        sys.path.insert(0, output_dir)
+        try:
+            adapter_mod = importlib.import_module("datus_semantic_regtest.adapter")
+            cls = adapter_mod.RegtestAdapter
+
+            for method_name in ("list_metrics", "get_dimensions", "query_metrics", "validate_semantic"):
+                assert method_name in cls.__dict__, (
+                    f"{method_name!r} must be defined in {cls.__name__}'s own "
+                    f"namespace. If this fails, the generated adapter.py has a "
+                    f"method-indentation bug that leaves the class body empty."
+                )
+
+            # __init__ must also belong to the class, not be a module-level function.
+            assert "__init__" in cls.__dict__
+        finally:
+            sys.path.pop(0)
+            for mod_name in list(sys.modules.keys()):
+                if "datus_semantic_regtest" in mod_name:
+                    del sys.modules[mod_name]
+
+    def test_generated_adapter_class_is_instantiable(self, tool, tmp_path):
+        """A stub semantic adapter must be instantiable; methods will still
+        raise NotImplementedError when called, but the class itself must not
+        be abstract. ABC's abstract-method check happens at __init__ time."""
+        import importlib
+
+        output_dir = str(tmp_path / "output")
+        tool.scaffold_adapter("semantic", "instest", output_dir)
+
+        sys.path.insert(0, output_dir)
+        try:
+            adapter_mod = importlib.import_module("datus_semantic_instest.adapter")
+            config_mod = importlib.import_module("datus_semantic_instest.config")
+
+            config = config_mod.InstestConfig()
+            instance = adapter_mod.InstestAdapter(config=config)
+            assert instance.__class__.__name__ == "InstestAdapter"
+
+            # Calling any abstract method should still raise NotImplementedError —
+            # the class is instantiable but the stubs aren't implemented yet.
+            import asyncio
+
+            with pytest.raises(NotImplementedError, match="list_metrics"):
+                asyncio.get_event_loop().run_until_complete(instance.list_metrics()) if False else None
+                # Use asyncio.run to avoid deprecated get_event_loop warnings
+                asyncio.run(instance.list_metrics())
+        finally:
+            sys.path.pop(0)
+            for mod_name in list(sys.modules.keys()):
+                if "datus_semantic_instest" in mod_name:
+                    del sys.modules[mod_name]
+
+    def test_generated_adapter_imports_model_types(self, tool, tmp_output):
+        """Generated adapter.py must import typing.List and the 4 model types
+        referenced in method annotations; otherwise class creation raises
+        NameError at import time."""
+        tool.scaffold_adapter("semantic", "cube", tmp_output)
+        adapter_file = os.path.join(tmp_output, "datus_semantic_cube", "adapter.py")
+        with open(adapter_file) as f:
+            content = f.read()
+        assert "from typing import List" in content
+        assert "MetricDefinition" in content
+        assert "DimensionInfo" in content
+        assert "QueryResult" in content
+        assert "ValidationResult" in content
+
+
+class TestScaffoldSemanticContractTest:
+    """Verify the auto-generated tests/unit/test_contract.py for semantic adapters."""
+
+    def test_creates_contract_test_file(self, tool, tmp_output):
+        tool.scaffold_adapter("semantic", "cube", tmp_output)
+        contract_file = os.path.join(tmp_output, "tests", "unit", "test_contract.py")
+        assert os.path.isfile(contract_file)
+
+    def test_contract_file_imports_testing_helper(self, tool, tmp_output):
+        tool.scaffold_adapter("semantic", "cube", tmp_output)
+        contract_file = os.path.join(tmp_output, "tests", "unit", "test_contract.py")
+        with open(contract_file) as f:
+            content = f.read()
+        assert "from datus_semantic_core.testing import make_semantic_contract_suite" in content
+
+    def test_contract_file_imports_generated_adapter(self, tool, tmp_output):
+        tool.scaffold_adapter("semantic", "cube", tmp_output)
+        contract_file = os.path.join(tmp_output, "tests", "unit", "test_contract.py")
+        with open(contract_file) as f:
+            content = f.read()
+        assert "from datus_semantic_cube.adapter import CubeAdapter" in content
+        assert "from datus_semantic_cube.config import CubeConfig" in content
+
+    def test_contract_file_has_factory_stub_with_todo(self, tool, tmp_output):
+        tool.scaffold_adapter("semantic", "cube", tmp_output)
+        contract_file = os.path.join(tmp_output, "tests", "unit", "test_contract.py")
+        with open(contract_file) as f:
+            content = f.read()
+        assert "async def factory()" in content
+        # TODO markers must be present so LLM knows where to fill in
+        assert "TODO (LLM)" in content
+        # Factory stub must reference both the adapter and config class
+        assert "CubeAdapter(config)" in content
+        assert "CubeConfig(" in content
+
+    def test_contract_file_instantiates_suite(self, tool, tmp_output):
+        tool.scaffold_adapter("semantic", "cube", tmp_output)
+        contract_file = os.path.join(tmp_output, "tests", "unit", "test_contract.py")
+        with open(contract_file) as f:
+            content = f.read()
+        # Module-level Test* name is the pytest discovery hook
+        assert "TestCubeContract = make_semantic_contract_suite(" in content
+        assert "sample_metric_name=SAMPLE_METRIC_NAME" in content
+        assert "sample_dimension_name=SAMPLE_DIMENSION_NAME" in content
+
+    def test_contract_file_compiles(self, tool, tmp_output):
+        tool.scaffold_adapter("semantic", "cube", tmp_output)
+        contract_file = os.path.join(tmp_output, "tests", "unit", "test_contract.py")
+        with open(contract_file) as f:
+            source = f.read()
+        # Raises SyntaxError on failure — explicit test for early feedback.
+        compile(source, contract_file, "exec")
+
+    def test_non_semantic_adapters_have_no_contract_file(self, tool, tmp_path):
+        """Only semantic adapters get the auto-generated contract test file."""
+        for adapter_type, platform in [
+            ("bi", "metabase"),
+            ("db", "clickhouse"),
+            ("scheduler", "dagster"),
+        ]:
+            sub_dir = str(tmp_path / adapter_type)
+            tool.scaffold_adapter(adapter_type, platform, sub_dir)
+            contract_file = os.path.join(sub_dir, "tests", "unit", "test_contract.py")
+            assert not os.path.isfile(contract_file), (
+                f"{adapter_type}/{platform} adapter must not have test_contract.py"
+            )
+
+    def test_contract_file_is_importable_and_builds_suite(self, tool, tmp_path):
+        """Generated test_contract.py should execute at module level and
+        instantiate the contract suite — this verifies:
+        - syntax is valid
+        - all imports resolve (including the generated adapter package)
+        - make_semantic_contract_suite accepts the factory and arguments
+        - the resulting TestXxxContract class exposes the expected contract methods
+        """
+        import importlib.util
+
+        output_dir = str(tmp_path / "output")
+        tool.scaffold_adapter("semantic", "cubetest", output_dir)
+
+        sys.path.insert(0, output_dir)
+        try:
+            contract_file = os.path.join(output_dir, "tests", "unit", "test_contract.py")
+            spec = importlib.util.spec_from_file_location("_generated_test_contract", contract_file)
+            assert spec is not None and spec.loader is not None
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+
+            # Suite class was created at module level
+            assert hasattr(module, "TestCubetestContract")
+            cls = module.TestCubetestContract
+            assert isinstance(cls, type)
+
+            # The suite class must expose the full contract surface
+            expected_methods = {
+                "test_list_metrics_returns_list_of_metric_definition",
+                "test_list_metrics_respects_limit",
+                "test_get_dimensions_returns_list_of_dimension_info",
+                "test_query_metrics_returns_query_result",
+                "test_query_metrics_data_rows_are_dicts",
+                "test_query_metrics_dry_run_contract",
+                "test_validate_semantic_returns_validation_result",
+                "test_list_semantic_models_returns_list",
+            }
+            missing = expected_methods - set(dir(cls))
+            assert not missing, f"Contract suite is missing methods: {missing}"
+        finally:
+            sys.path.pop(0)
+            for mod_name in list(sys.modules.keys()):
+                if "datus_semantic_cubetest" in mod_name or mod_name == "_generated_test_contract":
+                    del sys.modules[mod_name]
+
+    def test_semantic_scaffold_next_steps_mentions_contract(self, tool, tmp_output):
+        result = tool.scaffold_adapter("semantic", "cube", tmp_output)
+        assert "test_contract.py" in result.result["next_steps"]
+
+    def test_bi_scaffold_next_steps_omits_contract(self, tool, tmp_output):
+        result = tool.scaffold_adapter("bi", "metabase", tmp_output)
+        assert "test_contract.py" not in result.result["next_steps"]
