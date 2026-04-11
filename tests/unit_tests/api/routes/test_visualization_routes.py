@@ -141,24 +141,25 @@ class TestDataVisualizationErrors:
 
 
 class TestServiceDelegation:
+    def _make_success_return(self):
+        return {
+            "success": True,
+            "data": {
+                "data": {
+                    "chart_type": "Bar",
+                    "columns": ["date", "sales"],
+                    "numeric_columns": ["sales"],
+                    "x_col": "date",
+                    "y_cols": ["sales"],
+                    "reason": "ok",
+                }
+            },
+        }
+
     def test_passes_chart_type_to_service(self, valid_payload):
         from datus.api.deps import get_datus_service
 
-        svc = _mock_svc(
-            {
-                "success": True,
-                "data": {
-                    "data": {
-                        "chart_type": "Bar",
-                        "columns": ["date", "sales"],
-                        "numeric_columns": ["sales"],
-                        "x_col": "date",
-                        "y_cols": ["sales"],
-                        "reason": "ok",
-                    }
-                },
-            }
-        )
+        svc = _mock_svc(self._make_success_return())
         app = _make_app()
         app.dependency_overrides[get_datus_service] = lambda: svc
         client = TestClient(app, raise_server_exceptions=False)
@@ -168,3 +169,33 @@ class TestServiceDelegation:
 
         call_kwargs = svc.visualization.generate.call_args.kwargs
         assert call_kwargs["chart_type"] == "Bar"
+
+    def test_passes_sql_and_user_question_to_service(self, valid_payload):
+        from datus.api.deps import get_datus_service
+
+        svc = _mock_svc(self._make_success_return())
+        app = _make_app()
+        app.dependency_overrides[get_datus_service] = lambda: svc
+        client = TestClient(app, raise_server_exceptions=False)
+
+        valid_payload["sql"] = "SELECT date, sales FROM t"
+        valid_payload["user_question"] = "Show me sales"
+        client.post("/api/v1/data_visualization", json=valid_payload)
+
+        call_kwargs = svc.visualization.generate.call_args.kwargs
+        assert call_kwargs["sql"] == "SELECT date, sales FROM t"
+        assert call_kwargs["user_question"] == "Show me sales"
+
+    def test_sql_and_user_question_default_to_none(self, valid_payload):
+        from datus.api.deps import get_datus_service
+
+        svc = _mock_svc(self._make_success_return())
+        app = _make_app()
+        app.dependency_overrides[get_datus_service] = lambda: svc
+        client = TestClient(app, raise_server_exceptions=False)
+
+        client.post("/api/v1/data_visualization", json=valid_payload)
+
+        call_kwargs = svc.visualization.generate.call_args.kwargs
+        assert call_kwargs["sql"] is None
+        assert call_kwargs["user_question"] is None

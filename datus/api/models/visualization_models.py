@@ -19,9 +19,18 @@ class DataVisualizationRequest(BaseModel):
 
     csv_data: CsvData
     chart_type: Optional[ChartType] = Field(None, description="Desired chart type; omit for auto-recommendation")
+    sql: Optional[str] = Field(None, description="SQL query that produced the data (enables metadata extraction)")
+    user_question: Optional[str] = Field(None, description="User's original question (improves insight quality)")
 
 
 # ── Response payloads ────────────────────────────────────────────────
+
+
+class ShowingInfo(BaseModel):
+    """Describes what the data is showing (metrics and dimensions)."""
+
+    metrics: List[str] = Field(..., description="Metric names from aggregation columns")
+    dimensions: List[str] = Field(..., description="Dimension names from grouping columns")
 
 
 class ChartData(BaseModel):
@@ -33,6 +42,11 @@ class ChartData(BaseModel):
     x_col: Optional[str] = Field(None, description="X-axis column (absent when chart_type is Unknown)")
     y_cols: Optional[List[str]] = Field(None, description="Y-axis column(s) (absent when chart_type is Unknown)")
     reason: str = Field("", description="Explanation for the recommendation")
+    # Context metadata (only present when sql is provided)
+    showing: Optional[ShowingInfo] = Field(None, description="What the data shows (metrics + dimensions)")
+    period: Optional[str] = Field(None, description="Time range extracted from SQL")
+    filters: Optional[List[str]] = Field(None, description="Human-readable filter descriptions")
+    insight: Optional[str] = Field(None, description="AI-generated analytical summary")
 
 
 class DataVisualizationData(BaseModel):

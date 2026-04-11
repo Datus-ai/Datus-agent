@@ -32,6 +32,8 @@ async def data_visualization(
     result = svc.visualization.generate(
         csv_data=request.csv_data,
         chart_type=request.chart_type,
+        sql=request.sql,
+        user_question=request.user_question,
     )
 
     if not result["success"]:

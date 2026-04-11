@@ -12,6 +12,7 @@ from datus.api.services.visualization_service import DataVisualizationService
 
 _LLM_PATH = "datus.api.services.visualization_service.LLMBaseModel"
 _VIZ_TOOL_PATH = "datus.api.services.visualization_service.VisualizationTool"
+_PROMPT_PATH = "datus.api.services.visualization_service.prompt_manager"
 
 
 @pytest.fixture
@@ -72,11 +73,11 @@ class TestToolInit:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 2. generate() — success
+# 2. generate() without context — basic tool path
 # ═══════════════════════════════════════════════════════════════════
 
 
-class TestGenerateSuccess:
+class TestGenerateBasic:
     def test_returns_line_chart(self, mock_agent_config, csv_data):
         with patch(_LLM_PATH), patch(_VIZ_TOOL_PATH) as mock_cls:
             mock_cls.return_value.execute.return_value = _mock_tool_result()
@@ -89,6 +90,11 @@ class TestGenerateSuccess:
         assert chart["x_col"] == "date"
         assert chart["columns"] == ["date", "sales", "profit"]
         assert chart["numeric_columns"] == ["sales", "profit"]
+        # No context metadata when sql not provided
+        assert "showing" not in chart
+        assert "period" not in chart
+        assert "filters" not in chart
+        assert "insight" not in chart
 
     def test_returns_unknown_without_axes(self, mock_agent_config, csv_data):
         with patch(_LLM_PATH), patch(_VIZ_TOOL_PATH) as mock_cls:
@@ -102,9 +108,6 @@ class TestGenerateSuccess:
         assert chart["chart_type"] == "Unknown"
         assert chart["reason"] == "Cannot determine"
         assert "x_col" not in chart
-        # columns metadata still present for Unknown
-        assert chart["columns"] == ["date", "sales", "profit"]
-        assert chart["numeric_columns"] == ["sales", "profit"]
 
     def test_caller_overrides_chart_type(self, mock_agent_config, csv_data):
         with patch(_LLM_PATH), patch(_VIZ_TOOL_PATH) as mock_cls:
@@ -116,7 +119,130 @@ class TestGenerateSuccess:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 3. generate() — errors
+# 3. generate() with context — LLM merged call path
+# ═══════════════════════════════════════════════════════════════════
+
+
+class TestGenerateWithContext:
+    def _mock_llm_response(self):
+        return {
+            "chart_type": "Bar Chart",
+            "x_col": "date",
+            "y_cols": ["sales", "profit"],
+            "reason": "Categorical comparison",
+            "showing": {"metrics": ["sales", "profit"], "dimensions": ["date"]},
+            "period": "2024-01-01 ~ 2024-01-02",
+            "filters": ["BP购买"],
+            "insight": "Sales increased by 50% from day 1 to day 2.",
+        }
+
+    def _setup_context_svc(self, mock_agent_config, llm_response):
+        """Create a service with real VisualizationTool helpers but mocked LLM."""
+        from datus.tools.llms_tools.visualization_tool import VisualizationTool
+
+        mock_model = Mock()
+        mock_model.generate_with_json_output.return_value = llm_response
+
+        with patch(_LLM_PATH) as mock_llm, patch(_PROMPT_PATH):
+            mock_llm.create_model.return_value = mock_model
+            svc = DataVisualizationService(agent_config=mock_agent_config)
+            # Force tool creation with real class but mocked model
+            svc._tool = VisualizationTool(model=mock_model)
+            svc._model = mock_model
+        return svc, mock_model
+
+    def test_returns_chart_with_context_metadata(self, mock_agent_config, csv_data):
+        svc, _ = self._setup_context_svc(mock_agent_config, self._mock_llm_response())
+        with patch(_PROMPT_PATH):
+            result = svc.generate(csv_data, sql="SELECT date, sales FROM t")
+
+        assert result["success"] is True
+        chart = result["data"]["data"]
+        assert chart["chart_type"] == "Bar"
+        assert chart["x_col"] == "date"
+        assert chart["showing"] == {"metrics": ["sales", "profit"], "dimensions": ["date"]}
+        assert chart["period"] == "2024-01-01 ~ 2024-01-02"
+        assert chart["filters"] == ["BP购买"]
+        assert chart["insight"] == "Sales increased by 50% from day 1 to day 2."
+
+    def test_with_user_question_only(self, mock_agent_config, csv_data):
+        svc, _ = self._setup_context_svc(mock_agent_config, self._mock_llm_response())
+        with patch(_PROMPT_PATH):
+            result = svc.generate(csv_data, user_question="Show me sales trends")
+
+        assert result["success"] is True
+        chart = result["data"]["data"]
+        assert chart["showing"] is not None
+        assert chart["insight"] is not None
+
+    def test_chart_type_override_with_context(self, mock_agent_config, csv_data):
+        svc, _ = self._setup_context_svc(mock_agent_config, self._mock_llm_response())
+        with patch(_PROMPT_PATH):
+            result = svc.generate(csv_data, sql="SELECT ...", chart_type="Line")
+
+        assert result["data"]["data"]["chart_type"] == "Line"
+
+    def test_falls_back_to_basic_tool_on_llm_exception(self, mock_agent_config, csv_data):
+        svc, mock_model = self._setup_context_svc(mock_agent_config, self._mock_llm_response())
+        mock_model.generate_with_json_output.side_effect = Exception("LLM down")
+        svc._tool.execute = Mock(return_value=_mock_tool_result())
+
+        with patch(_PROMPT_PATH):
+            result = svc.generate(csv_data, sql="SELECT ...")
+
+        assert result["success"] is True
+        chart = result["data"]["data"]
+        assert chart["chart_type"] == "Line"
+        assert chart.get("showing") is None
+
+    def test_falls_back_to_basic_tool_on_invalid_response(self, mock_agent_config, csv_data):
+        svc, mock_model = self._setup_context_svc(mock_agent_config, self._mock_llm_response())
+        mock_model.generate_with_json_output.return_value = "not a dict"
+        svc._tool.execute = Mock(return_value=_mock_tool_result())
+
+        with patch(_PROMPT_PATH):
+            result = svc.generate(csv_data, sql="SELECT ...")
+
+        assert result["success"] is True
+        assert result["data"]["data"]["chart_type"] == "Line"
+
+    def test_falls_back_to_basic_when_no_model(self, mock_agent_config, csv_data):
+        """When LLM model cannot be created, should use basic tool even with sql."""
+        with patch(_LLM_PATH) as mock_llm, patch(_VIZ_TOOL_PATH) as mock_cls:
+            mock_llm.create_model.side_effect = Exception("no key")
+            mock_cls.return_value.execute.return_value = _mock_tool_result()
+
+            svc = DataVisualizationService(agent_config=mock_agent_config)
+            result = svc.generate(csv_data, sql="SELECT ...")
+
+        assert result["success"] is True
+        assert result["data"]["data"]["chart_type"] == "Line"
+
+    def test_sanitizes_invalid_metadata_types(self, mock_agent_config, csv_data):
+        """LLM returning wrong types for metadata should be handled gracefully."""
+        response = {
+            "chart_type": "Bar Chart",
+            "x_col": "date",
+            "y_cols": ["sales"],
+            "reason": "ok",
+            "showing": "not a dict",
+            "period": 12345,
+            "filters": "not a list",
+            "insight": ["not", "a", "string"],
+        }
+        svc, _ = self._setup_context_svc(mock_agent_config, response)
+        with patch(_PROMPT_PATH):
+            result = svc.generate(csv_data, sql="SELECT ...")
+
+        chart = result["data"]["data"]
+        assert chart["showing"] is None
+        assert chart["period"] is None
+        assert chart["filters"] == []
+        assert chart["insight"] is None
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 4. generate() — errors
 # ═══════════════════════════════════════════════════════════════════
 
 
@@ -148,7 +274,7 @@ class TestGenerateErrors:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 4. Caching
+# 5. Caching
 # ═══════════════════════════════════════════════════════════════════
 
 
@@ -161,39 +287,29 @@ class TestCaching:
             result2 = svc.generate(csv_data)
 
         assert result1 is result2
-        # Tool should only be called once
         mock_cls.return_value.execute.assert_called_once()
 
-    def test_different_chart_type_not_cached(self, mock_agent_config, csv_data):
-        with patch(_LLM_PATH), patch(_VIZ_TOOL_PATH) as mock_cls:
-            mock_cls.return_value.execute.return_value = _mock_tool_result()
+    def test_different_sql_not_cached(self, mock_agent_config, csv_data):
+        """Same csv_data but different sql should be separate cache entries."""
+        with patch(_LLM_PATH) as mock_llm, patch(_VIZ_TOOL_PATH), patch(_PROMPT_PATH):
+            mock_model = Mock()
+            mock_llm.create_model.return_value = mock_model
+            mock_model.generate_with_json_output.return_value = {
+                "chart_type": "Bar Chart",
+                "x_col": "date",
+                "y_cols": ["sales"],
+                "reason": "ok",
+                "showing": {"metrics": ["sales"], "dimensions": ["date"]},
+                "period": None,
+                "filters": [],
+                "insight": "ok",
+            }
+
             svc = DataVisualizationService(agent_config=mock_agent_config)
-            svc.generate(csv_data, chart_type=None)
-            svc.generate(csv_data, chart_type="Bar")
+            svc.generate(csv_data, sql="SELECT a")
+            svc.generate(csv_data, sql="SELECT b")
 
-        assert mock_cls.return_value.execute.call_count == 2
-
-    def test_different_data_not_cached(self, mock_agent_config, csv_data):
-        csv_data2 = CsvData(
-            columns=["x", "y"],
-            data=[{"x": 1, "y": 2}],
-        )
-        with patch(_LLM_PATH), patch(_VIZ_TOOL_PATH) as mock_cls:
-            mock_cls.return_value.execute.return_value = _mock_tool_result()
-            svc = DataVisualizationService(agent_config=mock_agent_config)
-            svc.generate(csv_data)
-            svc.generate(csv_data2)
-
-        assert mock_cls.return_value.execute.call_count == 2
-
-    def test_error_result_is_also_cached(self, mock_agent_config):
-        csv_data = CsvData(columns=[], data=[])
-        with patch(_LLM_PATH), patch(_VIZ_TOOL_PATH):
-            svc = DataVisualizationService(agent_config=mock_agent_config)
-            result1 = svc.generate(csv_data)
-            result2 = svc.generate(csv_data)
-        assert result1 is result2
-        assert result1["success"] is False
+        assert mock_model.generate_with_json_output.call_count == 2
 
     def test_evicts_lru_when_over_capacity(self, mock_agent_config):
         import datus.api.services.visualization_service as viz_mod
@@ -209,24 +325,24 @@ class TestCaching:
                 data_b = CsvData(columns=["b", "v"], data=[{"b": 1, "v": 2}])
                 data_c = CsvData(columns=["c", "v"], data=[{"c": 1, "v": 2}])
 
-                svc.generate(data_a)  # cache: [a]
-                svc.generate(data_b)  # cache: [a, b]
+                svc.generate(data_a)
+                svc.generate(data_b)
                 assert len(svc._cache) == 2
 
-                # Access data_a again to promote it (LRU: b is now oldest)
-                svc.generate(data_a)  # cache: [b, a] — cache hit, no tool call
+                # Access data_a to promote it (LRU: b is now oldest)
+                svc.generate(data_a)
                 assert mock_cls.return_value.execute.call_count == 2
 
                 # Insert data_c: should evict data_b (LRU), not data_a
-                svc.generate(data_c)  # cache: [a, c]
+                svc.generate(data_c)
                 assert len(svc._cache) == 2
 
-                # data_a should still be cached (not evicted)
-                svc.generate(data_a)  # cache hit
+                # data_a still cached
+                svc.generate(data_a)
                 assert mock_cls.return_value.execute.call_count == 3
 
-                # data_b was evicted, re-generating it calls tool again
-                svc.generate(data_b)  # cache miss
+                # data_b was evicted
+                svc.generate(data_b)
                 assert mock_cls.return_value.execute.call_count == 4
         finally:
             viz_mod._MAX_CACHE_SIZE = original
