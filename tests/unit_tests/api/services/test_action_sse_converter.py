@@ -547,3 +547,43 @@ class TestActionToSSEEvent:
         assert event is not None
         assert event.data.payload.depth == 1
         assert event.data.payload.parent_action_id == "parent-002"
+
+    def test_subagent_complete_non_dict_output(self):
+        """subagent_complete with non-dict output uses safe defaults."""
+        action = _make_action(
+            role=ActionRole.SYSTEM,
+            status=ActionStatus.SUCCESS,
+            action_type=SUBAGENT_COMPLETE_ACTION_TYPE,
+            output="not a dict",
+        )
+        event = action_to_sse_event(action, event_id=15, message_id="msg-15")
+        assert event is not None
+        content = event.data.payload.content[0]
+        assert content.payload["subagentType"] == "unknown"
+        assert content.payload["toolCount"] == 0
+
+    def test_subagent_complete_missing_times_gives_zero_duration(self):
+        """subagent_complete with missing end_time gives duration=0."""
+        action = _make_action(
+            role=ActionRole.SYSTEM,
+            status=ActionStatus.SUCCESS,
+            action_type=SUBAGENT_COMPLETE_ACTION_TYPE,
+            output={"subagent_type": "explore", "tool_count": 2},
+            end_time=None,
+        )
+        event = action_to_sse_event(action, event_id=16, message_id="msg-16")
+        assert event is not None
+        assert event.data.payload.content[0].payload["duration"] == 0.0
+
+    def test_subagent_complete_failed_still_produces_subagent_event(self):
+        """subagent_complete with FAILED status still produces subagent-complete, not error."""
+        action = _make_action(
+            role=ActionRole.SYSTEM,
+            status=ActionStatus.FAILED,
+            action_type=SUBAGENT_COMPLETE_ACTION_TYPE,
+            output={"subagent_type": "gen_sql", "tool_count": 0},
+        )
+        event = action_to_sse_event(action, event_id=17, message_id="msg-17")
+        assert event is not None
+        content = event.data.payload.content[0]
+        assert content.type == "subagent-complete"

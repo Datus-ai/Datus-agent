@@ -182,6 +182,18 @@ def _build_interaction_content(action: ActionHistory) -> List[IMessageContent]:
     return [IMessageContent(type="user-interaction", payload=payload_data)]
 
 
+def _build_subagent_complete_content(action: ActionHistory) -> List[IMessageContent]:
+    """Build content for sub-agent completion summary event."""
+    output = action.output if isinstance(action.output, dict) else {}
+    duration = (action.end_time - action.start_time).total_seconds() if action.start_time and action.end_time else 0.0
+    payload_data = {
+        "subagentType": output.get("subagent_type", "unknown"),
+        "toolCount": output.get("tool_count", 0),
+        "duration": duration,
+    }
+    return [IMessageContent(type="subagent-complete", payload=payload_data)]
+
+
 def _build_interaction_result_content(action: ActionHistory) -> Optional[List[IMessageContent]]:
     """Build content for interaction result event (SUCCESS status)."""
     output = action.output if isinstance(action.output, dict) else {}
@@ -223,7 +235,9 @@ def action_to_sse_event(
 
         sse_role = "assistant"
 
-        if status == ActionStatus.FAILED:
+        if action.action_type == SUBAGENT_COMPLETE_ACTION_TYPE:
+            contents = _build_subagent_complete_content(action)
+        elif status == ActionStatus.FAILED:
             contents = _build_error_content(action)
         elif role == ActionRole.TOOL and status == ActionStatus.PROCESSING:
             contents = _build_tool_call_content(action)
@@ -241,19 +255,6 @@ def action_to_sse_event(
                 sse_role = "user"
             else:
                 return None
-        elif action.action_type == SUBAGENT_COMPLETE_ACTION_TYPE:
-            output = action.output if isinstance(action.output, dict) else {}
-            duration = (
-                (action.end_time - action.start_time).total_seconds()
-                if action.start_time and action.end_time
-                else 0.0
-            )
-            payload_data = {
-                "subagentType": output.get("subagent_type", "unknown"),
-                "toolCount": output.get("tool_count", 0),
-                "duration": duration,
-            }
-            contents = [IMessageContent(type="subagent-complete", payload=payload_data)]
         elif (
             role == ActionRole.ASSISTANT and status == ActionStatus.SUCCESS and action.action_type.endswith("_response")
         ):
