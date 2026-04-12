@@ -245,7 +245,7 @@ class AgenticNode(Node):
             memory_content = load_memory_context(workspace_root, node_name)
             memory_dir = get_memory_dir(workspace_root, node_name)
 
-            memory_section = prompt_manager.render_template(
+            memory_section = get_prompt_manager(agent_config=self.agent_config).render_template(
                 template_name="memory_context",
                 version=None,
                 has_memory=True,
