@@ -329,8 +329,25 @@ class TestUpdateMetricYaml:
             if os.path.exists(yaml_path):
                 os.remove(yaml_path)
 
+    def test_update_metric_corrupt_yaml_does_not_raise(self, metric_storage: MetricStorage):
+        """_sync_metric_update_to_yaml catches exceptions on corrupt YAML files."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False, encoding="utf-8") as f:
+            yaml_path = f.name
+            f.write("{{invalid yaml")
+
+        try:
+            metric = _make_metric(10, subject_path=["Finance"], yaml_path=yaml_path)
+            metric["name"] = "corrupt_yaml_metric"
+            metric["id"] = "metric:corrupt"
+            metric_storage.batch_store_metrics([metric])
+
+            result = metric_storage.update_entry(["Finance"], "corrupt_yaml_metric", {"description": "new"})
+            assert result is True
+        finally:
+            if os.path.exists(yaml_path):
+                os.remove(yaml_path)
+
     # ---------------------------------------------------------------------------
-    # YAML subject_tree sync on rename
     def test_update_metric_entry_not_found_does_not_touch_yaml(self, metric_storage: MetricStorage):
         """update_entry on a non-existent metric should raise and leave the YAML file untouched."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False, encoding="utf-8") as f:

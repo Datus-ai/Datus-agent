@@ -479,6 +479,11 @@ class TestUpdateEntryYamlSync:
         with pytest.raises(DatusException, match="entry not found"):
             sem_storage.update_entry("table:nonexistent", {"description": "x"})
 
+    def test_update_entry_empty_id_raises(self, sem_storage):
+        """update_entry raises DatusException when entry_id is empty."""
+        with pytest.raises(DatusException, match="entry_id must not be empty"):
+            sem_storage.update_entry("", {"description": "x"})
+
     def test_update_entry_empty_values_raises(self, sem_storage):
         """update_entry raises DatusException when update_values is empty."""
         table_obj = _make_table_object("orders")
@@ -486,6 +491,76 @@ class TestUpdateEntryYamlSync:
 
         with pytest.raises(DatusException, match="update_values must not be empty"):
             sem_storage.update_entry("table:orders", {})
+
+    def test_update_entry_nonexistent_yaml_file(self, sem_storage):
+        """update_entry succeeds even when yaml_path points to a missing file."""
+        table_obj = _make_table_object("orders", yaml_path="/nonexistent/path.yml")
+        sem_storage.store_batch([table_obj])
+
+        result = sem_storage.update_entry("table:orders", {"description": "new"})
+        assert result is True
+
+    def test_sync_yaml_no_data_source_doc(self, sem_storage):
+        """_sync_semantic_update_to_yaml returns silently when YAML has no data_source."""
+        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False, encoding="utf-8")
+        try:
+            yaml.safe_dump_all([{"unrelated": "doc"}], tmp, allow_unicode=True, sort_keys=False)
+            tmp.close()
+
+            table_obj = _make_table_object("orders", yaml_path=tmp.name)
+            sem_storage.store_batch([table_obj])
+
+            result = sem_storage.update_entry("table:orders", {"description": "new"})
+            assert result is True
+
+            with open(tmp.name, encoding="utf-8") as f:
+                docs = list(yaml.safe_load_all(f))
+            assert docs[0] == {"unrelated": "doc"}
+        finally:
+            os.unlink(tmp.name)
+
+    def test_sync_yaml_corrupt_file_does_not_raise(self, sem_storage):
+        """_sync_semantic_update_to_yaml catches exceptions on corrupt YAML files."""
+        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False, encoding="utf-8")
+        try:
+            tmp.write("{{invalid yaml content")
+            tmp.close()
+
+            # Call private method directly — should log error but not raise
+            sem_storage._sync_semantic_update_to_yaml(tmp.name, "table", "orders", {"description": "new"})
+        finally:
+            os.unlink(tmp.name)
+
+    def test_update_column_not_found_in_yaml(self, sem_storage):
+        """_sync_semantic_update_to_yaml for a column not present in YAML leaves file unchanged."""
+        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False, encoding="utf-8")
+        try:
+            docs = [
+                {
+                    "data_source": {
+                        "name": "orders",
+                        "description": "Table",
+                        "dimensions": [{"name": "region", "description": "Region"}],
+                    }
+                }
+            ]
+            yaml.safe_dump_all(docs, tmp, allow_unicode=True, sort_keys=False)
+            tmp.close()
+
+            col_obj = _make_column_object("orders", "nonexistent_col", is_dimension=True)
+            col_obj["yaml_path"] = tmp.name
+            table_obj = _make_table_object("orders", yaml_path=tmp.name)
+            sem_storage.store_batch([table_obj, col_obj])
+
+            result = sem_storage.update_entry("column:orders.nonexistent_col", {"description": "new"})
+            assert result is True
+
+            with open(tmp.name, encoding="utf-8") as f:
+                reloaded = list(yaml.safe_load_all(f))
+            # Original region dimension should be untouched
+            assert reloaded[0]["data_source"]["dimensions"][0]["description"] == "Region"
+        finally:
+            os.unlink(tmp.name)
 
 
 # ============================================================

@@ -513,6 +513,74 @@ class TestUpdateReferenceSqlYaml:
         finally:
             os.unlink(tmp_file.name)
 
+    def test_update_reference_sql_non_dict_yaml_is_noop(self, ref_sql_storage):
+        """_sync_reference_sql_update_to_yaml returns when YAML is not a dict."""
+        tmp_file = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8")
+        try:
+            tmp_file.write("- just a list\n- not a dict\n")
+            tmp_file.close()
+
+            item = _make_sql_item(1, subject_path=["Finance", "Revenue"])
+            item["filepath"] = tmp_file.name
+            ref_sql_storage.batch_store_sql([item])
+
+            result = ref_sql_storage.update_entry(
+                subject_path=["Finance", "Revenue"],
+                name="query_1",
+                update_values={"sql": "SELECT 1"},
+            )
+            assert result is True
+
+            with open(tmp_file.name, encoding="utf-8") as f:
+                content = f.read()
+            assert "just a list" in content
+        finally:
+            os.unlink(tmp_file.name)
+
+    def test_update_reference_sql_no_syncable_fields(self, ref_sql_storage):
+        """update_entry with non-syncable fields should not rewrite the YAML file."""
+        original_doc = {"name": "q", "sql": "SELECT 1", "subject_tree": "a/b"}
+        tmp_file = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8")
+        try:
+            yaml.safe_dump(original_doc, tmp_file, allow_unicode=True, sort_keys=False)
+            tmp_file.close()
+
+            item = _make_sql_item(1, subject_path=["Finance", "Revenue"])
+            item["filepath"] = tmp_file.name
+            ref_sql_storage.batch_store_sql([item])
+
+            ref_sql_storage.update_entry(
+                subject_path=["Finance", "Revenue"],
+                name="query_1",
+                update_values={"id": "new_id_value"},  # not in _SYNCABLE_FIELDS
+            )
+
+            with open(tmp_file.name, encoding="utf-8") as f:
+                doc = yaml.safe_load(f)
+            assert doc["sql"] == "SELECT 1"
+        finally:
+            os.unlink(tmp_file.name)
+
+    def test_update_reference_sql_corrupt_yaml_does_not_raise(self, ref_sql_storage):
+        """_sync_reference_sql_update_to_yaml catches exceptions on corrupt YAML files."""
+        tmp_file = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8")
+        try:
+            tmp_file.write("{{invalid yaml")
+            tmp_file.close()
+
+            item = _make_sql_item(1, subject_path=["Finance", "Revenue"])
+            item["filepath"] = tmp_file.name
+            ref_sql_storage.batch_store_sql([item])
+
+            result = ref_sql_storage.update_entry(
+                subject_path=["Finance", "Revenue"],
+                name="query_1",
+                update_values={"sql": "SELECT 1"},
+            )
+            assert result is True
+        finally:
+            os.unlink(tmp_file.name)
+
     # ---------------------------------------------------------------------------
     def test_update_reference_sql_entry_not_found_does_not_touch_yaml(self, ref_sql_storage):
         """update_entry on a non-existent entry should raise and leave the YAML file untouched."""
