@@ -513,8 +513,34 @@ class TestUpdateReferenceSqlYaml:
         finally:
             os.unlink(tmp_file.name)
 
+    # ---------------------------------------------------------------------------
+    def test_update_reference_sql_entry_not_found_does_not_touch_yaml(self, ref_sql_storage):
+        """update_entry on a non-existent entry should raise and leave the YAML file untouched."""
+        original_doc = {
+            "id": "abc123",
+            "name": "Daily Sales",
+            "sql": "SELECT * FROM sales",
+            "summary": "Original summary",
+        }
+        tmp_file = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8")
+        try:
+            yaml.safe_dump(original_doc, tmp_file, allow_unicode=True, sort_keys=False)
+            tmp_file.close()
 
-# ---------------------------------------------------------------------------
+            with pytest.raises(ValueError):
+                ref_sql_storage.update_entry(
+                    subject_path=["Finance", "Revenue"],
+                    name="nonexistent_query",
+                    update_values={"sql": "SELECT 1"},
+                )
+
+            with open(tmp_file.name, encoding="utf-8") as f:
+                doc = yaml.safe_load(f)
+            assert doc["sql"] == "SELECT * FROM sales"
+        finally:
+            os.unlink(tmp_file.name)
+
+
 # YAML subject_tree sync on rename
 # ---------------------------------------------------------------------------
 

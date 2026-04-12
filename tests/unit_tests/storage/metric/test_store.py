@@ -329,9 +329,27 @@ class TestUpdateMetricYaml:
             if os.path.exists(yaml_path):
                 os.remove(yaml_path)
 
+    # ---------------------------------------------------------------------------
+    # YAML subject_tree sync on rename
+    def test_update_metric_entry_not_found_does_not_touch_yaml(self, metric_storage: MetricStorage):
+        """update_entry on a non-existent metric should raise and leave the YAML file untouched."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False, encoding="utf-8") as f:
+            yaml_path = f.name
+            docs = [{"metric": {"name": "existing", "description": "original"}}]
+            yaml.safe_dump_all(docs, f, allow_unicode=True, sort_keys=False)
 
-# ---------------------------------------------------------------------------
-# YAML subject_tree sync on rename
+        try:
+            with pytest.raises(ValueError):
+                metric_storage.update_entry(["Finance", "Revenue"], "nonexistent_metric", {"description": "new"})
+
+            with open(yaml_path, "r", encoding="utf-8") as f:
+                remaining = [d for d in yaml.safe_load_all(f) if d is not None]
+            assert remaining[0]["metric"]["description"] == "original"
+        finally:
+            if os.path.exists(yaml_path):
+                os.remove(yaml_path)
+
+
 # ---------------------------------------------------------------------------
 
 

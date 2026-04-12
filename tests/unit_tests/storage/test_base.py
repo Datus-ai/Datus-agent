@@ -537,6 +537,27 @@ class TestUpdate:
         result = store.search_all(catalog_name="cat")
         assert result.num_rows == 1
 
+    def test_update_re_embeds_when_vector_source_changes(self, tmp_path):
+        """update() should regenerate the vector when the vector source column is updated."""
+        store = self._make_store(tmp_path)
+        store.store_batch([self._make_row(1)])
+
+        # Get original vector
+        original = store.query_with_filter(where=eq("identifier", "id_1"), select_fields=["vector"])
+        original_vector = original.column("vector")[0].as_py()
+
+        # Update the vector_source_name column (definition for SchemaStorage)
+        store.update(
+            where=eq("identifier", "id_1"),
+            update_values={"definition": "A completely different table about customer orders and revenue tracking"},
+        )
+
+        # Get updated vector
+        updated = store.query_with_filter(where=eq("identifier", "id_1"), select_fields=["vector"])
+        updated_vector = updated.column("vector")[0].as_py()
+
+        assert original_vector != updated_vector, "Vector should change when vector source text changes"
+
 
 # ---------------------------------------------------------------------------
 # query_with_filter

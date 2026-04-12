@@ -537,6 +537,18 @@ class BaseEmbeddingStore(StorageBase):
                         "error_message": f"Conflicting rows already match {unique_filter}",
                     },
                 )
+
+        # Re-embed when the vector source column is updated
+        if self.vector_source_name in update_values:
+            new_text = update_values[self.vector_source_name]
+            if new_text:
+                try:
+                    vectors = self.model.model.generate_embeddings([str(new_text)])
+                    if vectors and len(vectors) > 0:
+                        update_values[self.vector_column_name] = vectors[0]
+                except Exception as e:
+                    logger.warning(f"Failed to re-embed on update for {self.table_name}: {e}")
+
         self.table.update(where=where, values=update_values)
 
     # -- Convenience methods for subclasses --
