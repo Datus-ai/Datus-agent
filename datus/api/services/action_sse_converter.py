@@ -70,7 +70,8 @@ def _build_tool_result_content(action: ActionHistory) -> List[IMessageContent]:
     if start_time and end_time:
         duration = (end_time - start_time).total_seconds()
 
-    short_desc = output.get("summary", "") if isinstance(output, dict) else ""
+    output_dict = output if isinstance(output, dict) else None
+    short_desc = output_dict.get("summary", "") if output_dict else ""
     function_name, _ = _extract_function(action)
 
     payload_data = {
@@ -78,7 +79,7 @@ def _build_tool_result_content(action: ActionHistory) -> List[IMessageContent]:
         "toolName": function_name,
         "duration": duration,
         "shortDesc": short_desc,
-        "result": output.get("raw_output", output),
+        "result": output_dict.get("raw_output", output) if output_dict else output,
     }
     return [IMessageContent(type="call-tool-result", payload=payload_data)]
 
@@ -235,10 +236,10 @@ def action_to_sse_event(
 
         sse_role = "assistant"
 
-        if action.action_type == SUBAGENT_COMPLETE_ACTION_TYPE:
-            contents = _build_subagent_complete_content(action)
-        elif status == ActionStatus.FAILED:
+        if status == ActionStatus.FAILED:
             contents = _build_error_content(action)
+        elif action.action_type == SUBAGENT_COMPLETE_ACTION_TYPE:
+            contents = _build_subagent_complete_content(action)
         elif role == ActionRole.TOOL and status == ActionStatus.PROCESSING:
             contents = _build_tool_call_content(action)
         elif role == ActionRole.TOOL:

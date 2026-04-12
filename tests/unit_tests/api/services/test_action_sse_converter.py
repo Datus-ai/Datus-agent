@@ -404,6 +404,21 @@ class TestActionToSSEEvent:
         assert event is not None
         assert event.data.payload.content[0].type == "call-tool-result"
 
+    def test_tool_success_non_dict_output(self):
+        """TOOL + SUCCESS with non-dict output does not crash."""
+        action = _make_action(
+            role=ActionRole.TOOL,
+            status=ActionStatus.SUCCESS,
+            input={"function_name": "run_sql"},
+            output="plain string result",
+        )
+        event = action_to_sse_event(action, event_id=30, message_id="msg-30")
+        assert event is not None
+        content = event.data.payload.content[0]
+        assert content.type == "call-tool-result"
+        assert content.payload["result"] == "plain string result"
+        assert content.payload["shortDesc"] == ""
+
     def test_user_role_excluded_by_default(self):
         """USER role returns None when include_user_message=False."""
         action = _make_action(role=ActionRole.USER, input={"user_message": "Hello"})
@@ -575,15 +590,16 @@ class TestActionToSSEEvent:
         assert event is not None
         assert event.data.payload.content[0].payload["duration"] == 0.0
 
-    def test_subagent_complete_failed_still_produces_subagent_event(self):
-        """subagent_complete with FAILED status still produces subagent-complete, not error."""
+    def test_subagent_complete_failed_produces_error_event(self):
+        """subagent_complete with FAILED status produces error content, not subagent-complete."""
         action = _make_action(
             role=ActionRole.SYSTEM,
             status=ActionStatus.FAILED,
             action_type=SUBAGENT_COMPLETE_ACTION_TYPE,
-            output={"subagent_type": "gen_sql", "tool_count": 0},
+            output={"error": "sub-agent timed out"},
         )
         event = action_to_sse_event(action, event_id=17, message_id="msg-17")
         assert event is not None
         content = event.data.payload.content[0]
-        assert content.type == "subagent-complete"
+        assert content.type == "error"
+        assert "timed out" in content.payload["content"]
