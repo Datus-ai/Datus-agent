@@ -15,7 +15,7 @@ from datus.api.services.action_sse_converter import (
     _extract_function,
     action_to_sse_event,
 )
-from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+from datus.schemas.action_history import SUBAGENT_COMPLETE_ACTION_TYPE, ActionHistory, ActionRole, ActionStatus
 
 
 def _make_action(**overrides) -> ActionHistory:
@@ -489,3 +489,61 @@ class TestActionToSSEEvent:
         )
         event = action_to_sse_event(action, event_id=10, message_id="msg-10")
         assert event is not None
+
+    def test_depth_and_parent_action_id_forwarded(self):
+        """depth=1 and parent_action_id are forwarded to SSEMessagePayload."""
+        action = _make_action(
+            role=ActionRole.TOOL,
+            status=ActionStatus.PROCESSING,
+            input={"function_name": "run_sql", "arguments": {}},
+            depth=1,
+            parent_action_id="parent-001",
+        )
+        event = action_to_sse_event(action, event_id=11, message_id="msg-11")
+        assert event is not None
+        assert event.data.payload.depth == 1
+        assert event.data.payload.parent_action_id == "parent-001"
+
+    def test_default_depth_is_zero(self):
+        """Normal action has depth=0 and parent_action_id=None by default."""
+        action = _make_action(
+            role=ActionRole.TOOL,
+            status=ActionStatus.PROCESSING,
+            input={"function_name": "list_tables", "arguments": {}},
+        )
+        event = action_to_sse_event(action, event_id=12, message_id="msg-12")
+        assert event is not None
+        assert event.data.payload.depth == 0
+        assert event.data.payload.parent_action_id is None
+
+    def test_subagent_complete_produces_event(self):
+        """subagent_complete action produces type='subagent-complete' content."""
+        action = _make_action(
+            role=ActionRole.SYSTEM,
+            status=ActionStatus.SUCCESS,
+            action_type=SUBAGENT_COMPLETE_ACTION_TYPE,
+            output={"subagent_type": "sql_gen", "tool_count": 3},
+        )
+        event = action_to_sse_event(action, event_id=13, message_id="msg-13")
+        assert event is not None
+        assert len(event.data.payload.content) == 1
+        content = event.data.payload.content[0]
+        assert content.type == "subagent-complete"
+        assert content.payload["subagentType"] == "sql_gen"
+        assert content.payload["toolCount"] == 3
+        assert content.payload["duration"] == 5.0  # end - start = 5s from defaults
+
+    def test_subagent_complete_with_depth(self):
+        """subagent_complete event carries depth=1 and parent_action_id."""
+        action = _make_action(
+            role=ActionRole.SYSTEM,
+            status=ActionStatus.SUCCESS,
+            action_type=SUBAGENT_COMPLETE_ACTION_TYPE,
+            output={"subagent_type": "data_viz", "tool_count": 1},
+            depth=1,
+            parent_action_id="parent-002",
+        )
+        event = action_to_sse_event(action, event_id=14, message_id="msg-14")
+        assert event is not None
+        assert event.data.payload.depth == 1
+        assert event.data.payload.parent_action_id == "parent-002"

@@ -16,7 +16,7 @@ from datus.api.models.cli_models import (
     SSEMessageData,
     SSEMessagePayload,
 )
-from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+from datus.schemas.action_history import SUBAGENT_COMPLETE_ACTION_TYPE, ActionHistory, ActionRole, ActionStatus
 from datus.utils.json_utils import llm_result2json
 from datus.utils.loggings import get_logger
 
@@ -241,6 +241,19 @@ def action_to_sse_event(
                 sse_role = "user"
             else:
                 return None
+        elif action.action_type == SUBAGENT_COMPLETE_ACTION_TYPE:
+            output = action.output if isinstance(action.output, dict) else {}
+            duration = (
+                (action.end_time - action.start_time).total_seconds()
+                if action.start_time and action.end_time
+                else 0.0
+            )
+            payload_data = {
+                "subagentType": output.get("subagent_type", "unknown"),
+                "toolCount": output.get("tool_count", 0),
+                "duration": duration,
+            }
+            contents = [IMessageContent(type="subagent-complete", payload=payload_data)]
         elif (
             role == ActionRole.ASSISTANT and status == ActionStatus.SUCCESS and action.action_type.endswith("_response")
         ):
@@ -256,6 +269,8 @@ def action_to_sse_event(
                 message_id=message_id,
                 role=sse_role,
                 content=contents,
+                depth=action.depth,
+                parent_action_id=action.parent_action_id,
             ),
         )
 

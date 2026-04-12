@@ -163,9 +163,11 @@ X-Accel-Buffering: no
 {
   "type":    "createMessage",
   "payload": {
-    "message_id": "act_0001",
-    "role":       "assistant",
-    "content":    [ /* 一个或多个 content 项,见下 */ ]
+    "message_id":       "act_0001",
+    "role":             "assistant",
+    "content":          [ /* 一个或多个 content 项,见下 */ ],
+    "depth":            0,
+    "parent_action_id": null
   }
 }
 ```
@@ -174,6 +176,10 @@ X-Accel-Buffering: no
   客户端遇到未知 `type` 应优雅忽略)。
 - 流式期间 `role` 始终为 `assistant`;`GET /chat/history` 拉取时,用户消息会以 `role: "user"` 出现。
 - `message_id` 即 action id;当 content 为用户交互时,**它同时也是 `interactionKey`**(详见下文)。
+- `depth` 表示动作的嵌套层级:`0` 为主 agent,`1` 为通过 `task()` 工具调起的 sub-agent。客户端可据此
+  对 sub-agent 事件进行分组或缩进展示。
+- `parent_action_id` 是触发此 sub-agent 动作的父 `task()` 工具调用的 action id。主 agent 动作(`depth=0`)
+  该字段为 `null`。结合 `depth`,前端可构建 agent 活动的层级树。
 
 ### content 元素类型
 
@@ -293,12 +299,55 @@ Agent 需要用户做决策才能继续时下发。SSE 流随后暂停,直到通
 - `allowFreeText: true` 表示即使有 `options`,也允许用户输入自定义答案。
 - `contentType` 通常为 `markdown`。
 
+#### `subagent-complete`
+
+当 sub-agent 完成委派任务时下发。此事件的 `depth >= 1` 且 `parent_action_id` 非空。它作为汇总标记,
+客户端可据此将 sub-agent 活动折叠为一行状态摘要。
+
+```json
+{
+  "type": "subagent-complete",
+  "payload": {
+    "subagentType": "gen_sql",
+    "toolCount":    5,
+    "duration":     3.21
+  }
+}
+```
+
+| 字段           | 类型   | 描述 |
+|----------------|--------|------|
+| `subagentType` | string | 运行的 sub-agent 名称(如 `explore`、`gen_sql`) |
+| `toolCount`    | int    | sub-agent 执行的工具调用次数 |
+| `duration`     | float  | sub-agent 运行的挂钟时间(秒) |
+
+> 外层 `MessageData.payload` 将携带 `depth: 1` 和指向触发该 sub-agent 的 `task()` 工具调用的
+> `parent_action_id`。完整 payload 结构参见 [MessageData](#messagedata)。
+
 ### 完整事件帧示例
+
+主 agent 事件(`depth=0`):
 
 ```
 id: 5
 event: message
-data: {"type":"createMessage","payload":{"message_id":"act_0005","role":"assistant","content":[{"type":"markdown","payload":{"content":"销售额前 5 的客户:\n"}}]}}
+data: {"type":"createMessage","payload":{"message_id":"act_0005","role":"assistant","content":[{"type":"markdown","payload":{"content":"销售额前 5 的客户:\n"}}],"depth":0,"parent_action_id":null}}
+```
+
+Sub-agent 事件(`depth=1`):
+
+```
+id: 12
+event: message
+data: {"type":"createMessage","payload":{"message_id":"act_0012","role":"assistant","content":[{"type":"call-tool","payload":{"callToolId":"act_0012","toolName":"execute_sql","toolParams":{"sql":"SELECT 1"}}}],"depth":1,"parent_action_id":"act_0006"}}
+```
+
+Sub-agent 完成:
+
+```
+id: 15
+event: message
+data: {"type":"createMessage","payload":{"message_id":"act_0015","role":"assistant","content":[{"type":"subagent-complete","payload":{"subagentType":"gen_sql","toolCount":5,"duration":3.21}}],"depth":1,"parent_action_id":"act_0006"}}
 ```
 
 ### 按游标续传

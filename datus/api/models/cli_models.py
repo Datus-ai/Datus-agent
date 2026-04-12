@@ -639,6 +639,8 @@ class SSEMessagePayload(BaseModel):
     message_id: str = Field(..., description="Message ID")
     role: str = Field(..., description="Message role (user, assistant)")
     content: List[IMessageContent] = Field(default_factory=list, description="Message content list")
+    depth: int = Field(default=0, description="Nesting depth (0=main, 1=sub-agent)")
+    parent_action_id: Optional[str] = Field(default=None, description="Parent action ID for sub-agent grouping")
 
 
 class SSEMessageData(BaseModel):

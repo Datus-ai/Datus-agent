@@ -165,9 +165,11 @@ are infrastructure.
 {
   "type":    "createMessage",
   "payload": {
-    "message_id": "act_0001",
-    "role":       "assistant",
-    "content":    [ /* one or more content items, see below */ ]
+    "message_id":       "act_0001",
+    "role":             "assistant",
+    "content":          [ /* one or more content items, see below */ ],
+    "depth":            0,
+    "parent_action_id": null
   }
 }
 ```
@@ -178,6 +180,11 @@ are infrastructure.
   `role: "user"`.
 - `message_id` is the action id; it is **also the `interactionKey`** when the content describes a user interaction
   (see below).
+- `depth` indicates the nesting level of the action: `0` for the main agent, `1` for a sub-agent invoked via the
+  `task()` tool. Clients can use this to visually group or indent sub-agent events.
+- `parent_action_id` is the action id of the parent `task()` tool call that spawned this sub-agent action. It is
+  `null` for main-agent actions (`depth=0`). Together with `depth`, it allows the frontend to build a hierarchical
+  tree of agent activities.
 
 ### Content item types
 
@@ -302,12 +309,56 @@ Notes on `requests`:
 - `allowFreeText: true` means the user may type a custom answer even when `options` is non-empty.
 - `contentType` is usually `markdown`.
 
+#### `subagent-complete`
+
+Emitted when a sub-agent finishes its delegated task. This event always has `depth >= 1` and a non-null
+`parent_action_id`. It acts as a summary marker — clients can use it to collapse sub-agent activity into a
+single status line.
+
+```json
+{
+  "type": "subagent-complete",
+  "payload": {
+    "subagentType": "gen_sql",
+    "toolCount":    5,
+    "duration":     3.21
+  }
+}
+```
+
+| Field          | Type   | Description |
+|----------------|--------|-------------|
+| `subagentType` | string | Name of the sub-agent that ran (e.g. `explore`, `gen_sql`) |
+| `toolCount`    | int    | Number of tool calls the sub-agent made |
+| `duration`     | float  | Wall-clock seconds the sub-agent ran |
+
+> The enclosing `MessageData.payload` will carry `depth: 1` and a `parent_action_id` pointing to the `task()` tool
+> call that spawned the sub-agent. See [MessageData](#messagedata) for the full payload schema.
+
 ### A complete frame example
+
+Main agent event (`depth=0`):
 
 ```
 id: 5
 event: message
-data: {"type":"createMessage","payload":{"message_id":"act_0005","role":"assistant","content":[{"type":"markdown","payload":{"content":"Here are the top 5 customers:\n"}}]}}
+data: {"type":"createMessage","payload":{"message_id":"act_0005","role":"assistant","content":[{"type":"markdown","payload":{"content":"Here are the top 5 customers:\n"}}],"depth":0,"parent_action_id":null}}
+```
+
+Sub-agent event (`depth=1`):
+
+```
+id: 12
+event: message
+data: {"type":"createMessage","payload":{"message_id":"act_0012","role":"assistant","content":[{"type":"call-tool","payload":{"callToolId":"act_0012","toolName":"execute_sql","toolParams":{"sql":"SELECT 1"}}}],"depth":1,"parent_action_id":"act_0006"}}
+```
+
+Sub-agent completion:
+
+```
+id: 15
+event: message
+data: {"type":"createMessage","payload":{"message_id":"act_0015","role":"assistant","content":[{"type":"subagent-complete","payload":{"subagentType":"gen_sql","toolCount":5,"duration":3.21}}],"depth":1,"parent_action_id":"act_0006"}}
 ```
 
 ### Resume by cursor
