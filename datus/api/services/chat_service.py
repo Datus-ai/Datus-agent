@@ -169,6 +169,9 @@ class ChatService:
             )
             node.session_id = session_id
 
+            # Load the existing SQLite session so _session is populated
+            node._get_or_create_session()
+
             old_tokens = await node._count_session_tokens()
             result = await node._manual_compact()
 
