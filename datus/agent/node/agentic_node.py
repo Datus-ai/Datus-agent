@@ -217,6 +217,11 @@ class AgenticNode(Node):
         Returns:
             Prompt with skills XML and memory context appended
         """
+        # Inject AGENTS.md project context if present in cwd
+        agents_md = self._load_agents_md()
+        if agents_md:
+            base_prompt = base_prompt + "\n\n" + agents_md
+
         # Ensure skill tools are in self.tools (lazy injection after subclass setup_tools()).
         self._ensure_skill_tools_in_tools()
 
@@ -258,6 +263,33 @@ class AgenticNode(Node):
         except Exception as e:
             logger.warning(f"Failed to inject memory context for node '{node_name}': {e}")
         return base_prompt
+
+    def _load_agents_md(self) -> str:
+        """Load AGENTS.md from current working directory as project context.
+
+        Returns first 200 lines wrapped in <project_context> tags.
+        Returns empty string if file doesn't exist — all features work without it.
+        """
+        import os
+
+        agents_md_path = os.path.join(os.getcwd(), "AGENTS.md")
+        if not os.path.exists(agents_md_path):
+            return ""
+
+        try:
+            with open(agents_md_path, encoding="utf-8") as f:
+                lines = f.readlines()
+            if not lines:
+                return ""
+            # Keep first 200 lines to stay within reasonable context budget
+            max_lines = 200
+            content = "".join(lines[:max_lines])
+            if len(lines) > max_lines:
+                content += f"\n... ({len(lines) - max_lines} more lines, see AGENTS.md for full content)"
+            return f"<project_context>\n{content}\n</project_context>"
+        except Exception as e:
+            logger.debug(f"Failed to load AGENTS.md: {e}")
+            return ""
 
     def _generate_session_id(self) -> str:
         """Generate a unique session ID."""

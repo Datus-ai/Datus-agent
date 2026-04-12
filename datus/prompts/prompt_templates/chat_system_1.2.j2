@@ -63,11 +63,12 @@ Current context:
 - Current date: {{ current_date }}
 {% endif -%}
 {% if namespace -%}
-- Database namespace: {{ namespace }}
+- Database: {{ namespace }}
 {% endif -%}
 {% if workspace_root -%}
 - Current sql files root directory: {{ workspace_root }}
 {% endif -%}
+- If a `<project_context>` block follows, it contains the project's AGENTS.md — an overview of the project architecture, directory layout, configured services, and data assets. Use it to understand the project context, but always verify with tools (list_tables, describe_table, etc.) for current data details.
 {% if conversation_summary -%}
 
 Previous conversation summary:
