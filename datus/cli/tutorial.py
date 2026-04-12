@@ -40,36 +40,37 @@ class BenchmarkTutorial:
         if self.config_path and not Path(self.config_path).expanduser().resolve().exists():
             self.console.print(
                 f" ❌Configuration file `{self.config_path}` not found, "
-                "please check it or run `datus-agent init` first."
+                "please check it or run `datus-agent configure` first."
             )
             return False
         agent_config = load_agent_config(config=self.config_path)
         self.benchmark_path = agent_config.path_manager.benchmark_dir
         if (
             self.namespace_name not in agent_config.benchmark_configs
-            or self.namespace_name not in agent_config.namespaces
+            or self.namespace_name not in agent_config.service.databases
         ):
             from datus.configuration.agent_config_loader import configuration_manager
 
-            namespace_config = {
-                "california_schools": {
-                    "type": "sqlite",
-                    "name": "california_schools",
-                    "uri": "~/.datus/benchmark/california_schools/california_schools.sqlite",
-                },
-            }
+            # Add california_schools database to service.databases
             config_manager = configuration_manager()
+            service_config = config_manager.data.get("service", {"databases": {}, "bi_tools": {}, "schedulers": {}})
+            service_config.setdefault("databases", {})
+            service_config["databases"]["california_schools"] = {
+                "type": "sqlite",
+                "name": "california_schools",
+                "uri": "~/.datus/benchmark/california_schools/california_schools.sqlite",
+            }
             config_manager.update_item(
-                "namespace",
-                namespace_config,
+                "service",
+                service_config,
                 delete_old_key=False,
                 save=False,
             )
-            self.console.print("Namespace configuration added:")
+            self.console.print("Database configuration added:")
 
             from rich.syntax import Syntax
 
-            self.console.print(Syntax(dict_to_yaml_str(namespace_config), lexer="yaml"))
+            self.console.print(Syntax(dict_to_yaml_str(service_config["databases"]), lexer="yaml"))
 
             benchmark_config = {
                 self.namespace_name: {
@@ -115,7 +116,7 @@ class BenchmarkTutorial:
             self.console.print("[bold yellow][2/6] Initialize Metadata using command: [/bold yellow]")
             self.console.print(
                 f"    [bold green]datus-agent[/] [bold]bootstrap-kb --config {self.config_path} "
-                "--namespace california_schools "
+                "--database california_schools "
                 "--components metadata --kb_update_strategy overwrite[/]"
             )
             init_metadata_and_log_result(
@@ -129,7 +130,7 @@ class BenchmarkTutorial:
             self.console.print("[bold yellow][3/6] Initialize Semantic Model using command: [/bold yellow]")
             self.console.print(
                 f"    [bold green]datus-agent[/] [bold]bootstrap-kb --config {self.config_path} "
-                f"--namespace california_schools "
+                f"--database california_schools "
                 f"--components semantic_model --kb_update_strategy overwrite --success_story {success_path} "
                 "[/]"
             )
@@ -138,7 +139,7 @@ class BenchmarkTutorial:
             self.console.print("[bold yellow][4/6] Initialize Metrics using command: [/bold yellow]")
             self.console.print(
                 f"    [bold green]datus-agent[/] [bold]bootstrap-kb --config {self.config_path} "
-                f"--namespace california_schools "
+                f"--database california_schools "
                 f"--components metrics --kb_update_strategy overwrite --success_story {success_path} "
                 '--subject_tree "california_schools/Continuation_School/Free_Rate,'
                 'california_schools/Charter/Education_Location"'
@@ -149,7 +150,7 @@ class BenchmarkTutorial:
             self.console.print("[bold yellow][5/6] Initialize Reference SQL using command: [/bold yellow]")
             self.console.print(
                 f"    [bold green]datus-agent[/] [bold]bootstrap-kb --config {self.config_path} "
-                "--namespace california_schools --components reference_sql --kb_update_strategy overwrite "
+                "--database california_schools --components reference_sql --kb_update_strategy overwrite "
                 f"--sql_dir {str(california_schools_path / 'reference_sql')} "
                 '--subject_tree "'
                 "california_schools/Continuation/Free_Rate,"

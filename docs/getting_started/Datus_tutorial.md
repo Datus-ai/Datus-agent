@@ -10,13 +10,15 @@ This tutorial walks you through the full workflow of Datus-agent:
 5. Run multi-round evaluation to demonstrate the value of [contextual data engineering](contextual_data_engineering.md)
 
 
-## 1. Prerequisites: Initialize Your Datus Agent
+## 1. Prerequisites: Configure Your Datus Agent
 
-Before running the tutorial, initialize your Datus agent:
+Before running the tutorial, configure your LLM and database connections:
 
 ```bash
-datus-agent init
+datus-agent configure
 ```
+
+This sets up your LLM provider (API key) and saves the configuration to `~/.datus/conf/agent.yml`. The tutorial will automatically configure the california_schools database for you.
 
 Since this tutorial involves metric generation, you also need to install the semantic layer adapter:
 
