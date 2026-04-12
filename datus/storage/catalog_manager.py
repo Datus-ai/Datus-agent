@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.registry import get_storage
 from datus.storage.semantic_model.store import SemanticModelStorage
+from datus.utils.exceptions import DatusException
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -50,7 +51,7 @@ class CatalogUpdater:
             entry_id = f"table:{table_name}"
             try:
                 self.semantic_model_storage.update_entry(entry_id, {"description": update_values["description"]})
-            except ValueError:
+            except DatusException:
                 logger.warning(f"Table entry not found: {entry_id}")
             else:
                 logger.debug("Updated table-level semantic model description")
@@ -120,7 +121,7 @@ class CatalogUpdater:
             entry_id = f"column:{table_name}.{col_name}"
             try:
                 self.semantic_model_storage.update_entry(entry_id, changed)
-            except ValueError:
+            except DatusException:
                 logger.warning(f"Column entry not found: {entry_id}")
             else:
                 logger.debug(f"Updated column '{col_name}' ({kind_field}): {list(changed.keys())}")

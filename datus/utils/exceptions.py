@@ -99,6 +99,8 @@ class ErrorCode(Enum):
         ),
     )
     STORAGE_INDEX_FAILED = ("410005", "Vector database index operation failed: {error_message}")
+    STORAGE_ENTRY_NOT_FOUND = ("410006", "Storage entry not found: {entry_id}")
+    STORAGE_INVALID_ARGUMENT = ("410007", "Invalid storage argument: {error_message}")
 
     # Database errors
     DB_FAILED = ("500000", "Database operation failed. Error details: {error_message}")

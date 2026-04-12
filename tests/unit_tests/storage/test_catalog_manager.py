@@ -7,6 +7,7 @@
 import json
 
 from datus.storage.catalog_manager import CatalogUpdater
+from datus.utils.exceptions import DatusException, ErrorCode
 
 
 class TestParseJsonField:
@@ -376,12 +377,12 @@ class TestUpdateColumnsMethod:
         assert calls[0] == {"description": "new"}
 
     def test_update_columns_value_error_is_handled(self):
-        """ValueError from update_entry (entry not found) is caught and logged, not raised."""
+        """DatusException from update_entry (entry not found) is caught and logged, not raised."""
         updater = self._make_updater()
 
         class FakeStorage:
             def update_entry(self, entry_id, values):
-                raise ValueError(f"Entry not found: {entry_id}")
+                raise DatusException(ErrorCode.STORAGE_ENTRY_NOT_FOUND, message_args={"entry_id": entry_id})
 
         updater.semantic_model_storage = FakeStorage()
 
@@ -458,12 +459,12 @@ class TestUpdateSemanticModel:
         assert any(entry_id == "table:orders" for entry_id, _ in calls)
 
     def test_update_semantic_model_description_value_error_handled(self):
-        """ValueError from update_entry for table is caught and does not raise."""
+        """DatusException from update_entry for table is caught and does not raise."""
         updater = self._make_updater()
 
         class FakeStorage:
             def update_entry(self, entry_id, values):
-                raise ValueError("not found")
+                raise DatusException(ErrorCode.STORAGE_ENTRY_NOT_FOUND, message_args={"entry_id": entry_id})
 
         updater.semantic_model_storage = FakeStorage()
 

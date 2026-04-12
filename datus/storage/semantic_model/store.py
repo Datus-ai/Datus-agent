@@ -10,6 +10,7 @@ import yaml
 from datus_storage_base.conditions import And, WhereExpr, eq, in_
 
 from datus.storage.base import BaseEmbeddingStore, EmbeddingModel
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
@@ -143,15 +144,19 @@ class SemanticModelStorage(BaseEmbeddingStore):
             ValueError: If entry not found or update_values is empty
         """
         if not entry_id:
-            raise ValueError("entry_id must not be empty")
+            raise DatusException(
+                ErrorCode.STORAGE_INVALID_ARGUMENT, message_args={"error_message": "entry_id must not be empty"}
+            )
         if not update_values:
-            raise ValueError("update_values must not be empty")
+            raise DatusException(
+                ErrorCode.STORAGE_INVALID_ARGUMENT, message_args={"error_message": "update_values must not be empty"}
+            )
 
         entries = self._search_all(
             where=eq("id", entry_id), select_fields=["id", "kind", "name", "yaml_path"]
         ).to_pylist()
         if not entries:
-            raise ValueError(f"Entry not found: {entry_id}")
+            raise DatusException(ErrorCode.STORAGE_ENTRY_NOT_FOUND, message_args={"entry_id": entry_id})
         entry = entries[0]
         yaml_path = entry.get("yaml_path", "")
 

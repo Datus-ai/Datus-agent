@@ -13,6 +13,7 @@ from pandas import Timestamp
 
 from datus.storage.embedding_models import get_db_embedding_model
 from datus.storage.semantic_model.store import SemanticModelRAG, SemanticModelStorage
+from datus.utils.exceptions import DatusException
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -474,16 +475,16 @@ class TestUpdateEntryYamlSync:
         assert result is True
 
     def test_update_entry_nonexistent_raises(self, sem_storage):
-        """update_entry raises ValueError when the entry_id does not exist."""
-        with pytest.raises(ValueError, match="Entry not found"):
+        """update_entry raises DatusException when the entry_id does not exist."""
+        with pytest.raises(DatusException, match="entry not found"):
             sem_storage.update_entry("table:nonexistent", {"description": "x"})
 
     def test_update_entry_empty_values_raises(self, sem_storage):
-        """update_entry raises ValueError when update_values is empty."""
+        """update_entry raises DatusException when update_values is empty."""
         table_obj = _make_table_object("orders")
         sem_storage.store_batch([table_obj])
 
-        with pytest.raises(ValueError, match="update_values must not be empty"):
+        with pytest.raises(DatusException, match="update_values must not be empty"):
             sem_storage.update_entry("table:orders", {})
 
 
