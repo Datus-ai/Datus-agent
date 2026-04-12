@@ -217,6 +217,8 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
         filepaths = list({e.get("filepath") for e in entries if e.get("filepath")})
 
         result = super().update_entry(subject_path, name, update_values, extra_conditions)
+        if not result:
+            return False
 
         for filepath in filepaths:
             self._sync_reference_sql_update_to_yaml(filepath, update_values)

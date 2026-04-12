@@ -311,6 +311,8 @@ class MetricStorage(BaseSubjectEmbeddingStore):
 
         # Update in vector store using base class method
         result = super().update_entry(subject_path, name, update_values, extra_conditions)
+        if not result:
+            return False
 
         # Sync changes to each yaml file
         for yaml_path in yaml_paths:
