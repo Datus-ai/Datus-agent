@@ -653,27 +653,27 @@ class AgentConfig:
 
     @property
     def output_dir(self) -> str:
-        return f"{self._save_dir}/{self._project_name}"
+        return f"{self._save_dir}/{self._current_database}"
 
     def get_save_run_dir(self, run_id: Optional[str] = None) -> str:
-        return str(self.save_run_dir(self._project_name, run_id))
+        return str(self.save_run_dir(self._current_database, run_id))
 
-    def save_run_dir(self, project_name: str, run_id: Optional[str] = None) -> Path:
+    def save_run_dir(self, database: str, run_id: Optional[str] = None) -> Path:
         from datus.utils.path_manager import DatusPathManager
 
-        return DatusPathManager.resolve_run_dir(Path(self._save_dir), project_name, run_id)
+        return DatusPathManager.resolve_run_dir(Path(self._save_dir), database, run_id)
 
     @property
     def trajectory_dir(self) -> str:
         return self._trajectory_dir
 
     def get_trajectory_run_dir(self, run_id: Optional[str] = None) -> str:
-        return str(self.trajectory_run_dir(self._project_name, run_id))
+        return str(self.trajectory_run_dir(self._current_database, run_id))
 
-    def trajectory_run_dir(self, project_name: str, run_id: Optional[str] = None) -> Path:
+    def trajectory_run_dir(self, database: str, run_id: Optional[str] = None) -> Path:
         from datus.utils.path_manager import DatusPathManager
 
-        return DatusPathManager.resolve_run_dir(Path(self._trajectory_dir), project_name, run_id)
+        return DatusPathManager.resolve_run_dir(Path(self._trajectory_dir), database, run_id)
 
     def reflection_nodes(self, strategy: str) -> List[str]:
         if strategy not in self._reflection_nodes:
