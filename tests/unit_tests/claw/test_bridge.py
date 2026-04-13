@@ -601,6 +601,7 @@ class TestEventToOutbound:
     def test_tool_call_cached_not_output(self, bridge):
         """call-tool alone should NOT produce output; it gets cached."""
         msg = _make_inbound()
+        pending = {}
         data = SSEMessageData(
             type=SSEDataType.CREATE_MESSAGE,
             payload=SSEMessagePayload(
@@ -614,18 +615,20 @@ class TestEventToOutbound:
                 ],
             ),
         )
-        result = bridge._event_to_outbound(data, msg)
+        result = bridge._event_to_outbound(data, msg, pending_tool_calls=pending)
         assert result is None
-        assert "t1" in bridge._pending_tool_calls
+        assert "t1" in pending
 
     def test_tool_result_merges_with_cached_call(self, bridge):
         """call-tool-result should merge with cached call-tool payload."""
         msg = _make_inbound()
         # First, cache a call-tool
-        bridge._pending_tool_calls["t1"] = {
-            "callToolId": "t1",
-            "toolName": "execute_sql",
-            "toolParams": {"sql": "SELECT 1"},
+        pending = {
+            "t1": {
+                "callToolId": "t1",
+                "toolName": "execute_sql",
+                "toolParams": {"sql": "SELECT 1"},
+            }
         }
         data = SSEMessageData(
             type=SSEDataType.CREATE_MESSAGE,
@@ -646,12 +649,12 @@ class TestEventToOutbound:
                 ],
             ),
         )
-        result = bridge._event_to_outbound(data, msg)
+        result = bridge._event_to_outbound(data, msg, pending_tool_calls=pending)
         assert result is not None
         assert "execute_sql" in result.text
         assert "2.5s" in result.text
         # Cached entry should be consumed
-        assert "t1" not in bridge._pending_tool_calls
+        assert "t1" not in pending
 
 
 class TestReactionLifecycle:
@@ -1047,8 +1050,8 @@ class TestVerboseLevels:
         assert len(adapter.sent) == 3
 
     @pytest.mark.asyncio
-    async def test_pending_tool_calls_cleared_after_stream(self, setup):
-        """_pending_tool_calls should be empty after stream ends."""
+    async def test_pending_tool_calls_scoped_per_request(self, setup):
+        """pending_tool_calls is local per request and does not leak across messages."""
         bridge, adapter, task_manager = setup
 
         mock_task = MagicMock()
@@ -1060,8 +1063,10 @@ class TestVerboseLevels:
 
         task_manager.consume_events = _fake_consume
 
+        # Should complete without error; orphan tool call stays in local dict only
         await bridge.handle_message(_make_inbound("q"), adapter)
-        assert len(bridge._pending_tool_calls) == 0
+        # No instance-level _pending_tool_calls attribute should exist
+        assert not hasattr(bridge, "_pending_tool_calls")
 
 
 class TestStreamIdAndFinalize:

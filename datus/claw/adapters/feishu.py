@@ -238,16 +238,15 @@ class FeishuAdapter(ChannelAdapter):
 
         self._lark_client = lark.Client.builder().app_id(self._app_id).app_secret(self._app_secret).build()
 
+        # Build the event handler on the main thread (no loop dependency).
+        # The ws.Client is created inside the worker thread so the SDK
+        # initialises its internal event loop and asyncio.Lock in the
+        # correct thread context — no monkey-patching required.
         event_handler = self._build_event_handler()
-        self._ws_client = lark.ws.Client(
-            self._app_id,
-            self._app_secret,
-            event_handler=event_handler,
-            log_level=lark.LogLevel.INFO,
-        )
 
         self._ws_thread = threading.Thread(
             target=self._start_ws_in_new_loop,
+            args=(event_handler,),
             name=f"feishu-ws-{self.channel_id}",
             daemon=True,
         )
@@ -285,15 +284,31 @@ class FeishuAdapter(ChannelAdapter):
                 text = text.replace(m.key, "").strip()
         return text
 
-    def _start_ws_in_new_loop(self) -> None:
-        """Run the lark ws client in a brand-new event loop on this thread."""
+    def _start_ws_in_new_loop(self, event_handler) -> None:
+        """Create the ws.Client and run it in a brand-new event loop on this thread.
+
+        Creating the client here (rather than in ``start()``) ensures
+        the SDK's internal ``asyncio.Lock`` is bound to this thread's
+        event loop — no need to replace the private ``_lock`` attribute.
+
+        We still set ``ws_module.loop`` because the SDK's ``start()``
+        calls ``loop.run_until_complete()`` on that module-level
+        reference instead of using ``asyncio.get_event_loop()``.
+        """
+        import lark_oapi as lark
         import lark_oapi.ws.client as ws_module
 
         new_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(new_loop)
         ws_module.loop = new_loop
         self._ws_loop = new_loop
-        self._ws_client._lock = asyncio.Lock()
+
+        self._ws_client = lark.ws.Client(
+            self._app_id,
+            self._app_secret,
+            event_handler=event_handler,
+            log_level=lark.LogLevel.INFO,
+        )
         try:
             self._ws_client.start()
         except Exception as e:

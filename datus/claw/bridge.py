@@ -59,8 +59,6 @@ class ChannelBridge:
         self._verbose_overrides: Dict[str, Verbose] = {}
         # Track bot message IDs for reaction feedback: {bot_msg_id -> context}
         self._bot_message_map: OrderedDict[str, dict] = OrderedDict()
-        # Pending call-tool payloads waiting for their results: {callToolId -> payload}
-        self._pending_tool_calls: Dict[str, dict] = {}
         # Deduplication: recently seen message IDs
         self._seen_message_ids: OrderedDict[str, None] = OrderedDict()
         self._max_seen_ids: int = 1000
@@ -172,22 +170,21 @@ class ChannelBridge:
 
         verbose = self.get_verbose(msg, channel_config)
         stream_id = f"{msg.channel_id}_{msg.message_id}"
+        # Per-request pending tool calls to avoid cross-message contamination
+        pending_tool_calls: Dict[str, dict] = {}
 
         try:
             # Stream each SSE event to the IM channel as it arrives
             any_sent = False
             async for event in self._task_manager.consume_events(task):
                 if event.event == "message":
-                    outbound = self._event_to_outbound(event.data, msg, verbose)
+                    outbound = self._event_to_outbound(event.data, msg, verbose, pending_tool_calls)
                     if outbound:
                         outbound.stream_id = stream_id
                         bot_msg_id = await adapter.send_message(outbound)
                         if bot_msg_id:
                             await self._track_bot_message(bot_msg_id, session_id, msg)
                         any_sent = True
-
-            # Clear pending tool calls at stream end
-            self._pending_tool_calls.clear()
 
             if not any_sent:
                 fallback = OutboundMessage(
@@ -246,11 +243,20 @@ class ChannelBridge:
             event.target_message_id,
         )
 
-    def _event_to_outbound(self, data, msg: InboundMessage, verbose: Verbose = Verbose.ON) -> Optional[OutboundMessage]:
+    def _event_to_outbound(
+        self,
+        data,
+        msg: InboundMessage,
+        verbose: Verbose = Verbose.ON,
+        pending_tool_calls: Optional[Dict[str, dict]] = None,
+    ) -> Optional[OutboundMessage]:
         """Convert a single SSE message event to an OutboundMessage.
 
         Returns None if the event contains no displayable content.
         """
+        if pending_tool_calls is None:
+            pending_tool_calls = {}
+
         if not hasattr(data, "type") or not hasattr(data, "payload"):
             return None
         if data.type not in (SSEDataType.CREATE_MESSAGE, SSEDataType.APPEND_MESSAGE, SSEDataType.UPDATE_MESSAGE):
@@ -273,12 +279,12 @@ class ChannelBridge:
             elif content_type == "call-tool":
                 if verbose != Verbose.OFF:
                     call_tool_id = payload.get("callToolId", "")
-                    self._pending_tool_calls[call_tool_id] = payload
+                    pending_tool_calls[call_tool_id] = payload
                 # Never output call-tool directly; wait for call-tool-result
             elif content_type == "call-tool-result":
                 if verbose != Verbose.OFF:
                     call_tool_id = payload.get("callToolId", "")
-                    call_payload = self._pending_tool_calls.pop(call_tool_id, {})
+                    call_payload = pending_tool_calls.pop(call_tool_id, {})
                     formatted = self._formatter.format_tool_complete(call_payload, payload, verbose)
                     if formatted:
                         text_parts.append(formatted)
