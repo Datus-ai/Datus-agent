@@ -22,7 +22,7 @@ def register_adapter(name: str, cls: Type[ChannelAdapter]) -> None:
 
 
 def get_adapter_class(name: str) -> Type[ChannelAdapter]:
-    """Return the adapter class for *name*, raising ``KeyError`` if unknown."""
+    """Return the adapter class for *name*, raising ``DatusException`` if unknown."""
     if name not in _ADAPTER_TYPES:
         raise DatusException(
             ErrorCode.COMMON_UNSUPPORTED,

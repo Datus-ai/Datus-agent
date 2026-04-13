@@ -64,7 +64,7 @@ class ChannelBridge:
         parts = [msg.channel_id, msg.conversation_id]
         if msg.thread_id:
             parts.append(msg.thread_id)
-        return "_".join(parts)
+        return "--".join(parts)
 
     def build_session_id(self, msg: InboundMessage) -> str:
         """Deterministic session id from channel + conversation (+ thread)."""
@@ -163,7 +163,7 @@ class ChannelBridge:
             )
             await adapter.send_message(busy_reply)
             has_error = True
-            return
+            task = None
 
         verbose = self.get_verbose(msg, channel_config)
         stream_id = f"{msg.channel_id}_{msg.message_id}"
@@ -172,29 +172,30 @@ class ChannelBridge:
 
         try:
             # Stream each SSE event to the IM channel as it arrives
-            any_sent = False
-            async for event in self._task_manager.consume_events(task):
-                if event.event == "error":
-                    error_text = ""
-                    if hasattr(event.data, "error"):
-                        error_text = event.data.error
-                    error_reply = OutboundMessage(
-                        channel_id=msg.channel_id,
-                        conversation_id=msg.conversation_id,
-                        thread_id=msg.thread_id,
-                        text=f"\u274c Error: {error_text}" if error_text else "\u274c An error occurred.",
-                    )
-                    await adapter.send_message(error_reply)
-                    has_error = True
-                    any_sent = True
-                elif event.event == "message":
-                    outbound = self._event_to_outbound(event.data, msg, verbose, pending_tool_calls)
-                    if outbound:
-                        outbound.stream_id = stream_id
-                        bot_msg_id = await adapter.send_message(outbound)
-                        if bot_msg_id:
-                            await self._track_bot_message(bot_msg_id, session_id, msg)
+            any_sent = task is None  # Busy path already sent a reply
+            if task is not None:
+                async for event in self._task_manager.consume_events(task):
+                    if event.event == "error":
+                        error_text = ""
+                        if hasattr(event.data, "error"):
+                            error_text = event.data.error
+                        error_reply = OutboundMessage(
+                            channel_id=msg.channel_id,
+                            conversation_id=msg.conversation_id,
+                            thread_id=msg.thread_id,
+                            text=f"\u274c Error: {error_text}" if error_text else "\u274c An error occurred.",
+                        )
+                        await adapter.send_message(error_reply)
+                        has_error = True
                         any_sent = True
+                    elif event.event == "message":
+                        outbound = self._event_to_outbound(event.data, msg, verbose, pending_tool_calls)
+                        if outbound:
+                            outbound.stream_id = stream_id
+                            bot_msg_id = await adapter.send_message(outbound)
+                            if bot_msg_id:
+                                await self._track_bot_message(bot_msg_id, session_id, msg)
+                            any_sent = True
 
             if not any_sent:
                 fallback = OutboundMessage(

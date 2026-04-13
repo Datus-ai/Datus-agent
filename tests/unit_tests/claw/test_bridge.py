@@ -201,13 +201,13 @@ class TestChannelBridge:
         bridge, _, _ = setup
         msg = _make_inbound()
         sid = bridge.build_session_id(msg)
-        assert sid == "claw_ch1_conv1"
+        assert sid == "claw_ch1--conv1"
 
     def test_build_session_id_with_thread(self, setup):
         bridge, _, _ = setup
         msg = _make_inbound(thread_id="t42")
         sid = bridge.build_session_id(msg)
-        assert sid == "claw_ch1_conv1_t42"
+        assert sid == "claw_ch1--conv1--t42"
 
     @pytest.mark.asyncio
     async def test_streams_each_event(self, setup):
@@ -378,9 +378,10 @@ class TestChannelBridge:
     async def test_new_command_case_insensitive(self, setup):
         bridge, adapter, _ = setup
 
-        for cmd in ["/new", "/NEW", "new", "reset", "/Reset"]:
-            await bridge.handle_message(_make_inbound(cmd), adapter)
+        for idx, cmd in enumerate(["/new", "/NEW", "new", "reset", "/Reset"], start=1):
+            await bridge.handle_message(_make_inbound(cmd, message_id=f"cmd_{idx}"), adapter)
 
+        assert len(adapter.sent) == 5
         assert all("Session cleared" in m.text for m in adapter.sent)
 
     @pytest.mark.asyncio
