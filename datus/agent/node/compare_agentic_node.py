@@ -232,6 +232,7 @@ class CompareAgenticNode(AgenticNode):
                 max_turns=self.max_turns,
                 session=session,
                 action_history_manager=action_history_manager,
+                agent_name=self.get_node_name(),
                 interrupt_controller=self.interrupt_controller,
             ):
                 yield stream_action

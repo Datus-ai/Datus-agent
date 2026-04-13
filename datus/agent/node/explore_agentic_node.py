@@ -246,6 +246,7 @@ class ExploreAgenticNode(AgenticNode):
                 session=session,
                 action_history_manager=action_history_manager,
                 hooks=None,
+                agent_name=self.get_node_name(),
                 interrupt_controller=self.interrupt_controller,
             ):
                 yield stream_action

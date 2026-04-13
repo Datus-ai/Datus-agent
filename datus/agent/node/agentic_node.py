@@ -359,7 +359,12 @@ class AgenticNode(Node):
 
             try:
                 result = await self.model.generate_with_tools(
-                    prompt=summarization_prompt, session=self._session, max_turns=1, temperature=0.3, max_tokens=2000
+                    prompt=summarization_prompt,
+                    session=self._session,
+                    max_turns=1,
+                    temperature=0.3,
+                    max_tokens=2000,
+                    agent_name=self.get_node_name(),
                 )
                 summary = result.get("content", "")
                 summary_token = result.get("usage", {}).get("output_tokens", 0)

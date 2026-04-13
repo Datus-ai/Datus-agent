@@ -1078,6 +1078,8 @@ class TestManualCompactExtended:
         assert node.last_summary == "summary text"
         assert node._session is None
         assert node.session_id is None
+        mock_model.generate_with_tools.assert_awaited_once()
+        assert mock_model.generate_with_tools.await_args.kwargs["agent_name"] == node.get_node_name()
 
 
 # ---------------------------------------------------------------------------

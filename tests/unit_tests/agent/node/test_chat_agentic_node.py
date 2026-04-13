@@ -898,6 +898,29 @@ class TestChatAgenticNodeExecuteStreamErrors:
         final_action = actions[-1]
         assert final_action.status == ActionStatus.SUCCESS
 
+    @pytest.mark.asyncio
+    async def test_execute_stream_passes_node_name_as_agent_name(self, real_agent_config, mock_llm_create):
+        """execute_stream passes the chat node name through to the model trace metadata."""
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        node = ChatAgenticNode(
+            node_id="test_trace_agent_name",
+            description="Test trace agent name",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
+
+        mock_llm_create.reset(responses=[build_simple_response("Trace name test response.")])
+        node.input = ChatNodeInput(user_message="Test trace naming", database="california_schools")
+
+        actions = []
+        async for action in node.execute_stream(ActionHistoryManager()):
+            actions.append(action)
+
+        assert len(actions) >= 2
+        assert mock_llm_create.call_history[-1]["method"] == "generate_with_tools_stream"
+        assert mock_llm_create.call_history[-1]["kwargs"]["agent_name"] == "chat"
+
 
 # ===========================================================================
 # execute_stream with Tool Calls Tests
