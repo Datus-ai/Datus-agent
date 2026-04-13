@@ -41,6 +41,9 @@ jobs:
           cp /home/datus_ci/ci_template/agent.yml conf/agent.yml
           cp /home/datus_ci/ci_template/ci.env .env
 
+      - name: Restore tracked test config
+        run: git restore --source=HEAD --worktree --staged tests/conf/agent.yml
+
       - name: Isolate test data directory
         run: |
           DATUS_TEST_HOME="${GITHUB_WORKSPACE}/.datus_test_data"

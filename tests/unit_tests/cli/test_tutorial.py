@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
+import yaml
 from rich.console import Console
 
 import datus.storage.metric.metric_init as metric_init
@@ -161,11 +162,12 @@ class TestBenchmarkTutorialEnsureConfig:
         mock_agent_config = MagicMock()
         mock_agent_config.home = str(tmp_path)
         mock_agent_config.benchmark_configs = {"california_schools": {}}
-        mock_agent_config.namespaces = {"california_schools": {}}
+        mock_agent_config.service = MagicMock()
+        mock_agent_config.service.databases = {"california_schools": {}}
         mock_agent_config.path_manager = MagicMock()
         mock_agent_config.path_manager.benchmark_dir = tmp_path / "benchmark"
 
-        monkeypatch.setattr(tutorial_module, "load_agent_config", lambda config: mock_agent_config)
+        monkeypatch.setattr(tutorial_module, "load_agent_config", lambda config=None, reload=False: mock_agent_config)
 
         tutorial = BenchmarkTutorial(config_path=str(config_file))
 
@@ -187,12 +189,13 @@ class TestBenchmarkTutorialEnsureConfig:
         mock_agent_config.path_manager.benchmark_dir = tmp_path / "benchmark"
 
         mock_config_manager = MagicMock()
+        mock_config_manager.data = {}
 
-        monkeypatch.setattr(tutorial_module, "load_agent_config", lambda config: mock_agent_config)
-        # Mock the configuration_manager in the agent_config_loader module where it's imported from
+        monkeypatch.setattr(tutorial_module, "load_agent_config", lambda config=None, reload=False: mock_agent_config)
         monkeypatch.setattr(
-            "datus.configuration.agent_config_loader.configuration_manager",
-            lambda: mock_config_manager,
+            tutorial_module,
+            "configuration_manager",
+            lambda config_path=None, reload=False: mock_config_manager,
         )
 
         tutorial = BenchmarkTutorial(config_path=str(config_file))
@@ -209,6 +212,42 @@ class TestBenchmarkTutorialEnsureConfig:
         # Second call for benchmark config
         second_call = mock_config_manager.update_item.call_args_list[1]
         assert second_call[0][0] == "benchmark"
+
+    def test_writes_to_explicit_config_instead_of_cached_singleton(self, tmp_path, monkeypatch):
+        seed_config = tmp_path / "seed.yml"
+        seed_config.write_text("agent:\n  sentinel: seed\n", encoding="utf-8")
+        target_config = tmp_path / "agent.yml"
+        target_config.write_text("agent: {}\n", encoding="utf-8")
+
+        mock_agent_config = MagicMock()
+        mock_agent_config.home = str(tmp_path)
+        mock_agent_config.benchmark_configs = {}
+        mock_agent_config.service = MagicMock()
+        mock_agent_config.service.databases = {}
+        mock_agent_config.path_manager = MagicMock()
+        mock_agent_config.path_manager.benchmark_dir = tmp_path / "benchmark"
+
+        monkeypatch.setattr(tutorial_module, "load_agent_config", lambda config=None, reload=False: mock_agent_config)
+
+        tutorial_module.configuration_manager(config_path=str(seed_config), reload=True)
+        tutorial = BenchmarkTutorial(config_path=str(target_config))
+        tutorial.console = Console(file=StringIO(), force_terminal=False, color_system=None)
+
+        try:
+            result = tutorial._ensure_config()
+            assert result is True
+        finally:
+            tutorial_module.configuration_manager(config_path=str(target_config), reload=True)
+
+        seed_agent = (yaml.safe_load(seed_config.read_text(encoding="utf-8")) or {}).get("agent", {})
+        target_agent = (yaml.safe_load(target_config.read_text(encoding="utf-8")) or {}).get("agent", {})
+
+        assert "service" not in seed_agent
+        assert "benchmark" not in seed_agent
+        assert "service" in target_agent
+        assert "benchmark" in target_agent
+        assert "california_schools" in target_agent["service"]["databases"]
+        assert "california_schools" in target_agent["benchmark"]
 
 
 class TestBenchmarkTutorialEnsureFiles:
@@ -262,8 +301,9 @@ class TestBenchmarkTutorialAddSubAgents:
     def test_adds_two_sub_agents(self, tmp_path, monkeypatch):
         mock_agent_config = MagicMock()
         mock_manager = MagicMock()
+        mock_load_agent_config = MagicMock(return_value=mock_agent_config)
 
-        monkeypatch.setattr(tutorial_module, "load_agent_config", lambda reload: mock_agent_config)
+        monkeypatch.setattr(tutorial_module, "load_agent_config", mock_load_agent_config)
         monkeypatch.setattr(tutorial_module, "configuration_manager", lambda config_path, reload: MagicMock())
         monkeypatch.setattr(tutorial_module, "SubAgentManager", lambda **kwargs: mock_manager)
 
@@ -273,6 +313,7 @@ class TestBenchmarkTutorialAddSubAgents:
 
         tutorial.add_sub_agents()
 
+        mock_load_agent_config.assert_called_once_with(reload=True, config=str(tmp_path / "config.yml"))
         assert mock_manager.save_agent.call_count == 2
 
         # Check first agent (datus_schools)
@@ -363,7 +404,8 @@ class TestBenchmarkTutorialRun:
         mock_agent_config = MagicMock()
         mock_agent_config.home = str(tmp_path)
         mock_agent_config.benchmark_configs = {"california_schools": {}}
-        mock_agent_config.namespaces = {"california_schools": {}}
+        mock_agent_config.service = MagicMock()
+        mock_agent_config.service.databases = {"california_schools": {}}
         benchmark_path = tmp_path / "benchmark"
         benchmark_path.mkdir()
         mock_agent_config.path_manager = MagicMock()

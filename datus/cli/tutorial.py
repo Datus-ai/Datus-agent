@@ -49,10 +49,8 @@ class BenchmarkTutorial:
             self.namespace_name not in agent_config.benchmark_configs
             or self.namespace_name not in agent_config.service.databases
         ):
-            from datus.configuration.agent_config_loader import configuration_manager
-
             # Add california_schools database to service.databases
-            config_manager = configuration_manager()
+            config_manager = configuration_manager(config_path=self.config_path, reload=True)
             service_config = config_manager.data.get("service", {"databases": {}, "bi_tools": {}, "schedulers": {}})
             service_config.setdefault("databases", {})
             service_config["databases"]["california_schools"] = {
@@ -247,7 +245,7 @@ class BenchmarkTutorial:
             return False
 
     def add_sub_agents(self):
-        agent_config = load_agent_config(reload=True)
+        agent_config = load_agent_config(reload=True, config=self.config_path)
         manager = SubAgentManager(
             configuration_manager=configuration_manager(config_path=self.config_path, reload=True),
             namespace=self.namespace_name,
