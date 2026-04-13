@@ -336,7 +336,6 @@ class DatusCLI:
 
     def run(self):
         """Run the REPL loop."""
-        self._confirm_trust_directory()
         self._print_welcome()
 
         while True:
@@ -720,6 +719,17 @@ class DatusCLI:
             # Save for later reference
             self.last_sql = sql
             self.last_result = result
+
+            # For CONTENT_SET SQL (USE/SET statements), update cli_context in-place from connector state
+            if result.success:
+                try:
+                    sql_type = parse_sql_type(sql, getattr(self.db_connector, "dialect", ""))
+                    if sql_type == SQLType.CONTENT_SET:
+                        self.cli_context.current_catalog = getattr(self.db_connector, "catalog_name", "") or ""
+                        self.cli_context.current_db_name = getattr(self.db_connector, "database_name", "") or ""
+                        self.cli_context.current_schema = getattr(self.db_connector, "schema_name", "") or ""
+                except Exception:
+                    pass
 
             # Display results and update action
             if result.success:

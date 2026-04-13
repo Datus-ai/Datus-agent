@@ -220,11 +220,9 @@ class NamespaceManager:
             console.print("✔ Database connection test successful\n")
 
             # Add to agent configuration (namespace is guaranteed to not exist from earlier check)
-            self.agent_config.namespaces[namespace_name] = {}
-
-            # Create DbConfig object and add to namespace
+            # Use service.databases directly — the namespaces property is a read-only compat view
             db_config = DbConfig.filter_kwargs(DbConfig, config_data)
-            self.agent_config.namespaces[namespace_name][config_data["name"]] = db_config
+            self.agent_config.service.databases[namespace_name] = db_config
 
             # Save configuration
             if self._save_configuration():

@@ -1704,7 +1704,13 @@ class TestEndToEndGenerationHooksInteraction:
         callback_output = success_interactions[0].output
         if isinstance(callback_output, dict):
             callback_content = callback_output.get("content", "")
-            assert "rejected" in callback_content.lower() or "deleted" in callback_content.lower()
+            # When user declines sync, the file is kept locally but not synced to KB
+            assert (
+                "rejected" in callback_content.lower()
+                or "deleted" in callback_content.lower()
+                or "saved to file" in callback_content.lower()
+                or "file only" in callback_content.lower()
+            )
 
     @pytest.mark.asyncio
     async def test_e2e_generation_hooks_no_yaml_no_interaction(self, real_agent_config, mock_llm_create, tmp_path):

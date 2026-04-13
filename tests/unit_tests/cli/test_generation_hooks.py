@@ -594,12 +594,11 @@ class TestSyncToStorage:
             result = await hooks._sync_to_storage("/tmp/file.yaml", "ext_knowledge")
         assert "Successfully synced" in result
 
-    async def test_reference_template_type_calls_sync(self, hooks):
-        mock_result = {"success": True, "message": "Template synced"}
-        with patch(
-            "datus.cli.generation_hooks.GenerationHooks._sync_reference_template_to_db", return_value=mock_result
-        ):
-            result = await hooks._sync_to_storage("/tmp/file.yaml", "reference_template")
+    async def test_sql_summary_type_calls_sync_reference_sql(self, hooks):
+        """sql_summary type delegates to _sync_reference_sql_to_db."""
+        mock_result = {"success": True, "message": "SQL synced via reference_sql"}
+        with patch("datus.cli.generation_hooks.GenerationHooks._sync_reference_sql_to_db", return_value=mock_result):
+            result = await hooks._sync_to_storage("/tmp/file.yaml", "sql_summary")
         assert "Successfully synced" in result
 
     async def test_exception_returns_error_string(self, hooks):
@@ -612,7 +611,7 @@ class TestSyncToStorage:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _sync_reference_template_to_db
+# Tests: _sync_reference_sql_to_db
 # ---------------------------------------------------------------------------
 
 
@@ -627,9 +626,9 @@ class TestSyncReferenceTemplateToDb:
             yaml.dump(
                 {
                     "sql": "SELECT * FROM t WHERE x = '{{val}}'",
-                    "name": "test_template",
-                    "summary": "Test template",
-                    "search_text": "test template val",
+                    "name": "test_reference_sql",
+                    "summary": "Test reference sql",
+                    "search_text": "test reference sql val",
                     "subject_tree": "Sales/Revenue",
                     "tags": "test",
                 }
@@ -637,16 +636,22 @@ class TestSyncReferenceTemplateToDb:
         )
 
         mock_config = MagicMock()
-        mock_config.current_namespace = "test_ns"
 
         with (
-            patch("datus.storage.reference_template.store.ReferenceTemplateRAG") as mock_rag_cls,
-            patch("datus.storage.reference_template.init_utils.exists_reference_templates", return_value=set()),
+            patch("datus.cli.generation_hooks.ReferenceSqlRAG") as mock_rag_cls,
+            patch(
+                "datus.storage.reference_sql.init_utils.exists_reference_sql",
+                return_value=set(),
+            ),
+            patch(
+                "datus.storage.reference_sql.init_utils.gen_reference_sql_id",
+                return_value="new_id",
+            ),
         ):
             mock_rag = mock_rag_cls.return_value
             mock_rag.upsert_batch = MagicMock()
 
-            result = GenerationHooks._sync_reference_template_to_db(str(yaml_file), mock_config)
+            result = GenerationHooks._sync_reference_sql_to_db(str(yaml_file), mock_config)
 
         assert result["success"] is True
         assert "Synced" in result["message"]
@@ -659,9 +664,9 @@ class TestSyncReferenceTemplateToDb:
         yaml_file = tmp_path / "bad.yaml"
         yaml_file.write_text(yaml.dump({"name": "no_sql"}))
 
-        result = GenerationHooks._sync_reference_template_to_db(str(yaml_file), MagicMock())
+        result = GenerationHooks._sync_reference_sql_to_db(str(yaml_file), MagicMock())
         assert result["success"] is False
-        assert "No reference_template data" in result["error"]
+        assert "No reference_sql data" in result["error"]
 
     def test_duplicate_skipped(self, tmp_path):
         import yaml
@@ -673,17 +678,17 @@ class TestSyncReferenceTemplateToDb:
 
         mock_config = MagicMock()
         with (
-            patch("datus.storage.reference_template.store.ReferenceTemplateRAG"),
+            patch("datus.cli.generation_hooks.ReferenceSqlRAG"),
             patch(
-                "datus.storage.reference_template.init_utils.exists_reference_templates",
+                "datus.storage.reference_sql.init_utils.exists_reference_sql",
                 return_value={"existing_id"},
             ),
             patch(
-                "datus.storage.reference_template.init_utils.gen_reference_template_id",
+                "datus.storage.reference_sql.init_utils.gen_reference_sql_id",
                 return_value="existing_id",
             ),
         ):
-            result = GenerationHooks._sync_reference_template_to_db(str(yaml_file), mock_config)
+            result = GenerationHooks._sync_reference_sql_to_db(str(yaml_file), mock_config)
 
         assert result["success"] is True
         assert "already exists" in result["message"]
@@ -820,37 +825,31 @@ class TestProcessMetricWithSemanticModel:
 @pytest.mark.asyncio
 class TestGetSyncConfirmationForPair:
     async def test_accept_syncs_both_files(self, hooks):
-        """Choosing 'y' calls _sync_to_storage for both files."""
+        """Choosing 'y' calls _sync_semantic_and_metric once."""
         callback = AsyncMock()
         hooks.broker.request = AsyncMock(return_value=("y", callback))
-        hooks._sync_to_storage = AsyncMock(return_value="Synced OK")
+        hooks._sync_semantic_and_metric = AsyncMock(return_value="Synced OK")
 
         await hooks._get_sync_confirmation_for_pair(
-            "/tmp/sem.yaml",
-            "data_source:\n  name: orders\n",
-            "/tmp/met.yaml",
-            "metric: revenue\n",
+            semantic_model_file="/tmp/sem.yaml",
+            metric_file="/tmp/met.yaml",
         )
 
-        assert hooks._sync_to_storage.await_count == 2
-        hooks._sync_to_storage.assert_any_await("/tmp/sem.yaml", "semantic")
-        hooks._sync_to_storage.assert_any_await("/tmp/met.yaml", "semantic")
+        hooks._sync_semantic_and_metric.assert_awaited_once_with("/tmp/sem.yaml", "/tmp/met.yaml", None)
         callback.assert_awaited_once()
 
     async def test_reject_skips_sync(self, hooks):
-        """Choosing 'n' does not call _sync_to_storage."""
+        """Choosing 'n' does not call _sync_semantic_and_metric."""
         callback = AsyncMock()
         hooks.broker.request = AsyncMock(return_value=("n", callback))
-        hooks._sync_to_storage = AsyncMock()
+        hooks._sync_semantic_and_metric = AsyncMock()
 
         await hooks._get_sync_confirmation_for_pair(
-            "/tmp/sem.yaml",
-            "data_source:\n  name: orders\n",
-            "/tmp/met.yaml",
-            "metric: revenue\n",
+            semantic_model_file="/tmp/sem.yaml",
+            metric_file="/tmp/met.yaml",
         )
 
-        hooks._sync_to_storage.assert_not_called()
+        hooks._sync_semantic_and_metric.assert_not_called()
         callback.assert_awaited_once()
 
     async def test_interaction_cancelled_raises_generation_cancelled(self, hooks):
@@ -859,30 +858,35 @@ class TestGetSyncConfirmationForPair:
 
         with pytest.raises(GenerationCancelledException, match="User interrupted"):
             await hooks._get_sync_confirmation_for_pair(
-                "/tmp/sem.yaml",
-                "sem content",
-                "/tmp/met.yaml",
-                "met content",
+                semantic_model_file="/tmp/sem.yaml",
+                metric_file="/tmp/met.yaml",
             )
 
     async def test_display_content_includes_both_files(self, hooks):
-        """Request content includes both semantic model and metric YAML."""
+        """Request content includes both file names when display_content is pre-built."""
         callback = AsyncMock()
         hooks.broker.request = AsyncMock(return_value=("n", callback))
 
+        display = (
+            "## Generated Semantic Model: sem.yaml\n\n"
+            "*Path: /tmp/sem.yaml*\n\n"
+            "```yaml\ndata_source:\n  name: orders\n```\n\n"
+            "---\n\n"
+            "## Generated Metric: met.yaml\n\n"
+            "*Path: /tmp/met.yaml*\n\n"
+            "```yaml\nmetric: revenue\n```\n"
+        )
+
         await hooks._get_sync_confirmation_for_pair(
-            "/tmp/sem.yaml",
-            "data_source:\n  name: orders\n",
-            "/tmp/met.yaml",
-            "metric: revenue\n",
+            semantic_model_file="/tmp/sem.yaml",
+            metric_file="/tmp/met.yaml",
+            display_content=display,
         )
 
         request_content = hooks.broker.request.call_args[1].get("contents") or hooks.broker.request.call_args[0][0]
         content_str = str(request_content)
         assert "sem.yaml" in content_str
         assert "met.yaml" in content_str
-        assert "data_source" in content_str
-        assert "revenue" in content_str
 
 
 # ---------------------------------------------------------------------------

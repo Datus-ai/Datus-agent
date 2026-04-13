@@ -117,7 +117,7 @@ def search_metrics_input() -> List[Dict[str, Any]]:
 
 @pytest.fixture
 def agent_config() -> AgentConfig:
-    agent_config = load_acceptance_config(namespace="bird_sqlite")  # FIXME Modify it according to your configuration
+    agent_config = load_acceptance_config(namespace="california_schools")  # Use a valid service.databases key
     return agent_config
 
 
@@ -274,7 +274,7 @@ class TestNode:
             ]
         )
 
-        agent_config.current_database = "bird_sqlite"
+        agent_config.current_database = "california_schools"
         agent_config.rag_base_path = "/tmp/test_data"
         node = Node.new_instance(
             node_id="schema_link",
@@ -558,13 +558,17 @@ class TestNode:
     def test_execution_node(self, execute_sql_input, agent_config, function_tools: List[Tool]):
         """Test SQL execution node with Snowflake database"""
         try:
-            agent_config.current_database = "bird_sqlite"
             # Create execution input from test data
             test_cases = [0, 1]
             for test_case_num in test_cases:
                 # Create execution input from test data
                 exec_input = execute_sql_input[test_case_num]["input"]
                 input_data = ExecuteSQLInput(**exec_input)
+                # Use the database_name from the input to set the current database
+                if exec_input.get("database_name") and exec_input["database_name"] in agent_config.service.databases:
+                    agent_config.current_database = exec_input["database_name"]
+                else:
+                    agent_config.current_database = "california_schools"
 
                 # Create node instance for testing
                 node = Node.new_instance(
