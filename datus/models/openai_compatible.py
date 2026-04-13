@@ -743,6 +743,10 @@ class OpenAICompatibleModel(LLMBaseModel):
                 temp_tool_calls = {}  # {call_id: ActionHistory}
                 early_assistant_yielded = False  # Flag to skip duplicate message_output_item
 
+                # Streaming thinking state: accumulate text deltas for real-time output
+                thinking_stream_id: Optional[str] = None
+                thinking_accumulated = ""
+
                 while not result.is_complete:
                     if interrupt_controller and interrupt_controller.is_interrupted:
                         from datus.cli.execution_state import ExecutionInterrupted
@@ -754,41 +758,89 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                             raise ExecutionInterrupted("Interrupted by user")
 
-                        # Capture assistant text from raw response events BEFORE tool execution.
-                        # The SDK emits ResponseOutputItemDoneEvent(type="message") before
-                        # executing tools, but only wraps it as RunItemStreamEvent(message_output_created)
-                        # AFTER tool execution. By processing the raw event early, we ensure the
-                        # assistant thinking text is yielded before any subagent bus actions.
+                        # Capture assistant text from raw response events for streaming output.
+                        # We process three raw event types:
+                        # 1. response.output_text.delta - stream text chunks as thinking_delta
+                        # 2. response.content_part.done - emit final thinking action
+                        # 3. response.output_item.done type="message" - fallback (skipped if early captured)
                         if hasattr(event, "type") and event.type == "raw_response_event":
                             raw_data = getattr(event, "data", None)
-                            if raw_data and getattr(raw_data, "type", None) == "response.output_item.done":
+                            raw_type = getattr(raw_data, "type", None) if raw_data else None
+
+                            # Stream text delta: yield thinking_delta for real-time display
+                            if raw_type == "response.output_text.delta":
+                                delta_text = getattr(raw_data, "delta", None)
+                                if delta_text:
+                                    if thinking_stream_id is None:
+                                        thinking_stream_id = f"thinking_stream_{uuid.uuid4().hex[:8]}"
+                                    thinking_accumulated += delta_text
+                                    delta_action = ActionHistory(
+                                        action_id=thinking_stream_id,
+                                        role=ActionRole.ASSISTANT,
+                                        messages="",
+                                        action_type="thinking_delta",
+                                        input={},
+                                        output={"delta": delta_text, "accumulated": thinking_accumulated},
+                                        status=ActionStatus.PROCESSING,
+                                    )
+                                    # Do NOT add to action_history_manager (transient, prevents dedup)
+                                    yield delta_action
+                                continue
+
+                            # Content part done: emit completed thinking action
+                            if raw_type == "response.content_part.done":
+                                if thinking_accumulated.strip():
+                                    full_text = thinking_accumulated.strip()
+                                    text_content_split = (
+                                        full_text if len(full_text) <= 200 else f"{full_text[:200]}..."
+                                    )
+                                    is_thinking = len(temp_tool_calls) > 0
+                                    thinking_action = ActionHistory(
+                                        action_id=thinking_stream_id or f"assistant_{uuid.uuid4().hex[:8]}",
+                                        role=ActionRole.ASSISTANT,
+                                        messages=f"Thinking: {text_content_split}",
+                                        action_type="response",
+                                        input={},
+                                        output={"raw_output": full_text, "is_thinking": is_thinking},
+                                        status=ActionStatus.SUCCESS,
+                                    )
+                                    action_history_manager.add_action(thinking_action)
+                                    yield thinking_action
+                                    early_assistant_yielded = True
+                                # Reset stream state for next content part
+                                thinking_stream_id = None
+                                thinking_accumulated = ""
+                                continue
+
+                            # Fallback: response.output_item.done type="message"
+                            if raw_type == "response.output_item.done":
                                 raw_item = getattr(raw_data, "item", None)
                                 if raw_item and getattr(raw_item, "type", None) == "message":
-                                    content_list = getattr(raw_item, "content", [])
-                                    text_parts = []
-                                    for content_part in content_list or []:
-                                        part_text = getattr(content_part, "text", None)
-                                        if part_text:
-                                            text_parts.append(part_text)
-                                    full_text = "\n".join(text_parts).strip()
-                                    if full_text:
-                                        text_content_split = (
-                                            full_text if len(full_text) <= 200 else f"{full_text[:200]}..."
-                                        )
-                                        is_thinking = len(temp_tool_calls) > 0
-                                        thinking_action = ActionHistory(
-                                            action_id=f"assistant_{uuid.uuid4().hex[:8]}",
-                                            role=ActionRole.ASSISTANT,
-                                            messages=f"Thinking: {text_content_split}",
-                                            action_type="response",
-                                            input={},
-                                            output={"raw_output": full_text, "is_thinking": is_thinking},
-                                            status=ActionStatus.SUCCESS,
-                                        )
-                                        action_history_manager.add_action(thinking_action)
-                                        yield thinking_action
-
-                                        early_assistant_yielded = True
+                                    if not early_assistant_yielded:
+                                        content_list = getattr(raw_item, "content", [])
+                                        text_parts = []
+                                        for content_part in content_list or []:
+                                            part_text = getattr(content_part, "text", None)
+                                            if part_text:
+                                                text_parts.append(part_text)
+                                        full_text = "\n".join(text_parts).strip()
+                                        if full_text:
+                                            text_content_split = (
+                                                full_text if len(full_text) <= 200 else f"{full_text[:200]}..."
+                                            )
+                                            is_thinking = len(temp_tool_calls) > 0
+                                            thinking_action = ActionHistory(
+                                                action_id=f"assistant_{uuid.uuid4().hex[:8]}",
+                                                role=ActionRole.ASSISTANT,
+                                                messages=f"Thinking: {text_content_split}",
+                                                action_type="response",
+                                                input={},
+                                                output={"raw_output": full_text, "is_thinking": is_thinking},
+                                                status=ActionStatus.SUCCESS,
+                                            )
+                                            action_history_manager.add_action(thinking_action)
+                                            yield thinking_action
+                                            early_assistant_yielded = True
                             continue
 
                         if not hasattr(event, "type") or event.type != "run_item_stream_event":
@@ -1008,12 +1060,14 @@ class OpenAICompatibleModel(LLMBaseModel):
             try:
                 async for action in _stream_operation():
                     # Skip actions that were already yielded in previous retry attempts
-                    if action.action_id in processed_action_ids:
+                    # (thinking_delta actions share a stream ID and must not be deduped)
+                    if action.action_type != "thinking_delta" and action.action_id in processed_action_ids:
                         logger.debug(f"Skipping duplicate action: {action.action_id}")
                         continue
 
-                    # Mark this action as processed
-                    processed_action_ids.add(action.action_id)
+                    # Mark this action as processed (skip transient deltas)
+                    if action.action_type != "thinking_delta":
+                        processed_action_ids.add(action.action_id)
                     yield action
                 # If we successfully complete, break out of retry loop
                 break

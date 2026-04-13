@@ -22,7 +22,7 @@ from datus.cli.autocomplete import AtReferenceCompleter
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.schemas.action_content_builder import action_to_content, build_interaction_content, build_response_content
 from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
-from datus.schemas.message_content import MessagePayload
+from datus.schemas.message_content import MessageContent, MessagePayload
 from datus.utils.async_utils import run_async
 from datus.utils.loggings import get_logger
 
@@ -41,6 +41,7 @@ class PrintModeRunner:
         self.subagent_name = getattr(args, "subagent", None) or None
         self.proxy_tool_patterns = getattr(args, "proxy_tools", None)
         self.scope = getattr(args, "session_scope", None)
+        self.stream_thinking = getattr(args, "stream_thinking", False)
 
         # Database context from args
         self.catalog = getattr(args, "catalog", None)
@@ -97,6 +98,23 @@ class PrintModeRunner:
                     if not self.proxy_tool_patterns:
                         user_input = await asyncio.to_thread(self._read_interaction_input)
                         await node.interaction_broker.submit(action.action_id, user_input)
+                    continue
+
+                # Streaming thinking deltas: emit only when --stream is enabled
+                if action.action_type == "thinking_delta":
+                    if self.stream_thinking:
+                        output = action.output if isinstance(action.output, dict) else {}
+                        delta_text = output.get("delta", "")
+                        contents = [MessageContent(type="thinking-delta", payload={"delta": delta_text})]
+                        self._write_payload(
+                            MessagePayload(
+                                message_id=action.action_id,
+                                role="assistant",
+                                content=contents,
+                                depth=action.depth,
+                                parent_action_id=action.parent_action_id,
+                            )
+                        )
                     continue
 
                 if (

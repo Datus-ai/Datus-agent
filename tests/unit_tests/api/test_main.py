@@ -273,6 +273,7 @@ class TestBuildAgentArgs:
             interactive=True,
             output_dir="./output",
             log_level="INFO",
+            stream_thinking=False,
         )
         base.update(overrides)
         return argparse.Namespace(**base)

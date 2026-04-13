@@ -338,7 +338,7 @@ class ChatInput(BaseModel):
     )
 
     # Response control
-    stream_response: bool = Field(False, description="Whether to stream response")
+    stream_response: Optional[bool] = Field(None, description="Whether to stream response; None means use server default")
 
     # Legacy fields for backward compatibility
     context_id: Optional[str] = Field(None, description="Context ID (legacy)")
@@ -443,7 +443,6 @@ class CompactSessionData(BaseModel):
 class StreamChatInput(ChatInput):
     """Input for streaming chat via /chat/stream."""
 
-    stream_response: bool = Field(True, description="Whether to stream response (always true for this endpoint)")
     subagent_id: Optional[str] = Field(default=None, description="Subagent ID (builtin name or DB SubAgent id)")
     prompt_version: Optional[str] = Field(default=None, description="Prompt version")
     prompt_language: str = Field(default="en", description="Prompt language")

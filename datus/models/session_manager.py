@@ -852,7 +852,7 @@ class SessionManager:
                                         messages=text,
                                         action_type="thinking",
                                         input=None,
-                                        output=None,
+                                        output={"raw_output": text},
                                         status=ActionStatus.SUCCESS,
                                         start_time=(
                                             datetime.fromisoformat(created_at) if created_at else datetime.now()

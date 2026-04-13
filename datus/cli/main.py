@@ -142,6 +142,14 @@ class ArgumentParser:
             help="Path to @datus/web-chatbot dist directory (for --web mode)",
         )
 
+        self.parser.add_argument(
+            "--stream",
+            dest="stream_thinking",
+            action="store_true",
+            default=False,
+            help="Enable streaming thinking deltas in print mode (token-by-token output)",
+        )
+
     def parse_args(self):
         return self.parser.parse_args()
 

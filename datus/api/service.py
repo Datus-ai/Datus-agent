@@ -438,6 +438,7 @@ async def lifespan(app: FastAPI):
         namespace=namespace,
         default_source=getattr(args, "source", None),
         default_interactive=getattr(args, "interactive", True),
+        stream_thinking=getattr(args, "stream_thinking", False),
     )
 
     logger.info("Datus API Service started")

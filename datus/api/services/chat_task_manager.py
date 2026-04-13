@@ -17,13 +17,9 @@ from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
 from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 from datus.api.models.cli_models import (
-    IMessageContent,
-    SSEDataType,
     SSEEndData,
     SSEErrorData,
     SSEEvent,
-    SSEMessageData,
-    SSEMessagePayload,
     SSEPingData,
     SSESessionData,
     StreamChatInput,
@@ -90,11 +86,17 @@ class ChatTaskManager:
     Owned by DatusService — one instance per cached project.
     """
 
-    def __init__(self, default_source: Optional[str] = None, default_interactive: bool = True) -> None:
+    def __init__(
+        self,
+        default_source: Optional[str] = None,
+        default_interactive: bool = True,
+        stream_thinking: bool = False,
+    ) -> None:
         self._tasks: Dict[str, ChatTask] = {}
         self._completed_tasks: Dict[str, ChatTask] = {}
         self._default_source = default_source
         self._default_interactive = default_interactive
+        self._stream_thinking = stream_thinking
 
     # ------------------------------------------------------------------
     # Public API
@@ -241,32 +243,8 @@ class ChatTaskManager:
 
         try:
             start_time = datetime.now()
-            message_id = str(uuid.uuid4())
 
-            # 1. Send the initial event before any heavy initialization so the
-            #    client sees the SSE stream immediately.
-
-            await self._push_event(
-                task,
-                SSEEvent(
-                    id=event_id,
-                    event="message",
-                    data=SSEMessageData(
-                        type=SSEDataType.CREATE_MESSAGE,
-                        payload=SSEMessagePayload(
-                            message_id=message_id,
-                            role="assistant",
-                            content=[
-                                IMessageContent(type="markdown", payload={"content": "Processing your request...\n"})
-                            ],
-                        ),
-                    ),
-                    timestamp=start_time.isoformat() + "Z",
-                ),
-            )
-            event_id += 1
-
-            # 2. Create node.
+            # 1. Create node.
             #    Runs in thread pool because setup_tools() triggers synchronous
             #    operations (psycopg ConnectionPool creation, PG DDL for table
             #    creation via get_storage()) that would freeze the event loop.
@@ -331,12 +309,35 @@ class ChatTaskManager:
             # 6. Execute streaming
             action_history = ActionHistoryManager()
             action_count = 0
+            seen_delta_action_ids: set[str] = set()
 
             async for action in node.execute_stream_with_interactions(action_history):
                 action_count += 1
 
                 # Convert action to SSE
-                sse = action_to_sse_event(action, event_id, action.action_id)
+                # Per-request stream_response overrides the server-level --stream flag
+                effective_stream = request.stream_response if request.stream_response is not None else self._stream_thinking
+
+                is_first_delta = True
+                if action.action_type == "thinking_delta":
+                    is_first_delta = action.action_id not in seen_delta_action_ids
+                    seen_delta_action_ids.add(action.action_id)
+
+                is_update = (
+                    effective_stream
+                    and action.action_type == "response"
+                    and isinstance(action.output, dict)
+                    and action.action_id in seen_delta_action_ids
+                )
+
+                sse = action_to_sse_event(
+                    action,
+                    event_id,
+                    action.action_id,
+                    stream_thinking=effective_stream,
+                    is_first_delta=is_first_delta,
+                    is_update=bool(is_update),
+                )
                 if sse:
                     await self._push_event(task, sse)
                     event_id += 1

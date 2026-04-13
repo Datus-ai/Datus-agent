@@ -75,6 +75,21 @@ class FakeOutputItemDoneData:
 
 
 @dataclass
+class FakeOutputTextDeltaData:
+    """Fake data for response.output_text.delta raw event."""
+
+    type: str = "response.output_text.delta"
+    delta: str = ""
+
+
+@dataclass
+class FakeContentPartDoneData:
+    """Fake data for response.content_part.done raw event."""
+
+    type: str = "response.content_part.done"
+
+
+@dataclass
 class FakeMessageItem:
     """Fake message item inside ResponseOutputItemDoneEvent."""
 
@@ -109,9 +124,21 @@ def _make_raw_message_done_event(text="I will now query the database"):
     return FakeEvent(type="raw_response_event", data=data)
 
 
+def _make_raw_text_delta_event(delta="chunk"):
+    """Create a raw_response_event for response.output_text.delta."""
+    data = FakeOutputTextDeltaData(delta=delta)
+    return FakeEvent(type="raw_response_event", data=data)
+
+
+def _make_raw_content_part_done_event():
+    """Create a raw_response_event for response.content_part.done."""
+    data = FakeContentPartDoneData()
+    return FakeEvent(type="raw_response_event", data=data)
+
+
 def _make_raw_other_event():
-    """Create a raw_response_event that is NOT a message output item done event."""
-    return FakeEvent(type="raw_response_event", data=MagicMock(type="response.output_text.delta"))
+    """Create a raw_response_event that is NOT handled (e.g. response.created)."""
+    return FakeEvent(type="raw_response_event", data=MagicMock(type="response.created"))
 
 
 # ---------------------------------------------------------------------------
@@ -340,65 +367,99 @@ class TestRawEventEarlyCapture:
     """Tests for assistant text capture from raw_response_event.
 
     In real SDK streaming, the event queue order is:
-      tool_call_item -> raw(message_done) -> [tool execution] -> message_output_item -> tool_output_item
-    PROCESSING is yielded immediately at tool_call_item. The raw event provides
-    assistant text before tool execution completes.
+      response.output_text.delta (chunk1) -> delta (chunk2) -> ... ->
+      response.content_part.done -> response.output_item.done (message) ->
+      tool_call_item -> [tool execution] -> tool_output_item
+    Deltas are yielded as thinking_delta, content_part.done emits the final action.
     """
 
     @pytest.mark.asyncio
-    async def test_raw_message_before_tool_output_yields_processing_first(self):
-        """Real SDK order: tool_called -> raw(message_done) -> message_output -> tool_output.
-        Expected: PROCESSING -> ASSISTANT (from raw) -> SUCCESS.
-        The Phase 3 message_output should be skipped (duplicate).
+    async def test_text_deltas_yield_thinking_delta_actions(self):
+        """Text deltas yield thinking_delta actions with accumulated text."""
+        events = [
+            _make_raw_text_delta_event("Hello "),
+            _make_raw_text_delta_event("world"),
+            _make_raw_content_part_done_event(),
+        ]
+
+        actions = await _collect_actions(events)
+
+        delta_actions = [a for a in actions if a.action_type == "thinking_delta"]
+        assert len(delta_actions) == 2
+        assert delta_actions[0].output["delta"] == "Hello "
+        assert delta_actions[0].output["accumulated"] == "Hello "
+        assert delta_actions[1].output["delta"] == "world"
+        assert delta_actions[1].output["accumulated"] == "Hello world"
+        # All deltas share the same stream ID
+        assert delta_actions[0].action_id == delta_actions[1].action_id
+        assert delta_actions[0].status == ActionStatus.PROCESSING
+
+        # Final ASSISTANT action from content_part.done
+        assistant_actions = [a for a in actions if a.role == ActionRole.ASSISTANT and a.action_type == "response"]
+        assert len(assistant_actions) == 1
+        assert assistant_actions[0].output["raw_output"] == "Hello world"
+        assert assistant_actions[0].status == ActionStatus.SUCCESS
+
+    @pytest.mark.asyncio
+    async def test_deltas_before_tool_call_yields_thinking_then_processing(self):
+        """Real SDK order: deltas -> content_part.done -> tool_call -> tool_output.
+        Expected: thinking_delta(s) -> ASSISTANT -> PROCESSING -> SUCCESS.
         """
         events = [
+            _make_raw_text_delta_event("Now let me "),
+            _make_raw_text_delta_event("generate the SQL query"),
+            _make_raw_content_part_done_event(),
             _make_tool_call_event(call_id="call_R1"),
-            _make_raw_message_done_event("Now let me generate the SQL query"),
             _make_message_event("Now let me generate the SQL query"),  # duplicate, should be skipped
             _make_tool_output_event(call_id="call_R1"),
         ]
 
         actions = await _collect_actions(events)
 
-        roles_and_statuses = [(a.role, a.status) for a in actions]
+        # Filter out thinking_delta actions for role/status check
+        non_delta = [a for a in actions if a.action_type != "thinking_delta"]
+        roles_and_statuses = [(a.role, a.status) for a in non_delta]
         assert roles_and_statuses == [
-            (ActionRole.TOOL, ActionStatus.PROCESSING),  # yielded immediately
-            (ActionRole.ASSISTANT, ActionStatus.SUCCESS),  # from raw event (early)
+            (ActionRole.ASSISTANT, ActionStatus.SUCCESS),  # from content_part.done
+            (ActionRole.TOOL, ActionStatus.PROCESSING),  # tool call
             (ActionRole.TOOL, ActionStatus.SUCCESS),  # tool complete
         ]
         # Only ONE assistant action, no duplicate
-        assistant_actions = [a for a in actions if a.role == ActionRole.ASSISTANT]
+        assistant_actions = [a for a in non_delta if a.role == ActionRole.ASSISTANT]
         assert len(assistant_actions) == 1
         assert "SQL query" in assistant_actions[0].output["raw_output"]
-        # Has in-progress tool calls -> is_thinking=True
-        assert assistant_actions[0].output["is_thinking"] is True
 
     @pytest.mark.asyncio
-    async def test_raw_message_with_processing_yielded_immediately(self):
-        """PROCESSING is yielded immediately, not flushed after ASSISTANT."""
+    async def test_tool_call_before_deltas_yields_processing_first(self):
+        """SDK order: tool_call -> deltas -> content_part.done -> tool_output.
+        Expected: PROCESSING -> thinking_delta(s) -> ASSISTANT -> SUCCESS.
+        """
         events = [
             _make_tool_call_event(call_id="call_R2", tool_name="subagent_tool"),
-            _make_raw_message_done_event("Thinking about the query"),
+            _make_raw_text_delta_event("Thinking about the query"),
+            _make_raw_content_part_done_event(),
+            _make_message_event("Thinking about the query"),  # duplicate
             _make_tool_output_event(call_id="call_R2"),
         ]
 
         actions = await _collect_actions(events)
 
-        # PROCESSING comes first (yielded immediately), then ASSISTANT, then SUCCESS
-        assert actions[0].role == ActionRole.TOOL
-        assert actions[0].status == ActionStatus.PROCESSING
-        assert actions[0].action_type == "subagent_tool"
-        assert actions[1].role == ActionRole.ASSISTANT
-        assert actions[2].role == ActionRole.TOOL
-        assert actions[2].status == ActionStatus.SUCCESS
+        non_delta = [a for a in actions if a.action_type != "thinking_delta"]
+        assert non_delta[0].role == ActionRole.TOOL
+        assert non_delta[0].status == ActionStatus.PROCESSING
+        assert non_delta[0].action_type == "subagent_tool"
+        assert non_delta[1].role == ActionRole.ASSISTANT
+        assert non_delta[2].role == ActionRole.TOOL
+        assert non_delta[2].status == ActionStatus.SUCCESS
 
     @pytest.mark.asyncio
-    async def test_raw_message_with_multiple_tool_calls(self):
-        """Multiple tool calls are yielded immediately before raw message."""
+    async def test_deltas_with_multiple_tool_calls(self):
+        """Multiple tool calls yielded immediately, deltas come after."""
         events = [
             _make_tool_call_event(call_id="call_X", tool_name="tool_x"),
             _make_tool_call_event(call_id="call_Y", tool_name="tool_y"),
-            _make_raw_message_done_event("Processing both tools"),
+            _make_raw_text_delta_event("Processing both tools"),
+            _make_raw_content_part_done_event(),
             _make_message_event("Processing both tools"),  # duplicate
             _make_tool_output_event(call_id="call_X"),
             _make_tool_output_event(call_id="call_Y"),
@@ -406,18 +467,19 @@ class TestRawEventEarlyCapture:
 
         actions = await _collect_actions(events)
 
-        roles_and_statuses = [(a.role, a.status) for a in actions]
+        non_delta = [a for a in actions if a.action_type != "thinking_delta"]
+        roles_and_statuses = [(a.role, a.status) for a in non_delta]
         assert roles_and_statuses == [
             (ActionRole.TOOL, ActionStatus.PROCESSING),  # tool_x
             (ActionRole.TOOL, ActionStatus.PROCESSING),  # tool_y
-            (ActionRole.ASSISTANT, ActionStatus.SUCCESS),  # from raw
+            (ActionRole.ASSISTANT, ActionStatus.SUCCESS),  # from content_part.done
             (ActionRole.TOOL, ActionStatus.SUCCESS),  # tool_x complete
             (ActionRole.TOOL, ActionStatus.SUCCESS),  # tool_y complete
         ]
 
     @pytest.mark.asyncio
     async def test_raw_non_message_event_is_ignored(self):
-        """Raw events that are not message output_item.done should be ignored."""
+        """Raw events that are not handled types should be ignored."""
         events = [
             _make_raw_other_event(),  # should be skipped
             _make_tool_call_event(call_id="call_Z"),
@@ -426,47 +488,47 @@ class TestRawEventEarlyCapture:
 
         actions = await _collect_actions(events)
 
-        roles_and_statuses = [(a.role, a.status) for a in actions]
+        non_delta = [a for a in actions if a.action_type != "thinking_delta"]
+        roles_and_statuses = [(a.role, a.status) for a in non_delta]
         assert roles_and_statuses == [
             (ActionRole.TOOL, ActionStatus.PROCESSING),
             (ActionRole.TOOL, ActionStatus.SUCCESS),
         ]
 
     @pytest.mark.asyncio
-    async def test_raw_message_with_empty_text_is_skipped(self):
-        """Raw message events with empty/whitespace text should not create ASSISTANT."""
-        msg_item = FakeMessageItem(content=[FakeTextContent(text="   ")])
-        data = FakeOutputItemDoneData(item=msg_item)
+    async def test_whitespace_only_deltas_skipped_at_content_part_done(self):
+        """Whitespace-only accumulated text should not create ASSISTANT action."""
         events = [
-            FakeEvent(type="raw_response_event", data=data),
+            _make_raw_text_delta_event("   "),
+            _make_raw_content_part_done_event(),
             _make_tool_call_event(call_id="call_E"),
             _make_tool_output_event(call_id="call_E"),
         ]
 
         actions = await _collect_actions(events)
 
-        # No ASSISTANT action should be created for whitespace-only text
-        roles_and_statuses = [(a.role, a.status) for a in actions]
+        non_delta = [a for a in actions if a.action_type != "thinking_delta"]
+        roles_and_statuses = [(a.role, a.status) for a in non_delta]
         assert roles_and_statuses == [
             (ActionRole.TOOL, ActionStatus.PROCESSING),
             (ActionRole.TOOL, ActionStatus.SUCCESS),
         ]
 
     @pytest.mark.asyncio
-    async def test_raw_message_without_tool_call(self):
-        """Raw message event without any tool calls should yield ASSISTANT only."""
+    async def test_deltas_without_tool_call(self):
+        """Text deltas without any tool calls should yield ASSISTANT with is_thinking=False."""
         events = [
-            _make_raw_message_done_event("Here is my analysis"),
-            _make_message_event("Here is my analysis"),  # duplicate
+            _make_raw_text_delta_event("Here is my "),
+            _make_raw_text_delta_event("analysis"),
+            _make_raw_content_part_done_event(),
         ]
 
         actions = await _collect_actions(events)
 
-        assert len(actions) == 1
-        assert actions[0].role == ActionRole.ASSISTANT
-        assert "analysis" in actions[0].output["raw_output"]
-        # No pending tool calls -> is_thinking=False
-        assert actions[0].output["is_thinking"] is False
+        assistant_actions = [a for a in actions if a.role == ActionRole.ASSISTANT and a.action_type == "response"]
+        assert len(assistant_actions) == 1
+        assert "analysis" in assistant_actions[0].output["raw_output"]
+        assert assistant_actions[0].output["is_thinking"] is False
 
     @pytest.mark.asyncio
     async def test_is_thinking_flag_true_when_tool_calls_in_progress(self):
@@ -474,7 +536,8 @@ class TestRawEventEarlyCapture:
         events = [
             _make_tool_call_event(call_id="call_T1"),
             _make_tool_call_event(call_id="call_T2"),
-            _make_raw_message_done_event("Let me run these tools"),
+            _make_raw_text_delta_event("Let me run these tools"),
+            _make_raw_content_part_done_event(),
             _make_message_event("Let me run these tools"),  # duplicate
             _make_tool_output_event(call_id="call_T1"),
             _make_tool_output_event(call_id="call_T2"),
@@ -482,7 +545,7 @@ class TestRawEventEarlyCapture:
 
         actions = await _collect_actions(events)
 
-        assistant_actions = [a for a in actions if a.role == ActionRole.ASSISTANT]
+        assistant_actions = [a for a in actions if a.role == ActionRole.ASSISTANT and a.action_type == "response"]
         assert len(assistant_actions) == 1
         assert assistant_actions[0].output["is_thinking"] is True
 
@@ -490,14 +553,15 @@ class TestRawEventEarlyCapture:
     async def test_is_thinking_flag_false_when_no_tool_calls(self):
         """is_thinking should be False when ASSISTANT fires without any in-progress tool calls."""
         events = [
-            _make_raw_message_done_event("Here is the final answer"),
+            _make_raw_text_delta_event("Here is the final answer"),
+            _make_raw_content_part_done_event(),
         ]
 
         actions = await _collect_actions(events)
 
-        assert len(actions) == 1
-        assert actions[0].role == ActionRole.ASSISTANT
-        assert actions[0].output["is_thinking"] is False
+        assistant_actions = [a for a in actions if a.role == ActionRole.ASSISTANT and a.action_type == "response"]
+        assert len(assistant_actions) == 1
+        assert assistant_actions[0].output["is_thinking"] is False
 
     @pytest.mark.asyncio
     async def test_is_thinking_flag_via_fallback_message_output_item(self):
@@ -528,16 +592,49 @@ class TestRawEventEarlyCapture:
         assert actions[0].output["is_thinking"] is False
 
     @pytest.mark.asyncio
-    async def test_raw_message_with_multiple_content_parts(self):
-        """Raw message with multiple text content parts joins them."""
-        msg_item = FakeMessageItem(content=[FakeTextContent(text="Part one."), FakeTextContent(text="Part two.")])
-        data = FakeOutputItemDoneData(item=msg_item)
+    async def test_fallback_message_done_when_no_deltas(self):
+        """Fallback: response.output_item.done type=message works when no deltas were received."""
         events = [
-            FakeEvent(type="raw_response_event", data=data),
+            _make_raw_message_done_event("Fallback message"),
+            _make_message_event("Fallback message"),  # duplicate
         ]
 
         actions = await _collect_actions(events)
 
-        assert len(actions) == 1
-        assert actions[0].role == ActionRole.ASSISTANT
-        assert "Part one.\nPart two." in actions[0].output["raw_output"]
+        non_delta = [a for a in actions if a.action_type != "thinking_delta"]
+        assert len(non_delta) == 1
+        assert non_delta[0].role == ActionRole.ASSISTANT
+        assert "Fallback" in non_delta[0].output["raw_output"]
+
+    @pytest.mark.asyncio
+    async def test_fallback_skipped_when_already_captured_via_deltas(self):
+        """Fallback output_item.done is skipped when content was already captured via deltas."""
+        events = [
+            _make_raw_text_delta_event("Already captured"),
+            _make_raw_content_part_done_event(),
+            _make_raw_message_done_event("Already captured"),  # should be skipped
+            _make_message_event("Already captured"),  # also skipped
+        ]
+
+        actions = await _collect_actions(events)
+
+        assistant_actions = [a for a in actions if a.role == ActionRole.ASSISTANT and a.action_type == "response"]
+        assert len(assistant_actions) == 1  # Only one from content_part.done
+
+    @pytest.mark.asyncio
+    async def test_thinking_delta_stream_id_shared(self):
+        """All thinking_delta actions in one stream share the same action_id."""
+        events = [
+            _make_raw_text_delta_event("chunk1"),
+            _make_raw_text_delta_event("chunk2"),
+            _make_raw_text_delta_event("chunk3"),
+            _make_raw_content_part_done_event(),
+        ]
+
+        actions = await _collect_actions(events)
+
+        delta_actions = [a for a in actions if a.action_type == "thinking_delta"]
+        assert len(delta_actions) == 3
+        ids = {a.action_id for a in delta_actions}
+        assert len(ids) == 1  # All share same stream ID
+        assert delta_actions[0].action_id.startswith("thinking_stream_")

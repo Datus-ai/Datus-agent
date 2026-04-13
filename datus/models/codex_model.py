@@ -364,6 +364,9 @@ class CodexModel(LLMBaseModel):
 
             # Stream events and yield ActionHistory objects
             temp_tool_calls = {}  # {call_id: {"tool_name": ..., "arguments": ...}}
+            early_assistant_yielded = False
+            thinking_stream_id: Optional[str] = None
+            thinking_accumulated = ""
 
             try:
                 while not result.is_complete:
@@ -378,29 +381,76 @@ class CodexModel(LLMBaseModel):
 
                             raise ExecutionInterrupted("Interrupted by user")
 
-                        # Handle assistant text from raw response events
+                        # Handle assistant text from raw response events (streaming)
                         if hasattr(event, "type") and event.type == "raw_response_event":
                             raw_data = getattr(event, "data", None)
-                            if raw_data and getattr(raw_data, "type", None) == "response.output_item.done":
+                            raw_type = getattr(raw_data, "type", None) if raw_data else None
+
+                            # Stream text delta
+                            if raw_type == "response.output_text.delta":
+                                delta_text = getattr(raw_data, "delta", None)
+                                if delta_text:
+                                    if thinking_stream_id is None:
+                                        thinking_stream_id = f"thinking_stream_{uuid.uuid4().hex[:8]}"
+                                    thinking_accumulated += delta_text
+                                    delta_action = ActionHistory(
+                                        action_id=thinking_stream_id,
+                                        role=ActionRole.ASSISTANT,
+                                        messages="",
+                                        action_type="thinking_delta",
+                                        input={},
+                                        output={"delta": delta_text, "accumulated": thinking_accumulated},
+                                        status=ActionStatus.PROCESSING,
+                                    )
+                                    yield delta_action
+                                continue
+
+                            # Content part done: emit completed thinking action
+                            if raw_type == "response.content_part.done":
+                                if thinking_accumulated.strip():
+                                    full_text = thinking_accumulated.strip()
+                                    text_split = full_text if len(full_text) <= 200 else f"{full_text[:200]}..."
+                                    action = ActionHistory(
+                                        action_id=thinking_stream_id or f"assistant_{uuid.uuid4().hex[:8]}",
+                                        role=ActionRole.ASSISTANT,
+                                        messages=f"Thinking: {text_split}",
+                                        action_type="response",
+                                        input={},
+                                        output={"raw_output": full_text, "is_thinking": len(temp_tool_calls) > 0},
+                                        status=ActionStatus.SUCCESS,
+                                    )
+                                    action_history_manager.add_action(action)
+                                    yield action
+                                    early_assistant_yielded = True
+                                thinking_stream_id = None
+                                thinking_accumulated = ""
+                                continue
+
+                            # Fallback: response.output_item.done type="message"
+                            if raw_type == "response.output_item.done":
                                 raw_item = getattr(raw_data, "item", None)
                                 if raw_item and getattr(raw_item, "type", None) == "message":
-                                    content_list = getattr(raw_item, "content", [])
-                                    text_parts = [
-                                        getattr(p, "text", "") for p in (content_list or []) if getattr(p, "text", None)
-                                    ]
-                                    full_text = "\n".join(text_parts).strip()
-                                    if full_text:
-                                        action = ActionHistory(
-                                            action_id=f"assistant_{uuid.uuid4().hex[:8]}",
-                                            role=ActionRole.ASSISTANT,
-                                            messages=full_text[:200] + ("..." if len(full_text) > 200 else ""),
-                                            action_type="response",
-                                            input={},
-                                            output={"raw_output": full_text},
-                                            status=ActionStatus.SUCCESS,
-                                        )
-                                        action_history_manager.add_action(action)
-                                        yield action
+                                    if not early_assistant_yielded:
+                                        content_list = getattr(raw_item, "content", [])
+                                        text_parts = [
+                                            getattr(p, "text", "")
+                                            for p in (content_list or [])
+                                            if getattr(p, "text", None)
+                                        ]
+                                        full_text = "\n".join(text_parts).strip()
+                                        if full_text:
+                                            action = ActionHistory(
+                                                action_id=f"assistant_{uuid.uuid4().hex[:8]}",
+                                                role=ActionRole.ASSISTANT,
+                                                messages=full_text[:200] + ("..." if len(full_text) > 200 else ""),
+                                                action_type="response",
+                                                input={},
+                                                output={"raw_output": full_text},
+                                                status=ActionStatus.SUCCESS,
+                                            )
+                                            action_history_manager.add_action(action)
+                                            yield action
+                                            early_assistant_yielded = True
                             continue
 
                         if not hasattr(event, "type") or event.type != "run_item_stream_event":

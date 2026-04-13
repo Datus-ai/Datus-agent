@@ -28,6 +28,7 @@ class DatusService:
         project_id: str,
         default_source: "str | None" = None,
         default_interactive: bool = True,
+        stream_thinking: bool = False,
     ):
         self._agent_config = agent_config
         self._project_id = project_id
@@ -39,6 +40,7 @@ class DatusService:
         self._task_manager = ChatTaskManager(
             default_source=default_source,
             default_interactive=default_interactive,
+            stream_thinking=stream_thinking,
         )
 
         # Lazy service slots

@@ -23,6 +23,7 @@ Chat 相关接口驱动 Agent 的对话循环。流式接口以 Server-Sent Even
 | `table_paths`/`metric_paths`/`sql_paths`/`knowledge_paths` | string[]? | `@` 引用路径 |
 | `max_turns`      | int      | 默认 `30` |
 | `prompt_language`| string   | `en`(默认)或 `zh` |
+| `stream_response`| bool?   | 是否逐 token 流式下发 thinking 内容;`null` 时使用服务端 `--stream` 启动参数(默认 `false`) |
 
 **响应**:`text/event-stream`,格式见下文 [流式格式](#流式格式)。
 
@@ -172,8 +173,8 @@ X-Accel-Buffering: no
 }
 ```
 
-- 流式下发的 `type` 当前固定为 `createMessage`(协议保留 `appendMessage` / `updateMessage` 以备后用,
-  客户端遇到未知 `type` 应优雅忽略)。
+- 大多数流式事件的 `type` 为 `createMessage`。开启 [Thinking-delta 流式下发](#thinking-delta-流式下发) 后,
+  还会出现 `appendMessage` 和 `updateMessage`。客户端遇到未知 `type` 应优雅忽略。
 - 流式期间 `role` 始终为 `assistant`;`GET /chat/history` 拉取时,用户消息会以 `role: "user"` 出现。
 - `message_id` 即 action id;当 content 为用户交互时,**它同时也是 `interactionKey`**(详见下文)。
 - `depth` 表示动作的嵌套层级:`0` 为主 agent,`1` 为通过 `task()` 工具调起的 sub-agent。客户端可据此
@@ -323,6 +324,45 @@ Agent 需要用户做决策才能继续时下发。SSE 流随后暂停,直到通
 
 > 外层 `MessageData.payload` 将携带 `depth: 1` 和指向触发该 sub-agent 的 `task()` 工具调用的
 > `parent_action_id`。完整 payload 结构参见 [MessageData](#messagedata)。
+
+### Thinking-delta 流式下发
+
+`stream_response` 字段控制 LLM 的 thinking 内容是逐 token 增量下发,还是作为单条完整消息一次性下发。
+
+**优先级**:请求级 `stream_response` > 服务端 `--stream` 启动参数 > 默认 `false`。
+
+#### 开启时(`stream_response: true`)
+
+Thinking token 在生成时即时推送,使用三种 `MessageData.type`:
+
+1. **首个 delta** — `createMessage`,携带一个 `thinking` content 项。客户端据此创建消息容器。
+2. **后续 delta** — `appendMessage`,携带一个 `thinking` content 项,仅包含增量文本。客户端将其追加到已有消息。
+3. **最终响应** — LLM 推理结束后,`response` action 到达。由于此 `message_id` 之前已流式下发过 delta,
+   事件使用 `updateMessage` **替换**先前所有 delta,写入完整的 thinking + response 内容。
+
+SSE 帧示例:
+
+```
+id: 3
+event: message
+data: {"type":"createMessage","payload":{"message_id":"act_0003","role":"assistant","content":[{"type":"thinking","payload":{"content":"让我分析一下"}}],"depth":0,"parent_action_id":null}}
+
+id: 4
+event: message
+data: {"type":"appendMessage","payload":{"message_id":"act_0003","role":"assistant","content":[{"type":"thinking","payload":{"content":"销售数据"}}],"depth":0,"parent_action_id":null}}
+
+id: 5
+event: message
+data: {"type":"appendMessage","payload":{"message_id":"act_0003","role":"assistant","content":[{"type":"thinking","payload":{"content":"，需要关联 orders 表..."}}],"depth":0,"parent_action_id":null}}
+
+id: 6
+event: message
+data: {"type":"updateMessage","payload":{"message_id":"act_0003","role":"assistant","content":[{"type":"thinking","payload":{"content":"让我分析一下销售数据，需要关联 orders 表..."}},{"type":"markdown","payload":{"content":"销售额前 5 的客户如下:\n"}}],"depth":0,"parent_action_id":null}}
+```
+
+#### 关闭时(`stream_response: false` 或不传)
+
+Thinking delta **不会**通过 SSE 下发。完整的 thinking 内容仅在最终的 `createMessage` 事件中与 response 内容一同出现。
 
 ### 完整事件帧示例
 

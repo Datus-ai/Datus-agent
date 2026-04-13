@@ -128,6 +128,11 @@ class InlineStreamingContext:
         while self._processed_index < len(self.actions):
             action = self.actions[self._processed_index]
 
+            # Skip thinking_delta actions in sync mode (transient streaming events)
+            if action.action_type == "thinking_delta":
+                self._processed_index += 1
+                continue
+
             # INTERACTION actions: skip in history replay (only shown during live interaction)
             if action.role == ActionRole.INTERACTION:
                 self._processed_index += 1
@@ -368,6 +373,11 @@ class InlineStreamingContext:
         while self._processed_index < len(self.actions):
             action = self.actions[self._processed_index]
 
+            # Streaming thinking deltas: skip in CLI (not supported yet)
+            if action.action_type == "thinking_delta":
+                self._processed_index += 1
+                continue
+
             # INTERACTION actions: collect input during live interaction, skip in history
             if action.role == ActionRole.INTERACTION:
                 if action.status == ActionStatus.PROCESSING and self._input_collector:
@@ -448,6 +458,11 @@ class InlineStreamingContext:
         """Flush all remaining actions at exit time without waiting for status changes."""
         while self._processed_index < len(self.actions):
             action = self.actions[self._processed_index]
+
+            # Skip thinking_delta actions in flush (transient, already displayed via Live)
+            if action.action_type == "thinking_delta":
+                self._processed_index += 1
+                continue
 
             # INTERACTION actions: skip in flush (only shown during live interaction)
             if action.role == ActionRole.INTERACTION:

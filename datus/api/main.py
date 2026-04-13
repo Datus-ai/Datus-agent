@@ -160,6 +160,7 @@ def _build_agent_args(args: argparse.Namespace) -> argparse.Namespace:
         interactive=args.interactive,
         output_dir=args.output_dir,
         log_level=args.log_level,
+        stream_thinking=args.stream_thinking,
     )
 
 
@@ -267,6 +268,13 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="interactive",
         action="store_false",
         help="Disable ask_user (workflow / non-interactive mode)",
+    )
+    parser.add_argument(
+        "--stream",
+        dest="stream_thinking",
+        action="store_true",
+        default=False,
+        help="Enable streaming thinking deltas (real-time token-by-token SSE output)",
     )
 
     # Daemon control

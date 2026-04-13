@@ -23,6 +23,7 @@ Send a chat message and stream the response as Server-Sent Events.
 | `table_paths`/`metric_paths`/`sql_paths`/`knowledge_paths` | string[]? | `@`-reference paths |
 | `max_turns`      | int      | Default `30` |
 | `prompt_language`| string   | `en` (default) or `zh` |
+| `stream_response`| bool?   | Stream thinking deltas token-by-token; `null` defers to server `--stream` flag (default `false`) |
 
 **Response**: `text/event-stream`. See [Streaming format](#streaming-format) below.
 
@@ -174,8 +175,9 @@ are infrastructure.
 }
 ```
 
-- `type` is currently always `createMessage` for streamed actions. (`appendMessage` and `updateMessage` exist in
-  the protocol for future use; clients should treat unknown `type` values gracefully.)
+- `type` is `createMessage` for most streamed actions. When [thinking-delta streaming](#thinking-delta-streaming)
+  is enabled, `appendMessage` and `updateMessage` are also used. Clients should treat unknown `type` values
+  gracefully.
 - `role` is `assistant` while streaming. When fetching `GET /chat/history`, user-authored turns appear with
   `role: "user"`.
 - `message_id` is the action id; it is **also the `interactionKey`** when the content describes a user interaction
@@ -334,6 +336,50 @@ single status line.
 
 > The enclosing `MessageData.payload` will carry `depth: 1` and a `parent_action_id` pointing to the `task()` tool
 > call that spawned the sub-agent. See [MessageData](#messagedata) for the full payload schema.
+
+### Thinking-delta streaming
+
+The `stream_response` field controls whether LLM thinking content is delivered incrementally (token-by-token) or
+as a single complete message.
+
+**Priority**: per-request `stream_response` > server-level `--stream` startup flag > default `false`.
+
+#### When enabled (`stream_response: true`)
+
+Thinking tokens are pushed as they arrive, using three `MessageData.type` values:
+
+1. **First delta** — `createMessage` with a `thinking` content item. This creates the message container on the
+   client.
+2. **Subsequent deltas** — `appendMessage` with a `thinking` content item containing only the incremental text.
+   The client appends the delta to the existing message.
+3. **Final response** — When the LLM finishes reasoning, a `response` action arrives. Because earlier deltas
+   were streamed for this `message_id`, the event uses `updateMessage` to **replace** all previously streamed
+   deltas with the complete thinking + response content.
+
+Example SSE frames:
+
+```
+id: 3
+event: message
+data: {"type":"createMessage","payload":{"message_id":"act_0003","role":"assistant","content":[{"type":"thinking","payload":{"content":"Let me analyze"}}],"depth":0,"parent_action_id":null}}
+
+id: 4
+event: message
+data: {"type":"appendMessage","payload":{"message_id":"act_0003","role":"assistant","content":[{"type":"thinking","payload":{"content":" the sales data"}}],"depth":0,"parent_action_id":null}}
+
+id: 5
+event: message
+data: {"type":"appendMessage","payload":{"message_id":"act_0003","role":"assistant","content":[{"type":"thinking","payload":{"content":" by joining orders..."}}],"depth":0,"parent_action_id":null}}
+
+id: 6
+event: message
+data: {"type":"updateMessage","payload":{"message_id":"act_0003","role":"assistant","content":[{"type":"thinking","payload":{"content":"Let me analyze the sales data by joining orders..."}},{"type":"markdown","payload":{"content":"Here are the top 5 customers:\n"}}],"depth":0,"parent_action_id":null}}
+```
+
+#### When disabled (`stream_response: false` or omitted)
+
+Thinking deltas are **not** sent over the wire. The complete thinking content appears only once, inside the
+final `createMessage` event alongside the response content.
 
 ### A complete frame example
 

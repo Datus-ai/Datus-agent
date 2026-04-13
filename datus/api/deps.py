@@ -19,6 +19,7 @@ _service_cache: Optional[DatusServiceCache] = None
 _namespace: str = "default"
 _default_source: Optional[str] = None
 _default_interactive: bool = True
+_stream_thinking: bool = False
 
 _DEFAULT_PROJECT_KEY = "default"
 
@@ -29,17 +30,19 @@ def init_deps(
     namespace: str = "default",
     default_source: Optional[str] = None,
     default_interactive: bool = True,
+    stream_thinking: bool = False,
 ) -> None:
     """Initialize global auth provider and service cache.
 
     Called from main.py lifespan to inject dependencies.
     """
-    global _auth_provider, _service_cache, _namespace, _default_source, _default_interactive
+    global _auth_provider, _service_cache, _namespace, _default_source, _default_interactive, _stream_thinking
     _auth_provider = auth_provider
     _service_cache = cache
     _namespace = namespace
     _default_source = default_source
     _default_interactive = default_interactive
+    _stream_thinking = stream_thinking
     # Wire eviction callback: auth config changes trigger cache eviction
     auth_provider.on_evict(cache.evict)
 
@@ -78,6 +81,7 @@ async def get_datus_service(request: Request) -> DatusService:
             project_id=cache_key,
             default_source=_default_source,
             default_interactive=_default_interactive,
+            stream_thinking=_stream_thinking,
         )
 
     return await _service_cache.get_or_create(cache_key, _factory, expected_fingerprint=expected_fp)

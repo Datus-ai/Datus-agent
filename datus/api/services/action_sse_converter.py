@@ -135,6 +135,9 @@ def _build_thinking_content(action: ActionHistory) -> Optional[List[IMessageCont
         if "output" in result_json and result_json["output"]:
             resp_payload = {"content": result_json.get("output", "")}
             contents.append(IMessageContent(type="markdown", payload=resp_payload))
+        if "explanation" in result_json and result_json["explanation"]:
+            resp_payload = {"content": result_json.get("explanation", "")}
+            contents.append(IMessageContent(type="markdown", payload=resp_payload))
 
         if contents:
             return contents
@@ -218,6 +221,9 @@ def action_to_sse_event(
     event_id: int,
     message_id: str,
     include_user_message: bool = False,
+    stream_thinking: bool = False,
+    is_first_delta: bool = True,
+    is_update: bool = False,
 ) -> Optional[SSEEvent]:
     """Convert an ActionHistory object to an SSEEvent.
 
@@ -232,14 +238,35 @@ def action_to_sse_event(
     include_user_message : bool
         If True, USER-role actions are converted to SSE events (for chat history).
         If False, USER-role actions return None (for streaming).
+    stream_thinking : bool
+        If True, thinking_delta actions are emitted as incremental SSE events.
+        If False, thinking_delta actions are silently skipped.
+    is_first_delta : bool
+        If True, the first thinking_delta uses CREATE_MESSAGE; subsequent deltas
+        use APPEND_MESSAGE. Only relevant when stream_thinking=True.
+    is_update : bool
+        If True, the event uses UPDATE_MESSAGE to overwrite previously streamed
+        deltas with the complete thinking response.
     """
     try:
         role = action.role
         status = action.status
 
         sse_role = "assistant"
+        sse_type = SSEDataType.CREATE_MESSAGE
 
-        if status == ActionStatus.FAILED:
+        if stream_thinking and is_update:
+            sse_type = SSEDataType.UPDATE_MESSAGE
+
+        if action.action_type == "thinking_delta":
+            if not stream_thinking:
+                return None
+            output = action.output if isinstance(action.output, dict) else {}
+            delta_text = output.get("delta", "")
+            if not is_first_delta:
+                sse_type = SSEDataType.APPEND_MESSAGE
+            contents = [IMessageContent(type="thinking", payload={"content": delta_text})]
+        elif status == ActionStatus.FAILED:
             contents = _build_error_content(action)
         elif action.action_type == SUBAGENT_COMPLETE_ACTION_TYPE:
             contents = _build_subagent_complete_content(action)
@@ -269,7 +296,7 @@ def action_to_sse_event(
                 return None  # Skip empty content
 
         sse_data = SSEMessageData(
-            type=SSEDataType.CREATE_MESSAGE,
+            type=sse_type,
             payload=SSEMessagePayload(
                 message_id=message_id,
                 role=sse_role,

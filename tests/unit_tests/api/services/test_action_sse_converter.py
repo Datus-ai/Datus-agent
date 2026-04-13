@@ -640,6 +640,118 @@ class TestActionToSSEEvent:
         assert event is not None
         assert event.data.payload.content[0].payload["duration"] == 0.0
 
+    def test_thinking_delta_first_creates_message(self):
+        """First thinking_delta uses CREATE_MESSAGE SSE type."""
+        action = _make_action(
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.PROCESSING,
+            action_type="thinking_delta",
+            output={"delta": "Hello ", "accumulated": "Hello "},
+        )
+        event = action_to_sse_event(action, event_id=20, message_id="msg-20", stream_thinking=True, is_first_delta=True)
+        assert event is not None
+        assert event.event == "message"
+        assert event.data.type == SSEDataType.CREATE_MESSAGE
+        content = event.data.payload.content[0]
+        assert content.type == "thinking-delta"
+        assert content.payload["delta"] == "Hello "
+
+    def test_thinking_delta_subsequent_appends_message(self):
+        """Subsequent thinking_delta uses APPEND_MESSAGE SSE type."""
+        action = _make_action(
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.PROCESSING,
+            action_type="thinking_delta",
+            output={"delta": "world"},
+        )
+        event = action_to_sse_event(
+            action, event_id=21, message_id="msg-21", stream_thinking=True, is_first_delta=False
+        )
+        assert event is not None
+        assert event.event == "message"
+        assert event.data.type == SSEDataType.APPEND_MESSAGE
+        content = event.data.payload.content[0]
+        assert content.type == "thinking-delta"
+        assert content.payload["delta"] == "world"
+
+    def test_thinking_delta_skipped_when_stream_disabled(self):
+        """thinking_delta returns None when stream_thinking=False (default)."""
+        action = _make_action(
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.PROCESSING,
+            action_type="thinking_delta",
+            output={"delta": "Hello "},
+        )
+        event = action_to_sse_event(action, event_id=20, message_id="msg-20")
+        assert event is None
+
+    def test_thinking_delta_with_empty_delta(self):
+        """thinking_delta with empty delta string still produces event when enabled."""
+        action = _make_action(
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.PROCESSING,
+            action_type="thinking_delta",
+            output={"delta": "", "accumulated": ""},
+        )
+        event = action_to_sse_event(action, event_id=22, message_id="msg-22", stream_thinking=True)
+        assert event is not None
+        assert event.event == "message"
+        assert event.data.type == SSEDataType.CREATE_MESSAGE  # is_first_delta defaults to True
+        assert event.data.payload.content[0].payload["delta"] == ""
+
+    def test_thinking_delta_non_dict_output(self):
+        """thinking_delta with non-dict output defaults to empty delta."""
+        action = _make_action(
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.PROCESSING,
+            action_type="thinking_delta",
+            output="raw string",
+        )
+        event = action_to_sse_event(action, event_id=23, message_id="msg-23", stream_thinking=True)
+        assert event is not None
+        assert event.event == "message"
+        assert event.data.payload.content[0].payload["delta"] == ""
+
+    def test_thinking_delta_with_depth(self):
+        """thinking_delta carries depth and parent_action_id."""
+        action = _make_action(
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.PROCESSING,
+            action_type="thinking_delta",
+            output={"delta": "chunk"},
+            depth=1,
+            parent_action_id="parent-003",
+        )
+        event = action_to_sse_event(action, event_id=24, message_id="msg-24", stream_thinking=True)
+        assert event is not None
+        assert event.event == "message"
+        assert event.data.payload.depth == 1
+        assert event.data.payload.parent_action_id == "parent-003"
+
+    def test_thinking_response_update_message(self):
+        """Complete thinking response with is_update=True uses UPDATE_MESSAGE."""
+        action = _make_action(
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.SUCCESS,
+            action_type="response",
+            output={"is_thinking": True, "thinking": "Full thinking content"},
+        )
+        event = action_to_sse_event(action, event_id=30, message_id="msg-30", stream_thinking=True, is_update=True)
+        assert event is not None
+        assert event.data.type == SSEDataType.UPDATE_MESSAGE
+
+    def test_thinking_response_default_create_message(self):
+        """Complete thinking response with is_update=False (default) uses CREATE_MESSAGE."""
+        action = _make_action(
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.SUCCESS,
+            action_type="response",
+            output={"is_thinking": True, "thinking": "Full thinking content"},
+        )
+        event = action_to_sse_event(action, event_id=31, message_id="msg-31", stream_thinking=True)
+        assert event is not None
+        assert event.data.type == SSEDataType.CREATE_MESSAGE
+
     def test_subagent_complete_failed_produces_error_event(self):
         """subagent_complete with FAILED status produces error content, not subagent-complete."""
         action = _make_action(
