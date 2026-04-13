@@ -104,7 +104,7 @@ pip install "slack-sdk[socket_mode]"
 
 在 Slack 中，将机器人邀请到你希望它响应消息的频道：
 
-```
+```bash
 /invite @YourBotName
 ```
 
@@ -148,7 +148,7 @@ python -m datus.claw.main --config conf/agent.yml --debug
 
 你应该看到：
 
-```
+```text
 Slack adapter 'slack-main' connecting...
 Slack adapter 'slack-main' started.
 ```

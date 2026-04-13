@@ -130,7 +130,6 @@ class SlackAdapter(ChannelAdapter):
         chat_type = "p2p" if channel_type == "im" else ("group" if channel_type else None)
 
         msg = InboundMessage(
-
             channel_id=self.channel_id,
             sender_id=event.get("user", ""),
             sender_name="",

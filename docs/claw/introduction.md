@@ -18,7 +18,7 @@ Claw is the IM (Instant Messaging) gateway module for Datus Agent. It connects D
 
 ## Architecture
 
-```
+```text
 ┌──────────────┐     long connection     ┌──────────────────┐
 │  IM Platform │ ◄──────────────────────► │  ChannelAdapter   │
 │  (Slack /    │                          │  (per platform)   │
@@ -182,7 +182,7 @@ Controls how much detail the bot shows during processing. When called without an
 
 Examples:
 
-```
+```text
 /verbose           # Show current verbosity level
 /verbose quiet     # Only show thinking and final answer
 /verbose brief     # Show tool call summaries
@@ -207,7 +207,7 @@ Use the `subagent_id` field to route messages from a specific channel to a dedic
 
 ### SDK Not Installed
 
-```
+```text
 ImportError: slack_sdk is required for the Slack adapter. Install it with: pip install slack-sdk[socket_mode]
 ```
 

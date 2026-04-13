@@ -150,7 +150,7 @@ python -m datus.claw.main --config conf/agent.yml --debug
 
 You should see:
 
-```
+```text
 Feishu adapter 'feishu-main' connecting...
 Feishu adapter 'feishu-main' started.
 ```

@@ -24,7 +24,7 @@ def _make_slack_adapter(bot_user_id: str = "") -> SlackAdapter:
     bridge.handle_reaction = AsyncMock()
     adapter = SlackAdapter(
         channel_id="test-slack",
-        config={"app_token": "xapp-fake", "bot_token": "xoxb-fake"},
+        config={"app_token": "test-app-token", "bot_token": "test-bot-token"},
         bridge=bridge,
     )
     adapter._bot_user_id = bot_user_id

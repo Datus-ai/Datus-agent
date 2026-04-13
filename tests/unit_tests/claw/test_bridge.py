@@ -1191,7 +1191,7 @@ class TestStreamIdAndFinalize:
         """The busy reply should not have stream_id."""
         bridge, adapter, task_manager = setup
 
-        task_manager.start_chat = AsyncMock(side_effect=ValueError("busy"))
+        task_manager.start_chat = AsyncMock(side_effect=ValueError("session is still being processed"))
 
         await bridge.handle_message(_make_inbound("q"), adapter)
 

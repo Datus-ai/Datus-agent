@@ -17,6 +17,8 @@ def chunk_text(text: str, max_length: int = SLACK_TEXT_LIMIT) -> list[str]:
     2. Line boundaries (``\\n``)
     3. Hard truncation at *max_length*
     """
+    if max_length <= 0:
+        raise ValueError(f"max_length must be positive, got {max_length}")
     if len(text) <= max_length:
         return [text]
 

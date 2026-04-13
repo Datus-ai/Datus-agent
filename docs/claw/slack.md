@@ -104,7 +104,7 @@ After the app is created, you need two tokens:
 
 In Slack, invite the bot to each channel where you want it to respond:
 
-```
+```bash
 /invite @YourBotName
 ```
 
@@ -148,7 +148,7 @@ python -m datus.claw.main --config conf/agent.yml --debug
 
 You should see:
 
-```
+```text
 Slack adapter 'slack-main' connecting...
 Slack adapter 'slack-main' started.
 ```

@@ -76,16 +76,19 @@ def match_command(text: str) -> Optional[CommandMatch]:
     Tries full-text match first (backward compat for ``/new``, ``/reset``, etc.),
     then falls back to first-word match for commands with arguments.
     """
-    normalized = _normalize(text.strip())
+    stripped = text.strip()
+    normalized = _normalize(stripped)
     # Full-text match first
     cmd = _COMMAND_REGISTRY.get(normalized)
     if cmd is not None:
         return CommandMatch(command=cmd, args="")
-    # First-word match for commands with arguments
-    first_word, _, remainder = normalized.partition(" ")
+    # First-word match for commands with arguments — preserve original case in args
+    first_word, _, _ = normalized.partition(" ")
     cmd = _COMMAND_REGISTRY.get(first_word)
     if cmd is not None:
-        return CommandMatch(command=cmd, args=remainder.strip())
+        # Split original text to preserve case of arguments
+        _, _, raw_remainder = stripped.partition(" ")
+        return CommandMatch(command=cmd, args=raw_remainder.strip())
     return None
 
 

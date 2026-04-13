@@ -7,6 +7,7 @@
 from typing import Dict, List, Type
 
 from datus.claw.channel.base import ChannelAdapter
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -23,7 +24,13 @@ def register_adapter(name: str, cls: Type[ChannelAdapter]) -> None:
 def get_adapter_class(name: str) -> Type[ChannelAdapter]:
     """Return the adapter class for *name*, raising ``KeyError`` if unknown."""
     if name not in _ADAPTER_TYPES:
-        raise KeyError(f"Unknown channel adapter: '{name}'. Available: {list(_ADAPTER_TYPES.keys())}")
+        raise DatusException(
+            ErrorCode.COMMON_UNSUPPORTED,
+            message_args={
+                "your_value": name,
+                "field_name": "channel adapter",
+            },
+        )
     return _ADAPTER_TYPES[name]
 
 

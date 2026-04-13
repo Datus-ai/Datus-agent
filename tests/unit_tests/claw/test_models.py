@@ -129,12 +129,12 @@ class TestChannelConfig:
             enabled=False,
             namespace="production",
             subagent_id="agent_42",
-            extra={"app_token": "xapp-xxx", "bot_token": "xoxb-yyy"},
+            extra={"app_token": "test-app-token", "bot_token": "test-bot-token"},
         )
         assert cfg.adapter == "slack"
         assert cfg.enabled is False
         assert cfg.namespace == "production"
-        assert cfg.extra["app_token"] == "xapp-xxx"
+        assert cfg.extra["app_token"] == "test-app-token"
 
     def test_serialization_roundtrip(self):
         cfg = ChannelConfig(adapter="feishu", extra={"app_id": "id123"})

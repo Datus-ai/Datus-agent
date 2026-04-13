@@ -14,6 +14,7 @@ from datus.claw.channel.registry import (
     register_builtins,
 )
 from datus.claw.models import OutboundMessage
+from datus.utils.exceptions import DatusException
 
 
 # Dummy adapter for testing
@@ -44,7 +45,7 @@ class TestRegisterAdapter:
         assert get_adapter_class("dummy") is _DummyAdapter
 
     def test_get_unknown_raises(self):
-        with pytest.raises(KeyError, match="Unknown channel adapter"):
+        with pytest.raises(DatusException):
             get_adapter_class("nonexistent")
 
     def test_list_empty(self):

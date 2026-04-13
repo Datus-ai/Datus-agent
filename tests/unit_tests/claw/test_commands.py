@@ -124,7 +124,7 @@ class TestCommandRegistry:
 
 class TestNewSessionCommand:
     @pytest.mark.asyncio
-    async def test_execute_rotates_session_and_replies(self):
+    async def test_execute_clears_session_and_replies(self):
         cmd = NewSessionCommand()
         msg = _make_inbound("/new")
 
@@ -132,19 +132,16 @@ class TestNewSessionCommand:
         adapter.send_message = AsyncMock(return_value="bot1")
 
         bridge = MagicMock()
-        bridge.rotate_session = MagicMock()
-        bridge.build_session_id = MagicMock(return_value="claw_ch1_conv1_abcd1234")
+        bridge.clear_session = MagicMock()
 
         ctx = CommandContext(msg=msg, adapter=adapter, bridge=bridge)
         await cmd.execute(ctx)
 
-        bridge.rotate_session.assert_called_once_with(msg)
-        bridge.build_session_id.assert_called_once_with(msg)
+        bridge.clear_session.assert_called_once_with(msg)
         adapter.send_message.assert_called_once()
 
         sent: OutboundMessage = adapter.send_message.call_args.args[0]
-        assert "Session reset" in sent.text
-        assert "claw_ch1_conv1_abcd1234" in sent.text
+        assert "Session cleared" in sent.text
         assert sent.channel_id == "ch1"
         assert sent.conversation_id == "conv1"
 

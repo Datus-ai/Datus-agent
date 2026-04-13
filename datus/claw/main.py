@@ -8,6 +8,7 @@
 
 import argparse
 import asyncio
+import logging
 import os
 
 from datus import __version__
@@ -53,6 +54,7 @@ def main() -> None:
         args.log_level = "DEBUG"
 
     configure_logging(args.debug)
+    logging.getLogger().setLevel(getattr(logging, args.log_level, logging.INFO))
 
     from datus.configuration.agent_config_loader import load_agent_config
 

@@ -18,7 +18,7 @@ Claw 是 Datus Agent 的 IM（即时通讯）网关模块。它将 Datus 连接�
 
 ## 架构
 
-```
+```text
 ┌──────────────┐     长连接              ┌──────────────────┐
 │  IM 平台      │ ◄──────────────────────► │  ChannelAdapter   │
 │  (Slack /    │                          │  (按平台实现)      │
@@ -117,8 +117,8 @@ channels:
 
 各 IM 平台的详细配置步骤，请参阅各适配器专属指南：
 
-- [Slack 配置指南](slack.md) — 创建 Slack App、启用 Socket Mode、配置权限和事件订阅
-- [飞书配置指南](feishu.md) — 创建自建应用、启用机器人能力、配置 WebSocket 事件
+- [Slack 配置指南](slack.zh.md) — 创建 Slack App、启用 Socket Mode、配置权限和事件订阅
+- [飞书配置指南](feishu.zh.md) — 创建自建应用、启用机器人能力、配置 WebSocket 事件
 
 
 ## 启动网关
@@ -182,7 +182,7 @@ Claw 提供了内置的斜杠命令，这些命令在消息进入 Agent 循环�
 
 示例：
 
-```
+```text
 /verbose           # 查看当前详细级别
 /verbose quiet     # 仅显示思考和最终回答
 /verbose brief     # 显示工具调用摘要
@@ -207,7 +207,7 @@ Claw 提供了内置的斜杠命令，这些命令在消息进入 Agent 循环�
 
 ### SDK 未安装
 
-```
+```text
 ImportError: slack_sdk is required for the Slack adapter. Install it with: pip install slack-sdk[socket_mode]
 ```
 

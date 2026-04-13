@@ -152,7 +152,9 @@ class ChannelBridge:
                 request,
                 sub_agent_id=subagent_id,
             )
-        except ValueError:
+        except ValueError as exc:
+            if "still being processed" not in str(exc) and "already running" not in str(exc):
+                raise
             busy_reply = OutboundMessage(
                 channel_id=msg.channel_id,
                 conversation_id=msg.conversation_id,
@@ -172,7 +174,20 @@ class ChannelBridge:
             # Stream each SSE event to the IM channel as it arrives
             any_sent = False
             async for event in self._task_manager.consume_events(task):
-                if event.event == "message":
+                if event.event == "error":
+                    error_text = ""
+                    if hasattr(event.data, "error"):
+                        error_text = event.data.error
+                    error_reply = OutboundMessage(
+                        channel_id=msg.channel_id,
+                        conversation_id=msg.conversation_id,
+                        thread_id=msg.thread_id,
+                        text=f"\u274c Error: {error_text}" if error_text else "\u274c An error occurred.",
+                    )
+                    await adapter.send_message(error_reply)
+                    has_error = True
+                    any_sent = True
+                elif event.event == "message":
                     outbound = self._event_to_outbound(event.data, msg, verbose, pending_tool_calls)
                     if outbound:
                         outbound.stream_id = stream_id
