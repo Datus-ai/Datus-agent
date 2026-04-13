@@ -134,7 +134,7 @@ Create a new package in the `datus-semantic-adapter` repository.
 
 ```
 datus-semantic-adapter/              # Repository root
-├── datus_semantic_metricflow/       # Each adapter is a subdirectory
+├── datus-semantic-metricflow/       # Each adapter project directory
 │   ├── pyproject.toml               # Package config for this adapter
 │   └── datus_semantic_metricflow/   # Python package
 │       ├── __init__.py              # Contains register() function
@@ -153,7 +153,7 @@ datus-semantic-adapter/              # Repository root
 **Installation**:
 ```bash
 # Install specific adapter from local directory
-pip install -e ../datus-semantic-adapter/datus_semantic_metricflow
+pip install -e ../datus-semantic-adapter/datus-semantic-metricflow
 ```
 
 ### Step 2: Implement Adapter Class
@@ -427,7 +427,7 @@ __all__ = ["MetricFlowAdapter", "MetricFlowConfig", "register"]
 ### Step 5: Configure Entry Point
 
 ```toml
-# pyproject.toml (in datus_semantic_metricflow directory)
+# pyproject.toml (in datus-semantic-metricflow directory)
 [project]
 name = "datus-semantic-metricflow"
 version = "0.1.0"
@@ -451,7 +451,7 @@ include = ["datus_semantic_metricflow*"]
 
 ```bash
 # Install specific adapter from datus-semantic-adapter repository
-pip install -e ../datus-semantic-adapter/datus_semantic_metricflow
+pip install -e ../datus-semantic-adapter/datus-semantic-metricflow
 
 # Verify installation
 pip show datus-semantic-metricflow

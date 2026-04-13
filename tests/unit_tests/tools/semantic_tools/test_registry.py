@@ -199,8 +199,10 @@ class TestSemanticAdapterRegistry:
 
     def test_try_load_adapter_handles_generic_exception(self):
         with patch("importlib.import_module", side_effect=Exception("weird error")):
-            # Should not raise
-            SemanticAdapterRegistry._try_load_adapter("errorplugin")
+            with pytest.raises(
+                SemanticCoreException, match="Failed to load semantic adapter 'errorplugin': weird error"
+            ):
+                SemanticAdapterRegistry._try_load_adapter("errorplugin")
         assert not SemanticAdapterRegistry.is_registered("errorplugin")
 
     def test_discover_adapters_handles_entry_point_failure(self):

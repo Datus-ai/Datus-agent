@@ -41,7 +41,7 @@ datus-agent (核心)
 pip install datus-semantic-metricflow
 
 # 或从源码安装
-pip install -e ../datus-semantic-adapter/datus_semantic_metricflow
+pip install -e ../datus-semantic-adapter/datus-semantic-metricflow
 ```
 
 安装后，Datus Agent 会自动检测并加载适配器。

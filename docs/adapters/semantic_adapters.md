@@ -41,7 +41,7 @@ The adapter system uses Python's entry points mechanism for automatic discovery.
 pip install datus-semantic-metricflow
 
 # Or install from source
-pip install -e ../datus-semantic-adapter/datus_semantic_metricflow
+pip install -e ../datus-semantic-adapter/datus-semantic-metricflow
 ```
 
 Once installed, Datus Agent will automatically detect and load the adapter.
