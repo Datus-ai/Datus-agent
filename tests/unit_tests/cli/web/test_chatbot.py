@@ -394,3 +394,35 @@ class TestTemplateFile:
         assert "{{ react_dom_js }}" in content
         assert "{{ request_origin_json }}" in content
         assert "{{ user_name_json }}" in content
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# _schedule_browser_open
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.ci
+class TestScheduleBrowserOpen:
+    """Ensure the helper kicks off a daemon thread that opens the URL after a delay."""
+
+    def test_delays_then_calls_webbrowser_open(self):
+        from datus.cli.web.chatbot import _schedule_browser_open
+
+        with (
+            patch("datus.cli.web.chatbot.webbrowser") as mock_webbrowser,
+            patch("time.sleep") as mock_sleep,
+            patch("threading.Thread") as mock_thread,
+        ):
+            _schedule_browser_open("http://example.test:1234", delay=0.25)
+
+            mock_thread.assert_called_once()
+            kwargs = mock_thread.call_args.kwargs
+            assert kwargs["daemon"] is True
+            inner = kwargs["target"]
+
+            mock_thread.return_value.start.assert_called_once()
+
+            # Invoke the inner thread target directly to cover the sleep+open path.
+            inner()
+            mock_sleep.assert_called_once_with(0.25)
+            mock_webbrowser.open.assert_called_once_with("http://example.test:1234")

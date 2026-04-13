@@ -1138,3 +1138,90 @@ class TestSyncSemanticToDbBooleanCoercion:
         assert len(table_rows) >= 1
         assert type(table_rows[0]["create_metric"]) is bool
         assert type(table_rows[0]["is_partition"]) is bool
+
+
+# ---------------------------------------------------------------------------
+# Tests: _get_base_dir edge cases (resolver missing / exception)
+# ---------------------------------------------------------------------------
+
+
+class TestGetBaseDirEdgeCases:
+    def test_returns_none_when_resolver_attr_is_none(self, broker):
+        """path_manager exists but the named resolver attribute is None."""
+        cfg = MagicMock()
+        cfg.current_namespace = "ns"
+        cfg.path_manager = MagicMock(spec=[])  # no attrs → getattr returns None
+        h = GenerationHooks(broker=broker, agent_config=cfg)
+        assert h._get_base_dir("semantic") is None
+
+    def test_returns_none_when_resolver_raises(self, broker):
+        """Exceptions raised by the resolver are caught and return None."""
+        cfg = MagicMock()
+        cfg.current_namespace = "ns"
+        cfg.path_manager = MagicMock()
+        cfg.path_manager.semantic_model_path = MagicMock(side_effect=RuntimeError("boom"))
+        h = GenerationHooks(broker=broker, agent_config=cfg)
+        assert h._get_base_dir("semantic") is None
+
+
+class TestResolvePathCommonpathValueError:
+    def test_returns_original_when_commonpath_raises_value_error(self, broker):
+        """When os.path.commonpath raises ValueError (e.g. mixed drives), original path is returned."""
+        cfg = MagicMock()
+        cfg.current_namespace = "ns"
+        cfg.path_manager = MagicMock()
+        cfg.path_manager.semantic_model_path = MagicMock(return_value=Path("/ws/sm"))
+        h = GenerationHooks(broker=broker, agent_config=cfg)
+        with patch("datus.cli.generation_hooks.os.path.commonpath", side_effect=ValueError("mixed drives")):
+            assert h._resolve_path("orders.yml", "semantic") == "orders.yml"
+
+
+# ---------------------------------------------------------------------------
+# Tests: _handle_end_metric_generation resolves relative paths
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestHandleEndMetricGeneration:
+    async def test_missing_metric_file_warns_and_returns(self, hooks):
+        hooks._extract_metric_generation_result = MagicMock(return_value=(None, None, {}))
+        hooks._process_single_file = AsyncMock()
+        hooks._process_metric_with_semantic_model = AsyncMock()
+        await hooks._handle_end_metric_generation({"result": {}})
+        hooks._process_single_file.assert_not_awaited()
+        hooks._process_metric_with_semantic_model.assert_not_awaited()
+
+    async def test_resolves_relative_paths_via_resolve_path(self, hooks):
+        """Relative metric_file and semantic_model_file must be resolved through _resolve_path."""
+        hooks._extract_metric_generation_result = MagicMock(
+            return_value=("metrics/orders.yml", "semantic/orders.yml", {"m": "SELECT 1"})
+        )
+        hooks._process_metric_with_semantic_model = AsyncMock()
+        hooks._resolve_path = MagicMock(side_effect=lambda p, k: f"/ws/sm/{p}" if p else p)
+
+        await hooks._handle_end_metric_generation({"result": {"metric_file": "metrics/orders.yml"}})
+
+        hooks._resolve_path.assert_any_call("metrics/orders.yml", "semantic")
+        hooks._resolve_path.assert_any_call("semantic/orders.yml", "semantic")
+        hooks._process_metric_with_semantic_model.assert_awaited_once_with(
+            "/ws/sm/semantic/orders.yml", "/ws/sm/metrics/orders.yml", {"m": "SELECT 1"}
+        )
+
+    async def test_no_semantic_model_falls_back_to_single_file(self, hooks):
+        hooks._extract_metric_generation_result = MagicMock(return_value=("metrics/orders.yml", None, {"m": "SQL"}))
+        hooks._process_single_file = AsyncMock()
+        hooks._resolve_path = MagicMock(side_effect=lambda p, k: f"/ws/sm/{p}" if p else p)
+
+        await hooks._handle_end_metric_generation({"result": {}})
+
+        hooks._process_single_file.assert_awaited_once_with("/ws/sm/metrics/orders.yml", metric_sqls={"m": "SQL"})
+
+    async def test_cancelled_exception_absorbed(self, hooks):
+        hooks._extract_metric_generation_result = MagicMock(return_value=("m.yml", None, {}))
+        hooks._resolve_path = MagicMock(side_effect=lambda p, k: p)
+        hooks._process_single_file = AsyncMock(side_effect=GenerationCancelledException("user-cancel"))
+        await hooks._handle_end_metric_generation({"result": {}})  # must not raise
+
+    async def test_unexpected_exception_absorbed(self, hooks):
+        hooks._extract_metric_generation_result = MagicMock(side_effect=RuntimeError("boom"))
+        await hooks._handle_end_metric_generation({"result": {}})  # must not raise
