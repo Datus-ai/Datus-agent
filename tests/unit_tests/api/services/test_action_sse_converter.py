@@ -653,8 +653,8 @@ class TestActionToSSEEvent:
         assert event.event == "message"
         assert event.data.type == SSEDataType.CREATE_MESSAGE
         content = event.data.payload.content[0]
-        assert content.type == "thinking-delta"
-        assert content.payload["delta"] == "Hello "
+        assert content.type == "thinking"
+        assert content.payload["content"] == "Hello "
 
     def test_thinking_delta_subsequent_appends_message(self):
         """Subsequent thinking_delta uses APPEND_MESSAGE SSE type."""
@@ -671,8 +671,8 @@ class TestActionToSSEEvent:
         assert event.event == "message"
         assert event.data.type == SSEDataType.APPEND_MESSAGE
         content = event.data.payload.content[0]
-        assert content.type == "thinking-delta"
-        assert content.payload["delta"] == "world"
+        assert content.type == "thinking"
+        assert content.payload["content"] == "world"
 
     def test_thinking_delta_skipped_when_stream_disabled(self):
         """thinking_delta returns None when stream_thinking=False (default)."""
@@ -697,7 +697,7 @@ class TestActionToSSEEvent:
         assert event is not None
         assert event.event == "message"
         assert event.data.type == SSEDataType.CREATE_MESSAGE  # is_first_delta defaults to True
-        assert event.data.payload.content[0].payload["delta"] == ""
+        assert event.data.payload.content[0].payload["content"] == ""
 
     def test_thinking_delta_non_dict_output(self):
         """thinking_delta with non-dict output defaults to empty delta."""
@@ -710,7 +710,7 @@ class TestActionToSSEEvent:
         event = action_to_sse_event(action, event_id=23, message_id="msg-23", stream_thinking=True)
         assert event is not None
         assert event.event == "message"
-        assert event.data.payload.content[0].payload["delta"] == ""
+        assert event.data.payload.content[0].payload["content"] == ""
 
     def test_thinking_delta_with_depth(self):
         """thinking_delta carries depth and parent_action_id."""
