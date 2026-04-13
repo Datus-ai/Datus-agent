@@ -4,7 +4,7 @@
 """Unit tests for datus.claw.bridge.ChannelBridge."""
 
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
@@ -342,7 +342,7 @@ class TestChannelBridge:
         assert long_text in adapter.sent[0].text
 
     @pytest.mark.asyncio
-    async def test_new_command_resets_session(self, setup):
+    async def test_new_command_clears_session(self, setup):
         bridge, adapter, task_manager = setup
 
         mock_task = MagicMock()
@@ -359,15 +359,20 @@ class TestChannelBridge:
         first_call = task_manager.start_chat.call_args
         first_session = first_call.args[1].session_id
 
-        # Send /new to reset
-        await bridge.handle_message(_make_inbound("/new", message_id="m2"), adapter)
-        assert "Session reset" in adapter.sent[-1].text
+        # Send /new to clear session
+        with patch("datus.claw.bridge.SessionManager") as mock_sm_cls:
+            mock_sm = MagicMock()
+            mock_sm.session_exists.return_value = True
+            mock_sm_cls.return_value = mock_sm
+            await bridge.handle_message(_make_inbound("/new", message_id="m2"), adapter)
+            mock_sm.clear_session.assert_called_once_with(first_session)
+        assert "Session cleared" in adapter.sent[-1].text
 
-        # Next message — should use a different session id
+        # Next message — should use the SAME session id (no suffix rotation)
         await bridge.handle_message(_make_inbound("hello again", message_id="m3"), adapter)
         second_call = task_manager.start_chat.call_args
         second_session = second_call.args[1].session_id
-        assert first_session != second_session
+        assert first_session == second_session
 
     @pytest.mark.asyncio
     async def test_new_command_case_insensitive(self, setup):
@@ -376,7 +381,7 @@ class TestChannelBridge:
         for cmd in ["/new", "/NEW", "new", "reset", "/Reset"]:
             await bridge.handle_message(_make_inbound(cmd), adapter)
 
-        assert all("Session reset" in m.text for m in adapter.sent)
+        assert all("Session cleared" in m.text for m in adapter.sent)
 
     @pytest.mark.asyncio
     async def test_error_event(self, setup):

@@ -5,7 +5,6 @@
 """ChannelBridge — routes IM messages through ChatTaskManager and sends responses back."""
 
 import asyncio
-import uuid
 from collections import OrderedDict
 from typing import Dict, Optional
 
@@ -26,6 +25,7 @@ from datus.claw.models import (
 )
 from datus.claw.richtext.parser import markdown_to_ir
 from datus.configuration.agent_config import AgentConfig
+from datus.models.session_manager import SessionManager
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -51,10 +51,6 @@ class ChannelBridge:
         self._formatter = ToolOutputFormatter()
         # Lock protects mutable state accessed from concurrent handle_message calls.
         self._lock = asyncio.Lock()
-        # Mapping from conversation key -> current session suffix.
-        # When the user sends /new, we rotate the suffix so that a fresh
-        # session_id is generated for subsequent messages.
-        self._session_suffixes: Dict[str, str] = {}
         # Per-conversation verbose override set via /verbose command
         self._verbose_overrides: Dict[str, Verbose] = {}
         # Track bot message IDs for reaction feedback: {bot_msg_id -> context}
@@ -71,17 +67,16 @@ class ChannelBridge:
         return "_".join(parts)
 
     def build_session_id(self, msg: InboundMessage) -> str:
-        """Deterministic session id from channel + conversation (+ thread) + suffix."""
+        """Deterministic session id from channel + conversation (+ thread)."""
         conv_key = self._conversation_key(msg)
-        suffix = self._session_suffixes.get(conv_key, "")
-        if suffix:
-            return f"claw_{conv_key}_{suffix}"
         return f"claw_{conv_key}"
 
-    def rotate_session(self, msg: InboundMessage) -> None:
-        """Assign a new random suffix so subsequent messages use a fresh session."""
-        conv_key = self._conversation_key(msg)
-        self._session_suffixes[conv_key] = str(uuid.uuid4())[:8]
+    def clear_session(self, msg: InboundMessage) -> None:
+        """Clear the conversation history for the current session."""
+        session_id = self.build_session_id(msg)
+        session_mgr = SessionManager(session_dir=self._agent_config.session_dir)
+        if session_mgr.session_exists(session_id):
+            session_mgr.clear_session(session_id)
 
     def set_verbose(self, msg: InboundMessage, level: Verbose) -> None:
         """Override the verbose level for the conversation that *msg* belongs to."""

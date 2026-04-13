@@ -117,13 +117,12 @@ class NewSessionCommand(ChatCommand):
         return "Reset the current conversation session"
 
     async def execute(self, ctx: CommandContext) -> None:
-        ctx.bridge.rotate_session(ctx.msg)
-        new_sid = ctx.bridge.build_session_id(ctx.msg)
+        ctx.bridge.clear_session(ctx.msg)
         reply = OutboundMessage(
             channel_id=ctx.msg.channel_id,
             conversation_id=ctx.msg.conversation_id,
             thread_id=ctx.msg.thread_id,
-            text=f"Session reset. New session: `{new_sid}`",
+            text="Session cleared.",
         )
         await ctx.adapter.send_message(reply)
 
