@@ -117,7 +117,7 @@ def search_metrics_input() -> List[Dict[str, Any]]:
 
 @pytest.fixture
 def agent_config() -> AgentConfig:
-    agent_config = load_acceptance_config(namespace="california_schools")  # Use a valid service.databases key
+    agent_config = load_acceptance_config(namespace="bird_sqlite")  # Uses bird_sqlite namespace key from test config
     return agent_config
 
 
