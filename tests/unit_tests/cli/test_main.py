@@ -196,7 +196,15 @@ class TestMain:
         mock_app.run.assert_called_once()
 
     def test_main_skill_subcommand(self):
-        """main() delegates to skill handler when first arg is 'skill'."""
+        """main() delegates to skill handler when first arg is 'skill'.
+
+        The mocked ``sys.exit`` must raise ``SystemExit`` (like the real one) so
+        execution actually stops at the skill dispatch. A silent no-op lets
+        ``main()`` fall through into ``Application().run()``, whose argparse
+        rejects ``skill list`` and — because ``sys.exit`` is still a no-op —
+        returns a partial Namespace that ends up launching the interactive REPL,
+        which blocks on prompt_toolkit stdin.
+        """
         from datus.cli.main import main
 
         mock_skill_args = SimpleNamespace(debug=False, subcommand="skill")
@@ -219,7 +227,9 @@ class TestMain:
                     "datus.cli.skill_cli": mock_skill_cli,
                 },
             ),
-            patch("sys.exit") as mock_exit,
+            patch("sys.exit", side_effect=SystemExit) as mock_exit,
         ):
-            main()
+            with pytest.raises(SystemExit):
+                main()
         mock_exit.assert_any_call(0)
+        mock_skill_cli.run_skill_command.assert_called_once_with(mock_skill_args)
