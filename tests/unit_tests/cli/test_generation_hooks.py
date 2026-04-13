@@ -233,6 +233,20 @@ class TestResolvePath:
         h, _ = self._make_hooks(broker)
         assert h._resolve_path("metrics/../orders.yml", "semantic") == "/ws/sm/orders.yml"
 
+    def test_rejects_symlink_that_escapes_workspace(self, broker, tmp_path):
+        """A symlink inside the workspace whose target is outside must be rejected."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "secret.yml").write_text("x")
+        (workspace / "leak.yml").symlink_to(outside / "secret.yml")
+
+        h, _ = self._make_hooks(broker, sem=str(workspace))
+        # Textually the path looks inside the workspace, but realpath dereferences
+        # the symlink to /…/outside/secret.yml which escapes the workspace root.
+        assert h._resolve_path("leak.yml", "semantic") == "leak.yml"
+
     def test_uses_current_namespace_at_call_time(self, broker):
         """Sub-agent switches change current_namespace; resolution must follow."""
         h, cfg = self._make_hooks(broker, namespace="ns_a")

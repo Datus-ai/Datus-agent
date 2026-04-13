@@ -106,8 +106,10 @@ class GenerationHooks(AgentHooks):
 
         candidate = os.path.normpath(os.path.join(base_dir, path))
         try:
-            base_abs = os.path.abspath(base_dir)
-            candidate_abs = os.path.abspath(candidate)
+            # Use realpath (not abspath) so symlinked paths pointing outside the
+            # workspace are still detected as escapes.
+            base_abs = os.path.realpath(base_dir)
+            candidate_abs = os.path.realpath(candidate)
             if os.path.commonpath([base_abs, candidate_abs]) != base_abs:
                 logger.warning(
                     f"Rejected path {path!r} for kind={kind}: resolved {candidate_abs!r} "
@@ -193,13 +195,11 @@ class GenerationHooks(AgentHooks):
                 logger.warning(f"Could not extract metric_file from end_metric_generation result: {result}")
                 return
 
-            # Convert relative paths to absolute paths
-            if self.agent_config:
-                base_dir = str(self.agent_config.path_manager.semantic_model_path(self.agent_config.current_database))
-                if metric_file and not os.path.isabs(metric_file):
-                    metric_file = os.path.join(base_dir, metric_file)
-                if semantic_model_file and not os.path.isabs(semantic_model_file):
-                    semantic_model_file = os.path.join(base_dir, semantic_model_file)
+            # Resolve relative paths against the current sub-agent's semantic-model
+            # workspace using the shared resolver. This applies the same containment
+            # check (path traversal rejection) as the other generation kinds.
+            metric_file = self._resolve_path(metric_file, "semantic")
+            semantic_model_file = self._resolve_path(semantic_model_file, "semantic")
 
             logger.debug(
                 f"Processing metric generation: metric_file={metric_file}, "
