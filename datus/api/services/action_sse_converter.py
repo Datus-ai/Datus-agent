@@ -156,6 +156,7 @@ def _build_interaction_content(action: ActionHistory) -> List[IMessageContent]:
     contents = input_data.get("contents", [])
     choices_list = input_data.get("choices", [])
     default_choices = input_data.get("default_choices", [])
+    multi_selects = input_data.get("multi_selects", [])
     content_type = input_data.get("content_type", "markdown")
     allow_free_text = input_data.get("allow_free_text", False)
 
@@ -164,6 +165,7 @@ def _build_interaction_content(action: ActionHistory) -> List[IMessageContent]:
         choices = choices_list[i] if i < len(choices_list) else {}
         options = [{"key": k, "title": v} for k, v in choices.items()] if choices else None
         default_choice = default_choices[i] if i < len(default_choices) else ""
+        allow_multi_select = multi_selects[i] if i < len(multi_selects) else False
         requests_payload.append(
             {
                 "content": content,
@@ -171,6 +173,7 @@ def _build_interaction_content(action: ActionHistory) -> List[IMessageContent]:
                 "defaultChoice": default_choice,
                 "contentType": content_type,
                 "allowFreeText": allow_free_text,
+                "multiSelect": allow_multi_select,
             }
         )
 

@@ -201,7 +201,14 @@ async def submit_user_interaction(
             errorMessage="Interaction broker not found for this session",
         )
 
-    user_choice = request.input[0] if len(request.input) == 1 else json.dumps(request.input)
+    # Convert List[List[str]] → broker format
+    # Single-element lists unwrap to string, multi-element stay as list
+    answers = [ans[0] if len(ans) == 1 else ans for ans in request.input]
+    if len(answers) == 1:
+        answer = answers[0]
+        user_choice = json.dumps(answer) if isinstance(answer, list) else answer
+    else:
+        user_choice = json.dumps(answers)
     success = await broker.submit(request.interaction_key, user_choice)
     return Result[dict](
         success=success,

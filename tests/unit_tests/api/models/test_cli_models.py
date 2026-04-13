@@ -2,9 +2,12 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""Unit tests for SSEEndData token fields in datus/api/models/cli_models.py."""
+"""Unit tests for datus/api/models/cli_models.py."""
 
-from datus.api.models.cli_models import SSEEndData
+import pytest
+from pydantic import ValidationError
+
+from datus.api.models.cli_models import SSEEndData, UserInteractionInput
 
 
 class TestSSEEndDataTokenFields:
@@ -61,3 +64,34 @@ class TestSSEEndDataTokenFields:
         assert "input_tokens" in d
         assert d["input_tokens"] == 42
         assert d["output_tokens"] == 0
+
+
+class TestUserInteractionInput:
+    """Tests for UserInteractionInput with List[List[str]] input type."""
+
+    def test_single_select(self):
+        """Single-select: input=[['2']]."""
+        obj = UserInteractionInput(session_id="s1", interaction_key="k1", input=[["2"]])
+        assert obj.input == [["2"]]
+
+    def test_multi_select(self):
+        """Multi-select: input=[['1','3']]."""
+        obj = UserInteractionInput(session_id="s1", interaction_key="k1", input=[["1", "3"]])
+        assert obj.input == [["1", "3"]]
+
+    def test_batch_mixed(self):
+        """Batch: single + multi select."""
+        obj = UserInteractionInput(session_id="s1", interaction_key="k1", input=[["2"], ["1", "3"]])
+        assert len(obj.input) == 2
+        assert obj.input[0] == ["2"]
+        assert obj.input[1] == ["1", "3"]
+
+    def test_rejects_flat_strings(self):
+        """Old format List[str] should be rejected by validation."""
+        with pytest.raises(ValidationError):
+            UserInteractionInput(session_id="s1", interaction_key="k1", input=["2", "3"])
+
+    def test_rejects_empty_input(self):
+        """Missing input raises validation error."""
+        with pytest.raises(ValidationError):
+            UserInteractionInput(session_id="s1", interaction_key="k1")

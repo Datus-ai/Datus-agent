@@ -440,7 +440,10 @@ class UserInteractionInput(BaseModel):
 
     session_id: str = Field(..., description="Session ID for the active chat task")
     interaction_key: str = Field(..., description="Interaction key (action_id) for the interaction request")
-    input: List[str] = Field(..., description="List of user answers, one per request")
+    input: List[List[str]] = Field(
+        ...,
+        description="List of user answers, one per request. Single-select: ['key'], multi-select: ['key1', 'key2'].",
+    )
 
 
 class StreamChatChunk(BaseModel):
