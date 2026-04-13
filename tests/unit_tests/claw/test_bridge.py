@@ -1076,7 +1076,7 @@ class TestVerboseLevels:
 
 
 class TestStreamIdAndFinalize:
-    """Tests that stream_id is set on outbound messages and _finalize_stream is called."""
+    """Tests that stream_id is set on outbound messages and finalize_stream is called."""
 
     @pytest_asyncio.fixture
     async def setup(self):
@@ -1110,10 +1110,10 @@ class TestStreamIdAndFinalize:
 
     @pytest.mark.asyncio
     async def test_finalize_stream_called_on_adapter_with_method(self, setup):
-        """If adapter has _finalize_stream, it should be called in finally."""
+        """finalize_stream should be called in finally block."""
         bridge, adapter, task_manager = setup
 
-        adapter._finalize_stream = AsyncMock()
+        adapter.finalize_stream = AsyncMock()
 
         mock_task = MagicMock()
         task_manager.start_chat = AsyncMock(return_value=mock_task)
@@ -1126,14 +1126,14 @@ class TestStreamIdAndFinalize:
 
         await bridge.handle_message(_make_inbound("q"), adapter)
 
-        adapter._finalize_stream.assert_awaited_once()
+        adapter.finalize_stream.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_finalize_stream_called_even_on_error(self, setup):
-        """_finalize_stream should be called even when streaming raises."""
+        """finalize_stream should be called even when streaming raises."""
         bridge, adapter, task_manager = setup
 
-        adapter._finalize_stream = AsyncMock()
+        adapter.finalize_stream = AsyncMock()
 
         mock_task = MagicMock()
         task_manager.start_chat = AsyncMock(return_value=mock_task)
@@ -1147,15 +1147,12 @@ class TestStreamIdAndFinalize:
         with pytest.raises(RuntimeError, match="boom"):
             await bridge.handle_message(_make_inbound("q"), adapter)
 
-        adapter._finalize_stream.assert_awaited_once()
+        adapter.finalize_stream.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_no_finalize_on_adapter_without_method(self, setup):
-        """Adapters without _finalize_stream should not cause errors."""
+    async def test_no_finalize_on_adapter_without_override(self, setup):
+        """Adapters with default no-op finalize_stream should not cause errors."""
         bridge, adapter, task_manager = setup
-
-        # _StubAdapter has no _finalize_stream — this should just work
-        assert not hasattr(adapter, "_finalize_stream")
 
         mock_task = MagicMock()
         task_manager.start_chat = AsyncMock(return_value=mock_task)

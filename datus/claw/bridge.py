@@ -211,13 +211,11 @@ class ChannelBridge:
             has_error = True
             raise
         finally:
-            # Finalize card stream if adapter supports it
-            _finalize = getattr(adapter, "_finalize_stream", None)
-            if _finalize:
-                try:
-                    await _finalize()
-                except Exception as e:
-                    logger.debug("Failed to finalize stream: %s", e)
+            # Finalize card stream (no-op for adapters that don't support streaming)
+            try:
+                await adapter.finalize_stream(stream_id)
+            except Exception as e:
+                logger.debug("Failed to finalize stream: %s", e)
             try:
                 await adapter.remove_reaction(msg.conversation_id, msg.message_id, PROCESSING_EMOJI, msg.thread_id)
             except Exception as e:

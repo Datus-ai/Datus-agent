@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import dataclasses
 import json
 import threading
 import uuid
@@ -59,6 +60,16 @@ _STREAMING_CARD_TEMPLATE: dict = {
 }
 
 
+@dataclasses.dataclass
+class _StreamState:
+    """Per-stream state for a single streaming card session."""
+
+    card_id: str
+    msg_id: str
+    seq: int = 1
+    accumulated: str = ""
+
+
 class FeishuAdapter(ChannelAdapter):
     """Feishu IM adapter using the official ``lark-oapi`` WebSocket long connection.
 
@@ -84,12 +95,8 @@ class FeishuAdapter(ChannelAdapter):
         self._lark_client: Optional[object] = None
         # Cache reaction_id for remove_reaction: {(msg_id, emoji) -> reaction_id}
         self._processing_reactions: dict[tuple[str, str], str] = {}
-        # Streaming card state
-        self._stream_card_id: Optional[str] = None
-        self._stream_msg_id: Optional[str] = None
-        self._stream_id: Optional[str] = None
-        self._stream_seq: int = 0
-        self._stream_accumulated: str = ""
+        # Streaming card state — keyed by stream_id for concurrency safety
+        self._streams: dict[str, _StreamState] = {}
 
     def _dispatch_to_loop(self, coro) -> None:
         """Schedule *coro* on the main event loop from a sync SDK callback thread.
@@ -331,6 +338,7 @@ class FeishuAdapter(ChannelAdapter):
                 logger.warning("Feishu WS thread for '%s' did not exit within timeout.", self.channel_id)
 
         self._processing_reactions.clear()
+        self._streams.clear()
         self._ws_client = None
         self._lark_client = None
         self._ws_thread = None
@@ -410,13 +418,15 @@ class FeishuAdapter(ChannelAdapter):
         if message.sql:
             text += f"\n\n```sql\n{message.sql}\n```"
 
-        if self._stream_id != message.stream_id:
+        stream_id = message.stream_id
+        state = self._streams.get(stream_id)
+        if state is None:
             # First message in this stream — create the streaming card
             return await self._start_stream(message, text)
         else:
             # Subsequent message — append content to existing card
-            self._stream_accumulated += f"\n\n{text}"
-            await self._update_card_content()
+            state.accumulated += f"\n\n{text}"
+            await self._update_card_content(stream_id)
             return None
 
     async def _start_stream(self, message: OutboundMessage, text: str) -> Optional[str]:
@@ -475,11 +485,12 @@ class FeishuAdapter(ChannelAdapter):
                 logger.warning("Failed to convert message_id to card_id; falling back to non-streaming")
                 return msg_id
 
-            self._stream_card_id = card_id
-            self._stream_msg_id = msg_id
-            self._stream_id = message.stream_id
-            self._stream_seq = 1
-            self._stream_accumulated = text
+            self._streams[message.stream_id] = _StreamState(
+                card_id=card_id,
+                msg_id=msg_id,
+                seq=1,
+                accumulated=text,
+            )
 
             logger.debug("Feishu streaming card created: card_id=%s, message_id=%s", card_id, msg_id)
             return msg_id
@@ -515,9 +526,10 @@ class FeishuAdapter(ChannelAdapter):
             logger.error("Failed to convert message_id to card_id: %s", e)
             return None
 
-    async def _update_card_content(self) -> None:
+    async def _update_card_content(self, stream_id: str) -> None:
         """Push accumulated content to the streaming card element."""
-        if not self._stream_card_id or not self._lark_client:
+        state = self._streams.get(stream_id)
+        if not state or not self._lark_client:
             return
         try:
             from lark_oapi.api.cardkit.v1 import ContentCardElementRequest, ContentCardElementRequestBody
@@ -525,13 +537,13 @@ class FeishuAdapter(ChannelAdapter):
             body = (
                 ContentCardElementRequestBody.builder()
                 .uuid(str(uuid.uuid4()))
-                .content(self._stream_accumulated)
-                .sequence(self._stream_seq)
+                .content(state.accumulated)
+                .sequence(state.seq)
                 .build()
             )
             request = (
                 ContentCardElementRequest.builder()
-                .card_id(self._stream_card_id)
+                .card_id(state.card_id)
                 .element_id("content_md")
                 .request_body(body)
                 .build()
@@ -543,7 +555,7 @@ class FeishuAdapter(ChannelAdapter):
                 self._lark_client.cardkit.v1.card_element.content,
                 request,
             )
-            self._stream_seq += 1
+            state.seq += 1
             if not response.success():
                 logger.warning(
                     "Failed to update streaming card content (code=%s): %s",
@@ -553,23 +565,20 @@ class FeishuAdapter(ChannelAdapter):
         except Exception as e:
             logger.warning("Failed to update streaming card content: %s", e)
 
-    async def _finalize_stream(self) -> None:
-        """Disable streaming_mode on the current card and reset state."""
-        if not self._stream_card_id or not self._lark_client:
-            self._reset_stream_state()
+    async def finalize_stream(self, stream_id: str) -> None:
+        """Disable streaming_mode on the card identified by *stream_id* and clean up."""
+        state = self._streams.get(stream_id)
+        if not state or not self._lark_client:
+            self._streams.pop(stream_id, None)
             return
         try:
             from lark_oapi.api.cardkit.v1 import SettingsCardRequest, SettingsCardRequestBody
 
             settings = json.dumps({"config": {"streaming_mode": False}})
             body = (
-                SettingsCardRequestBody.builder()
-                .settings(settings)
-                .uuid(str(uuid.uuid4()))
-                .sequence(self._stream_seq)
-                .build()
+                SettingsCardRequestBody.builder().settings(settings).uuid(str(uuid.uuid4())).sequence(state.seq).build()
             )
-            request = SettingsCardRequest.builder().card_id(self._stream_card_id).request_body(body).build()
+            request = SettingsCardRequest.builder().card_id(state.card_id).request_body(body).build()
 
             loop = asyncio.get_running_loop()
             response = await loop.run_in_executor(
@@ -586,15 +595,7 @@ class FeishuAdapter(ChannelAdapter):
         except Exception as e:
             logger.warning("Failed to finalize streaming card: %s", e)
         finally:
-            self._reset_stream_state()
-
-    def _reset_stream_state(self) -> None:
-        """Clear all streaming card state."""
-        self._stream_card_id = None
-        self._stream_msg_id = None
-        self._stream_id = None
-        self._stream_seq = 0
-        self._stream_accumulated = ""
+            self._streams.pop(stream_id, None)
 
     async def add_reaction(
         self, conversation_id: str, message_id: str, emoji: str, thread_id: Optional[str] = None

@@ -320,10 +320,10 @@ async def test_streaming_first_message_creates_card():
     result = await adapter.send_message(_make_streaming_message("first chunk"))
 
     assert result == "msg_stream_1"
-    assert adapter._stream_card_id == "card_stream_1"
-    assert adapter._stream_id == "stream_1"
-    assert adapter._stream_seq == 1
-    assert adapter._stream_accumulated == "first chunk"
+    assert adapter._streams["stream_1"].card_id == "card_stream_1"
+    assert "stream_1" in adapter._streams
+    assert adapter._streams["stream_1"].seq == 1
+    assert adapter._streams["stream_1"].accumulated == "first chunk"
     # im.v1.message.create should have been called
     adapter._lark_client.im.v1.message.create.assert_called_once()
     # cardkit id_convert should have been called
@@ -362,8 +362,8 @@ async def test_streaming_subsequent_message_updates_card():
 
     # Card element content should have been called for the update
     assert adapter._lark_client.cardkit.v1.card_element.content.call_count == 1
-    assert "chunk1\n\nchunk2" in adapter._stream_accumulated
-    assert adapter._stream_seq == 2
+    assert "chunk1\n\nchunk2" in adapter._streams["stream_1"].accumulated
+    assert adapter._streams["stream_1"].seq == 2
 
 
 @pytest.mark.asyncio
@@ -374,7 +374,7 @@ async def test_streaming_with_sql_appended():
 
     await adapter.send_message(_make_streaming_message("Result:", sql="SELECT 1"))
 
-    assert "```sql\nSELECT 1\n```" in adapter._stream_accumulated
+    assert "```sql\nSELECT 1\n```" in adapter._streams["stream_1"].accumulated
 
 
 @pytest.mark.asyncio
@@ -384,14 +384,11 @@ async def test_finalize_stream_disables_streaming():
     adapter._lark_client = _mock_lark_client(message_id="msg_f", card_id="card_f")
 
     await adapter.send_message(_make_streaming_message("content"))
-    await adapter._finalize_stream()
+    await adapter.finalize_stream("stream_1")
 
     adapter._lark_client.cardkit.v1.card.settings.assert_called_once()
-    # State should be reset
-    assert adapter._stream_card_id is None
-    assert adapter._stream_id is None
-    assert adapter._stream_seq == 0
-    assert adapter._stream_accumulated == ""
+    # State should be cleaned up
+    assert "stream_1" not in adapter._streams
 
 
 @pytest.mark.asyncio
@@ -401,7 +398,7 @@ async def test_finalize_stream_noop_when_no_stream():
     adapter._lark_client = _mock_lark_client()
 
     # No stream started — should not raise or call any API
-    await adapter._finalize_stream()
+    await adapter.finalize_stream("nonexistent_stream")
     adapter._lark_client.cardkit.v1.card.settings.assert_not_called()
 
 
@@ -412,11 +409,11 @@ async def test_streaming_different_stream_id_creates_new_card():
     adapter._lark_client = _mock_lark_client(message_id="msg_a", card_id="card_a")
 
     await adapter.send_message(_make_streaming_message("first", stream_id="stream_a"))
-    assert adapter._stream_id == "stream_a"
+    assert "stream_a" in adapter._streams
 
     # New stream_id — should create a new card
     await adapter.send_message(_make_streaming_message("second", stream_id="stream_b"))
-    assert adapter._stream_id == "stream_b"
+    assert "stream_b" in adapter._streams
     # im.v1.message.create should have been called twice
     assert adapter._lark_client.im.v1.message.create.call_count == 2
 
@@ -447,7 +444,7 @@ async def test_streaming_fallback_on_id_convert_failure():
 
     assert result == "msg_fallback"
     # Stream state should NOT be set since id_convert failed
-    assert adapter._stream_card_id is None
+    assert "stream_1" not in adapter._streams
 
 
 # ---------------------------------------------------------------------------

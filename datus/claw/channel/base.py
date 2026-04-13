@@ -68,3 +68,10 @@ class ChannelAdapter(ABC):
         self, conversation_id: str, message_id: str, emoji: str, thread_id: Optional[str] = None
     ) -> None:
         """Remove an emoji reaction from a message."""
+
+    async def finalize_stream(self, stream_id: str) -> None:
+        """Finalize a streaming session and clean up associated resources.
+
+        Subclasses that support streaming cards (e.g. Feishu) should override
+        this method. The default implementation is a no-op.
+        """
