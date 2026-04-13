@@ -90,15 +90,36 @@ class GenerationHooks(AgentHooks):
         the base directory for ``kind`` (resolved from the live ``agent_config``);
         if the base directory cannot be determined, the path is returned as-is
         so downstream existence checks can surface the real failure.
+
+        Path traversal (``"../etc/passwd"``) is rejected: if the joined path
+        escapes the workspace root, the original ``path`` is returned so the
+        downstream existence check fails naturally instead of operating on a
+        file outside the workspace.
         """
         if not path:
             return path
         if os.path.isabs(path):
             return path
         base_dir = self._get_base_dir(kind)
-        if base_dir:
-            return os.path.normpath(os.path.join(base_dir, path))
-        return path
+        if not base_dir:
+            return path
+
+        candidate = os.path.normpath(os.path.join(base_dir, path))
+        try:
+            base_abs = os.path.abspath(base_dir)
+            candidate_abs = os.path.abspath(candidate)
+            if os.path.commonpath([base_abs, candidate_abs]) != base_abs:
+                logger.warning(
+                    f"Rejected path {path!r} for kind={kind}: resolved {candidate_abs!r} "
+                    f"escapes workspace {base_abs!r}."
+                )
+                return path
+        except ValueError:
+            # commonpath raises when inputs mix drives or relative/absolute — treat as escape.
+            logger.warning(f"Rejected path {path!r} for kind={kind}: cannot verify containment in {base_dir!r}.")
+            return path
+
+        return candidate
 
     async def on_start(self, context, agent) -> None:
         pass

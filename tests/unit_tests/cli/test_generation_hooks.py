@@ -218,6 +218,21 @@ class TestResolvePath:
         h = GenerationHooks(broker=broker, agent_config=None)
         assert h._resolve_path("orders.yml", "semantic") == "orders.yml"
 
+    def test_rejects_traversal_escape(self, broker):
+        """Relative paths that escape the workspace root must be rejected."""
+        h, _ = self._make_hooks(broker)
+        assert h._resolve_path("../../etc/passwd", "semantic") == "../../etc/passwd"
+
+    def test_rejects_traversal_escape_that_normalizes_outside(self, broker):
+        """`a/../../b` normalizes outside the workspace and must be rejected."""
+        h, _ = self._make_hooks(broker)
+        assert h._resolve_path("a/../../b.yml", "semantic") == "a/../../b.yml"
+
+    def test_allows_traversal_that_stays_inside(self, broker):
+        """`metrics/../orders.yml` normalizes inside the workspace and is allowed."""
+        h, _ = self._make_hooks(broker)
+        assert h._resolve_path("metrics/../orders.yml", "semantic") == "/ws/sm/orders.yml"
+
     def test_uses_current_namespace_at_call_time(self, broker):
         """Sub-agent switches change current_namespace; resolution must follow."""
         h, cfg = self._make_hooks(broker, namespace="ns_a")
