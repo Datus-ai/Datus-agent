@@ -5,12 +5,14 @@
 """OpenAI-compatible base model for models that use OpenAI-compatible APIs."""
 
 import asyncio
+import hashlib
 import json
 import threading
 import time
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from urllib.parse import urlparse
 
 import httpx
 import litellm
@@ -157,6 +159,56 @@ class OpenAICompatibleModel(LLMBaseModel):
     def _get_base_url(self) -> Optional[str]:
         """Get base URL from config. Override in subclasses if needed."""
         return self.model_config.base_url
+
+    def _is_official_openai_api(self) -> bool:
+        """Return True only for official OpenAI API endpoints."""
+        if self.model_config.type != "openai":
+            return False
+        if not self.base_url:
+            return False
+        try:
+            hostname = (urlparse(self.base_url).hostname or "").lower()
+        except Exception:
+            return False
+        return hostname == "api.openai.com"
+
+    def _default_prompt_cache_retention(self) -> Optional[str]:
+        """Choose a safe default prompt cache retention policy for OpenAI."""
+        if not self._is_official_openai_api():
+            return None
+        if self.model_name.startswith("gpt-5.4"):
+            return "24h"
+        return "in_memory"
+
+    def _default_prompt_cache_key(self, agent_name: str) -> Optional[str]:
+        """Build a stable prompt cache key for requests with shared prefixes."""
+        if not self._is_official_openai_api():
+            return None
+
+        node_name = ""
+        namespace = ""
+        database = ""
+        if getattr(self, "current_node", None):
+            try:
+                node_name = self.current_node.get_node_name()
+            except Exception:
+                node_name = getattr(self.current_node, "node_type", "") or ""
+            agent_config = getattr(self.current_node, "agent_config", None)
+            if agent_config:
+                namespace = getattr(agent_config, "current_namespace", "") or ""
+                database = getattr(agent_config, "current_database", "") or ""
+
+        raw_key = "|".join(
+            [
+                "openai-prompt-cache",
+                self.model_name,
+                agent_name,
+                node_name,
+                namespace,
+                database,
+            ]
+        )
+        return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()[:32]
 
     @staticmethod
     def _setup_custom_json_encoder():
@@ -587,6 +639,13 @@ class OpenAICompatibleModel(LLMBaseModel):
         if self.litellm_adapter.is_thinking_model:
             model_settings_kwargs["reasoning"] = Reasoning(effort="medium")
             logger.debug(f"Enabled thinking mode for model: {self.model_name}")
+
+        prompt_cache_retention = self._default_prompt_cache_retention()
+        if prompt_cache_retention:
+            model_settings_kwargs["prompt_cache_retention"] = prompt_cache_retention
+            prompt_cache_key = self._default_prompt_cache_key(agent_name)
+            if prompt_cache_key:
+                model_settings_kwargs["extra_args"] = {"prompt_cache_key": prompt_cache_key}
 
         agent_kwargs["model_settings"] = ModelSettings(**model_settings_kwargs)
 

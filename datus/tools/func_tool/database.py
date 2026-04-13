@@ -912,7 +912,10 @@ class DBFuncTool:
                     logger.debug("Checking for semantic models")
                     # Use coordinate values (resolved and stripped) for lookup
                     model = self._get_semantic_model(
-                        coordinate.catalog, coordinate.database, coordinate.schema, coordinate.table
+                        coordinate.catalog,
+                        coordinate.database,
+                        coordinate.schema,
+                        coordinate.table,
                     )
 
                     if model:

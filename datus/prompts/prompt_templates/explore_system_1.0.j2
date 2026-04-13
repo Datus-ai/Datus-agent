@@ -71,6 +71,12 @@ Current context:
 {% if namespace -%}
 - Database namespace: {{ namespace }}
 {% endif -%}
+{% if scoped_tables -%}
+- Scoped tables: {{ scoped_tables | join(", ") }}
+- IMPORTANT: Only use database tools against the scoped tables above. Do NOT rename, broaden, or explore outside this allowlist.
+- IMPORTANT: In scoped-table mode, do NOT call `list_tables`, `list_schemas`, `list_databases`, or `search_table`. Use `describe_table` on the scoped table first, then `read_query` only for the minimum sampling/probe queries needed to answer the task.
+- IMPORTANT: Once you have completed the requested profiling for the scoped table(s), stop immediately and return the findings. Do NOT continue exploratory probing.
+{% endif -%}
 {% if workspace_root -%}
 - Workspace root: {{ workspace_root }}
 {% endif -%}

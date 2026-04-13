@@ -29,47 +29,31 @@ This skill is the **authoritative source** for dialect translation, row-filterin
 
 ---
 
-## Data Reality Check Workflow (MANDATORY before any staging SQL)
+## Data Reality Check Workflow
 
-The data contract describes the **desired** schema, but source data often violates those claims. Before writing staging SQL, you MUST verify the reality with DB tools. **Contract claims lose to observed data** — if the data says something different, follow the data.
+The data contract describes the **desired** schema, but source data often violates those claims. **Contract claims lose to observed data** — if the data says something different, follow the data.
 
-### Required steps for every staging table
+### If explore pre-flight findings are available
 
-1. **Observe the raw source**: call `describe_table` on the `source_table` the spec points to. Note the **actual** column types — they are frequently VARCHAR even when the contract claims TIMESTAMP / BIGINT / BOOLEAN.
+When the user prompt includes a "Pre-Flight Data Reality Findings" section, it already contains per-column observations from a dedicated explore pass (schema types, cast test results, format samples). **Use those findings directly** — do NOT re-run the profiling steps below. The findings are factual; combine them with the contract spec to choose your casting strategy.
 
-2. **For every TIMESTAMP target column**, measure the cast success rate with `read_query`:
+### Schema discovery rules
 
-   ```sql
-   SELECT
-       COUNT(*)                                            AS total,
-       COUNT(TRY_CAST(col AS TIMESTAMP))                   AS cast_ok,
-       CAST(COUNT(TRY_CAST(col AS TIMESTAMP)) AS DOUBLE)
-         / NULLIF(COUNT(*), 0)                             AS success_rate
-   FROM raw.<source_table>
-   ```
+- **Raw tables live in the `raw.` schema** (e.g. `raw.user`, `raw.account_history`). Always qualify as `FROM raw.<table>`.
+- Use `list_tables(schema_name='raw')` and `describe_table('raw.<name>')` for discovery.
+- The DB file name (catalog) is **never** a valid schema prefix. `FROM _skill_scratch_pendo.user` is **wrong**; `FROM raw.user` is correct.
 
-   Interpret the result:
+### Cast strategy decision (when NO explore findings are available)
 
-   | success_rate | meaning | action |
-   |---|---|---|
-   | ≥ 0.95 | DuckDB can parse this format | Use `TRY_CAST` normally |
-   | < 0.95 (and > 0) | Mixed-quality data | Use `TRY_CAST`, accept partial NULLs, **do NOT filter** |
-   | 0.0 | Format not supported by DuckDB standard TIMESTAMP (e.g. strings with `+0800` style timezone) | Still use `TRY_CAST`, **all values will become NULL**, **MUST NOT add any `WHERE col IS NOT NULL` filter** — the rows must be preserved with NULL values. The contract's `not_null` claim on this column is a **spec wish**, not an executable rule, and gold solutions explicitly accept this violation. |
+For every TIMESTAMP / DATE target column where the raw source is VARCHAR, test with `read_query`:
 
-3. **For suspiciously-short VARCHAR ids**, run a quick sample with `read_query LIMIT 3` to see the actual format before applying `TRIM`, `length(...) > 0`, etc.
+1. **Plain cast**: `SELECT COUNT(*) AS total, COUNT(TRY_CAST(col AS TIMESTAMP)) AS cast_ok FROM raw.<table>` — if success_rate ≥ 0.95, use plain `TRY_CAST`.
+2. **Substring salvage**: `SELECT COUNT(*), COUNT(TRY_CAST(SUBSTRING(col, 1, 23) AS TIMESTAMP)) FROM raw.<table>` — if the plain cast fails but this succeeds, use `TRY_CAST(SUBSTRING(col, 1, 23) AS TIMESTAMP)`.
+3. **If both fail**: use plain `TRY_CAST` and accept NULLs — do NOT add `WHERE col IS NOT NULL`.
 
-### Strict rule: observation ≠ imitation
+### Output column naming rule
 
-The raw column names you see via `describe_table` are for **type checking and cast verification only**. The **output column names** MUST come from the contract's `columns:` section. Never copy raw column names into the final SELECT — always use the contract's renamed target columns. For example:
-
-- Raw: `raw.application.id` → Contract: `stg_lever__application.application_id`
-- Raw: `raw.user.creator_id` → Contract: `stg_lever__user.creator_user_id`
-
-If the contract renames it, you rename it. The DB check is for understanding source types, not for bypassing the contract's naming.
-
-### Why this workflow exists
-
-The DAComp DE benchmark includes a deliberate trap: contracts declare `created_at: TIMESTAMP not_null` while the raw data is VARCHAR with non-standard timezone strings that `TRY_CAST(...AS TIMESTAMP)` returns NULL for. A naive agent that trusts the contract's `not_null` and adds `WHERE created_at IS NOT NULL` drops 100% of rows. The gold solution uses `try_cast` and accepts NULL values without filtering. **Observe the data, follow the data.**
+Raw column names from `describe_table` are for type checking only. **Output column names MUST come from the contract's `columns:` section.** Never copy raw names into the final SELECT — always use the contract's renamed targets.
 
 ---
 
@@ -153,7 +137,7 @@ If the target column is produced by a cast (`TRY_CAST(x AS TIMESTAMP)`, `STRPTIM
 
 → **Do NOT add `WHERE col IS NOT NULL`.**
 
-The cast can silently produce NULLs when the raw format is non-standard (e.g. `+0800` timezone strings that DuckDB's standard TIMESTAMP parser rejects). The contract's `not_null` on a cast column is a **spec wish**, not an executable rule. Gold preserves those rows with NULL and the benchmark evaluator accepts it.
+The cast can silently produce NULLs when the raw format is non-standard — for example `+0800`-style timezone strings that DuckDB's standard TIMESTAMP parser rejects, or DATE strings with slashes instead of dashes, or INT strings with thousand separators. Any format DuckDB can't natively parse triggers the trap. The contract's `not_null` on a cast column is a **spec wish**, not an executable rule. Gold preserves those rows with NULL and the benchmark evaluator accepts it.
 
 Use the Data Reality Check success-rate test from earlier in this skill to confirm the cast behavior. If success_rate < 0.95, you MUST NOT filter that column.
 
@@ -186,25 +170,20 @@ SELECT
 FROM raw.users
 ```
 
-### Summary table
+### Decision summary
+
+Walk through every `constraints: [not_null]` column and classify it via the left column below; the right column tells you the action:
 
 | Situation | Action |
 |---|---|
-| Pass-through column, `constraints: [not_null]` | `WHERE col IS NOT NULL` |
+| Pass-through column (direct ref / TRIM / rename), `constraints: [not_null]` | `WHERE col IS NOT NULL` |
 | Pass-through PK, `not_null, unique` + `delete_row` rule | `WHERE LENGTH(pk) > 0` |
-| Cast-derived column (`TRY_CAST`, `STRPTIME`, ...), any constraint | **No WHERE filter**; let cast NULLs pass through |
+| Cast-derived column (`TRY_CAST`, `STRPTIME`, `to_timestamp`, …), any constraint | **No WHERE filter**; let cast NULLs pass through |
 | Regex / whitelist validation | `CASE WHEN valid THEN value ELSE NULL END` |
 | Temporal cross-column constraint | `(a IS NULL OR b IS NULL OR a <= b)` |
 | Column has no `not_null` constraint | Do not filter |
 
-### Before writing the WHERE clause
-
-Walk through every `constraints: [not_null]` column in the contract and classify it:
-
-1. Is the target expression a direct reference / TRIM / rename? → Pass-through → Filter.
-2. Is it `TRY_CAST`, `STRPTIME`, `to_timestamp`, or any other format-dependent cast? → Cast-derived → Do not filter.
-
-Only columns that fail *step 1* should appear in your final `WHERE ... IS NOT NULL` list.
+Only columns whose row hits the first line of the table should appear in your final `WHERE ... IS NOT NULL` list.
 
 ---
 
@@ -228,7 +207,7 @@ this is the dataset's pinned reference date. You MUST emit a fixed DATE / TIMEST
 | `current_date - INTERVAL '30' DAY` | `CURRENT_DATE - INTERVAL '30' DAY` | `DATE '<current_date>' - INTERVAL '30' DAY` |
 | `CURRENT_TIMESTAMP` | `CURRENT_TIMESTAMP` | `TIMESTAMP '<current_date> 00:00:00'` |
 
-Example (pinned to 2025-10-27):
+Example (pinned to `2025-10-27`, table name taken from DAComp DE impl-001 for illustration only — substitute whatever table your task actually queries):
 
 ```sql
 -- WRONG: non-deterministic, breaks hash match
@@ -258,59 +237,41 @@ If the system prompt has no `Current date:` line, the dataset is not pinned. Fol
 
 ## COALESCE Sentinel Discipline for Scoring and Classification (CRITICAL)
 
-When business_logic declares a rule like *"set to 0 if no qualifying rows"* for an aggregate column (e.g. `avg_days_to_advancement`, `avg_interview_duration`, `candidates_hired`), **that rule applies ONLY to the final output column value**. It does NOT automatically apply to every other place the same underlying CTE column is referenced for classification, threshold scoring, or derived labels.
+When business_logic declares *"set to 0 if no qualifying rows"* for an aggregate column (e.g. `avg_days_to_advancement`, `candidates_hired`), **that rule applies ONLY to the final output column value**. It does NOT automatically apply to every other place the same underlying CTE column is referenced for classification, threshold scoring, or derived labels.
 
-Reusing the `COALESCE(col, 0)` fallback inside a threshold CASE silently breaks the classification because **0 is at the bottom of the numeric range** — it will spuriously match any low-threshold bucket that was meant for "fast" / "efficient" / "best".
+Reusing `COALESCE(col, 0)` inside a threshold CASE silently breaks the classification because **0 sits at the bottom of the numeric range** — it spuriously matches any low-threshold bucket meant for "fast" / "efficient" / "best" and fails any high-threshold bucket meant for "slow" / "missing".
 
-### The canonical trap
+### Decision rule for each CASE expression
 
-Suppose business_logic says:
+When you write a CASE / threshold expression referencing an aggregate that could be NULL:
+
+1. **Output column itself?** → `COALESCE(x, 0)` is fine when business_logic says "set to 0 if no qualifying rows".
+2. **Threshold classification, business_logic silent about NULL?** → Do NOT wrap in `COALESCE(x, 0)`. Let NULL propagate so it falls through to `ELSE`.
+3. **Threshold classification, business_logic explicitly says "treat missing as 999" (or similar)?** → Use that specific sentinel (`COALESCE(x, 999)`).
+
+Write every classification CASE as if the raw value could be NULL and ask *"would NULL route to the correct branch?"* If no, adjust the sentinel for that branch only, not for the output column.
+
+### Example (contract from DAComp DE impl-001 `int_lever__posting_analytics`, illustrative — the pattern generalizes to any benchmark that mixes output defaults with threshold classification)
+
+Contract:
 
 > `avg_days_to_advancement: set to 0 if no qualifying rows.`
 > `posting_effectiveness_score: +20 if avg_days_to_advancement ≤ 30; +10 if ≤ 60; else +0`
 > `primary_bottleneck: ... avg_days_to_advancement > 60 → 'Slow Decision Process'`
 
-A naive agent writes:
-
 ```sql
--- WRONG: uses COALESCE(...,0) everywhere
-SELECT
-    posting_id,
-    COALESCE(te.avg_days_to_advancement, 0) AS avg_days_to_advancement,
-    -- score: 0 satisfies <=30, so a missing value gets +20
-    CASE WHEN COALESCE(te.avg_days_to_advancement, 0) <= 30 THEN 20
-         WHEN COALESCE(te.avg_days_to_advancement, 0) <= 60 THEN 10
-         ELSE 0
-    END AS score_component,
-    -- bottleneck: 0 is NOT > 60, so missing falls through to later branches
-    CASE WHEN COALESCE(te.avg_days_to_advancement, 0) > 60
-         THEN 'Slow Decision Process'
-         ...
-    END AS primary_bottleneck
-FROM ...
-```
-
-With `te.avg_days_to_advancement = NULL` (no qualifying rows), the `0` fallback:
-- Gives this posting a full +20 in the effectiveness score (wrong — there is no data to support it)
-- Skips the "Slow Decision Process" branch (wrong — missing data should be treated as the worst case)
-
-### The correct pattern
-
-Use two DIFFERENT expressions — one for the output column, one (or more) for classification / scoring:
-
-```sql
--- CORRECT: output column uses 0; classification lets NULL propagate or uses a high sentinel
+-- CORRECT: output column uses 0; score lets NULL propagate; bottleneck uses 999 sentinel
 SELECT
     posting_id,
     COALESCE(te.avg_days_to_advancement, 0) AS avg_days_to_advancement,
 
-    -- Score: do NOT COALESCE here. NULL <= 30 is NULL → falls to ELSE 0
+    -- Score: no COALESCE; NULL <= 30 is NULL → falls to ELSE 0 (missing data gets 0 points, not +20)
     CASE WHEN te.avg_days_to_advancement <= 30 THEN 20
          WHEN te.avg_days_to_advancement <= 60 THEN 10
          ELSE 0
     END AS score_component,
 
-    -- Bottleneck: use 999 sentinel so NULL goes to 'Slow Decision Process'
+    -- Bottleneck: 999 sentinel so NULL routes to 'Slow Decision Process' (worst case)
     CASE WHEN COALESCE(te.avg_days_to_advancement, 999) > 60
          THEN 'Slow Decision Process'
          ...
@@ -318,20 +279,8 @@ SELECT
 FROM ...
 ```
 
-### Decision rule
+The wrong pattern uses `COALESCE(...,0)` inside both the score CASE and the bottleneck CASE. The score then spuriously gives missing data +20 points (because 0 ≤ 30), and the bottleneck never routes NULL to "Slow Decision Process" (because 0 is not > 60).
 
-When you write a CASE / threshold expression referencing an aggregate that could be NULL:
+### Quick audit
 
-1. **Is the business_logic silent about NULL handling for this classification?** → Do NOT wrap in `COALESCE(x, 0)`. Let NULL propagate so it falls through to `ELSE`.
-2. **Does the business_logic say "treat missing as 999" or similar?** → Use that specific sentinel (`COALESCE(x, 999)`).
-3. **Is this the output column itself (not a classification input)?** → `COALESCE(x, 0)` is fine here if business_logic says "set to 0 if no qualifying rows".
-
-Write the CASE for a classification as if the raw value could be NULL and ask *"would NULL route to the correct branch?"* If no, adjust the sentinel for that specific branch, not for the output column.
-
-### Where this trap shows up
-
-- `avg_days_to_*` used in effectiveness / performance scoring
-- `avg_interview_duration` used in rate calculations
-- Any column that is both a final output (defaulted to 0) AND a threshold input for classification
-
-When in doubt, scan every CASE expression in your final SELECT and ask whether `COALESCE(..., 0)` inside it could route a missing value to the wrong branch.
+Before emitting the final SELECT, scan every CASE expression and ask: *"if this aggregate is NULL, does my sentinel route it to the right branch?"* Fix any branch that would misroute.

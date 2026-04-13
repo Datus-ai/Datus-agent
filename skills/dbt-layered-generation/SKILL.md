@@ -40,8 +40,8 @@ For any staging table and for intermediate / marts tables that do cleaning or cl
 
 For any table with more than ~5 output columns or any non-trivial business logic, you MUST use `todo_write` to record a short plan **before writing SQL**. This prevents two recurring failure modes:
 
-1. **MaxTurnsExceeded**: complex marts (e.g. `lever__hiring_manager_scorecard`, `lever__departmental_hiring_trends`) where the agent keeps exploring without ever finalizing — a plan enforces closure.
-2. **Over-production**: 20+ column outputs where the contract only asks for 10-15, because the agent accumulates CTE columns without ever pruning (see `lever__opportunity_stage_history`).
+1. **MaxTurnsExceeded**: complex marts (example: `lever__hiring_manager_scorecard`, `lever__departmental_hiring_trends` from DAComp DE impl-001 — the pattern generalizes to **any** mart whose contract has a multi-CTE scoring / classification spec) where the agent keeps exploring without ever finalizing — a plan enforces closure.
+2. **Over-production**: 20+ column outputs where the contract only asks for 10-15, because the agent accumulates CTE columns without ever pruning (example: `lever__opportunity_stage_history` in DAComp DE impl-001 — the pattern generalizes to **any** mart whose business_logic walks through CTEs verbosely before the Final Assembly section).
 
 ### When to invoke todo_write
 
@@ -53,14 +53,14 @@ Call `todo_write` at the start of any table that matches **any** of:
 
 ### Required plan shape
 
-The plan must be concrete and SQL-oriented, not narrative. Each item should correspond to a concrete deliverable in the final SQL:
+The plan must be concrete and SQL-oriented, not narrative. Each item should correspond to a concrete deliverable in the final SQL. Example shape (table names are illustrative — substitute your task's real upstream tables):
 
 ```json
 [
   {"content": "Read contract columns: exact list of target output columns, with types", "status": "pending"},
-  {"content": "Describe upstream stg_lever__opportunity for created_at / stage_id types", "status": "pending"},
-  {"content": "Write CTE `opportunity_base` with the 6 base columns", "status": "pending"},
-  {"content": "Write CTE `stage_join` aggregating stage_name and archive_reason", "status": "pending"},
+  {"content": "Describe upstream <base_table> for key column types (e.g. timestamps, enums)", "status": "pending"},
+  {"content": "Write CTE `<base_name>` with the base columns needed downstream", "status": "pending"},
+  {"content": "Write CTE `<join_name>` aggregating / joining the auxiliary lookups", "status": "pending"},
   {"content": "Write final SELECT matching contract columns EXACTLY (no extras)", "status": "pending"},
   {"content": "Verify: final SELECT columns === contract columns:, same order, same names", "status": "pending"}
 ]
@@ -78,66 +78,44 @@ Do NOT skip the plan for complex tables. The benchmark has measured the failure 
 
 ---
 
-## Strict Column Name Adherence (CRITICAL)
+## Output Column Compliance (CRITICAL)
 
-The contract's `columns:` section is the ONLY source of truth for the final output column names. **Never invent plausible alternatives**, even when the inferred names seem more natural.
+The contract's `columns:` section is the **only** source of truth for final output column names and their presence. **Never invent plausible alternatives**; never leak CTE-internal columns; never omit a listed column.
 
-### Common failure patterns observed in benchmarks
+### The two-step final check
+
+After writing the final SELECT, run a mental diff:
+
+1. List the contract's expected columns (from `columns:` or `business_logic` "Final assembly" / "Output" block).
+2. List your final SELECT's columns, in order.
+3. They must be **identical sets** — case-sensitive, underscore-sensitive, no extras, no renames, no omissions.
+
+If the sets differ: **remove extras, add missing, rename to match exactly**. Your sense of "better" naming is irrelevant — the benchmark scorer compares by literal column name after lowering.
+
+### Where extras come from
+
+Most extras are CTE input columns that the agent dragged into the final SELECT out of habit:
+
+- **CTE inputs are not auto-outputs.** If the business_logic says *"Start from orders: select order_id, customer_id, amount, created_at, last_modified_at"*, those are the CTE's inputs. Only include a column in the final output if it is (a) explicitly listed in the contract's `columns:` section, (b) used as a key carried from the base table, or (c) named in a derived-field `= <formula>` definition.
+- **Raw timestamp fields** (`last_advanced_at`, `last_interaction_at`, `updated_at`, `last_modified_at`) are almost always intermediate-only. They feed into `DATEDIFF(...)` derived fields but rarely appear in the final SELECT themselves.
+
+### Common rename drift patterns
+
+> *The agent-wrote / contract-wants pairs below come from DAComp DE impl-001 observations (lever / pendo domains). The **patterns** — suffix drift, prefix collapse, unrelated leakage — generalize to any contract-driven task.*
 
 | Pattern | Agent wrote | Contract wants |
 |---|---|---|
 | "count" suffix drift | `basic_quality_count`, `exceptional_count` | `basic_quality_candidates`, `exceptional_candidates` |
 | "avg" prefix collapse | `avg_quality_score` | `overall_avg_quality_score` |
-| Redundant name doubling | `stage_name` (when the stage CTE was aliased) | `stage` |
+| Redundant name doubling | `stage_name` (when a stage CTE was aliased) | `stage` |
 | Missing business-domain rename | `contact_name` | `opportunity_contact_name` |
-| Unrelated extras dragged from intermediate | `archived_at`, `archived_reason_id`, `posting_id`, `emails`, `phones`, `linkedin_link`, `github_link`, `tags` | (contract lists none of these) |
+| Unrelated intermediate leakage | `archived_at`, `posting_id`, `emails`, `phones`, `linkedin_link`, `github_link`, `tags` | (contract lists none) |
 
-### Mandatory cross-check before returning SQL
+If the contract field is spelled `basic_quality_candidates`, write `AS basic_quality_candidates`. If you cannot decide what name to use for a derived field, read the exact `columns:` list via `filesystem_tools` on the contract YAML.
 
-After writing the final SELECT, run this mental diff:
+### Uniform COALESCE across aggregate groups
 
-1. Extract the `columns:` list from the contract `columns:` section (or `business_logic` "Final assembly" / "Output" block).
-2. Extract the column names your final SELECT produces, in order.
-3. They must be **identical sets** — no extras, no renames, no omissions.
-
-If they differ:
-- **Extras in your SELECT**: remove them. CTE input columns are NOT final outputs.
-- **Missing from your SELECT**: add them, deriving them from upstream if necessary.
-- **Renames**: rename to match the contract EXACTLY (case-sensitive, underscore-sensitive).
-
-### Rule of thumb
-
-If the contract field is spelled `basic_quality_candidates`, write `AS basic_quality_candidates`. If it's `overall_avg_quality_score`, write `AS overall_avg_quality_score`. Your own sense of "better" naming is irrelevant — the benchmark scorer compares by literal column name after lowering.
-
-If you genuinely cannot decide what name to use for a derived field, fall back to reading the **exact** `columns:` list via `filesystem_tools` on the contract YAML, or via the per-table spec the runner already injected into your user prompt.
-
----
-
-## Intermediate and Marts Output Column Discipline
-
-The `business_logic` narrative mixes CTE input columns with final output columns. This frequently causes generated SQL to include too many columns in the final SELECT.
-
-### Rule 1: CTE inputs are not automatically output columns
-
-If the business logic says:
-
-> "Start from orders as cte_orders: Select order_id, customer_id, amount, created_at, last_modified_at..."
-
-`last_modified_at` being selected into the CTE does NOT mean it appears in the final output. Only include it if it is explicitly listed in the "Final assembly" section or used in a derived field definition.
-
-### Rule 2: Raw timestamp fields are almost always intermediate only
-
-Fields like `last_advanced_at`, `last_interaction_at`, `updated_at`, `last_modified_at` are typically used ONLY to compute derived fields (e.g., `days_since_last_interaction = DATEDIFF('day', last_interaction_at, CURRENT_DATE)`). They should NOT appear in the final SELECT unless the contract explicitly lists them as output columns.
-
-### Rule 3: Final output columns come from exactly three sources
-
-1. **Keys and business attributes** explicitly carried from the base table in the contract's output columns list
-2. **Derived fields** defined with a `= <formula>` expression in the business logic
-3. **Computed fields** explicitly named in the "Final assembly" / "Output" section of the business logic
-
-### Rule 4: "Set missing aggregates to 0" applies to EVERY aggregate column uniformly
-
-When the contract's business_logic says something like *"Set missing interview and feedback aggregates to 0"*, you MUST apply `COALESCE(..., 0)` to **every** aggregate column in that group, not just the counts. Agents frequently wrap `total_interviews`, `completed_interviews`, `canceled_interviews` in COALESCE but forget `avg_interview_duration` and `total_interview_time` because "avg and sum feel different from count".
+When business_logic says *"Set missing interview and feedback aggregates to 0"* (or similar), you MUST apply `COALESCE(..., 0)` to **every** aggregate column in that group, not just the counts. Agents frequently wrap `total_*` and `completed_*` columns in COALESCE but forget `avg_*` and `total_*_time` because "avg and sum feel different from count".
 
 ```sql
 -- WRONG: avg_interview_duration is an aggregate too; contract said "set missing aggregates to 0"
@@ -145,7 +123,6 @@ LEFT JOIN interview_summary is2 USING (opportunity_id)
 SELECT
     COALESCE(is2.total_interviews, 0)     AS total_interviews,
     COALESCE(is2.completed_interviews, 0) AS completed_interviews,
-    COALESCE(is2.canceled_interviews, 0)  AS canceled_interviews,
     is2.avg_interview_duration            AS avg_interview_duration,  -- MISSING COALESCE
     COALESCE(is2.total_interview_time, 0) AS total_interview_time
 
@@ -154,39 +131,13 @@ LEFT JOIN interview_summary is2 USING (opportunity_id)
 SELECT
     COALESCE(is2.total_interviews, 0)        AS total_interviews,
     COALESCE(is2.completed_interviews, 0)    AS completed_interviews,
-    COALESCE(is2.canceled_interviews, 0)     AS canceled_interviews,
     COALESCE(is2.avg_interview_duration, 0)  AS avg_interview_duration,
     COALESCE(is2.total_interview_time, 0)    AS total_interview_time
 ```
 
-**Before emitting the final SELECT, do a cross-check**: for every aggregate CTE you joined with LEFT JOIN, list every column you're selecting from it. If the contract said to default missing aggregates to 0, every one of those columns needs `COALESCE(..., 0)`. No exceptions for averages, sums, or medians.
+> *Example table names are from DAComp DE impl-001 → `int_lever__candidate_insights`; the rule is universal.*
 
-This rule is about *which aggregates to COALESCE in the final SELECT*. For the distinct question of *what sentinel to use inside a threshold CASE*, see `duckdb-cleaning-rules` → COALESCE Sentinel Discipline for Scoring and Classification.
-
-### Good vs bad example
-
-Contract business logic (intermediate layer):
-
-> "Start from customer_events: Select customer_id, event_type, event_time, last_event_time.
-> Compute: days_since_last_event = DATEDIFF('day', last_event_time, CURRENT_DATE).
-> Final assembly: customer_id, event_type, days_since_last_event."
-
-```sql
--- WRONG: includes last_event_time which was only used for the computation
-SELECT
-    customer_id,
-    event_type,
-    last_event_time,                                              -- REMOVE
-    DATEDIFF('day', last_event_time, CURRENT_DATE) AS days_since_last_event
-FROM staging.stg_customer_events
-
--- CORRECT: only the three final output sources
-SELECT
-    customer_id,
-    event_type,
-    DATEDIFF('day', last_event_time, CURRENT_DATE) AS days_since_last_event
-FROM staging.stg_customer_events
-```
+This rule governs **which aggregates to COALESCE for output values**. For the separate question of *what sentinel to use inside a threshold CASE / classification expression*, see `duckdb-cleaning-rules` → COALESCE Sentinel Discipline.
 
 ---
 
@@ -205,7 +156,9 @@ A table may contain several foreign keys (`candidate_id`, `opportunity_id`, `use
 3. `PARTITION BY X` in your ROW_NUMBER / RANK / FIRST_VALUE window.
 4. The subsequent `JOIN` target (e.g. "join … on opportunity_id") is **unrelated** to the partition key — it's the join column, not the aggregation key.
 
-### Example (from DAComp lever)
+### Example (from DAComp DE impl-001, lever domain)
+
+> The rule is generic — the example below uses DAComp lever tables, but the trap ("partition by the join target instead of the 'per X' noun") appears anywhere business_logic names a window operation in natural language. Replace table names with whatever your task uses.
 
 Contract says:
 

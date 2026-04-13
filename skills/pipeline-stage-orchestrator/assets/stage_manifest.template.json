@@ -1,0 +1,29 @@
+{
+  "pipeline_name": "daily_revenue_pipeline",
+  "stages": [
+    {
+      "name": "ddl_ready",
+      "depends_on": [],
+      "execute_action": "apply_ddl",
+      "verify_action": "verify_schema_contract",
+      "failure_action": "halt",
+      "success_condition": "schema_contract_passed"
+    },
+    {
+      "name": "data_written",
+      "depends_on": ["ddl_ready"],
+      "execute_action": "execute_write",
+      "verify_action": "verify_write_row_count_and_quality",
+      "failure_action": "rollback",
+      "success_condition": "write_checks_passed"
+    },
+    {
+      "name": "bi_published",
+      "depends_on": ["data_written"],
+      "execute_action": "publish_bi",
+      "verify_action": "verify_bi_metrics",
+      "failure_action": "halt",
+      "success_condition": "bi_checks_passed"
+    }
+  ]
+}

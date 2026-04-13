@@ -1,0 +1,41 @@
+[
+  {
+    "id": "output_columns_match_contract",
+    "type": "output_columns_match_contract",
+    "applies_to": {
+      "node": "gensql"
+    },
+    "requires_context": [
+      "expected_output_columns"
+    ]
+  },
+  {
+    "id": "no_select_star",
+    "type": "sql_pattern",
+    "applies_to": {
+      "node": "gensql"
+    },
+    "config": {
+      "must_not_contain": [
+        "select *"
+      ]
+    }
+  },
+  {
+    "id": "pinned_date_literal",
+    "type": "pinned_date_literal",
+    "applies_to": {
+      "node": "gensql"
+    },
+    "requires_context": [
+      "reference_date"
+    ],
+    "config": {
+      "forbidden_patterns": [
+        "current_date",
+        "current_timestamp",
+        "now()"
+      ]
+    }
+  }
+]

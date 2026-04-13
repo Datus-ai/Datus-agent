@@ -1,0 +1,19 @@
+{
+  "job_name": "daily_orders_etl",
+  "target_objects": [
+    "staging.orders_clean",
+    "marts.daily_orders"
+  ],
+  "stages": [
+    "ddl_ready",
+    "sql_ready",
+    "job_submitted",
+    "job_succeeded",
+    "output_validated"
+  ],
+  "validation_skills": [
+    "contract-validation",
+    "data-governance-validation"
+  ]
+}
+

@@ -1,0 +1,46 @@
+{
+  "table": "staging.customer_profile",
+  "db_type": "duckdb",
+  "checks": [
+    {
+      "type": "null_ratio",
+      "name": "email_null_ratio",
+      "column": "email",
+      "max_ratio": 0.01
+    },
+    {
+      "type": "range",
+      "name": "amount_range",
+      "column": "lifetime_value",
+      "min_value": 0,
+      "max_value": 1000000
+    },
+    {
+      "type": "accepted_values",
+      "name": "status_values",
+      "column": "customer_status",
+      "values": [
+        "active",
+        "inactive",
+        "paused"
+      ],
+      "max_fail_ratio": 0.0
+    },
+    {
+      "type": "regex",
+      "name": "phone_format",
+      "column": "phone_number",
+      "pattern": "^\\d{10}$",
+      "max_fail_ratio": 0.0
+    },
+    {
+      "type": "uniqueness",
+      "name": "customer_id_unique",
+      "columns": [
+        "customer_id"
+      ],
+      "max_duplicate_rows": 0
+    }
+  ]
+}
+

@@ -10,7 +10,7 @@ providing structured validation for read-only data exploration interactions
 that gather context (schema, data samples, metrics, knowledge) before SQL generation.
 """
 
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import Field
 
@@ -24,6 +24,10 @@ class ExploreNodeInput(BaseInput):
 
     user_message: str = Field(..., description="Exploration task description")
     database: Optional[str] = Field(default=None, description="Database name for context")
+    scoped_tables: Optional[List[str]] = Field(
+        default=None,
+        description="Optional per-run table allowlist for database tools (e.g. ['raw.user'])",
+    )
 
 
 class ExploreNodeResult(BaseResult):

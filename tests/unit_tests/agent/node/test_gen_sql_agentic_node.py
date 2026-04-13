@@ -15,6 +15,7 @@ real PathManager.
 """
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -23,11 +24,13 @@ from datus.configuration.node_type import NodeType
 from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.chat_agentic_node_models import ChatNodeInput
 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput, GenSQLNodeResult
+from datus.tools.skill_tools.skill_config import SkillConfig
 from tests.unit_tests.mock_llm_model import (
     MockLLMModel,
     MockLLMResponse,
     MockToolCall,
     build_simple_response,
+    build_sql_response,
     build_tool_then_response,
 )
 
@@ -485,6 +488,208 @@ class TestGenSQLAgenticNodeExecution:
         with pytest.raises(ValueError, match="GenSQL input not set"):
             async for _ in node.execute_stream(ahm):
                 pass
+
+    @pytest.mark.asyncio
+    async def test_gensql_validation_retry_uses_skill_declared_validator(self, real_agent_config, mock_llm_create):
+        """A skill-declared validator should trigger one retry and accept the corrected SQL."""
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+        repo_root = Path(__file__).resolve().parents[4]
+        real_agent_config.skills_config = SkillConfig(directories=[str(repo_root / "skills")])
+        real_agent_config.agentic_nodes["gensql"]["skills"] = "dbt-layered-generation"
+        mock_llm_create.reset(
+            responses=[
+                build_sql_response(
+                    sql="SELECT cds AS school_id, AvgScrRead AS avg_reading, AvgScrMath AS avg_math FROM satscores",
+                    tables=["satscores"],
+                    explanation="First attempt with an extra column",
+                ),
+                build_sql_response(
+                    sql="SELECT cds AS school_id, AvgScrRead AS avg_reading FROM satscores",
+                    tables=["satscores"],
+                    explanation="Second attempt fixes the output columns",
+                ),
+            ]
+        )
+
+        node = GenSQLAgenticNode(
+            node_id="test_gensql_validation_retry",
+            description="Test GenSQL validation retry",
+            node_type=NodeType.TYPE_GENSQL,
+            agent_config=real_agent_config,
+            node_name="gensql",
+        )
+
+        node.input = GenSQLNodeInput(
+            user_message="Return school id and reading score only",
+            database="california_schools",
+            expected_output_columns=["school_id", "avg_reading"],
+        )
+
+        ahm = ActionHistoryManager()
+        actions = []
+        async for action in node.execute_stream(ahm):
+            actions.append(action)
+
+        validation_failures = [a for a in actions if a.action_type == "validation" and a.status == ActionStatus.FAILED]
+        assert len(validation_failures) == 1
+        assert len(mock_llm_create.call_history) == 2
+
+        final_action = actions[-1]
+        assert final_action.role == ActionRole.ASSISTANT
+        assert final_action.status == ActionStatus.SUCCESS
+        assert final_action.output["sql"] == "SELECT cds AS school_id, AvgScrRead AS avg_reading FROM satscores"
+        assert final_action.output["validation_issues"] is None
+
+    @pytest.mark.asyncio
+    async def test_gensql_validation_failure_after_retry_returns_failed_action(
+        self, real_agent_config, mock_llm_create
+    ):
+        """If validation still fails after one retry, the node should surface a failed assistant action."""
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+        repo_root = Path(__file__).resolve().parents[4]
+        real_agent_config.skills_config = SkillConfig(directories=[str(repo_root / "skills")])
+        real_agent_config.agentic_nodes["gensql"]["skills"] = "dbt-layered-generation"
+        mock_llm_create.reset(
+            responses=[
+                build_sql_response(
+                    sql="SELECT cds AS school_id, AvgScrRead AS avg_reading, AvgScrMath AS avg_math FROM satscores",
+                    tables=["satscores"],
+                    explanation="First attempt with an extra column",
+                ),
+                build_sql_response(
+                    sql="SELECT cds AS school_id, AvgScrRead AS avg_reading, AvgScrMath AS avg_math FROM satscores",
+                    tables=["satscores"],
+                    explanation="Second attempt still has the extra column",
+                ),
+            ]
+        )
+
+        node = GenSQLAgenticNode(
+            node_id="test_gensql_validation_fail",
+            description="Test GenSQL validation failure",
+            node_type=NodeType.TYPE_GENSQL,
+            agent_config=real_agent_config,
+            node_name="gensql",
+        )
+
+        node.input = GenSQLNodeInput(
+            user_message="Return school id and reading score only",
+            database="california_schools",
+            expected_output_columns=["school_id", "avg_reading"],
+        )
+
+        ahm = ActionHistoryManager()
+        actions = []
+        async for action in node.execute_stream(ahm):
+            actions.append(action)
+
+        final_action = actions[-1]
+        assert final_action.role == ActionRole.ASSISTANT
+        assert final_action.status == ActionStatus.FAILED
+        assert final_action.action_type == "validation_error"
+        assert final_action.output["error"] == "SQL validation failed"
+        assert final_action.output["validation_issues"]
+
+    @pytest.mark.asyncio
+    async def test_gensql_skill_pattern_validator_retries_without_contract_context(
+        self, real_agent_config, mock_llm_create
+    ):
+        """A skill-declared SQL pattern validator should work even without expected output columns."""
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+        repo_root = Path(__file__).resolve().parents[4]
+        real_agent_config.skills_config = SkillConfig(directories=[str(repo_root / "skills")])
+        real_agent_config.agentic_nodes["gensql"]["skills"] = "dbt-layered-generation"
+        mock_llm_create.reset(
+            responses=[
+                build_sql_response(
+                    sql="SELECT * FROM satscores",
+                    tables=["satscores"],
+                    explanation="First attempt uses select star",
+                ),
+                build_sql_response(
+                    sql="SELECT cds AS school_id, AvgScrRead AS avg_reading FROM satscores",
+                    tables=["satscores"],
+                    explanation="Second attempt removes select star",
+                ),
+            ]
+        )
+
+        node = GenSQLAgenticNode(
+            node_id="test_gensql_skill_pattern_retry",
+            description="Test SQL pattern validation retry",
+            node_type=NodeType.TYPE_GENSQL,
+            agent_config=real_agent_config,
+            node_name="gensql",
+        )
+
+        node.input = GenSQLNodeInput(
+            user_message="Return school identifiers and reading scores without select star",
+            database="california_schools",
+        )
+
+        ahm = ActionHistoryManager()
+        actions = []
+        async for action in node.execute_stream(ahm):
+            actions.append(action)
+
+        validation_failures = [a for a in actions if a.action_type == "validation" and a.status == ActionStatus.FAILED]
+        assert len(validation_failures) == 1
+        assert "no_select_star" in str(validation_failures[0].output)
+        final_action = actions[-1]
+        assert final_action.status == ActionStatus.SUCCESS
+        assert final_action.output["sql"] == "SELECT cds AS school_id, AvgScrRead AS avg_reading FROM satscores"
+
+    @pytest.mark.asyncio
+    async def test_gensql_pinned_date_validator_retries_with_reference_date(self, real_agent_config, mock_llm_create):
+        """A skill-declared pinned-date validator should replace CURRENT_DATE with the provided reference date."""
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+        repo_root = Path(__file__).resolve().parents[4]
+        real_agent_config.skills_config = SkillConfig(directories=[str(repo_root / "skills")])
+        real_agent_config.agentic_nodes["gensql"]["skills"] = "dbt-layered-generation"
+        mock_llm_create.reset(
+            responses=[
+                build_sql_response(
+                    sql="SELECT CURRENT_DATE AS as_of_date, cds AS school_id FROM satscores",
+                    tables=["satscores"],
+                    explanation="First attempt uses CURRENT_DATE",
+                ),
+                build_sql_response(
+                    sql="SELECT DATE '2025-10-27' AS as_of_date, cds AS school_id FROM satscores",
+                    tables=["satscores"],
+                    explanation="Second attempt uses the pinned date literal",
+                ),
+            ]
+        )
+
+        node = GenSQLAgenticNode(
+            node_id="test_gensql_pinned_date_retry",
+            description="Test pinned date validation retry",
+            node_type=NodeType.TYPE_GENSQL,
+            agent_config=real_agent_config,
+            node_name="gensql",
+        )
+
+        node.input = GenSQLNodeInput(
+            user_message="Return a deterministic as_of_date and school id",
+            database="california_schools",
+            reference_date="2025-10-27",
+        )
+
+        ahm = ActionHistoryManager()
+        actions = []
+        async for action in node.execute_stream(ahm):
+            actions.append(action)
+
+        validation_failures = [a for a in actions if a.action_type == "validation" and a.status == ActionStatus.FAILED]
+        assert len(validation_failures) == 1
+        assert "pinned_date_literal" in str(validation_failures[0].output)
+        final_action = actions[-1]
+        assert final_action.status == ActionStatus.SUCCESS
+        assert final_action.output["sql"] == "SELECT DATE '2025-10-27' AS as_of_date, cds AS school_id FROM satscores"
 
 
 # ===========================================================================

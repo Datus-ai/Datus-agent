@@ -36,6 +36,7 @@ from datus.utils.message_utils import (
     is_structured_content,
 )
 from datus.utils.node_utils import build_database_context
+from datus.validation import ValidatorRegistry, format_validation_retry_feedback, run_validators
 
 logger = get_logger(__name__)
 
@@ -180,6 +181,7 @@ class GenSQLAgenticNode(AgenticNode):
                 db_schema=workflow.task.schema_name,
                 schemas=workflow.context.table_schemas,
                 metrics=workflow.context.metrics,
+                reference_date=workflow.task.current_date,
                 plan_mode=plan_mode,
                 auto_execute_plan=auto_execute_plan,
             )
@@ -192,6 +194,7 @@ class GenSQLAgenticNode(AgenticNode):
             self.input.db_schema = workflow.task.schema_name
             self.input.schemas = workflow.context.table_schemas
             self.input.metrics = workflow.context.metrics
+            self.input.reference_date = workflow.task.current_date
             self.input.plan_mode = plan_mode
             self.input.auto_execute_plan = auto_execute_plan
 
@@ -720,7 +723,8 @@ class GenSQLAgenticNode(AgenticNode):
             response_content = ""
             sql_content = None
             tokens_used = 0
-            last_successful_output = None
+            validation_issues = None
+            validation_failed = False
 
             logger.debug(f"Tools available : {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
             logger.debug(f"MCP servers available : {len(self.mcp_servers)} servers - {list(self.mcp_servers.keys())}")
@@ -728,69 +732,94 @@ class GenSQLAgenticNode(AgenticNode):
             # Choose execution mode based on plan_mode flag
             execution_mode = "plan" if is_plan_mode else "normal"
 
-            # Stream response using unified execution (supports plan mode and normal mode)
-            async for stream_action in self._execute_with_recursive_replan(
-                prompt=enhanced_message,
-                execution_mode=execution_mode,
-                original_input=user_input,
-                action_history_manager=action_history_manager,
-                session=session,
-            ):
-                yield stream_action
+            prompt_for_attempt = enhanced_message
+            max_validation_retries = 1
 
-                # Collect response content from successful actions
-                if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
-                    if isinstance(stream_action.output, dict):
-                        last_successful_output = stream_action.output
-                        # Look for content in various possible fields
-                        response_content = (
-                            stream_action.output.get("content", "")
-                            or stream_action.output.get("response", "")
-                            or stream_action.output.get("raw_output", "")
-                            or response_content
+            for validation_attempt in range(max_validation_retries + 1):
+                # Stream response using unified execution (supports plan mode and normal mode)
+                async for stream_action in self._execute_with_recursive_replan(
+                    prompt=prompt_for_attempt,
+                    execution_mode=execution_mode,
+                    original_input=user_input,
+                    action_history_manager=action_history_manager,
+                    session=session,
+                ):
+                    yield stream_action
+
+                response_content, sql_content = self._collect_final_response(action_history_manager)
+
+                logger.debug(f"Final response_content: '{response_content}' (length: {len(response_content)})")
+                logger.debug(f"Final sql_content: {sql_content[:100] if sql_content else 'None'}...")
+
+                if not sql_content:
+                    break
+
+                validation_result = self._validate_generated_sql(sql_content, user_input)
+                validation_issues = (
+                    [issue.model_dump() for issue in validation_result.issues] if validation_result.issues else None
+                )
+
+                if validation_result.passed:
+                    if validation_attempt == 0 or validation_issues is None:
+                        validation_action = ActionHistory.create_action(
+                            role=ActionRole.WORKFLOW,
+                            action_type="validation",
+                            messages="Validation passed for generated SQL",
+                            input_data={"has_expected_output_columns": bool(user_input.expected_output_columns)},
+                            output_data={"passed": True},
+                            status=ActionStatus.SUCCESS,
                         )
+                        action_history_manager.add_action(validation_action)
+                        yield validation_action
+                    break
 
-            # If we still don't have response_content, check the last successful output
-            if not response_content and last_successful_output:
-                logger.debug(f"Trying to extract response from last_successful_output: {last_successful_output}")
-                # Try different fields that might contain the response
-                response_content = (
-                    last_successful_output.get("content", "")
-                    or last_successful_output.get("text", "")
-                    or last_successful_output.get("response", "")
-                    or last_successful_output.get("raw_output", "")
-                    or str(last_successful_output)  # Fallback to string representation
+                validation_action = ActionHistory.create_action(
+                    role=ActionRole.WORKFLOW,
+                    action_type="validation",
+                    messages="Validation failed for generated SQL",
+                    input_data={
+                        "retry_attempt": validation_attempt,
+                        "has_expected_output_columns": bool(user_input.expected_output_columns),
+                    },
+                    output_data=validation_result.model_dump(),
+                    status=ActionStatus.FAILED,
+                )
+                action_history_manager.add_action(validation_action)
+                yield validation_action
+
+                if validation_attempt >= max_validation_retries:
+                    validation_failed = True
+                    break
+
+                prompt_for_attempt = (
+                    enhanced_message + "\n\n" + format_validation_retry_feedback(validation_result.issues)
+                )
+                logger.info(
+                    "Retrying SQL generation after validation failure: "
+                    f"{[issue.code for issue in validation_result.issues]}"
                 )
 
-            # Extract SQL directly from summary_report action if available
-            sql_content = None
-            for stream_action in reversed(action_history_manager.get_actions()):
-                if stream_action.action_type == "summary_report" and stream_action.output:
-                    if isinstance(stream_action.output, dict):
-                        sql_content = stream_action.output.get("sql")
-                        # Also get the markdown/content if response_content is still empty
-                        if not response_content:
-                            response_content = (
-                                stream_action.output.get("markdown", "")
-                                or stream_action.output.get("content", "")
-                                or stream_action.output.get("response", "")
-                            )
-                        if sql_content:  # Found SQL, stop searching
-                            logger.debug(f"Extracted SQL from summary_report action: {sql_content[:100]}...")
-                            break
-
-            # Fallback: try to extract SQL and output from response_content if not found
-            if not sql_content:
-                extracted_sql, extracted_output = self._extract_sql_and_output_from_response(
-                    {"content": response_content}
+            if validation_failed:
+                error_result = GenSQLNodeResult(
+                    success=False,
+                    error="SQL validation failed",
+                    response=response_content or "Generated SQL failed validation.",
+                    sql=sql_content,
+                    validation_issues=validation_issues,
+                    tokens_used=0,
+                    action_history=[action.model_dump() for action in action_history_manager.get_actions()],
                 )
-                if extracted_sql:
-                    sql_content = extracted_sql
-                if extracted_output:
-                    response_content = extracted_output
-
-            logger.debug(f"Final response_content: '{response_content}' (length: {len(response_content)})")
-            logger.debug(f"Final sql_content: {sql_content[:100] if sql_content else 'None'}...")
+                error_action = ActionHistory.create_action(
+                    role=ActionRole.ASSISTANT,
+                    action_type="validation_error",
+                    messages=f"{self.get_node_name()} interaction failed validation",
+                    input_data=user_input.model_dump(),
+                    output_data=error_result.model_dump(),
+                    status=ActionStatus.FAILED,
+                )
+                action_history_manager.add_action(error_action)
+                yield error_action
+                return
 
             # Extract token usage from final actions
             final_actions = action_history_manager.get_actions()
@@ -848,6 +877,7 @@ class GenSQLAgenticNode(AgenticNode):
                 sql=result_sql,
                 sql_file_path=sql_file_path,
                 sql_preview=sql_preview,
+                validation_issues=validation_issues,
                 tokens_used=int(tokens_used),
                 action_history=[action.model_dump() for action in all_actions],
                 execution_stats=execution_stats,
@@ -1135,6 +1165,85 @@ class GenSQLAgenticNode(AgenticNode):
         except Exception as e:
             logger.warning(f"Failed to extract SQL and output from response: {e}")
             return None, None
+
+    def _collect_final_response(
+        self,
+        action_history_manager: ActionHistoryManager,
+    ) -> tuple[str, Optional[str]]:
+        """Collect final response text and SQL from accumulated action history."""
+
+        response_content = ""
+        last_successful_output = None
+        for stream_action in action_history_manager.get_actions():
+            if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
+                if isinstance(stream_action.output, dict):
+                    last_successful_output = stream_action.output
+                    response_content = (
+                        stream_action.output.get("content", "")
+                        or stream_action.output.get("response", "")
+                        or stream_action.output.get("raw_output", "")
+                        or response_content
+                    )
+
+        if not response_content and last_successful_output:
+            logger.debug(f"Trying to extract response from last_successful_output: {last_successful_output}")
+            response_content = (
+                last_successful_output.get("content", "")
+                or last_successful_output.get("text", "")
+                or last_successful_output.get("response", "")
+                or last_successful_output.get("raw_output", "")
+                or str(last_successful_output)
+            )
+
+        sql_content = None
+        for stream_action in reversed(action_history_manager.get_actions()):
+            if stream_action.action_type == "summary_report" and stream_action.output:
+                if isinstance(stream_action.output, dict):
+                    sql_content = stream_action.output.get("sql")
+                    if not response_content:
+                        response_content = (
+                            stream_action.output.get("markdown", "")
+                            or stream_action.output.get("content", "")
+                            or stream_action.output.get("response", "")
+                        )
+                    if sql_content:
+                        logger.debug(f"Extracted SQL from summary_report action: {sql_content[:100]}...")
+                        break
+
+        if not sql_content:
+            extracted_sql, extracted_output = self._extract_sql_and_output_from_response({"content": response_content})
+            if extracted_sql:
+                sql_content = extracted_sql
+            if extracted_output:
+                response_content = extracted_output
+
+        return response_content, sql_content
+
+    def _validate_generated_sql(self, sql_content: str, user_input: GenSQLNodeInput):
+        """Run core and skill-declared validators against generated SQL."""
+
+        skill_patterns = None
+        if self.skill_manager:
+            skill_patterns_str = self.node_config.get("skills", "")
+            if skill_patterns_str:
+                skill_patterns = self.skill_manager.parse_skill_patterns(skill_patterns_str)
+
+        context = {
+            "db_type": self.agent_config.db_type if self.agent_config else "",
+            "expected_output_columns": user_input.expected_output_columns or [],
+            "reference_date": user_input.reference_date
+            or (self.date_parsing_tools.reference_date if self.date_parsing_tools else None),
+            "catalog": user_input.catalog,
+            "database": user_input.database,
+            "db_schema": user_input.db_schema,
+        }
+        registry = ValidatorRegistry(skill_manager=self.skill_manager)
+        validators = registry.build_validators(
+            node_name=self.get_node_name(),
+            skill_patterns=skill_patterns,
+            context=context,
+        )
+        return run_validators(validators=validators, sql=sql_content, context=context)
 
 
 def prepare_template_context(

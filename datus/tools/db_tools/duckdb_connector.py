@@ -619,7 +619,29 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin):
 
         sql = f"PRAGMA table_info('{full_name}')"
         try:
-            result = self.connection.execute(sql)
+            try:
+                result = self.connection.execute(sql)
+            except duckdb.CatalogException:
+                # In common single-file DuckDB usage, callers may pass the
+                # connector's logical/current database name even though PRAGMA
+                # resolution only needs "schema.table". Retry without the
+                # database qualifier before surfacing the error.
+                if database_name:
+                    fallback_full_name = self.full_name(schema_name=schema_name, table_name=table_name)
+                    fallback_sql = f"PRAGMA table_info('{fallback_full_name}')"
+                    logger.warning(
+                        "DuckDB get_schema retrying without database qualification: "
+                        "database_name=%r schema_name=%r table_name=%r original=%r fallback=%r",
+                        database_name,
+                        schema_name,
+                        table_name,
+                        full_name,
+                        fallback_full_name,
+                    )
+                    result = self.connection.execute(fallback_sql)
+                    sql = fallback_sql
+                else:
+                    raise
             rows = result.fetchall()
             columns = [desc[0] for desc in result.description]
             # Normalize field names to match standard schema

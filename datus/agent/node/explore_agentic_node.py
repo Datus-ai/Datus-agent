@@ -103,12 +103,28 @@ class ExploreAgenticNode(AgenticNode):
         """Setup database tools (all are read-only)."""
         try:
             db_manager = db_manager_instance(self.agent_config.namespaces)
-            conn = db_manager.get_conn(self.agent_config.current_database, self.agent_config.current_database)
+            conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
+            dynamic_scoped_tables = None
+            if isinstance(self.input, ExploreNodeInput) and self.input.scoped_tables:
+                dynamic_scoped_tables = self.input.scoped_tables
             self.db_func_tool = DBFuncTool(
                 conn,
                 agent_config=self.agent_config,
+                sub_agent_name=self.get_node_name(),
+                scoped_tables=dynamic_scoped_tables,
             )
-            self.tools.extend(self.db_func_tool.available_tools())
+            if dynamic_scoped_tables:
+                # A per-run scoped table allowlist indicates a tightly
+                # bounded profiling task. Keep the DB tool surface narrow so
+                # the model cannot drift into broader schema exploration.
+                self.tools.extend(
+                    [
+                        trans_to_function_tool(self.db_func_tool.describe_table),
+                        trans_to_function_tool(self.db_func_tool.read_query),
+                    ]
+                )
+            else:
+                self.tools.extend(self.db_func_tool.available_tools())
         except Exception as e:
             logger.warning(f"Failed to setup database tools, continuing without: {e}")
 
@@ -160,6 +176,11 @@ class ExploreAgenticNode(AgenticNode):
             "workspace_root": self._resolve_workspace_root(),
             "conversation_summary": conversation_summary,
             "current_date": get_default_current_date(None),
+            "scoped_tables": (
+                self.input.scoped_tables
+                if isinstance(self.input, ExploreNodeInput) and self.input.scoped_tables
+                else []
+            ),
         }
 
         try:
@@ -212,6 +233,11 @@ class ExploreAgenticNode(AgenticNode):
             )
 
         user_input = self.input
+
+        # Dynamic scoped context is carried on ExploreNodeInput, so rebuild
+        # tools after input is set to ensure DBFuncTool receives the per-run
+        # table allowlist instead of only static agent.yml configuration.
+        self.setup_tools()
 
         # Create initial action
         action = ActionHistory.create_action(

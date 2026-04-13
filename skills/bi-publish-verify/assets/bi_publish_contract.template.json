@@ -1,0 +1,16 @@
+{
+  "dataset_id": "finance.revenue_dashboard",
+  "expected_metrics": [
+    {
+      "name": "total_revenue",
+      "expected_value": 1250000,
+      "tolerance_ratio": 0.02
+    },
+    {
+      "name": "active_customers",
+      "expected_value": 4200,
+      "tolerance_ratio": 0.01
+    }
+  ]
+}
+
