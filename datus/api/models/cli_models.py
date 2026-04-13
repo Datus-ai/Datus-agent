@@ -31,6 +31,7 @@ class ExecuteSQLInput(BaseModel):
 class ExecuteSQLData(BaseModel):
     """Data for SQL execution result."""
 
+    execute_task_id: str = Field(..., description="Task ID for this SQL execution, can be used to stop it")
     sql_query: str = Field(..., description="Executed SQL query")
     row_count: Optional[int] = Field(None, description="Number of rows returned")
     sql_return: Optional[str] = Field(None, description="SQL result data")
@@ -38,6 +39,19 @@ class ExecuteSQLData(BaseModel):
     execution_time: float = Field(..., description="Execution time in seconds")
     executed_at: str = Field(..., description="Execution timestamp")
     columns: Optional[List[str]] = Field(None, description="Column names")
+
+
+class StopExecuteSQLInput(BaseModel):
+    """Input model for stopping a SQL execution."""
+
+    execute_task_id: str = Field(..., description="Task ID of the SQL execution to stop")
+
+
+class StopExecuteSQLData(BaseModel):
+    """Data for stop SQL execution result."""
+
+    execute_task_id: str = Field(..., description="Task ID of the stopped SQL execution")
+    stopped: bool = Field(..., description="Whether the execution was successfully stopped")
 
 
 # Tool Commands models

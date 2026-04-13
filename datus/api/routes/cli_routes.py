@@ -17,6 +17,8 @@ from datus.api.models.cli_models import (
     ExecuteToolInput,
     InternalCommandData,
     InternalCommandInput,
+    StopExecuteSQLData,
+    StopExecuteSQLInput,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["cli"])
@@ -26,14 +28,28 @@ router = APIRouter(prefix="/api/v1", tags=["cli"])
     "/sql/execute",
     response_model=Result[ExecuteSQLData],
     summary="Execute SQL Query",
-    description="Execute SQL query directly against the database",
+    description="Execute SQL query directly against the database. Returns an execute_task_id that can be used to stop the execution.",
 )
 async def execute_sql(
     request: ExecuteSQLInput,
     svc: ServiceDep,
 ) -> Result[ExecuteSQLData]:
     """Execute SQL query directly."""
-    return svc.cli.execute_sql(request)
+    return await svc.cli.execute_sql(request)
+
+
+@router.post(
+    "/sql/stop_execute",
+    response_model=Result[StopExecuteSQLData],
+    summary="Stop SQL Execution",
+    description="Stop a running SQL execution by its execute_task_id",
+)
+async def stop_execute_sql(
+    request: StopExecuteSQLInput,
+    svc: ServiceDep,
+) -> Result[StopExecuteSQLData]:
+    """Stop a running SQL execution."""
+    return await svc.cli.stop_execute_sql(request.execute_task_id)
 
 
 @router.post(

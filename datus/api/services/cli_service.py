@@ -2,7 +2,10 @@
 Service for handling CLI Command operations.
 """
 
+import asyncio
+import threading
 import time
+import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -31,6 +34,7 @@ from datus.api.models.cli_models import (
     SearchHistoryToolInput,
     SearchMetricsResult,
     SearchMetricsToolInput,
+    StopExecuteSQLData,
     TableInfo,
     TableMetadata,
 )
@@ -90,6 +94,10 @@ class CLIService:
         self.agent = None
         self.agent_ready = False
 
+        # Track running SQL execution tasks: {task_id: asyncio.Task}
+        self._sql_tasks: Dict[str, asyncio.Task] = {}
+        self._sql_tasks_lock = threading.Lock()
+
         # Initialize context search tools and output tool
         self.context_search_tools = None
         self.output_tool = None
@@ -143,16 +151,13 @@ class CLIService:
                 return False
         return self.agent_ready
 
-    def execute_sql(self, request: ExecuteSQLInput) -> Result[ExecuteSQLData]:
-        """
-        Execute SQL query.
+    def _cleanup_sql_task(self, task_id: str) -> None:
+        """Remove a completed SQL task from the tracking dict."""
+        with self._sql_tasks_lock:
+            self._sql_tasks.pop(task_id, None)
 
-        Args:
-            request: SQL execution request
-
-        Returns:
-            ExecuteSQLResult with query result
-        """
+    def _execute_sql_sync(self, request: ExecuteSQLInput, task_id: str) -> Result[ExecuteSQLData]:
+        """Synchronous SQL execution logic (runs in a thread)."""
         try:
             if not self.current_db_connector:
                 return Result(
@@ -162,8 +167,6 @@ class CLIService:
                 )
 
             # Switch to the requested database/catalog context before executing.
-            # The connector is initialized without an active database; callers
-            # pass database_name per-request to select the correct one.
             if request.database_name:
                 catalog = getattr(self.current_db_connector, "catalog_name", "") or ""
                 self.current_db_connector.switch_context(
@@ -196,7 +199,6 @@ class CLIService:
             exec_time = end_time - start_time
 
             if not result:
-                # Update action with error
                 actions.update_action_by_id(
                     sql_action.action_id,
                     status=ActionStatus.FAILED,
@@ -210,15 +212,12 @@ class CLIService:
                 )
 
             if result.success:
-                # Convert result data based on format
                 sql_return = None
                 row_count = None
                 columns = None
 
                 if hasattr(result.sql_return, "column_names"):
-                    # Arrow format
                     if request.result_format == "csv":
-                        # Convert Arrow to CSV
                         import csv
                         import io
 
@@ -230,23 +229,19 @@ class CLIService:
                             writer.writerows(rows)
                         sql_return = output.getvalue()
                     elif request.result_format == "json":
-                        # Convert Arrow to JSON
                         import json
 
                         rows = result.sql_return.to_pylist()
                         sql_return = json.dumps(rows)
                     else:
-                        # Keep as Arrow string representation
                         sql_return = str(result.sql_return)
 
                     row_count = result.sql_return.num_rows
                     columns = result.sql_return.column_names
                 else:
-                    # Non-Arrow result
                     sql_return = str(result.sql_return) if result.sql_return else ""
                     row_count = result.row_count
 
-                # Update action with success
                 actions.update_action_by_id(
                     sql_action.action_id,
                     status=ActionStatus.SUCCESS,
@@ -260,6 +255,7 @@ class CLIService:
                 )
 
                 data = ExecuteSQLData(
+                    execute_task_id=task_id,
                     sql_query=request.sql_query,
                     row_count=row_count,
                     sql_return=sql_return,
@@ -273,7 +269,6 @@ class CLIService:
             else:
                 error_msg = result.error or "Unknown SQL error"
 
-                # Update action with error
                 actions.update_action_by_id(
                     sql_action.action_id,
                     status=ActionStatus.FAILED,
@@ -294,6 +289,69 @@ class CLIService:
                 errorCode=ErrorCode.SQL_EXECUTION_ERROR,
                 errorMessage=str(e),
             )
+
+    async def execute_sql(self, request: ExecuteSQLInput) -> Result[ExecuteSQLData]:
+        """Execute SQL query asynchronously with cancellation support.
+
+        Returns a Result containing an execute_task_id that can be used
+        to stop the execution via stop_execute_sql().
+        """
+        task_id = str(uuid.uuid4())
+
+        async def _run() -> Result[ExecuteSQLData]:
+            try:
+                return await asyncio.to_thread(self._execute_sql_sync, request, task_id)
+            except asyncio.CancelledError:
+                logger.info(f"SQL execution task cancelled: {task_id}")
+                return Result(
+                    success=False,
+                    errorCode=ErrorCode.SQL_EXECUTION_ERROR,
+                    errorMessage="SQL execution was cancelled",
+                )
+            finally:
+                self._cleanup_sql_task(task_id)
+
+        task = asyncio.create_task(_run())
+        with self._sql_tasks_lock:
+            self._sql_tasks[task_id] = task
+
+        return await task
+
+    async def stop_execute_sql(self, task_id: str) -> Result[StopExecuteSQLData]:
+        """Stop a running SQL execution task.
+
+        Args:
+            task_id: The execute_task_id returned from execute_sql.
+
+        Returns:
+            Result indicating whether the task was stopped.
+        """
+        with self._sql_tasks_lock:
+            task = self._sql_tasks.get(task_id)
+
+        if not task:
+            return Result(
+                success=False,
+                errorCode=ErrorCode.SQL_EXECUTION_ERROR,
+                errorMessage=f"No running SQL execution found for task ID: {task_id}",
+                data=StopExecuteSQLData(execute_task_id=task_id, stopped=False),
+            )
+
+        if task.done():
+            self._cleanup_sql_task(task_id)
+            return Result(
+                success=False,
+                errorCode=ErrorCode.SQL_EXECUTION_ERROR,
+                errorMessage="SQL execution has already completed",
+                data=StopExecuteSQLData(execute_task_id=task_id, stopped=False),
+            )
+
+        task.cancel()
+        logger.info(f"Cancellation requested for SQL execution task: {task_id}")
+        return Result(
+            success=True,
+            data=StopExecuteSQLData(execute_task_id=task_id, stopped=True),
+        )
 
     def execute_tool(self, tool_name: str, request: Any) -> Result[ExecuteToolData]:
         """Execute Tool Commands API as defined in the design."""

@@ -1,5 +1,7 @@
 """Tests for datus.api.services.cli_service — CLI command operations."""
 
+import asyncio
+
 import pytest
 
 from datus.api.models.cli_models import ExecuteContextInput, ExecuteSQLInput
@@ -50,79 +52,146 @@ class TestCLIServiceInit:
 class TestCLIServiceExecuteSQL:
     """Tests for execute_sql with real SQLite."""
 
-    def test_execute_sql_select_success(self, cli_svc):
+    @pytest.mark.asyncio
+    async def test_execute_sql_select_success(self, cli_svc):
         """execute_sql runs a SELECT query and returns data."""
         request = ExecuteSQLInput(sql_query="SELECT COUNT(*) as cnt FROM schools")
-        result = cli_svc.execute_sql(request)
+        result = await cli_svc.execute_sql(request)
         assert result.success is True
         assert result.data is not None
         assert result.data.sql_query == "SELECT COUNT(*) as cnt FROM schools"
         assert result.data.execution_time > 0
+        assert result.data.execute_task_id is not None
 
-    def test_execute_sql_returns_row_count(self, cli_svc):
+    @pytest.mark.asyncio
+    async def test_execute_sql_returns_row_count(self, cli_svc):
         """execute_sql reports row count."""
         request = ExecuteSQLInput(sql_query="SELECT * FROM schools LIMIT 5")
-        result = cli_svc.execute_sql(request)
+        result = await cli_svc.execute_sql(request)
         assert result.success is True
         assert result.data.row_count is not None
 
-    def test_execute_sql_csv_format(self, cli_svc):
+    @pytest.mark.asyncio
+    async def test_execute_sql_csv_format(self, cli_svc):
         """execute_sql with csv format returns CSV string."""
         request = ExecuteSQLInput(sql_query="SELECT CDSCode, School FROM schools LIMIT 3", result_format="csv")
-        result = cli_svc.execute_sql(request)
+        result = await cli_svc.execute_sql(request)
         assert result.success is True
         if result.data.sql_return:
             assert "CDSCode" in result.data.sql_return or "School" in result.data.sql_return
 
-    def test_execute_sql_json_format(self, cli_svc):
+    @pytest.mark.asyncio
+    async def test_execute_sql_json_format(self, cli_svc):
         """execute_sql with json format returns JSON string."""
         request = ExecuteSQLInput(sql_query="SELECT CDSCode FROM schools LIMIT 2", result_format="json")
-        result = cli_svc.execute_sql(request)
+        result = await cli_svc.execute_sql(request)
         assert result.success is True
 
-    def test_execute_sql_invalid_sql_returns_error(self, cli_svc):
+    @pytest.mark.asyncio
+    async def test_execute_sql_invalid_sql_returns_error(self, cli_svc):
         """execute_sql with invalid SQL returns error."""
         request = ExecuteSQLInput(sql_query="SELCT INVALID SYNTAX")
-        result = cli_svc.execute_sql(request)
+        result = await cli_svc.execute_sql(request)
         assert result.success is False
 
-    def test_execute_sql_without_connector_returns_error(self):
+    @pytest.mark.asyncio
+    async def test_execute_sql_without_connector_returns_error(self):
         """execute_sql returns error when no connector available."""
         svc = CLIService(agent_config=None, chat_service=None)
         request = ExecuteSQLInput(sql_query="SELECT 1")
-        result = svc.execute_sql(request)
+        result = await svc.execute_sql(request)
         assert result.success is False
         assert "No database connection" in result.errorMessage
 
-    def test_execute_sql_with_columns(self, cli_svc):
+    @pytest.mark.asyncio
+    async def test_execute_sql_with_columns(self, cli_svc):
         """execute_sql returns column names when available."""
         request = ExecuteSQLInput(sql_query="SELECT CDSCode, School FROM schools LIMIT 1")
-        result = cli_svc.execute_sql(request)
+        result = await cli_svc.execute_sql(request)
         assert result.success is True
 
-    def test_execute_sql_arrow_default_format(self, cli_svc):
+    @pytest.mark.asyncio
+    async def test_execute_sql_arrow_default_format(self, cli_svc):
         """execute_sql with default format returns arrow string."""
         request = ExecuteSQLInput(sql_query="SELECT CDSCode FROM schools LIMIT 3", result_format="arrow")
-        result = cli_svc.execute_sql(request)
+        result = await cli_svc.execute_sql(request)
         assert result.success is True
         assert result.data.row_count is not None
 
-    def test_execute_sql_has_executed_at(self, cli_svc):
+    @pytest.mark.asyncio
+    async def test_execute_sql_has_executed_at(self, cli_svc):
         """execute_sql result includes executed_at timestamp."""
         request = ExecuteSQLInput(sql_query="SELECT 1 as val")
-        result = cli_svc.execute_sql(request)
+        result = await cli_svc.execute_sql(request)
         assert result.success is True
         assert result.data.executed_at is not None
 
-    def test_execute_sql_with_database_name(self, cli_svc):
+    @pytest.mark.asyncio
+    async def test_execute_sql_with_database_name(self, cli_svc):
         """execute_sql with database_name parameter."""
         request = ExecuteSQLInput(
             sql_query="SELECT COUNT(*) FROM schools",
             database_name="california_schools",
         )
-        result = cli_svc.execute_sql(request)
+        result = await cli_svc.execute_sql(request)
         # May or may not work with switch_context — exercise the code path
         assert result is not None
+
+
+class TestCLIServiceStopExecuteSQL:
+    """Tests for stop_execute_sql."""
+
+    @pytest.mark.asyncio
+    async def test_stop_nonexistent_task_returns_error(self, cli_svc):
+        """stop_execute_sql with unknown task_id returns error."""
+        result = await cli_svc.stop_execute_sql("nonexistent-task-id")
+        assert result.success is False
+        assert result.data.stopped is False
+        assert "No running SQL execution" in result.errorMessage
+
+    @pytest.mark.asyncio
+    async def test_stop_completed_task_returns_error(self, cli_svc):
+        """stop_execute_sql on a completed task returns already-completed error."""
+        request = ExecuteSQLInput(sql_query="SELECT 1 as val")
+        exec_result = await cli_svc.execute_sql(request)
+        assert exec_result.success is True
+        task_id = exec_result.data.execute_task_id
+
+        # Task is already completed and cleaned up
+        stop_result = await cli_svc.stop_execute_sql(task_id)
+        assert stop_result.success is False
+        assert stop_result.data.stopped is False
+
+    @pytest.mark.asyncio
+    async def test_execute_sql_returns_execute_task_id(self, cli_svc):
+        """execute_sql result contains a non-empty execute_task_id."""
+        request = ExecuteSQLInput(sql_query="SELECT 1 as val")
+        result = await cli_svc.execute_sql(request)
+        assert result.success is True
+        assert result.data.execute_task_id
+        assert len(result.data.execute_task_id) > 0
+
+    @pytest.mark.asyncio
+    async def test_stop_running_task(self):
+        """stop_execute_sql cancels a running task."""
+        svc = CLIService(agent_config=None, chat_service=None)
+
+        # Manually inject a long-running task to simulate a slow SQL execution
+        async def _slow_task():
+            await asyncio.sleep(60)
+
+        task = asyncio.create_task(_slow_task())
+        task_id = "test-stop-task"
+        svc._sql_tasks[task_id] = task
+
+        stop_result = await svc.stop_execute_sql(task_id)
+        assert stop_result.success is True
+        assert stop_result.data.stopped is True
+        assert stop_result.data.execute_task_id == task_id
+
+        # Give the event loop a chance to process the cancellation
+        await asyncio.sleep(0)
+        assert task.cancelled()
 
 
 class TestCLIServiceExecuteTool:
