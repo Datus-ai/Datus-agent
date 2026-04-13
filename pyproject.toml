@@ -85,7 +85,7 @@ dependencies = [
 scheduler = ["datus-scheduler-airflow>=0.1.0"]
 
 [tool.uv.sources]
-datus-scheduler-airflow = { path = "../datus-scheduler-adapters/datus-scheduler-airflow", editable = true }
+# datus-scheduler-airflow = { path = "../datus-scheduler-adapters/datus-scheduler-airflow", editable = true }
 
 [project.urls]
 Homepage = "https://datus.ai/"

@@ -4,7 +4,6 @@
 
 """Unit tests for datus/configuration/config_migrator.py"""
 
-
 import yaml
 
 from datus.configuration.config_migrator import migrate_file, migrate_namespace_to_service

@@ -170,9 +170,7 @@ class TestInitWorkspaceRun:
         args.config = str(tmp_path / "missing.yml")
         args.database = ""
 
-        with patch(
-            "datus.configuration.agent_config_loader.load_agent_config", side_effect=Exception("not found")
-        ):
+        with patch("datus.configuration.agent_config_loader.load_agent_config", side_effect=Exception("not found")):
             iw = InitWorkspace(args)
             iw.project_dir = str(tmp_path)
             iw.project_name = "test_project"
