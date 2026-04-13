@@ -131,14 +131,15 @@ Add the following configuration to your `~/.datus/agent.yml`:
 
 ```yaml
 agent:
-  namespace:
-    superset:
-      type: postgresql
-      host: 127.0.0.1
-      port: 15432
-      username: superset
-      password: superset
-      database: examples
+  service:
+    databases:
+      superset:
+        type: postgresql
+        host: 127.0.0.1
+        port: 15432
+        username: superset
+        password: superset
+        database: examples
   dashboard:
     superset:
       username: admin
@@ -148,8 +149,11 @@ agent:
 ```
 
 !!! note "Configuration Sections"
-    - **namespace**: Defines the database connection for SQL execution
+    - **service.databases**: Defines database connections for SQL execution
     - **dashboard**: Defines the BI platform credentials for dashboard access
+
+!!! tip
+    You can also add the database interactively with `datus-agent configure` instead of editing YAML manually.
 
 ## Step 3: Bootstrap from Dashboard
 
