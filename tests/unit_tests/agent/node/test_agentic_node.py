@@ -10,6 +10,7 @@ Uses _ConcreteAgenticNode (minimal concrete subclass) and patches LLM + sessions
 """
 
 import asyncio
+import os
 from typing import AsyncGenerator, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -150,10 +151,10 @@ class TestParseNodeConfig:
 
 
 class TestResolveWorkspaceRoot:
-    def test_returns_dot_when_no_config(self):
+    def test_returns_cwd_when_no_config(self):
         node = _make_node()
         result = node._resolve_workspace_root()
-        assert result == "."
+        assert result == os.getcwd()
 
     def test_uses_node_config_workspace_root(self):
         node = _make_node()
@@ -761,10 +762,10 @@ class TestGetToolCategoryExtended:
 
 
 class TestResolveWorkspaceRootExtended:
-    def test_default_is_dot(self):
+    def test_default_is_cwd(self):
         node = _make_simple_node()
         result = node._resolve_workspace_root()
-        assert result == "."
+        assert result == os.getcwd()
 
     def test_node_config_workspace_root_used(self):
         node = _make_simple_node(node_config={"workspace_root": "/tmp/ws"})
