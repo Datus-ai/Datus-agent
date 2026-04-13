@@ -791,9 +791,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                             if raw_type == "response.content_part.done":
                                 if thinking_accumulated.strip():
                                     full_text = thinking_accumulated.strip()
-                                    text_content_split = (
-                                        full_text if len(full_text) <= 200 else f"{full_text[:200]}..."
-                                    )
+                                    text_content_split = full_text if len(full_text) <= 200 else f"{full_text[:200]}..."
                                     is_thinking = len(temp_tool_calls) > 0
                                     thinking_action = ActionHistory(
                                         action_id=thinking_stream_id or f"assistant_{uuid.uuid4().hex[:8]}",

@@ -316,7 +316,9 @@ class ChatTaskManager:
 
                 # Convert action to SSE
                 # Per-request stream_response overrides the server-level --stream flag
-                effective_stream = request.stream_response if request.stream_response is not None else self._stream_thinking
+                effective_stream = (
+                    request.stream_response if request.stream_response is not None else self._stream_thinking
+                )
 
                 is_first_delta = True
                 if action.action_type == "thinking_delta":

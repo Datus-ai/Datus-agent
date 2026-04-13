@@ -338,7 +338,9 @@ class ChatInput(BaseModel):
     )
 
     # Response control
-    stream_response: Optional[bool] = Field(None, description="Whether to stream response; None means use server default")
+    stream_response: Optional[bool] = Field(
+        None, description="Whether to stream response; None means use server default"
+    )
 
     # Legacy fields for backward compatibility
     context_id: Optional[str] = Field(None, description="Context ID (legacy)")
