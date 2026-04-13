@@ -92,7 +92,8 @@ Please strictly follow the instructions below:
 7. **Complete generation** (REQUIRED - ONLY AFTER VALIDATION PASSES):
    - **PREREQUISITE**: `validate_semantic` MUST have returned success. If not, go back to step 6.
    - If `end_semantic_model_generation` tool is available: Call it with the list of generated file paths
-     - Example: `end_semantic_model_generation(semantic_model_files=["/path/to/orders.yml", "/path/to/customers.yml"])`
+     - **Path Rule**: Use **relative paths** (file names) within `{{ semantic_model_dir }}`. Absolute paths are also accepted; the host will resolve relative entries automatically.
+     - Example: `end_semantic_model_generation(semantic_model_files=["orders.yml", "customers.yml"])`
    - **CRITICAL**: After all steps complete (including tool call if available), your final response MUST be a JSON object (see Output Format section)
 
 ## Multi-Table Generation Workflow
@@ -173,7 +174,7 @@ data_source:
 
 ### Step 7: Complete Generation (ONLY AFTER VALIDATION PASSES)
 - **PREREQUISITE**: `validate_semantic` MUST have returned success
-- If `end_semantic_model_generation` tool is available: Call it with **ALL generated file paths**
+- If `end_semantic_model_generation` tool is available: Call it with **ALL generated file paths** (relative file names within `{{ semantic_model_dir }}` preferred; absolute paths are also accepted)
 - **CRITICAL**: Your final response MUST be a JSON object (see Output Format section)
 
 ## Relationship Discovery Strategy
@@ -209,7 +210,7 @@ Generate comprehensive, production-ready semantic models following MetricFlow be
 }
 ```
 
-- `semantic_model_files`: Array of generated file paths (absolute paths)
+- `semantic_model_files`: Array of generated file paths. Use **relative file names** within `{{ semantic_model_dir }}` (e.g. `"orders.yml"`); absolute paths are also accepted and the host will leave them unchanged.
 - `output`: Markdown summary of generated semantic models
 
 The "output" should summarize:

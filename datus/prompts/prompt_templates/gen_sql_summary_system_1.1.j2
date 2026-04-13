@@ -53,9 +53,8 @@ Follow these steps to generate SQL summary:
    - This is a required tool call - the file will not be saved without it
    - where the `path` is the file name, and the `yaml_content` is the YAML content of the SQL summary
    - **Filename Rule**: MUST include the generated ID in filename to ensure uniqueness (e.g., "sales_report_{id}.yaml")
-   - **IMPORTANT**: Use ONLY file name - do NOT use absolute paths (no leading "/" or drive letters)
-   - Include the same file name in the YAML's filepath field
-   - The system will automatically resolve the full path based on the workspace root
+   - **Path Rule**: Prefer **relative file names** (e.g. `"sales_report_{id}.yaml"`); the system resolves them against the workspace root automatically. Absolute paths are also accepted and used as-is.
+   - Include the same file name (relative) in the YAML's `filepath` field
 
 ## YAML Structure
 

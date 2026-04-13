@@ -113,7 +113,7 @@ Skip any metric that already exists — do NOT update or overwrite.
 
 ### Step 5: Write, Validate, and Dry-Run
 
-**File paths**: All `write_file` / `edit_file` / `read_file` calls use **relative paths** within the workspace directory (`{{ semantic_model_dir }}`). Never use absolute paths. Use `{table_name}.yml` for semantic models, `metrics/{table_name}_metrics.yml` for metrics.
+**File paths**: All `write_file` / `edit_file` / `read_file` calls — and the `metric_file` / `semantic_model_file` arguments to `end_metric_generation` — use **relative paths** within the workspace directory (`{{ semantic_model_dir }}`). Absolute paths are also tolerated, but relative paths (e.g. `{table_name}.yml` for semantic models, `metrics/{table_name}_metrics.yml` for metrics) are preferred and the host will resolve them automatically.
 
 1. **Write files**: Use `write_file` to save metric YAML (and semantic model if newly created)
 2. **Validate (MUST PASS)**: Use `validate_semantic` — if validation fails, fix errors with `edit_file` and retry until it **passes**. Do NOT proceed to Step 6 until validation passes.

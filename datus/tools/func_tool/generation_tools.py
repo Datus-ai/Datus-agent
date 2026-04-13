@@ -152,7 +152,11 @@ class GenerationTools:
         This tool triggers user confirmation workflow for syncing to vector store.
 
         Args:
-            semantic_model_files: List of absolute paths to generated semantic model YAML files
+            semantic_model_files: List of generated semantic model YAML file paths.
+                Relative file names within the sub-agent's semantic-model workspace
+                are preferred (e.g. ``["orders.yml", "customers.yml"]``). Absolute
+                paths are also accepted. The downstream hook resolves relative
+                entries against the live agent_config namespace.
 
         Returns:
             dict: Result containing confirmation message and semantic_model_files
@@ -183,10 +187,15 @@ class GenerationTools:
         This tool automatically syncs the metric to the vector store (no user confirmation needed).
 
         Args:
-            metric_file: Absolute path to the generated metric YAML file (required)
-            semantic_model_file: Absolute path to the primary semantic model file that defines
-                                 the measure(s) used by this metric. Optional - provide this
-                                 if the semantic model was newly created or updated.
+            metric_file: Path to the generated metric YAML file (required).
+                Relative paths (e.g. ``"metrics/orders_metrics.yml"``) are preferred
+                and resolved against the sub-agent's semantic-model workspace using
+                the live ``agent_config.current_namespace``. Absolute paths are also
+                accepted and used as-is.
+            semantic_model_file: Path to the primary semantic model file that defines
+                the measure(s) used by this metric. Optional — provide this if the
+                semantic model was newly created or updated. Same relative/absolute
+                rules as ``metric_file``.
             metric_sqls_json: JSON string mapping metric names to their generated SQL (from query_metrics dry_run).
                               Example: '{"revenue_total": "SELECT SUM(revenue) FROM orders GROUP BY date"}'
 

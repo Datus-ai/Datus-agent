@@ -176,6 +176,65 @@ class TestExtractFilepaths:
         assert paths == []
 
 
+class TestResolvePath:
+    def _make_hooks(self, broker, sem="/ws/sm", sql="/ws/sql", ext="/ws/ext", namespace="ns_a"):
+        cfg = MagicMock()
+        cfg.current_namespace = namespace
+        cfg.path_manager = MagicMock()
+        cfg.path_manager.semantic_model_path = MagicMock(return_value=Path(sem))
+        cfg.path_manager.sql_summary_path = MagicMock(return_value=Path(sql))
+        cfg.path_manager.ext_knowledge_path = MagicMock(return_value=Path(ext))
+        return GenerationHooks(broker=broker, agent_config=cfg), cfg
+
+    def test_absolute_path_unchanged(self, broker):
+        h, _ = self._make_hooks(broker)
+        assert h._resolve_path("/abs/path/to/file.yml", "semantic") == "/abs/path/to/file.yml"
+
+    def test_relative_joined_for_semantic(self, broker):
+        h, _ = self._make_hooks(broker)
+        assert h._resolve_path("orders.yml", "semantic") == "/ws/sm/orders.yml"
+
+    def test_relative_joined_for_sql_summary(self, broker):
+        h, _ = self._make_hooks(broker)
+        assert h._resolve_path("q_001.yaml", "sql_summary") == "/ws/sql/q_001.yaml"
+
+    def test_relative_joined_for_ext_knowledge(self, broker):
+        h, _ = self._make_hooks(broker)
+        assert h._resolve_path("gmv.yaml", "ext_knowledge") == "/ws/ext/gmv.yaml"
+
+    def test_nested_relative_joined(self, broker):
+        h, _ = self._make_hooks(broker)
+        assert h._resolve_path("metrics/orders_metrics.yml", "semantic") == "/ws/sm/metrics/orders_metrics.yml"
+
+    def test_empty_path_returns_unchanged(self, broker):
+        h, _ = self._make_hooks(broker)
+        assert h._resolve_path("", "semantic") == ""
+
+    def test_unknown_kind_leaves_relative_unchanged(self, broker):
+        h, _ = self._make_hooks(broker)
+        assert h._resolve_path("orders.yml", "unknown") == "orders.yml"
+
+    def test_no_agent_config_leaves_relative_unchanged(self, broker):
+        h = GenerationHooks(broker=broker, agent_config=None)
+        assert h._resolve_path("orders.yml", "semantic") == "orders.yml"
+
+    def test_uses_current_namespace_at_call_time(self, broker):
+        """Sub-agent switches change current_namespace; resolution must follow."""
+        h, cfg = self._make_hooks(broker, namespace="ns_a")
+        h._resolve_path("orders.yml", "semantic")
+        cfg.path_manager.semantic_model_path.assert_called_with("ns_a")
+
+        cfg.current_namespace = "ns_b"
+        h._resolve_path("orders.yml", "semantic")
+        cfg.path_manager.semantic_model_path.assert_called_with("ns_b")
+
+    def test_extract_filepaths_resolves_relative_entries(self, broker):
+        h, _ = self._make_hooks(broker)
+        result = {"result": {"semantic_model_files": ["orders.yml", "/abs/customers.yml"]}}
+        paths = h._extract_filepaths_from_result(result)
+        assert paths == ["/ws/sm/orders.yml", "/abs/customers.yml"]
+
+
 # ---------------------------------------------------------------------------
 # Tests: _process_single_file
 # ---------------------------------------------------------------------------
