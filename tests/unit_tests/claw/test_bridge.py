@@ -498,9 +498,7 @@ class TestChannelBridge:
 
         task_manager.consume_events = _fake_consume
 
-        msg = _make_inbound(
-            "more details please", chat_type="group", mentions_bot=False, thread_id="existing_thread"
-        )
+        msg = _make_inbound("more details please", chat_type="group", mentions_bot=False, thread_id="existing_thread")
         await bridge.handle_message(msg, adapter)
 
         assert len(adapter.sent) == 1
@@ -805,13 +803,14 @@ class TestReactionLifecycle:
         # Should not raise
         await bridge.handle_reaction(event, adapter)
 
-    def test_bot_message_map_eviction(self, setup):
+    @pytest.mark.asyncio
+    async def test_bot_message_map_eviction(self, setup):
         """_bot_message_map should not exceed _MAX_BOT_MSG_MAP."""
         bridge, _, _ = setup
 
         msg = _make_inbound()
         for i in range(_MAX_BOT_MSG_MAP + 100):
-            bridge._track_bot_message(f"msg_{i}", "sess", msg)
+            await bridge._track_bot_message(f"msg_{i}", "sess", msg)
 
         assert len(bridge._bot_message_map) == _MAX_BOT_MSG_MAP
         # Oldest entries should be evicted

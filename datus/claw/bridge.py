@@ -4,6 +4,7 @@
 
 """ChannelBridge — routes IM messages through ChatTaskManager and sends responses back."""
 
+import asyncio
 import uuid
 from collections import OrderedDict
 from typing import Dict, Optional
@@ -48,6 +49,8 @@ class ChannelBridge:
         self._agent_config = agent_config
         self._task_manager = task_manager
         self._formatter = ToolOutputFormatter()
+        # Lock protects mutable state accessed from concurrent handle_message calls.
+        self._lock = asyncio.Lock()
         # Mapping from conversation key -> current session suffix.
         # When the user sends /new, we rotate the suffix so that a fresh
         # session_id is generated for subsequent messages.
@@ -104,12 +107,13 @@ class ChannelBridge:
         """Process an inbound IM message end-to-end, streaming each action back."""
         # Deduplicate: IM platforms may retry delivery of the same message
         dedup_key = f"{msg.channel_id}_{msg.message_id}"
-        if dedup_key in self._seen_message_ids:
-            logger.debug("Ignoring duplicate message %s", msg.message_id)
-            return
-        self._seen_message_ids[dedup_key] = None
-        while len(self._seen_message_ids) > self._max_seen_ids:
-            self._seen_message_ids.popitem(last=False)
+        async with self._lock:
+            if dedup_key in self._seen_message_ids:
+                logger.debug("Ignoring duplicate message %s", msg.message_id)
+                return
+            self._seen_message_ids[dedup_key] = None
+            while len(self._seen_message_ids) > self._max_seen_ids:
+                self._seen_message_ids.popitem(last=False)
 
         # In group chats, only respond to @bot messages or thread replies
         if msg.chat_type == "group" and not msg.mentions_bot and not msg.thread_id:
@@ -132,7 +136,7 @@ class ChannelBridge:
         try:
             await adapter.add_reaction(msg.conversation_id, msg.message_id, PROCESSING_EMOJI, msg.thread_id)
         except Exception as e:
-            logger.debug("Failed to add processing reaction: %s", e)
+            logger.warning("Failed to add processing reaction: %s", e)
 
         session_id = self.build_session_id(msg)
         subagent_id = channel_config.subagent_id if channel_config else None
@@ -179,7 +183,7 @@ class ChannelBridge:
                         outbound.stream_id = stream_id
                         bot_msg_id = await adapter.send_message(outbound)
                         if bot_msg_id:
-                            self._track_bot_message(bot_msg_id, session_id, msg)
+                            await self._track_bot_message(bot_msg_id, session_id, msg)
                         any_sent = True
 
             # Clear pending tool calls at stream end
@@ -194,7 +198,7 @@ class ChannelBridge:
                 )
                 bot_msg_id = await adapter.send_message(fallback)
                 if bot_msg_id:
-                    self._track_bot_message(bot_msg_id, session_id, msg)
+                    await self._track_bot_message(bot_msg_id, session_id, msg)
         except Exception:
             has_error = True
             raise
@@ -216,17 +220,18 @@ class ChannelBridge:
             except Exception as e:
                 logger.debug("Failed to add done reaction: %s", e)
 
-    def _track_bot_message(self, bot_msg_id: str, session_id: str, msg: InboundMessage) -> None:
+    async def _track_bot_message(self, bot_msg_id: str, session_id: str, msg: InboundMessage) -> None:
         """Record a bot message ID for future reaction feedback tracking."""
-        self._bot_message_map[bot_msg_id] = {
-            "session_id": session_id,
-            "channel_id": msg.channel_id,
-            "conversation_id": msg.conversation_id,
-            "sender_id": msg.sender_id,
-        }
-        # Evict oldest entries if over limit
-        while len(self._bot_message_map) > _MAX_BOT_MSG_MAP:
-            self._bot_message_map.popitem(last=False)
+        async with self._lock:
+            self._bot_message_map[bot_msg_id] = {
+                "session_id": session_id,
+                "channel_id": msg.channel_id,
+                "conversation_id": msg.conversation_id,
+                "sender_id": msg.sender_id,
+            }
+            # Evict oldest entries if over limit
+            while len(self._bot_message_map) > _MAX_BOT_MSG_MAP:
+                self._bot_message_map.popitem(last=False)
 
     async def handle_reaction(self, event: ReactionEvent, adapter: ChannelAdapter) -> None:
         """Process a reaction event on a bot message (feedback tracking)."""

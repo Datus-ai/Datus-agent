@@ -77,8 +77,10 @@ class FeishuAdapter(ChannelAdapter):
         self._app_id: str = config.get("app_id", "")
         self._app_secret: str = config.get("app_secret", "")
         self._bot_open_id: Optional[str] = config.get("bot_open_id", "")
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._ws_client: Optional[object] = None
         self._ws_thread: Optional[threading.Thread] = None
+        self._ws_loop: Optional[asyncio.AbstractEventLoop] = None
         self._lark_client: Optional[object] = None
         # Cache reaction_id for remove_reaction: {(msg_id, emoji) -> reaction_id}
         self._processing_reactions: dict[tuple[str, str], str] = {}
@@ -88,6 +90,29 @@ class FeishuAdapter(ChannelAdapter):
         self._stream_id: Optional[str] = None
         self._stream_seq: int = 0
         self._stream_accumulated: str = ""
+
+    def _dispatch_to_loop(self, coro) -> None:
+        """Schedule *coro* on the main event loop from a sync SDK callback thread.
+
+        Safely handles cases where the loop is not yet set or already closed.
+        """
+        loop = self._loop
+        if not loop or not loop.is_running():
+            logger.warning("Main event loop not available; dropping dispatched coroutine.")
+            return
+        try:
+            future = asyncio.run_coroutine_threadsafe(coro, loop)
+            future.add_done_callback(self._dispatch_done_callback)
+        except RuntimeError:
+            logger.warning("Failed to dispatch coroutine: event loop is closed.")
+
+    @staticmethod
+    def _dispatch_done_callback(future) -> None:
+        """Log exceptions from dispatched coroutines so they are not silently lost."""
+        try:
+            future.result()
+        except Exception as e:
+            logger.error("Dispatched coroutine raised an exception: %s", e)
 
     def _build_event_handler(self):
         """Build a lark_oapi EventDispatcherHandler that dispatches to our message handler."""
@@ -137,9 +162,7 @@ class FeishuAdapter(ChannelAdapter):
                 raw_payload=None,
             )
 
-            loop = self._loop
-            if loop and loop.is_running():
-                asyncio.run_coroutine_threadsafe(self.dispatch_message(msg), loop)
+            self._dispatch_to_loop(self.dispatch_message(msg))
 
         def _on_reaction_created(data) -> None:
             """Handle reaction_created events from Feishu."""
@@ -162,9 +185,7 @@ class FeishuAdapter(ChannelAdapter):
                     action="added",
                 )
 
-                loop = self._loop
-                if loop and loop.is_running():
-                    asyncio.run_coroutine_threadsafe(self.dispatch_reaction(reaction_event), loop)
+                self._dispatch_to_loop(self.dispatch_reaction(reaction_event))
             except Exception as e:
                 logger.warning("Failed to handle Feishu reaction event: %s", e)
 
@@ -189,9 +210,7 @@ class FeishuAdapter(ChannelAdapter):
                     action="removed",
                 )
 
-                loop = self._loop
-                if loop and loop.is_running():
-                    asyncio.run_coroutine_threadsafe(self.dispatch_reaction(reaction_event), loop)
+                self._dispatch_to_loop(self.dispatch_reaction(reaction_event))
             except Exception as e:
                 logger.warning("Failed to handle Feishu reaction deleted event: %s", e)
 
@@ -273,20 +292,35 @@ class FeishuAdapter(ChannelAdapter):
         new_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(new_loop)
         ws_module.loop = new_loop
+        self._ws_loop = new_loop
         self._ws_client._lock = asyncio.Lock()
         try:
             self._ws_client.start()
         except Exception as e:
             logger.error("Feishu ws client exited with error: %s", e)
+        finally:
+            new_loop.close()
 
     async def stop(self) -> None:
-        """Stop the Feishu WebSocket client."""
-        # The daemon thread will be terminated when the process exits.
-        # There is no public stop() API on lark.ws.Client, so we just
-        # drop references and let the daemon thread die with the process.
+        """Stop the Feishu WebSocket client and clean up resources."""
+        # Stop the WS event loop running in the daemon thread so it exits
+        # gracefully instead of lingering until process termination.
+        ws_loop = self._ws_loop
+        if ws_loop and ws_loop.is_running():
+            ws_loop.call_soon_threadsafe(ws_loop.stop)
+
+        # Wait briefly for the daemon thread to finish
+        if self._ws_thread and self._ws_thread.is_alive():
+            self._ws_thread.join(timeout=3.0)
+            if self._ws_thread.is_alive():
+                logger.warning("Feishu WS thread for '%s' did not exit within timeout.", self.channel_id)
+
+        self._processing_reactions.clear()
         self._ws_client = None
         self._lark_client = None
         self._ws_thread = None
+        self._ws_loop = None
+        self._loop = None
         logger.info("Feishu adapter '%s' stopped.", self.channel_id)
 
     async def send_message(self, message: OutboundMessage) -> Optional[str]:

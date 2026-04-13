@@ -11,7 +11,6 @@ from datus.claw.commands import (
     _COMMAND_REGISTRY,
     ChatCommand,
     CommandContext,
-    CommandMatch,
     HelpCommand,
     NewSessionCommand,
     VerboseCommand,

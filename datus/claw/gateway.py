@@ -6,6 +6,7 @@
 
 import asyncio
 import signal
+import sys
 from typing import Dict, Optional
 
 from datus.api.services.chat_task_manager import ChatTaskManager
@@ -44,10 +45,11 @@ class ClawGateway:
 
         self._shutdown_event = asyncio.Event()
 
-        # Wire up OS signals
-        loop = asyncio.get_running_loop()
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, self._shutdown_event.set)
+        # Wire up OS signals (not supported on Windows)
+        if sys.platform != "win32":
+            loop = asyncio.get_running_loop()
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                loop.add_signal_handler(sig, self._shutdown_event.set)
 
         # Instantiate and configure adapters
         for channel_id, raw_cfg in self._channels_config.items():
