@@ -74,6 +74,7 @@ class DatusCLI:
         self.console_column_width = 16
         self.selected_catalog_path = ""
         self.selected_catalog_data = {}
+        self.scope = getattr(args, "session_scope", None)
 
         setup_exception_handler(
             console_logger=self.console.print, prefix_wrap_func=lambda x: f"[bold red]{x}[/bold red]"
