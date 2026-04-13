@@ -129,6 +129,17 @@ def agent_config() -> AgentConfig:
 
 
 @pytest.fixture
+def metricflow_agent_config(tmp_path) -> AgentConfig:
+    """Use tracked duckdb test RAG data instead of per-machine cache state."""
+    agent_config = load_acceptance_config(namespace="duckdb", home=str(tmp_path))
+    agent_config.rag_base_path = str(TEST_DATA_DIR)
+    agent_config.project_name = "duckdb"
+    agent_config.current_database = "duckdb"
+    assert Path(agent_config.rag_storage_path()).exists(), "Expected tracked duckdb test RAG data to be available"
+    return agent_config
+
+
+@pytest.fixture
 def function_tools(agent_config: AgentConfig) -> List[Tool]:
     return db_function_tools(agent_config)
 
@@ -633,9 +644,10 @@ class TestNode:
             logger.error(f"Doc search node test failed: {str(e)}")
             raise
 
-    def test_search_metrics_node(self, search_metrics_input, agent_config: AgentConfig):
+    def test_search_metrics_node(self, search_metrics_input, metricflow_agent_config: AgentConfig):
         """Test schema linking node"""
         # Take first test case from the list
+        agent_config = metricflow_agent_config
         _current_database = agent_config.current_database
         try:
             for case in search_metrics_input:
