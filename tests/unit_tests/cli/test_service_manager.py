@@ -4,7 +4,7 @@
 
 """Unit tests for datus/cli/service_manager.py"""
 
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 from datus.utils.exceptions import DatusException, ErrorCode
 

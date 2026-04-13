@@ -4,8 +4,7 @@
 
 """Unit tests for datus/cli/init_workspace.py"""
 
-import os
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import MagicMock, patch
 
 
 class TestScanDirectory:
@@ -381,7 +380,7 @@ def _make_mock_llm_module(model_class_name: str, llm_instance):
     """Inject a fake model module into sys.modules so __import__ in _generate_with_llm works."""
     import sys
 
-    module_name = f"datus.models.openai_model"
+    module_name = "datus.models.openai_model"
     mock_mod = MagicMock()
     setattr(mock_mod, model_class_name, MagicMock(return_value=llm_instance))
     sys.modules[module_name] = mock_mod
