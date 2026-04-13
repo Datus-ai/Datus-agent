@@ -117,7 +117,14 @@ def search_metrics_input() -> List[Dict[str, Any]]:
 
 @pytest.fixture
 def agent_config() -> AgentConfig:
-    agent_config = load_acceptance_config(namespace="bird_sqlite")  # Uses bird_sqlite namespace key from test config
+    # Post-refactor (PR #542) legacy `namespace:` configs with `path_pattern` expand into
+    # one database per matched file (keyed by logic name). The old "bird_sqlite" key is no
+    # longer valid, so the loader drops it; individual tests override `current_database` as
+    # needed. Seed a valid default here so fixtures that touch the DB (e.g. `function_tools`)
+    # can initialize.
+    agent_config = load_acceptance_config(namespace="bird_sqlite")
+    if not agent_config.current_database and agent_config.service.databases:
+        agent_config.current_database = "california_schools"
     return agent_config
 
 

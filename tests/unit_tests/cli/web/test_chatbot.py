@@ -295,7 +295,7 @@ class TestRunWebInterface:
         with (
             patch("datus.cli.web.chatbot.create_web_app") as mock_create,
             patch("datus.cli.web.chatbot.uvicorn") as mock_uvicorn,
-            patch("datus.cli.web.chatbot.webbrowser"),
+            patch("datus.cli.web.chatbot._schedule_browser_open"),
             patch("datus.cli.web.config_manager.get_home_from_config", return_value="~/.datus"),
             patch("datus.utils.path_manager.set_current_path_manager"),
         ):
@@ -330,7 +330,7 @@ class TestRunWebInterface:
         with (
             patch("datus.cli.web.chatbot.create_web_app"),
             patch("datus.cli.web.chatbot.uvicorn") as mock_uvicorn,
-            patch("datus.cli.web.chatbot.webbrowser"),
+            patch("datus.cli.web.chatbot._schedule_browser_open"),
             patch("datus.cli.web.config_manager.get_home_from_config", return_value="~/.datus"),
             patch("datus.utils.path_manager.set_current_path_manager"),
         ):
@@ -356,7 +356,7 @@ class TestRunWebInterface:
         with (
             patch("datus.cli.web.chatbot.create_web_app"),
             patch("datus.cli.web.chatbot.uvicorn") as mock_uvicorn,
-            patch("datus.cli.web.chatbot.webbrowser"),
+            patch("datus.cli.web.chatbot._schedule_browser_open"),
             patch("datus.cli.web.config_manager.get_home_from_config", return_value="~/.datus"),
             patch("datus.utils.path_manager.set_current_path_manager"),
         ):

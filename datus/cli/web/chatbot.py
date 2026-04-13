@@ -142,6 +142,24 @@ def create_web_app(args: argparse.Namespace) -> FastAPI:
     return app
 
 
+def _schedule_browser_open(url: str, delay: float = 1.5) -> None:
+    """Open ``url`` in the user's browser after ``delay`` seconds, in a daemon thread.
+
+    Extracted as a module-level function so tests can patch it out reliably —
+    patching ``webbrowser`` inside ``run_web_interface`` does not help because
+    the patch is lifted as soon as the mocked ``uvicorn.run`` returns, while the
+    daemon thread is still asleep and would then call the real ``webbrowser``.
+    """
+    import threading
+    import time
+
+    def _open():
+        time.sleep(delay)
+        webbrowser.open(url)
+
+    threading.Thread(target=_open, daemon=True).start()
+
+
 def run_web_interface(args: argparse.Namespace) -> None:
     """Entry point called by ``datus web``.
 
@@ -166,19 +184,7 @@ def run_web_interface(args: argparse.Namespace) -> None:
 
     app = create_web_app(args)
 
-    # Open the browser after a short delay
-    def _open_browser():
-        import threading
-        import time
-
-        def _open():
-            time.sleep(1.5)
-            webbrowser.open(url)
-
-        t = threading.Thread(target=_open, daemon=True)
-        t.start()
-
-    _open_browser()
+    _schedule_browser_open(url)
 
     try:
         uvicorn.run(

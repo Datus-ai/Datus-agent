@@ -1165,7 +1165,13 @@ class TestAddDatabase:
         assert "newdb" in cfg.databases
 
     def test_returns_false_when_no_adapters_available(self, tmp_path):
-        """_add_database() returns False when no adapter types are available."""
+        """_add_database() returns False when no adapter is installed and plugin install fails.
+
+        With zero installed adapters, the function still offers the hard-coded
+        ``installable_types`` set via ``select_choice``. Mock ``select_choice`` so the
+        test doesn't block on interactive input, and force ``_install_plugin`` to
+        return False so the function returns False.
+        """
         from rich.prompt import Prompt
 
         cfg = _make_configure(tmp_path)
@@ -1175,6 +1181,8 @@ class TestAddDatabase:
         with (
             patch("datus.tools.db_tools.connector_registry", registry),
             patch.object(Prompt, "ask", return_value="mydb"),
+            patch("datus.cli.interactive_configure.select_choice", return_value="snowflake"),
+            patch.object(cfg, "_install_plugin", return_value=False),
         ):
             result = cfg._add_database()
 
