@@ -3,17 +3,20 @@ on:
   push:
     branches:
       - main
-    paths:
-      - 'docs/**'
-      - 'mkdocs.yml'
-      - 'requirements-docs.txt'
+    tags:
+      - 'v*.*.*'
+      - '*.*.*'
 permissions:
   contents: write
+env:
+  DOCS_MIN_VISIBLE_VERSION: "0.2.6"
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Configure Git Credentials
         run: |
           git config user.name github-actions[bot]
@@ -29,5 +32,112 @@ jobs:
           restore-keys: |
             mkdocs-material-
       - run: pip install -r requirements-docs.txt
+      - name: Fetch published docs branch
+        run: git fetch origin gh-pages --depth=1 || true
+      - name: Detect existing published docs versions
+        run: |
+          versions_json="$(mike list -j 2>/dev/null || echo '[]')"
+          if [[ "${versions_json}" == "[]" ]]; then
+            echo "DOCS_HAS_PUBLISHED_VERSIONS=false" >> "${GITHUB_ENV}"
+          else
+            echo "DOCS_HAS_PUBLISHED_VERSIONS=true" >> "${GITHUB_ENV}"
+          fi
+      - name: Resolve docs version metadata
+        run: |
+          echo "DOCS_SKIP_DEPLOY=false" >> "${GITHUB_ENV}"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.+-]+)?$ ]]; then
+              echo "DOCS_SKIP_DEPLOY=true" >> "${GITHUB_ENV}"
+              echo "DOCS_VERSION=" >> "${GITHUB_ENV}"
+              echo "DOCS_ALIASES=" >> "${GITHUB_ENV}"
+              echo "DOCS_SET_DEFAULT=" >> "${GITHUB_ENV}"
+              echo "DOCS_EDIT_URI=edit/${GITHUB_REF_NAME}/docs/" >> "${GITHUB_ENV}"
+              exit 0
+            fi
+            echo "DOCS_EDIT_URI=edit/${GITHUB_REF_NAME}/docs/" >> "${GITHUB_ENV}"
+            echo "DOCS_VERSION=${VERSION}" >> "${GITHUB_ENV}"
+            echo "DOCS_ALIASES=" >> "${GITHUB_ENV}"
+            echo "DOCS_SET_DEFAULT=" >> "${GITHUB_ENV}"
+            if [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              SHOULD_PROMOTE_LATEST="$(
+                VERSION="${VERSION}" python -c 'import json, os, re, subprocess; from packaging.version import Version; current = Version(os.environ["VERSION"]); raw = subprocess.check_output(["mike", "list", "-j"], text=True) if True else "[]"; stable = [Version(str(item.get("version", ""))) for item in json.loads(raw or "[]") if re.fullmatch(r"\d+\.\d+\.\d+", str(item.get("version", "")))]; print("true" if not stable or current >= max(stable) else "false")' 2>/dev/null || echo "true"
+              )"
+              if [[ "${SHOULD_PROMOTE_LATEST}" == "true" ]]; then
+                echo "DOCS_ALIASES=latest" >> "${GITHUB_ENV}"
+                echo "DOCS_SET_DEFAULT=latest" >> "${GITHUB_ENV}"
+              fi
+            fi
+          else
+            echo "DOCS_VERSION=dev" >> "${GITHUB_ENV}"
+            echo "DOCS_ALIASES=" >> "${GITHUB_ENV}"
+            echo "DOCS_SET_DEFAULT=" >> "${GITHUB_ENV}"
+            echo "DOCS_EDIT_URI=edit/main/docs/" >> "${GITHUB_ENV}"
+          fi
       - run: mkdocs build --strict
-      - run: mkdocs gh-deploy --force
+        if: env.DOCS_SKIP_DEPLOY != 'true'
+      - name: Deploy versioned docs
+        if: env.DOCS_SKIP_DEPLOY != 'true'
+        run: |
+          if [[ -n "${DOCS_ALIASES}" ]]; then
+            mike deploy --push --update-aliases "${DOCS_VERSION}" "${DOCS_ALIASES}"
+          else
+            mike deploy --push "${DOCS_VERSION}"
+          fi
+      - name: Set default docs version
+        if: env.DOCS_SKIP_DEPLOY != 'true'
+        run: |
+          if [[ -n "${DOCS_SET_DEFAULT}" ]]; then
+            mike set-default --push "${DOCS_SET_DEFAULT}"
+          elif [[ "${DOCS_HAS_PUBLISHED_VERSIONS}" == "false" ]]; then
+            mike set-default --push "${DOCS_VERSION}"
+          fi
+      - name: Hide legacy docs versions
+        if: env.DOCS_SKIP_DEPLOY != 'true'
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          import sys
+          from packaging.version import Version
+
+          threshold = Version(os.environ["DOCS_MIN_VISIBLE_VERSION"])
+          raw = subprocess.check_output(["mike", "list", "-j"], text=True)
+          versions = json.loads(raw or "[]")
+
+          changed = False
+          for item in versions:
+              version = str(item.get("version", ""))
+              props = item.get("properties") or {}
+              hidden = bool(props.get("hidden", False))
+
+              if version == "dev":
+                  target_hidden = False
+              elif re.fullmatch(r"\d+\.\d+\.\d+([.-][0-9A-Za-z.+-]+)?", version):
+                  target_hidden = Version(version) < threshold
+              else:
+                  target_hidden = False
+
+              if hidden == target_hidden:
+                  continue
+
+              subprocess.run(
+                  [
+                      "mike",
+                      "props",
+                      version,
+                      "--set",
+                      f"hidden={'true' if target_hidden else 'false'}",
+                      "--allow-empty",
+                  ],
+                  check=True,
+              )
+              changed = True
+
+          if changed:
+              subprocess.run(["git", "push", "--", "origin", "gh-pages"], check=True)
+          else:
+              print("No legacy version visibility changes needed.")
+          PY

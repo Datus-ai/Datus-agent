@@ -23,7 +23,7 @@ X-Datus-User-Id: alice
 Namespace 隔离由 `--namespace` CLI 参数(或 `DATUS_NAMESPACE` 环境变量)单独控制,决定加载 `agent.yml`
 中的哪个 namespace 的数据库与知识库。
 
-## 响应封装
+## 响应封装 {#response-envelope}
 
 绝大多数 JSON 响应都包裹在统一的 `Result[T]` 结构中:
 

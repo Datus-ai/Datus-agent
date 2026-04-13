@@ -6,6 +6,7 @@ mkdocs-material>=9.5.0
 
 # Plugins
 mkdocs-static-i18n>=1.2.3
+mike>=2.1.3
 
 # Markdown extensions (included with pymdown-extensions)
 pymdown-extensions>=10.2,<11

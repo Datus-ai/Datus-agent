@@ -157,11 +157,11 @@ storage:
     dim_size: 384
 ```
 
-## 存储后端
+## 存储后端 {#storage-backends}
 
 Datus Agent 采用双轨存储架构 — **向量数据库（Vector DB）** 用于 embedding 存储，**关系数据库（RDB）** 用于结构化元数据。两者均支持通过 Registry + entry-point 机制实现可插拔后端切换。
 
-> 架构概览请参考 [知识库简介](../knowledge_base/introduction.zh.md#存储后端)
+> 架构概览请参考 [知识库简介](../knowledge_base/introduction.zh.md#storage-backends)
 
 ### 默认后端
 

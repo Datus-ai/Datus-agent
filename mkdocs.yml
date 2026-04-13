@@ -64,6 +64,7 @@ nav:
     - Integration:
       - MCP: integration/mcp.md
       - Skills: integration/skills.md
+      - Auto Memory: integration/memory.md
     - Training:
       - LLM Trace Usage: training/llm_trace_usage.md
     - Develop:
@@ -75,6 +76,8 @@ nav:
 
 plugins:
   - search
+  - mike:
+      alias_type: redirect
   - i18n:
       languages:
         - locale: en
@@ -128,6 +131,7 @@ plugins:
             Integration: 集成
             MCP: MCP
             Skills: Skills
+            Auto Memory: 自动记忆
             Release Notes: 发布说明
 
 theme:
@@ -169,9 +173,11 @@ theme:
     # - header.autohide
 repo_name: Datus-ai/Datus-agent
 repo_url: https://github.com/Datus-ai/Datus-agent
-edit_uri: edit/main/docs/
+edit_uri: !ENV [DOCS_EDIT_URI, "edit/main/docs/"]
 
 extra:
+  version:
+    provider: mike
   analytics:
     provider: google
     property: G-8HMXHZDV7F
@@ -242,4 +248,3 @@ markdown_extensions:
 
 extra_css:
   - stylesheets/extra.css
-

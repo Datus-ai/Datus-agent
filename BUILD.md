@@ -140,6 +140,20 @@ You can use GitHub Actions for automated release:
 2. Create a `.github/workflows/release.yml` workflow
 3. Push a tag to trigger the release
 
+## Versioned Docs Release
+
+The docs site is published to `gh-pages` with [mike](https://github.com/jimporter/mike), so multiple released documentation versions can coexist.
+
+- Pushes to `main` deploy the current docs as `dev`
+- Release tags like `v0.2.6` deploy docs as version `0.2.6`
+- The latest release tag also updates the `latest` alias and root redirect
+- Versions older than `0.2.6` are hidden from the version selector
+
+The docs edit link is resolved from the Git ref used for that build:
+
+- `main` builds point to `edit/main/docs/`
+- Tag builds point to `edit/<tag>/docs/`
+
 ## Useful Commands
 
 ```bash
@@ -160,4 +174,4 @@ python -m twine check dist/*
 
 # Show package info
 pip show datus-agent
-``` 
+```
