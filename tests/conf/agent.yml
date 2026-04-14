@@ -4,6 +4,7 @@ agent:
   home: ~/.datus/tests
   target: deepseek
   workspace_root: ~/.datus/tests/workspace
+  knowledge_base_home: ~/.datus/tests/workspace/knowledge_base # Configuration to simulate real-world scenarios
   models:
     deepseek:
       type: deepseek
