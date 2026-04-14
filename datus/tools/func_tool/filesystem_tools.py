@@ -70,14 +70,24 @@ class FilesystemFuncTool(BaseTool):
         self.config = FilesystemConfig(root_path=root_path)
         self._path_normalizer = path_normalizer
 
-    def _normalize(self, path: str, file_type: Optional[str] = None) -> str:
-        """Apply the configured path normalizer (if any) before sandbox resolution."""
+    def _normalize(self, path: str, file_type: Optional[str] = None, *, strict: bool = False) -> str:
+        """
+        Apply the configured path normalizer (if any) before sandbox resolution.
+
+        With ``strict=False`` (default, read-side), normalizer errors are logged
+        and the original path is returned so the downstream sandbox check can
+        fail naturally. With ``strict=True`` (write-side), the exception is
+        re-raised so callers don't silently land a mutation at a mis-normalized
+        location.
+        """
         if self._path_normalizer is None or not path:
             return path
         try:
             return self._path_normalizer(path, file_type)
         except Exception as e:
             logger.warning(f"path_normalizer raised on path={path!r} file_type={file_type!r}: {e}")
+            if strict:
+                raise
             return path
 
     def available_tools(self) -> List[Tool]:
@@ -222,7 +232,10 @@ class FilesystemFuncTool(BaseTool):
                   - 'result' (Optional[str]): Success message on success.
         """
         try:
-            path = self._normalize(path, file_type)
+            try:
+                path = self._normalize(path, file_type, strict=True)
+            except Exception as e:
+                return FuncToolResult(success=0, error=f"Path normalization failed: {e}")
             target_path = self._get_safe_path(path)
 
             if not target_path:
@@ -266,7 +279,10 @@ class FilesystemFuncTool(BaseTool):
                 except json.JSONDecodeError as e:
                     return FuncToolResult(success=0, error=f"Invalid JSON in edits parameter: {str(e)}")
 
-            path = self._normalize(path)
+            try:
+                path = self._normalize(path, strict=True)
+            except Exception as e:
+                return FuncToolResult(success=0, error=f"Path normalization failed: {e}")
             target_path = self._get_safe_path(path)
 
             if not target_path or not target_path.exists():
@@ -583,7 +599,11 @@ class FilesystemFuncTool(BaseTool):
             dict: A dictionary with the execution result, containing these keys:
                   - 'success' (int): 1 for success, 0 for failure.
                   - 'error' (Optional[str]): Error message on failure.
-                  - 'result' (Optional[List[str]]): List of matching absolute file paths on success.
+                  - 'result' (Optional[List[str]]): List of matches whose paths are
+                    relative to ``root_path`` (so callers can feed them back to
+                    ``read_file`` / ``write_file`` without leaking absolute paths).
+                    Falls back to the absolute form only if a match somehow lands
+                    outside ``root_path``.
         """
         try:
             target_path = self._get_safe_path(path)

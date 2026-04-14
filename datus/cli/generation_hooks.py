@@ -172,23 +172,25 @@ class GenerationHooks(AgentHooks):
         Resolve a file path reported by a generation tool to an absolute path
         under ``knowledge_base_home``.
 
-        The path is first normalized via :func:`normalize_kb_relative_path`
+        Relative paths are first normalized via :func:`normalize_kb_relative_path`
         (so naked filenames like ``orders.yaml`` get the ``{subdir}/{namespace}/``
         prefix matching the LLM's actual write location) and then joined with
-        ``knowledge_base_home``. Absolute paths and paths that escape the
-        workspace are returned unchanged so downstream existence checks fail
-        naturally rather than operating on something outside the KB.
+        ``knowledge_base_home``. Absolute paths are accepted only when they
+        resolve inside ``knowledge_base_home``; any path that escapes the
+        workspace — absolute or relative — is returned as-is so downstream
+        existence checks fail closed instead of disclosing arbitrary files.
         """
         if not path:
-            return path
-        if os.path.isabs(path):
             return path
         kb_home = self._get_kb_home()
         if not kb_home:
             return path
-        namespace = getattr(self.agent_config, "current_namespace", None) if self.agent_config else None
-        normalized = normalize_kb_relative_path(path, kind, namespace)
-        candidate = os.path.normpath(os.path.join(kb_home, normalized))
+        if os.path.isabs(path):
+            candidate = os.path.normpath(path)
+        else:
+            namespace = getattr(self.agent_config, "current_namespace", None) if self.agent_config else None
+            normalized = normalize_kb_relative_path(path, kind, namespace)
+            candidate = os.path.normpath(os.path.join(kb_home, normalized))
         try:
             base_abs = os.path.realpath(kb_home)
             candidate_abs = os.path.realpath(candidate)

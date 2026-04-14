@@ -618,13 +618,23 @@ class SqlSummaryAgenticNode(AgenticNode):
         Save generated SQL summary to database (synchronous).
 
         Args:
-            sql_summary_file: Name of the SQL summary file (e.g., "query_001.yaml")
+            sql_summary_file: Path of the SQL summary file as reported by the LLM.
+                Absolute, KB-root-relative (e.g. ``sql_summaries/<db>/q_001.yaml``)
+                and bare-filename forms are all accepted — the same normalizer
+                used on the write side resolves them to the actual on-disk path.
         """
         try:
             import os
 
-            # Construct full path
-            full_path = os.path.join(self.sql_summary_dir, sql_summary_file)
+            from datus.cli.generation_hooks import normalize_kb_relative_path
+
+            if os.path.isabs(sql_summary_file):
+                full_path = os.path.normpath(sql_summary_file)
+            else:
+                normalized = normalize_kb_relative_path(
+                    sql_summary_file, "sql_summary", self.agent_config.current_namespace
+                )
+                full_path = os.path.normpath(os.path.join(self.knowledge_base_dir, normalized))
 
             if not os.path.exists(full_path):
                 logger.warning(f"SQL summary file not found: {full_path}")

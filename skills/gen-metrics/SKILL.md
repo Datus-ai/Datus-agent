@@ -265,7 +265,7 @@ After ALL metrics have been reviewed one by one:
 
 ## Common Pitfalls (MUST avoid)
 
-1. **Do NOT use `create_metric: true`**: Never set `create_metric: true` on measures. Always write explicit metric YAML files in `metrics/` directory. Reason: `create_metric: true` only creates metrics at MetricFlow runtime — they are NOT synced to the Knowledge Base (vector DB). Only explicit `metric:` YAML entries get imported.
+1. **Do NOT use `create_metric: true`**: Never set `create_metric: true` on measures. Always write explicit metric YAML files under `semantic_models/{current_database}/metrics/`. Reason: `create_metric: true` only creates metrics at MetricFlow runtime — they are NOT synced to the Knowledge Base (vector DB). Only explicit `metric:` YAML entries get imported.
 
 2. **Metric name must match measure name**: For a `measure_proxy` metric, the metric name should typically equal the measure name (or be a clear derivative). The `type_params.measure` must exactly match a measure name from the semantic model. Do NOT invent unrelated names (e.g., measure `activity_count` → metric name should be `activity_count`, NOT `total_activity_count` or `activity_count_metric`).
 

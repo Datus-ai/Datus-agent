@@ -194,9 +194,22 @@ class TestResolvePath:
         cfg.path_manager.knowledge_base_home = Path(kb)
         return GenerationHooks(broker=broker, agent_config=cfg), cfg
 
-    def test_absolute_path_unchanged(self, broker):
+    def test_absolute_path_outside_kb_rejected(self, broker):
+        """Absolute paths that escape knowledge_base_home must be returned as-is
+        so downstream os.path.exists / open fails closed (no arbitrary file disclosure)."""
         h, _ = self._make_hooks(broker)
+        assert h._resolve_path("/etc/passwd", "semantic") == "/etc/passwd"
         assert h._resolve_path("/abs/path/to/file.yml", "semantic") == "/abs/path/to/file.yml"
+
+    def test_absolute_path_inside_kb_home_is_normpathed(self, broker, tmp_path):
+        """Absolute paths that resolve inside knowledge_base_home are accepted."""
+        kb = tmp_path / "kb"
+        (kb / "semantic_models" / "ns_a").mkdir(parents=True)
+        inside = kb / "semantic_models" / "ns_a" / "orders.yml"
+        inside.write_text("x")
+        h, _ = self._make_hooks(broker, kb=str(kb))
+        resolved = h._resolve_path(str(inside), "semantic")
+        assert os.path.realpath(resolved) == os.path.realpath(str(inside))
 
     def test_relative_joined_for_semantic(self, broker):
         h, _ = self._make_hooks(broker)

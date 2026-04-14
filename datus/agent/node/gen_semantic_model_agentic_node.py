@@ -619,8 +619,15 @@ class GenSemanticModelAgenticNode(AgenticNode):
         try:
             import os
 
-            # Construct full path
-            full_path = os.path.join(self.semantic_model_dir, semantic_model_file)
+            from datus.cli.generation_hooks import normalize_kb_relative_path
+
+            if os.path.isabs(semantic_model_file):
+                full_path = os.path.normpath(semantic_model_file)
+            else:
+                normalized = normalize_kb_relative_path(
+                    semantic_model_file, "semantic", self.agent_config.current_namespace
+                )
+                full_path = os.path.normpath(os.path.join(self.knowledge_base_dir, normalized))
 
             if not os.path.exists(full_path):
                 logger.warning(f"Semantic model file not found: {full_path}")

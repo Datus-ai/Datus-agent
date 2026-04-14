@@ -3,7 +3,7 @@ agent:
   # Optional: override the root for knowledge-base directories
   # (semantic_models, sql_summaries, ext_knowledge). When unset, falls back to `home`.
   # Useful in SaaS / multi-tenant deployments where the KB is mounted from a shared volume.
-  knowledge_base_home: ~/.datus
+  # knowledge_base_home: /mnt/shared/datus-kb
   target: anthropic
   models:
     openai:

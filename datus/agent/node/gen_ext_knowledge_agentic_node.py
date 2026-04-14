@@ -1042,13 +1042,23 @@ Rules:
         Save generated external knowledge to database (synchronous).
 
         Args:
-            ext_knowledge_file: Name of the external knowledge file (e.g., "gmv_001.yaml")
+            ext_knowledge_file: Path of the ext-knowledge file as reported by the LLM.
+                Absolute, KB-root-relative (e.g. ``ext_knowledge/<db>/gmv.yaml``)
+                and bare-filename forms are all accepted — the same normalizer
+                used on the write side resolves them to the actual on-disk path.
         """
         try:
             import os
 
-            # Construct full path
-            full_path = os.path.join(self.ext_knowledge_dir, ext_knowledge_file)
+            from datus.cli.generation_hooks import normalize_kb_relative_path
+
+            if os.path.isabs(ext_knowledge_file):
+                full_path = os.path.normpath(ext_knowledge_file)
+            else:
+                normalized = normalize_kb_relative_path(
+                    ext_knowledge_file, "ext_knowledge", self.agent_config.current_namespace
+                )
+                full_path = os.path.normpath(os.path.join(self.knowledge_base_dir, normalized))
 
             if not os.path.exists(full_path):
                 logger.warning(f"External knowledge file not found: {full_path}")
