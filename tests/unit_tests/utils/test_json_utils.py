@@ -282,6 +282,15 @@ class TestLlmResult2Json:
         assert result is not None
         assert result["sql"] == "SELECT [a];  FROM t(x)"
 
+    def test_scrubbing_preserves_backslashes_inside_quoted_strings(self):
+        """Backslash sequences inside single-quoted SQL literals must not be altered."""
+        # In the JSON source, \\( becomes the Python string \( after JSON decode.
+        # Inside a single-quoted SQL literal, the scrubber must leave it alone.
+        raw = r'{"sql": "SELECT * FROM t WHERE path = ' "'" "C:\\(data\\)" "'" ' AND x = 1"}'
+        result = llm_result2json(raw)
+        assert result is not None
+        assert r"C:\(data\)" in result["sql"]
+
 
 # ---------------------------------------------------------------------------
 # llm_result2sql

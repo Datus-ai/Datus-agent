@@ -4,7 +4,7 @@
 
 **内置 Subagent**  是集成在 Datus Agent 系统中的专用 AI 助手。每个subagent专注于数据工程自动化的特定方面——分析 SQL、生成语义模型、将查询转换为可复用指标——共同构成从原始 SQL 到具备知识感知的数据产品的闭环工作流。
 
-本文档涵盖九个核心subagent：
+本文档涵盖十二个核心subagent：
 
 1. **[gen_sql_summary](#gen_sql_summary)** — 总结和分类 SQL 查询
 2. **[gen_semantic_model](#gen_semantic_model)** — 生成 MetricFlow 语义模型
@@ -13,8 +13,11 @@
 5. **[explore](#explore)** — 只读数据探索和上下文收集
 6. **[gen_sql](#gen_sql)** — 具备深度专业知识的专用 SQL 生成
 7. **[gen_report](#gen_report)** — 灵活的报告生成，支持可配置工具
-8. **[gen_dashboard](#gen_dashboard)** — Superset 和 Grafana 的 BI 仪表盘 CRUD
-9. **[scheduler](#scheduler)** — Airflow 作业生命周期管理
+8. **[gen_table](gen_table.zh.md)** — 数据库建表（CTAS 或自然语言描述）
+9. **[gen_job](gen_job.zh.md)** — 单库 ETL 作业执行
+10. **[migration](migration.zh.md)** — 跨库迁移与对数校验
+11. **[gen_dashboard](#gen_dashboard)** — Superset 和 Grafana 的 BI 仪表盘 CRUD
+12. **[scheduler](#scheduler)** — Airflow 作业生命周期管理
 
 ## 配置
 
@@ -51,6 +54,12 @@ agent:
       model: claude     # 可选：默认使用已配置的模型
       max_turns: 30     # 可选：默认为 30
       tools: "semantic_tools.*, context_search_tools.list_subject_tree"  # 可选：默认使用语义+上下文工具
+
+    gen_table:
+      max_turns: 20     # 可选：默认为 20
+
+    gen_job:
+      max_turns: 30     # 可选：默认为 30
 
     gen_dashboard:
       model: claude     # 可选：默认使用已配置的模型

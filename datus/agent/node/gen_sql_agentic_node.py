@@ -269,16 +269,35 @@ class GenSQLAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup platform_doc_search tools: {e}")
 
+    def _needs_multi_connector(self) -> bool:
+        """Check if the current node config requires multi-connector mode.
+
+        Multi-connector mode is needed when the node uses tools that access
+        multiple databases (e.g. transfer_query_result for cross-db migration).
+        """
+        tools_str = self.node_config.get("tools", "")
+        return "transfer_query_result" in tools_str
+
     def _setup_db_tools(self):
-        """Setup database tools."""
+        """Setup database tools.
+
+        Uses multi-connector mode (DBManager) when the node needs cross-database
+        access (e.g. migration subagent), otherwise single-connector mode.
+        """
         try:
-            db_manager = db_manager_instance(self.agent_config.namespaces)
-            conn = db_manager.get_conn(self.agent_config.current_database, self.agent_config.current_database)
-            self.db_func_tool = DBFuncTool(
-                conn,
-                agent_config=self.agent_config,
-                sub_agent_name=self.node_config.get("system_prompt"),
-            )
+            if self._needs_multi_connector():
+                self.db_func_tool = DBFuncTool.create_dynamic(
+                    self.agent_config,
+                    sub_agent_name=self.node_config.get("system_prompt"),
+                )
+            else:
+                db_manager = db_manager_instance(self.agent_config.namespaces)
+                conn = db_manager.get_conn(self.agent_config.current_database, self.agent_config.current_database)
+                self.db_func_tool = DBFuncTool(
+                    conn,
+                    agent_config=self.agent_config,
+                    sub_agent_name=self.node_config.get("system_prompt"),
+                )
             self.tools.extend(self.db_func_tool.available_tools())
         except Exception as e:
             logger.error(f"Failed to setup database tools: {e}")
@@ -416,13 +435,21 @@ class GenSQLAgenticNode(AgenticNode):
                 tool_instance = self.context_search_tools
             elif tool_type == "db_tools":
                 if not self.db_func_tool:
-                    db_manager = db_manager_instance(self.agent_config.namespaces)
-                    conn = db_manager.get_conn(self.agent_config.current_database, self.agent_config.current_database)
-                    self.db_func_tool = DBFuncTool(
-                        conn,
-                        agent_config=self.agent_config,
-                        sub_agent_name=self.node_config.get("system_prompt"),
-                    )
+                    if self._needs_multi_connector():
+                        self.db_func_tool = DBFuncTool.create_dynamic(
+                            self.agent_config,
+                            sub_agent_name=self.node_config.get("system_prompt"),
+                        )
+                    else:
+                        db_manager = db_manager_instance(self.agent_config.namespaces)
+                        conn = db_manager.get_conn(
+                            self.agent_config.current_database, self.agent_config.current_database
+                        )
+                        self.db_func_tool = DBFuncTool(
+                            conn,
+                            agent_config=self.agent_config,
+                            sub_agent_name=self.node_config.get("system_prompt"),
+                        )
                 tool_instance = self.db_func_tool
             elif tool_type == "date_parsing_tools":
                 if not self.date_parsing_tools:
@@ -1113,8 +1140,12 @@ class GenSQLAgenticNode(AgenticNode):
                 or last_successful_output.get("text", "")
                 or last_successful_output.get("response", "")
                 or last_successful_output.get("raw_output", "")
-                or str(last_successful_output)
             )
+            if not response_content:
+                logger.warning(
+                    f"Falling back to str() for response content: keys={list(last_successful_output.keys())}"
+                )
+                response_content = str(last_successful_output)
 
         sql_content = None
         for stream_action in reversed(action_history_manager.get_actions()):

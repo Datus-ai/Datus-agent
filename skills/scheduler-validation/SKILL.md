@@ -32,6 +32,10 @@ Use this skill after a pipeline job is created or updated and you need to confir
 4. If the run fails, report the scheduler-side failure point and stop promotion.
 5. If the run succeeds, return a compact verification summary.
 
+## Checklist
+
+Use the core workflow steps above as the checklist. No external reference document is needed — the preferred tools provide the verification surface directly.
+
 ## Output expectations
 
 - job identifier

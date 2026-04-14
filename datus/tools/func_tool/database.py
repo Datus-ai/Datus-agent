@@ -216,8 +216,19 @@ class DBFuncTool:
             self._connector_cache.move_to_end(db_name)
             return self._connector_cache[db_name]
 
-        # Fetch from db_manager
-        connector = self._db_manager.get_conn(self._namespace, db_name)
+        # Fetch from db_manager.
+        # Each database in service.databases is its own namespace (see AgentConfig.namespaces).
+        # For cross-database scenarios, use db_name as both namespace and logic_name.
+        try:
+            connector = self._db_manager.get_conn(db_name, db_name)
+        except (KeyError, ValueError) as e:
+            # Fallback to current namespace for backward compatibility
+            logger.debug(f"Falling back to namespace lookup for '{db_name}': {e}")
+            connector = self._db_manager.get_conn(self._namespace, db_name)
+
+        # Ensure connector is connected
+        if hasattr(connector, "connect"):
+            connector.connect()
 
         # Add to cache with LRU eviction
         if self._connector_cache_size > 0 and len(self._connector_cache) >= self._connector_cache_size:
@@ -426,12 +437,23 @@ class DBFuncTool:
 
     def _read_sql_from_file(self, file_path: str) -> str:
         """Read SQL content from a file path relative to workspace root."""
+        if os.path.isabs(file_path):
+            raise DatusException(
+                ErrorCode.TOOL_INVALID_INPUT,
+                message_args={"error_message": f"Absolute paths are not allowed: {file_path}"},
+            )
         if ".." in file_path:
             raise DatusException(
                 ErrorCode.TOOL_INVALID_INPUT, message_args={"error_message": f"Invalid SQL file path: {file_path}"}
             )
         workspace_root = self._resolve_workspace_root()
-        full_path = Path(workspace_root) / file_path
+        full_path = (Path(workspace_root) / file_path).resolve()
+        workspace_resolved = Path(workspace_root).resolve()
+        if not str(full_path).startswith(str(workspace_resolved) + os.sep) and full_path != workspace_resolved:
+            raise DatusException(
+                ErrorCode.TOOL_INVALID_INPUT,
+                message_args={"error_message": f"SQL file path escapes workspace: {file_path}"},
+            )
         if not full_path.exists():
             raise DatusException(
                 ErrorCode.COMMON_FILE_NOT_FOUND,
@@ -749,7 +771,13 @@ class DBFuncTool:
             an explanatory error message.
         """
         if self._is_multi_connector:
-            return FuncToolResult(success=1, result=self._databases)
+            # Return database names with type info so LLM can identify source/target
+            db_configs = self.agent_config.current_db_configs() if self.agent_config else {}
+            db_list = [
+                {"name": name, "type": db_configs[name].type if name in db_configs else "unknown"}
+                for name in self._databases
+            ]
+            return FuncToolResult(success=1, result=db_list)
         try:
             connector = self._get_connector()
             databases = connector.get_databases(catalog, include_sys=include_sys)
@@ -885,10 +913,15 @@ class DBFuncTool:
             # Use parsed coordinate fields so that dotted names like "raw.stage"
             # are correctly split into schema="raw", table="stage" before passing
             # to the connector (avoids DuckDB treating "raw" as a catalog).
-            connector = self._get_connector(coordinate.database or database)
+            # In multi-connector mode, the `database` parameter is a logical routing name
+            # (e.g., "local_duckdb") for connector selection, NOT an engine-internal database name.
+            # After routing, don't pass it to get_schema — the connector knows its own database.
+            routing_db = coordinate.database or database
+            connector = self._get_connector(routing_db)
+            effective_db = "" if (self._is_multi_connector and routing_db in self._databases) else routing_db
             column_result = connector.get_schema(
                 catalog_name=coordinate.catalog or catalog,
-                database_name=coordinate.database or database,
+                database_name=effective_db,
                 schema_name=coordinate.schema or schema_name,
                 table_name=coordinate.table,
             )
@@ -1097,21 +1130,23 @@ class DBFuncTool:
     _ALLOWED_DDL_RE = re.compile(
         r"^\s*(CREATE\s+(?:OR\s+REPLACE\s+)?(?:(?:TEMPORARY|TEMP)\s+)?(?:TABLE|VIEW)"
         r"|CREATE\s+SCHEMA(?:\s+IF\s+NOT\s+EXISTS)?"
+        r"|DROP\s+SCHEMA(?:\s+IF\s+EXISTS)?"
         r"|ALTER\s+TABLE"
         r"|DROP\s+(?:TABLE|VIEW)(?:\s+IF\s+EXISTS)?)\b",
         re.IGNORECASE,
     )
 
-    def execute_ddl(self, sql: str) -> FuncToolResult:
+    def execute_ddl(self, sql: str, database: Optional[str] = "") -> FuncToolResult:
         """
         Execute a DDL SQL statement (CREATE TABLE AS SELECT, ALTER TABLE, etc.).
 
         CAUTION: This modifies the database. Only use when explicitly instructed.
         Supported statements: CREATE TABLE, CREATE TABLE AS SELECT (CTAS),
-        CREATE SCHEMA, ALTER TABLE, DROP TABLE, CREATE VIEW, DROP VIEW.
+        CREATE/DROP SCHEMA, ALTER TABLE, DROP TABLE, CREATE VIEW, DROP VIEW.
 
         Args:
             sql: DDL SQL statement to execute
+            database: Optional database name for multi-database scenarios.
 
         Returns:
             Execution result with success status
@@ -1133,17 +1168,33 @@ class DBFuncTool:
         if not self._ALLOWED_DDL_RE.match(cleaned):
             return FuncToolResult(
                 success=0,
-                error="Only DDL statements are allowed (CREATE SCHEMA, CREATE TABLE/VIEW, ALTER TABLE, DROP TABLE/VIEW). "
-                "DML statements (INSERT, UPDATE, DELETE, SELECT) are not permitted.",
+                error="Only DDL statements are allowed (CREATE/DROP SCHEMA, CREATE TABLE/VIEW, ALTER TABLE, "
+                "DROP TABLE/VIEW). DML statements (INSERT, UPDATE, DELETE, SELECT) are not permitted.",
             )
 
-        connector = self._get_connector()
+        out_of_scope = self._check_sql_table_scope(cleaned)
+        if out_of_scope:
+            return FuncToolResult(
+                success=0,
+                error=f"DDL statement references tables outside scoped context: {', '.join(out_of_scope)}",
+            )
+
+        connector = self._get_connector(database)
         if not hasattr(connector, "execute_ddl"):
             return FuncToolResult(success=0, error="Current database connector does not support DDL operations")
         try:
             result = connector.execute_ddl(cleaned)
             if result.success:
-                return FuncToolResult(result={"message": "DDL executed successfully", "sql": cleaned})
+                # Commit to release locks (critical for SQLAlchemy-based connectors)
+                if hasattr(connector, "connection") and hasattr(connector.connection, "commit"):
+                    connector.connection.commit()
+                return FuncToolResult(
+                    result={
+                        "message": "DDL executed successfully",
+                        "sql": cleaned,
+                        "database": database or self._default_database,
+                    }
+                )
             else:
                 return FuncToolResult(success=0, error=result.error)
         except Exception as e:
@@ -1167,7 +1218,11 @@ class DBFuncTool:
             sql: Write SQL statement to execute, or a .sql file path.
             database: Optional database name for multi-database scenarios.
             min_rows: Optional minimum acceptable affected row count.
+                Checked after the write is committed; violation returns success=0
+                but the write is NOT rolled back.
             max_rows: Optional maximum acceptable affected row count.
+                Checked after the write is committed; violation returns success=0
+                but the write is NOT rolled back.
             dry_run: Reserved for future transactional preview support. Currently unsupported.
 
         Returns:
@@ -1242,12 +1297,14 @@ class DBFuncTool:
             if min_rows is not None and row_count is not None and row_count < min_rows:
                 return FuncToolResult(
                     success=0,
-                    error=f"Write affected {row_count} rows, below min_rows={min_rows}.",
+                    error=f"Write affected {row_count} rows, below min_rows={min_rows}. "
+                    "Note: the write has already been committed.",
                 )
             if max_rows is not None and row_count is not None and row_count > max_rows:
                 return FuncToolResult(
                     success=0,
-                    error=f"Write affected {row_count} rows, above max_rows={max_rows}.",
+                    error=f"Write affected {row_count} rows, above max_rows={max_rows}. "
+                    "Note: the write has already been committed.",
                 )
 
             return FuncToolResult(
@@ -1262,6 +1319,177 @@ class DBFuncTool:
             )
         except Exception as e:
             return FuncToolResult(success=0, error=f"Write execution failed: {str(e)}")
+
+    # Maximum rows allowed in a single transfer (v1 memory constraint)
+    _TRANSFER_MAX_ROWS = 1_000_000
+
+    def transfer_query_result(
+        self,
+        source_sql: str,
+        source_database: str,
+        target_table: str,
+        target_database: str = "",
+        mode: str = "replace",
+        batch_size: int = 5000,
+    ) -> FuncToolResult:
+        """
+        Transfer query results from a source database to a target table in another database.
+
+        Executes source_sql on source_database, fetches the result as a DataFrame,
+        and batch-inserts into target_table on target_database.
+
+        Args:
+            source_sql: SQL query to execute on the source database.
+            source_database: Source database name.
+            target_table: Fully qualified target table name.
+            target_database: Target database name.
+            mode: Transfer mode - 'replace' (TRUNCATE + INSERT) or 'append' (INSERT only).
+            batch_size: Number of rows per INSERT batch.
+
+        Returns:
+            FuncToolResult with transfer metadata on success.
+        """
+        # Validate batch_size
+        if batch_size <= 0:
+            return FuncToolResult(success=0, error="batch_size must be a positive integer.")
+
+        # Validate target_table identifier
+        if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$", target_table):
+            return FuncToolResult(
+                success=0,
+                error=f"Invalid target_table identifier: '{target_table}'. "
+                "Only alphanumeric characters, underscores, and dots are allowed.",
+            )
+
+        # Validate mode
+        if mode not in ("replace", "append"):
+            return FuncToolResult(
+                success=0,
+                error=f"Invalid mode '{mode}'. Supported modes: 'replace', 'append'.",
+            )
+
+        # Get connectors
+        try:
+            source_conn = self._get_connector(source_database)
+            target_conn = self._get_connector(target_database)
+        except Exception as e:
+            return FuncToolResult(success=0, error=f"Failed to get connector: {str(e)}")
+
+        # Execute source query
+        try:
+            if not hasattr(source_conn, "execute_pandas"):
+                return FuncToolResult(
+                    success=0,
+                    error="Source database connector does not support pandas execution.",
+                )
+            source_result = source_conn.execute_pandas(source_sql)
+            if not source_result.success:
+                return FuncToolResult(success=0, error=f"Source query failed: {source_result.error}")
+            df = source_result.sql_return
+        except Exception as e:
+            return FuncToolResult(success=0, error=f"Source query execution failed: {str(e)}")
+
+        # Check row limit
+        row_count = len(df)
+        if row_count > self._TRANSFER_MAX_ROWS:
+            return FuncToolResult(
+                success=0,
+                error=f"Result set has {row_count:,} rows, exceeding the {self._TRANSFER_MAX_ROWS:,} row limit. "
+                "Please add WHERE conditions to transfer in smaller batches.",
+            )
+
+        # Handle empty result
+        if row_count == 0:
+            logger.info(f"Source query returned 0 rows, nothing to transfer to {target_table}")
+            return FuncToolResult(
+                result={
+                    "message": "Transfer completed (empty result set)",
+                    "source_sql": source_sql,
+                    "source_database": source_database,
+                    "target_table": target_table,
+                    "target_database": target_database or self._default_database,
+                    "mode": mode,
+                    "rows_transferred": 0,
+                    "batch_size": batch_size,
+                }
+            )
+
+        # TRUNCATE for replace mode (bypass _ALLOWED_DDL_RE which doesn't include TRUNCATE)
+        if mode == "replace":
+            try:
+                truncate_result = target_conn.execute_ddl(f"TRUNCATE TABLE {target_table}")
+                if not truncate_result.success:
+                    return FuncToolResult(
+                        success=0,
+                        error=f"Failed to truncate target table: {truncate_result.error}",
+                    )
+            except Exception as e:
+                return FuncToolResult(success=0, error=f"Failed to truncate target table: {str(e)}")
+
+        # Convert pandas NaT/NaN to Python None for DBAPI2 compatibility
+        df = df.where(df.notna(), other=None)
+        # Also convert numpy types to native Python types
+        df = df.astype(object).where(df.notna(), other=None)
+
+        # Batch INSERT using connector's execute_insert (adapter-agnostic)
+        # Quote column names with double quotes to prevent SQL injection via crafted DataFrame columns
+        columns = list(df.columns)
+        col_names = ", ".join(f'"{c}"' for c in columns)
+
+        rows_written = 0
+        try:
+            for batch_start in range(0, row_count, batch_size):
+                batch_end = min(batch_start + batch_size, row_count)
+                batch_df = df.iloc[batch_start:batch_end]
+
+                # Build batch INSERT statement with inline values
+                value_rows = []
+                for _, row in batch_df.iterrows():
+                    values = []
+                    for val in row:
+                        if val is None:
+                            values.append("NULL")
+                        elif isinstance(val, bool):
+                            values.append("TRUE" if val else "FALSE")
+                        elif isinstance(val, (int, float)):
+                            values.append(str(val))
+                        else:
+                            escaped = str(val).replace("'", "''")
+                            values.append(f"'{escaped}'")
+                    value_rows.append(f"({', '.join(values)})")
+
+                insert_sql = f"INSERT INTO {target_table} ({col_names}) VALUES {', '.join(value_rows)}"
+                result = target_conn.execute_insert(insert_sql)
+                if not result.success:
+                    return FuncToolResult(
+                        success=0,
+                        error=f"Transfer failed after writing {rows_written} rows: {result.error}",
+                    )
+                rows_written += len(batch_df)
+
+            # Commit the transaction to release locks (critical for SQLAlchemy-based connectors)
+            if hasattr(target_conn, "connection") and hasattr(target_conn.connection, "commit"):
+                target_conn.connection.commit()
+
+        except Exception as e:
+            return FuncToolResult(
+                success=0,
+                error=f"Transfer failed after writing {rows_written} rows: {str(e)}",
+            )
+
+        logger.info(f"Transferred {rows_written} rows to {target_table} (mode={mode})")
+        return FuncToolResult(
+            result={
+                "message": "Transfer completed successfully",
+                "source_sql": source_sql,
+                "source_database": source_database,
+                "target_table": target_table,
+                "target_database": target_database or self._default_database,
+                "mode": mode,
+                "rows_transferred": rows_written,
+                "batch_size": batch_size,
+            }
+        )
 
 
 def db_function_tool_instance(

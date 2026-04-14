@@ -154,6 +154,8 @@ class TestExecuteDDLStatementValidation:
             "CREATE TABLE test AS SELECT * FROM other",
             "CREATE SCHEMA staging",
             "CREATE SCHEMA IF NOT EXISTS staging",
+            "DROP SCHEMA staging",
+            "DROP SCHEMA IF EXISTS staging",
             "  CREATE TABLE test (id INT)",
             "ALTER TABLE test ADD COLUMN name TEXT",
             "DROP TABLE test",
@@ -347,6 +349,7 @@ class TestDBFuncToolExecuteWrite:
 
         assert result.success == 0
         assert "below min_rows=2" in result.error
+        assert "already been committed" in result.error
 
     def test_execute_write_honors_max_rows(self):
         mock_connector = Mock()
@@ -360,6 +363,7 @@ class TestDBFuncToolExecuteWrite:
 
         assert result.success == 0
         assert "above max_rows=3" in result.error
+        assert "already been committed" in result.error
 
     def test_execute_write_connector_failure(self):
         mock_connector = Mock()
@@ -473,3 +477,523 @@ class TestDescribeTableDuckDBSchemaPrefix:
 
         assert effective.get("schema_name") == "raw"
         assert effective.get("table_name") == "stage"
+
+
+class TestExecuteDDLDatabaseParam:
+    """Tests for execute_ddl with the database parameter for multi-connector routing."""
+
+    def _make_tool(self, connector=None):
+        if connector is None:
+            connector = Mock()
+            connector.dialect = "sqlite"
+            connector.get_databases.return_value = []
+            ddl_result = Mock()
+            ddl_result.success = True
+            connector.execute_ddl.return_value = ddl_result
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            return DBFuncTool(connector)
+
+    def test_execute_ddl_with_database_routes_to_connector(self):
+        """execute_ddl(database='greenplum') should call _get_connector('greenplum')."""
+        mock_connector = Mock()
+        mock_connector.dialect = "sqlite"
+        mock_connector.get_databases.return_value = []
+        ddl_result = Mock(success=True)
+        mock_connector.execute_ddl.return_value = ddl_result
+
+        tool = self._make_tool(mock_connector)
+        with patch.object(tool, "_get_connector", return_value=mock_connector) as mock_get:
+            tool.execute_ddl("CREATE TABLE t (id INT)", database="greenplum")
+            mock_get.assert_called_once_with("greenplum")
+
+    def test_execute_ddl_without_database_uses_default(self):
+        """execute_ddl() without database should call _get_connector with empty string."""
+        mock_connector = Mock()
+        mock_connector.dialect = "sqlite"
+        mock_connector.get_databases.return_value = []
+        ddl_result = Mock(success=True)
+        mock_connector.execute_ddl.return_value = ddl_result
+
+        tool = self._make_tool(mock_connector)
+        with patch.object(tool, "_get_connector", return_value=mock_connector) as mock_get:
+            tool.execute_ddl("CREATE TABLE t (id INT)")
+            mock_get.assert_called_once_with("")
+
+    def test_execute_ddl_returns_database_in_result(self):
+        """Successful execute_ddl should include database name in result."""
+        mock_connector = Mock()
+        mock_connector.dialect = "sqlite"
+        mock_connector.get_databases.return_value = []
+        ddl_result = Mock(success=True)
+        mock_connector.execute_ddl.return_value = ddl_result
+
+        tool = self._make_tool(mock_connector)
+        result = tool.execute_ddl("CREATE TABLE t (id INT)", database="greenplum")
+        assert result.success == 1
+        assert "database" in result.result
+
+
+class TestGetConnectorRouting:
+    """Tests for _get_connector routing in single vs multi connector mode.
+
+    Verifies that single-connector mode ignores the database parameter
+    (always returning the primary connector), while multi-connector mode
+    correctly routes to different connectors by logical name.
+    """
+
+    def _make_single_mode_tool(self, connector):
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            return DBFuncTool(connector)
+
+    def test_single_connector_ignores_database_param(self):
+        """In single-connector mode, _get_connector always returns the same connector."""
+        mock_connector = Mock()
+        mock_connector.dialect = "sqlite"
+        mock_connector.get_databases.return_value = []
+
+        tool = self._make_single_mode_tool(mock_connector)
+
+        conn_default = tool._get_connector()
+        conn_named = tool._get_connector("greenplum")
+        conn_other = tool._get_connector("starrocks")
+
+        # All three should be the exact same object
+        assert conn_default is conn_named
+        assert conn_named is conn_other
+        assert conn_default is mock_connector
+
+    def test_multi_connector_routes_by_database_name(self):
+        """In multi-connector mode, _get_connector returns different connectors."""
+        from datus.tools.db_tools.db_manager import DBManager
+
+        mock_source = Mock()
+        mock_source.dialect = "duckdb"
+        mock_source.get_databases.return_value = []
+        mock_target = Mock()
+        mock_target.dialect = "greenplum"
+        mock_target.get_databases.return_value = []
+
+        mock_db_manager = Mock(spec=DBManager)
+        mock_db_manager.get_conn.side_effect = lambda ns, name: mock_target if name == "greenplum" else mock_source
+        mock_db_manager.first_conn.return_value = mock_source
+
+        mock_config = Mock()
+        mock_config.active_model.return_value.model = "gpt-5.4"
+        mock_config.current_database = "duckdb"
+        # Must have >1 database so DBFuncTool enters true multi-connector mode
+        mock_config.current_db_configs.return_value = {"duckdb": Mock(), "greenplum": Mock()}
+
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            tool = DBFuncTool(
+                mock_db_manager,
+                agent_config=mock_config,
+                default_database="duckdb",
+            )
+
+        # Verify multi-connector mode is active
+        assert tool._is_multi_connector is True
+
+        conn_source = tool._get_connector("duckdb")
+        conn_target = tool._get_connector("greenplum")
+
+        assert conn_source is mock_source
+        assert conn_target is mock_target
+        assert conn_source is not conn_target
+
+
+class TestTransferQueryResult:
+    """Tests for DBFuncTool.transfer_query_result method."""
+
+    def _make_multi_tool(self, source_connector, target_connector, default_db="source_db"):
+        """Create a DBFuncTool with mocked _get_connector for multi-db routing."""
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            tool = DBFuncTool(source_connector)
+
+        def get_connector(database=None):
+            if database == "target_db":
+                return target_connector
+            return source_connector
+
+        tool._get_connector = Mock(side_effect=get_connector)
+        tool._default_database = default_db
+        return tool
+
+    def _make_source_connector(self, df):
+        """Create a mock source connector that returns a pandas DataFrame."""
+
+        connector = Mock()
+        connector.dialect = "duckdb"
+        connector.get_databases.return_value = []
+
+        exec_result = Mock()
+        exec_result.success = True
+        exec_result.sql_return = df
+        exec_result.row_count = len(df)
+        connector.execute_pandas.return_value = exec_result
+        return connector
+
+    def _make_target_connector(self):
+        """Create a mock target connector with execute_insert support."""
+        connector = Mock()
+        connector.dialect = "postgresql"
+        connector.get_databases.return_value = []
+
+        # Mock DDL execution (for TRUNCATE)
+        ddl_result = Mock(success=True)
+        connector.execute_ddl.return_value = ddl_result
+
+        # Mock execute_insert for batch INSERT
+        insert_result = Mock(success=True, row_count=0)
+        connector.execute_insert.return_value = insert_result
+        return connector, connector.execute_insert
+
+    def test_transfer_replace_mode_success(self):
+        import pandas as pd
+
+        df = pd.DataFrame({"id": [1, 2, 3], "name": ["a", "b", "c"]})
+        source = self._make_source_connector(df)
+        target, cursor = self._make_target_connector()
+
+        tool = self._make_multi_tool(source, target)
+        result = tool.transfer_query_result(
+            source_sql="SELECT * FROM users",
+            source_database="source_db",
+            target_table="tgt.users",
+            target_database="target_db",
+            mode="replace",
+            batch_size=5000,
+        )
+
+        assert result.success == 1
+        assert result.result["rows_transferred"] == 3
+        assert result.result["mode"] == "replace"
+        # TRUNCATE should be called in replace mode
+        target.execute_ddl.assert_called_once()
+        assert "TRUNCATE" in target.execute_ddl.call_args[0][0].upper()
+
+    def test_transfer_append_mode_no_truncate(self):
+        import pandas as pd
+
+        df = pd.DataFrame({"id": [1, 2]})
+        source = self._make_source_connector(df)
+        target, cursor = self._make_target_connector()
+
+        tool = self._make_multi_tool(source, target)
+        result = tool.transfer_query_result(
+            source_sql="SELECT * FROM users",
+            source_database="source_db",
+            target_table="tgt.users",
+            target_database="target_db",
+            mode="append",
+        )
+
+        assert result.success == 1
+        assert result.result["rows_transferred"] == 2
+        # TRUNCATE should NOT be called in append mode
+        target.execute_ddl.assert_not_called()
+
+    def test_transfer_empty_result_set(self):
+        import pandas as pd
+
+        df = pd.DataFrame(columns=["id", "name"])
+        source = self._make_source_connector(df)
+        target, cursor = self._make_target_connector()
+
+        tool = self._make_multi_tool(source, target)
+        result = tool.transfer_query_result(
+            source_sql="SELECT * FROM empty_table",
+            source_database="source_db",
+            target_table="tgt.t",
+            target_database="target_db",
+            mode="replace",
+        )
+
+        assert result.success == 1
+        assert result.result["rows_transferred"] == 0
+
+    def test_transfer_source_query_failure(self):
+        source = Mock()
+        source.dialect = "duckdb"
+        source.get_databases.return_value = []
+        exec_result = Mock(success=False, error="syntax error in SQL")
+        source.execute_pandas.return_value = exec_result
+
+        target, _ = self._make_target_connector()
+        tool = self._make_multi_tool(source, target)
+
+        result = tool.transfer_query_result(
+            source_sql="SELECT bad syntax",
+            source_database="source_db",
+            target_table="tgt.t",
+            target_database="target_db",
+        )
+
+        assert result.success == 0
+        assert "syntax error" in result.error
+
+    def test_transfer_exceeds_row_limit(self):
+
+        source = Mock()
+        source.dialect = "duckdb"
+        source.get_databases.return_value = []
+
+        # Create a mock DataFrame that reports >1M rows via len()
+        large_df = Mock()
+        large_df.__len__ = Mock(return_value=1_000_001)
+        large_df.columns = ["id"]
+
+        exec_result = Mock()
+        exec_result.success = True
+        exec_result.sql_return = large_df
+        source.execute_pandas.return_value = exec_result
+
+        target, _ = self._make_target_connector()
+        tool = self._make_multi_tool(source, target)
+
+        result = tool.transfer_query_result(
+            source_sql="SELECT * FROM huge",
+            source_database="source_db",
+            target_table="tgt.t",
+            target_database="target_db",
+        )
+
+        assert result.success == 0
+        assert "1,000,000" in result.error
+
+    def test_transfer_invalid_mode(self):
+        import pandas as pd
+
+        df = pd.DataFrame({"id": [1]})
+        source = self._make_source_connector(df)
+        target, _ = self._make_target_connector()
+
+        tool = self._make_multi_tool(source, target)
+        result = tool.transfer_query_result(
+            source_sql="SELECT 1",
+            source_database="source_db",
+            target_table="tgt.t",
+            target_database="target_db",
+            mode="upsert",
+        )
+
+        assert result.success == 0
+        assert "mode" in result.error.lower()
+
+    def test_transfer_uses_correct_connectors(self):
+        import pandas as pd
+
+        df = pd.DataFrame({"id": [1]})
+        source = self._make_source_connector(df)
+        target, cursor = self._make_target_connector()
+
+        tool = self._make_multi_tool(source, target)
+        tool.transfer_query_result(
+            source_sql="SELECT * FROM t",
+            source_database="source_db",
+            target_table="tgt.t",
+            target_database="target_db",
+            mode="append",
+        )
+
+        # Verify _get_connector was called with both databases
+        calls = [c[0][0] for c in tool._get_connector.call_args_list]
+        assert "source_db" in calls
+        assert "target_db" in calls
+
+    def test_transfer_batch_partial_failure(self):
+        import pandas as pd
+
+        # Create a df that will need multiple batches
+        df = pd.DataFrame({"id": range(10), "name": [f"n{i}" for i in range(10)]})
+        source = self._make_source_connector(df)
+        target, execute_insert = self._make_target_connector()
+
+        # Make execute_insert fail on the second call
+        execute_insert.side_effect = [Mock(success=True), RuntimeError("disk full")]
+
+        tool = self._make_multi_tool(source, target)
+        result = tool.transfer_query_result(
+            source_sql="SELECT * FROM t",
+            source_database="source_db",
+            target_table="tgt.t",
+            target_database="target_db",
+            mode="append",
+            batch_size=5,  # Force 2 batches
+        )
+
+        assert result.success == 0
+        assert "disk full" in result.error
+
+    def test_transfer_truncate_failure_in_replace_mode(self):
+        """Replace mode should report error when TRUNCATE fails."""
+        import pandas as pd
+
+        df = pd.DataFrame({"id": [1]})
+        source = self._make_source_connector(df)
+        target, _ = self._make_target_connector()
+        # Make TRUNCATE fail
+        target.execute_ddl.return_value = Mock(success=False, error="permission denied")
+
+        tool = self._make_multi_tool(source, target)
+        result = tool.transfer_query_result(
+            source_sql="SELECT 1",
+            source_database="source_db",
+            target_table="tgt.t",
+            target_database="target_db",
+            mode="replace",
+        )
+
+        assert result.success == 0
+        assert "permission denied" in result.error
+
+    def test_transfer_source_without_execute_pandas(self):
+        """Source connector without execute_pandas should report clear error."""
+        source = Mock(spec=["dialect", "get_databases"])
+        source.dialect = "sqlite"
+        source.get_databases.return_value = []
+        target, _ = self._make_target_connector()
+
+        tool = self._make_multi_tool(source, target)
+        result = tool.transfer_query_result(
+            source_sql="SELECT 1",
+            source_database="source_db",
+            target_table="tgt.t",
+            target_database="target_db",
+        )
+
+        assert result.success == 0
+        assert "pandas" in result.error.lower()
+
+    def test_transfer_batch_size_zero(self):
+        """batch_size <= 0 should be rejected."""
+        import pandas as pd
+
+        df = pd.DataFrame({"id": [1]})
+        source = self._make_source_connector(df)
+        target, _ = self._make_target_connector()
+
+        tool = self._make_multi_tool(source, target)
+        result = tool.transfer_query_result(
+            source_sql="SELECT 1",
+            source_database="source_db",
+            target_table="tgt.t",
+            target_database="target_db",
+            batch_size=0,
+        )
+
+        assert result.success == 0
+        assert "batch_size" in result.error
+
+    def test_transfer_invalid_target_table(self):
+        """SQL-injection-style target_table should be rejected."""
+        import pandas as pd
+
+        df = pd.DataFrame({"id": [1]})
+        source = self._make_source_connector(df)
+        target, _ = self._make_target_connector()
+
+        tool = self._make_multi_tool(source, target)
+
+        for bad_name in ["users; DROP TABLE x", "123bad", "table name with spaces"]:
+            result = tool.transfer_query_result(
+                source_sql="SELECT 1",
+                source_database="source_db",
+                target_table=bad_name,
+                target_database="target_db",
+            )
+            assert result.success == 0, f"Expected rejection for target_table='{bad_name}'"
+            assert "invalid" in result.error.lower() or "identifier" in result.error.lower()
+
+
+class TestGetConnectorFallback:
+    """Test _get_connector fallback from db_name to namespace routing."""
+
+    def test_fallback_to_namespace_when_direct_lookup_fails(self):
+        """When get_conn(db_name, db_name) fails, should fallback to get_conn(namespace, db_name)."""
+        from datus.tools.db_tools.db_manager import DBManager
+
+        mock_connector = Mock()
+        mock_connector.dialect = "duckdb"
+        mock_connector.get_databases.return_value = []
+
+        mock_db_manager = Mock(spec=DBManager)
+        # First call (db_name, db_name) raises, second call (namespace, db_name) succeeds
+        mock_db_manager.get_conn.side_effect = [KeyError("not found"), mock_connector]
+        mock_db_manager.first_conn.return_value = mock_connector
+
+        mock_config = Mock()
+        mock_config.active_model.return_value.model = "gpt-5.4"
+        mock_config.current_database = "default_db"
+        mock_config.current_db_configs.return_value = {"default_db": Mock(), "other_db": Mock()}
+
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            tool = DBFuncTool(mock_db_manager, agent_config=mock_config, default_database="default_db")
+
+        conn = tool._get_connector("other_db")
+        assert conn is mock_connector
+        # Should have been called twice: first (db_name, db_name) then (namespace, db_name)
+        assert mock_db_manager.get_conn.call_count == 2
+
+
+class TestPathTraversalGuard:
+    """Tests for _read_sql_from_file path traversal prevention."""
+
+    def _make_tool(self):
+        connector = Mock()
+        connector.dialect = "sqlite"
+        connector.get_databases.return_value = []
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            return DBFuncTool(connector)
+
+    def test_rejects_absolute_path(self):
+        """Absolute paths must be rejected to prevent sandbox escape."""
+        from datus.utils.exceptions import DatusException
+
+        tool = self._make_tool()
+        with pytest.raises(DatusException):
+            tool._read_sql_from_file("/etc/passwd")
+
+    def test_rejects_dotdot_traversal(self):
+        """Paths with .. must be rejected."""
+        from datus.utils.exceptions import DatusException
+
+        tool = self._make_tool()
+        with pytest.raises(DatusException):
+            tool._read_sql_from_file("../../../etc/passwd")
+
+    def test_execute_write_rejects_absolute_sql_file(self):
+        """execute_write must reject absolute .sql file paths."""
+        tool = self._make_tool()
+        result = tool.execute_write("/etc/passwd.sql")
+        assert result.success == 0
+        assert "failed" in result.error.lower()

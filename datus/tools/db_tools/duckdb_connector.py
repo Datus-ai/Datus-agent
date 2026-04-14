@@ -617,7 +617,8 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin):
         schema_name = schema_name or self.schema_name or "main"
         full_name = self.full_name(database_name=database_name, schema_name=schema_name, table_name=table_name)
 
-        sql = f"PRAGMA table_info('{full_name}')"
+        escaped_name = full_name.replace("'", "''")
+        sql = f"PRAGMA table_info('{escaped_name}')"
         try:
             try:
                 result = self.connection.execute(sql)

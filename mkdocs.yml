@@ -27,6 +27,9 @@ nav:
       - Generate Metrics: subagent/gen_metrics.md
       - Generate Semantic Model: subagent/gen_semantic_model.md
       - Generate SQL Summary: subagent/gen_sql_summary.md
+      - Table Generation: subagent/gen_table.md
+      - ETL Job: subagent/gen_job.md
+      - Migration: subagent/migration.md
     - Chatbot: web_chatbot/introduction.md
     - IM Gateway (Claw):
       - Introduction: claw/introduction.md

@@ -4,6 +4,7 @@
 
 import io
 import json
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime, time
@@ -215,19 +216,14 @@ def llm_result2json(llm_str: str, expected_type: type[Dict | List] = dict) -> Un
         # sequences are never valid in any SQL dialect; their presence
         # is always a model mistake and left intact they cause
         # downstream parser errors. Strip only the backslash, keep the
-        # character itself.
+        # character itself — but preserve content inside single-quoted
+        # string literals to avoid corrupting legitimate SQL values.
         if isinstance(result, dict) and isinstance(result.get("sql"), str):
-            sql = result["sql"]
-            for bogus, fixed in (
-                ("\\(", "("),
-                ("\\)", ")"),
-                ("\\[", "["),
-                ("\\]", "]"),
-                ("\\;", ";"),
-            ):
-                if bogus in sql:
-                    sql = sql.replace(bogus, fixed)
-            result["sql"] = sql
+            result["sql"] = re.sub(
+                r"'(?:''|[^'])*'|\\([()[\];])",
+                lambda m: m.group(0) if m.group(1) is None else m.group(1),
+                result["sql"],
+            )
 
         # If it's a dict, check if it has meaningful content
         if isinstance(result, dict):

@@ -201,6 +201,14 @@ async def submit_user_interaction(
             errorMessage="Interaction broker not found for this session",
         )
 
+    # Validate: each answer must be non-empty
+    if not request.input or any(len(ans) == 0 for ans in request.input):
+        return Result[dict](
+            success=False,
+            errorCode="INVALID_INPUT",
+            errorMessage="Each answer must contain at least one value",
+        )
+
     # Convert List[List[str]] → broker format
     # Single-element lists unwrap to string, multi-element stay as list
     answers = [ans[0] if len(ans) == 1 else ans for ans in request.input]

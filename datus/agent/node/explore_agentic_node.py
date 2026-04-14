@@ -79,7 +79,10 @@ class ExploreAgenticNode(AgenticNode):
             mcp_servers={},
         )
 
-        # Setup read-only tools
+        # Setup read-only tools. When input_data is None (e.g. factory path),
+        # scoped_tables are not yet available, so tools are set up without
+        # scoping. execute_stream() will call setup_tools() again after input
+        # is set to rebuild DB tools with the per-run scoped_tables allowlist.
         self.setup_tools()
         logger.debug(f"ExploreAgenticNode tools: {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
 
@@ -103,7 +106,8 @@ class ExploreAgenticNode(AgenticNode):
         """Setup database tools (all are read-only)."""
         try:
             db_manager = db_manager_instance(self.agent_config.namespaces)
-            conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
+            namespace = self.agent_config.current_namespace or self.agent_config.current_database
+            conn = db_manager.get_conn(namespace, self.agent_config.current_database)
             dynamic_scoped_tables = None
             if isinstance(self.input, ExploreNodeInput) and self.input.scoped_tables:
                 dynamic_scoped_tables = self.input.scoped_tables

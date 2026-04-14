@@ -67,7 +67,7 @@ class TestSSEEndDataTokenFields:
 
 
 class TestUserInteractionInput:
-    """Tests for UserInteractionInput with List[List[str]] input type."""
+    """Tests for UserInteractionInput with List[List[str]] and legacy format support."""
 
     def test_single_select(self):
         """Single-select: input=[['2']]."""
@@ -86,10 +86,23 @@ class TestUserInteractionInput:
         assert obj.input[0] == ["2"]
         assert obj.input[1] == ["1", "3"]
 
-    def test_rejects_flat_strings(self):
-        """Old format List[str] should be rejected by validation."""
-        with pytest.raises(ValidationError):
-            UserInteractionInput(session_id="s1", interaction_key="k1", input=["2", "3"])
+    def test_legacy_format_list_of_strings(self):
+        """Legacy List[str] format should be auto-normalized to List[List[str]]."""
+        data = UserInteractionInput(
+            session_id="s1",
+            interaction_key="k1",
+            input=["answer1", "answer2"],
+        )
+        assert data.input == [["answer1"], ["answer2"]]
+
+    def test_single_legacy_answer(self):
+        """Single legacy string answer should normalize correctly."""
+        data = UserInteractionInput(
+            session_id="s1",
+            interaction_key="k1",
+            input=["yes"],
+        )
+        assert data.input == [["yes"]]
 
     def test_rejects_empty_input(self):
         """Missing input raises validation error."""

@@ -4,7 +4,7 @@
 
 The **Builtin Subagent** are specialized AI assistants integrated within the Datus Agent system. Each subagent focuses on a specific aspect of data engineering automation — analyzing SQL, generating semantic models, and converting queries into reusable metrics — together forming a closed-loop workflow from raw SQL to knowledge-aware data products.
 
-This document covers nine core subagents:
+This document covers twelve core subagents:
 
 1. **[gen_sql_summary](#gen_sql_summary)** — Summarizes and classifies SQL queries
 2. **[gen_semantic_model](#gen_semantic_model)** — Generates MetricFlow semantic models
@@ -13,8 +13,11 @@ This document covers nine core subagents:
 5. **[explore](#explore)** — Read-only data exploration and context gathering
 6. **[gen_sql](#gen_sql)** — Specialized SQL generation with deep expertise
 7. **[gen_report](#gen_report)** — Flexible report generation with configurable tools
-8. **[gen_dashboard](#gen_dashboard)** — BI dashboard CRUD for Superset and Grafana
-9. **[scheduler](#scheduler)** — Airflow job lifecycle management
+8. **[gen_table](gen_table.md)** — Database table creation via CTAS or natural language
+9. **[gen_job](gen_job.md)** — Single-database ETL job execution
+10. **[migration](migration.md)** — Cross-database migration with reconciliation
+11. **[gen_dashboard](#gen_dashboard)** — BI dashboard CRUD for Superset and Grafana
+12. **[scheduler](#scheduler)** — Airflow job lifecycle management
 
 ## Configuration
 
@@ -51,6 +54,12 @@ agent:
       model: claude     # Optional: defaults to configured model
       max_turns: 30     # Optional: defaults to 30
       tools: "semantic_tools.*, context_search_tools.list_subject_tree"  # Optional: defaults to semantic + context tools
+
+    gen_table:
+      max_turns: 20     # Optional: defaults to 20
+
+    gen_job:
+      max_turns: 30     # Optional: defaults to 30
 
     gen_dashboard:
       model: claude     # Optional: defaults to configured model

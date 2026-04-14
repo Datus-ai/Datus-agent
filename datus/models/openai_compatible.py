@@ -165,7 +165,8 @@ class OpenAICompatibleModel(LLMBaseModel):
         if self.model_config.type != "openai":
             return False
         if not self.base_url:
-            return False
+            # When base_url is unset, the OpenAI SDK defaults to api.openai.com
+            return True
         try:
             hostname = (urlparse(self.base_url).hostname or "").lower()
         except Exception:
@@ -645,7 +646,9 @@ class OpenAICompatibleModel(LLMBaseModel):
             model_settings_kwargs["prompt_cache_retention"] = prompt_cache_retention
             prompt_cache_key = self._default_prompt_cache_key(agent_name)
             if prompt_cache_key:
-                model_settings_kwargs["extra_args"] = {"prompt_cache_key": prompt_cache_key}
+                existing_extra_args = model_settings_kwargs.get("extra_args", {})
+                existing_extra_args["prompt_cache_key"] = prompt_cache_key
+                model_settings_kwargs["extra_args"] = existing_extra_args
 
         agent_kwargs["model_settings"] = ModelSettings(**model_settings_kwargs)
 

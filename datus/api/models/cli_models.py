@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 # SQL Execution models
@@ -272,6 +272,14 @@ class UserInteractionInput(BaseModel):
         ...,
         description="List of user answers, one per request. Single-select: ['key'], multi-select: ['key1', 'key2'].",
     )
+
+    @field_validator("input", mode="before")
+    @classmethod
+    def normalize_input(cls, v):
+        """Accept legacy List[str] format and normalize to List[List[str]]."""
+        if isinstance(v, list) and v and isinstance(v[0], str):
+            return [[item] for item in v]
+        return v
 
 
 class StreamChatChunk(BaseModel):

@@ -30,6 +30,10 @@ Use this skill after changing semantic models or metrics. Reuse existing semanti
 4. Compare semantic results against warehouse expectations or a direct SQL baseline.
 5. Return a compact pass / fail report and stop rollout if semantic results drift materially.
 
+## Checklist
+
+Use the core workflow steps above as the checklist. No external reference document is needed — the preferred tools provide the verification surface directly.
+
 ## Output expectations
 
 - semantic validation status

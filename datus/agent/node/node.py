@@ -138,6 +138,20 @@ class Node(ABC):
             if input_data is not None:
                 node.input = input_data
             return node
+        elif node_type == NodeType.TYPE_GEN_JOB:
+            from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
+
+            node = GenJobAgenticNode(agent_config=agent_config, execution_mode="workflow")
+            if input_data is not None:
+                node.input = input_data
+            return node
+        elif node_type == NodeType.TYPE_MIGRATION:
+            from datus.agent.node.migration_agentic_node import MigrationAgenticNode
+
+            node = MigrationAgenticNode(agent_config=agent_config, execution_mode="workflow")
+            if input_data is not None:
+                node.input = input_data
+            return node
         elif node_type == NodeType.TYPE_GEN_SKILL:
             from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
