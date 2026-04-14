@@ -685,6 +685,24 @@ class TestCoalesceDeltas:
         assert isinstance(data, SSEMessageData)
         assert data.payload.content[0].payload["content"] == "xy"
 
+    def test_different_message_ids_break_run(self):
+        """Consecutive deltas with different message_ids are NOT merged."""
+        d1 = _make_thinking_delta(0, "a", message_id="m1")
+        d2 = _make_thinking_delta(1, "b", message_id="m1")
+        d3 = _make_thinking_delta(2, "c", message_id="m2")
+        d4 = _make_thinking_delta(3, "d", message_id="m2")
+        result = _coalesce_deltas([d1, d2, d3, d4])
+        # Should produce 2 merged events (one per message_id)
+        assert len(result) == 2
+        data0 = result[0].data
+        data1 = result[1].data
+        assert isinstance(data0, SSEMessageData)
+        assert isinstance(data1, SSEMessageData)
+        assert data0.payload.message_id == "m1"
+        assert data0.payload.content[0].payload["content"] == "ab"
+        assert data1.payload.message_id == "m2"
+        assert data1.payload.content[0].payload["content"] == "cd"
+
 
 # ---------------------------------------------------------------------------
 # Integration: consume_events with coalescing

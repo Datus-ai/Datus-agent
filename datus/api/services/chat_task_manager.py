@@ -60,21 +60,42 @@ def _is_thinking_delta(event: SSEEvent) -> bool:
     return is_thinking_only_content(data.payload.content)
 
 
+def _delta_message_id(event: SSEEvent) -> str:
+    """Extract the message_id from a thinking-delta event.
+
+    Callers must ensure *event* passes ``_is_thinking_delta`` first.
+    """
+    data = event.data
+    if isinstance(data, SSEMessageData):
+        return data.payload.message_id
+    return ""
+
+
 def _coalesce_deltas(events: list[SSEEvent]) -> list[SSEEvent]:
-    """Merge consecutive thinking-delta events into single events.
+    """Merge consecutive thinking-delta events **for the same message** into single events.
 
     Non-delta events pass through unchanged and break any ongoing run of deltas.
+    A change in ``message_id`` between adjacent deltas also breaks the run so
+    that deltas from different logical messages are never merged together.
     """
     if not events:
         return []
 
     result: list[SSEEvent] = []
     run_start: int | None = None  # index of first delta in the current run
+    run_msg_id: str = ""  # message_id of the current run
 
     for i, ev in enumerate(events):
         if _is_thinking_delta(ev):
+            msg_id = _delta_message_id(ev)
             if run_start is None:
                 run_start = i
+                run_msg_id = msg_id
+            elif msg_id != run_msg_id:
+                # Different message — flush the current run and start a new one
+                result.append(_merge_delta_run(events[run_start:i]))
+                run_start = i
+                run_msg_id = msg_id
         else:
             # Flush any accumulated delta run before emitting this non-delta
             if run_start is not None:
