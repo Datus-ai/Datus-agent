@@ -320,9 +320,10 @@ class TestStoreSemanticModel:
 
     def test_rejects_semantic_model_info_without_physical_table_name(self):
         from datus.tools.semantic_tools.models import SemanticModelInfo
+        from datus.utils.exceptions import DatusException
 
         manager = _make_manager()
-        with pytest.raises(ValueError, match="physical table_name"):
+        with pytest.raises(DatusException, match="missing physical table_name"):
             manager.store_semantic_model(SemanticModelInfo(name="orders_cube"))
 
     def test_skips_non_dict_dimensions(self):

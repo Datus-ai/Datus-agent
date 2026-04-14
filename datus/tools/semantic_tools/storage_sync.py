@@ -20,6 +20,7 @@ from datus.storage.metric.store import MetricStorage
 from datus.storage.semantic_model.store import SemanticModelStorage
 from datus.storage.subject_tree.store import SubjectTreeStore
 from datus.tools.semantic_tools.models import SemanticModelInfo
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -92,7 +93,12 @@ class SemanticStorageManager:
             extra = model_data.extra or {}
             table_name = model_data.table_name or extra.get("table_name")
             if not table_name:
-                raise ValueError("SemanticModelInfo must include physical table_name metadata")
+                raise DatusException(
+                    ErrorCode.SEMANTIC_ADAPTER_SYNC_FAILED,
+                    message_args={
+                        "error_message": f"SemanticModelInfo '{model_data.name}' missing physical table_name"
+                    },
+                )
 
             converted = {
                 "semantic_model_name": model_data.name,

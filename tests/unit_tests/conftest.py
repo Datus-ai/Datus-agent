@@ -186,8 +186,6 @@ def real_agent_config(tmp_path, reset_global_singletons):
     yield agent_config
 
     # Cleanup: storage backends with empty data_dir create datus_db* in cwd
-    import shutil
-
     for name in os.listdir(project_root):
         if name.startswith("datus_db"):
             shutil.rmtree(os.path.join(project_root, name), ignore_errors=True)
