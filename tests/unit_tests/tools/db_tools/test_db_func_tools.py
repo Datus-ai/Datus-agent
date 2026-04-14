@@ -1521,7 +1521,8 @@ class TestDBFuncToolMultiConnector:
         result = tool.read_query("SELECT * FROM test", database="db2")
 
         assert result.success == 1
-        mock_db_manager.get_conn.assert_called_with("db1", "db2")
+        # In cross-database mode, db_name is used as both namespace and logic_name
+        mock_db_manager.get_conn.assert_called_with("db2", "db2")
         mock_connector.execute_query.assert_called_once()
 
 

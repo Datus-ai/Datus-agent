@@ -197,6 +197,8 @@ class TestResolveNodeType:
             "sql_summary": NodeType.TYPE_SQL_SUMMARY,
             "explore": NodeType.TYPE_EXPLORE,
             "gen_table": NodeType.TYPE_GEN_TABLE,
+            "gen_job": NodeType.TYPE_GEN_JOB,
+            "migration": NodeType.TYPE_MIGRATION,
             "gen_skill": NodeType.TYPE_GEN_SKILL,
             "gen_dashboard": NodeType.TYPE_GEN_DASHBOARD,
             "scheduler": NodeType.TYPE_SCHEDULER,

@@ -16,7 +16,9 @@ Design principle: NO mock except LLM.
 
 import pytest
 
+from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
+from tests.unit_tests.mock_llm_model import build_simple_response
 
 
 class TestMigrationAgenticNodeInit:
@@ -97,7 +99,7 @@ class TestMigrationAgenticNodeInit:
 
 
 class TestMigrationExecution:
-    """Test execute_stream error paths."""
+    """Test execute_stream error paths and basic workflow."""
 
     @pytest.mark.asyncio
     async def test_execute_stream_raises_without_input(self, real_agent_config, mock_llm_create):
@@ -111,6 +113,51 @@ class TestMigrationExecution:
             async for _ in node.execute_stream():
                 pass
         assert "input" in str(exc_info.value).lower()
+
+    @pytest.mark.asyncio
+    async def test_execute_stream_basic_workflow(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.migration_agentic_node import MigrationAgenticNode
+
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response("Migration completed successfully."),
+            ]
+        )
+
+        node = MigrationAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.input = SemanticNodeInput(user_message="Migrate users table from duckdb to greenplum")
+
+        action_manager = ActionHistoryManager()
+        actions = []
+        async for action in node.execute_stream(action_manager):
+            actions.append(action)
+
+        assert len(actions) >= 2
+        assert actions[0].role == ActionRole.USER
+        assert actions[0].status == ActionStatus.PROCESSING
+        assert actions[-1].status == ActionStatus.SUCCESS
+
+    @pytest.mark.asyncio
+    async def test_execute_stream_error_handling(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.migration_agentic_node import MigrationAgenticNode
+
+        async def _raise_error(*args, **kwargs):
+            raise RuntimeError("LLM connection error")
+            yield  # noqa: makes this an async generator
+
+        node = MigrationAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.input = SemanticNodeInput(user_message="Migrate data")
+        mock_llm_create.generate_with_tools_stream = _raise_error
+
+        action_manager = ActionHistoryManager()
+        actions = []
+        async for action in node.execute_stream(action_manager):
+            actions.append(action)
+
+        assert len(actions) >= 2
+        last = actions[-1]
+        assert last.status == ActionStatus.FAILED
+        assert last.action_type == "error"
 
 
 class TestMigrationNodeType:
