@@ -1,8 +1,8 @@
 """API routes for direct tool dispatch."""
 
-from typing import Annotated, Dict
+from typing import Annotated, Dict, Optional
 
-from fastapi import APIRouter, Path
+from fastapi import APIRouter, Body, Path
 
 from datus.api.deps import ServiceDep
 from datus.api.models.base_models import Result
@@ -20,7 +20,7 @@ router = APIRouter(prefix="/api/v1/tools", tags=["tools"])
 def execute_tool(
     tool_name: Annotated[str, Path(description="Name of the tool to execute")],
     svc: ServiceDep,
-    params: Dict = None,
+    params: Annotated[Optional[Dict], Body()] = None,
 ) -> Result[FuncToolResult]:
     """Execute a tool by name."""
     if params is None:
