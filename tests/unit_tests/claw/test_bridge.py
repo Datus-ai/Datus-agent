@@ -198,9 +198,10 @@ def _make_sse_end() -> SSEEvent:
 
 class TestChannelBridge:
     @pytest_asyncio.fixture
-    async def setup(self):
+    async def setup(self, tmp_path):
         adapter = _StreamingStubAdapter()
         agent_config = MagicMock()
+        agent_config.session_dir = str(tmp_path / "sessions")
         task_manager = MagicMock()
         bridge = ChannelBridge(agent_config, task_manager)
         return bridge, adapter, task_manager
@@ -560,8 +561,9 @@ class TestChannelBridge:
 
 class TestEventToOutbound:
     @pytest.fixture
-    def bridge(self):
+    def bridge(self, tmp_path):
         agent_config = MagicMock()
+        agent_config.session_dir = str(tmp_path / "sessions")
         task_manager = MagicMock()
         return ChannelBridge(agent_config, task_manager)
 
@@ -675,9 +677,10 @@ class TestReactionLifecycle:
     """Tests for the reaction emoji lifecycle in handle_message."""
 
     @pytest_asyncio.fixture
-    async def setup(self):
+    async def setup(self, tmp_path):
         adapter = _StubAdapter()
         agent_config = MagicMock()
+        agent_config.session_dir = str(tmp_path / "sessions")
         task_manager = MagicMock()
         bridge = ChannelBridge(agent_config, task_manager)
         return bridge, adapter, task_manager
@@ -839,9 +842,10 @@ class TestVerboseLevels:
     """Tests that verbose level correctly filters SSE events."""
 
     @pytest_asyncio.fixture
-    async def setup(self):
+    async def setup(self, tmp_path):
         adapter = _StreamingStubAdapter()
         agent_config = MagicMock()
+        agent_config.session_dir = str(tmp_path / "sessions")
         task_manager = MagicMock()
         bridge = ChannelBridge(agent_config, task_manager)
         return bridge, adapter, task_manager
@@ -1087,9 +1091,10 @@ class TestStreamIdAndFinalize:
     """Tests that stream_id is set on outbound messages and finalize_stream is called."""
 
     @pytest_asyncio.fixture
-    async def setup(self):
+    async def setup(self, tmp_path):
         adapter = _StreamingStubAdapter()
         agent_config = MagicMock()
+        agent_config.session_dir = str(tmp_path / "sessions")
         task_manager = MagicMock()
         bridge = ChannelBridge(agent_config, task_manager)
         return bridge, adapter, task_manager
