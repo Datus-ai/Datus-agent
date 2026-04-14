@@ -24,6 +24,7 @@ sql_processing_errors.log
 /conf/agent.yml
 /save
 uv.lock
+uv.toml
 /logs
 /tests/output
 before_reflection_*.yaml
