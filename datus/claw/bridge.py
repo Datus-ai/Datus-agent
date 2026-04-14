@@ -134,11 +134,7 @@ class ChannelBridge:
         session_id = self.build_session_id(msg)
         subagent_id = channel_config.subagent_id if channel_config else None
 
-        request = StreamChatInput(
-            message=msg.text,
-            session_id=session_id,
-            stream_response=adapter.supports_streaming
-        )
+        request = StreamChatInput(message=msg.text, session_id=session_id, stream_response=adapter.supports_streaming)
 
         # Apply channel-level namespace override
         if channel_config and channel_config.namespace:
@@ -194,7 +190,10 @@ class ChannelBridge:
                             stream_enabled = adapter.supports_streaming and (
                                 not channel_config or channel_config.stream_response
                             )
+                            is_update = getattr(event.data, "type", None) == SSEDataType.UPDATE_MESSAGE
                             if stream_enabled:
+                                if is_update:
+                                    continue
                                 outbound.stream_id = stream_id
                             elif outbound.is_delta:
                                 continue

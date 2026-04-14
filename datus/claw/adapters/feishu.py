@@ -352,6 +352,12 @@ class FeishuAdapter(ChannelAdapter):
 
     async def send_message(self, message: OutboundMessage) -> Optional[str]:
         """Send a reply message via the Feishu OpenAPI (lark-oapi SDK). Returns the message ID."""
+        logger.debug(
+            "Feishu send_message: stream_id=%s is_delta=%s text=%s",
+            message.stream_id,
+            message.is_delta,
+            message.text[:80] if message.text else "",
+        )
         if message.stream_id:
             return await self._send_streaming(message)
         return await self._send_simple(message)
