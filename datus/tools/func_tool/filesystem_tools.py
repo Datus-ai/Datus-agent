@@ -234,7 +234,7 @@ class FilesystemFuncTool(BaseTool):
             try:
                 target_path.parent.mkdir(parents=True, exist_ok=True)
                 target_path.write_text(content, encoding="utf-8")
-                return FuncToolResult(result=f"File written successfully: {str(target_path)}")
+                return FuncToolResult(result=f"File written successfully: {str(path)}")
             except PermissionError:
                 return FuncToolResult(success=0, error=f"Permission denied: {path}")
 
@@ -307,9 +307,7 @@ class FilesystemFuncTool(BaseTool):
                     return FuncToolResult(success=0, error="No edits were applied")
 
                 target_path.write_text(content, encoding="utf-8")
-                return FuncToolResult(
-                    result=f"File edited successfully: {str(target_path)} ({edits_applied} edit(s) applied)"
-                )
+                return FuncToolResult(result=f"File edited successfully: {str(path)} ({edits_applied} edit(s) applied)")
             except UnicodeDecodeError:
                 return FuncToolResult(success=0, error=f"Cannot edit binary file: {path}")
             except PermissionError:
@@ -657,14 +655,20 @@ class FilesystemFuncTool(BaseTool):
                                     continue
 
                                 relative_path = str(item.relative_to(target_path_resolved))
+                                # Report paths relative to root_path so the LLM can feed them
+                                # back to read_file/write_file without leaking absolute paths.
+                                try:
+                                    reported_path = str(item_resolved.relative_to(root_path_resolved))
+                                except ValueError:
+                                    reported_path = str(item_resolved)
                                 try:
                                     if glob.globmatch(relative_path, pattern, flags=glob.DOTGLOB | glob.GLOBSTAR):
-                                        matches.append(str(item_resolved))
+                                        matches.append(reported_path)
                                         if len(matches) >= effective_max:
                                             return
                                 except Exception:
                                     if item.name == pattern:
-                                        matches.append(str(item_resolved))
+                                        matches.append(reported_path)
                                         if len(matches) >= effective_max:
                                             return
 

@@ -162,7 +162,7 @@ If the semantic model is missing, use the analysis tools to build a high-quality
      ```
    - This prevents incorrect aggregation across time (e.g., summing daily balances)
 
-4. Save with `write_file` (use relative path like `{table_name}.yml`) → `validate_semantic` (MUST pass before continuing) → `end_semantic_model_generation`
+4. Save with `write_file` using the path `semantic_models/{current_database}/{table_name}.yml` (relative to the knowledge base root) → `validate_semantic` (MUST pass before continuing) → `end_semantic_model_generation`
 
 ### 2c. Multi-Table / JOIN SQL Modeling
 
@@ -212,11 +212,15 @@ Use when: non-equi JOINs, > 2 hop joins, subqueries, LATERAL/CROSS joins, comple
 
 ## Phase 3: Generate and Validate
 
-**File paths**: All `write_file` / `edit_file` / `read_file` calls use **relative paths** within the workspace directory (shown in system prompt as `semantic_model_dir`). Never use absolute paths. For example, use `table_name.yml` for semantic models and `metrics/table_name_metrics.yml` for metrics.
+**File paths**: All `write_file` / `edit_file` / `read_file` calls use paths relative to the **knowledge base root** (shown in system prompt as `knowledge_base_dir`). Always include the `semantic_models/{current_database}/` prefix so subsequent reads find the file. For example:
+- Semantic model: `semantic_models/{current_database}/{table_name}.yml`
+- Metric file: `semantic_models/{current_database}/metrics/{table_name}_metrics.yml`
+
+Bare filenames are silently normalized by the host, but the prefixed form is preferred for clarity. Absolute paths are also tolerated.
 
 1. **Check existing**: Call `check_semantic_object_exists(name="{metric_name}", kind="metric")` for each metric confirmed in Phase 1. If it already exists, inform the user and skip it.
 
-2. **Write metric YAML**: Use `write_file` to save each metric definition to `metrics/{table_name}_metrics.yml`.
+2. **Write metric YAML**: Use `write_file` to save each metric definition to `semantic_models/{current_database}/metrics/{table_name}_metrics.yml`.
 
 3. **Validate (MUST PASS)**: Call `validate_semantic` to check the metric YAML.
    - If validation fails, fix errors with `edit_file` and retry until it **passes**.
