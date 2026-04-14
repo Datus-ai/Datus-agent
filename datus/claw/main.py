@@ -51,7 +51,10 @@ def _read_pid(pid_file: Path) -> Optional[int]:
         return None
     try:
         pid_text = pid_file.read_text().strip()
-        return int(pid_text) if pid_text else None
+        if not pid_text:
+            return None
+        pid = int(pid_text)
+        return pid if pid > 0 else None
     except Exception:
         return None
 
@@ -118,10 +121,13 @@ def _run_gateway(args: argparse.Namespace) -> None:
 
 def _daemon_worker(args: argparse.Namespace, pid_file: Path, log_file: Path) -> None:
     """Worker function that runs in the daemon process."""
-    os.setsid()
-    os.umask(0)
+    if sys.platform != "win32":
+        os.setsid()
+        os.umask(0o022)
 
-    configure_logging(args.debug, log_dir="logs", console_output=False)
+    log_dir = str(log_file.parent)
+    configure_logging(args.debug, log_dir=log_dir, console_output=False)
+    logging.getLogger().setLevel(getattr(logging, args.log_level, logging.INFO))
     _redirect_stdio(log_file)
     _write_pid_file(pid_file, os.getpid())
 
@@ -160,7 +166,10 @@ def _stop(pid_file: Path, timeout_seconds: float = 10.0) -> int:
         time.sleep(0.2)
 
     try:
-        os.kill(pid, signal.SIGKILL)
+        if sys.platform == "win32":
+            os.kill(pid, signal.SIGTERM)
+        else:
+            os.kill(pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
     _remove_pid_file(pid_file)
@@ -254,14 +263,16 @@ def main() -> None:
     if args.action == "restart":
         configure_logging(args.debug)
         _stop(pid_file)
-        # fall-through to start
+        args.daemon = True
+        # fall-through to start as daemon
 
     if args.daemon:
         if (pid := _read_pid(pid_file)) and _is_process_running(pid):
             print(f"Already running (pid={pid})", file=sys.stderr)
             raise SystemExit(0)
 
-        configure_logging(args.debug, log_dir="logs", console_output=False)
+        log_dir = str(log_file.parent)
+        configure_logging(args.debug, log_dir=log_dir, console_output=False)
         logger.info(f"Starting Datus Claw gateway (daemon) on {args.host}:{args.port} | Debug: {args.debug}")
 
         daemon_process = multiprocessing.Process(target=_daemon_worker, args=(args, pid_file, log_file), daemon=False)
