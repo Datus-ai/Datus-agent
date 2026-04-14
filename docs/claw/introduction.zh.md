@@ -123,10 +123,34 @@ channels:
 
 ## 启动网关
 
-使用以下命令启动 Claw 网关：
+### 前台启动（默认）
 
 ```bash
-python -m datus.claw.main --config conf/agent.yml
+datus-claw --config conf/agent.yml
+```
+
+### 后台守护进程模式
+
+以守护进程方式在后台运行网关：
+
+```bash
+# 后台启动
+datus-claw --daemon
+
+# 查看状态
+datus-claw --action status
+
+# 停止
+datus-claw --action stop
+
+# 重启
+datus-claw --action restart
+```
+
+默认情况下，PID 文件存储在 `~/.datus/run/datus-claw.pid`，守护进程日志写入 `logs/datus-claw.log`。可通过参数覆盖：
+
+```bash
+datus-claw --daemon --pid-file /var/run/datus-claw.pid --daemon-log-file /var/log/datus-claw.log
 ```
 
 ### CLI 参数
@@ -139,6 +163,10 @@ python -m datus.claw.main --config conf/agent.yml
 | `--port` | `9000` | 健康检查服务绑定端口 |
 | `--debug` | `false` | 启用调试日志 |
 | `--log-level` | `INFO`（或 `DATUS_LOG_LEVEL` 环境变量） | 日志级别：DEBUG、INFO、WARNING、ERROR、CRITICAL |
+| `--daemon` | `false` | 以守护进程方式后台运行 |
+| `--action` | `start` | 守护进程操作：`start`、`stop`、`restart`、`status` |
+| `--pid-file` | `~/.datus/run/datus-claw.pid` | PID 文件路径 |
+| `--daemon-log-file` | `logs/datus-claw.log` | 守护进程日志文件路径 |
 
 ## 功能特性
 
@@ -230,7 +258,7 @@ ImportError: slack_sdk is required for the Slack adapter. Install it with: pip i
 启用详细日志以诊断连接问题：
 
 ```bash
-python -m datus.claw.main --config conf/agent.yml --debug
+datus-claw --config conf/agent.yml --debug
 ```
 
 或设置环境变量：

@@ -12,8 +12,34 @@ This registers the `datus-api` console script.
 
 ## Launch
 
+### Foreground (default)
+
 ```bash
 datus-api --host 0.0.0.0 --port 8000
+```
+
+### Daemon (background) Mode
+
+Run the API server as a background daemon:
+
+```bash
+# Start in background
+datus-api --daemon --port 8000
+
+# Check status
+datus-api --action status
+
+# Stop
+datus-api --action stop
+
+# Restart
+datus-api --action restart
+```
+
+By default, the PID file is stored at `~/.datus/run/datus-agent-api.pid` and daemon logs are written to `logs/datus-agent-api.log`. You can override these paths:
+
+```bash
+datus-api --daemon --pid-file /var/run/datus-api.pid --daemon-log-file /var/log/datus-api.log
 ```
 
 ## CLI arguments
@@ -29,8 +55,13 @@ datus-api --host 0.0.0.0 --port 8000
 | `--reload`       | off                      | Auto-reload on file change (dev only) |
 | `--workers`      | `1`                      | Number of uvicorn worker processes |
 | `-v`, `--version`| —                        | Print version and exit |
+| `--daemon`       | off                      | Run in background as a daemon |
+| `--action`       | `start`                  | Daemon action: `start`, `stop`, `restart`, `status` |
+| `--pid-file`     | `~/.datus/run/datus-agent-api.pid` | PID file path |
+| `--daemon-log-file` | `logs/datus-agent-api.log` | Daemon log file path |
 
 `--reload` and `--workers > 1` are mutually exclusive; the server will warn and fall back to a single worker.
+`--daemon` and `--reload` are mutually exclusive.
 
 ## Environment variables
 

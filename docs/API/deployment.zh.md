@@ -12,8 +12,34 @@ uv sync
 
 ## 启动
 
+### 前台启动（默认）
+
 ```bash
 datus-api --host 0.0.0.0 --port 8000
+```
+
+### 后台守护进程模式
+
+以守护进程方式在后台运行 API 服务：
+
+```bash
+# 后台启动
+datus-api --daemon --port 8000
+
+# 查看状态
+datus-api --action status
+
+# 停止
+datus-api --action stop
+
+# 重启
+datus-api --action restart
+```
+
+默认情况下，PID 文件存储在 `~/.datus/run/datus-agent-api.pid`，守护进程日志写入 `logs/datus-agent-api.log`。可通过参数覆盖：
+
+```bash
+datus-api --daemon --pid-file /var/run/datus-api.pid --daemon-log-file /var/log/datus-api.log
 ```
 
 ## CLI 参数
@@ -29,8 +55,13 @@ datus-api --host 0.0.0.0 --port 8000
 | `--reload`        | 关闭                    | 文件变更自动重载(仅开发) |
 | `--workers`       | `1`                     | uvicorn worker 进程数 |
 | `-v`, `--version` | —                       | 打印版本并退出 |
+| `--daemon`        | 关闭                    | 以守护进程方式后台运行 |
+| `--action`        | `start`                 | 守护进程操作：`start`、`stop`、`restart`、`status` |
+| `--pid-file`      | `~/.datus/run/datus-agent-api.pid` | PID 文件路径 |
+| `--daemon-log-file` | `logs/datus-agent-api.log` | 守护进程日志文件路径 |
 
-`--reload` 与 `--workers > 1` 互斥,服务会发出告警并退回单 worker 模式。
+`--reload` 与 `--workers > 1` 互斥，服务会发出告警并退回单 worker 模式。
+`--daemon` 与 `--reload` 互斥。
 
 ## 环境变量
 

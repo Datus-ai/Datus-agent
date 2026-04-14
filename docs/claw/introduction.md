@@ -123,10 +123,36 @@ For detailed step-by-step instructions on configuring each IM platform, see the 
 
 ## Running the Gateway
 
-Start the Claw gateway with:
+### Foreground (default)
+
+Start the Claw gateway in the foreground:
 
 ```bash
-python -m datus.claw.main --config conf/agent.yml
+datus-claw --config conf/agent.yml
+```
+
+### Daemon (background) Mode
+
+Run the gateway as a background daemon:
+
+```bash
+# Start in background
+datus-claw --daemon
+
+# Check status
+datus-claw --action status
+
+# Stop
+datus-claw --action stop
+
+# Restart
+datus-claw --action restart
+```
+
+By default, the PID file is stored at `~/.datus/run/datus-claw.pid` and daemon logs are written to `logs/datus-claw.log`. You can override these paths:
+
+```bash
+datus-claw --daemon --pid-file /var/run/datus-claw.pid --daemon-log-file /var/log/datus-claw.log
 ```
 
 ### CLI Flags
@@ -139,6 +165,10 @@ python -m datus.claw.main --config conf/agent.yml
 | `--port` | `9000` | Health-check server bind port |
 | `--debug` | `false` | Enable debug logging |
 | `--log-level` | `INFO` (or `DATUS_LOG_LEVEL` env) | Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL |
+| `--daemon` | `false` | Run in background as a daemon |
+| `--action` | `start` | Daemon action: `start`, `stop`, `restart`, `status` |
+| `--pid-file` | `~/.datus/run/datus-claw.pid` | PID file path |
+| `--daemon-log-file` | `logs/datus-claw.log` | Daemon log file path |
 
 ## Features
 
@@ -230,7 +260,7 @@ If the bot connects but immediately disconnects or logs authentication errors, v
 Enable verbose logging to diagnose connection issues:
 
 ```bash
-python -m datus.claw.main --config conf/agent.yml --debug
+datus-claw --config conf/agent.yml --debug
 ```
 
 Or set the environment variable:
