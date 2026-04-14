@@ -54,40 +54,6 @@ class StopExecuteSQLData(BaseModel):
     stopped: bool = Field(..., description="Whether the execution was successfully stopped")
 
 
-# Tool Commands models
-class SchemaLinkingToolInput(BaseModel):
-    """Input model for schema linking tool (sl)."""
-
-    query_text: str = Field(..., description="Text to search for in table metadata")
-    catalog_name: Optional[str] = Field(None, description="Catalog name")
-    database_name: Optional[str] = Field(None, description="Database name")
-    schema_name: Optional[str] = Field(None, description="Schema name")
-    top_n: int = Field(5, description="Number of top results to return")
-
-
-class SearchMetricsToolInput(BaseModel):
-    """Input model for search metrics tool (sm)."""
-
-    query_text: str = Field(..., description="Text to search for in metrics")
-    domain: Optional[str] = Field(None, description="Metrics domain")
-    layer1: Optional[str] = Field(None, description="First layer classification")
-    layer2: Optional[str] = Field(None, description="Second layer classification")
-    catalog_name: Optional[str] = Field(None, description="Catalog name")
-    database_name: Optional[str] = Field(None, description="Database name")
-    schema_name: Optional[str] = Field(None, description="Schema name")
-    top_n: int = Field(5, description="Number of top results to return")
-
-
-class SearchHistoryToolInput(BaseModel):
-    """Input model for search history tool (sh)."""
-
-    query_text: str = Field(..., description="Text to search for in SQL history")
-    domain: Optional[str] = Field(None, description="Query domain")
-    layer1: Optional[str] = Field(None, description="First layer classification")
-    layer2: Optional[str] = Field(None, description="Second layer classification")
-    top_n: int = Field(5, description="Number of top results to return")
-
-
 class SaveToolInput(BaseModel):
     """Input model for save tool."""
 
@@ -96,25 +62,6 @@ class SaveToolInput(BaseModel):
     file_name: Optional[str] = Field(None, description="File name")
 
 
-class ExecuteToolInput(BaseModel):
-    """Generic input model for tool execution - used for backward compatibility."""
-
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "tool_name": "sl",
-                "args": "users table analysis",
-                "stream_output": False,
-            }
-        }
-    )
-
-    tool_name: str = Field(..., description="Name of the tool to execute")
-    args: str = Field("", description="Arguments for the tool")
-    stream_output: bool = Field(False, description="Whether to stream output")
-
-
-# Tool-specific result models
 class TableMetadata(BaseModel):
     """Table metadata information."""
 
@@ -133,15 +80,6 @@ class SampleData(BaseModel):
     sample_rows: str = Field(..., description="Sample rows as formatted text")
 
 
-class SchemaLinkingResult(BaseModel):
-    """Schema linking tool result."""
-
-    metadata: List[TableMetadata] = Field(default_factory=list, description="Table metadata")
-    sample_data: List[SampleData] = Field(default_factory=list, description="Sample data")
-    total_metadata: int = Field(0, description="Total metadata count")
-    total_sample_data: int = Field(0, description="Total sample data count")
-
-
 class Metric(BaseModel):
     """Metric information."""
 
@@ -154,13 +92,6 @@ class Metric(BaseModel):
     score: Optional[float] = Field(None, description="Relevance score")
 
 
-class SearchMetricsResult(BaseModel):
-    """Search metrics tool result."""
-
-    metrics: List[Metric] = Field(default_factory=list, description="Found metrics")
-    total_count: int = Field(0, description="Total metrics count")
-
-
 class HistoricalQuery(BaseModel):
     """Historical query information."""
 
@@ -171,13 +102,6 @@ class HistoricalQuery(BaseModel):
     layer2: Optional[str] = Field(None, description="Second layer")
     timestamp: Optional[str] = Field(None, description="Query timestamp")
     score: Optional[float] = Field(None, description="Relevance score")
-
-
-class SearchHistoryResult(BaseModel):
-    """Search history tool result."""
-
-    history: List[HistoricalQuery] = Field(default_factory=list, description="Historical queries")
-    total_count: int = Field(0, description="Total queries count")
 
 
 class SavedFile(BaseModel):
@@ -196,18 +120,6 @@ class SaveToolResult(BaseModel):
     total_size: str = Field("0B", description="Total size")
     zip_path: Optional[str] = Field(None, description="Path to zip archive")
     download_url: Optional[str] = Field(None, description="Download URL for zip archive")
-
-
-class ExecuteToolData(BaseModel):
-    """Data for tool execution result."""
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    tool_name: str = Field(..., description="Tool name")
-    query_text: Optional[str] = Field(None, description="Query text used")
-    result: Any = Field(..., description="Tool execution result")
-    execution_time: float = Field(..., description="Execution time in seconds")
-    executed_at: str = Field(..., description="Execution timestamp")
 
 
 # Context Commands models

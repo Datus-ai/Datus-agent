@@ -480,6 +480,7 @@ def create_app(agent_args: argparse.Namespace) -> FastAPI:
         ("datus.api.routes.kb_routes", "kb"),
         ("datus.api.routes.agent_routes", "agent"),
         ("datus.api.routes.visualization_routes", "visualization"),
+        ("datus.api.routes.tool_routes", "tool"),
     ]
     import importlib
 

@@ -13,8 +13,6 @@ from datus.api.models.cli_models import (
     ExecuteContextInput,
     ExecuteSQLData,
     ExecuteSQLInput,
-    ExecuteToolData,
-    ExecuteToolInput,
     InternalCommandData,
     InternalCommandInput,
     StopExecuteSQLData,
@@ -50,25 +48,6 @@ async def stop_execute_sql(
 ) -> Result[StopExecuteSQLData]:
     """Stop a running SQL execution."""
     return await svc.cli.stop_execute_sql(request.execute_task_id)
-
-
-@router.post(
-    "/tools/{tool_name}",
-    response_model=Result[ExecuteToolData],
-    summary="Execute Tool Command",
-    description="Execute agent tool commands (! prefix commands)",
-)
-async def execute_tool(
-    tool_name: Annotated[str, Path(description="Name of the tool to execute")],
-    svc: ServiceDep,
-    request: ExecuteToolInput = None,
-) -> Result[ExecuteToolData]:
-    """Execute tool command."""
-    if request is None:
-        request = ExecuteToolInput(tool_name="", args="")
-    # Update the tool_name from path parameter
-    request.tool_name = tool_name
-    return svc.cli.execute_tool(tool_name, request)
 
 
 @router.post(

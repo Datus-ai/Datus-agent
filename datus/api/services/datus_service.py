@@ -51,6 +51,7 @@ class DatusService:
         self._mcp = None
         self._kb = None
         self._visualization = None
+        self._tool = None
 
     # ------------------------------------------------------------------
     # Read-only properties
@@ -145,6 +146,14 @@ class DatusService:
 
             self._kb = KbService(agent_config=self._agent_config)
         return self._kb
+
+    @property
+    def tool(self):
+        if self._tool is None:
+            from datus.api.services.tool_service import ToolService
+
+            self._tool = ToolService(agent_config=self._agent_config)
+        return self._tool
 
     @property
     def visualization(self):

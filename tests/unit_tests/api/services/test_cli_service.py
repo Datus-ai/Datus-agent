@@ -36,10 +36,6 @@ class TestCLIServiceInit:
         """CLIService initializes CLI context."""
         assert cli_svc.cli_context is not None
 
-    def test_init_creates_context_search_tools(self, cli_svc):
-        """CLIService creates ContextSearchTools when config is provided."""
-        assert cli_svc.context_search_tools is not None
-
     def test_init_creates_output_tool(self, cli_svc):
         """CLIService creates OutputTool when config is provided."""
         assert cli_svc.output_tool is not None
@@ -193,33 +189,6 @@ class TestCLIServiceStopExecuteSQL:
         await asyncio.sleep(0)
         assert task.cancelled()
 
-
-class TestCLIServiceExecuteTool:
-    """Tests for execute_tool — tool dispatch."""
-
-    def test_execute_tool_unsupported_returns_error(self, cli_svc):
-        """execute_tool with unknown tool name returns error."""
-        result = cli_svc.execute_tool("nonexistent_tool", {"query_text": "test"})
-        assert result.success is False
-        assert "not supported" in result.errorMessage.lower()
-
-    def test_execute_tool_invalid_request_type(self, cli_svc):
-        """execute_tool with non-mapping request returns error."""
-        result = cli_svc.execute_tool("sl", "invalid_string")
-        assert result.success is False
-
-    def test_execute_tool_schema_linking_without_agent(self, cli_svc):
-        """execute_tool for schema_linking fails when agent not ready."""
-        # Agent is not initialized, _ensure_agent will try and may fail
-        result = cli_svc.execute_tool("sl", {"query_text": "revenue"})
-        # May fail because agent init requires LLM, or succeed if context_search_tools works
-        assert result is not None
-
-    def test_execute_tool_validation_error(self, cli_svc):
-        """execute_tool with invalid params returns validation error."""
-        # Missing required query_text
-        result = cli_svc.execute_tool("save", {})
-        assert result is not None
 
 
 class TestCLIServiceExecuteContext:
@@ -429,74 +398,6 @@ class TestCLIServiceExecuteInternalCommand:
         assert result.success is True
         assert "no database" in result.data.result.command_output.lower()
 
-
-class TestCLIServiceSchemaLinkingTool:
-    """Tests for _execute_schema_linking_tool with real ContextSearchTools."""
-
-    def test_schema_linking_with_query(self, cli_svc):
-        """_execute_schema_linking_tool returns SchemaLinkingResult."""
-        from datus.api.models.cli_models import SchemaLinkingToolInput
-
-        request = SchemaLinkingToolInput(query_text="schools in california")
-        result = cli_svc._execute_schema_linking_tool(request)
-        assert result is not None
-        assert hasattr(result, "metadata")
-        assert hasattr(result, "total_metadata")
-
-    def test_schema_linking_without_tools_returns_empty(self):
-        """_execute_schema_linking_tool without tools returns empty result."""
-        from datus.api.models.cli_models import SchemaLinkingToolInput
-
-        svc = CLIService(agent_config=None, chat_service=None)
-        request = SchemaLinkingToolInput(query_text="test")
-        result = svc._execute_schema_linking_tool(request)
-        assert result.total_metadata == 0
-
-
-class TestCLIServiceSearchMetricsTool:
-    """Tests for _execute_search_metrics_tool with real ContextSearchTools."""
-
-    def test_search_metrics_returns_result(self, cli_svc):
-        """_execute_search_metrics_tool returns SearchMetricsResult."""
-        from datus.api.models.cli_models import SearchMetricsToolInput
-
-        request = SearchMetricsToolInput(query_text="revenue")
-        result = cli_svc._execute_search_metrics_tool(request)
-        assert result is not None
-        assert hasattr(result, "metrics")
-        assert hasattr(result, "total_count")
-
-    def test_search_metrics_without_tools_returns_empty(self):
-        """_execute_search_metrics_tool without tools returns empty result."""
-        from datus.api.models.cli_models import SearchMetricsToolInput
-
-        svc = CLIService(agent_config=None, chat_service=None)
-        request = SearchMetricsToolInput(query_text="test")
-        result = svc._execute_search_metrics_tool(request)
-        assert result.total_count == 0
-
-
-class TestCLIServiceSearchHistoryTool:
-    """Tests for _execute_search_history_tool with real ContextSearchTools."""
-
-    def test_search_history_returns_result(self, cli_svc):
-        """_execute_search_history_tool returns SearchHistoryResult."""
-        from datus.api.models.cli_models import SearchHistoryToolInput
-
-        request = SearchHistoryToolInput(query_text="schools query")
-        result = cli_svc._execute_search_history_tool(request)
-        assert result is not None
-        assert hasattr(result, "history")
-        assert hasattr(result, "total_count")
-
-    def test_search_history_without_tools_returns_empty(self):
-        """_execute_search_history_tool without tools returns empty result."""
-        from datus.api.models.cli_models import SearchHistoryToolInput
-
-        svc = CLIService(agent_config=None, chat_service=None)
-        request = SearchHistoryToolInput(query_text="test")
-        result = svc._execute_search_history_tool(request)
-        assert result.total_count == 0
 
 
 class TestCLIServiceInitializeConnection:
