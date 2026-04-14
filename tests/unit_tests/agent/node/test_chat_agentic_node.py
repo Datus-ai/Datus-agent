@@ -1457,6 +1457,7 @@ class TestChatAgenticNodeExecutionMode:
         assert node.execution_mode == "interactive"
         assert node.ask_user_tool is not None
 
+
 # ===========================================================================
 # BI Tools Setup Tests
 # ===========================================================================
