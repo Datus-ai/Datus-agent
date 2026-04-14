@@ -45,7 +45,7 @@ def _build_agent_args(args: argparse.Namespace) -> argparse.Namespace:
     ``create_app`` / ``DatusAPIService``.
     """
     agent_args = argparse.Namespace(
-        namespace=args.namespace,
+        namespace=args.database,
         config=getattr(args, "config", None),
         debug=getattr(args, "debug", False),
         # Fields expected by DatusAPIService but not present in CLI args
@@ -179,7 +179,7 @@ def run_web_interface(args: argparse.Namespace) -> None:
         url += f"/?subagent={args.subagent}"
 
     logger.info("Starting Datus Web Interface...")
-    logger.info(f"Namespace: {args.namespace}")
+    logger.info(f"Database: {args.database}")
     logger.info(f"Server URL: {url}")
 
     app = create_web_app(args)
