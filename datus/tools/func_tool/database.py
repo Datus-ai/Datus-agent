@@ -1460,8 +1460,8 @@ class DBFuncTool:
         # Use dialect-appropriate quoting: backticks for MySQL/StarRocks, double quotes for others.
         columns = list(df.columns)
         dialect = getattr(target_conn, "dialect", "")
-        mysql_dialects = ("mysql", "starrocks")
-        quote_char = "`" if dialect in mysql_dialects else '"'
+        backtick_dialects = ("mysql", "starrocks", "hive", "spark", "bigquery", "clickhouse")
+        quote_char = "`" if dialect in backtick_dialects else '"'
         col_names = ", ".join(f"{quote_char}{c}{quote_char}" for c in columns)
 
         rows_written = 0
