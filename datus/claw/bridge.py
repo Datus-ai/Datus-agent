@@ -205,9 +205,7 @@ class ChannelBridge:
                                     continue
                                 outbound.stream_id = stream_id
                                 # Insert separator when LLM message_id changes within a stream
-                                current_message_id = getattr(
-                                    getattr(event.data, "payload", None), "message_id", None
-                                )
+                                current_message_id = getattr(getattr(event.data, "payload", None), "message_id", None)
                                 if (
                                     current_message_id
                                     and last_message_id is not None
