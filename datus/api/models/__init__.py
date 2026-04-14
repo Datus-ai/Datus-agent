@@ -20,7 +20,6 @@ from datus.api.models.cli_models import (
     CompactSessionData,
     CompactSessionInput,
     ContentType,
-    ContextType,
     ExecuteContextData,
     ExecuteContextInput,
     ExecuteSQLData,
@@ -34,7 +33,6 @@ from datus.api.models.cli_models import (
     InternalCommandData,
     InternalCommandInput,
     InternalCommandResultData,
-    InternalCommandType,
     IUpdateMessagePayload,
     MessageRole,
     SSEDataType,
@@ -48,7 +46,6 @@ from datus.api.models.cli_models import (
     SSESessionData,
     StreamChatChunk,
     StreamChatInput,
-    ToolType,
     UserInteractionInput,
 )
 from datus.api.models.config_models import (
@@ -144,9 +141,6 @@ __all__ = [
     "ChatSessionItemInfo",
     "CompactSessionInput",
     "CompactSessionData",
-    "ToolType",
-    "ContextType",
-    "InternalCommandType",
     "ContentType",
     "MessageRole",
     "SSEDataType",
@@ -156,7 +150,6 @@ __all__ = [
     "IMarkdownPayload",
     "ICodePayload",
     "ICreateMessagePayload",
-    "IAppendMessagePayload",
     "IUpdateMessagePayload",
     "InternalCommandResultData",
     # chat_models

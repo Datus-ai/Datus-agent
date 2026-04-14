@@ -36,10 +36,6 @@ class TestCLIServiceInit:
         """CLIService initializes CLI context."""
         assert cli_svc.cli_context is not None
 
-    def test_init_creates_output_tool(self, cli_svc):
-        """CLIService creates OutputTool when config is provided."""
-        assert cli_svc.output_tool is not None
-
     def test_init_sets_current_db_name(self, cli_svc):
         """Init resolves current_db_name from namespace."""
         assert cli_svc.current_db_name is not None
@@ -188,7 +184,6 @@ class TestCLIServiceStopExecuteSQL:
         # Give the event loop a chance to process the cancellation
         await asyncio.sleep(0)
         assert task.cancelled()
-
 
 
 class TestCLIServiceExecuteContext:
@@ -399,7 +394,6 @@ class TestCLIServiceExecuteInternalCommand:
         assert "no database" in result.data.result.command_output.lower()
 
 
-
 class TestCLIServiceInitializeConnection:
     """Tests for _initialize_connection paths."""
 
@@ -408,31 +402,3 @@ class TestCLIServiceInitializeConnection:
         assert cli_svc.cli_context is not None
         # CLI context should have been updated during init
         assert cli_svc.current_db_name is not None
-
-
-class TestCLIServiceSaveTool:
-    """Tests for _execute_save_tool."""
-
-    def test_save_tool_no_last_sql(self, cli_svc):
-        """_execute_save_tool with no last SQL returns empty result."""
-        from datus.api.models.cli_models import SaveToolInput
-
-        request = SaveToolInput()
-        result = cli_svc._execute_save_tool(request)
-        assert result.total_files == 0
-        assert result.files_saved == []
-
-
-class TestCLIServiceEnsureAgent:
-    """Tests for _ensure_agent lazy initialization."""
-
-    def test_agent_not_ready_initially(self, cli_svc):
-        """Agent is not ready immediately after init."""
-        assert cli_svc.agent is None
-        assert cli_svc.agent_ready is False
-
-    def test_ensure_agent_without_config(self):
-        """_ensure_agent returns False when no config."""
-        svc = CLIService(agent_config=None, chat_service=None)
-        result = svc._ensure_agent()
-        assert result is False

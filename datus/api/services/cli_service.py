@@ -19,9 +19,6 @@ from datus.api.models.cli_models import (
     InternalCommandData,
     InternalCommandInput,
     InternalCommandResultData,
-    SavedFile,
-    SaveToolInput,
-    SaveToolResult,
     StopExecuteSQLData,
     TableInfo,
 )
@@ -35,7 +32,6 @@ from datus.schemas.action_history import (
     ActionStatus,
 )
 from datus.tools.db_tools.db_manager import DBManager
-from datus.tools.output_tools.output import OutputTool
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -76,18 +72,9 @@ class CLIService:
         if self.agent_config:
             self._initialize_connection()
 
-        # Initialize agent (lazy loading)
-        self.agent = None
-        self.agent_ready = False
-
         # Track running SQL execution tasks: {task_id: asyncio.Task}
         self._sql_tasks: Dict[str, asyncio.Task] = {}
         self._sql_tasks_lock = threading.Lock()
-
-        # Initialize output tool
-        self.output_tool = None
-        if self.agent_config:
-            self.output_tool = OutputTool(agent_config=self.agent_config)
 
     def _initialize_connection(self):
         """Initialize the current database connection."""
@@ -106,34 +93,6 @@ class CLIService:
                     )
             except Exception as e:
                 logger.warning(f"Failed to initialize database connection: {e}")
-
-    def _ensure_agent(self):
-        """Ensure agent is initialized."""
-        if not self.agent and not self.agent_ready:
-            try:
-                from argparse import Namespace
-
-                from datus.agent.agent import Agent
-
-                agent_args = Namespace(
-                    temperature=0.7,
-                    top_p=0.9,
-                    max_tokens=8000,
-                    plan="reflection",
-                    max_steps=20,
-                    debug=False,
-                    load_cp=False,
-                    components=["metrics", "metadata", "table_lineage", "document"],
-                )
-
-                if self.agent_config:
-                    self.agent = Agent(agent_args, self.agent_config)
-                    self.agent_ready = True
-                    return True
-            except Exception as e:
-                logger.error(f"Failed to initialize agent: {e}")
-                return False
-        return self.agent_ready
 
     def _cleanup_sql_task(self, task_id: str) -> None:
         """Remove a completed SQL task from the tracking dict."""
@@ -336,101 +295,6 @@ class CLIService:
             success=True,
             data=StopExecuteSQLData(execute_task_id=task_id, stopped=True),
         )
-
-    def _execute_save_tool(self, request: SaveToolInput) -> SaveToolResult:
-        """Execute save tool with structured parameters."""
-        try:
-            import os
-            import zipfile
-            from datetime import datetime
-
-            from datus.schemas.node_models import OutputInput
-
-            # Get last SQL context
-            last_sql = self.cli_context.get_last_sql_context()
-            if not last_sql:
-                logger.error("No previous SQL result to save")
-                return SaveToolResult(files_saved=[], total_files=0, total_size="0B")
-
-            # Create target directory
-            target_dir = request.target_dir or os.path.expanduser("~/.datus/output")
-            os.makedirs(target_dir, exist_ok=True)
-
-            file_name = request.file_name or datetime.now().strftime("%Y%m%d%H%M%S")
-
-            # Initialize output tool if not exists
-            if not self.output_tool:
-                self.output_tool = OutputTool(agent_config=self.agent_config)
-
-            # Execute output tool to save results
-            output_input = OutputInput(
-                task="",
-                database_name=self.cli_context.current_db_name or "",
-                task_id=file_name,
-                gen_sql=last_sql.sql_query,
-                sql_result=last_sql.sql_return or "",
-                row_count=last_sql.row_count or 0,
-                file_type=request.file_type,
-                check_result=False,
-                error=last_sql.sql_error,
-                finished=not last_sql.sql_error,
-                output_dir=target_dir,
-            )
-
-            result = self.output_tool.execute(output_input, self.current_db_connector)
-
-            # Parse saved files from result.output
-            files_saved = []
-            total_size = 0
-            file_paths = []
-
-            # OutputTool returns paths in result.output
-            output_paths = result.output.split("\n") if result.output else []
-            for path in output_paths:
-                path = path.strip()
-                if path and os.path.exists(path):
-                    file_type = path.split(".")[-1] if "." in path else "unknown"
-                    file_size = os.path.getsize(path)
-                    files_saved.append(
-                        SavedFile(
-                            file_type=file_type,
-                            file_path=path,
-                            file_size=f"{file_size}B",
-                        )
-                    )
-                    total_size += file_size
-                    file_paths.append(path)
-
-            # Create zip archive
-            zip_path = None
-            download_url = None
-            if file_paths:
-                zip_filename = f"{file_name}.zip"
-                zip_path = os.path.join(target_dir, zip_filename)
-
-                with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-                    for file_path in file_paths:
-                        # Add file to zip with just the basename (no directory structure)
-                        zipf.write(file_path, os.path.basename(file_path))
-
-                # Calculate zip size
-                zip_size = os.path.getsize(zip_path)
-                logger.info(f"Created zip archive: {zip_path} ({zip_size} bytes)")
-
-                # Generate download URL (relative path from output directory)
-                # Frontend should map this to actual download endpoint
-                download_url = f"/api/download/{zip_filename}"
-
-            return SaveToolResult(
-                files_saved=files_saved,
-                total_files=len(files_saved),
-                total_size=f"{total_size}B",
-                zip_path=zip_path,
-                download_url=download_url,
-            )
-        except Exception as e:
-            logger.error(f"Save tool error: {e}")
-            return SaveToolResult(files_saved=[], total_files=0, total_size="0B")
 
     def execute_context(self, context_type: str, request: ExecuteContextInput) -> Result[ExecuteContextData]:
         """
