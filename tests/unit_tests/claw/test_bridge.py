@@ -500,7 +500,7 @@ class TestChannelBridge:
 
     @pytest.mark.asyncio
     async def test_group_thread_reply_without_mention_processed(self, setup):
-        """Thread replies in group chats should be processed without @bot."""
+        """Thread replies in bot-active threads should be processed without @bot."""
         bridge, adapter, task_manager = setup
 
         mock_task = MagicMock()
@@ -513,10 +513,30 @@ class TestChannelBridge:
         task_manager.consume_events = _fake_consume
 
         msg = _make_inbound("more details please", chat_type="group", mentions_bot=False, thread_id="existing_thread")
-        await bridge.handle_message(msg, adapter)
+        with patch("datus.claw.bridge.SessionManager") as mock_sm_cls:
+            mock_sm = MagicMock()
+            mock_sm.session_exists.return_value = True
+            mock_sm_cls.return_value = mock_sm
+            await bridge.handle_message(msg, adapter)
 
         assert len(adapter.sent) == 1
         assert adapter.sent[0].thread_id == "existing_thread"
+
+    @pytest.mark.asyncio
+    async def test_group_thread_reply_to_unknown_thread_ignored(self, setup):
+        """Thread replies in non-bot threads should be ignored."""
+        bridge, adapter, task_manager = setup
+        task_manager.start_chat = AsyncMock()
+
+        msg = _make_inbound("more details please", chat_type="group", mentions_bot=False, thread_id="other_thread")
+        with patch("datus.claw.bridge.SessionManager") as mock_sm_cls:
+            mock_sm = MagicMock()
+            mock_sm.session_exists.return_value = False
+            mock_sm_cls.return_value = mock_sm
+            await bridge.handle_message(msg, adapter)
+
+        task_manager.start_chat.assert_not_called()
+        assert len(adapter.sent) == 0
 
     @pytest.mark.asyncio
     async def test_dm_always_processed(self, setup):

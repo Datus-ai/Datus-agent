@@ -108,10 +108,17 @@ class ChannelBridge:
             while len(self._seen_message_ids) > self._max_seen_ids:
                 self._seen_message_ids.popitem(last=False)
 
-        # In group chats, only respond to @bot messages or thread replies
-        if msg.chat_type == "group" and not msg.mentions_bot and not msg.thread_id:
-            logger.debug("Ignoring non-mention group message in %s", msg.conversation_id)
-            return
+        # In group chats, only respond to @bot messages or replies in bot-active threads
+        if msg.chat_type == "group" and not msg.mentions_bot:
+            if not msg.thread_id:
+                logger.debug("Ignoring non-mention group message in %s", msg.conversation_id)
+                return
+            # Check if bot has an existing session for this thread
+            session_id = self.build_session_id(msg)
+            session_mgr = SessionManager(session_dir=self._agent_config.session_dir)
+            if not session_mgr.session_exists(session_id):
+                logger.debug("Ignoring reply to unknown thread %s in %s", msg.thread_id, msg.conversation_id)
+                return
 
         # In group chats without an existing thread, use message_id as thread_id
         # so each @bot message gets its own thread (independent session)
@@ -319,7 +326,7 @@ class ChannelBridge:
                 if code_text:
                     text_parts.append(f"```{code_type}\n{code_text}\n```")
 
-        combined_text = "\n".join(text_parts).strip()
+        combined_text = "\n\n".join(text_parts).strip()
         if not combined_text and not sql:
             return None
 

@@ -128,7 +128,7 @@ class AgentService:
                 errorCode="INVALID_AGENT_TYPE",
                 errorMessage=f"Unknown agent_type '{agent_type}'. Must be one of: {', '.join(SUBAGENT_TOOL_REFERENCE)}",
             )
-        return Result(success=True, data=SUBAGENT_TOOL_REFERENCE[agent_type])
+        return Result(success=True, data={"tools": SUBAGENT_TOOL_REFERENCE[agent_type]})
 
     async def get_agent(
         self,

@@ -112,8 +112,10 @@ class TestGetUseTools:
         """get_use_tools returns tools for known agent type."""
         result = AgentService.get_use_tools("gen_sql")
         assert result.success is True
-        assert isinstance(result.data, list)
-        assert len(result.data) > 0
+        assert isinstance(result.data, dict)
+        assert "tools" in result.data
+        assert isinstance(result.data["tools"], list)
+        assert len(result.data["tools"]) > 0
 
     def test_unknown_agent_type_returns_error(self):
         """get_use_tools returns error for unknown agent type."""
@@ -126,7 +128,8 @@ class TestGetUseTools:
         """get_use_tools returns tools for gen_report."""
         result = AgentService.get_use_tools("gen_report")
         assert result.success is True
-        assert len(result.data) > 0
+        assert isinstance(result.data, dict)
+        assert len(result.data["tools"]) > 0
 
 
 @pytest.mark.asyncio
