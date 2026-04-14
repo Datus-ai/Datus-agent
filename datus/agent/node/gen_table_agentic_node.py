@@ -7,7 +7,8 @@ GenTableAgenticNode implementation for wide table generation.
 
 This module provides a specialized implementation of AgenticNode focused on
 creating database tables via CTAS (from JOIN SQL) or CREATE TABLE (from
-natural language descriptions). Only DB tools + DDL + ask_user are included.
+natural language descriptions). It includes DB tools, DDL execution,
+filesystem tools, and ask_user.
 """
 
 from typing import AsyncGenerator, Literal, Optional
@@ -17,7 +18,7 @@ from datus.cli.execution_state import ExecutionInterrupted
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SemanticNodeResult
-from datus.tools.func_tool import DBFuncTool
+from datus.tools.func_tool import DBFuncTool, FilesystemFuncTool
 from datus.tools.func_tool.base import trans_to_function_tool
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -33,6 +34,7 @@ class GenTableAgenticNode(AgenticNode):
     This node provides table creation capabilities with:
     - Database tools for schema exploration
     - DDL execution tool for table creation
+    - Filesystem tools for reading/writing SQL artifacts
     - Ask-user tool for interactive confirmation
     - Session-based conversation management
     """
@@ -70,6 +72,7 @@ class GenTableAgenticNode(AgenticNode):
         )
 
         self.db_func_tool: Optional[DBFuncTool] = None
+        self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
         self.ask_user_tool = None
         self.setup_tools()
 
@@ -82,6 +85,7 @@ class GenTableAgenticNode(AgenticNode):
 
         self.tools = []
         self._setup_db_tools()
+        self._setup_filesystem_tools()
         if self.execution_mode == "interactive":
             self._setup_ask_user_tool()
 
@@ -106,6 +110,16 @@ class GenTableAgenticNode(AgenticNode):
                 code=ErrorCode.COMMON_CONFIG_ERROR,
                 message_args={"config_error": f"Failed to setup database tools for {self.NODE_NAME}: {e}"},
             ) from e
+
+    def _setup_filesystem_tools(self):
+        """Setup filesystem tools."""
+        try:
+            root_path = self._resolve_workspace_root()
+            self.filesystem_func_tool = FilesystemFuncTool(root_path=root_path)
+            self.tools.extend(self.filesystem_func_tool.available_tools())
+            logger.debug(f"Setup filesystem tools with root path: {root_path}")
+        except Exception as e:
+            logger.error(f"Failed to setup filesystem tools: {e}")
 
     def _prepare_template_context(self, user_input: SemanticNodeInput) -> dict:
         context = {}

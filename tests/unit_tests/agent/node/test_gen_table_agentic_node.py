@@ -73,14 +73,14 @@ class TestGenTableAgenticNodeInit:
         assert "read_query" in tool_names
         assert "get_table_ddl" in tool_names
 
-    def test_setup_tools_no_filesystem_tools(self, real_agent_config, mock_llm_create):
-        """gen_table node should NOT have filesystem or generation tools."""
+    def test_setup_tools_includes_filesystem_tools(self, real_agent_config, mock_llm_create):
+        """gen_table node should include filesystem tools for SQL artifact handling."""
         from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
 
         node = GenTableAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
         tool_names = [tool.name for tool in node.tools]
-        assert "read_file" not in tool_names
-        assert "write_file" not in tool_names
+        assert "read_file" in tool_names
+        assert "write_file" in tool_names
         assert "check_semantic_object_exists" not in tool_names
 
     def test_max_turns_from_config(self, real_agent_config, mock_llm_create):

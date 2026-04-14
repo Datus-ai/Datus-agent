@@ -39,10 +39,6 @@ class GenSQLNodeInput(BaseInput):
         default=None,
         description="Pinned reference date for deterministic SQL generation and validation",
     )
-    expected_output_columns: Optional[list[str]] = Field(
-        default=None,
-        description="Exact expected output columns for post-generation validation",
-    )
     plan_mode: bool = Field(default=False, description="Enable plan mode for multi-step task planning")
     auto_execute_plan: bool = Field(default=False, description="Auto-execute plan without confirmation")
 
@@ -61,9 +57,5 @@ class GenSQLNodeResult(BaseResult):
     )
     sql_preview: Optional[str] = Field(default=None, description="First N lines of SQL for preview when file-stored")
     sql_diff: Optional[str] = Field(default=None, description="Unified diff of SQL modifications")
-    validation_issues: Optional[list[dict]] = Field(
-        default=None,
-        description="Structured validation issues produced after SQL generation",
-    )
     tokens_used: int = Field(default=0, description="Total tokens used in this interaction")
     error: Optional[str] = Field(default=None, description="Error message if interaction failed")

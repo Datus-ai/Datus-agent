@@ -1096,6 +1096,7 @@ class DBFuncTool:
     # Regex matching allowed DDL statement prefixes
     _ALLOWED_DDL_RE = re.compile(
         r"^\s*(CREATE\s+(?:OR\s+REPLACE\s+)?(?:(?:TEMPORARY|TEMP)\s+)?(?:TABLE|VIEW)"
+        r"|CREATE\s+SCHEMA(?:\s+IF\s+NOT\s+EXISTS)?"
         r"|ALTER\s+TABLE"
         r"|DROP\s+(?:TABLE|VIEW)(?:\s+IF\s+EXISTS)?)\b",
         re.IGNORECASE,
@@ -1107,7 +1108,7 @@ class DBFuncTool:
 
         CAUTION: This modifies the database. Only use when explicitly instructed.
         Supported statements: CREATE TABLE, CREATE TABLE AS SELECT (CTAS),
-        ALTER TABLE, DROP TABLE, CREATE VIEW, DROP VIEW.
+        CREATE SCHEMA, ALTER TABLE, DROP TABLE, CREATE VIEW, DROP VIEW.
 
         Args:
             sql: DDL SQL statement to execute
@@ -1132,7 +1133,7 @@ class DBFuncTool:
         if not self._ALLOWED_DDL_RE.match(cleaned):
             return FuncToolResult(
                 success=0,
-                error="Only DDL statements are allowed (CREATE TABLE/VIEW, ALTER TABLE, DROP TABLE/VIEW). "
+                error="Only DDL statements are allowed (CREATE SCHEMA, CREATE TABLE/VIEW, ALTER TABLE, DROP TABLE/VIEW). "
                 "DML statements (INSERT, UPDATE, DELETE, SELECT) are not permitted.",
             )
 
@@ -1147,6 +1148,120 @@ class DBFuncTool:
                 return FuncToolResult(success=0, error=result.error)
         except Exception as e:
             return FuncToolResult(success=0, error=f"DDL execution failed: {str(e)}")
+
+    def execute_write(
+        self,
+        sql: str,
+        database: Optional[str] = "",
+        min_rows: Optional[int] = None,
+        max_rows: Optional[int] = None,
+        dry_run: bool = False,
+    ) -> FuncToolResult:
+        """
+        Execute a single write statement against the current database connection.
+
+        Supported statements: INSERT, UPDATE, DELETE.
+        Multi-statement SQL, read-only queries, DDL, and MERGE are rejected.
+
+        Args:
+            sql: Write SQL statement to execute, or a .sql file path.
+            database: Optional database name for multi-database scenarios.
+            min_rows: Optional minimum acceptable affected row count.
+            max_rows: Optional maximum acceptable affected row count.
+            dry_run: Reserved for future transactional preview support. Currently unsupported.
+
+        Returns:
+            FuncToolResult with execution metadata when successful.
+        """
+        from datus.utils.sql_utils import _first_statement, parse_sql_type, strip_sql_comments
+
+        if dry_run:
+            return FuncToolResult(
+                success=0,
+                error="dry_run is not supported yet for execute_write. Use dry_run=False.",
+            )
+
+        try:
+            sql_stripped = sql.strip()
+            if sql_stripped.endswith(".sql") and "\n" not in sql_stripped and " " not in sql_stripped:
+                sql = self._read_sql_from_file(sql_stripped)
+
+            cleaned = strip_sql_comments(sql).strip()
+            normalized_sql = cleaned.rstrip(";").strip()
+            if not normalized_sql:
+                return FuncToolResult(success=0, error="Empty SQL statement")
+
+            if _first_statement(normalized_sql) != normalized_sql:
+                return FuncToolResult(
+                    success=0,
+                    error="Multi-statement SQL is not allowed. Please submit one write statement at a time.",
+                )
+
+            connector = self._get_connector(database)
+            sql_type = parse_sql_type(normalized_sql, connector.dialect)
+            if sql_type == SQLType.MERGE:
+                return FuncToolResult(
+                    success=0,
+                    error="MERGE statements are not supported by execute_write yet.",
+                )
+
+            allowed_sql_types = {SQLType.INSERT, SQLType.UPDATE, SQLType.DELETE}
+            if sql_type not in allowed_sql_types:
+                return FuncToolResult(
+                    success=0,
+                    error=(
+                        "Only single-statement writes (INSERT, UPDATE, DELETE) are allowed. "
+                        f"Detected SQL type: {sql_type.value}"
+                    ),
+                )
+
+            out_of_scope = self._check_sql_table_scope(normalized_sql)
+            if out_of_scope:
+                return FuncToolResult(
+                    success=0,
+                    error=f"Write statement references tables outside scoped context: {', '.join(out_of_scope)}",
+                )
+
+            method_name = {
+                SQLType.INSERT: "execute_insert",
+                SQLType.UPDATE: "execute_update",
+                SQLType.DELETE: "execute_delete",
+            }[sql_type]
+
+            if not hasattr(connector, method_name):
+                return FuncToolResult(
+                    success=0,
+                    error=f"Current database connector does not support {sql_type.value.upper()} operations",
+                )
+
+            result = getattr(connector, method_name)(normalized_sql)
+            if not result.success:
+                return FuncToolResult(success=0, error=result.error)
+
+            row_count = getattr(result, "row_count", None)
+            if min_rows is not None and row_count is not None and row_count < min_rows:
+                return FuncToolResult(
+                    success=0,
+                    error=f"Write affected {row_count} rows, below min_rows={min_rows}.",
+                )
+            if max_rows is not None and row_count is not None and row_count > max_rows:
+                return FuncToolResult(
+                    success=0,
+                    error=f"Write affected {row_count} rows, above max_rows={max_rows}.",
+                )
+
+            return FuncToolResult(
+                result={
+                    "message": "Write executed successfully",
+                    "sql": normalized_sql,
+                    "sql_type": sql_type.value,
+                    "row_count": row_count,
+                    "database": database or self._default_database,
+                    "dry_run": dry_run,
+                }
+            )
+        except Exception as e:
+            return FuncToolResult(success=0, error=f"Write execution failed: {str(e)}")
 
 
 def db_function_tool_instance(

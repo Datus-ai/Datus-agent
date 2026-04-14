@@ -36,7 +36,6 @@ from datus.utils.message_utils import (
     is_structured_content,
 )
 from datus.utils.node_utils import build_database_context
-from datus.validation import ValidatorRegistry, format_validation_retry_feedback, run_validators
 
 logger = get_logger(__name__)
 
@@ -723,103 +722,26 @@ class GenSQLAgenticNode(AgenticNode):
             response_content = ""
             sql_content = None
             tokens_used = 0
-            validation_issues = None
-            validation_failed = False
-
             logger.debug(f"Tools available : {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
             logger.debug(f"MCP servers available : {len(self.mcp_servers)} servers - {list(self.mcp_servers.keys())}")
 
             # Choose execution mode based on plan_mode flag
             execution_mode = "plan" if is_plan_mode else "normal"
 
-            prompt_for_attempt = enhanced_message
-            max_validation_retries = 1
+            # Stream response using unified execution (supports plan mode and normal mode)
+            async for stream_action in self._execute_with_recursive_replan(
+                prompt=enhanced_message,
+                execution_mode=execution_mode,
+                original_input=user_input,
+                action_history_manager=action_history_manager,
+                session=session,
+            ):
+                yield stream_action
 
-            for validation_attempt in range(max_validation_retries + 1):
-                # Stream response using unified execution (supports plan mode and normal mode)
-                async for stream_action in self._execute_with_recursive_replan(
-                    prompt=prompt_for_attempt,
-                    execution_mode=execution_mode,
-                    original_input=user_input,
-                    action_history_manager=action_history_manager,
-                    session=session,
-                ):
-                    yield stream_action
+            response_content, sql_content = self._collect_final_response(action_history_manager)
 
-                response_content, sql_content = self._collect_final_response(action_history_manager)
-
-                logger.debug(f"Final response_content: '{response_content}' (length: {len(response_content)})")
-                logger.debug(f"Final sql_content: {sql_content[:100] if sql_content else 'None'}...")
-
-                if not sql_content:
-                    break
-
-                validation_result = self._validate_generated_sql(sql_content, user_input)
-                validation_issues = (
-                    [issue.model_dump() for issue in validation_result.issues] if validation_result.issues else None
-                )
-
-                if validation_result.passed:
-                    if validation_attempt == 0 or validation_issues is None:
-                        validation_action = ActionHistory.create_action(
-                            role=ActionRole.WORKFLOW,
-                            action_type="validation",
-                            messages="Validation passed for generated SQL",
-                            input_data={"has_expected_output_columns": bool(user_input.expected_output_columns)},
-                            output_data={"passed": True},
-                            status=ActionStatus.SUCCESS,
-                        )
-                        action_history_manager.add_action(validation_action)
-                        yield validation_action
-                    break
-
-                validation_action = ActionHistory.create_action(
-                    role=ActionRole.WORKFLOW,
-                    action_type="validation",
-                    messages="Validation failed for generated SQL",
-                    input_data={
-                        "retry_attempt": validation_attempt,
-                        "has_expected_output_columns": bool(user_input.expected_output_columns),
-                    },
-                    output_data=validation_result.model_dump(),
-                    status=ActionStatus.FAILED,
-                )
-                action_history_manager.add_action(validation_action)
-                yield validation_action
-
-                if validation_attempt >= max_validation_retries:
-                    validation_failed = True
-                    break
-
-                prompt_for_attempt = (
-                    enhanced_message + "\n\n" + format_validation_retry_feedback(validation_result.issues)
-                )
-                logger.info(
-                    "Retrying SQL generation after validation failure: "
-                    f"{[issue.code for issue in validation_result.issues]}"
-                )
-
-            if validation_failed:
-                error_result = GenSQLNodeResult(
-                    success=False,
-                    error="SQL validation failed",
-                    response=response_content or "Generated SQL failed validation.",
-                    sql=sql_content,
-                    validation_issues=validation_issues,
-                    tokens_used=0,
-                    action_history=[action.model_dump() for action in action_history_manager.get_actions()],
-                )
-                error_action = ActionHistory.create_action(
-                    role=ActionRole.ASSISTANT,
-                    action_type="validation_error",
-                    messages=f"{self.get_node_name()} interaction failed validation",
-                    input_data=user_input.model_dump(),
-                    output_data=error_result.model_dump(),
-                    status=ActionStatus.FAILED,
-                )
-                action_history_manager.add_action(error_action)
-                yield error_action
-                return
+            logger.debug(f"Final response_content: '{response_content}' (length: {len(response_content)})")
+            logger.debug(f"Final sql_content: {sql_content[:100] if sql_content else 'None'}...")
 
             # Extract token usage from final actions
             final_actions = action_history_manager.get_actions()
@@ -877,7 +799,6 @@ class GenSQLAgenticNode(AgenticNode):
                 sql=result_sql,
                 sql_file_path=sql_file_path,
                 sql_preview=sql_preview,
-                validation_issues=validation_issues,
                 tokens_used=int(tokens_used),
                 action_history=[action.model_dump() for action in all_actions],
                 execution_stats=execution_stats,
@@ -1218,32 +1139,6 @@ class GenSQLAgenticNode(AgenticNode):
                 response_content = extracted_output
 
         return response_content, sql_content
-
-    def _validate_generated_sql(self, sql_content: str, user_input: GenSQLNodeInput):
-        """Run core and skill-declared validators against generated SQL."""
-
-        skill_patterns = None
-        if self.skill_manager:
-            skill_patterns_str = self.node_config.get("skills", "")
-            if skill_patterns_str:
-                skill_patterns = self.skill_manager.parse_skill_patterns(skill_patterns_str)
-
-        context = {
-            "db_type": self.agent_config.db_type if self.agent_config else "",
-            "expected_output_columns": user_input.expected_output_columns or [],
-            "reference_date": user_input.reference_date
-            or (self.date_parsing_tools.reference_date if self.date_parsing_tools else None),
-            "catalog": user_input.catalog,
-            "database": user_input.database,
-            "db_schema": user_input.db_schema,
-        }
-        registry = ValidatorRegistry(skill_manager=self.skill_manager)
-        validators = registry.build_validators(
-            node_name=self.get_node_name(),
-            skill_patterns=skill_patterns,
-            context=context,
-        )
-        return run_validators(validators=validators, sql=sql_content, context=context)
 
 
 def prepare_template_context(

@@ -750,6 +750,8 @@ class AgenticNode(Node):
         if tool_name.startswith("db_") or tool_name in [
             "list_tables",
             "describe_table",
+            "execute_ddl",
+            "execute_write",
             "execute_sql",
             "get_sample_data",
         ]:
