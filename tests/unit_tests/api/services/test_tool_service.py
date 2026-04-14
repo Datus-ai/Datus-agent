@@ -90,6 +90,7 @@ class TestToolServiceExecute:
 
     def test_execute_invalid_params_returns_error(self, tool_service):
         """execute with wrong params returns INVALID_PARAMETERS error."""
+
         # Replace a registered tool with a real function that has strict signature
         def strict_tool(query_text: str) -> FuncToolResult:
             return FuncToolResult(success=1, result=[])
