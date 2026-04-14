@@ -78,12 +78,18 @@ class FilesystemFuncTool(BaseTool):
         and the original path is returned so the downstream sandbox check can
         fail naturally. With ``strict=True`` (write-side), the exception is
         re-raised so callers don't silently land a mutation at a mis-normalized
-        location.
+        location. ``strict=True`` is also forwarded to the normalizer as the
+        ``strict_kind`` kwarg so KB normalizers can enforce cross-kind write
+        restrictions on mutating ops while keeping reads lax.
         """
         if self._path_normalizer is None or not path:
             return path
         try:
-            return self._path_normalizer(path, file_type)
+            try:
+                return self._path_normalizer(path, file_type, strict_kind=strict)
+            except TypeError:
+                # Legacy normalizer that doesn't accept strict_kind — fall back to 2-arg form.
+                return self._path_normalizer(path, file_type)
         except Exception as e:
             logger.warning(f"path_normalizer raised on path={path!r} file_type={file_type!r}: {e}")
             if strict:

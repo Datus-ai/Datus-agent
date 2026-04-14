@@ -669,3 +669,24 @@ class TestExecuteStreamGenMetricsError:
         last = actions[-1]
         assert last.status == ActionStatus.FAILED
         assert last.action_type == "error"
+
+
+class TestGenMetricsFilesystemRootPath:
+    """FilesystemFuncTool is sandboxed to knowledge_base_home (not the type-specific subdir)."""
+
+    def test_filesystem_root_is_kb_home(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+
+        node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        expected = str(real_agent_config.path_manager.knowledge_base_home)
+
+        assert node.filesystem_func_tool is not None
+        assert node.filesystem_func_tool.config.root_path == expected
+        assert node.filesystem_func_tool._path_normalizer is not None
+
+        ns = real_agent_config.current_namespace
+        # metric kind co-locates under semantic_models/
+        assert (
+            node.filesystem_func_tool._path_normalizer("metrics/orders.yaml", None)
+            == f"semantic_models/{ns}/metrics/orders.yaml"
+        )

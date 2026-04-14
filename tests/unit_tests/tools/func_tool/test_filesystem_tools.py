@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
+from datus.cli.generation_hooks import make_kb_path_normalizer
 from datus.tools.func_tool.filesystem_tools import EditOperation, FilesystemConfig, FilesystemFuncTool
 
 # ---------------------------------------------------------------------------
@@ -638,3 +639,121 @@ class TestSearchFiles:
         assert result.result["truncated"] is True
         # With propagation fix, should be exactly max_results
         assert len(result.result["files"]) == 3
+
+
+# ---------------------------------------------------------------------------
+# KB path_normalizer round-trip: write/read/edit with the silent prefix
+# normalizer (covers the knowledge_base_home re-scope refactor contract).
+# ---------------------------------------------------------------------------
+
+
+class _StubCfg:
+    def __init__(self, ns: str):
+        self.current_namespace = ns
+
+
+class TestFilesystemFuncToolKbNormalizerRoundTrip:
+    """Contract tests for FilesystemFuncTool + KB path_normalizer."""
+
+    def _make(self, tmp_path: Path, kind: str, namespace: str):
+        kb_root = tmp_path / "kb"
+        kb_root.mkdir()
+        tool = FilesystemFuncTool(
+            root_path=str(kb_root),
+            path_normalizer=make_kb_path_normalizer(_StubCfg(namespace), default_kind=kind),
+        )
+        return tool, kb_root
+
+    def test_naked_filename_lands_in_typed_subdir(self, tmp_path):
+        tool, kb_root = self._make(tmp_path, "semantic", "school_db")
+        result = tool.write_file("orders.yml", "id: orders\n", file_type="semantic_model")
+        assert result.success == 1
+        on_disk = kb_root / "semantic_models" / "school_db" / "orders.yml"
+        assert on_disk.is_file()
+        assert on_disk.read_text() == "id: orders\n"
+
+    def test_read_naked_filename_after_naked_write(self, tmp_path):
+        """LLM forgets prefix on both write and subsequent read — both must succeed."""
+        tool, _ = self._make(tmp_path, "semantic", "school_db")
+        tool.write_file("orders.yml", "payload\n", file_type="semantic_model")
+        assert tool.read_file("orders.yml").result == "payload\n"
+
+    def test_read_with_full_prefix_after_naked_write(self, tmp_path):
+        tool, _ = self._make(tmp_path, "semantic", "school_db")
+        tool.write_file("orders.yml", "payload\n", file_type="semantic_model")
+        assert tool.read_file("semantic_models/school_db/orders.yml").result == "payload\n"
+
+    def test_read_multiple_files_mixed_naked_and_prefixed(self, tmp_path):
+        """read_multiple_files applies the same normalizer to each path in the batch."""
+        tool, _ = self._make(tmp_path, "semantic", "school_db")
+        tool.write_file("orders.yml", "A\n", file_type="semantic_model")
+        tool.write_file("customers.yml", "B\n", file_type="semantic_model")
+
+        result = tool.read_multiple_files(["orders.yml", "semantic_models/school_db/customers.yml"])
+        assert result.success == 1
+        # Keyed by the caller's raw path so the LLM can correlate the response.
+        assert result.result["orders.yml"] == "A\n"
+        assert result.result["semantic_models/school_db/customers.yml"] == "B\n"
+
+    def test_edit_file_after_naked_write(self, tmp_path):
+        tool, _ = self._make(tmp_path, "sql_summary", "school_db")
+        tool.write_file("q_001.yaml", "name: original\n", file_type="sql_summary")
+        edit_result = tool.edit_file("q_001.yaml", [{"oldText": "original", "newText": "edited"}])
+        assert edit_result.success == 1, edit_result.error
+        assert tool.read_file("q_001.yaml").result == "name: edited\n"
+
+    def test_write_with_full_prefix_does_not_double_prefix(self, tmp_path):
+        tool, kb_root = self._make(tmp_path, "semantic", "school_db")
+        tool.write_file(
+            "semantic_models/school_db/customers.yml",
+            "id: customers\n",
+            file_type="semantic_model",
+        )
+        assert (kb_root / "semantic_models" / "school_db" / "customers.yml").is_file()
+        assert not (kb_root / "semantic_models" / "school_db" / "semantic_models").exists()
+
+    def test_cross_kind_read_works(self, tmp_path):
+        """A semantic-mode tool must still read peer sql_summaries by full path."""
+        tool, kb_root = self._make(tmp_path, "semantic", "school_db")
+        peer = kb_root / "sql_summaries" / "school_db" / "q_001.yaml"
+        peer.parent.mkdir(parents=True)
+        peer.write_text("peer content\n")
+        assert tool.read_file("sql_summaries/school_db/q_001.yaml").result == "peer content\n"
+
+    def test_cross_kind_write_is_rejected_under_strict(self, tmp_path):
+        """Writing to a peer kind's subdir must fail closed (sandbox enforcement)."""
+        tool, _ = self._make(tmp_path, "semantic", "school_db")
+        result = tool.write_file(
+            "sql_summaries/school_db/q_001.yaml",
+            "bad\n",
+            file_type="semantic_model",
+        )
+        assert result.success == 0
+        assert "not allowed" in (result.error or "").lower()
+
+    def test_normalizer_exception_fails_write(self, tmp_path):
+        """If the path_normalizer raises, write_file must fail instead of
+        silently landing the mutation at an unnormalized path."""
+
+        def _boom(path, file_type, *, strict_kind=False):
+            raise RuntimeError("normalizer error")
+
+        tool = FilesystemFuncTool(root_path=str(tmp_path), path_normalizer=_boom)
+        result = tool.write_file("orders.yml", "data\n")
+        assert result.success == 0
+        assert "normalization failed" in (result.error or "").lower()
+        # And no file should have been created.
+        assert not any(tmp_path.rglob("orders.yml"))
+
+    def test_normalizer_exception_does_not_fail_read(self, tmp_path):
+        """Reads stay lax: on normalizer error, fall back to the original path
+        and let the sandbox check fail naturally."""
+
+        def _boom(path, file_type, *, strict_kind=False):
+            raise RuntimeError("normalizer error")
+
+        (tmp_path / "orders.yml").write_text("data\n")
+        tool = FilesystemFuncTool(root_path=str(tmp_path), path_normalizer=_boom)
+        result = tool.read_file("orders.yml")
+        assert result.success == 1
+        assert result.result == "data\n"

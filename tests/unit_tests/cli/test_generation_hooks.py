@@ -23,7 +23,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from datus.cli.execution_state import InteractionCancelled
-from datus.cli.generation_hooks import GenerationCancelledException, GenerationHooks
+from datus.cli.generation_hooks import (
+    GenerationCancelledException,
+    GenerationHooks,
+    make_kb_path_normalizer,
+    normalize_kb_relative_path,
+)
+from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -1259,3 +1265,155 @@ class TestHandleEndMetricGeneration:
     async def test_unexpected_exception_absorbed(self, hooks):
         hooks._extract_metric_generation_result = MagicMock(side_effect=RuntimeError("boom"))
         await hooks._handle_end_metric_generation({"result": {}})  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Tests: normalize_kb_relative_path (pure function)
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeKbRelativePath:
+    def test_prepends_when_prefix_missing(self):
+        assert (
+            normalize_kb_relative_path("orders.yaml", "semantic", "school_db")
+            == "semantic_models/school_db/orders.yaml"
+        )
+
+    def test_prepends_for_sql_summary(self):
+        assert (
+            normalize_kb_relative_path("q_001.yaml", "sql_summary", "school_db") == "sql_summaries/school_db/q_001.yaml"
+        )
+
+    def test_prepends_for_ext_knowledge(self):
+        assert (
+            normalize_kb_relative_path("notes.yaml", "ext_knowledge", "school_db")
+            == "ext_knowledge/school_db/notes.yaml"
+        )
+
+    def test_metric_kind_co_locates_with_semantic_models(self):
+        """metrics live under semantic_models/{db}/metrics/ — same root as semantic."""
+        assert (
+            normalize_kb_relative_path("metrics/orders_metrics.yaml", "metric", "school_db")
+            == "semantic_models/school_db/metrics/orders_metrics.yaml"
+        )
+
+    def test_idempotent_when_prefix_already_correct(self):
+        already = "semantic_models/school_db/orders.yaml"
+        assert normalize_kb_relative_path(already, "semantic", "school_db") == already
+
+    def test_passes_through_paths_in_other_namespaces(self):
+        path = "semantic_models/other_db/orders.yaml"
+        assert normalize_kb_relative_path(path, "semantic", "school_db") == path
+
+    def test_passes_through_paths_in_other_kinds(self):
+        path = "sql_summaries/school_db/q_001.yaml"
+        assert normalize_kb_relative_path(path, "semantic", "school_db") == path
+
+    def test_absolute_paths_unchanged(self):
+        assert normalize_kb_relative_path("/abs/path/orders.yaml", "semantic", "school_db") == "/abs/path/orders.yaml"
+
+    def test_empty_path_unchanged(self):
+        assert normalize_kb_relative_path("", "semantic", "school_db") == ""
+
+    def test_dot_path_unchanged(self):
+        assert normalize_kb_relative_path(".", "semantic", "school_db") == "."
+
+    def test_parent_traversal_unchanged(self):
+        assert normalize_kb_relative_path("../../etc/passwd", "semantic", "school_db") == "../../etc/passwd"
+
+    def test_unknown_kind_unchanged(self):
+        assert normalize_kb_relative_path("orders.yaml", "unknown", "school_db") == "orders.yaml"
+
+    def test_missing_namespace_unchanged(self):
+        assert normalize_kb_relative_path("orders.yaml", "semantic", None) == "orders.yaml"
+
+
+# ---------------------------------------------------------------------------
+# Tests: make_kb_path_normalizer factory
+# ---------------------------------------------------------------------------
+
+
+class _StubCfg:
+    """Minimal agent_config stand-in for normalizer factory tests."""
+
+    def __init__(self, ns: str):
+        self.current_namespace = ns
+
+
+class TestMakeKbPathNormalizer:
+    def test_uses_default_kind_when_file_type_missing(self):
+        normalizer = make_kb_path_normalizer(_StubCfg("db"), default_kind="semantic")
+        assert normalizer("orders.yaml", None) == "semantic_models/db/orders.yaml"
+
+    def test_file_type_overrides_default_kind(self):
+        normalizer = make_kb_path_normalizer(_StubCfg("db"), default_kind="semantic")
+        assert normalizer("q_001.yaml", "sql_summary") == "sql_summaries/db/q_001.yaml"
+
+    def test_file_type_aliases_recognized(self):
+        normalizer = make_kb_path_normalizer(_StubCfg("db"), default_kind=None)
+        assert normalizer("orders.yaml", "semantic_model") == "semantic_models/db/orders.yaml"
+        assert normalizer("metrics/x.yaml", "metric") == "semantic_models/db/metrics/x.yaml"
+        assert normalizer("notes.yaml", "ext_knowledge") == "ext_knowledge/db/notes.yaml"
+
+    def test_namespace_resolved_at_call_time(self):
+        """Sub-agent switches mid-session must be honored — closure rebinds each call."""
+        cfg = _StubCfg("ns_x")
+        normalizer = make_kb_path_normalizer(cfg, default_kind="semantic")
+        assert normalizer("orders.yaml", None) == "semantic_models/ns_x/orders.yaml"
+        cfg.current_namespace = "ns_y"
+        assert normalizer("orders.yaml", None) == "semantic_models/ns_y/orders.yaml"
+
+    def test_strict_kind_rejects_cross_kind_write(self):
+        """Mutating ops (strict_kind=True) must reject writes to peer kinds' subdirs."""
+        normalizer = make_kb_path_normalizer(_StubCfg("db"), default_kind="semantic")
+        # Read-lax: cross-kind reads still allowed.
+        assert normalizer("sql_summaries/db/q.yaml", None) == "sql_summaries/db/q.yaml"
+        # Write-strict: the same cross-kind path is refused.
+        with pytest.raises(ValueError, match="Write to 'sql_summaries/' is not allowed"):
+            normalizer("sql_summaries/db/q.yaml", None, strict_kind=True)
+
+    def test_strict_kind_ignores_file_type_override(self):
+        """In strict mode, file_type cannot be used to switch kinds."""
+        normalizer = make_kb_path_normalizer(_StubCfg("db"), default_kind="semantic")
+        # Without strict: file_type override is honored.
+        assert normalizer("q.yaml", "sql_summary") == "sql_summaries/db/q.yaml"
+        # With strict: override is ignored; default_kind wins.
+        assert normalizer("q.yaml", "sql_summary", strict_kind=True) == "semantic_models/db/q.yaml"
+
+
+# ---------------------------------------------------------------------------
+# Tests: hook + tool agreement — _resolve_path finds files written via the
+# same normalizer regardless of whether the LLM emitted a naked filename.
+# ---------------------------------------------------------------------------
+
+
+class TestHookAndToolPathAgreement:
+    def test_resolve_path_finds_naked_file_after_normalized_write(self, tmp_path, real_agent_config):
+        """FilesystemFuncTool writes orders.yml → hook resolves 'orders.yml' to the same on-disk path."""
+        kb_root = Path(str(real_agent_config.path_manager.knowledge_base_home))
+
+        tool = FilesystemFuncTool(
+            root_path=str(kb_root),
+            path_normalizer=make_kb_path_normalizer(real_agent_config, default_kind="semantic"),
+        )
+        write_result = tool.write_file("orders.yml", "id: orders\n", file_type="semantic_model")
+        assert write_result.success == 1
+
+        hooks = GenerationHooks(broker=None, agent_config=real_agent_config)
+        resolved = hooks._resolve_path("orders.yml", "semantic")
+
+        on_disk = kb_root / "semantic_models" / real_agent_config.current_namespace / "orders.yml"
+        assert os.path.realpath(resolved) == os.path.realpath(str(on_disk))
+        assert Path(resolved).is_file()
+
+    def test_extract_filepaths_resolves_relative_entries_against_kb_home(self, real_agent_config):
+        """end_semantic_model_generation payloads with bare filenames resolve correctly."""
+        kb_root = Path(str(real_agent_config.path_manager.knowledge_base_home))
+        target = kb_root / "semantic_models" / real_agent_config.current_namespace / "orders.yml"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("data\n")
+
+        hooks = GenerationHooks(broker=None, agent_config=real_agent_config)
+        paths = hooks._extract_filepaths_from_result({"result": {"semantic_model_files": ["orders.yml"]}})
+        assert len(paths) == 1
+        assert os.path.realpath(paths[0]) == os.path.realpath(str(target))

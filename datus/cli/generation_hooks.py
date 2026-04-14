@@ -94,10 +94,27 @@ def make_kb_path_normalizer(agent_config: "AgentConfig", default_kind: Optional[
     """
     Build a `FilesystemFuncTool.path_normalizer` closure that resolves the
     namespace lazily so sub-agent switches mid-session are honored.
-    """
 
-    def _normalize(path: str, file_type: Optional[str]) -> str:
-        kind = _FILE_TYPE_ALIASES.get(file_type or "", default_kind)
+    The closure accepts an optional ``strict_kind`` kwarg. When set (used for
+    mutating tool ops — ``write_file`` / ``edit_file``), cross-kind writes are
+    rejected: a node whose ``default_kind`` is ``semantic`` cannot write to a
+    path already prefixed with ``sql_summaries/`` or ``ext_knowledge/``. Reads
+    stay lax so the LLM can still browse peer KB artifacts.
+    """
+    expected_subdir = _KIND_TO_SUBDIR.get(default_kind or "")
+    known_subdirs = set(_KIND_TO_SUBDIR.values())
+
+    def _normalize(path: str, file_type: Optional[str], *, strict_kind: bool = False) -> str:
+        if strict_kind and expected_subdir and path and not os.path.isabs(path):
+            head = path.replace("\\", "/").split("/", 1)[0]
+            if head in known_subdirs and head != expected_subdir:
+                raise ValueError(
+                    f"Write to '{head}/' is not allowed from a {default_kind!r} node; "
+                    f"this node may only write under '{expected_subdir}/'."
+                )
+            kind = default_kind
+        else:
+            kind = _FILE_TYPE_ALIASES.get(file_type or "", default_kind)
         namespace = getattr(agent_config, "current_namespace", None) if agent_config else None
         return normalize_kb_relative_path(path, kind, namespace)
 
