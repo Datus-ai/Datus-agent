@@ -173,7 +173,7 @@ X-Accel-Buffering: no
 }
 ```
 
-- 大多数流式事件的 `type` 为 `createMessage`。开启 [Thinking-delta 流式下发](#thinking-delta-流式下发) 后,
+- 大多数流式事件的 `type` 为 `createMessage`。开启 [Thinking-delta 流式下发](#thinking-delta-streaming) 后,
   还会出现 `appendMessage` 和 `updateMessage`。客户端遇到未知 `type` 应优雅忽略。
 - 流式期间 `role` 始终为 `assistant`;`GET /chat/history` 拉取时,用户消息会以 `role: "user"` 出现。
 - `message_id` 即 action id;当 content 为用户交互时,**它同时也是 `interactionKey`**(详见下文)。
@@ -325,7 +325,7 @@ Agent 需要用户做决策才能继续时下发。SSE 流随后暂停,直到通
 > 外层 `MessageData.payload` 将携带 `depth: 1` 和指向触发该 sub-agent 的 `task()` 工具调用的
 > `parent_action_id`。完整 payload 结构参见 [MessageData](#messagedata)。
 
-### Thinking-delta 流式下发
+### Thinking-delta 流式下发 {#thinking-delta-streaming}
 
 `stream_response` 字段控制 LLM 的 thinking 内容是逐 token 增量下发,还是作为单条完整消息一次性下发。
 

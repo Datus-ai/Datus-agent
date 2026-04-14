@@ -47,16 +47,61 @@ models:
 
 ## Supported LLM Providers
 
-Datus Agent supports a wide range of LLM providers through standardized interfaces:
+Providers selected in `datus-agent configure` are written into `agent.models`, and `agent.target` points to the default one. In practice:
 
-| Provider | Models | Interface Type |
-|----------|--------|----------------|
-| **OpenAI** | GPT-4, GPT-5, and other OpenAI models | `openai` |
-| **Anthropic** | Claude 4 (Sonnet, Opus) and Claude 3 models | `claude` |
-| **Google** | Gemini models (Pro, Flash, Ultra) | `gemini` |
-| **DeepSeek** | DeepSeek Chat and DeepSeek Reasoning models | `deepseek` |
-| **Kimi** | Moonshot AI's Kimi models | `openai` |
-| **Qwen** | Alibaba's Qwen series models | `openai` |
+- The provider name you choose in `datus-agent configure` becomes the key under `agent.models.<provider>`
+- You can later edit `agent.yml` manually and bind different nodes to different model entries
+
+### General-purpose providers
+
+| Provider | Typical models | Interface Type | Auth |
+|----------|----------------|----------------|------|
+| `openai` | `gpt-5.2`, `gpt-4.1`, `o3` | `openai` | API key |
+| `deepseek` | `deepseek-chat`, `deepseek-reasoner` | `deepseek` | API key |
+| `claude` | `claude-sonnet-4-5`, `claude-opus-4-5` | `claude` | API key |
+| `kimi` | `kimi-k2.5`, `kimi-k2-thinking` | `kimi` | API key |
+| `qwen` | `qwen3-max`, `qwen3-coder-plus` | `openai` | API key |
+| `gemini` | `gemini-2.5-flash`, `gemini-2.5-pro` | `gemini` | API key |
+| `minimax` | `MiniMax-M2.7`, `MiniMax-M2.5` | `minimax` | API key |
+| `glm` | `glm-5`, `glm-4.7` | `glm` | API key |
+
+### Special-auth providers
+
+| Provider | Interface Type | Auth | Notes |
+|----------|----------------|------|-------|
+| `claude_subscription` | `claude` | Claude subscription token | The wizard first tries to auto-detect a local subscription credential and otherwise prompts for `sk-ant-oat01-...` |
+| `codex` | `codex` | OAuth | Uses locally available Codex OAuth credentials and verifies connectivity |
+
+### Coding Plan providers
+
+These providers target coding/planning-oriented endpoints. Even though their names include `coding`, they are configured exactly like any other model entry and can be used as `agent.target` or referenced from node-level `model` fields.
+
+| Provider | Default model | Interface Type | Notes |
+|----------|---------------|----------------|-------|
+| `alibaba_coding` | `qwen3-coder-plus` | `claude` | DashScope Anthropic-compatible coding endpoint |
+| `glm_coding` | `glm-5` | `claude` | GLM Anthropic-compatible coding endpoint |
+| `minimax_coding` | `MiniMax-M2.7` | `claude` | MiniMax Anthropic-compatible coding endpoint |
+| `kimi_coding` | `kimi-for-coding` | `claude` | Kimi coding endpoint |
+
+!!! tip "When to choose a coding plan provider"
+    If your priority is general chat, SQL generation, or cost efficiency, start with a regular provider.
+
+    If you want a default model that is better aligned with planning, code generation, and structured task decomposition, or if you use [Plan Mode](../cli/plan_mode.md) frequently, add one of the `*_coding` providers and route specific nodes to it.
+
+### Environment variables and model overrides
+
+All providers support environment-variable references in `api_key`, for example:
+
+```yaml
+api_key: ${OPENAI_API_KEY}
+```
+
+For OpenAI, DeepSeek, Claude, Kimi, Qwen, and Gemini, the configuration wizard can prompt with provider-specific environment variable hints. For `minimax`, `glm`, and the `*_coding` providers, you can still enter values such as `${MINIMAX_API_KEY}`, `${GLM_API_KEY}`, `${KIMI_API_KEY}`, or `${DASHSCOPE_API_KEY}` directly.
+
+The current implementation also auto-applies fixed parameter overrides for a few models:
+
+- `kimi-k2.5`: `temperature: 1.0`, `top_p: 0.95`
+- `qwen3-coder-plus`: `temperature: 1.0`, `top_p: 0.95`
 
 ### Provider Configuration Examples
 
@@ -67,17 +112,17 @@ Datus Agent supports a wide range of LLM providers through standardized interfac
       type: openai
       base_url: https://api.openai.com/v1
       api_key: ${OPENAI_API_KEY}
-      model: gpt-4-turbo
+      model: gpt-5.2
     ```
 
 === "Anthropic Claude"
 
     ```yaml
-    anthropic:
+    claude:
       type: claude
       base_url: https://api.anthropic.com
       api_key: ${ANTHROPIC_API_KEY}
-      model: claude-sonnet-4-20250514
+      model: claude-sonnet-4-5
     ```
 
 === "DeepSeek"
@@ -93,7 +138,7 @@ Datus Agent supports a wide range of LLM providers through standardized interfac
 === "Google Gemini"
 
     ```yaml
-    google:
+    gemini:
       type: gemini
       base_url: https://generativelanguage.googleapis.com/v1beta
       api_key: ${GEMINI_API_KEY}
@@ -104,30 +149,54 @@ Datus Agent supports a wide range of LLM providers through standardized interfac
 
     ```yaml
     kimi:
-      type: openai  # Uses OpenAI-compatible interface
+      type: kimi
       base_url: https://api.moonshot.cn/v1
       api_key: ${KIMI_API_KEY}
-      model: kimi-k2-turbo-preview
+      model: kimi-k2.5
     ```
 
 === "Qwen (Alibaba)"
 
     ```yaml
     qwen:
-      type: openai  # Uses OpenAI-compatible interface
+      type: openai
       base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-      api_key: ${QWEN_API_KEY}
-      model: qwen-turbo
+      api_key: ${DASHSCOPE_API_KEY}
+      model: qwen3-max
     ```
 
-=== "Azure OpenAI"
+=== "Alibaba Coding Plan"
 
     ```yaml
-    azure_openai:
-      type: openai
-      base_url: https://${AZURE_OPENAI_ENDPOINT}/openai/deployments/${AZURE_DEPLOYMENT_NAME}
-      api_key: ${AZURE_OPENAI_API_KEY}
-      model: gpt-4
+    alibaba_coding:
+      type: claude
+      base_url: https://coding-intl.dashscope.aliyuncs.com/apps/anthropic
+      api_key: ${DASHSCOPE_API_KEY}
+      model: qwen3-coder-plus
+      temperature: 1.0
+      top_p: 0.95
+    ```
+
+=== "Claude Subscription"
+
+    ```yaml
+    claude_subscription:
+      type: claude
+      base_url: https://api.anthropic.com
+      api_key: ${CLAUDE_CODE_OAUTH_TOKEN}
+      model: claude-sonnet-4-6
+      auth_type: subscription
+    ```
+
+=== "Codex"
+
+    ```yaml
+    codex:
+      type: codex
+      base_url: https://chatgpt.com/backend-api/codex
+      api_key: ""
+      model: codex-mini-latest
+      auth_type: oauth
     ```
 
 ## Complete Configuration Example
@@ -137,41 +206,37 @@ Here's a comprehensive agent configuration example with multiple providers:
 ```yaml title="datus-config.yaml"
 # Complete Datus Agent Configuration
 agent:
-  target: openai  # Default model for all operations
+  target: alibaba_coding
+  models:
+    openai:
+      type: openai
+      base_url: https://api.openai.com/v1
+      api_key: ${OPENAI_API_KEY}
+      model: gpt-5.2
 
-models:
-  # Production OpenAI configuration
-  openai:
-    type: openai
-    base_url: https://api.openai.com/v1
-    api_key: ${OPENAI_API_KEY}
-    model: gpt-4-turbo
-    
-  # Alternative Google Gemini
-  google:
-    type: gemini
-    base_url: https://generativelanguage.googleapis.com/v1beta
-    api_key: ${GEMINI_API_KEY}
-    model: gemini-2.5-flash
-    
-  # Anthropic Claude for reasoning
-  anthropic:
-    type: claude
-    base_url: https://api.anthropic.com
-    api_key: ${ANTHROPIC_API_KEY}
-    model: claude-sonnet-4-20250514
-    
-  # Cost-effective DeepSeek
-  deepseek_v3:
-    type: deepseek
-    base_url: https://api.deepseek.com
-    api_key: ${DEEPSEEK_API_KEY}
-    model: deepseek-chat
-    
-  # Azure OpenAI (Enterprise)
-  azure_openai:
-    type: openai
-    base_url: https://${AZURE_OPENAI_ENDPOINT}/openai/deployments/${AZURE_DEPLOYMENT_NAME}
-    api_key: ${AZURE_OPENAI_API_KEY}
-    model: gpt-4
+    gemini:
+      type: gemini
+      base_url: https://generativelanguage.googleapis.com/v1beta
+      api_key: ${GEMINI_API_KEY}
+      model: gemini-2.5-flash
+
+    claude:
+      type: claude
+      base_url: https://api.anthropic.com
+      api_key: ${ANTHROPIC_API_KEY}
+      model: claude-sonnet-4-5
+
+    deepseek:
+      type: deepseek
+      base_url: https://api.deepseek.com
+      api_key: ${DEEPSEEK_API_KEY}
+      model: deepseek-chat
+
+    alibaba_coding:
+      type: claude
+      base_url: https://coding-intl.dashscope.aliyuncs.com/apps/anthropic
+      api_key: ${DASHSCOPE_API_KEY}
+      model: qwen3-coder-plus
+      temperature: 1.0
+      top_p: 0.95
 ```
