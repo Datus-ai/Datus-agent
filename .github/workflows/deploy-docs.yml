@@ -6,6 +6,12 @@ on:
     tags:
       - 'v*.*.*'
       - '*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to deploy (e.g. v0.2.6). Uses the tag ref if empty.'
+        required: false
+        default: ''
 permissions:
   contents: write
 env:
@@ -45,7 +51,30 @@ jobs:
       - name: Resolve docs version metadata
         run: |
           echo "DOCS_SKIP_DEPLOY=false" >> "${GITHUB_ENV}"
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+          # workflow_dispatch with explicit version input
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.version }}" ]]; then
+            VERSION="${{ inputs.version }}"
+            VERSION="${VERSION#v}"
+            if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.+-]+)?$ ]]; then
+              echo "::error::Invalid version format: ${VERSION}"
+              exit 1
+            fi
+            # Checkout the tag so docs content matches the version
+            git checkout "v${VERSION}" 2>/dev/null || git checkout "${VERSION}" 2>/dev/null || { echo "::error::Tag v${VERSION} or ${VERSION} not found"; exit 1; }
+            echo "DOCS_EDIT_URI=edit/v${VERSION}/docs/" >> "${GITHUB_ENV}"
+            echo "DOCS_VERSION=${VERSION}" >> "${GITHUB_ENV}"
+            echo "DOCS_ALIASES=" >> "${GITHUB_ENV}"
+            echo "DOCS_SET_DEFAULT=" >> "${GITHUB_ENV}"
+            if [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              SHOULD_PROMOTE_LATEST="$(
+                VERSION="${VERSION}" python -c 'import json, os, re, subprocess; from packaging.version import Version; current = Version(os.environ["VERSION"]); raw = subprocess.check_output(["mike", "list", "-j"], text=True) if True else "[]"; stable = [Version(str(item.get("version", ""))) for item in json.loads(raw or "[]") if re.fullmatch(r"\d+\.\d+\.\d+", str(item.get("version", "")))]; print("true" if not stable or current >= max(stable) else "false")' 2>/dev/null || echo "true"
+              )"
+              if [[ "${SHOULD_PROMOTE_LATEST}" == "true" ]]; then
+                echo "DOCS_ALIASES=latest" >> "${GITHUB_ENV}"
+                echo "DOCS_SET_DEFAULT=latest" >> "${GITHUB_ENV}"
+              fi
+            fi
+          elif [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
             if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.+-]+)?$ ]]; then
               echo "DOCS_SKIP_DEPLOY=true" >> "${GITHUB_ENV}"
