@@ -137,7 +137,7 @@ class ChannelBridge:
         request = StreamChatInput(
             message=msg.text,
             session_id=session_id,
-            source="claw",
+            stream_response=adapter.supports_streaming
         )
 
         # Apply channel-level namespace override
