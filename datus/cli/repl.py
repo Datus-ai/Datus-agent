@@ -1063,12 +1063,15 @@ Type '.help' for a list of commands or '.exit' to quit.
 """
         self.console.print(welcome_text)
 
-        namespace = getattr(self.args, "namespace", "")
-        # TODO use default namespace if not set
-        if namespace:
-            self.console.print(f"Namespace [bold green]{namespace}[/] selected")
+        database = (
+            getattr(self.args, "database", "")
+            or getattr(self.args, "namespace", "")
+            or getattr(self.agent_config, "current_database", "")
+        )
+        if database:
+            self.console.print(f"Database [bold green]{database}[/] selected")
         else:
-            self.console.print("[yellow]Warning: No namespace selected, please use .namespace to select a namespace[/]")
+            self.console.print("[yellow]Warning: No database selected, please use .database to select a database[/]")
         # Display connection info
         if self.db_connector:
             db_info = f"Connected to [bold green]{self.agent_config.db_type}[/]"
