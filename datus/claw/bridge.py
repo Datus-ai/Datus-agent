@@ -172,6 +172,8 @@ class ChannelBridge:
         stream_id = f"{msg.channel_id}_{msg.message_id}"
         # Per-request pending tool calls to avoid cross-message contamination
         pending_tool_calls: Dict[str, dict] = {}
+        # Track LLM message_id changes within a single stream to insert separators
+        last_message_id: Optional[str] = None
 
         try:
             # Stream each SSE event to the IM channel as it arrives
@@ -202,6 +204,18 @@ class ChannelBridge:
                                 if is_update:
                                     continue
                                 outbound.stream_id = stream_id
+                                # Insert separator when LLM message_id changes within a stream
+                                current_message_id = getattr(
+                                    getattr(event.data, "payload", None), "message_id", None
+                                )
+                                if (
+                                    current_message_id
+                                    and last_message_id is not None
+                                    and current_message_id != last_message_id
+                                ):
+                                    outbound.text = f"\n\n{outbound.text}"
+                                if current_message_id:
+                                    last_message_id = current_message_id
                             elif outbound.is_delta:
                                 continue
                             bot_msg_id = await adapter.send_message(outbound)

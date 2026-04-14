@@ -362,7 +362,7 @@ async def test_streaming_subsequent_message_updates_card():
 
     # Card element content should have been called for the update
     assert adapter._lark_client.cardkit.v1.card_element.content.call_count == 1
-    assert "chunk1\n\nchunk2" in adapter._streams["stream_1"].accumulated
+    assert adapter._streams["stream_1"].accumulated == "chunk1chunk2"
     assert adapter._streams["stream_1"].seq == 2
 
 
@@ -400,8 +400,8 @@ async def test_streaming_delta_concatenates_directly():
 
 
 @pytest.mark.asyncio
-async def test_streaming_non_delta_uses_separator():
-    """Non-delta messages should use \\n\\n separator."""
+async def test_streaming_non_delta_concatenates_directly():
+    """Non-delta messages should be concatenated directly (separator added by bridge)."""
     adapter = _make_adapter()
     adapter._lark_client = _mock_lark_client(message_id="msg_nd", card_id="card_nd")
 
@@ -412,7 +412,7 @@ async def test_streaming_non_delta_uses_separator():
     msg2 = _make_streaming_message("second")
     await adapter.send_message(msg2)
 
-    assert adapter._streams["stream_1"].accumulated == "first\n\nsecond"
+    assert adapter._streams["stream_1"].accumulated == "firstsecond"
 
 
 @pytest.mark.asyncio

@@ -435,12 +435,9 @@ class FeishuAdapter(ChannelAdapter):
             return await self._start_stream(message, text)
         else:
             # Subsequent message — append content to existing card
-            # Delta chunks (token-level) are concatenated directly;
-            # complete messages are separated by blank lines.
-            if message.is_delta:
-                state.accumulated += text
-            else:
-                state.accumulated += f"\n\n{text}"
+            # Concatenate directly — separators between different LLM messages
+            # are already prepended by the bridge layer.
+            state.accumulated += text
             await self._update_card_content(stream_id)
             return None
 

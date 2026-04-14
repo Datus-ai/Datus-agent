@@ -86,14 +86,14 @@ def _make_inbound(
     )
 
 
-def _make_sse_message(content_text: str, content_type: str = "markdown") -> SSEEvent:
+def _make_sse_message(content_text: str, content_type: str = "markdown", message_id: str = "m1") -> SSEEvent:
     return SSEEvent(
         id=1,
         event="message",
         data=SSEMessageData(
             type=SSEDataType.CREATE_MESSAGE,
             payload=SSEMessagePayload(
-                message_id="m1",
+                message_id=message_id,
                 role="assistant",
                 content=[IMessageContent(type=content_type, payload={"content": content_text})],
             ),
@@ -1328,6 +1328,107 @@ class TestStreamResponseConfig:
 
         assert len(adapter.sent) == 1
         assert "final result" in adapter.sent[0].text
+
+
+class TestStreamMessageIdSeparator:
+    """Tests that \\n\\n separator is prepended when SSE message_id changes during streaming."""
+
+    @pytest_asyncio.fixture
+    async def setup(self):
+        adapter = _StreamingStubAdapter()
+        agent_config = MagicMock()
+        task_manager = MagicMock()
+        bridge = ChannelBridge(agent_config, task_manager)
+        return bridge, adapter, task_manager
+
+    @pytest.mark.asyncio
+    async def test_separator_prepended_on_message_id_change(self, setup):
+        """When message_id changes, the outbound text should be prepended with \\n\\n."""
+        bridge, adapter, task_manager = setup
+
+        mock_task = MagicMock()
+        task_manager.start_chat = AsyncMock(return_value=mock_task)
+
+        async def _fake_consume(task, start_from=None):
+            yield _make_sse_message("first part", message_id="msg_a")
+            yield _make_sse_message("second part", message_id="msg_b")
+            yield _make_sse_end()
+
+        task_manager.consume_events = _fake_consume
+
+        await bridge.handle_message(_make_inbound("q"), adapter)
+
+        assert len(adapter.sent) == 2
+        # First message: no separator (first message_id seen)
+        assert adapter.sent[0].text == "first part"
+        # Second message: prepended with \n\n because message_id changed
+        assert adapter.sent[1].text == "\n\nsecond part"
+
+    @pytest.mark.asyncio
+    async def test_no_separator_when_message_id_unchanged(self, setup):
+        """When message_id stays the same, no separator should be added."""
+        bridge, adapter, task_manager = setup
+
+        mock_task = MagicMock()
+        task_manager.start_chat = AsyncMock(return_value=mock_task)
+
+        async def _fake_consume(task, start_from=None):
+            yield _make_sse_message("chunk1", message_id="msg_a")
+            yield _make_sse_message("chunk2", message_id="msg_a")
+            yield _make_sse_end()
+
+        task_manager.consume_events = _fake_consume
+
+        await bridge.handle_message(_make_inbound("q"), adapter)
+
+        assert len(adapter.sent) == 2
+        assert adapter.sent[0].text == "chunk1"
+        assert adapter.sent[1].text == "chunk2"
+
+    @pytest.mark.asyncio
+    async def test_separator_only_in_streaming_mode(self, setup):
+        """Non-streaming adapters should not get separators."""
+        bridge, _, task_manager = setup
+        non_stream_adapter = _StubAdapter()
+
+        mock_task = MagicMock()
+        task_manager.start_chat = AsyncMock(return_value=mock_task)
+
+        async def _fake_consume(task, start_from=None):
+            yield _make_sse_message("first", message_id="msg_a")
+            yield _make_sse_message("second", message_id="msg_b")
+            yield _make_sse_end()
+
+        task_manager.consume_events = _fake_consume
+
+        await bridge.handle_message(_make_inbound("q"), non_stream_adapter)
+
+        assert len(non_stream_adapter.sent) == 2
+        assert non_stream_adapter.sent[0].text == "first"
+        assert non_stream_adapter.sent[1].text == "second"
+
+    @pytest.mark.asyncio
+    async def test_multiple_message_id_changes(self, setup):
+        """Multiple message_id transitions should each get a separator."""
+        bridge, adapter, task_manager = setup
+
+        mock_task = MagicMock()
+        task_manager.start_chat = AsyncMock(return_value=mock_task)
+
+        async def _fake_consume(task, start_from=None):
+            yield _make_sse_message("a", message_id="id1")
+            yield _make_sse_message("b", message_id="id2")
+            yield _make_sse_message("c", message_id="id3")
+            yield _make_sse_end()
+
+        task_manager.consume_events = _fake_consume
+
+        await bridge.handle_message(_make_inbound("q"), adapter)
+
+        assert len(adapter.sent) == 3
+        assert adapter.sent[0].text == "a"
+        assert adapter.sent[1].text == "\n\nb"
+        assert adapter.sent[2].text == "\n\nc"
 
 
 class TestVerboseOverride:
