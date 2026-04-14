@@ -23,12 +23,14 @@ agent:
 - `model`：具体模型名
 
 ```yaml
-models:
-  provider_name:
-    type: provider_type
-    base_url: https://api.example.com/v1
-    api_key: ${API_KEY_ENV_VAR}
-    model: model-name
+agent:
+  target: provider_name
+  models:
+    provider_name:
+      type: provider_type
+      base_url: https://api.example.com/v1
+      api_key: ${API_KEY_ENV_VAR}
+      model: model-name
 ```
 
 !!! tip "环境变量"

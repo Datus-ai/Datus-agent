@@ -224,17 +224,19 @@ class TestChatServiceStreamChat:
         with patch.object(tm, "_create_node", return_value=BlockingNode("dup-stream")):
             request1 = StreamChatInput(message="first", session_id="dup-stream")
             stream1 = svc.stream_chat(request1)
-            first_event = await anext(stream1)
-            assert first_event.event == "session"
-            assert "dup-stream" in tm._tasks
-
-            request2 = StreamChatInput(message="second", session_id="dup-stream")
-            stream2 = svc.stream_chat(request2)
+            stream2 = None
             try:
-                duplicate_event = await anext(stream2)
+                first_event = await asyncio.wait_for(anext(stream1), timeout=2)
+                assert first_event.event == "session"
+                assert "dup-stream" in tm._tasks
+
+                request2 = StreamChatInput(message="second", session_id="dup-stream")
+                stream2 = svc.stream_chat(request2)
+                duplicate_event = await asyncio.wait_for(anext(stream2), timeout=2)
                 assert duplicate_event.event == "error"
             finally:
                 release_first_task.set()
                 await stream1.aclose()
-                await stream2.aclose()
+                if stream2 is not None:
+                    await stream2.aclose()
                 await tm.shutdown()

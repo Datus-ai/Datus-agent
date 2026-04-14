@@ -26,12 +26,14 @@ Configure LLM providers that your agent can use. Each model configuration includ
 - **`model`** - Specific model name to use from the provider
 
 ```yaml
-models:
-  provider_name:
-    type: provider_type
-    base_url: https://api.example.com/v1
-    api_key: ${API_KEY_ENV_VAR}
-    model: model-name
+agent:
+  target: provider_name
+  models:
+    provider_name:
+      type: provider_type
+      base_url: https://api.example.com/v1
+      api_key: ${API_KEY_ENV_VAR}
+      model: model-name
 ```
 
 !!! tip "Environment Variables"
