@@ -4,7 +4,7 @@
 
 The **Builtin Subagent** are specialized AI assistants integrated within the Datus Agent system. Each subagent focuses on a specific aspect of data engineering automation — analyzing SQL, generating semantic models, and converting queries into reusable metrics — together forming a closed-loop workflow from raw SQL to knowledge-aware data products.
 
-This document covers seven core subagents:
+This document covers eight core subagents:
 
 1. **[gen_sql_summary](#gen_sql_summary)** — Summarizes and classifies SQL queries
 2. **[gen_semantic_model](#gen_semantic_model)** — Generates MetricFlow semantic models
@@ -13,6 +13,7 @@ This document covers seven core subagents:
 5. **[explore](#explore)** — Read-only data exploration and context gathering
 6. **[gen_sql](#gen_sql)** — Specialized SQL generation with deep expertise
 7. **[gen_report](#gen_report)** — Flexible report generation with configurable tools
+8. **[gen_adapter](#gen_adapter)** — Generates adapter project scaffolding for external platforms
 
 ## Configuration
 
@@ -49,6 +50,10 @@ agent:
       model: claude     # Optional: defaults to configured model
       max_turns: 30     # Optional: defaults to 30
       tools: "semantic_tools.*, context_search_tools.list_subject_tree"  # Optional: defaults to semantic + context tools
+
+    gen_adapter:
+      model: claude     # Optional: defaults to configured model
+      max_turns: 30     # Optional: defaults to 30
 ```
 
 **Optional configuration parameters:**
@@ -914,6 +919,95 @@ Then use it via `/attribution_report Analyze the conversion attribution for camp
 
 ---
 
+## gen_adapter
+
+### Overview
+
+The adapter generation subagent helps you create Datus adapter project scaffolding for integrating external platforms (BI, DB, Scheduler, Semantic Layer). It generates a complete project skeleton, assists with platform-specific implementation, and validates the result with contract tests.
+
+### Key Features
+
+- **Four adapter types**: semantic, bi, db, scheduler — each with a defined interface contract
+- **Complete project scaffolding**: Generates `pyproject.toml`, adapter class, config, tests, and README
+- **Contract test generation**: Semantic adapters get auto-wired contract tests from `datus_semantic_core.testing`
+- **Built-in pytest runner**: Runs tests inside the generated project without leaving the agent workflow
+- **Platform doc search**: Fetches official API documentation to guide implementation
+
+### Configuration
+
+```yaml
+agent:
+  agentic_nodes:
+    gen_adapter:
+      model: claude           # Optional: defaults to configured model
+      max_turns: 30           # Optional: defaults to 30
+```
+
+### Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `list_adapter_types` | List all supported adapter types with metadata |
+| `scaffold_adapter` | Generate a complete adapter project skeleton |
+| `validate_adapter` | Static validation: imports, register(), stub check |
+| `run_adapter_pytest` | Run pytest inside a scaffolded adapter project |
+| `read_file` / `write_file` / `edit_file` | Read and modify generated code |
+| `list_directory` | Browse project file structure |
+| `web_search_document` | Search external platform API documentation |
+| `ask_user` | Confirm decisions (interactive mode only) |
+
+### How It Works
+
+```mermaid
+graph LR
+    A[User describes platform] --> B[Confirm intent]
+    B --> C[Scaffold project]
+    C --> D[Implement methods]
+    D --> E[Static validation]
+    E --> F[Run contract tests]
+    F --> G{Tests pass?}
+    G -->|No| D
+    G -->|Yes| H[Summary]
+```
+
+**Five phases:**
+
+1. **Understand Intent**: Identifies adapter type, platform name, output directory; confirms with user
+2. **Generate Skeleton**: Scaffolds project with adapter stubs, config, tests, pyproject.toml
+3. **Assist Implementation**: Searches platform docs, proposes code for each method, writes after confirmation
+4. **Validate**: Static checks (`validate_adapter`) + contract test execution (`run_adapter_pytest`)
+5. **Summary**: Reports files created, test results, remaining TODOs
+
+### Generated Project Structure
+
+```
+datus-semantic-cube/
+├── datus_semantic_cube/
+│   ├── __init__.py          # register() + exports
+│   ├── adapter.py           # CubeAdapter with method stubs
+│   ├── config.py            # CubeConfig (Pydantic)
+│   └── py.typed
+├── tests/
+│   ├── conftest.py
+│   └── unit/
+│       ├── test_adapter.py  # Basic instantiation
+│       └── test_contract.py # Contract suite (semantic only)
+├── pyproject.toml
+└── README.md
+```
+
+### Usage
+
+```bash
+/gen_adapter Generate a semantic adapter for the Cube platform
+/gen_adapter Create a BI adapter for Metabase
+/gen_adapter Generate a database adapter for ClickHouse
+```
+
+> For the full interface contracts, contract test details, and security constraints, see the [Adapter Generation Guide](gen_adapter.md).
+
+---
+
 ## Summary
 
 | Subagent | Purpose | Output | Stored In | Key Features                                        |
@@ -925,6 +1019,7 @@ Then use it via `/attribution_report Analyze the conversion attribution for camp
 | `explore` | Read-only data exploration | Structured context | N/A | Strictly read-only, fast (15 turns), three-direction exploration |
 | `gen_sql` | Generate optimized SQL | SQL query / SQL file | N/A | Deep SQL expertise, auto-validation, file-based output |
 | `gen_report` | Flexible report generation | Structured report | N/A | Configurable tools, extensible, custom report subagents |
+| `gen_adapter` | Adapter project scaffolding | Python project | Output directory | 4 adapter types, contract tests, built-in pytest runner |
 
 **Built-in Features Across All Subagents:**
 - Minimal configuration required (only `model` and `max_turns` optional)
@@ -934,4 +1029,4 @@ Then use it via `/attribution_report Analyze the conversion attribution for camp
 - Knowledge Base integration for semantic search
 - Automatic workspace management
 
-Together, these subagents automate the **data engineering knowledge pipeline** — from **data exploration → query generation → model definition → metric generation → business knowledge capture → searchable Knowledge Base**.
+Together, these subagents automate the **data engineering knowledge pipeline** — from **data exploration → query generation → model definition → metric generation → business knowledge capture → adapter integration → searchable Knowledge Base**.

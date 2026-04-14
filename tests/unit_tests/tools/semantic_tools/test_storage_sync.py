@@ -293,7 +293,7 @@ class TestStoreSemanticModel:
         assert len(dim_objects) == 1
         assert dim_objects[0]["name"] == "region"
 
-    def test_stores_semantic_model_info_with_direct_fields(self):
+    def test_stores_semantic_model_info_with_extra_fields(self):
         from datus.tools.semantic_tools.models import DimensionInfo, SemanticModelInfo
 
         manager = _make_manager()
@@ -301,11 +301,9 @@ class TestStoreSemanticModel:
         model = SemanticModelInfo(
             name="orders_cube",
             description="Orders",
-            table_name="orders",
-            database_name="analytics",
-            schema_name="public",
             dimensions=[DimensionInfo(name="region", description="Region")],
             measures=["orders.count"],
+            extra={"table_name": "orders", "database_name": "analytics", "schema_name": "public"},
         )
         with patch.object(manager, "_ensure_semantic_model_store", return_value=mock_store):
             manager.store_semantic_model(model)
@@ -691,6 +689,7 @@ class TestSyncFromAdapterWithSemanticModelInfo:
                 platform_type="cube",
                 dimensions=[DimensionInfo(name="status", type="string")],
                 measures=["orders.count"],
+                extra={"table_name": "orders"},
             ),
             SemanticModelInfo(
                 name="customers",
@@ -698,6 +697,7 @@ class TestSyncFromAdapterWithSemanticModelInfo:
                 platform_type="cube",
                 dimensions=[DimensionInfo(name="name", type="string")],
                 measures=["customers.count"],
+                extra={"table_name": "customers"},
             ),
         ]
         mock_adapter.list_semantic_models.return_value = model_infos
@@ -730,7 +730,7 @@ class TestSyncFromAdapterWithSemanticModelInfo:
                 DimensionInfo(name="created_at", type="time"),
             ],
             measures=["orders.count", "orders.total"],
-            extra={"connectedComponent": 1},
+            extra={"table_name": "orders", "connectedComponent": 1},
         )
         mock_adapter.list_semantic_models.return_value = [model_info]
         mock_adapter.list_metrics = AsyncMock(return_value=[])
@@ -775,6 +775,7 @@ class TestStoreSemanticModelWithSemanticModelInfo:
                 DimensionInfo(name="id", type="number", is_primary_key=True),
             ],
             measures=["orders.count"],
+            extra={"table_name": "orders"},
         )
 
         with patch.object(manager, "_ensure_semantic_model_store", return_value=mock_store):
@@ -798,7 +799,9 @@ class TestStoreSemanticModelWithSemanticModelInfo:
         manager = _make_manager()
         mock_store = MagicMock()
 
-        model_info = SemanticModelInfo(name="user_events", dimensions=[], measures=[])
+        model_info = SemanticModelInfo(
+            name="user_events", dimensions=[], measures=[], extra={"table_name": "user_events"}
+        )
 
         with patch.object(manager, "_ensure_semantic_model_store", return_value=mock_store):
             manager.store_semantic_model(model_info)

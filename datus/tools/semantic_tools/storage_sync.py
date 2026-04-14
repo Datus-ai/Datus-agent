@@ -91,7 +91,7 @@ class SemanticStorageManager:
         # Convert SemanticModelInfo to dict format for storage
         if isinstance(model_data, SemanticModelInfo):
             extra = model_data.extra or {}
-            table_name = model_data.table_name or extra.get("table_name")
+            table_name = extra.get("table_name")
             if not table_name:
                 raise DatusException(
                     ErrorCode.SEMANTIC_ADAPTER_SYNC_FAILED,
@@ -104,9 +104,9 @@ class SemanticStorageManager:
                 "semantic_model_name": model_data.name,
                 "description": model_data.description or "",
                 "table_name": table_name,
-                "catalog_name": model_data.catalog_name or extra.get("catalog_name", ""),
-                "database_name": model_data.database_name or extra.get("database_name", ""),
-                "schema_name": model_data.schema_name or extra.get("schema_name", ""),
+                "catalog_name": extra.get("catalog_name", ""),
+                "database_name": extra.get("database_name", ""),
+                "schema_name": extra.get("schema_name", ""),
                 "dimensions": [
                     {"name": d.name, "description": d.description or "", "expr": ""} for d in model_data.dimensions
                 ],
@@ -347,7 +347,7 @@ class SemanticStorageManager:
                 try:
                     if isinstance(model_entry, SemanticModelInfo):
                         entry_extra = model_entry.extra or {}
-                        table_name = model_entry.table_name or entry_extra.get("table_name")
+                        table_name = entry_extra.get("table_name")
                         if table_name:
                             self.store_semantic_model(model_entry)
                             stats["semantic_models_synced"] += 1

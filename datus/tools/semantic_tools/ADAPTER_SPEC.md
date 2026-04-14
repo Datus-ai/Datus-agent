@@ -5,11 +5,16 @@ It is designed for LLM consumption during adapter code generation.
 
 ## Base Class
 
-Inherit from `BaseSemanticAdapter` in `datus/tools/semantic_tools/base.py`.
+Inherit from `BaseSemanticAdapter` provided by the `datus-semantic-core` package.
 
 ```python
-from datus.tools.semantic_tools.base import BaseSemanticAdapter
+from datus_semantic_core import BaseSemanticAdapter
 ```
+
+> **Note**: The scaffold tool imports from `datus_semantic_core`, which is the
+> canonical source for adapter base classes and data models. The local module
+> `datus.tools.semantic_tools.base` re-exports these types for internal use
+> but should **not** be imported directly by external adapters.
 
 ## Required Abstract Methods
 
@@ -176,6 +181,7 @@ Default: returns `[]`. Override to enable semantic model discovery.
 |-------|------|-------------|
 | `name` | `str` | Model name (cube name, explore name, etc.) |
 | `description` | `Optional[str]` | Description |
+| `extra` | `Dict[str, Any]` | Platform-specific metadata. **`extra["table_name"]` is required** for storage sync — it identifies the physical table backing the model. If missing, `SemanticStorageManager` will attempt to fetch the full model via `get_semantic_model()` as a fallback. Other common keys: `database_name`, `schema_name`, `catalog_name`. |
 | `platform_type` | `Optional[str]` | Platform type: `cube`, `view`, `explore`, `semantic_model` |
 | `dimensions` | `List[DimensionInfo]` | Dimensions with type info |
 | `measures` | `List[str]` | Measure names |

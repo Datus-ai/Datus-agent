@@ -167,12 +167,19 @@ class GenAdapterAgenticNode(AgenticNode):
             return self._finalize_system_prompt(
                 "You are an adapter generation assistant. Help users create adapter project scaffolding "
                 "for integrating external platforms (BI, DB, Scheduler, Semantic Layer) with Datus. "
-                "Use the available tools to scaffold, edit, and validate adapters."
+                "Use the available tools to scaffold, edit, and validate adapters.\n\n"
+                "IMPORTANT: After you finish generating and validating an adapter, always tell the user "
+                "how to install it. Provide the exact command:\n"
+                "```\nuv pip install -e <path_to_adapter_project>/\n```\n"
+                "Explain that this registers the adapter as a plugin via entry-points so Datus can "
+                "auto-discover it at runtime, and that editable mode (-e) allows code changes without reinstalling."
             )
         except Exception as e:
             logger.error(f"Template loading error for '{template_name}': {e}")
             return self._finalize_system_prompt(
-                "You are an adapter generation assistant. Help users create adapter projects."
+                "You are an adapter generation assistant. Help users create adapter projects.\n\n"
+                "IMPORTANT: After generation completes, tell the user to install the adapter with:\n"
+                "```\nuv pip install -e <path_to_adapter_project>/\n```"
             )
 
     async def execute_stream(
@@ -222,6 +229,7 @@ class GenAdapterAgenticNode(AgenticNode):
                 action_history_manager=action_history_manager,
                 hooks=None,
                 interrupt_controller=self.interrupt_controller,
+                agent_name=self.get_node_name(),
             ):
                 yield stream_action
 
@@ -230,16 +238,16 @@ class GenAdapterAgenticNode(AgenticNode):
                         last_successful_output = stream_action.output
                         raw_output = stream_action.output.get("raw_output", "")
                         if isinstance(raw_output, dict):
-                            response_content = raw_output
+                            response_content = str(raw_output)
                         elif raw_output:
-                            response_content = raw_output
+                            response_content = str(raw_output)
 
             if not response_content and last_successful_output:
                 raw_output = last_successful_output.get("raw_output", "")
                 if isinstance(raw_output, dict):
-                    response_content = raw_output
+                    response_content = str(raw_output)
                 elif raw_output:
-                    response_content = raw_output
+                    response_content = str(raw_output)
                 else:
                     response_content = str(last_successful_output)
 
@@ -279,7 +287,7 @@ class GenAdapterAgenticNode(AgenticNode):
             raise
 
         except Exception as e:
-            logger.error(f"{self.get_node_name()} execution error: {e}")
+            logger.exception(f"{self.get_node_name()} execution error: {e}")
 
             error_result = SemanticNodeResult(
                 success=False,

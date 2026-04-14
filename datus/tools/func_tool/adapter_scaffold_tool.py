@@ -130,13 +130,6 @@ def _to_pascal_case(name: str) -> str:
     return "".join(part.capitalize() for part in name.replace("-", "_").split("_"))
 
 
-def _write(path: str, content: str) -> None:
-    """Write *content* to *path*, creating parent directories as needed."""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write(content)
-
-
 # ---------------------------------------------------------------------------
 # Template generators
 # ---------------------------------------------------------------------------
