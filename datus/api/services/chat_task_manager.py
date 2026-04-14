@@ -410,7 +410,7 @@ class ChatTaskManager:
             if effective_source == "vscode":
                 apply_proxy_tools(node, ["filesystem_tools.*"])
             elif effective_source == "web":
-                apply_proxy_tools(node, ["write_file", "edit_file", "move_file", "create_directory"])
+                apply_proxy_tools(node, ["write_file", "edit_file"])
             elif effective_source:
                 logger.warning("Unsupported source '%s'; skipping proxy shortcut", effective_source)
 

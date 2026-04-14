@@ -124,10 +124,8 @@ class TestExploreAgenticNodeTools:
         tool_names = [t.name for t in node.tools]
         # Read-only tools should be present
         assert "read_file" in tool_names
-        assert "read_multiple_files" in tool_names
-        assert "list_directory" in tool_names
-        assert "directory_tree" in tool_names
-        assert "search_files" in tool_names
+        assert "glob" in tool_names
+        assert "grep" in tool_names
 
     def test_explore_excludes_write_tools(self, real_agent_config, mock_llm_create):
         """Node should NOT have write/edit/create/move filesystem tools."""
@@ -144,8 +142,6 @@ class TestExploreAgenticNodeTools:
         # Write tools should NOT be present
         assert "write_file" not in tool_names
         assert "edit_file" not in tool_names
-        assert "create_directory" not in tool_names
-        assert "move_file" not in tool_names
 
     def test_explore_has_date_parsing_tools(self, real_agent_config, mock_llm_create):
         """Node should have date parsing tools."""

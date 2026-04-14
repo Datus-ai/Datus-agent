@@ -39,7 +39,7 @@ class TestGenSemanticModelAgentic:
         # Filesystem tools
         assert "read_file" in tool_names, f"Missing read_file, got: {tool_names}"
         assert "write_file" in tool_names, f"Missing write_file, got: {tool_names}"
-        assert "list_directory" in tool_names, f"Missing list_directory, got: {tool_names}"
+        assert "glob" in tool_names, f"Missing glob, got: {tool_names}"
 
         # Generation tools
         assert "check_semantic_object_exists" in tool_names, f"Missing check_semantic_object_exists, got: {tool_names}"

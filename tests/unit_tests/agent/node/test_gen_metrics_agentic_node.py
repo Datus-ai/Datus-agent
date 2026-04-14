@@ -69,9 +69,9 @@ class TestGenMetricsAgenticNodeInit:
         # Filesystem tools
         assert "read_file" in tool_names
         assert "write_file" in tool_names
-        assert "list_directory" in tool_names
         assert "edit_file" in tool_names
-        assert "read_multiple_files" in tool_names
+        assert "glob" in tool_names
+        assert "grep" in tool_names
 
         # Generation tools
         assert "check_semantic_object_exists" in tool_names

@@ -188,21 +188,13 @@ class GenSemanticModelAgenticNode(AgenticNode):
     def _setup_filesystem_tools(self):
         """Setup filesystem tools."""
         try:
-            from datus.tools.func_tool import trans_to_function_tool
-
             self.filesystem_func_tool = FilesystemFuncTool(
                 root_path=self.knowledge_base_dir,
                 path_normalizer=make_kb_path_normalizer(self.agent_config, default_kind="semantic"),
             )
 
-            self.tools.append(trans_to_function_tool(self.filesystem_func_tool.read_file))
-            self.tools.append(trans_to_function_tool(self.filesystem_func_tool.read_multiple_files))
-            self.tools.append(trans_to_function_tool(self.filesystem_func_tool.write_file))
-            self.tools.append(trans_to_function_tool(self.filesystem_func_tool.edit_file))
-            self.tools.append(trans_to_function_tool(self.filesystem_func_tool.list_directory))
-            logger.debug(
-                "Added filesystem tools: read_file, read_multiple_files, write_file, edit_file, list_directory"
-            )
+            self.tools.extend(self.filesystem_func_tool.available_tools())
+            logger.debug("Added filesystem tools: read_file, write_file, edit_file, glob, grep")
         except Exception as e:
             logger.error(f"Failed to setup filesystem tools: {e}")
 

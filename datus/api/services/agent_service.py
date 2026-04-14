@@ -30,14 +30,10 @@ VALID_TOOL_METHODS: dict[str, set[str]] = {
     "date_parsing_tools": {"parse_temporal_expressions"},
     "filesystem_tools": {
         "read_file",
-        "read_multiple_files",
         "write_file",
         "edit_file",
-        "create_directory",
-        "list_directory",
-        "directory_tree",
-        "move_file",
-        "search_files",
+        "glob",
+        "grep",
     },
     "platform_doc_tools": set(PlatformDocSearchTool.all_tools_name()),
 }

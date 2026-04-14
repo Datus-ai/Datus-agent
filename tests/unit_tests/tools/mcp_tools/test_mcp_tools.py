@@ -43,8 +43,8 @@ def test_parse_cmd():
 def test_tool_filtering():
     """Test tool filtering functionality."""
     # Test creating static tool filters
-    allowlist_filter = create_static_tool_filter(allowed_tool_names=["read_file", "write_file", "list_directory"])
-    assert allowlist_filter.allowed_tool_names == ["read_file", "write_file", "list_directory"]
+    allowlist_filter = create_static_tool_filter(allowed_tool_names=["read_file", "write_file", "glob"])
+    assert allowlist_filter.allowed_tool_names == ["read_file", "write_file", "glob"]
     assert allowlist_filter.blocked_tool_names is None
     assert allowlist_filter.enabled is True
 

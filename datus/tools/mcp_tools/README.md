@@ -58,14 +58,14 @@ if result.success:
 # Call a tool
 result = mcp_tool.call_tool(
     "my-filesystem-server",
-    "list_directory",
-    {"path": "/tmp"}
+    "glob",
+    {"pattern": "*.py", "path": "/tmp"}
 )
 
 # Set up tool filtering (allow only specific tools)
 result = mcp_tool.set_tool_filter(
     "my-filesystem-server",
-    allowed_tools=["read_file", "write_file", "list_directory"],
+    allowed_tools=["read_file", "write_file", "glob"],
     blocked_tools=None,
     enabled=True
 )
@@ -194,7 +194,7 @@ Only specified tools are permitted. All other tools are blocked.
 # Allow only specific tools
 mcp_tool.set_tool_filter(
     "my-server",
-    allowed_tools=["read_file", "write_file", "list_directory"],
+    allowed_tools=["read_file", "write_file", "glob"],
     blocked_tools=None,  # Not used with allowlist
     enabled=True
 )
@@ -233,7 +233,7 @@ mcp_tool.set_tool_filter(
 # Basic allowlist
 result = mcp_tool.set_tool_filter(
     server_name="filesystem-server",
-    allowed_tools=["read_file", "write_file", "list_directory"],
+    allowed_tools=["read_file", "write_file", "glob"],
     enabled=True
 )
 
@@ -313,7 +313,7 @@ Tool filters are persisted in the configuration file:
       "command": "python",
       "args": ["-m", "my_server"],
       "tool_filter": {
-        "allowed_tool_names": ["read_file", "search_files"],
+        "allowed_tool_names": ["read_file", "glob"],
         "enabled": true
       }
     },

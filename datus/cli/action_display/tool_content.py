@@ -1246,8 +1246,27 @@ def _build_read_file(action: ActionHistory, verbose: bool) -> ToolCallContent:
     return tc
 
 
-def _build_read_multiple_files(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """read_multiple_files: show file count."""
+def _build_glob(action: ActionHistory, verbose: bool) -> ToolCallContent:
+    """glob: show file count."""
+    tc = make_base_content(action)
+    if verbose:
+        tc.args_lines = extract_args_markup(action)
+        if action.output:
+            tc.output_lines = _format_result_only_markup(action.output)
+    else:
+        data = parse_output_data(action.output)
+        if data:
+            result = data.get("result")
+            if isinstance(result, dict):
+                files = result.get("files", [])
+                tc.output_preview = f"\u2713 {len(files)} files found"
+            elif isinstance(result, list):
+                tc.output_preview = f"\u2713 {len(result)} files found"
+    return tc
+
+
+def _build_grep(action: ActionHistory, verbose: bool) -> ToolCallContent:
+    """grep: show match count."""
     tc = make_base_content(action)
     if verbose:
         tc.args_lines = extract_args_markup(action)
@@ -1256,10 +1275,15 @@ def _build_read_multiple_files(action: ActionHistory, verbose: bool) -> ToolCall
             if data:
                 result = data.get("result")
                 if isinstance(result, dict):
+                    matches = result.get("matches", [])
                     lines: List[str] = []
-                    for path, content in result.items():
-                        line_count = len(content.split("\n")) if isinstance(content, str) else "?"
-                        lines.append(f"[bold]{_escape_markup(path)}[/bold]: [dim]{line_count} lines[/dim]")
+                    for m in matches[:30]:
+                        f = _escape_markup(str(m.get("file", "?")))
+                        ln = m.get("line", "?")
+                        content = _escape_markup(str(m.get("content", "")))
+                        lines.append(f"  [bold]{f}:{ln}[/bold]: [dim]{content}[/dim]")
+                    if len(matches) > 30:
+                        lines.append(f"  [dim]... ({len(matches) - 30} more matches)[/dim]")
                     tc.output_lines = lines
                 else:
                     tc.output_lines = _format_result_only_markup(action.output)
@@ -1270,82 +1294,9 @@ def _build_read_multiple_files(action: ActionHistory, verbose: bool) -> ToolCall
         if data:
             result = data.get("result")
             if isinstance(result, dict):
-                tc.output_preview = f"\u2713 {len(result)} files read"
+                matches = result.get("matches", [])
+                tc.output_preview = f"\u2713 {len(matches)} matches"
     return tc
-
-
-def _build_create_directory(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """create_directory: show success."""
-    return _build_simple_action(action, verbose, "Directory created")
-
-
-def _build_list_directory(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """list_directory: show item count."""
-    tc = make_base_content(action)
-    if verbose:
-        tc.args_lines = extract_args_markup(action)
-        if action.output:
-            data = parse_output_data(action.output)
-            if data:
-                result = data.get("result")
-                if isinstance(result, list):
-                    lines: List[str] = []
-                    for item in result:
-                        if isinstance(item, dict):
-                            name = item.get("name", "?")
-                            item_type = item.get("type", "")
-                            suffix = "/" if item_type == "directory" else ""
-                            lines.append(f"  {_escape_markup(name)}{suffix}")
-                        else:
-                            lines.append(f"  {_escape_markup(str(item))}")
-                    tc.output_lines = lines
-                else:
-                    tc.output_lines = _format_result_only_markup(action.output)
-            else:
-                tc.output_lines = _format_result_only_markup(action.output)
-    else:
-        data = parse_output_data(action.output)
-        if data:
-            result = data.get("result")
-            if isinstance(result, list):
-                tc.output_preview = f"\u2713 {len(result)} items"
-    return tc
-
-
-def _build_directory_tree(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """directory_tree: show tree."""
-    tc = make_base_content(action)
-    if verbose:
-        tc.args_lines = extract_args_markup(action)
-        if action.output:
-            data = parse_output_data(action.output)
-            if data:
-                result = data.get("result")
-                if isinstance(result, str):
-                    lines: List[str] = ["[bold]tree[/bold]:"]
-                    for tree_line in result.split("\n")[:30]:
-                        lines.append(f"  [dim]{_escape_markup(tree_line)}[/dim]")
-                    total = len(result.split("\n"))
-                    if total > 30:
-                        lines.append(f"  [dim]... ({total - 30} more lines)[/dim]")
-                    tc.output_lines = lines
-                else:
-                    tc.output_lines = _format_result_only_markup(action.output)
-            else:
-                tc.output_lines = _format_result_only_markup(action.output)
-    else:
-        tc.output_preview = "\u2713 Tree generated"
-    return tc
-
-
-def _build_move_file(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """move_file: show success."""
-    return _build_simple_action(action, verbose, "Moved")
-
-
-def _build_search_files(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """search_files: show file count."""
-    return _build_simple_list(action, verbose, "files found")
 
 
 def _build_list_document_nav(action: ActionHistory, verbose: bool) -> ToolCallContent:
@@ -1723,12 +1674,8 @@ class ToolCallContentBuilder:
         self._registry["edit_file"] = _build_edit_file
         self._registry["write_file"] = _build_write_file
         self._registry["read_file"] = _build_read_file
-        self._registry["read_multiple_files"] = _build_read_multiple_files
-        self._registry["create_directory"] = _build_create_directory
-        self._registry["list_directory"] = _build_list_directory
-        self._registry["directory_tree"] = _build_directory_tree
-        self._registry["move_file"] = _build_move_file
-        self._registry["search_files"] = _build_search_files
+        self._registry["glob"] = _build_glob
+        self._registry["grep"] = _build_grep
 
         # Platform document tools
         self._registry["list_document_nav"] = _build_list_document_nav

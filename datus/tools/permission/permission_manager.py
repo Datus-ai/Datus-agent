@@ -294,8 +294,9 @@ class PermissionManager:
         elif tool_name.startswith("fs_") or tool_name in (
             "read_file",
             "write_file",
-            "list_files",
-            "list_directory",
+            "edit_file",
+            "glob",
+            "grep",
         ):
             return "filesystem_tools"
         elif tool_name.startswith("date_") or tool_name in ("parse_date", "parse_temporal_expressions"):

@@ -18,7 +18,7 @@ Before asking the user anything, gather context silently:
 
 - If creating a data-related skill, **explore the database first**: use `list_tables`, `describe_table`, `read_query` (with LIMIT) to understand available tables, columns, data types, sample data, and time ranges.
 - If the conversation already contains a workflow the user wants to capture (e.g., "turn this into a skill"), extract the key steps, tools used, and patterns from the conversation history.
-- Check existing skills via `skill_list_directory` to avoid duplicates.
+- Check existing skills via `skill_glob` to avoid duplicates.
 
 This research informs your questions and your SKILL.md — it is NOT skill output.
 
@@ -94,13 +94,11 @@ skill-name/
 Use `skill_*` tools (paths relative to skills directory root):
 
 ```
-skill_create_directory(path="<skill-name>")
 skill_write_file(path="<skill-name>/SKILL.md", content=...)
 ```
 
 If the user explicitly requested scripts, also create scripts/:
 ```
-skill_create_directory(path="<skill-name>/scripts")
 skill_write_file(path="<skill-name>/scripts/<script>.py", content=...)
 ```
 

@@ -124,8 +124,7 @@ class SqlSummaryAgenticNode(AgenticNode):
 
         # Hardcoded tool configuration: specific methods from generation_tools and filesystem_tools
         # tools: generation_tools.generate_sql_summary_id,
-        # filesystem_tools.read_file, filesystem_tools.read_multiple_files, filesystem_tools.write_file,
-        # filesystem_tools.edit_file, filesystem_tools.list_directory
+        # filesystem_tools: read_file, write_file, edit_file, glob, grep
         self._setup_specific_generation_tools()
         self._setup_specific_filesystem_tool()
         if self.execution_mode == "interactive":
@@ -152,18 +151,12 @@ class SqlSummaryAgenticNode(AgenticNode):
     def _setup_specific_filesystem_tool(self):
         """Setup specific filesystem tools"""
         try:
-            from datus.tools.func_tool import trans_to_function_tool
-
             self.filesystem_func_tool = FilesystemFuncTool(
                 root_path=self.knowledge_base_dir,
                 path_normalizer=make_kb_path_normalizer(self.agent_config, default_kind="sql_summary"),
             )
 
-            self.tools.append(trans_to_function_tool(self.filesystem_func_tool.read_file))
-            self.tools.append(trans_to_function_tool(self.filesystem_func_tool.read_multiple_files))
-            self.tools.append(trans_to_function_tool(self.filesystem_func_tool.write_file))
-            self.tools.append(trans_to_function_tool(self.filesystem_func_tool.edit_file))
-            self.tools.append(trans_to_function_tool(self.filesystem_func_tool.list_directory))
+            self.tools.extend(self.filesystem_func_tool.available_tools())
         except Exception as e:
             logger.error(f"Failed to setup specific filesystem tool: {e}")
 

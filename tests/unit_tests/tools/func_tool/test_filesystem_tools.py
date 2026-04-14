@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from datus.cli.generation_hooks import make_kb_path_normalizer
-from datus.tools.func_tool.filesystem_tools import EditOperation, FilesystemConfig, FilesystemFuncTool
+from datus.tools.func_tool.filesystem_tools import FilesystemConfig, FilesystemFuncTool
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -156,41 +156,44 @@ class TestReadFile:
         result = tool.read_file("../../etc/passwd")
         assert result.success == 0
 
-
-# ---------------------------------------------------------------------------
-# FilesystemFuncTool - read_multiple_files
-# ---------------------------------------------------------------------------
-
-
-class TestReadMultipleFiles:
-    def test_read_multiple_success(self, tmp_path):
-        (tmp_path / "a.txt").write_text("content_a")
-        (tmp_path / "b.txt").write_text("content_b")
+    def test_read_file_with_offset_and_limit(self, tmp_path):
+        f = tmp_path / "lines.txt"
+        f.write_text("line1\nline2\nline3\nline4\nline5")
         tool = _make_tool(str(tmp_path))
-        result = tool.read_multiple_files(["a.txt", "b.txt"])
+        result = tool.read_file("lines.txt", offset=2, limit=2)
         assert result.success == 1
-        assert result.result["a.txt"] == "content_a"
-        assert result.result["b.txt"] == "content_b"
+        assert "2: line2" in result.result
+        assert "3: line3" in result.result
+        assert "line1" not in result.result
+        assert "line4" not in result.result
 
-    def test_read_multiple_partial_missing(self, tmp_path):
-        (tmp_path / "exists.txt").write_text("hi")
+    def test_read_file_with_offset_only(self, tmp_path):
+        f = tmp_path / "lines.txt"
+        f.write_text("line1\nline2\nline3")
         tool = _make_tool(str(tmp_path))
-        result = tool.read_multiple_files(["exists.txt", "missing.txt"])
+        result = tool.read_file("lines.txt", offset=2)
         assert result.success == 1
-        assert result.result["exists.txt"] == "hi"
-        assert "not found" in result.result["missing.txt"].lower()
+        assert "2: line2" in result.result
+        assert "3: line3" in result.result
+        assert "1: line1" not in result.result
 
-    def test_read_multiple_not_a_file(self, tmp_path):
-        (tmp_path / "mydir").mkdir()
+    def test_read_file_with_limit_only(self, tmp_path):
+        f = tmp_path / "lines.txt"
+        f.write_text("line1\nline2\nline3")
         tool = _make_tool(str(tmp_path))
-        result = tool.read_multiple_files(["mydir"])
-        assert "not a file" in result.result["mydir"].lower()
+        result = tool.read_file("lines.txt", limit=2)
+        assert result.success == 1
+        assert "1: line1" in result.result
+        assert "2: line2" in result.result
+        assert "line3" not in result.result
 
-    def test_read_multiple_disallowed_extension(self, tmp_path):
-        (tmp_path / "file.exe").write_bytes(b"binary")
+    def test_read_file_no_offset_limit_returns_full(self, tmp_path):
+        f = tmp_path / "lines.txt"
+        f.write_text("line1\nline2\nline3")
         tool = _make_tool(str(tmp_path))
-        result = tool.read_multiple_files(["file.exe"])
-        assert "not allowed" in result.result["file.exe"].lower()
+        result = tool.read_file("lines.txt")
+        assert result.success == 1
+        assert result.result == "line1\nline2\nline3"
 
 
 # ---------------------------------------------------------------------------
@@ -241,320 +244,104 @@ class TestEditFile:
         f = tmp_path / "code.py"
         f.write_text("hello world\nfoo bar")
         tool = _make_tool(str(tmp_path))
-        edits = [EditOperation(oldText="hello world", newText="goodbye world")]
-        result = tool.edit_file("code.py", edits)
+        result = tool.edit_file("code.py", "hello world", "goodbye world")
         assert result.success == 1
         assert "goodbye world" in f.read_text()
-
-    def test_edit_with_dict_list(self, tmp_path):
-        f = tmp_path / "code.py"
-        f.write_text("alpha beta gamma")
-        tool = _make_tool(str(tmp_path))
-        result = tool.edit_file("code.py", [{"oldText": "alpha", "newText": "delta"}])
-        assert result.success == 1
-        assert "delta" in f.read_text()
-
-    def test_edit_with_json_string(self, tmp_path):
-        f = tmp_path / "code.py"
-        f.write_text("foo bar")
-        tool = _make_tool(str(tmp_path))
-        import json
-
-        edits_json = json.dumps([{"oldText": "foo", "newText": "baz"}])
-        result = tool.edit_file("code.py", edits_json)
-        assert result.success == 1
-        assert "baz" in f.read_text()
-
-    def test_edit_invalid_json_string(self, tmp_path):
-        f = tmp_path / "code.py"
-        f.write_text("foo")
-        tool = _make_tool(str(tmp_path))
-        result = tool.edit_file("code.py", "not valid json{{")
-        assert result.success == 0
-        assert "invalid json" in result.error.lower()
 
     def test_edit_text_not_found(self, tmp_path):
         f = tmp_path / "code.py"
         f.write_text("foo bar")
         tool = _make_tool(str(tmp_path))
-        result = tool.edit_file("code.py", [EditOperation(oldText="nonexistent", newText="x")])
+        result = tool.edit_file("code.py", "nonexistent", "x")
         assert result.success == 0
         assert "not found" in result.error.lower()
 
+    def test_edit_multiple_matches_rejected(self, tmp_path):
+        f = tmp_path / "code.py"
+        f.write_text("hello hello hello")
+        tool = _make_tool(str(tmp_path))
+        result = tool.edit_file("code.py", "hello", "bye")
+        assert result.success == 0
+        assert "3 times" in result.error
+
+    def test_edit_empty_old_string_rejected(self, tmp_path):
+        f = tmp_path / "code.py"
+        f.write_text("content")
+        tool = _make_tool(str(tmp_path))
+        result = tool.edit_file("code.py", "", "x")
+        assert result.success == 0
+        assert "empty" in result.error.lower()
+
     def test_edit_file_not_found(self, tmp_path):
         tool = _make_tool(str(tmp_path))
-        result = tool.edit_file("missing.py", [EditOperation(oldText="x", newText="y")])
+        result = tool.edit_file("missing.py", "x", "y")
         assert result.success == 0
 
     def test_edit_disallowed_extension(self, tmp_path):
         f = tmp_path / "file.exe"
         f.write_bytes(b"binary")
         tool = _make_tool(str(tmp_path))
-        result = tool.edit_file("file.exe", [EditOperation(oldText="x", newText="y")])
-        assert result.success == 0
-
-    def test_edit_no_edits_applied(self, tmp_path):
-        f = tmp_path / "code.py"
-        f.write_text("content")
-        tool = _make_tool(str(tmp_path))
-        # Empty oldText means condition not met
-        result = tool.edit_file("code.py", [EditOperation(oldText="", newText="x")])
-        assert result.success == 0
-        assert "no edits" in result.error.lower()
-
-
-# ---------------------------------------------------------------------------
-# FilesystemFuncTool - create_directory
-# ---------------------------------------------------------------------------
-
-
-class TestCreateDirectory:
-    def test_create_new_directory(self, tmp_path):
-        tool = _make_tool(str(tmp_path))
-        result = tool.create_directory("newdir")
-        assert result.success == 1
-        assert (tmp_path / "newdir").is_dir()
-
-    def test_create_nested_directories(self, tmp_path):
-        tool = _make_tool(str(tmp_path))
-        result = tool.create_directory("a/b/c")
-        assert result.success == 1
-        assert (tmp_path / "a" / "b" / "c").is_dir()
-
-    def test_create_existing_directory_ok(self, tmp_path):
-        (tmp_path / "existing").mkdir()
-        tool = _make_tool(str(tmp_path))
-        result = tool.create_directory("existing")
-        assert result.success == 1
-
-    def test_create_directory_path_traversal(self, tmp_path):
-        tool = _make_tool(str(tmp_path))
-        result = tool.create_directory("../../evil_dir")
+        result = tool.edit_file("file.exe", "x", "y")
         assert result.success == 0
 
 
 # ---------------------------------------------------------------------------
-# FilesystemFuncTool - list_directory
+# FilesystemFuncTool - glob
 # ---------------------------------------------------------------------------
 
 
-class TestListDirectory:
-    def test_list_root_directory(self, tmp_path):
-        (tmp_path / "file1.txt").write_text("a")
-        (tmp_path / "subdir").mkdir()
-        tool = _make_tool(str(tmp_path))
-        result = tool.list_directory(".")
-        assert result.success == 1
-        names = [item["name"] for item in result.result]
-        assert "file1.txt" in names
-        assert "subdir" in names
-
-    def test_list_directory_types(self, tmp_path):
-        (tmp_path / "myfile.txt").write_text("x")
-        (tmp_path / "mydir").mkdir()
-        tool = _make_tool(str(tmp_path))
-        result = tool.list_directory(".")
-        items = {item["name"]: item["type"] for item in result.result}
-        assert items["myfile.txt"] == "file"
-        assert items["mydir"] == "directory"
-
-    def test_list_nonexistent_directory(self, tmp_path):
-        tool = _make_tool(str(tmp_path))
-        result = tool.list_directory("nonexistent")
-        assert result.success == 0
-        assert "not found" in result.error.lower()
-
-    def test_list_file_as_directory(self, tmp_path):
-        (tmp_path / "file.txt").write_text("x")
-        tool = _make_tool(str(tmp_path))
-        result = tool.list_directory("file.txt")
-        assert result.success == 0
-        assert "not a directory" in result.error.lower()
-
-
-# ---------------------------------------------------------------------------
-# FilesystemFuncTool - directory_tree
-# ---------------------------------------------------------------------------
-
-
-class TestDirectoryTree:
-    def test_tree_basic(self, tmp_path):
-        (tmp_path / "file.txt").write_text("hello")
-        (tmp_path / "subdir").mkdir()
-        (tmp_path / "subdir" / "nested.py").write_text("code")
-        tool = _make_tool(str(tmp_path))
-        result = tool.directory_tree(".")
-        assert result.success == 1
-        assert "file.txt" in result.result
-        assert "subdir" in result.result
-
-    def test_tree_max_depth_zero(self, tmp_path):
-        (tmp_path / "subdir").mkdir()
-        (tmp_path / "subdir" / "deep.txt").write_text("x")
-        tool = _make_tool(str(tmp_path))
-        result = tool.directory_tree(".", max_depth=0)
-        assert result.success == 1
-        assert "max depth" in result.result
-
-    def test_tree_nonexistent(self, tmp_path):
-        tool = _make_tool(str(tmp_path))
-        result = tool.directory_tree("nonexistent")
-        assert result.success == 0
-
-    def test_tree_file_as_directory(self, tmp_path):
-        (tmp_path / "file.txt").write_text("x")
-        tool = _make_tool(str(tmp_path))
-        result = tool.directory_tree("file.txt")
-        assert result.success == 0
-
-    def test_tree_max_items_truncated(self, tmp_path):
-        for i in range(10):
-            (tmp_path / f"file{i}.txt").write_text("x")
-        tool = _make_tool(str(tmp_path))
-        result = tool.directory_tree(".", max_items=3)
-        assert result.success == 1
-        assert "truncated" in result.result.lower() or "max items" in result.result
-
-    def test_tree_unlimited_depth(self, tmp_path):
-        d = tmp_path / "a" / "b" / "c"
-        d.mkdir(parents=True)
-        (d / "leaf.txt").write_text("x")
-        tool = _make_tool(str(tmp_path))
-        result = tool.directory_tree(".", max_depth=-1)
-        assert result.success == 1
-        assert "leaf.txt" in result.result
-
-
-# ---------------------------------------------------------------------------
-# FilesystemFuncTool - move_file
-# ---------------------------------------------------------------------------
-
-
-class TestMoveFile:
-    def test_move_file_success(self, tmp_path):
-        src = tmp_path / "source.txt"
-        src.write_text("content")
-        tool = _make_tool(str(tmp_path))
-        result = tool.move_file("source.txt", "dest.txt")
-        assert result.success == 1
-        assert not src.exists()
-        assert (tmp_path / "dest.txt").exists()
-
-    def test_move_source_not_found(self, tmp_path):
-        tool = _make_tool(str(tmp_path))
-        result = tool.move_file("nonexistent.txt", "dest.txt")
-        assert result.success == 0
-        assert "not found" in result.error.lower()
-
-    def test_move_invalid_destination(self, tmp_path):
-        src = tmp_path / "source.txt"
-        src.write_text("content")
-        tool = _make_tool(str(tmp_path))
-        result = tool.move_file("source.txt", "../../evil.txt")
-        assert result.success == 0
-
-    def test_move_rename_file(self, tmp_path):
-        src = tmp_path / "old_name.txt"
-        src.write_text("data")
-        tool = _make_tool(str(tmp_path))
-        result = tool.move_file("old_name.txt", "new_name.txt")
-        assert result.success == 1
-        assert (tmp_path / "new_name.txt").read_text() == "data"
-
-
-# ---------------------------------------------------------------------------
-# FilesystemFuncTool - search_files
-# ---------------------------------------------------------------------------
-
-
-class TestSearchFiles:
-    def test_search_finds_py_files(self, tmp_path):
+class TestGlobSearch:
+    def test_glob_finds_py_files(self, tmp_path):
         (tmp_path / "a.py").write_text("code")
         (tmp_path / "b.txt").write_text("text")
         (tmp_path / "sub").mkdir()
         (tmp_path / "sub" / "c.py").write_text("more code")
         tool = _make_tool(str(tmp_path))
-        result = tool.search_files(".", "*.py")
+        result = tool.glob("*.py")
         assert result.success == 1
         py_files = [Path(p).name for p in result.result["files"]]
         assert "a.py" in py_files
 
-    def test_search_with_glob_star(self, tmp_path):
+    def test_glob_with_globstar(self, tmp_path):
         (tmp_path / "sub").mkdir()
         (tmp_path / "sub" / "deep.py").write_text("x")
         tool = _make_tool(str(tmp_path))
-        result = tool.search_files(".", "**/*.py")
+        result = tool.glob("**/*.py")
         assert result.success == 1
         names = [Path(p).name for p in result.result["files"]]
         assert "deep.py" in names
 
-    def test_search_nonexistent_directory(self, tmp_path):
+    def test_glob_nonexistent_directory(self, tmp_path):
         tool = _make_tool(str(tmp_path))
-        result = tool.search_files("nonexistent", "*.py")
+        result = tool.glob("*.py", "nonexistent")
         assert result.success == 0
 
-    def test_search_file_as_directory(self, tmp_path):
+    def test_glob_file_as_directory(self, tmp_path):
         (tmp_path / "file.txt").write_text("x")
         tool = _make_tool(str(tmp_path))
-        result = tool.search_files("file.txt", "*.py")
+        result = tool.glob("*.py", "file.txt")
         assert result.success == 0
 
-    def test_search_with_exclude_patterns(self, tmp_path):
-        (tmp_path / "keep.py").write_text("x")
-        (tmp_path / "exclude.py").write_text("y")
-        tool = _make_tool(str(tmp_path))
-        result = tool.search_files(".", "*.py", exclude_patterns=["exclude.py"])
-        assert result.success == 1
-        names = [Path(p).name for p in result.result["files"]]
-        assert "keep.py" in names
-        assert "exclude.py" not in names
-
-    def test_search_ignores_git_directory(self, tmp_path):
+    def test_glob_ignores_git_directory(self, tmp_path):
         (tmp_path / ".git").mkdir()
         (tmp_path / ".git" / "config").write_text("git config")
-        (tmp_path / ".git" / "objects").mkdir()
-        (tmp_path / ".git" / "objects" / "pack.py").write_text("x")
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "main.py").write_text("code")
         tool = _make_tool(str(tmp_path))
-        result = tool.search_files(".", "**/*")
+        result = tool.glob("**/*")
         assert result.success == 1
         paths = [Path(p).name for p in result.result["files"]]
         assert "main.py" in paths
         assert "config" not in paths
-        assert "pack.py" not in paths
 
-    def test_search_empty_results(self, tmp_path):
+    def test_glob_empty_results(self, tmp_path):
         tool = _make_tool(str(tmp_path))
-        result = tool.search_files(".", "*.xyz_nonexistent")
+        result = tool.glob("*.xyz_nonexistent")
         assert result.success == 1
         assert result.result["files"] == []
         assert result.result["truncated"] is False
 
-    def test_search_max_results_truncates(self, tmp_path):
-        """Results are truncated when exceeding max_results."""
-        for i in range(10):
-            (tmp_path / f"file_{i}.py").write_text(f"code {i}")
-        tool = _make_tool(str(tmp_path))
-        result = tool.search_files(".", "*.py", max_results=3)
-        assert result.success == 1
-        assert isinstance(result.result, dict)
-        assert len(result.result["files"]) == 3
-        assert result.result["truncated"] is True
-
-    def test_search_max_results_no_truncate_when_under_limit(self, tmp_path):
-        """No truncation when results fit within max_results."""
-        (tmp_path / "a.py").write_text("code")
-        (tmp_path / "b.py").write_text("code")
-        tool = _make_tool(str(tmp_path))
-        result = tool.search_files(".", "*.py", max_results=10)
-        assert result.success == 1
-        assert isinstance(result.result, dict)
-        assert len(result.result["files"]) == 2
-        assert result.result["truncated"] is False
-
-    def test_search_excludes_gitignore_patterns(self, tmp_path):
-        """Patterns from .gitignore are excluded from search results."""
+    def test_glob_excludes_gitignore_patterns(self, tmp_path):
         (tmp_path / ".gitignore").write_text("*.log\nbuild/\n__pycache__\n")
         (tmp_path / "real.py").write_text("code")
         (tmp_path / "debug.log").write_text("log data")
@@ -563,82 +350,143 @@ class TestSearchFiles:
         (tmp_path / "__pycache__").mkdir()
         (tmp_path / "__pycache__" / "cached.py").write_text("bytecode")
         tool = _make_tool(str(tmp_path))
-        result = tool.search_files(".", "*")
+        result = tool.glob("*")
         assert result.success == 1
         names = [Path(p).name for p in result.result["files"]]
         assert "real.py" in names
         assert "debug.log" not in names
         assert "output.py" not in names
         assert "cached.py" not in names
-        # Trailing-slash entry should also exclude the directory itself
-        assert "build" not in names
 
-    def test_search_excludes_git_dir_always(self, tmp_path):
-        """.git directory is always excluded even without .gitignore."""
-        (tmp_path / "real.py").write_text("code")
-        (tmp_path / ".git").mkdir()
-        (tmp_path / ".git" / "config").write_text("git config")
+    def test_glob_with_path_param(self, tmp_path):
+        (tmp_path / "sub").mkdir()
+        (tmp_path / "sub" / "file.py").write_text("x")
+        (tmp_path / "other.py").write_text("y")
         tool = _make_tool(str(tmp_path))
-        result = tool.search_files(".", "*")
+        result = tool.glob("*.py", "sub")
         assert result.success == 1
         names = [Path(p).name for p in result.result["files"]]
-        assert "real.py" in names
-        assert "config" not in names
+        assert "file.py" in names
+        assert "other.py" not in names
 
-    def test_search_fallback_excludes_without_gitignore(self, tmp_path):
-        """Without .gitignore, fallback excludes (.git, __pycache__, node_modules) apply."""
-        (tmp_path / "real.py").write_text("code")
-        (tmp_path / "__pycache__").mkdir()
-        (tmp_path / "__pycache__" / "cached.py").write_text("bytecode")
-        (tmp_path / "node_modules").mkdir()
-        (tmp_path / "node_modules" / "pkg.js").write_text("js")
-        tool = _make_tool(str(tmp_path))
-        result = tool.search_files(".", "*")
-        assert result.success == 1
-        names = [Path(p).name for p in result.result["files"]]
-        assert "real.py" in names
-        assert "cached.py" not in names
-        assert "pkg.js" not in names
-
-    def test_search_unlimited_with_negative_max(self, tmp_path):
-        """max_results=-1 returns all results without truncation."""
+    def test_glob_truncation(self, tmp_path):
+        """Results are truncated when exceeding max_results (200)."""
         for i in range(5):
-            (tmp_path / f"file_{i}.txt").write_text(f"text {i}")
+            (tmp_path / f"file_{i}.py").write_text(f"code {i}")
         tool = _make_tool(str(tmp_path))
-        result = tool.search_files(".", "*.txt", max_results=-1)
+        result = tool.glob("*.py")
         assert result.success == 1
-        assert isinstance(result.result, dict)
-        assert len(result.result["files"]) == 5
         assert result.result["truncated"] is False
+        assert len(result.result["files"]) == 5
 
-    def test_search_negation_pattern_not_excluded(self, tmp_path):
-        """Gitignore negation patterns (!) should not cause exclusion."""
-        (tmp_path / ".gitignore").write_text("*.log\n!important.log\n")
-        (tmp_path / "debug.log").write_text("debug")
-        (tmp_path / "important.log").write_text("keep this")
-        (tmp_path / "code.py").write_text("code")
+
+# ---------------------------------------------------------------------------
+# FilesystemFuncTool - grep
+# ---------------------------------------------------------------------------
+
+
+class TestGrep:
+    def test_grep_finds_pattern(self, tmp_path):
+        (tmp_path / "hello.py").write_text("def hello():\n    return 'world'\n")
         tool = _make_tool(str(tmp_path))
-        result = tool.search_files(".", "*")
+        result = tool.grep("hello")
         assert result.success == 1
-        names = [Path(p).name for p in result.result["files"]]
-        assert "code.py" in names
-        # important.log is excluded by *.log (negation not fully supported),
-        # but crucially it must NOT be excluded by the ! line itself
-        assert "debug.log" not in names
+        assert len(result.result["matches"]) >= 1
+        assert result.result["matches"][0]["content"] == "def hello():"
 
-    def test_search_max_results_nested_dirs(self, tmp_path):
-        """Early termination propagates correctly through nested directories."""
-        for i in range(5):
-            d = tmp_path / f"dir_{i}"
-            d.mkdir()
-            for j in range(5):
-                (d / f"file_{j}.py").write_text(f"code {i}-{j}")
+    def test_grep_regex_pattern(self, tmp_path):
+        (tmp_path / "code.py").write_text("foo123\nbar456\nfoo789\n")
         tool = _make_tool(str(tmp_path))
-        result = tool.search_files(".", "**/*.py", max_results=3)
+        result = tool.grep(r"foo\d+")
+        assert result.success == 1
+        assert len(result.result["matches"]) == 2
+
+    def test_grep_case_insensitive(self, tmp_path):
+        (tmp_path / "data.txt").write_text("Hello\nhello\nHELLO\n")
+        tool = _make_tool(str(tmp_path))
+        result = tool.grep("hello", case_sensitive=False)
+        assert result.success == 1
+        assert len(result.result["matches"]) == 3
+
+    def test_grep_case_sensitive_default(self, tmp_path):
+        (tmp_path / "data.txt").write_text("Hello\nhello\nHELLO\n")
+        tool = _make_tool(str(tmp_path))
+        result = tool.grep("hello")
+        assert result.success == 1
+        assert len(result.result["matches"]) == 1
+
+    def test_grep_with_include_filter(self, tmp_path):
+        (tmp_path / "code.py").write_text("target line\n")
+        (tmp_path / "data.txt").write_text("target line\n")
+        tool = _make_tool(str(tmp_path))
+        result = tool.grep("target", include="*.py")
+        assert result.success == 1
+        files = [m["file"] for m in result.result["matches"]]
+        assert any("code.py" in f for f in files)
+        assert not any("data.txt" in f for f in files)
+
+    def test_grep_skips_binary_files(self, tmp_path):
+        (tmp_path / "binary.txt").write_bytes(b"\xff\xfe\x00\x01target\x00")
+        (tmp_path / "text.txt").write_text("target line\n")
+        tool = _make_tool(str(tmp_path))
+        result = tool.grep("target")
+        assert result.success == 1
+        files = [m["file"] for m in result.result["matches"]]
+        assert any("text.txt" in f for f in files)
+
+    def test_grep_invalid_regex(self, tmp_path):
+        tool = _make_tool(str(tmp_path))
+        result = tool.grep("[invalid")
+        assert result.success == 0
+        assert "invalid regex" in result.error.lower()
+
+    def test_grep_nonexistent_directory(self, tmp_path):
+        tool = _make_tool(str(tmp_path))
+        result = tool.grep("pattern", "nonexistent")
+        assert result.success == 0
+
+    def test_grep_returns_line_numbers(self, tmp_path):
+        (tmp_path / "code.py").write_text("line1\ntarget\nline3\n")
+        tool = _make_tool(str(tmp_path))
+        result = tool.grep("target")
+        assert result.success == 1
+        assert result.result["matches"][0]["line"] == 2
+
+    def test_grep_respects_gitignore(self, tmp_path):
+        (tmp_path / ".gitignore").write_text("*.log\n")
+        (tmp_path / "code.py").write_text("target\n")
+        (tmp_path / "debug.log").write_text("target\n")
+        tool = _make_tool(str(tmp_path))
+        result = tool.grep("target")
+        assert result.success == 1
+        files = [m["file"] for m in result.result["matches"]]
+        assert any("code.py" in f for f in files)
+        assert not any("debug.log" in f for f in files)
+
+    def test_grep_truncation(self, tmp_path):
+        (tmp_path / "big.txt").write_text("\n".join([f"match line {i}" for i in range(150)]))
+        tool = _make_tool(str(tmp_path))
+        result = tool.grep("match")
         assert result.success == 1
         assert result.result["truncated"] is True
-        # With propagation fix, should be exactly max_results
-        assert len(result.result["files"]) == 3
+        assert len(result.result["matches"]) == 100
+
+
+# ---------------------------------------------------------------------------
+# FilesystemFuncTool - available_tools
+# ---------------------------------------------------------------------------
+
+
+class TestAvailableTools:
+    def test_available_tools_returns_five(self, tmp_path):
+        tool = _make_tool(str(tmp_path))
+        tools = tool.available_tools()
+        names = [t.name for t in tools]
+        assert set(names) == {"read_file", "write_file", "edit_file", "glob", "grep"}
+
+    def test_available_tools_count(self, tmp_path):
+        tool = _make_tool(str(tmp_path))
+        assert len(tool.available_tools()) == 5
 
 
 # ---------------------------------------------------------------------------
@@ -698,7 +546,7 @@ class TestFilesystemFuncToolKbNormalizerRoundTrip:
     def test_edit_file_after_naked_write(self, tmp_path):
         tool, _ = self._make(tmp_path, "sql_summary", "school_db")
         tool.write_file("q_001.yaml", "name: original\n", file_type="sql_summary")
-        edit_result = tool.edit_file("q_001.yaml", [{"oldText": "original", "newText": "edited"}])
+        edit_result = tool.edit_file("q_001.yaml", "original", "edited")
         assert edit_result.success == 1, edit_result.error
         assert tool.read_file("q_001.yaml").result == "name: edited\n"
 

@@ -252,7 +252,7 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["web", "vscode"],
         help=(
             "Default proxy tool source shortcut. 'vscode' -> proxy filesystem_tools.*, "
-            "'web' -> proxy write_file/edit_file/move_file/create_directory. "
+            "'web' -> proxy write_file/edit_file. "
             "Overridable per request via ChatInput.source."
         ),
     )

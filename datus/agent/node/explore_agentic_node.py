@@ -30,10 +30,8 @@ logger = get_logger(__name__)
 # Read-only filesystem methods exposed to the explore agent
 READONLY_FILESYSTEM_METHODS = [
     "read_file",
-    "read_multiple_files",
-    "list_directory",
-    "directory_tree",
-    "search_files",
+    "glob",
+    "grep",
 ]
 
 

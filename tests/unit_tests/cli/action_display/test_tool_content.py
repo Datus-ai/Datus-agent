@@ -18,9 +18,7 @@ from datus.cli.action_display.tool_content import (
     _build_ask_user,
     _build_attribution_analyze,
     _build_check_exists,
-    _build_create_directory,
     _build_describe_table,
-    _build_directory_tree,
     _build_doc_search_result,
     _build_end_generation,
     _build_end_metric_generation,
@@ -34,23 +32,21 @@ from datus.cli.action_display.tool_content import (
     _build_get_multiple_ddl,
     _build_get_reference_sql,
     _build_get_table_ddl,
+    _build_glob,
+    _build_grep,
     _build_list_databases,
-    _build_list_directory,
     _build_list_document_nav,
     _build_list_metrics_semantic,
     _build_list_schemas,
     _build_list_subject_tree,
     _build_list_tables,
     _build_load_skill,
-    _build_move_file,
     _build_parse_dates,
     _build_query_metrics,
     _build_read_file,
-    _build_read_multiple_files,
     _build_read_query,
     _build_search_documents,
     _build_search_external_knowledge,
-    _build_search_files,
     _build_search_knowledge,
     _build_search_metrics,
     _build_search_reference_sql,
@@ -1372,96 +1368,39 @@ class TestBuildReadFile:
 
 
 @pytest.mark.ci
-class TestBuildReadMultipleFiles:
+class TestBuildGlob:
     def test_compact(self):
         a = _make(
-            input_data={"function_name": "read_multiple_files"},
-            output_data={"raw_output": '{"success": 1, "result": {"/a.py": "x", "/b.py": "y"}}'},
+            input_data={"function_name": "glob"},
+            output_data={"raw_output": '{"success": 1, "result": {"files": ["/a.py", "/b.py"], "truncated": false}}'},
         )
-        tc = _build_read_multiple_files(a, verbose=False)
-        assert "2 files read" in tc.output_preview
-
-    def test_verbose_shows_paths(self):
-        a = _make(
-            input_data={"function_name": "read_multiple_files", "arguments": {"paths": ["/a.py"]}},
-            output_data={"raw_output": '{"success": 1, "result": {"/a.py": "content"}}'},
-        )
-        tc = _build_read_multiple_files(a, verbose=True)
-        assert any("/a.py" in line for line in tc.output_lines)
+        tc = _build_glob(a, verbose=False)
+        assert "2 files found" in tc.output_preview
 
 
 @pytest.mark.ci
-class TestBuildCreateDirectory:
+class TestBuildGrep:
     def test_compact(self):
         a = _make(
-            input_data={"function_name": "create_directory"},
-            output_data={"raw_output": '{"success": 1, "result": "Directory created: /tmp/dir"}'},
-        )
-        tc = _build_create_directory(a, verbose=False)
-        assert "Directory created" in tc.output_preview
-
-
-@pytest.mark.ci
-class TestBuildListDirectory:
-    def test_compact(self):
-        a = _make(
-            input_data={"function_name": "list_directory"},
+            input_data={"function_name": "grep"},
             output_data={
-                "raw_output": '{"success": 1, "result": ['
-                '{"name": "src", "type": "directory"}, {"name": "readme.md", "type": "file"}]}'
+                "raw_output": '{"success": 1, "result": {"matches": ['
+                '{"file": "/a.py", "line": 1, "content": "hello"}], "truncated": false}}'
             },
         )
-        tc = _build_list_directory(a, verbose=False)
-        assert "2 items" in tc.output_preview
+        tc = _build_grep(a, verbose=False)
+        assert "1 matches" in tc.output_preview
 
-    def test_verbose_shows_dir_suffix(self):
+    def test_verbose_shows_matches(self):
         a = _make(
-            input_data={"function_name": "list_directory", "arguments": {"path": "/tmp"}},
-            output_data={"raw_output": '{"success": 1, "result": [{"name": "src", "type": "directory"}]}'},
+            input_data={"function_name": "grep", "arguments": {"pattern": "hello"}},
+            output_data={
+                "raw_output": '{"success": 1, "result": {"matches": ['
+                '{"file": "/a.py", "line": 1, "content": "hello world"}], "truncated": false}}'
+            },
         )
-        tc = _build_list_directory(a, verbose=True)
-        assert any("src/" in line for line in tc.output_lines)
-
-
-@pytest.mark.ci
-class TestBuildDirectoryTree:
-    def test_compact(self):
-        a = _make(
-            input_data={"function_name": "directory_tree"},
-            output_data={"raw_output": '{"success": 1, "result": ".\n├── src\n└── test"}'},
-        )
-        tc = _build_directory_tree(a, verbose=False)
-        assert "Tree generated" in tc.output_preview
-
-    def test_verbose(self):
-        a = _make(
-            input_data={"function_name": "directory_tree", "arguments": {"path": "/tmp"}},
-            output_data={"raw_output": '{"success": 1, "result": ".\\nsrc\\ntest"}'},
-        )
-        tc = _build_directory_tree(a, verbose=True)
-        assert any("tree" in line for line in tc.output_lines)
-
-
-@pytest.mark.ci
-class TestBuildMoveFile:
-    def test_compact(self):
-        a = _make(
-            input_data={"function_name": "move_file"},
-            output_data={"raw_output": '{"success": 1, "result": "Moved a to b"}'},
-        )
-        tc = _build_move_file(a, verbose=False)
-        assert "Moved" in tc.output_preview
-
-
-@pytest.mark.ci
-class TestBuildSearchFiles:
-    def test_compact(self):
-        a = _make(
-            input_data={"function_name": "search_files"},
-            output_data={"raw_output": '{"success": 1, "result": ["/a.py", "/b.py"]}'},
-        )
-        tc = _build_search_files(a, verbose=False)
-        assert "2 files found" in tc.output_preview
+        tc = _build_grep(a, verbose=True)
+        assert any("/a.py" in line for line in tc.output_lines)
 
 
 # ── Platform document tools ───────────────────────────────────────
@@ -1811,12 +1750,8 @@ class TestAllToolsRegistered:
         "edit_file",
         "write_file",
         "read_file",
-        "read_multiple_files",
-        "create_directory",
-        "list_directory",
-        "directory_tree",
-        "move_file",
-        "search_files",
+        "glob",
+        "grep",
         # Platform doc
         "list_document_nav",
         "get_document",

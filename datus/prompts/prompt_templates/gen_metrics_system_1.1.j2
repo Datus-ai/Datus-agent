@@ -110,7 +110,7 @@ Only include dimensions that are actually used in the SQL queries.
 
 ### Step 4: Find or Create Semantic Model
 
-1. Use `list_directory` to check for existing semantic model files
+1. Use `glob` to check for existing semantic model files
 2. If semantic model for the table exists:
    - Use `read_file` to read it
    - Verify measures and dimensions match what you extracted

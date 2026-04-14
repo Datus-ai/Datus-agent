@@ -34,23 +34,17 @@ logger = get_logger(__name__)
 # Workspace filesystem methods (read-only, root = workspace)
 WORKSPACE_READONLY_METHODS = [
     "read_file",
-    "read_multiple_files",
-    "list_directory",
-    "directory_tree",
-    "search_files",
+    "glob",
+    "grep",
 ]
 
 # Skills filesystem methods (read + write, root = skills directory)
 SKILLS_ALL_METHODS = [
     "read_file",
-    "read_multiple_files",
-    "list_directory",
-    "directory_tree",
-    "search_files",
     "write_file",
     "edit_file",
-    "create_directory",
-    "move_file",
+    "glob",
+    "grep",
 ]
 
 

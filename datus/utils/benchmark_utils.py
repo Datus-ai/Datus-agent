@@ -482,7 +482,7 @@ def _extract_artifacts_from_action_history(
 
         output_payload = entry.get("output") or {}
         result_payload = _extract_result_payload(output_payload)
-        if function_name in {"write_file", "read_file", "read_multiple_files", "search_files"}:
+        if function_name in {"write_file", "read_file", "glob", "grep"}:
             _collect_file_artifacts(artifacts, result_payload)
         elif function_name in {"search_reference_sql", "get_reference_sql"}:
             _collect_reference_sql_artifacts(artifacts, result_payload)

@@ -21,13 +21,12 @@ If unclear, use `ask_user` to clarify whether the user wants to create or optimi
 ## Available Tools
 {% if has_filesystem_tools -%}
 ### Workspace (read-only)
-- `read_file`, `list_directory`, `directory_tree`, `search_files` — browse project files
+- `read_file`, `glob`, `grep` — browse project files
 
 ### Skills Directory (read+write)
 All `skill_*` tools operate within the skills directory. Paths are relative.
-- `skill_create_directory`, `skill_write_file`, `skill_edit_file` — create/modify skills
-- `skill_read_file`, `skill_list_directory`, `skill_directory_tree` — browse skills
-- `skill_move_file` — reorganize
+- `skill_write_file`, `skill_edit_file` — create/modify skills
+- `skill_read_file`, `skill_glob`, `skill_grep` — browse skills
 {% endif -%}
 {% if has_db_tools -%}
 ### Database (research only)

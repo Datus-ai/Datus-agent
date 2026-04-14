@@ -40,9 +40,9 @@ class TestSqlSummaryAgentic:
         # Filesystem tools
         assert "read_file" in tool_names, f"Missing read_file, got: {tool_names}"
         assert "write_file" in tool_names, f"Missing write_file, got: {tool_names}"
-        assert "list_directory" in tool_names, f"Missing list_directory, got: {tool_names}"
         assert "edit_file" in tool_names, f"Missing edit_file, got: {tool_names}"
-        assert "read_multiple_files" in tool_names, f"Missing read_multiple_files, got: {tool_names}"
+        assert "glob" in tool_names, f"Missing glob, got: {tool_names}"
+        assert "grep" in tool_names, f"Missing grep, got: {tool_names}"
 
         # Generation tools
         assert "generate_sql_summary_id" in tool_names, f"Missing generate_sql_summary_id, got: {tool_names}"

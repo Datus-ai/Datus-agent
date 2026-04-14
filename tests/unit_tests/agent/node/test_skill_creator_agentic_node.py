@@ -108,8 +108,8 @@ class TestSkillCreatorAgenticNodeTools:
         tool_names = [t.name for t in node.tools]
         assert "skill_write_file" in tool_names
         assert "skill_edit_file" in tool_names
-        assert "skill_create_directory" in tool_names
-        assert "skill_move_file" in tool_names
+        assert "skill_glob" in tool_names
+        assert "skill_grep" in tool_names
 
     def test_has_workspace_read_tools(self, real_agent_config, mock_llm_create):
         """Node should have workspace read-only tools (unprefixed)."""
@@ -124,10 +124,8 @@ class TestSkillCreatorAgenticNodeTools:
         )
         tool_names = [t.name for t in node.tools]
         assert "read_file" in tool_names
-        assert "read_multiple_files" in tool_names
-        assert "list_directory" in tool_names
-        assert "directory_tree" in tool_names
-        assert "search_files" in tool_names
+        assert "glob" in tool_names
+        assert "grep" in tool_names
 
     def test_has_skills_read_tools(self, real_agent_config, mock_llm_create):
         """Node should have skill_* prefixed read tools for skills directory."""
@@ -142,8 +140,8 @@ class TestSkillCreatorAgenticNodeTools:
         )
         tool_names = [t.name for t in node.tools]
         assert "skill_read_file" in tool_names
-        assert "skill_list_directory" in tool_names
-        assert "skill_directory_tree" in tool_names
+        assert "skill_glob" in tool_names
+        assert "skill_grep" in tool_names
 
     def test_has_db_tools(self, real_agent_config, mock_llm_create):
         """Node should have database tools."""

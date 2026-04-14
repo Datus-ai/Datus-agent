@@ -156,8 +156,7 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
         self.tools = []
 
         # Hardcoded tool configuration: specific methods from generation_tools and filesystem_tools
-        # filesystem_tools.read_file, filesystem_tools.read_multiple_files, filesystem_tools.write_file,
-        # filesystem_tools.edit_file, filesystem_tools.list_directory
+        # filesystem_tools: read_file, write_file, edit_file
         # Chat node uses all available tools by default
         db_manager = db_manager_instance(self.agent_config.namespaces)
         self.conn = db_manager.get_conn(self.agent_config.current_database, self.agent_config.current_database)

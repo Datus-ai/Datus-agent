@@ -37,7 +37,7 @@ class TestGenMetricsAgentic:
         tool_names = [tool.name for tool in node.tools]
         assert "read_file" in tool_names, f"Missing read_file tool, got: {tool_names}"
         assert "write_file" in tool_names, f"Missing write_file tool, got: {tool_names}"
-        assert "list_directory" in tool_names, f"Missing list_directory tool, got: {tool_names}"
+        assert "glob" in tool_names, f"Missing glob tool, got: {tool_names}"
         assert "check_semantic_object_exists" in tool_names, f"Missing check_semantic_object_exists, got: {tool_names}"
         assert "end_metric_generation" in tool_names, f"Missing end_metric_generation, got: {tool_names}"
 

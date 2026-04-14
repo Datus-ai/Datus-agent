@@ -71,8 +71,8 @@ class TestSqlSummaryAgenticNodeInit:
         assert "read_file" in tool_names
         assert "write_file" in tool_names
         assert "edit_file" in tool_names
-        assert "read_multiple_files" in tool_names
-        assert "list_directory" in tool_names
+        assert "glob" in tool_names
+        assert "grep" in tool_names
 
         # Tool instances should be initialized
         assert node.filesystem_func_tool is not None
@@ -148,8 +148,8 @@ class TestSqlSummaryAgenticNodeExecution:
                 build_tool_then_response(
                     tool_calls=[
                         MockToolCall(
-                            name="list_directory",
-                            arguments=json.dumps({"path": "."}),
+                            name="glob",
+                            arguments=json.dumps({"pattern": "*"}),
                         ),
                     ],
                     content=response_content,
