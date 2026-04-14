@@ -13,7 +13,7 @@ Responsibilities:
 """
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.metric.store import MetricStorage
@@ -68,7 +68,7 @@ class SemanticStorageManager:
 
     def store_semantic_model(
         self,
-        model_data,
+        model_data: Union[SemanticModelInfo, Dict[str, Any]],
     ) -> None:
         """
         Store semantic model to unified storage.
@@ -89,7 +89,8 @@ class SemanticStorageManager:
         """
         # Convert SemanticModelInfo to dict format for storage
         if isinstance(model_data, SemanticModelInfo):
-            table_name = getattr(model_data, "table_name", None) or model_data.extra.get("table_name")
+            extra = model_data.extra or {}
+            table_name = model_data.table_name or extra.get("table_name")
             if not table_name:
                 raise ValueError("SemanticModelInfo must include physical table_name metadata")
 
@@ -97,10 +98,9 @@ class SemanticStorageManager:
                 "semantic_model_name": model_data.name,
                 "description": model_data.description or "",
                 "table_name": table_name,
-                "catalog_name": getattr(model_data, "catalog_name", None) or model_data.extra.get("catalog_name", ""),
-                "database_name": getattr(model_data, "database_name", None)
-                or model_data.extra.get("database_name", ""),
-                "schema_name": getattr(model_data, "schema_name", None) or model_data.extra.get("schema_name", ""),
+                "catalog_name": model_data.catalog_name or extra.get("catalog_name", ""),
+                "database_name": model_data.database_name or extra.get("database_name", ""),
+                "schema_name": model_data.schema_name or extra.get("schema_name", ""),
                 "dimensions": [
                     {"name": d.name, "description": d.description or "", "expr": ""} for d in model_data.dimensions
                 ],
@@ -340,7 +340,8 @@ class SemanticStorageManager:
             for model_entry in models:
                 try:
                     if isinstance(model_entry, SemanticModelInfo):
-                        table_name = getattr(model_entry, "table_name", None) or model_entry.extra.get("table_name")
+                        entry_extra = model_entry.extra or {}
+                        table_name = model_entry.table_name or entry_extra.get("table_name")
                         if table_name:
                             self.store_semantic_model(model_entry)
                             stats["semantic_models_synced"] += 1

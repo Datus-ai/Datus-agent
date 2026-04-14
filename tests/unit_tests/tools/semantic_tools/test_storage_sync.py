@@ -292,6 +292,32 @@ class TestStoreSemanticModel:
         assert len(dim_objects) == 1
         assert dim_objects[0]["name"] == "region"
 
+    def test_stores_semantic_model_info_with_direct_fields(self):
+        from datus.tools.semantic_tools.models import DimensionInfo, SemanticModelInfo
+
+        manager = _make_manager()
+        mock_store = MagicMock()
+        model = SemanticModelInfo(
+            name="orders_cube",
+            description="Orders",
+            table_name="orders",
+            database_name="analytics",
+            schema_name="public",
+            dimensions=[DimensionInfo(name="region", description="Region")],
+            measures=["orders.count"],
+        )
+        with patch.object(manager, "_ensure_semantic_model_store", return_value=mock_store):
+            manager.store_semantic_model(model)
+
+        all_stored = []
+        for call in mock_store.batch_store.call_args_list:
+            all_stored.extend(call[0][0])
+        table_obj = [o for o in all_stored if o["kind"] == "table"][0]
+        assert table_obj["table_name"] == "orders"
+        assert table_obj["database_name"] == "analytics"
+        assert table_obj["schema_name"] == "public"
+        assert table_obj["fq_name"] == "analytics.public.orders"
+
     def test_rejects_semantic_model_info_without_physical_table_name(self):
         from datus.tools.semantic_tools.models import SemanticModelInfo
 
