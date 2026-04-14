@@ -771,12 +771,23 @@ class DBFuncTool:
             an explanatory error message.
         """
         if self._is_multi_connector:
-            # Return database names with type info so LLM can identify source/target
+            # Return database names with type info and connectivity status.
+            # Only databases with installed adapters and working connections are marked available.
             db_configs = self.agent_config.current_db_configs() if self.agent_config else {}
-            db_list = [
-                {"name": name, "type": db_configs[name].type if name in db_configs else "unknown"}
-                for name in self._databases
-            ]
+            db_list = []
+            for name in self._databases:
+                db_type = db_configs[name].type if name in db_configs else "unknown"
+                available = True
+                error_msg = ""
+                try:
+                    self._get_connector(name)
+                except Exception as e:
+                    available = False
+                    error_msg = str(e)
+                entry = {"name": name, "type": db_type, "available": available}
+                if not available:
+                    entry["error"] = error_msg
+                db_list.append(entry)
             return FuncToolResult(success=1, result=db_list)
         try:
             connector = self._get_connector()
@@ -1368,12 +1379,25 @@ class DBFuncTool:
                 error=f"Invalid mode '{mode}'. Supported modes: 'replace', 'append'.",
             )
 
-        # Get connectors
+        # Get connectors — both must be available; do NOT fall back to a different database
         try:
             source_conn = self._get_connector(source_database)
+        except Exception as e:
+            return FuncToolResult(
+                success=0,
+                error=f"Source database '{source_database}' is not available: {str(e)}. "
+                "Check that the database adapter is installed and the connection config is correct. "
+                "Do NOT fall back to a different source database.",
+            )
+        try:
             target_conn = self._get_connector(target_database)
         except Exception as e:
-            return FuncToolResult(success=0, error=f"Failed to get connector: {str(e)}")
+            return FuncToolResult(
+                success=0,
+                error=f"Target database '{target_database}' is not available: {str(e)}. "
+                "Check that the database adapter is installed and the connection config is correct. "
+                "Do NOT fall back to a different target database — STOP and report this error to the user.",
+            )
 
         # Execute source query
         try:

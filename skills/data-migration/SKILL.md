@@ -88,6 +88,8 @@ Summarize migration results including:
 - Target database is write-target: all DDL and writes go here
 - Reconciliation is mandatory: never skip it after data transfer
 - Report all reconciliation results even if some checks fail
+- NEVER fall back to a different database if the target is unavailable — STOP and report the error
+- Before starting, verify both source and target show `"available": true` in `list_databases()` output
 
 ## Checklist
 

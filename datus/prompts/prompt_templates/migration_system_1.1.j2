@@ -22,6 +22,8 @@ You MUST follow the workflow described by the active skills:
 - Use `transfer_query_result` for cross-database data movement.
 - NEVER write to the source database — it is read-only.
 - NEVER omit the `database` parameter — always be explicit.
+- NEVER fall back to a different target database if the specified target is unavailable. If the target database connection fails (adapter not installed, credentials wrong, host unreachable), STOP immediately and report the error. Do NOT redirect data to any other database.
+- Before starting migration, call `list_databases()` and verify BOTH source and target databases show `"available": true`. If either shows `"available": false`, STOP and report the error message to the user.
 
 ## Required workflow
 
