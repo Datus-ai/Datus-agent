@@ -10,7 +10,7 @@ SQL query summarization and classification with support for filesystem tools,
 generation tools, and hooks.
 """
 
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.cli.execution_state import ExecutionInterrupted
@@ -43,7 +43,7 @@ class SqlSummaryAgenticNode(AgenticNode):
         self,
         node_name: str,
         agent_config: Optional[AgentConfig] = None,
-        execution_mode: str = "interactive",
+        execution_mode: Literal["interactive", "workflow"] = "interactive",
         build_mode: str = "incremental",
         subject_tree: Optional[list] = None,
         storage_type: str = "reference_sql",

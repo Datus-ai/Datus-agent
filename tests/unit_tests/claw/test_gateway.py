@@ -66,6 +66,13 @@ class TestGatewayInit:
         assert gw._host == "0.0.0.0"
         assert gw._port == 9000
 
+    def test_task_manager_created_with_non_interactive_mode(self):
+        """ClawGateway should create ChatTaskManager with default_interactive=False."""
+        agent_config = MagicMock()
+        with patch("datus.claw.gateway.ChatTaskManager") as mock_ctm:
+            ClawGateway(agent_config=agent_config, channels_config={})
+            mock_ctm.assert_called_once_with(default_interactive=False)
+
 
 # ---------------------------------------------------------------------------
 # Tests: start()

@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
 
 from agents import FunctionTool, Tool
 
@@ -258,6 +258,14 @@ class SubAgentTaskTool:
             node_name=node_name,
         )
 
+    def _resolve_execution_mode(self) -> Literal["interactive", "workflow"]:
+        """Resolve execution_mode from the parent node, defaulting to 'interactive'."""
+        if self._parent_node and hasattr(self._parent_node, "execution_mode"):
+            mode = self._parent_node.execution_mode
+            if mode in ("interactive", "workflow"):
+                return mode
+        return "interactive"
+
     def _create_builtin_node(self, subagent_type: str):
         """Create a builtin system subagent node with its non-standard constructor."""
         if subagent_type == "gen_semantic_model":
@@ -265,14 +273,14 @@ class SubAgentTaskTool:
 
             return GenSemanticModelAgenticNode(
                 agent_config=self.agent_config,
-                execution_mode="interactive",
+                execution_mode=self._resolve_execution_mode(),
             )
         elif subagent_type == "gen_metrics":
             from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
 
             return GenMetricsAgenticNode(
                 agent_config=self.agent_config,
-                execution_mode="interactive",
+                execution_mode=self._resolve_execution_mode(),
             )
         elif subagent_type == "gen_sql_summary":
             from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
@@ -280,7 +288,7 @@ class SubAgentTaskTool:
             return SqlSummaryAgenticNode(
                 node_name="gen_sql_summary",
                 agent_config=self.agent_config,
-                execution_mode="interactive",
+                execution_mode=self._resolve_execution_mode(),
             )
         elif subagent_type == "gen_ext_knowledge":
             from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
@@ -288,7 +296,7 @@ class SubAgentTaskTool:
             return GenExtKnowledgeAgenticNode(
                 node_name="gen_ext_knowledge",
                 agent_config=self.agent_config,
-                execution_mode="interactive",
+                execution_mode=self._resolve_execution_mode(),
             )
         elif subagent_type == "gen_sql":
             from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
@@ -301,6 +309,7 @@ class SubAgentTaskTool:
                 agent_config=self.agent_config,
                 tools=None,
                 node_name="gen_sql",
+                execution_mode=self._resolve_execution_mode(),
             )
         elif subagent_type == "gen_report":
             from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
@@ -313,13 +322,14 @@ class SubAgentTaskTool:
                 agent_config=self.agent_config,
                 tools=None,
                 node_name="gen_report",
+                execution_mode=self._resolve_execution_mode(),
             )
         elif subagent_type == "gen_table":
             from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
 
             return GenTableAgenticNode(
                 agent_config=self.agent_config,
-                execution_mode="interactive",
+                execution_mode=self._resolve_execution_mode(),
             )
         elif subagent_type == "gen_skill":
             from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
@@ -332,6 +342,7 @@ class SubAgentTaskTool:
                 agent_config=self.agent_config,
                 tools=None,
                 node_name="gen_skill",
+                execution_mode=self._resolve_execution_mode(),
             )
         else:
             raise ValueError(f"Unknown builtin subagent type: {subagent_type}")

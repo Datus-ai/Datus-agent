@@ -34,7 +34,7 @@ class ClawGateway:
         self._channels_config = channels_config
         self._host = host
         self._port = port
-        self._task_manager = ChatTaskManager()
+        self._task_manager = ChatTaskManager(default_interactive=False)
         self._bridge = ChannelBridge(agent_config, self._task_manager)
         self._adapters: Dict[str, ChannelAdapter] = {}
         self._shutdown_event: Optional[asyncio.Event] = None

@@ -907,6 +907,88 @@ class TestCreateBuiltinNode:
             mock_builtin.assert_called_once_with("gen_semantic_model")
 
 
+# ── _resolve_execution_mode ─────────────────────────────────────────
+
+
+@pytest.mark.ci
+class TestResolveExecutionMode:
+    def test_returns_interactive_when_no_parent(self, task_tool):
+        assert task_tool._parent_node is None
+        assert task_tool._resolve_execution_mode() == "interactive"
+
+    def test_returns_parent_mode_workflow(self, task_tool):
+        parent = Mock()
+        parent.execution_mode = "workflow"
+        task_tool.set_parent_node(parent)
+        assert task_tool._resolve_execution_mode() == "workflow"
+
+    def test_returns_parent_mode_interactive(self, task_tool):
+        parent = Mock()
+        parent.execution_mode = "interactive"
+        task_tool.set_parent_node(parent)
+        assert task_tool._resolve_execution_mode() == "interactive"
+
+    def test_returns_interactive_when_parent_has_no_execution_mode(self, task_tool):
+        parent = Mock(spec=[])  # no attributes
+        task_tool._parent_node = parent
+        assert task_tool._resolve_execution_mode() == "interactive"
+
+    def test_returns_interactive_for_invalid_mode(self, task_tool):
+        parent = Mock()
+        parent.execution_mode = "unknown_mode"
+        task_tool.set_parent_node(parent)
+        assert task_tool._resolve_execution_mode() == "interactive"
+
+
+@pytest.mark.ci
+class TestBuiltinNodeInheritsExecutionMode:
+    """Verify _create_builtin_node passes parent's execution_mode to subagent constructors."""
+
+    @pytest.mark.parametrize(
+        "subagent_type,init_path",
+        [
+            (
+                "gen_semantic_model",
+                "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode.__init__",
+            ),
+            ("gen_metrics", "datus.agent.node.gen_metrics_agentic_node.GenMetricsAgenticNode.__init__"),
+            ("gen_sql_summary", "datus.agent.node.sql_summary_agentic_node.SqlSummaryAgenticNode.__init__"),
+            (
+                "gen_ext_knowledge",
+                "datus.agent.node.gen_ext_knowledge_agentic_node.GenExtKnowledgeAgenticNode.__init__",
+            ),
+            ("gen_table", "datus.agent.node.gen_table_agentic_node.GenTableAgenticNode.__init__"),
+        ],
+    )
+    def test_builtin_node_uses_workflow_mode(self, task_tool, subagent_type, init_path):
+        parent = Mock()
+        parent.execution_mode = "workflow"
+        task_tool.set_parent_node(parent)
+
+        with patch(init_path, return_value=None) as mock_init:
+            task_tool._create_builtin_node(subagent_type)
+            call_kwargs = mock_init.call_args[1]
+            assert call_kwargs["execution_mode"] == "workflow"
+
+    @pytest.mark.parametrize(
+        "subagent_type,init_path",
+        [
+            ("gen_sql", "datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode.__init__"),
+            ("gen_report", "datus.agent.node.gen_report_agentic_node.GenReportAgenticNode.__init__"),
+            ("gen_skill", "datus.agent.node.gen_skill_agentic_node.SkillCreatorAgenticNode.__init__"),
+        ],
+    )
+    def test_builtin_node_with_extra_params_uses_workflow_mode(self, task_tool, subagent_type, init_path):
+        parent = Mock()
+        parent.execution_mode = "workflow"
+        task_tool.set_parent_node(parent)
+
+        with patch(init_path, return_value=None) as mock_init:
+            task_tool._create_builtin_node(subagent_type)
+            call_kwargs = mock_init.call_args[1]
+            assert call_kwargs["execution_mode"] == "workflow"
+
+
 # ── Built-in subagent: _build_node_input ───────────────────────────
 
 

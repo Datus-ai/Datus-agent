@@ -14,7 +14,7 @@ higher max_turns budget for extended multi-step interactions.
 import os
 import re
 from pathlib import Path
-from typing import AsyncGenerator, Dict, List, Optional
+from typing import AsyncGenerator, Dict, List, Literal, Optional
 
 from agents import FunctionTool
 
@@ -73,7 +73,7 @@ class SkillCreatorAgenticNode(AgenticNode):
         agent_config: Optional[AgentConfig] = None,
         tools: Optional[list] = None,
         node_name: Optional[str] = None,
-        execution_mode: str = "interactive",
+        execution_mode: Literal["interactive", "workflow"] = "interactive",
     ):
         self.configured_node_name = node_name
         self.execution_mode = execution_mode

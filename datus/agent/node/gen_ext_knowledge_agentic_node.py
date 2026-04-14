@@ -11,7 +11,7 @@ generation tools, and hooks.
 """
 
 from dataclasses import dataclass
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator, Literal, Optional
 
 import pandas as pd
 
@@ -67,7 +67,7 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
         self,
         node_name: str,
         agent_config: Optional[AgentConfig] = None,
-        execution_mode: str = "interactive",
+        execution_mode: Literal["interactive", "workflow"] = "interactive",
         build_mode: str = "incremental",
         subject_tree: Optional[list] = None,
         scope: Optional[str] = None,
