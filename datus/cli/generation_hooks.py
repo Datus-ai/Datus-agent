@@ -90,6 +90,48 @@ def normalize_kb_relative_path(
     return f"{subdir}/{namespace}/{'/'.join(parts)}"
 
 
+def resolve_kb_sandbox_path(
+    raw_path: str,
+    kind: str,
+    agent_config: "AgentConfig",
+    knowledge_base_dir: str,
+) -> Optional[str]:
+    """
+    Resolve an LLM-reported file path to an absolute path under the sandbox
+    ``{knowledge_base_dir}/{kind_subdir}/<namespace>/`` for the given ``kind``.
+
+    Used by workflow-mode ``_save_to_db()`` helpers where the path comes from
+    the model's final JSON (not from a ``write_file`` tool result), so it must
+    be validated against the per-kind, per-namespace sandbox before syncing —
+    otherwise a fabricated response could cause an arbitrary file on disk to
+    be imported. Returns ``None`` when the path escapes the sandbox so callers
+    can skip it.
+    """
+    if not raw_path:
+        return None
+    namespace = getattr(agent_config, "current_namespace", None) if agent_config else None
+    if os.path.isabs(raw_path):
+        candidate = os.path.normpath(raw_path)
+    else:
+        normalized = normalize_kb_relative_path(raw_path, kind, namespace)
+        candidate = os.path.normpath(os.path.join(knowledge_base_dir, normalized))
+    subdir = _KIND_TO_SUBDIR.get(kind or "")
+    if not subdir or not namespace:
+        return candidate
+    try:
+        sandbox = os.path.realpath(os.path.join(knowledge_base_dir, subdir, namespace))
+        candidate_real = os.path.realpath(candidate)
+        if os.path.commonpath([sandbox, candidate_real]) != sandbox:
+            logger.warning(
+                f"Rejected path {raw_path!r} for kind={kind}: resolved {candidate_real!r} escapes sandbox {sandbox!r}."
+            )
+            return None
+    except ValueError:
+        logger.warning(f"Rejected path {raw_path!r} for kind={kind}: cannot verify containment under sandbox.")
+        return None
+    return candidate
+
+
 def make_kb_path_normalizer(agent_config: "AgentConfig", default_kind: Optional[str] = None):
     """
     Build a `FilesystemFuncTool.path_normalizer` closure that resolves the
@@ -105,17 +147,27 @@ def make_kb_path_normalizer(agent_config: "AgentConfig", default_kind: Optional[
     known_subdirs = set(_KIND_TO_SUBDIR.values())
 
     def _normalize(path: str, file_type: Optional[str], *, strict_kind: bool = False) -> str:
+        namespace = getattr(agent_config, "current_namespace", None) if agent_config else None
         if strict_kind and expected_subdir and path and not os.path.isabs(path):
-            head = path.replace("\\", "/").split("/", 1)[0]
+            parts = [p for p in path.replace("\\", "/").split("/") if p]
+            head = parts[0] if parts else ""
             if head in known_subdirs and head != expected_subdir:
                 raise ValueError(
                     f"Write to '{head}/' is not allowed from a {default_kind!r} node; "
                     f"this node may only write under '{expected_subdir}/'."
                 )
+            # Even within the correct kind, reject prefixes that would write
+            # into a peer namespace (e.g. semantic_models/other_db/foo.yml
+            # from a node whose current_namespace is 'db').
+            if head == expected_subdir and namespace and len(parts) >= 2 and parts[1] != namespace:
+                raise ValueError(
+                    f"Write to '{head}/{parts[1]}/' is not allowed from namespace "
+                    f"{namespace!r}; this node may only write under "
+                    f"'{expected_subdir}/{namespace}/'."
+                )
             kind = default_kind
         else:
             kind = _FILE_TYPE_ALIASES.get(file_type or "", default_kind)
-        namespace = getattr(agent_config, "current_namespace", None) if agent_config else None
         return normalize_kb_relative_path(path, kind, namespace)
 
     return _normalize
@@ -187,15 +239,15 @@ class GenerationHooks(AgentHooks):
     def _resolve_path(self, path: str, kind: str) -> str:
         """
         Resolve a file path reported by a generation tool to an absolute path
-        under ``knowledge_base_home``.
+        under ``knowledge_base_home``, or return an empty string when the path
+        escapes the workspace so callers skip it (fail closed — never open
+        arbitrary files outside the KB).
 
         Relative paths are first normalized via :func:`normalize_kb_relative_path`
         (so naked filenames like ``orders.yaml`` get the ``{subdir}/{namespace}/``
         prefix matching the LLM's actual write location) and then joined with
         ``knowledge_base_home``. Absolute paths are accepted only when they
-        resolve inside ``knowledge_base_home``; any path that escapes the
-        workspace — absolute or relative — is returned as-is so downstream
-        existence checks fail closed instead of disclosing arbitrary files.
+        resolve inside ``knowledge_base_home``.
         """
         if not path:
             return path
@@ -216,10 +268,10 @@ class GenerationHooks(AgentHooks):
                     f"Rejected path {path!r} for kind={kind}: resolved {candidate_abs!r} "
                     f"escapes knowledge_base_home {base_abs!r}."
                 )
-                return path
+                return ""
         except ValueError:
             logger.warning(f"Rejected path {path!r} for kind={kind}: cannot verify containment in {kb_home!r}.")
-            return path
+            return ""
         return candidate
 
     async def on_start(self, context, agent) -> None:
@@ -336,7 +388,8 @@ class GenerationHooks(AgentHooks):
         if isinstance(result_dict, dict):
             filepaths = result_dict.get("semantic_model_files", [])
             if filepaths and isinstance(filepaths, list):
-                return [self._resolve_path(p, "semantic") for p in filepaths if p]
+                resolved = [self._resolve_path(p, "semantic") for p in filepaths if p]
+                return [p for p in resolved if p]
 
         return []
 

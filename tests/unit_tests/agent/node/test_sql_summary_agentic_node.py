@@ -320,6 +320,35 @@ class TestSqlSummaryExtractMethods:
         assert output is None
 
 
+class TestSqlSummarySaveToDbSandbox:
+    """``_save_to_db`` must reject paths outside the per-kind, per-namespace sandbox.
+
+    These paths come from the LLM's final JSON (not from the write_file tool
+    result), so the containment check is the last line of defence against a
+    fabricated response syncing an arbitrary file.
+    """
+
+    def test_rejects_out_of_sandbox_absolute_path(self, real_agent_config, mock_llm_create, tmp_path):
+        from unittest.mock import patch
+
+        node = _create_node(real_agent_config)
+        outside = tmp_path / "outside" / "malicious.yaml"
+        outside.parent.mkdir(parents=True)
+        outside.write_text("x: y\n")
+
+        with patch("datus.cli.generation_hooks.GenerationHooks._sync_reference_sql_to_db") as sync_mock:
+            node._save_to_db(str(outside))
+            sync_mock.assert_not_called()
+
+    def test_rejects_cross_namespace_prefix(self, real_agent_config, mock_llm_create):
+        from unittest.mock import patch
+
+        node = _create_node(real_agent_config)
+        with patch("datus.cli.generation_hooks.GenerationHooks._sync_reference_sql_to_db") as sync_mock:
+            node._save_to_db("sql_summaries/other_db/q_001.yaml")
+            sync_mock.assert_not_called()
+
+
 class TestSqlSummaryFilesystemRootPath:
     """FilesystemFuncTool is sandboxed to knowledge_base_home (not the type-specific subdir)."""
 

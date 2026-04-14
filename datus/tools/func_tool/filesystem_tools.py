@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import inspect
 import os
 from pathlib import Path
 from typing import Callable, List, Optional
@@ -69,6 +70,18 @@ class FilesystemFuncTool(BaseTool):
         self.root_path = root_path or os.getenv("FILESYSTEM_MCP_PATH", os.path.expanduser("~"))
         self.config = FilesystemConfig(root_path=root_path)
         self._path_normalizer = path_normalizer
+        # Detect strict_kind support via signature inspection up front so a
+        # TypeError raised *inside* the normalizer can't be mistaken for a
+        # legacy 2-arg signature and silently drop the strict flag.
+        self._normalizer_accepts_strict_kind = False
+        if path_normalizer is not None:
+            try:
+                params = inspect.signature(path_normalizer).parameters
+                self._normalizer_accepts_strict_kind = "strict_kind" in params or any(
+                    p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+                )
+            except (TypeError, ValueError):
+                pass
 
     def _normalize(self, path: str, file_type: Optional[str] = None, *, strict: bool = False) -> str:
         """
@@ -85,11 +98,9 @@ class FilesystemFuncTool(BaseTool):
         if self._path_normalizer is None or not path:
             return path
         try:
-            try:
+            if self._normalizer_accepts_strict_kind:
                 return self._path_normalizer(path, file_type, strict_kind=strict)
-            except TypeError:
-                # Legacy normalizer that doesn't accept strict_kind — fall back to 2-arg form.
-                return self._path_normalizer(path, file_type)
+            return self._path_normalizer(path, file_type)
         except Exception as e:
             logger.warning(f"path_normalizer raised on path={path!r} file_type={file_type!r}: {e}")
             if strict:
@@ -118,13 +129,20 @@ class FilesystemFuncTool(BaseTool):
         return bound_tools
 
     def _get_safe_path(self, path: str) -> Optional[Path]:
-        """Get a safe path within the root directory"""
+        """Get a safe path within the root directory.
+
+        Uses ``Path.relative_to`` instead of string ``startswith`` so that
+        sibling directories whose names share the root's prefix (e.g. a
+        ``knowledge_base_home_backup`` sitting next to ``knowledge_base_home``)
+        can't be mistaken for an in-sandbox path via ``../`` traversal.
+        """
         try:
             root = Path(self.config.root_path).resolve()
             target = (root / path).resolve()
-            if not str(target).startswith(str(root)):
+            try:
+                target.relative_to(root)
+            except ValueError:
                 return None
-
             return target
         except Exception:
             return None

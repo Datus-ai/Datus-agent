@@ -582,6 +582,31 @@ class TestSaveToDb:
         except Exception:
             pass  # Any exception is acceptable for empty filename
 
+    def test_save_to_db_rejects_out_of_sandbox_absolute_path(self, real_agent_config, mock_llm_create, tmp_path):
+        """A fabricated absolute path outside the semantic-model sandbox must
+        be refused so _save_to_db never syncs an arbitrary on-disk file."""
+        from unittest.mock import patch
+
+        node = _make_node(real_agent_config, mock_llm_create)
+        # Create a file outside the KB to prove the node won't touch it even if it exists.
+        outside = tmp_path / "outside" / "malicious.yaml"
+        outside.parent.mkdir(parents=True)
+        outside.write_text("x: y\n")
+
+        with patch("datus.cli.generation_hooks.GenerationHooks._sync_semantic_to_db") as sync_mock:
+            node._save_to_db(str(outside))
+            sync_mock.assert_not_called()
+
+    def test_save_to_db_rejects_cross_namespace_prefix(self, real_agent_config, mock_llm_create):
+        """LLM-emitted cross-namespace prefix must be refused so a node can't
+        overwrite another namespace's KB via a fabricated final JSON."""
+        from unittest.mock import patch
+
+        node = _make_node(real_agent_config, mock_llm_create)
+        with patch("datus.cli.generation_hooks.GenerationHooks._sync_semantic_to_db") as sync_mock:
+            node._save_to_db("semantic_models/other_db/orders.yml")
+            sync_mock.assert_not_called()
+
 
 class TestGenSemanticModelFilesystemRootPath:
     """FilesystemFuncTool is sandboxed to knowledge_base_home (not the type-specific subdir)."""

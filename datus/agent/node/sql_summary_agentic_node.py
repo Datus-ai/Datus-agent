@@ -626,15 +626,14 @@ class SqlSummaryAgenticNode(AgenticNode):
         try:
             import os
 
-            from datus.cli.generation_hooks import normalize_kb_relative_path
+            from datus.cli.generation_hooks import resolve_kb_sandbox_path
 
-            if os.path.isabs(sql_summary_file):
-                full_path = os.path.normpath(sql_summary_file)
-            else:
-                normalized = normalize_kb_relative_path(
-                    sql_summary_file, "sql_summary", self.agent_config.current_namespace
-                )
-                full_path = os.path.normpath(os.path.join(self.knowledge_base_dir, normalized))
+            full_path = resolve_kb_sandbox_path(
+                sql_summary_file, "sql_summary", self.agent_config, self.knowledge_base_dir
+            )
+            if not full_path:
+                logger.warning(f"SQL summary file rejected by sandbox check: {sql_summary_file!r}")
+                return
 
             if not os.path.exists(full_path):
                 logger.warning(f"SQL summary file not found: {full_path}")

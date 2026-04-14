@@ -1050,15 +1050,14 @@ Rules:
         try:
             import os
 
-            from datus.cli.generation_hooks import normalize_kb_relative_path
+            from datus.cli.generation_hooks import resolve_kb_sandbox_path
 
-            if os.path.isabs(ext_knowledge_file):
-                full_path = os.path.normpath(ext_knowledge_file)
-            else:
-                normalized = normalize_kb_relative_path(
-                    ext_knowledge_file, "ext_knowledge", self.agent_config.current_namespace
-                )
-                full_path = os.path.normpath(os.path.join(self.knowledge_base_dir, normalized))
+            full_path = resolve_kb_sandbox_path(
+                ext_knowledge_file, "ext_knowledge", self.agent_config, self.knowledge_base_dir
+            )
+            if not full_path:
+                logger.warning(f"External knowledge file rejected by sandbox check: {ext_knowledge_file!r}")
+                return
 
             if not os.path.exists(full_path):
                 logger.warning(f"External knowledge file not found: {full_path}")
