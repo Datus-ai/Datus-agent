@@ -1456,9 +1456,13 @@ class DBFuncTool:
         df = df.astype(object).where(df.notna(), other=None)
 
         # Batch INSERT using connector's execute_insert (adapter-agnostic)
-        # Quote column names with double quotes to prevent SQL injection via crafted DataFrame columns
+        # Quote column names to handle reserved words (e.g., status, order, select).
+        # Use dialect-appropriate quoting: backticks for MySQL/StarRocks, double quotes for others.
         columns = list(df.columns)
-        col_names = ", ".join(f'"{c}"' for c in columns)
+        dialect = getattr(target_conn, "dialect", "")
+        mysql_dialects = ("mysql", "starrocks")
+        quote_char = "`" if dialect in mysql_dialects else '"'
+        col_names = ", ".join(f"{quote_char}{c}{quote_char}" for c in columns)
 
         rows_written = 0
         try:
