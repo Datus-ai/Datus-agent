@@ -1257,6 +1257,59 @@ class TestNonStreamingAdapter:
         assert "final result" in adapter.sent[0].text
 
 
+class TestStreamResponseConfig:
+    """Tests that channel_config.stream_response=False disables streaming on capable adapters."""
+
+    @pytest_asyncio.fixture
+    async def setup(self):
+        adapter = _StreamingStubAdapter()  # supports_streaming = True
+        agent_config = MagicMock()
+        task_manager = MagicMock()
+        bridge = ChannelBridge(agent_config, task_manager)
+        return bridge, adapter, task_manager
+
+    @pytest.mark.asyncio
+    async def test_stream_response_false_disables_stream_id(self, setup):
+        """When channel_config.stream_response=False, stream_id should not be set."""
+        bridge, adapter, task_manager = setup
+
+        mock_task = MagicMock()
+        task_manager.start_chat = AsyncMock(return_value=mock_task)
+
+        async def _fake_consume(task, start_from=None):
+            yield _make_sse_message("result")
+            yield _make_sse_end()
+
+        task_manager.consume_events = _fake_consume
+
+        cfg = ChannelConfig(adapter="feishu", stream_response=False)
+        await bridge.handle_message(_make_inbound("q"), adapter, channel_config=cfg)
+
+        assert len(adapter.sent) == 1
+        assert adapter.sent[0].stream_id is None
+
+    @pytest.mark.asyncio
+    async def test_stream_response_false_skips_deltas(self, setup):
+        """When channel_config.stream_response=False, delta messages should be skipped."""
+        bridge, adapter, task_manager = setup
+
+        mock_task = MagicMock()
+        task_manager.start_chat = AsyncMock(return_value=mock_task)
+
+        async def _fake_consume(task, start_from=None):
+            yield _make_sse_thinking("analyzing...")
+            yield _make_sse_message("final result")
+            yield _make_sse_end()
+
+        task_manager.consume_events = _fake_consume
+
+        cfg = ChannelConfig(adapter="feishu", stream_response=False)
+        await bridge.handle_message(_make_inbound("q"), adapter, channel_config=cfg)
+
+        assert len(adapter.sent) == 1
+        assert "final result" in adapter.sent[0].text
+
+
 class TestVerboseOverride:
     """Tests for set_verbose / get_verbose per-conversation override."""
 

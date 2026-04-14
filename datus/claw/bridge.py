@@ -9,7 +9,7 @@ from collections import OrderedDict
 from typing import Dict, Optional
 
 from datus.api.models.cli_models import SSEDataType, StreamChatInput
-from datus.api.services.chat_task_manager import ChatTaskManager
+from datus.api.services.chat_task_manager import ChatTaskManager, is_thinking_only_content
 from datus.claw.channel.base import ChannelAdapter
 from datus.claw.commands import CommandContext, match_command, register_builtin_commands
 from datus.claw.formatters import ToolOutputFormatter
@@ -191,7 +191,10 @@ class ChannelBridge:
                     elif event.event == "message":
                         outbound = self._event_to_outbound(event.data, msg, verbose, pending_tool_calls)
                         if outbound:
-                            if adapter.supports_streaming:
+                            stream_enabled = adapter.supports_streaming and (
+                                not channel_config or channel_config.stream_response
+                            )
+                            if stream_enabled:
                                 outbound.stream_id = stream_id
                             elif outbound.is_delta:
                                 continue
@@ -324,7 +327,7 @@ class ChannelBridge:
         # Detect delta messages: events whose content is only thinking chunks.
         # Delta text is partial and cannot be parsed into rich-text IR.
         content_items = getattr(data.payload, "content", [])
-        is_delta = bool(content_items) and all(getattr(item, "type", "") == "thinking" for item in content_items)
+        is_delta = is_thinking_only_content(content_items)
 
         ir = None
         if combined_text and not is_delta:

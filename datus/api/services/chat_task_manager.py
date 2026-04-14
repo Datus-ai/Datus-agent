@@ -39,6 +39,15 @@ logger = get_logger(__name__)
 HEARTBEAT_INTERVAL = 10  # seconds
 
 
+def is_thinking_only_content(content_items) -> bool:
+    """Return True if all content items are thinking chunks (i.e. a delta message).
+
+    Used by both the SSE coalescing logic and the bridge outbound conversion
+    to avoid duplicating the detection heuristic.
+    """
+    return bool(content_items) and all(getattr(item, "type", "") == "thinking" for item in content_items)
+
+
 def _is_thinking_delta(event: SSEEvent) -> bool:
     """Return True if *event* is a thinking delta (consecutive-mergeable)."""
     if event.event != "message":
@@ -48,8 +57,7 @@ def _is_thinking_delta(event: SSEEvent) -> bool:
         return False
     if data.type not in (SSEDataType.CREATE_MESSAGE, SSEDataType.APPEND_MESSAGE):
         return False
-    content = data.payload.content
-    return bool(content) and all(item.type == "thinking" for item in content)
+    return is_thinking_only_content(data.payload.content)
 
 
 def _coalesce_deltas(events: list[SSEEvent]) -> list[SSEEvent]:
@@ -91,7 +99,8 @@ def _merge_delta_run(run: list[SSEEvent]) -> SSEEvent:
     parts: list[str] = []
     for ev in run:
         data = ev.data
-        assert isinstance(data, SSEMessageData)  # guaranteed by caller
+        if not isinstance(data, SSEMessageData):  # guaranteed by caller; guard for safety
+            continue
         for item in data.payload.content:
             parts.append(item.payload.get("content", ""))
 
