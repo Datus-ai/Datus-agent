@@ -722,3 +722,49 @@ class TestInitConnection:
 
         assert cli.cli_context.current_logic_db_name == "returned_db"
         assert cli.cli_context.current_db_name == "connector_db"
+
+
+# ---------------------------------------------------------------------------
+# Tests: _print_welcome database fallback
+# ---------------------------------------------------------------------------
+
+
+class TestPrintWelcome:
+    """Test _print_welcome database fallback chain."""
+
+    def _get_output(self, cli):
+        """Call _print_welcome and return the console output."""
+        cli._print_welcome()
+        return cli.console.file.getvalue()
+
+    def test_database_from_args_database(self, real_agent_config):
+        """args.database takes highest priority."""
+        cli = _make_cli(real_agent_config)
+        cli.args = MagicMock(database="my_db", namespace="my_ns")
+        real_agent_config._current_database = "config_db"
+        output = self._get_output(cli)
+        assert "Database my_db selected" in output
+
+    def test_database_fallback_to_args_namespace(self, real_agent_config):
+        """Falls back to args.namespace when args.database is empty."""
+        cli = _make_cli(real_agent_config)
+        cli.args = MagicMock(database="", namespace="my_ns")
+        real_agent_config._current_database = ""
+        output = self._get_output(cli)
+        assert "Database my_ns selected" in output
+
+    def test_database_fallback_to_agent_config(self, real_agent_config):
+        """Falls back to agent_config.current_database when args are empty."""
+        cli = _make_cli(real_agent_config)
+        cli.args = MagicMock(database="", namespace="")
+        real_agent_config._current_database = "config_db"
+        output = self._get_output(cli)
+        assert "Database config_db selected" in output
+
+    def test_no_database_warning(self, real_agent_config):
+        """Shows warning when no database is available."""
+        cli = _make_cli(real_agent_config)
+        cli.args = MagicMock(database="", namespace="")
+        real_agent_config._current_database = ""
+        output = self._get_output(cli)
+        assert "No database selected" in output
