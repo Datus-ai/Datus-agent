@@ -129,6 +129,9 @@ Start the Claw gateway in the foreground:
 
 ```bash
 datus-claw --config conf/agent.yml
+
+# Or via uv
+uv run datus-claw --config conf/agent.yml
 ```
 
 ### Daemon (background) Mode
@@ -148,6 +151,8 @@ datus-claw --action stop
 # Restart
 datus-claw --action restart
 ```
+
+All daemon commands also work with `uv run`, e.g. `uv run datus-claw --daemon`.
 
 By default, the PID file is stored at `~/.datus/run/datus-claw.pid` and daemon logs are written to `logs/datus-claw.log`. You can override these paths:
 

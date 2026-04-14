@@ -16,6 +16,9 @@ uv sync
 
 ```bash
 datus-api --host 0.0.0.0 --port 8000
+
+# 或通过 uv 运行
+uv run datus-api --host 0.0.0.0 --port 8000
 ```
 
 ### 后台守护进程模式
@@ -35,6 +38,8 @@ datus-api --action stop
 # 重启
 datus-api --action restart
 ```
+
+所有守护进程命令也支持 `uv run`，例如 `uv run datus-api --daemon --port 8000`。
 
 默认情况下，PID 文件存储在 `~/.datus/run/datus-agent-api.pid`，守护进程日志写入 `logs/datus-agent-api.log`。可通过参数覆盖：
 

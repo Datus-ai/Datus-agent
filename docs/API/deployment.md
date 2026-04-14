@@ -16,6 +16,9 @@ This registers the `datus-api` console script.
 
 ```bash
 datus-api --host 0.0.0.0 --port 8000
+
+# Or via uv
+uv run datus-api --host 0.0.0.0 --port 8000
 ```
 
 ### Daemon (background) Mode
@@ -35,6 +38,8 @@ datus-api --action stop
 # Restart
 datus-api --action restart
 ```
+
+All daemon commands also work with `uv run`, e.g. `uv run datus-api --daemon --port 8000`.
 
 By default, the PID file is stored at `~/.datus/run/datus-agent-api.pid` and daemon logs are written to `logs/datus-agent-api.log`. You can override these paths:
 

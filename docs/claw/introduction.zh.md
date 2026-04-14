@@ -127,6 +127,9 @@ channels:
 
 ```bash
 datus-claw --config conf/agent.yml
+
+# 或通过 uv 运行
+uv run datus-claw --config conf/agent.yml
 ```
 
 ### 后台守护进程模式
@@ -146,6 +149,8 @@ datus-claw --action stop
 # 重启
 datus-claw --action restart
 ```
+
+所有守护进程命令也支持 `uv run`，例如 `uv run datus-claw --daemon`。
 
 默认情况下，PID 文件存储在 `~/.datus/run/datus-claw.pid`，守护进程日志写入 `logs/datus-claw.log`。可通过参数覆盖：
 
