@@ -219,10 +219,6 @@ class TestSessionManagerExecution:
 
     # -- clear_session --
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="BUG: SessionManager.clear_session does not await async AdvancedSQLiteSession.clear_session",
-    )
     def test_clear_session_removes_messages(self, sm):
         """clear_session removes all messages from the session's database."""
         session_id = "clear-me"
