@@ -367,6 +367,55 @@ async def test_streaming_subsequent_message_updates_card():
 
 
 @pytest.mark.asyncio
+async def test_streaming_delta_concatenates_directly():
+    """Delta messages (is_delta=True) should be concatenated without separator."""
+    adapter = _make_adapter()
+    adapter._lark_client = _mock_lark_client(message_id="msg_d1", card_id="card_d1")
+
+    # First message creates the card
+    msg1 = _make_streaming_message("Hel")
+    await adapter.send_message(msg1)
+
+    # Subsequent delta messages — should concatenate directly
+    msg2 = OutboundMessage(
+        channel_id="test-feishu",
+        conversation_id="oc_test123",
+        text="lo ",
+        stream_id="stream_1",
+        is_delta=True,
+    )
+    await adapter.send_message(msg2)
+
+    msg3 = OutboundMessage(
+        channel_id="test-feishu",
+        conversation_id="oc_test123",
+        text="world",
+        stream_id="stream_1",
+        is_delta=True,
+    )
+    await adapter.send_message(msg3)
+
+    # Should be directly concatenated: "Hel" + "lo " + "world" = "Hello world"
+    assert adapter._streams["stream_1"].accumulated == "Hello world"
+
+
+@pytest.mark.asyncio
+async def test_streaming_non_delta_uses_separator():
+    """Non-delta messages should use \\n\\n separator."""
+    adapter = _make_adapter()
+    adapter._lark_client = _mock_lark_client(message_id="msg_nd", card_id="card_nd")
+
+    # First message creates the card
+    await adapter.send_message(_make_streaming_message("first"))
+
+    # Non-delta follow-up (is_delta defaults to False)
+    msg2 = _make_streaming_message("second")
+    await adapter.send_message(msg2)
+
+    assert adapter._streams["stream_1"].accumulated == "first\n\nsecond"
+
+
+@pytest.mark.asyncio
 async def test_streaming_with_sql_appended():
     """SQL should be appended to text in streaming messages."""
     adapter = _make_adapter()
@@ -574,3 +623,14 @@ async def test_streaming_reply_in_thread():
     assert result == "msg_stream_reply"
     client.im.v1.message.reply.assert_called_once()
     client.im.v1.message.create.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Tests: supports_streaming
+# ---------------------------------------------------------------------------
+class TestFeishuSupportsStreaming:
+    """Feishu adapter should support streaming."""
+
+    def test_supports_streaming_is_true(self):
+        adapter = _make_adapter()
+        assert adapter.supports_streaming is True

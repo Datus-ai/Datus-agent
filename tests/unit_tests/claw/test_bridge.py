@@ -36,7 +36,7 @@ from datus.claw.models import (
 
 
 class _StubAdapter(ChannelAdapter):
-    """Minimal adapter that records sent messages and reactions."""
+    """Minimal adapter that records sent messages and reactions (no streaming)."""
 
     def __init__(self, bridge=None):
         super().__init__("test_channel", {}, bridge=bridge or MagicMock())
@@ -61,6 +61,14 @@ class _StubAdapter(ChannelAdapter):
 
     async def remove_reaction(self, conversation_id, message_id, emoji, thread_id=None):
         self.reactions_removed.append((conversation_id, message_id, emoji))
+
+
+class _StreamingStubAdapter(_StubAdapter):
+    """Stub adapter that supports streaming (like Feishu)."""
+
+    @property
+    def supports_streaming(self) -> bool:
+        return True
 
 
 def _make_inbound(
@@ -191,7 +199,7 @@ def _make_sse_end() -> SSEEvent:
 class TestChannelBridge:
     @pytest_asyncio.fixture
     async def setup(self):
-        adapter = _StubAdapter()
+        adapter = _StreamingStubAdapter()
         agent_config = MagicMock()
         task_manager = MagicMock()
         bridge = ChannelBridge(agent_config, task_manager)
@@ -832,7 +840,7 @@ class TestVerboseLevels:
 
     @pytest_asyncio.fixture
     async def setup(self):
-        adapter = _StubAdapter()
+        adapter = _StreamingStubAdapter()
         agent_config = MagicMock()
         task_manager = MagicMock()
         bridge = ChannelBridge(agent_config, task_manager)
@@ -1080,7 +1088,7 @@ class TestStreamIdAndFinalize:
 
     @pytest_asyncio.fixture
     async def setup(self):
-        adapter = _StubAdapter()
+        adapter = _StreamingStubAdapter()
         agent_config = MagicMock()
         task_manager = MagicMock()
         bridge = ChannelBridge(agent_config, task_manager)
@@ -1088,7 +1096,7 @@ class TestStreamIdAndFinalize:
 
     @pytest.mark.asyncio
     async def test_stream_id_set_on_outbound(self, setup):
-        """Each outbound message should have stream_id = channel_id + _ + message_id."""
+        """Each outbound message should have stream_id when adapter supports streaming."""
         bridge, adapter, task_manager = setup
 
         mock_task = MagicMock()
@@ -1195,6 +1203,58 @@ class TestStreamIdAndFinalize:
 
         assert len(adapter.sent) == 1
         assert adapter.sent[0].stream_id is None
+
+
+class TestNonStreamingAdapter:
+    """Tests that non-streaming adapters skip deltas and don't get stream_id."""
+
+    @pytest_asyncio.fixture
+    async def setup(self):
+        adapter = _StubAdapter()  # supports_streaming = False
+        agent_config = MagicMock()
+        task_manager = MagicMock()
+        bridge = ChannelBridge(agent_config, task_manager)
+        return bridge, adapter, task_manager
+
+    @pytest.mark.asyncio
+    async def test_no_stream_id_on_non_streaming_adapter(self, setup):
+        """Non-streaming adapters should not get stream_id on outbound messages."""
+        bridge, adapter, task_manager = setup
+
+        mock_task = MagicMock()
+        task_manager.start_chat = AsyncMock(return_value=mock_task)
+
+        async def _fake_consume(task, start_from=None):
+            yield _make_sse_message("result")
+            yield _make_sse_end()
+
+        task_manager.consume_events = _fake_consume
+
+        await bridge.handle_message(_make_inbound("q"), adapter)
+
+        assert len(adapter.sent) == 1
+        assert adapter.sent[0].stream_id is None
+
+    @pytest.mark.asyncio
+    async def test_delta_messages_skipped(self, setup):
+        """Non-streaming adapters should skip delta (thinking) messages."""
+        bridge, adapter, task_manager = setup
+
+        mock_task = MagicMock()
+        task_manager.start_chat = AsyncMock(return_value=mock_task)
+
+        async def _fake_consume(task, start_from=None):
+            yield _make_sse_thinking("analyzing...")
+            yield _make_sse_message("final result")
+            yield _make_sse_end()
+
+        task_manager.consume_events = _fake_consume
+
+        await bridge.handle_message(_make_inbound("q"), adapter)
+
+        # Only the non-delta markdown message should be sent, thinking is skipped
+        assert len(adapter.sent) == 1
+        assert "final result" in adapter.sent[0].text
 
 
 class TestVerboseOverride:

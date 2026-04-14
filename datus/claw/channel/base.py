@@ -34,6 +34,15 @@ class ChannelAdapter(ABC):
         self._bridge = bridge
         self._channel_config = channel_config
 
+    @property
+    def supports_streaming(self) -> bool:
+        """Whether this adapter supports streaming cards (delta accumulation).
+
+        Adapters that return False will not receive delta messages — only
+        complete, fully-rendered messages are forwarded by the bridge.
+        """
+        return False
+
     async def dispatch_message(self, msg: InboundMessage) -> None:
         """Forward an inbound message to the bridge for processing."""
         await self._bridge.handle_message(msg, self, self._channel_config)

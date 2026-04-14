@@ -17,9 +17,11 @@ from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
 from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 from datus.api.models.cli_models import (
+    SSEDataType,
     SSEEndData,
     SSEErrorData,
     SSEEvent,
+    SSEMessageData,
     SSEPingData,
     SSESessionData,
     StreamChatInput,
@@ -35,6 +37,81 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 HEARTBEAT_INTERVAL = 10  # seconds
+
+
+def _is_thinking_delta(event: SSEEvent) -> bool:
+    """Return True if *event* is a thinking delta (consecutive-mergeable)."""
+    if event.event != "message":
+        return False
+    data = event.data
+    if not isinstance(data, SSEMessageData):
+        return False
+    if data.type not in (SSEDataType.CREATE_MESSAGE, SSEDataType.APPEND_MESSAGE):
+        return False
+    content = data.payload.content
+    return bool(content) and all(item.type == "thinking" for item in content)
+
+
+def _coalesce_deltas(events: list[SSEEvent]) -> list[SSEEvent]:
+    """Merge consecutive thinking-delta events into single events.
+
+    Non-delta events pass through unchanged and break any ongoing run of deltas.
+    """
+    if not events:
+        return []
+
+    result: list[SSEEvent] = []
+    run_start: int | None = None  # index of first delta in the current run
+
+    for i, ev in enumerate(events):
+        if _is_thinking_delta(ev):
+            if run_start is None:
+                run_start = i
+        else:
+            # Flush any accumulated delta run before emitting this non-delta
+            if run_start is not None:
+                result.append(_merge_delta_run(events[run_start:i]))
+                run_start = None
+            result.append(ev)
+
+    # Flush trailing delta run
+    if run_start is not None:
+        result.append(_merge_delta_run(events[run_start:]))
+
+    return result
+
+
+def _merge_delta_run(run: list[SSEEvent]) -> SSEEvent:
+    """Merge a non-empty run of thinking-delta events into a single event."""
+    if len(run) == 1:
+        return run[0]
+
+    first = run[0]
+    # Concatenate the text from content[0].payload["content"] of each event
+    parts: list[str] = []
+    for ev in run:
+        data = ev.data
+        assert isinstance(data, SSEMessageData)  # guaranteed by caller
+        for item in data.payload.content:
+            parts.append(item.payload.get("content", ""))
+
+    merged_content_items = copy.deepcopy(first.data.payload.content)  # type: ignore[union-attr]
+    # Replace the first item's text with the concatenated text
+    if merged_content_items:
+        merged_content_items[0].payload["content"] = "".join(parts)
+        # Keep only one content item for the merged event
+        merged_content_items = merged_content_items[:1]
+
+    merged_payload = copy.deepcopy(first.data.payload)  # type: ignore[union-attr]
+    merged_payload.content = merged_content_items
+    merged_data = SSEMessageData(type=first.data.type, payload=merged_payload)  # type: ignore[union-attr]
+
+    return SSEEvent(
+        id=first.id,
+        event=first.event,
+        data=merged_data,
+        timestamp=first.timestamp,
+    )
 
 
 def _fill_database_context(
@@ -200,10 +277,11 @@ class ChatTaskManager:
             if ping_event is not None:
                 yield ping_event
 
-            for event in new_events:
+            coalesced = _coalesce_deltas(new_events)
+            for event in coalesced:
                 yield event
-                cursor += 1
-                task.consumer_offset = cursor
+            cursor += len(new_events)
+            task.consumer_offset = cursor
 
             if is_done and cursor >= len(task.events):
                 break

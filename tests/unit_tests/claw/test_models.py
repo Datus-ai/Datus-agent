@@ -88,6 +88,7 @@ class TestOutboundMessage:
         assert msg.text == ""
         assert msg.sql is None
         assert msg.thread_id is None
+        assert msg.is_delta is False
 
     def test_full_construction(self):
         msg = OutboundMessage(
@@ -96,9 +97,11 @@ class TestOutboundMessage:
             thread_id="t1",
             text="Here is your result",
             sql="SELECT 1",
+            is_delta=True,
         )
         assert msg.sql == "SELECT 1"
         assert msg.thread_id == "t1"
+        assert msg.is_delta is True
 
     def test_serialization_roundtrip(self):
         msg = OutboundMessage(
@@ -121,6 +124,7 @@ class TestChannelConfig:
         assert cfg.namespace is None
         assert cfg.subagent_id is None
         assert cfg.verbose == Verbose.ON
+        assert cfg.stream_response is True
         assert cfg.extra == {}
 
     def test_full_construction(self):
@@ -150,6 +154,10 @@ class TestChannelConfig:
     def test_disabled_channel(self):
         cfg = ChannelConfig(adapter="feishu", enabled=False)
         assert cfg.enabled is False
+
+    def test_stream_response_disabled(self):
+        cfg = ChannelConfig(adapter="feishu", stream_response=False)
+        assert cfg.stream_response is False
 
 
 class TestReactionEvent:

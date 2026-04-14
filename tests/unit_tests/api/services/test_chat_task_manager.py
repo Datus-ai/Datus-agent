@@ -6,10 +6,20 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from datus.api.models.cli_models import (
+    IMessageContent,
+    SSEDataType,
+    SSEEvent,
+    SSEMessageData,
+    SSEMessagePayload,
+    SSEPingData,
+)
 from datus.api.services.chat_task_manager import (
     ChatTask,
     ChatTaskManager,
+    _coalesce_deltas,
     _fill_database_context,
+    _is_thinking_delta,
 )
 
 
@@ -506,6 +516,217 @@ class TestCreateNodeInput:
         assert result.catalog == "cat"
         assert result.database == "db"
         assert result.db_schema == "schema"
+
+
+# ---------------------------------------------------------------------------
+# Helpers for thinking-delta tests
+# ---------------------------------------------------------------------------
+
+
+def _make_thinking_delta(event_id: int, text: str, message_id: str = "m1", data_type=SSEDataType.APPEND_MESSAGE):
+    """Create a thinking-delta SSEEvent."""
+    return SSEEvent(
+        id=event_id,
+        event="message",
+        data=SSEMessageData(
+            type=data_type,
+            payload=SSEMessagePayload(
+                message_id=message_id,
+                role="assistant",
+                content=[IMessageContent(type="thinking", payload={"content": text})],
+            ),
+        ),
+        timestamp="2025-01-01T00:00:00Z",
+    )
+
+
+def _make_markdown_event(event_id: int, text: str, message_id: str = "m1"):
+    """Create a non-delta markdown message SSEEvent."""
+    return SSEEvent(
+        id=event_id,
+        event="message",
+        data=SSEMessageData(
+            type=SSEDataType.APPEND_MESSAGE,
+            payload=SSEMessagePayload(
+                message_id=message_id,
+                role="assistant",
+                content=[IMessageContent(type="markdown", payload={"content": text})],
+            ),
+        ),
+        timestamp="2025-01-01T00:00:00Z",
+    )
+
+
+def _make_ping_event(event_id: int = -1):
+    return SSEEvent(id=event_id, event="ping", data=SSEPingData(), timestamp="2025-01-01T00:00:00Z")
+
+
+# ---------------------------------------------------------------------------
+# _is_thinking_delta tests
+# ---------------------------------------------------------------------------
+
+
+class TestIsThinkingDelta:
+    """Tests for _is_thinking_delta identification."""
+
+    def test_positive_append(self):
+        """Correctly identifies APPEND_MESSAGE thinking delta."""
+        ev = _make_thinking_delta(0, "hello")
+        assert _is_thinking_delta(ev) is True
+
+    def test_positive_create(self):
+        """Correctly identifies CREATE_MESSAGE thinking delta."""
+        ev = _make_thinking_delta(0, "hello", data_type=SSEDataType.CREATE_MESSAGE)
+        assert _is_thinking_delta(ev) is True
+
+    def test_negative_markdown(self):
+        """Markdown content is not a thinking delta."""
+        ev = _make_markdown_event(0, "hello")
+        assert _is_thinking_delta(ev) is False
+
+    def test_negative_update_message(self):
+        """UPDATE_MESSAGE is not a thinking delta."""
+        ev = SSEEvent(
+            id=0,
+            event="message",
+            data=SSEMessageData(
+                type=SSEDataType.UPDATE_MESSAGE,
+                payload=SSEMessagePayload(
+                    message_id="m1",
+                    role="assistant",
+                    content=[IMessageContent(type="thinking", payload={"content": "x"})],
+                ),
+            ),
+            timestamp="t",
+        )
+        assert _is_thinking_delta(ev) is False
+
+    def test_negative_ping_event(self):
+        """Ping event is not a thinking delta."""
+        ev = _make_ping_event()
+        assert _is_thinking_delta(ev) is False
+
+    def test_negative_empty_content(self):
+        """Empty content list is not a thinking delta."""
+        ev = SSEEvent(
+            id=0,
+            event="message",
+            data=SSEMessageData(
+                type=SSEDataType.APPEND_MESSAGE,
+                payload=SSEMessagePayload(message_id="m1", role="assistant", content=[]),
+            ),
+            timestamp="t",
+        )
+        assert _is_thinking_delta(ev) is False
+
+
+# ---------------------------------------------------------------------------
+# _coalesce_deltas tests
+# ---------------------------------------------------------------------------
+
+
+class TestCoalesceDeltas:
+    """Tests for _coalesce_deltas batch merging."""
+
+    def test_empty_list(self):
+        """Empty list returns empty list."""
+        assert _coalesce_deltas([]) == []
+
+    def test_single_delta(self):
+        """Single delta is returned unchanged."""
+        ev = _make_thinking_delta(0, "hi")
+        result = _coalesce_deltas([ev])
+        assert len(result) == 1
+        assert result[0] is ev  # same object, no copy needed
+
+    def test_merges_consecutive(self):
+        """3 consecutive deltas merge into 1 with concatenated text."""
+        evts = [_make_thinking_delta(i, f"part{i}") for i in range(3)]
+        result = _coalesce_deltas(evts)
+        assert len(result) == 1
+        merged = result[0]
+        assert merged.id == 0  # retains first event's id
+        data = merged.data
+        assert isinstance(data, SSEMessageData)
+        assert data.payload.content[0].payload["content"] == "part0part1part2"
+
+    def test_preserves_non_delta(self):
+        """Non-delta events pass through unchanged."""
+        md = _make_markdown_event(0, "hello")
+        ping = _make_ping_event(1)
+        result = _coalesce_deltas([md, ping])
+        assert len(result) == 2
+        assert result[0] is md
+        assert result[1] is ping
+
+    def test_mixed_sequence(self):
+        """delta + non-delta + delta → 3 events (non-delta breaks run)."""
+        d1 = _make_thinking_delta(0, "a")
+        md = _make_markdown_event(1, "break")
+        d2 = _make_thinking_delta(2, "b")
+        result = _coalesce_deltas([d1, md, d2])
+        assert len(result) == 3
+        # First is the lone delta (unchanged)
+        assert result[0] is d1
+        # Second is the markdown
+        assert result[1] is md
+        # Third is the lone delta (unchanged)
+        assert result[2] is d2
+
+    def test_trailing_delta_run(self):
+        """Non-delta followed by multiple deltas → 2 events."""
+        md = _make_markdown_event(0, "start")
+        d1 = _make_thinking_delta(1, "x")
+        d2 = _make_thinking_delta(2, "y")
+        result = _coalesce_deltas([md, d1, d2])
+        assert len(result) == 2
+        assert result[0] is md
+        data = result[1].data
+        assert isinstance(data, SSEMessageData)
+        assert data.payload.content[0].payload["content"] == "xy"
+
+
+# ---------------------------------------------------------------------------
+# Integration: consume_events with coalescing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestConsumeEventsCoalescing:
+    """Integration test: queued deltas are coalesced during consumption."""
+
+    async def test_consume_events_coalesces_queued_deltas(self, monkeypatch):
+        """Multiple queued thinking deltas are yielded as a single merged event."""
+        from datus.api.services import chat_task_manager as ctm
+
+        monkeypatch.setattr(ctm, "HEARTBEAT_INTERVAL", 0.05)
+
+        manager = ChatTaskManager()
+        task = ChatTask(session_id="coalesce-test", asyncio_task=MagicMock())
+        task.status = "running"
+        manager._tasks["coalesce-test"] = task
+
+        # Push 3 thinking deltas while consumer is not running
+        for i in range(3):
+            await manager._push_event(task, _make_thinking_delta(i, f"chunk{i}"))
+
+        # Mark done so consumer exits after draining
+        async with task.condition:
+            task.status = "completed"
+            task.condition.notify_all()
+
+        events = []
+        async for e in manager.consume_events(task, start_from=0):
+            events.append(e)
+
+        # Should receive 1 merged event instead of 3
+        assert len(events) == 1
+        data = events[0].data
+        assert isinstance(data, SSEMessageData)
+        assert data.payload.content[0].payload["content"] == "chunk0chunk1chunk2"
+
+        # cursor should have advanced past all 3 original events
+        assert task.consumer_offset == 3
 
 
 class _StubGenSQLNode:

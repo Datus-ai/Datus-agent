@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from agents.extensions.memory import AdvancedSQLiteSession
 
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+from datus.utils.async_utils import run_async
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import llm_result2json
 from datus.utils.loggings import get_logger
@@ -141,7 +142,7 @@ class SessionManager:
         # Load session from disk if not in memory
         session = self.get_session(session_id) if self.session_exists(session_id) else self._sessions.get(session_id)
         if session:
-            session.clear_session()
+            run_async(session.clear_session())
             logger.debug(f"Cleared session: {session_id}")
         else:
             logger.warning(f"Attempted to clear non-existent session: {session_id}")

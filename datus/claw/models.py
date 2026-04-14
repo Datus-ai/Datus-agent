@@ -58,6 +58,7 @@ class OutboundMessage(BaseModel):
     ir: Optional[MarkdownIR] = Field(None, description="Structured IR for platform-specific rendering")
     sql: Optional[str] = Field(None, description="Generated SQL code block")
     stream_id: Optional[str] = Field(None, description="Groups outbound messages from the same request into one stream")
+    is_delta: bool = Field(False, description="True for token-level delta chunks that should be concatenated directly")
 
 
 class ReactionEvent(BaseModel):
@@ -80,4 +81,5 @@ class ChannelConfig(BaseModel):
     namespace: Optional[str] = Field(None, description="Override default namespace")
     subagent_id: Optional[str] = Field(None, description="Route to a specific sub-agent")
     verbose: Verbose = Field(Verbose.ON, description="Output verbosity level: quiet, brief, detail")
+    stream_response: bool = Field(True, description="Enable token-level streaming for chat responses")
     extra: Dict = Field(default_factory=dict, description="Adapter-specific config (tokens, app_id, etc.)")

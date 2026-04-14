@@ -468,3 +468,14 @@ class TestSlackRenderIr:
         ir = MarkdownIR(text="no styles here")
         result = adapter._render_ir(ir)
         assert result == "no styles here"
+
+
+# ---------------------------------------------------------------------------
+# Tests: supports_streaming
+# ---------------------------------------------------------------------------
+class TestSlackSupportsStreaming:
+    """Slack adapter should not support streaming."""
+
+    def test_supports_streaming_is_false(self):
+        adapter = _make_slack_adapter()
+        assert adapter.supports_streaming is False

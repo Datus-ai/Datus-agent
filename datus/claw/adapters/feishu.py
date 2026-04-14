@@ -77,6 +77,10 @@ class FeishuAdapter(ChannelAdapter):
     encryption, heartbeat, and reconnection.
     """
 
+    @property
+    def supports_streaming(self) -> bool:
+        return True
+
     def __init__(
         self,
         channel_id: str,
@@ -425,7 +429,12 @@ class FeishuAdapter(ChannelAdapter):
             return await self._start_stream(message, text)
         else:
             # Subsequent message — append content to existing card
-            state.accumulated += f"\n\n{text}"
+            # Delta chunks (token-level) are concatenated directly;
+            # complete messages are separated by blank lines.
+            if message.is_delta:
+                state.accumulated += text
+            else:
+                state.accumulated += f"\n\n{text}"
             await self._update_card_content(stream_id)
             return None
 

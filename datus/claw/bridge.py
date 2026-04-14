@@ -191,7 +191,10 @@ class ChannelBridge:
                     elif event.event == "message":
                         outbound = self._event_to_outbound(event.data, msg, verbose, pending_tool_calls)
                         if outbound:
-                            outbound.stream_id = stream_id
+                            if adapter.supports_streaming:
+                                outbound.stream_id = stream_id
+                            elif outbound.is_delta:
+                                continue
                             bot_msg_id = await adapter.send_message(outbound)
                             if bot_msg_id:
                                 await self._track_bot_message(bot_msg_id, session_id, msg)
@@ -318,7 +321,14 @@ class ChannelBridge:
         if not combined_text and not sql:
             return None
 
-        ir = markdown_to_ir(combined_text, heading_style="bold", table_mode="bullets") if combined_text else None
+        # Detect delta messages: events whose content is only thinking chunks.
+        # Delta text is partial and cannot be parsed into rich-text IR.
+        content_items = getattr(data.payload, "content", [])
+        is_delta = bool(content_items) and all(getattr(item, "type", "") == "thinking" for item in content_items)
+
+        ir = None
+        if combined_text and not is_delta:
+            ir = markdown_to_ir(combined_text, heading_style="bold", table_mode="bullets")
 
         return OutboundMessage(
             channel_id=msg.channel_id,
@@ -327,4 +337,5 @@ class ChannelBridge:
             text=combined_text,
             ir=ir,
             sql=sql,
+            is_delta=is_delta,
         )
