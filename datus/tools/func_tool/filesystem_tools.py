@@ -4,7 +4,7 @@
 
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from agents import Tool
 from pydantic import BaseModel, Field
@@ -52,13 +52,33 @@ class FilesystemConfig:
         self.max_file_size = max_file_size
 
 
+PathNormalizer = Callable[[str, Optional[str]], str]
+
+
 class FilesystemFuncTool(BaseTool):
     """Function tool wrapper for filesystem operations"""
 
-    def __init__(self, root_path: str = None, **kwargs):
+    def __init__(
+        self,
+        root_path: str = None,
+        *,
+        path_normalizer: Optional[PathNormalizer] = None,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.root_path = root_path or os.getenv("FILESYSTEM_MCP_PATH", os.path.expanduser("~"))
         self.config = FilesystemConfig(root_path=root_path)
+        self._path_normalizer = path_normalizer
+
+    def _normalize(self, path: str, file_type: Optional[str] = None) -> str:
+        """Apply the configured path normalizer (if any) before sandbox resolution."""
+        if self._path_normalizer is None or not path:
+            return path
+        try:
+            return self._path_normalizer(path, file_type)
+        except Exception as e:
+            logger.warning(f"path_normalizer raised on path={path!r} file_type={file_type!r}: {e}")
+            return path
 
     def available_tools(self) -> List[Tool]:
         """Get all available filesystem tools"""
@@ -113,6 +133,7 @@ class FilesystemFuncTool(BaseTool):
                   - 'result' (Optional[str]): File contents on success.
         """
         try:
+            path = self._normalize(path)
             target_path = self._get_safe_path(path)
 
             if not target_path or not target_path.exists():
@@ -155,27 +176,28 @@ class FilesystemFuncTool(BaseTool):
         try:
             results = {}
 
-            for path in paths:
+            for raw_path in paths:
+                path = self._normalize(raw_path)
                 target_path = self._get_safe_path(path)
                 if not target_path or not target_path.exists():
-                    results[path] = f"File not found: {path}"
+                    results[raw_path] = f"File not found: {raw_path}"
                     continue
 
                 if not target_path.is_file():
-                    results[path] = f"Path is not a file: {path}"
+                    results[raw_path] = f"Path is not a file: {raw_path}"
                     continue
 
                 if not self._is_allowed_file(target_path):
-                    results[path] = f"File type not allowed: {path}"
+                    results[raw_path] = f"File type not allowed: {raw_path}"
                     continue
 
                 try:
                     content = target_path.read_text(encoding="utf-8")
-                    results[path] = content
+                    results[raw_path] = content
                 except UnicodeDecodeError:
-                    results[path] = f"Cannot read binary file: {path}"
+                    results[raw_path] = f"Cannot read binary file: {raw_path}"
                 except PermissionError:
-                    results[path] = f"Permission denied: {path}"
+                    results[raw_path] = f"Permission denied: {raw_path}"
 
             return FuncToolResult(result=results)
 
@@ -200,6 +222,7 @@ class FilesystemFuncTool(BaseTool):
                   - 'result' (Optional[str]): Success message on success.
         """
         try:
+            path = self._normalize(path, file_type)
             target_path = self._get_safe_path(path)
 
             if not target_path:
@@ -243,6 +266,7 @@ class FilesystemFuncTool(BaseTool):
                 except json.JSONDecodeError as e:
                     return FuncToolResult(success=0, error=f"Invalid JSON in edits parameter: {str(e)}")
 
+            path = self._normalize(path)
             target_path = self._get_safe_path(path)
 
             if not target_path or not target_path.exists():

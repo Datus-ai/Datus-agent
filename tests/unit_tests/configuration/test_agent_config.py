@@ -407,9 +407,9 @@ class TestAgentConfigApiSection:
 
 
 class TestAgentConfigKnowledgeHome:
-    """End-to-end tests for the knowledge_home config option."""
+    """End-to-end tests for the knowledge_base_home config option."""
 
-    def _make(self, tmp_path, *, home=None, knowledge_home=None):
+    def _make(self, tmp_path, *, home=None, knowledge_base_home=None):
         from datus.configuration.agent_config import AgentConfig, NodeConfig
 
         kwargs = dict(
@@ -426,23 +426,23 @@ class TestAgentConfigKnowledgeHome:
             },
             skip_init_dirs=True,
         )
-        if knowledge_home is not None:
-            kwargs["knowledge_home"] = knowledge_home
+        if knowledge_base_home is not None:
+            kwargs["knowledge_base_home"] = knowledge_base_home
         return AgentConfig(**kwargs)
 
-    def test_knowledge_home_unset_falls_back_to_home(self, tmp_path):
+    def test_knowledge_base_home_unset_falls_back_to_home(self, tmp_path):
         cfg = self._make(tmp_path)
         # When not configured, KB dirs should live under home
-        assert cfg.path_manager.knowledge_home == cfg.path_manager.datus_home
+        assert cfg.path_manager.knowledge_base_home == cfg.path_manager.datus_home
         assert cfg.path_manager.semantic_models_dir == cfg.path_manager.datus_home / "semantic_models"
 
-    def test_knowledge_home_custom_path_propagates_to_path_manager(self, tmp_path):
+    def test_knowledge_base_home_custom_path_propagates_to_path_manager(self, tmp_path):
         datus_home = tmp_path / "datus"
         kb_home = tmp_path / "shared_kb"
-        cfg = self._make(tmp_path, home=datus_home, knowledge_home=str(kb_home))
+        cfg = self._make(tmp_path, home=datus_home, knowledge_base_home=str(kb_home))
 
-        assert cfg.knowledge_home == str(kb_home)
-        assert cfg.path_manager.knowledge_home == kb_home.resolve()
+        assert cfg.knowledge_base_home == str(kb_home)
+        assert cfg.path_manager.knowledge_base_home == kb_home.resolve()
         # All three KB dirs should live under kb_home
         assert cfg.path_manager.semantic_models_dir == kb_home.resolve() / "semantic_models"
         assert cfg.path_manager.sql_summaries_dir == kb_home.resolve() / "sql_summaries"
@@ -452,18 +452,18 @@ class TestAgentConfigKnowledgeHome:
         assert cfg.path_manager.sessions_dir == datus_home.resolve() / "sessions"
         assert cfg.path_manager.data_dir == datus_home.resolve() / "data"
 
-    def test_override_by_args_updates_knowledge_home(self, tmp_path):
+    def test_override_by_args_updates_knowledge_base_home(self, tmp_path):
         cfg = self._make(tmp_path)
         new_kb = tmp_path / "new_kb"
         # action="namespace" keeps override_by_args from touching current_namespace
-        cfg.override_by_args(knowledge_home=str(new_kb), action="namespace")
+        cfg.override_by_args(knowledge_base_home=str(new_kb), action="namespace")
 
-        assert cfg.knowledge_home == str(new_kb)
-        assert cfg.path_manager.knowledge_home == new_kb.resolve()
+        assert cfg.knowledge_base_home == str(new_kb)
+        assert cfg.path_manager.knowledge_base_home == new_kb.resolve()
         assert cfg.path_manager.semantic_models_dir == new_kb.resolve() / "semantic_models"
 
-    def test_load_agent_config_reads_knowledge_home_from_yaml(self, tmp_path, monkeypatch):
-        """End-to-end: YAML with knowledge_home → load_agent_config → path_manager."""
+    def test_load_agent_config_reads_knowledge_base_home_from_yaml(self, tmp_path, monkeypatch):
+        """End-to-end: YAML with knowledge_base_home → load_agent_config → path_manager."""
         import yaml
 
         from datus.configuration.agent_config_loader import load_agent_config
@@ -474,7 +474,7 @@ class TestAgentConfigKnowledgeHome:
         yaml_content = {
             "agent": {
                 "home": str(datus_home),
-                "knowledge_home": str(kb_home),
+                "knowledge_base_home": str(kb_home),
                 "target": "mock",
                 "models": {
                     "mock": {
@@ -498,7 +498,7 @@ class TestAgentConfigKnowledgeHome:
 
         cfg = load_agent_config(config=str(config_path), reload=True)
 
-        assert cfg.path_manager.knowledge_home == kb_home.resolve()
+        assert cfg.path_manager.knowledge_base_home == kb_home.resolve()
         assert cfg.path_manager.semantic_models_dir == kb_home.resolve() / "semantic_models"
         assert cfg.path_manager.sql_summaries_dir == kb_home.resolve() / "sql_summaries"
         assert cfg.path_manager.ext_knowledge_dir == kb_home.resolve() / "ext_knowledge"

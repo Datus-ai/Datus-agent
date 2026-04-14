@@ -18,7 +18,7 @@ import pandas as pd
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.compare_agentic_node import CompareAgenticNode
 from datus.cli.execution_state import ExecutionInterrupted
-from datus.cli.generation_hooks import GenerationHooks
+from datus.cli.generation_hooks import GenerationHooks, make_kb_path_normalizer
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.compare_node_models import CompareInput
@@ -107,6 +107,7 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
         self._verification_attempt_count: int = 0
 
         self.ext_knowledge_dir = str(agent_config.path_manager.ext_knowledge_path(agent_config.current_database))
+        self.knowledge_base_dir = str(agent_config.path_manager.knowledge_base_home)
 
         from datus.configuration.node_type import NodeType
 
@@ -456,7 +457,10 @@ Do NOT give up. Continue iterating until verify_sql returns success=1.
         try:
             from datus.tools.func_tool import trans_to_function_tool
 
-            self.filesystem_func_tool = FilesystemFuncTool(root_path=self.ext_knowledge_dir)
+            self.filesystem_func_tool = FilesystemFuncTool(
+                root_path=self.knowledge_base_dir,
+                path_normalizer=make_kb_path_normalizer(self.agent_config, default_kind="ext_knowledge"),
+            )
             self.tools.append(trans_to_function_tool(self.filesystem_func_tool.read_file))
             self.tools.append(trans_to_function_tool(self.filesystem_func_tool.edit_file))
             self.tools.append(trans_to_function_tool(self.filesystem_func_tool.write_file))
@@ -502,6 +506,9 @@ Do NOT give up. Continue iterating until verify_sql returns success=1.
 
         context["native_tools"] = ", ".join([tool.name for tool in self.tools]) if self.tools else "None"
         context["ext_knowledge_dir"] = self.ext_knowledge_dir
+        context["knowledge_base_dir"] = self.knowledge_base_dir
+        context["kind_subdir"] = "ext_knowledge"
+        context["current_database"] = self.agent_config.current_database
         context["has_filesystem_tools"] = bool(self.filesystem_func_tool)
         context["has_ask_user_tool"] = self.ask_user_tool is not None
 

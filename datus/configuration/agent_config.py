@@ -342,8 +342,8 @@ class AgentConfig:
         """
         # Resolve home early so dependent helpers can use a stable path manager.
         self.home = kwargs.get("home", "~/.datus")
-        self.knowledge_home = kwargs.get("knowledge_home")
-        self._set_path_manager(self.home, self.knowledge_home)
+        self.knowledge_base_home = kwargs.get("knowledge_base_home")
+        self._set_path_manager(self.home, self.knowledge_base_home)
         models_raw = kwargs["models"]
         self.target = kwargs["target"]
         self.models = {name: load_model_config(cfg) for name, cfg in models_raw.items()}
@@ -758,14 +758,14 @@ class AgentConfig:
 
     def override_by_args(self, **kwargs):
         home_override = kwargs.get("home")
-        knowledge_home_override = kwargs.get("knowledge_home")
+        knowledge_base_home_override = kwargs.get("knowledge_base_home")
         # Use truthy checks for both so empty strings are consistently ignored.
-        if home_override or knowledge_home_override:
+        if home_override or knowledge_base_home_override:
             if home_override:
                 self.home = home_override
-            if knowledge_home_override:
-                self.knowledge_home = knowledge_home_override
-            self._set_path_manager(self.home, self.knowledge_home)
+            if knowledge_base_home_override:
+                self.knowledge_base_home = knowledge_base_home_override
+            self._set_path_manager(self.home, self.knowledge_base_home)
             self._init_dirs()
         # storage_path parameter has been deprecated - data path is now fixed at {home}/data
         if "storage_path" in kwargs and kwargs["storage_path"] is not None:
@@ -837,10 +837,10 @@ class AgentConfig:
 
         return str(self.path_manager.benchmark_dir / config.benchmark_path)
 
-    def _set_path_manager(self, home: str, knowledge_home: Optional[str] = None) -> None:
+    def _set_path_manager(self, home: str, knowledge_base_home: Optional[str] = None) -> None:
         from datus.utils.path_manager import DatusPathManager, set_current_path_manager
 
-        self.path_manager = DatusPathManager(home, knowledge_home=knowledge_home)
+        self.path_manager = DatusPathManager(home, knowledge_base_home=knowledge_base_home)
         set_current_path_manager(self.path_manager)
 
     def _current_db_config(self) -> Dict[str, DbConfig]:

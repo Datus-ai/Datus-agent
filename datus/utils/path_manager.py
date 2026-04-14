@@ -33,19 +33,21 @@ class DatusPathManager:
     def __init__(
         self,
         datus_home: Optional[PathLike] = None,
-        knowledge_home: Optional[PathLike] = None,
+        knowledge_base_home: Optional[PathLike] = None,
     ):
         """
         Initialize the path manager.
 
         Args:
             datus_home: Custom .datus root directory. If None, defaults to ~/.datus
-            knowledge_home: Custom root for knowledge-base directories
+            knowledge_base_home: Custom root for knowledge-base directories
                 (``semantic_models``, ``sql_summaries``, ``ext_knowledge``).
                 If None, falls back to ``datus_home`` so behavior is unchanged.
         """
         self._datus_home = self.resolve_home(datus_home)
-        self._knowledge_home = Path(knowledge_home).expanduser().resolve() if knowledge_home else self._datus_home
+        self._knowledge_base_home = (
+            Path(knowledge_base_home).expanduser().resolve() if knowledge_base_home else self._datus_home
+        )
 
     @staticmethod
     def resolve_home(datus_home: Optional[PathLike] = None) -> Path:
@@ -61,9 +63,9 @@ class DatusPathManager:
         Deprecated compatibility helper.
         Prefer creating a new ``DatusPathManager(new_home)`` and passing it explicitly.
 
-        Also resets ``knowledge_home`` to track ``new_home`` to avoid stale cross-tenant
+        Also resets ``knowledge_base_home`` to track ``new_home`` to avoid stale cross-tenant
         state in long-running processes. Callers that need a separate knowledge root
-        must construct a new ``DatusPathManager(new_home, knowledge_home=...)`` instead.
+        must construct a new ``DatusPathManager(new_home, knowledge_base_home=...)`` instead.
 
         Args:
             new_home: New home directory path (can include ~)
@@ -76,8 +78,8 @@ class DatusPathManager:
             stacklevel=2,
         )
         self._datus_home = self.resolve_home(new_home)
-        # Reset knowledge_home to match so stale KB paths from a prior tenant don't leak.
-        self._knowledge_home = self._datus_home
+        # Reset knowledge_base_home to match so stale KB paths from a prior tenant don't leak.
+        self._knowledge_base_home = self._datus_home
 
     @property
     def datus_home(self) -> Path:
@@ -85,9 +87,9 @@ class DatusPathManager:
         return self._datus_home
 
     @property
-    def knowledge_home(self) -> Path:
+    def knowledge_base_home(self) -> Path:
         """Root directory for knowledge-base data (semantic_models, sql_summaries, ext_knowledge)."""
-        return self._knowledge_home
+        return self._knowledge_base_home
 
     @property
     def conf_dir(self) -> Path:
@@ -164,18 +166,18 @@ class DatusPathManager:
 
     @property
     def semantic_models_dir(self) -> Path:
-        """Semantic models directory: {knowledge_home}/semantic_models"""
-        return self._knowledge_home / "semantic_models"
+        """Semantic models directory: {knowledge_base_home}/semantic_models"""
+        return self._knowledge_base_home / "semantic_models"
 
     @property
     def sql_summaries_dir(self) -> Path:
-        """SQL summaries directory: {knowledge_home}/sql_summaries"""
-        return self._knowledge_home / "sql_summaries"
+        """SQL summaries directory: {knowledge_base_home}/sql_summaries"""
+        return self._knowledge_base_home / "sql_summaries"
 
     @property
     def ext_knowledge_dir(self) -> Path:
-        """ext knowledge directory: {knowledge_home}/ext_knowledge"""
-        return self._knowledge_home / "ext_knowledge"
+        """ext knowledge directory: {knowledge_base_home}/ext_knowledge"""
+        return self._knowledge_base_home / "ext_knowledge"
 
     # Valid directory names mapping
     _VALID_DIR_NAMES = {
@@ -391,7 +393,7 @@ class DatusPathManager:
 # Context-local path manager for legacy helpers that do not receive ``AgentConfig`` directly.
 # Unlike the previous process-wide fallback, this does not leak across threads/tasks.
 # We store the full ``DatusPathManager`` instance (not just the home path string) so that
-# ``knowledge_home`` and any other instance-level state survives the ContextVar round-trip.
+# ``knowledge_base_home`` and any other instance-level state survives the ContextVar round-trip.
 _current_path_manager: ContextVar[Optional["DatusPathManager"]] = ContextVar("datus_current_path_manager", default=None)
 
 
@@ -402,7 +404,7 @@ def set_current_path_manager(
 ) -> Token:
     """Set the current context-local path manager used by ``get_path_manager()``.
 
-    The full ``DatusPathManager`` instance is stored, so ``knowledge_home`` and
+    The full ``DatusPathManager`` instance is stored, so ``knowledge_base_home`` and
     any instance-level state is preserved for implicit callers.
     """
     if path_manager is None and agent_config is not None:

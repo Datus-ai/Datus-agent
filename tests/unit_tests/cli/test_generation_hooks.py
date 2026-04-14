@@ -177,13 +177,21 @@ class TestExtractFilepaths:
 
 
 class TestResolvePath:
-    def _make_hooks(self, broker, sem="/ws/sm", sql="/ws/sql", ext="/ws/ext", namespace="ns_a"):
+    """
+    Tests for ``GenerationHooks._resolve_path``.
+
+    The resolver joins relative paths against ``knowledge_base_home`` after
+    routing them through ``normalize_kb_relative_path`` — so a naked filename
+    written by the LLM (e.g. ``orders.yml``) lands at
+    ``{kb_home}/{type_subdir}/{namespace}/orders.yml``, matching where the
+    FilesystemFuncTool actually wrote the file.
+    """
+
+    def _make_hooks(self, broker, kb="/ws", namespace="ns_a"):
         cfg = MagicMock()
         cfg.current_namespace = namespace
         cfg.path_manager = MagicMock()
-        cfg.path_manager.semantic_model_path = MagicMock(return_value=Path(sem))
-        cfg.path_manager.sql_summary_path = MagicMock(return_value=Path(sql))
-        cfg.path_manager.ext_knowledge_path = MagicMock(return_value=Path(ext))
+        cfg.path_manager.knowledge_base_home = Path(kb)
         return GenerationHooks(broker=broker, agent_config=cfg), cfg
 
     def test_absolute_path_unchanged(self, broker):
@@ -192,76 +200,89 @@ class TestResolvePath:
 
     def test_relative_joined_for_semantic(self, broker):
         h, _ = self._make_hooks(broker)
-        assert h._resolve_path("orders.yml", "semantic") == "/ws/sm/orders.yml"
+        assert h._resolve_path("orders.yml", "semantic") == "/ws/semantic_models/ns_a/orders.yml"
 
     def test_relative_joined_for_sql_summary(self, broker):
         h, _ = self._make_hooks(broker)
-        assert h._resolve_path("q_001.yaml", "sql_summary") == "/ws/sql/q_001.yaml"
+        assert h._resolve_path("q_001.yaml", "sql_summary") == "/ws/sql_summaries/ns_a/q_001.yaml"
 
     def test_relative_joined_for_ext_knowledge(self, broker):
         h, _ = self._make_hooks(broker)
-        assert h._resolve_path("gmv.yaml", "ext_knowledge") == "/ws/ext/gmv.yaml"
+        assert h._resolve_path("gmv.yaml", "ext_knowledge") == "/ws/ext_knowledge/ns_a/gmv.yaml"
 
     def test_nested_relative_joined(self, broker):
         h, _ = self._make_hooks(broker)
-        assert h._resolve_path("metrics/orders_metrics.yml", "semantic") == "/ws/sm/metrics/orders_metrics.yml"
+        assert (
+            h._resolve_path("metrics/orders_metrics.yml", "semantic")
+            == "/ws/semantic_models/ns_a/metrics/orders_metrics.yml"
+        )
+
+    def test_already_prefixed_path_passes_through(self, broker):
+        """LLM that includes the {subdir}/{namespace}/ prefix must not be double-prefixed."""
+        h, _ = self._make_hooks(broker)
+        assert h._resolve_path("semantic_models/ns_a/orders.yml", "semantic") == "/ws/semantic_models/ns_a/orders.yml"
+
+    def test_other_namespace_subdir_passes_through(self, broker):
+        """Explicit cross-namespace authoring is preserved."""
+        h, _ = self._make_hooks(broker)
+        assert (
+            h._resolve_path("semantic_models/other_db/orders.yml", "semantic")
+            == "/ws/semantic_models/other_db/orders.yml"
+        )
 
     def test_empty_path_returns_unchanged(self, broker):
         h, _ = self._make_hooks(broker)
         assert h._resolve_path("", "semantic") == ""
 
-    def test_unknown_kind_leaves_relative_unchanged(self, broker):
+    def test_unknown_kind_resolves_against_kb_home_root(self, broker):
+        """Unknown kind: normalizer adds no prefix, but path still rooted at kb_home."""
         h, _ = self._make_hooks(broker)
-        assert h._resolve_path("orders.yml", "unknown") == "orders.yml"
+        assert h._resolve_path("orders.yml", "unknown") == "/ws/orders.yml"
 
     def test_no_agent_config_leaves_relative_unchanged(self, broker):
         h = GenerationHooks(broker=broker, agent_config=None)
         assert h._resolve_path("orders.yml", "semantic") == "orders.yml"
 
     def test_rejects_traversal_escape(self, broker):
-        """Relative paths that escape the workspace root must be rejected."""
+        """`../../etc/passwd` resolves outside knowledge_base_home and must be rejected."""
         h, _ = self._make_hooks(broker)
         assert h._resolve_path("../../etc/passwd", "semantic") == "../../etc/passwd"
 
-    def test_rejects_traversal_escape_that_normalizes_outside(self, broker):
-        """`a/../../b` normalizes outside the workspace and must be rejected."""
+    def test_allows_traversal_that_stays_inside_kb_home(self, broker):
+        """A path whose normpath stays under knowledge_base_home is allowed."""
         h, _ = self._make_hooks(broker)
-        assert h._resolve_path("a/../../b.yml", "semantic") == "a/../../b.yml"
+        # `metrics/../orders.yml` → prepend → `semantic_models/ns_a/metrics/../orders.yml`
+        # → normpath under /ws → `/ws/semantic_models/ns_a/orders.yml`
+        assert h._resolve_path("metrics/../orders.yml", "semantic") == "/ws/semantic_models/ns_a/orders.yml"
 
-    def test_allows_traversal_that_stays_inside(self, broker):
-        """`metrics/../orders.yml` normalizes inside the workspace and is allowed."""
-        h, _ = self._make_hooks(broker)
-        assert h._resolve_path("metrics/../orders.yml", "semantic") == "/ws/sm/orders.yml"
-
-    def test_rejects_symlink_that_escapes_workspace(self, broker, tmp_path):
-        """A symlink inside the workspace whose target is outside must be rejected."""
-        workspace = tmp_path / "workspace"
-        workspace.mkdir()
+    def test_rejects_symlink_that_escapes_kb_home(self, broker, tmp_path):
+        """A symlink inside the KB whose target is outside must be rejected."""
+        kb_home = tmp_path / "kb"
+        sub = kb_home / "semantic_models" / "ns_a"
+        sub.mkdir(parents=True)
         outside = tmp_path / "outside"
         outside.mkdir()
         (outside / "secret.yml").write_text("x")
-        (workspace / "leak.yml").symlink_to(outside / "secret.yml")
+        (sub / "leak.yml").symlink_to(outside / "secret.yml")
 
-        h, _ = self._make_hooks(broker, sem=str(workspace))
-        # Textually the path looks inside the workspace, but realpath dereferences
-        # the symlink to /…/outside/secret.yml which escapes the workspace root.
+        h, _ = self._make_hooks(broker, kb=str(kb_home))
+        # Textually the path looks inside kb_home, but realpath dereferences the
+        # symlink to /…/outside/secret.yml which escapes the workspace root.
         assert h._resolve_path("leak.yml", "semantic") == "leak.yml"
 
     def test_uses_current_namespace_at_call_time(self, broker):
         """Sub-agent switches change current_namespace; resolution must follow."""
         h, cfg = self._make_hooks(broker, namespace="ns_a")
-        h._resolve_path("orders.yml", "semantic")
-        cfg.path_manager.semantic_model_path.assert_called_with("ns_a")
+        assert h._resolve_path("orders.yml", "semantic") == "/ws/semantic_models/ns_a/orders.yml"
 
         cfg.current_namespace = "ns_b"
-        h._resolve_path("orders.yml", "semantic")
-        cfg.path_manager.semantic_model_path.assert_called_with("ns_b")
+        assert h._resolve_path("orders.yml", "semantic") == "/ws/semantic_models/ns_b/orders.yml"
 
     def test_extract_filepaths_resolves_relative_entries(self, broker):
         h, _ = self._make_hooks(broker)
         result = {"result": {"semantic_model_files": ["orders.yml", "/abs/customers.yml"]}}
         paths = h._extract_filepaths_from_result(result)
-        assert paths == ["/ws/sm/orders.yml", "/abs/customers.yml"]
+        assert paths == ["/ws/semantic_models/ns_a/orders.yml", "/abs/customers.yml"]
 
 
 # ---------------------------------------------------------------------------
@@ -1170,7 +1191,7 @@ class TestResolvePathCommonpathValueError:
         cfg = MagicMock()
         cfg.current_namespace = "ns"
         cfg.path_manager = MagicMock()
-        cfg.path_manager.semantic_model_path = MagicMock(return_value=Path("/ws/sm"))
+        cfg.path_manager.knowledge_base_home = Path("/ws")
         h = GenerationHooks(broker=broker, agent_config=cfg)
         with patch("datus.cli.generation_hooks.os.path.commonpath", side_effect=ValueError("mixed drives")):
             assert h._resolve_path("orders.yml", "semantic") == "orders.yml"

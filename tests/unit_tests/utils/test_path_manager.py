@@ -43,36 +43,36 @@ class TestDatusPathManagerInit:
         pm.update_home(str(new_home))
         assert pm.datus_home == new_home.resolve()
 
-    def test_knowledge_home_defaults_to_datus_home(self, tmp_path):
+    def test_knowledge_base_home_defaults_to_datus_home(self, tmp_path):
         pm = DatusPathManager(datus_home=str(tmp_path / "datus"))
-        assert pm.knowledge_home == pm.datus_home
+        assert pm.knowledge_base_home == pm.datus_home
 
-    def test_knowledge_home_custom_path(self, tmp_path):
+    def test_knowledge_base_home_custom_path(self, tmp_path):
         datus_home = tmp_path / "datus"
         kb_home = tmp_path / "shared_kb"
-        pm = DatusPathManager(datus_home=str(datus_home), knowledge_home=str(kb_home))
+        pm = DatusPathManager(datus_home=str(datus_home), knowledge_base_home=str(kb_home))
         assert pm.datus_home == datus_home.resolve()
-        assert pm.knowledge_home == kb_home.resolve()
+        assert pm.knowledge_base_home == kb_home.resolve()
 
-    def test_knowledge_home_tilde_expansion(self, tmp_path):
-        pm = DatusPathManager(datus_home=str(tmp_path), knowledge_home="~/custom_kb")
-        assert "~" not in str(pm.knowledge_home)
+    def test_knowledge_base_home_tilde_expansion(self, tmp_path):
+        pm = DatusPathManager(datus_home=str(tmp_path), knowledge_base_home="~/custom_kb")
+        assert "~" not in str(pm.knowledge_base_home)
 
-    def test_knowledge_home_accepts_path_object(self, tmp_path):
+    def test_knowledge_base_home_accepts_path_object(self, tmp_path):
         kb_home = tmp_path / "kb"
-        pm = DatusPathManager(datus_home=str(tmp_path), knowledge_home=kb_home)
-        assert pm.knowledge_home == kb_home.resolve()
+        pm = DatusPathManager(datus_home=str(tmp_path), knowledge_base_home=kb_home)
+        assert pm.knowledge_base_home == kb_home.resolve()
 
-    def test_knowledge_home_empty_string_falls_back_to_datus_home(self, tmp_path):
-        pm = DatusPathManager(datus_home=str(tmp_path / "datus"), knowledge_home="")
-        assert pm.knowledge_home == pm.datus_home
+    def test_knowledge_base_home_empty_string_falls_back_to_datus_home(self, tmp_path):
+        pm = DatusPathManager(datus_home=str(tmp_path / "datus"), knowledge_base_home="")
+        assert pm.knowledge_base_home == pm.datus_home
 
-    def test_update_home_resets_knowledge_home_and_warns(self, tmp_path):
+    def test_update_home_resets_knowledge_base_home_and_warns(self, tmp_path):
         import warnings
 
         kb_home = tmp_path / "old_kb"
-        pm = DatusPathManager(datus_home=str(tmp_path / "old_datus"), knowledge_home=str(kb_home))
-        assert pm.knowledge_home == kb_home.resolve()
+        pm = DatusPathManager(datus_home=str(tmp_path / "old_datus"), knowledge_base_home=str(kb_home))
+        assert pm.knowledge_base_home == kb_home.resolve()
 
         new_home = tmp_path / "new_datus"
         with warnings.catch_warnings(record=True) as w:
@@ -81,8 +81,8 @@ class TestDatusPathManagerInit:
 
         # Deprecation warning emitted
         assert any(issubclass(warning.category, DeprecationWarning) for warning in w)
-        # knowledge_home is reset to track the new datus_home (no cross-tenant leak)
-        assert pm.knowledge_home == new_home.resolve()
+        # knowledge_base_home is reset to track the new datus_home (no cross-tenant leak)
+        assert pm.knowledge_base_home == new_home.resolve()
         assert pm.datus_home == new_home.resolve()
 
 
@@ -115,12 +115,12 @@ class TestDatusPathManagerProperties:
     def test_directory_property(self, pm, attr, suffix):
         assert getattr(pm, attr) == pm.datus_home / suffix
 
-    def test_knowledge_dirs_follow_knowledge_home_override(self, tmp_path):
+    def test_knowledge_dirs_follow_knowledge_base_home_override(self, tmp_path):
         datus_home = tmp_path / "datus"
         kb_home = tmp_path / "shared_kb"
-        pm = DatusPathManager(datus_home=str(datus_home), knowledge_home=str(kb_home))
+        pm = DatusPathManager(datus_home=str(datus_home), knowledge_base_home=str(kb_home))
 
-        # These three should live under the custom knowledge_home
+        # These three should live under the custom knowledge_base_home
         assert pm.semantic_models_dir == kb_home.resolve() / "semantic_models"
         assert pm.sql_summaries_dir == kb_home.resolve() / "sql_summaries"
         assert pm.ext_knowledge_dir == kb_home.resolve() / "ext_knowledge"
@@ -398,19 +398,19 @@ class TestResetPathManager:
         reset_path_manager(outer_token)
         assert get_path_manager().datus_home == (Path.home() / ".datus").resolve()
 
-    def test_context_var_preserves_knowledge_home_round_trip(self, tmp_path):
-        """Regression: ContextVar used to store only datus_home string, losing knowledge_home."""
+    def test_context_var_preserves_knowledge_base_home_round_trip(self, tmp_path):
+        """Regression: ContextVar used to store only datus_home string, losing knowledge_base_home."""
         datus_home = tmp_path / "tenant"
         kb_home = tmp_path / "shared_kb"
-        pm = DatusPathManager(datus_home=str(datus_home), knowledge_home=str(kb_home))
+        pm = DatusPathManager(datus_home=str(datus_home), knowledge_base_home=str(kb_home))
 
         token = set_current_path_manager(pm)
         try:
-            # get_path_manager() must return a manager whose knowledge_home matches the original
+            # get_path_manager() must return a manager whose knowledge_base_home matches the original
             retrieved = get_path_manager()
-            assert retrieved.knowledge_home == kb_home.resolve()
+            assert retrieved.knowledge_base_home == kb_home.resolve()
             assert retrieved.datus_home == datus_home.resolve()
-            # And the three KB dirs must reflect the stored knowledge_home, not fall back to datus_home
+            # And the three KB dirs must reflect the stored knowledge_base_home, not fall back to datus_home
             assert retrieved.semantic_models_dir == kb_home.resolve() / "semantic_models"
             assert retrieved.sql_summaries_dir == kb_home.resolve() / "sql_summaries"
             assert retrieved.ext_knowledge_dir == kb_home.resolve() / "ext_knowledge"

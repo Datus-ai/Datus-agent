@@ -14,6 +14,7 @@ from typing import AsyncGenerator, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.cli.execution_state import ExecutionInterrupted
+from datus.cli.generation_hooks import make_kb_path_normalizer
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SemanticNodeResult
@@ -67,6 +68,7 @@ class GenMetricsAgenticNode(AgenticNode):
                 self.max_turns = agentic_node_config.get("max_turns", 30)
 
         self.metrics_dir = str(agent_config.path_manager.semantic_model_path(agent_config.current_database))
+        self.knowledge_base_dir = str(agent_config.path_manager.knowledge_base_home)
 
         from datus.configuration.node_type import NodeType
 
@@ -129,7 +131,10 @@ class GenMetricsAgenticNode(AgenticNode):
         try:
             from datus.tools.func_tool import trans_to_function_tool
 
-            self.filesystem_func_tool = FilesystemFuncTool(root_path=self.metrics_dir)
+            self.filesystem_func_tool = FilesystemFuncTool(
+                root_path=self.knowledge_base_dir,
+                path_normalizer=make_kb_path_normalizer(self.agent_config, default_kind="metric"),
+            )
 
             self.tools.append(trans_to_function_tool(self.filesystem_func_tool.read_file))
             self.tools.append(trans_to_function_tool(self.filesystem_func_tool.read_multiple_files))
@@ -253,6 +258,9 @@ class GenMetricsAgenticNode(AgenticNode):
         context["native_tools"] = ", ".join([tool.name for tool in self.tools]) if self.tools else "None"
         context["mcp_tools"] = ", ".join(list(self.mcp_servers.keys())) if self.mcp_servers else "None"
         context["semantic_model_dir"] = self.metrics_dir
+        context["knowledge_base_dir"] = self.knowledge_base_dir
+        context["kind_subdir"] = "semantic_models"
+        context["current_database"] = self.agent_config.current_database
         context["has_ask_user_tool"] = self.ask_user_tool is not None
 
         # Handle subject_tree context based on whether predefined or query from storage

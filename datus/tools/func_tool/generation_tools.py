@@ -222,18 +222,21 @@ class GenerationTools:
                 f"metric_sqls={metric_sqls}"
             )
 
-            # Resolve absolute paths — use agent_config so knowledge_home override is respected
-            base_dir = str(
-                get_path_manager(agent_config=self.agent_config).semantic_model_path(
-                    self.agent_config.current_namespace
-                )
-            )
-            abs_metric = os.path.join(base_dir, metric_file) if not os.path.isabs(metric_file) else metric_file
-            abs_semantic = (
-                os.path.join(base_dir, semantic_model_file)
-                if semantic_model_file and not os.path.isabs(semantic_model_file)
-                else semantic_model_file
-            )
+            # Resolve absolute paths against knowledge_base_home, applying the same
+            # silent prefix normalization as FilesystemFuncTool so the LLM-reported
+            # path matches where the file was actually written.
+            from datus.cli.generation_hooks import normalize_kb_relative_path
+
+            kb_home = str(get_path_manager(agent_config=self.agent_config).knowledge_base_home)
+            namespace = self.agent_config.current_namespace
+
+            def _resolve(path: str, kind: str) -> str:
+                if not path or os.path.isabs(path):
+                    return path
+                return os.path.normpath(os.path.join(kb_home, normalize_kb_relative_path(path, kind, namespace)))
+
+            abs_metric = _resolve(metric_file, "metric")
+            abs_semantic = _resolve(semantic_model_file, "semantic")
 
             # Auto-sync to Knowledge Base
             sync_result = self._sync_metric_to_db(abs_metric, abs_semantic, metric_sqls)

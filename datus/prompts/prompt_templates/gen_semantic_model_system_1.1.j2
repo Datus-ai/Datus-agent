@@ -15,7 +15,9 @@ When user mentions multiple tables (e.g., "orders, customers, products"), you sh
 {% endif %}
 
 ## Workspace
-- Semantic model directory: {{ semantic_model_dir }}
+- Knowledge base root (`read_file` / `write_file` / `edit_file` operate inside this sandbox): {{ knowledge_base_dir }}
+- Semantic model directory for this database: `{{ kind_subdir }}/{{ current_database }}/`
+  (resolves to `{{ semantic_model_dir }}` on disk)
 
 ## Instructions
 
@@ -73,7 +75,8 @@ Please strictly follow the instructions below:
 
 5. **Save YAML file**:
    - Use `write_file` tool to store the semantic model
-   - File naming: `{table_name}.yml`
+   - **Path**: write under `{{ kind_subdir }}/{{ current_database }}/{table_name}.yml` (relative to the knowledge base root). Example: `{{ kind_subdir }}/{{ current_database }}/orders.yml`.
+   - If you forget the prefix the host will silently normalize it, but always include it so subsequent `read_file` / `edit_file` use the same path.
    - If semantic model already exists, update it with `edit_file` if anything changed
 
 6. **Validate configuration** (MANDATORY - DO NOT SKIP):
@@ -92,8 +95,8 @@ Please strictly follow the instructions below:
 7. **Complete generation** (REQUIRED - ONLY AFTER VALIDATION PASSES):
    - **PREREQUISITE**: `validate_semantic` MUST have returned success. If not, go back to step 6.
    - If `end_semantic_model_generation` tool is available: Call it with the list of generated file paths
-     - **Path Rule**: Use **relative paths** (file names) within `{{ semantic_model_dir }}`. Absolute paths are also accepted; the host will resolve relative entries automatically.
-     - Example: `end_semantic_model_generation(semantic_model_files=["orders.yml", "customers.yml"])`
+     - **Path Rule**: Use the same path you passed to `write_file`, e.g. `{{ kind_subdir }}/{{ current_database }}/{table_name}.yml`. Absolute paths are also accepted; bare filenames (`orders.yml`) are silently normalized but the prefixed form is preferred for clarity.
+     - Example: `end_semantic_model_generation(semantic_model_files=["{{ kind_subdir }}/{{ current_database }}/orders.yml", "{{ kind_subdir }}/{{ current_database }}/customers.yml"])`
    - **CRITICAL**: After all steps complete (including tool call if available), your final response MUST be a JSON object (see Output Format section)
 
 ## Multi-Table Generation Workflow
@@ -174,7 +177,7 @@ data_source:
 
 ### Step 7: Complete Generation (ONLY AFTER VALIDATION PASSES)
 - **PREREQUISITE**: `validate_semantic` MUST have returned success
-- If `end_semantic_model_generation` tool is available: Call it with **ALL generated file paths** (relative file names within `{{ semantic_model_dir }}` preferred; absolute paths are also accepted)
+- If `end_semantic_model_generation` tool is available: Call it with **ALL generated file paths** using the form `{{ kind_subdir }}/{{ current_database }}/{table_name}.yml` (absolute paths are also accepted)
 - **CRITICAL**: Your final response MUST be a JSON object (see Output Format section)
 
 ## Relationship Discovery Strategy
@@ -210,7 +213,7 @@ Generate comprehensive, production-ready semantic models following MetricFlow be
 }
 ```
 
-- `semantic_model_files`: Array of generated file paths. Use **relative file names** within `{{ semantic_model_dir }}` (e.g. `"orders.yml"`); absolute paths are also accepted and the host will leave them unchanged.
+- `semantic_model_files`: Array of generated file paths in the form `{{ kind_subdir }}/{{ current_database }}/{table_name}.yml` (e.g. `"{{ kind_subdir }}/{{ current_database }}/orders.yml"`). Absolute paths are also accepted and left unchanged.
 - `output`: Markdown summary of generated semantic models
 
 The "output" should summarize:

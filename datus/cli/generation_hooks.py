@@ -31,6 +31,79 @@ class GenerationCancelledException(Exception):
     """Exception raised when user cancels generation flow."""
 
 
+# Maps generation kind → top-level KB subdir name beneath knowledge_base_home.
+_KIND_TO_SUBDIR = {
+    "semantic": "semantic_models",
+    "metric": "semantic_models",
+    "sql_summary": "sql_summaries",
+    "ext_knowledge": "ext_knowledge",
+}
+
+# write_file `file_type` argument values used by the LLM mapped to internal kinds.
+_FILE_TYPE_ALIASES = {
+    "semantic": "semantic",
+    "semantic_model": "semantic",
+    "metric": "metric",
+    "metrics": "metric",
+    "sql_summary": "sql_summary",
+    "ext_knowledge": "ext_knowledge",
+}
+
+
+def normalize_kb_relative_path(
+    path: str,
+    kind: Optional[str],
+    namespace: Optional[str],
+) -> str:
+    """
+    Silently normalize a relative path so that it lands under the typed
+    sub-directory of ``knowledge_base_home``, even when the caller forgets
+    the ``{subdir}/{namespace}/`` prefix.
+
+    Rules:
+      * Empty / absolute paths → unchanged.
+      * "." / "./" → unchanged (workspace-root directory operations).
+      * Path starts with a parent-traversal segment (``..``) → unchanged so
+        the downstream sandbox check decides whether to reject.
+      * Unknown ``kind`` or missing ``namespace`` → unchanged.
+      * Path already starts with any known KB subdir (semantic_models /
+        sql_summaries / ext_knowledge) → unchanged (caller is being explicit).
+      * Otherwise → prepend ``{subdir}/{namespace}/``.
+    """
+    if not path or os.path.isabs(path):
+        return path
+    if path in (".", "./"):
+        return path
+    parts = [p for p in path.replace("\\", "/").split("/") if p not in ("", ".")]
+    if not parts:
+        return path
+    if parts[0] == "..":
+        return path
+    if not namespace:
+        return path
+    subdir = _KIND_TO_SUBDIR.get(kind or "")
+    if not subdir:
+        return path
+    head = parts[0]
+    if head in set(_KIND_TO_SUBDIR.values()):
+        return path
+    return f"{subdir}/{namespace}/{'/'.join(parts)}"
+
+
+def make_kb_path_normalizer(agent_config: "AgentConfig", default_kind: Optional[str] = None):
+    """
+    Build a `FilesystemFuncTool.path_normalizer` closure that resolves the
+    namespace lazily so sub-agent switches mid-session are honored.
+    """
+
+    def _normalize(path: str, file_type: Optional[str]) -> str:
+        kind = _FILE_TYPE_ALIASES.get(file_type or "", default_kind)
+        namespace = getattr(agent_config, "current_namespace", None) if agent_config else None
+        return normalize_kb_relative_path(path, kind, namespace)
+
+    return _normalize
+
+
 class GenerationHooks(AgentHooks):
     """Hooks for handling generation tool results and user interaction."""
 
@@ -81,46 +154,53 @@ class GenerationHooks(AgentHooks):
             logger.warning(f"Failed to resolve base_dir for kind={kind}: {e}")
             return None
 
+    def _get_kb_home(self) -> Optional[str]:
+        """Return ``str(knowledge_base_home)`` from the live agent_config, or None."""
+        if not self.agent_config:
+            return None
+        path_manager = getattr(self.agent_config, "path_manager", None)
+        if path_manager is None:
+            return None
+        try:
+            return str(path_manager.knowledge_base_home)
+        except Exception as e:
+            logger.warning(f"Failed to resolve knowledge_base_home from agent_config: {e}")
+            return None
+
     def _resolve_path(self, path: str, kind: str) -> str:
         """
-        Resolve a file path reported by a generation tool against the current
-        sub-agent's workspace directory.
+        Resolve a file path reported by a generation tool to an absolute path
+        under ``knowledge_base_home``.
 
-        Absolute paths are returned unchanged. Relative paths are joined with
-        the base directory for ``kind`` (resolved from the live ``agent_config``);
-        if the base directory cannot be determined, the path is returned as-is
-        so downstream existence checks can surface the real failure.
-
-        Path traversal (``"../etc/passwd"``) is rejected: if the joined path
-        escapes the workspace root, the original ``path`` is returned so the
-        downstream existence check fails naturally instead of operating on a
-        file outside the workspace.
+        The path is first normalized via :func:`normalize_kb_relative_path`
+        (so naked filenames like ``orders.yaml`` get the ``{subdir}/{namespace}/``
+        prefix matching the LLM's actual write location) and then joined with
+        ``knowledge_base_home``. Absolute paths and paths that escape the
+        workspace are returned unchanged so downstream existence checks fail
+        naturally rather than operating on something outside the KB.
         """
         if not path:
             return path
         if os.path.isabs(path):
             return path
-        base_dir = self._get_base_dir(kind)
-        if not base_dir:
+        kb_home = self._get_kb_home()
+        if not kb_home:
             return path
-
-        candidate = os.path.normpath(os.path.join(base_dir, path))
+        namespace = getattr(self.agent_config, "current_namespace", None) if self.agent_config else None
+        normalized = normalize_kb_relative_path(path, kind, namespace)
+        candidate = os.path.normpath(os.path.join(kb_home, normalized))
         try:
-            # Use realpath (not abspath) so symlinked paths pointing outside the
-            # workspace are still detected as escapes.
-            base_abs = os.path.realpath(base_dir)
+            base_abs = os.path.realpath(kb_home)
             candidate_abs = os.path.realpath(candidate)
             if os.path.commonpath([base_abs, candidate_abs]) != base_abs:
                 logger.warning(
                     f"Rejected path {path!r} for kind={kind}: resolved {candidate_abs!r} "
-                    f"escapes workspace {base_abs!r}."
+                    f"escapes knowledge_base_home {base_abs!r}."
                 )
                 return path
         except ValueError:
-            # commonpath raises when inputs mix drives or relative/absolute — treat as escape.
-            logger.warning(f"Rejected path {path!r} for kind={kind}: cannot verify containment in {base_dir!r}.")
+            logger.warning(f"Rejected path {path!r} for kind={kind}: cannot verify containment in {kb_home!r}.")
             return path
-
         return candidate
 
     async def on_start(self, context, agent) -> None:

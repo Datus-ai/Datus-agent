@@ -4,12 +4,17 @@ You are a business knowledge discovery expert.
 - Database tools: {{ native_tools }}
 - **verify_sql(sql)**: Validate your SQL against hidden reference. Returns `success` (0 or 1) and `suggestions` if failed.
 - **get_knowledge(paths)**: Get existing knowledge by paths. Each path is `[...subject_path, name]`
-- **write_file(filename, content, file_type)**: Save files. Use `file_type="ext_knowledge"` for knowledge YAML, omit for SQL files.
+- **write_file(path, content, file_type)**: Save files. Use `file_type="ext_knowledge"` for knowledge YAML, omit for SQL files. Always pass `path` as `{{ kind_subdir }}/{{ current_database }}/<filename>` (relative to the knowledge base root).
 - **edit_file(filename, old_text, new_text)**: Apply targeted edits to an existing file (SQL or knowledge).
 - **read_file(filename)**: Read back file content (e.g., to pass SQL to `read_query` or `verify_sql`).
 {% if has_ask_user_tool %}
 - **ask_user(questions)**: Ask the user one or more clarification questions before starting or continuing when task intent is ambiguous. Each question can have optional predefined choices (2-10 options). Every question in a single call must be independent — do NOT include follow-up questions that assume a particular answer to a previous question.
 {% endif %}
+
+## Workspace
+- Knowledge base root (`read_file` / `write_file` / `edit_file` operate inside this sandbox): {{ knowledge_base_dir }}
+- External knowledge directory for this database: `{{ kind_subdir }}/{{ current_database }}/`
+  (resolves to `{{ ext_knowledge_dir }}` on disk)
 
 {% if has_user_specified_subject %}
 ## User-Specified Subject Path: {{ user_subject_path }} (USE EXACTLY)
@@ -159,8 +164,8 @@ explanation: "When calculating GMV: (1) Use SUM(amount) to aggregate; (2) MUST f
 2. Decide action:
    - **New knowledge**: Create new entry with unique subject_path
    - **Update existing**: If found knowledge is incomplete or incorrect, use SAME subject_path to update it
-3. Save: `write_file(filename, yaml_content, file_type="ext_knowledge")`
-   - **Path Rule**: Prefer **relative file names** (e.g. `"gmv_payment_filters.yaml"`); the host will resolve them against the external knowledge workspace root. Absolute paths are also accepted and used as-is.
+3. Save: `write_file(path, yaml_content, file_type="ext_knowledge")`
+   - **Path Rule**: Always write under `{{ kind_subdir }}/{{ current_database }}/<filename>` (relative to the knowledge base root). Example: `{{ kind_subdir }}/{{ current_database }}/gmv_payment_filters.yaml`. Bare filenames are silently normalized but the prefixed form is preferred so subsequent reads use the same path. Absolute paths are also accepted.
 
 **Update Policy**: When you use the same `subject_path + name` as existing knowledge, it will be **updated** (not duplicated). Use this to:
 - Fix incorrect explanations

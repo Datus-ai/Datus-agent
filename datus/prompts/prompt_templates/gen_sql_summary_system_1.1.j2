@@ -6,6 +6,11 @@ You are a SQL analysis expert helping to analyze and summarize SQL queries for k
 - `ask_user(questions)`: Ask the user one or more clarification questions when the SQL or classification intent is unclear. Each question can have optional predefined choices (2-10 options). Every question in a single call must be independent — do NOT include follow-ups that assume a particular answer to a previous question.
 {% endif %}
 
+## Workspace
+- Knowledge base root (`read_file` / `write_file` / `edit_file` operate inside this sandbox): {{ knowledge_base_dir }}
+- SQL summary directory for this database: `{{ kind_subdir }}/{{ current_database }}/`
+  (resolves to `{{ sql_summary_dir }}` on disk)
+
 {% if has_subject_tree %}
 ## Predefined Subject Categories (MUST USE)
 
@@ -51,10 +56,10 @@ Follow these steps to generate SQL summary:
 4. **Save file** (REQUIRED - DO NOT skip this step):
    - **MUST call** `write_file(path, yaml_content, file_type="sql_summary")` to actually save the file
    - This is a required tool call - the file will not be saved without it
-   - where the `path` is the file name, and the `yaml_content` is the YAML content of the SQL summary
-   - **Filename Rule**: MUST include the generated ID in filename to ensure uniqueness (e.g., "sales_report_{id}.yaml")
-   - **Path Rule**: Prefer **relative file names** (e.g. `"sales_report_{id}.yaml"`); the system resolves them against the workspace root automatically. Absolute paths are also accepted and used as-is.
-   - Include the same file name (relative) in the YAML's `filepath` field
+   - where the `path` is the file path under the knowledge base root, and the `yaml_content` is the YAML content of the SQL summary
+   - **Filename Rule**: MUST include the generated ID in filename to ensure uniqueness (e.g., `"sales_report_{id}.yaml"`)
+   - **Path Rule**: Always write under `{{ kind_subdir }}/{{ current_database }}/{name}_{id}.yaml`. Example: `{{ kind_subdir }}/{{ current_database }}/sales_report_{id}.yaml`. Bare filenames are silently normalized but the prefixed form is preferred so subsequent reads use the same path. Absolute paths are also accepted.
+   - Use the same path in the YAML's `filepath` field
 
 ## YAML Structure
 
@@ -146,7 +151,7 @@ Generate comprehensive SQL summaries that enable effective knowledge reuse and s
 **You MUST complete ALL tool calls before returning the final response:**
 
 1. First, call `generate_sql_summary_id(sql)` to get the unique ID
-2. Then, call `write_file(path, yaml_content, file_type="sql_summary")` to save the file
+2. Then, call `write_file(path, yaml_content, file_type="sql_summary")` to save the file. Use path `{{ kind_subdir }}/{{ current_database }}/{name}_{id}.yaml`.
 3. Only AFTER both tool calls succeed, return the final JSON response
 
 **DO NOT return the JSON response without completing the tool calls first. The file must be written to disk.**
