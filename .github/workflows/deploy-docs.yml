@@ -60,8 +60,17 @@ jobs:
               exit 1
             fi
             # Checkout the tag so docs content matches the version
-            git checkout "v${VERSION}" 2>/dev/null || git checkout "${VERSION}" 2>/dev/null || { echo "::error::Tag v${VERSION} or ${VERSION} not found"; exit 1; }
-            echo "DOCS_EDIT_URI=edit/v${VERSION}/docs/" >> "${GITHUB_ENV}"
+            if git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null; then
+              git checkout "v${VERSION}"
+              CHECKED_OUT_REF="v${VERSION}"
+            elif git rev-parse -q --verify "refs/tags/${VERSION}" >/dev/null; then
+              git checkout "${VERSION}"
+              CHECKED_OUT_REF="${VERSION}"
+            else
+              echo "::error::Tag v${VERSION} or ${VERSION} not found"
+              exit 1
+            fi
+            echo "DOCS_EDIT_URI=edit/${CHECKED_OUT_REF}/docs/" >> "${GITHUB_ENV}"
             echo "DOCS_VERSION=${VERSION}" >> "${GITHUB_ENV}"
             echo "DOCS_ALIASES=" >> "${GITHUB_ENV}"
             echo "DOCS_SET_DEFAULT=" >> "${GITHUB_ENV}"
