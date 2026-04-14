@@ -238,6 +238,24 @@ class GenerationTools:
             abs_metric = _resolve(metric_file, "metric")
             abs_semantic = _resolve(semantic_model_file, "semantic")
 
+            # Pre-flight: refuse to sync a metric file that has no `metric:`
+            # YAML blocks. The LLM occasionally fills the file with markdown
+            # documentation and relies on `create_metric: true` measures
+            # (which never reach the KB vector DB). Catching it here gives a
+            # crisp, actionable error the LLM can act on without a roundtrip
+            # through the deeper sync path.
+            preflight_error = self._validate_metric_file_has_blocks(abs_metric)
+            if preflight_error:
+                return FuncToolResult(
+                    success=0,
+                    error=preflight_error,
+                    result={
+                        "metric_file": metric_file,
+                        "semantic_model_file": semantic_model_file,
+                        "metric_sqls": metric_sqls,
+                    },
+                )
+
             # Auto-sync to Knowledge Base
             sync_result = self._sync_metric_to_db(abs_metric, abs_semantic, metric_sqls)
 
@@ -266,6 +284,38 @@ class GenerationTools:
         except Exception as e:
             logger.error(f"Error completing metric generation: {e}")
             return FuncToolResult(success=0, error=f"Failed to complete generation: {str(e)}")
+
+    @staticmethod
+    def _validate_metric_file_has_blocks(metric_file: str) -> Optional[str]:
+        """Return an actionable error string when ``metric_file`` lacks any
+        ``metric:`` YAML document; return ``None`` when at least one is found.
+
+        The check is intentionally lenient: a file is considered valid as long
+        as it parses as YAML and at least one document carries a top-level
+        ``metric:`` key. We don't validate the metric body here — the
+        downstream sync path does that.
+        """
+        if not metric_file or not os.path.exists(metric_file):
+            return f"Metric file not found: {metric_file!r}"
+        try:
+            with open(metric_file, "r", encoding="utf-8") as f:
+                docs = list(yaml.safe_load_all(f))
+        except yaml.YAMLError as e:
+            return (
+                f"Metric file {metric_file!r} is not valid YAML ({e}). "
+                "Rewrite the file with explicit `metric:` YAML blocks "
+                "(separated by `---`)."
+            )
+        for doc in docs:
+            if isinstance(doc, dict) and "metric" in doc:
+                return None
+        return (
+            f"Metric file {metric_file!r} contains no `metric:` YAML blocks. "
+            "Documentation/markdown is not a metric definition. Rewrite the file "
+            "with explicit `metric:` entries (separated by `---`); do not rely on "
+            "`create_metric: true` on semantic-model measures — those only emit "
+            "metrics at MetricFlow runtime and are NOT synced to the Knowledge Base."
+        )
 
     def _sync_metric_to_db(
         self,

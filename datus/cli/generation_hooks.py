@@ -1002,6 +1002,23 @@ class GenerationHooks(AgentHooks):
                 elif doc and "metric" in doc:
                     metrics_list.append(doc["metric"])
 
+            # Metric-only sync (e.g. end_metric_generation -> _sync_metric_to_db)
+            # benefits from a more actionable error: the LLM frequently writes
+            # markdown/documentation into the metric file and relies on
+            # `create_metric: true` measures, which only generate metrics at
+            # MetricFlow runtime and never reach the KB vector DB. Spell that
+            # out so the LLM can self-correct on retry.
+            if include_metrics and not include_semantic_objects and not metrics_list:
+                return {
+                    "success": False,
+                    "error": (
+                        f"Metric file {file_path!r} contains no `metric:` YAML blocks. "
+                        "Documentation/markdown is not a metric definition. Rewrite the file "
+                        "with explicit `metric:` entries (separated by `---`); do not rely on "
+                        "`create_metric: true` on semantic-model measures — those only emit "
+                        "metrics at MetricFlow runtime and are NOT synced to the Knowledge Base."
+                    ),
+                }
             if not data_source and not metrics_list:
                 return {"success": False, "error": "No data_source or metrics found in YAML file"}
 

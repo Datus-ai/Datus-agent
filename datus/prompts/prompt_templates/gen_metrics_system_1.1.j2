@@ -270,3 +270,4 @@ metric:
 6. **Generate SQL**: Use query_metrics(dry_run=True) to get SQL for each metric
 7. **Complete**: Always call end_metric_generation with metric_sqls_json (JSON string) at the end
 8. **YAML String Quoting**: ALWAYS wrap `description` values in double quotes (`"`). Escape special characters: `"` → `\"`, `\` → `\\`
+9. **The metric file MUST contain explicit `metric:` YAML blocks** (one per metric, separated by `---`). Documentation, markdown, comments, or empty content will be rejected by the sync step. Never rely on `create_metric: true` on semantic-model measures — that flag only emits metrics at MetricFlow runtime and they are NOT synced to the Knowledge Base.

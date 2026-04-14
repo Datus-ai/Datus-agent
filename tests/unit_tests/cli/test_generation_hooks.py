@@ -1210,6 +1210,60 @@ class TestSyncSemanticToDbBooleanCoercion:
 
 
 # ---------------------------------------------------------------------------
+# Tests: _sync_semantic_to_db actionable error for empty metric-only sync
+# ---------------------------------------------------------------------------
+
+
+class TestSyncSemanticToDbMetricOnlyDiagnostic:
+    """Metric-only syncs (e.g. end_metric_generation) emit a tailored error
+    message when the file has no `metric:` blocks, so the LLM can self-correct
+    instead of getting a generic "No valid objects found to sync"."""
+
+    def test_metric_only_sync_with_no_metric_blocks_returns_actionable_error(self, agent_config, tmp_path):
+        empty_metric = tmp_path / "frpm_metrics.yml"
+        empty_metric.write_text(
+            "# Generated metric documentation\n\n## Summary\n\n- avg_percent_eligible_free_ages_5_17\n"
+        )
+
+        with (
+            patch("datus.cli.generation_hooks.SemanticModelRAG"),
+            patch("datus.cli.generation_hooks.MetricRAG"),
+        ):
+            result = GenerationHooks._sync_semantic_to_db(
+                file_path=str(empty_metric),
+                agent_config=agent_config,
+                include_semantic_objects=False,
+                include_metrics=True,
+            )
+
+        assert result["success"] is False
+        assert "no `metric:` YAML blocks" in result["error"]
+        assert "create_metric: true" in result["error"]
+        assert str(empty_metric) in result["error"]
+
+    def test_combined_sync_keeps_generic_error_when_both_missing(self, agent_config, tmp_path):
+        """A combined sync (semantic + metrics) with neither still uses the
+        original generic message; the new diagnostic only fires for the
+        metrics-only branch."""
+        empty = tmp_path / "empty.yml"
+        empty.write_text("# nothing useful\n")
+
+        with (
+            patch("datus.cli.generation_hooks.SemanticModelRAG"),
+            patch("datus.cli.generation_hooks.MetricRAG"),
+        ):
+            result = GenerationHooks._sync_semantic_to_db(
+                file_path=str(empty),
+                agent_config=agent_config,
+                include_semantic_objects=True,
+                include_metrics=True,
+            )
+
+        assert result["success"] is False
+        assert result["error"] == "No data_source or metrics found in YAML file"
+
+
+# ---------------------------------------------------------------------------
 # Tests: _get_base_dir edge cases (resolver missing / exception)
 # ---------------------------------------------------------------------------
 

@@ -178,15 +178,21 @@ class TestEndSemanticModelGeneration:
 
 class TestEndMetricGeneration:
     def _patch_sync(self, generation_tools):
-        """Patch get_path_manager and _sync_metric_to_db for end_metric_generation tests."""
+        """Patch get_path_manager, the pre-flight validator (so legacy tests
+        can pass synthetic paths), and _sync_metric_to_db."""
         return (
             patch("datus.tools.func_tool.generation_tools.get_path_manager"),
+            patch.object(
+                type(generation_tools),
+                "_validate_metric_file_has_blocks",
+                staticmethod(lambda _path: None),
+            ),
             patch.object(generation_tools, "_sync_metric_to_db", return_value={"success": True, "message": "ok"}),
         )
 
     def test_success_basic(self, generation_tools):
-        p1, p2 = self._patch_sync(generation_tools)
-        with p1, p2:
+        p1, p2, p3 = self._patch_sync(generation_tools)
+        with p1, p2, p3:
             result = generation_tools.end_metric_generation(metric_file="/path/metric.yaml")
         assert result.success == 1
         assert result.result["metric_file"] == "/path/metric.yaml"
@@ -195,8 +201,8 @@ class TestEndMetricGeneration:
         assert result.result["sync"]["success"] is True
 
     def test_success_with_semantic_model(self, generation_tools):
-        p1, p2 = self._patch_sync(generation_tools)
-        with p1, p2:
+        p1, p2, p3 = self._patch_sync(generation_tools)
+        with p1, p2, p3:
             result = generation_tools.end_metric_generation(
                 metric_file="/path/metric.yaml", semantic_model_file="/path/model.yaml"
             )
@@ -205,8 +211,8 @@ class TestEndMetricGeneration:
 
     def test_success_with_metric_sqls_json(self, generation_tools):
         metric_sqls_json = json.dumps({"revenue_total": "SELECT SUM(revenue) FROM orders"})
-        p1, p2 = self._patch_sync(generation_tools)
-        with p1, p2:
+        p1, p2, p3 = self._patch_sync(generation_tools)
+        with p1, p2, p3:
             result = generation_tools.end_metric_generation(
                 metric_file="/path/metric.yaml", metric_sqls_json=metric_sqls_json
             )
@@ -214,13 +220,127 @@ class TestEndMetricGeneration:
         assert result.result["metric_sqls"] == {"revenue_total": "SELECT SUM(revenue) FROM orders"}
 
     def test_invalid_metric_sqls_json_ignored(self, generation_tools):
-        p1, p2 = self._patch_sync(generation_tools)
-        with p1, p2:
+        p1, p2, p3 = self._patch_sync(generation_tools)
+        with p1, p2, p3:
             result = generation_tools.end_metric_generation(
                 metric_file="/path/metric.yaml", metric_sqls_json="not valid json"
             )
         assert result.success == 1
         assert result.result["metric_sqls"] == {}
+
+
+class TestEndMetricGenerationPreflight:
+    """Pre-flight validation rejects metric files with no `metric:` blocks
+    BEFORE attempting the deeper sync, so the LLM gets an actionable error
+    instead of an opaque "No valid objects found to sync"."""
+
+    @staticmethod
+    def _patch_path_resolution(tools, kb_root):
+        """Make end_metric_generation treat absolute paths as-is."""
+        mock_pm = Mock()
+        mock_pm.knowledge_base_home = str(kb_root)
+        tools.agent_config.current_namespace = "ns"
+        return patch(
+            "datus.tools.func_tool.generation_tools.get_path_manager",
+            return_value=mock_pm,
+        )
+
+    def test_rejects_missing_metric_file(self, generation_tools, tmp_path):
+        with self._patch_path_resolution(generation_tools, tmp_path):
+            result = generation_tools.end_metric_generation(metric_file=str(tmp_path / "missing.yaml"))
+        assert result.success == 0
+        assert "Metric file not found" in result.error
+
+    def test_rejects_documentation_only_metric_file(self, generation_tools, tmp_path):
+        bad = tmp_path / "frpm_metrics.yml"
+        bad.write_text(
+            "# Generated metric documentation\n\n"
+            "## Summary\n\n"
+            "- avg_percent_eligible_free_ages_5_17\n"
+            "- total_free_meal_count_ages_5_17\n"
+        )
+        with (
+            self._patch_path_resolution(generation_tools, tmp_path),
+            patch.object(generation_tools, "_sync_metric_to_db") as sync_mock,
+        ):
+            result = generation_tools.end_metric_generation(metric_file=str(bad))
+        assert result.success == 0
+        assert "no `metric:` YAML blocks" in result.error
+        assert "create_metric: true" in result.error
+        sync_mock.assert_not_called()
+
+    def test_rejects_invalid_yaml(self, generation_tools, tmp_path):
+        bad = tmp_path / "broken.yml"
+        bad.write_text("name: x\n  bad-indent: : :\n")
+        with (
+            self._patch_path_resolution(generation_tools, tmp_path),
+            patch.object(generation_tools, "_sync_metric_to_db") as sync_mock,
+        ):
+            result = generation_tools.end_metric_generation(metric_file=str(bad))
+        assert result.success == 0
+        assert "not valid YAML" in result.error
+        sync_mock.assert_not_called()
+
+    def test_accepts_file_with_metric_block(self, generation_tools, tmp_path):
+        good = tmp_path / "good_metric.yml"
+        good.write_text("metric:\n  name: revenue_total\n  type: measure_proxy\n  type_params:\n    measure: revenue\n")
+        with (
+            self._patch_path_resolution(generation_tools, tmp_path),
+            patch.object(generation_tools, "_sync_metric_to_db", return_value={"success": True, "message": "ok"}),
+        ):
+            result = generation_tools.end_metric_generation(metric_file=str(good))
+        assert result.success == 1
+
+
+class TestValidateMetricFileHasBlocks:
+    """Direct unit tests for the metric-file pre-flight validator."""
+
+    def test_returns_error_for_missing_file(self):
+        from datus.tools.func_tool.generation_tools import GenerationTools
+
+        msg = GenerationTools._validate_metric_file_has_blocks("/nonexistent/m.yaml")
+        assert msg is not None and "not found" in msg
+
+    def test_returns_error_for_documentation_only(self, tmp_path):
+        from datus.tools.func_tool.generation_tools import GenerationTools
+
+        f = tmp_path / "doc.yml"
+        f.write_text("# just docs\n- bullet\n- bullet2\n")
+        msg = GenerationTools._validate_metric_file_has_blocks(str(f))
+        assert msg is not None
+        assert "no `metric:` YAML blocks" in msg
+
+    def test_returns_error_for_invalid_yaml(self, tmp_path):
+        from datus.tools.func_tool.generation_tools import GenerationTools
+
+        f = tmp_path / "broken.yml"
+        f.write_text(": : :\n  - oops\n  not yaml")
+        msg = GenerationTools._validate_metric_file_has_blocks(str(f))
+        assert msg is not None
+        assert "not valid YAML" in msg
+
+    def test_returns_none_for_single_metric_block(self, tmp_path):
+        from datus.tools.func_tool.generation_tools import GenerationTools
+
+        f = tmp_path / "ok.yml"
+        f.write_text("metric:\n  name: x\n  type: measure_proxy\n")
+        assert GenerationTools._validate_metric_file_has_blocks(str(f)) is None
+
+    def test_returns_none_for_multi_metric_yaml(self, tmp_path):
+        from datus.tools.func_tool.generation_tools import GenerationTools
+
+        f = tmp_path / "multi.yml"
+        f.write_text("metric:\n  name: a\n  type: measure_proxy\n---\nmetric:\n  name: b\n  type: measure_proxy\n")
+        assert GenerationTools._validate_metric_file_has_blocks(str(f)) is None
+
+    def test_data_source_only_is_rejected(self, tmp_path):
+        """A file with only `data_source:` (no `metric:`) is not a metric file."""
+        from datus.tools.func_tool.generation_tools import GenerationTools
+
+        f = tmp_path / "ds.yml"
+        f.write_text("data_source:\n  name: orders\n")
+        msg = GenerationTools._validate_metric_file_has_blocks(str(f))
+        assert msg is not None and "no `metric:` YAML blocks" in msg
 
 
 class TestSyncMetricToDb:
