@@ -1,5 +1,6 @@
 """Tests for datus.api.services.chat_service — chat session management."""
 
+import asyncio
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -203,23 +204,37 @@ class TestChatServiceStreamChat:
         tm = ChatTaskManager()
         svc = ChatService(agent_config=real_agent_config, task_manager=tm, project_id="test-proj")
 
-        # Mock _create_node to avoid real storage initialization in the background task
-        mock_node = MagicMock()
-        mock_node.session_id = "dup-stream"
-        with patch.object(tm, "_create_node", return_value=mock_node):
-            # Start first chat
+        release_first_task = asyncio.Event()
+
+        class BlockingNode:
+            """Keep the first task running so duplicate-session handling is deterministic."""
+
+            def __init__(self, session_id: str):
+                self.session_id = session_id
+
+            async def execute_stream_with_interactions(self, action_history):
+                if False:
+                    yield None
+                await release_first_task.wait()
+
+            async def get_last_turn_usage(self):
+                return None
+
+        # Mock _create_node to avoid real storage initialization and keep the task active.
+        with patch.object(tm, "_create_node", return_value=BlockingNode("dup-stream")):
             request1 = StreamChatInput(message="first", session_id="dup-stream")
-            async for _ in svc.stream_chat(request1):
-                break
+            stream1 = svc.stream_chat(request1)
+            first_event = await anext(stream1)
+            assert first_event.event == "session"
+            assert "dup-stream" in tm._tasks
 
-            # Second should yield error event
             request2 = StreamChatInput(message="second", session_id="dup-stream")
-            events = []
-            async for event in svc.stream_chat(request2):
-                events.append(event)
-                break
-
-        assert len(events) >= 1
-        # First event should be an error
-        assert events[0].event == "error"
-        await tm.shutdown()
+            stream2 = svc.stream_chat(request2)
+            try:
+                duplicate_event = await anext(stream2)
+                assert duplicate_event.event == "error"
+            finally:
+                release_first_task.set()
+                await stream1.aclose()
+                await stream2.aclose()
+                await tm.shutdown()
