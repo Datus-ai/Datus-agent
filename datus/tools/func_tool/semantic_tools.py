@@ -9,6 +9,7 @@ Provides unified interface to semantic layer services through adapters.
 Tools delegate to registered semantic adapters while leveraging unified storage for performance.
 """
 
+import json
 from typing import List, Optional
 
 from agents import Tool
@@ -407,11 +408,21 @@ class SemanticTools:
                 )
             )
 
-            # Format result
+            # Format result — sanitize metadata to ensure JSON-serializable
+            # Adapters (e.g. MetricFlow) may put non-serializable objects
+            # like DataflowPlan into metadata; convert them to strings.
+            safe_metadata = {}
+            for k, v in (result.metadata or {}).items():
+                try:
+                    json.dumps(v)
+                    safe_metadata[k] = v
+                except (TypeError, ValueError):
+                    safe_metadata[k] = str(v)
+
             result_dict = {
                 "columns": result.columns,
                 "data": self.compressor.compress(result.data),
-                "metadata": result.metadata,
+                "metadata": safe_metadata,
             }
 
             return FuncToolResult(
