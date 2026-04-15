@@ -169,7 +169,7 @@ class TestSqlSummaryAgenticNodeExecution:
 
         # Should include TOOL actions from real tool execution
         tool_actions = [a for a in actions if a.role == ActionRole.TOOL]
-        assert len(tool_actions) >= 2  # PROCESSING + SUCCESS for list_directory
+        assert len(tool_actions) >= 2  # PROCESSING + SUCCESS for glob
 
         # Verify tool was actually executed
         tool_success_actions = [a for a in tool_actions if a.status == ActionStatus.SUCCESS]

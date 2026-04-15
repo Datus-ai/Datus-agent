@@ -531,18 +531,6 @@ class TestFilesystemFuncToolKbNormalizerRoundTrip:
         tool.write_file("orders.yml", "payload\n", file_type="semantic_model")
         assert tool.read_file("semantic_models/school_db/orders.yml").result == "payload\n"
 
-    def test_read_multiple_files_mixed_naked_and_prefixed(self, tmp_path):
-        """read_multiple_files applies the same normalizer to each path in the batch."""
-        tool, _ = self._make(tmp_path, "semantic", "school_db")
-        tool.write_file("orders.yml", "A\n", file_type="semantic_model")
-        tool.write_file("customers.yml", "B\n", file_type="semantic_model")
-
-        result = tool.read_multiple_files(["orders.yml", "semantic_models/school_db/customers.yml"])
-        assert result.success == 1
-        # Keyed by the caller's raw path so the LLM can correlate the response.
-        assert result.result["orders.yml"] == "A\n"
-        assert result.result["semantic_models/school_db/customers.yml"] == "B\n"
-
     def test_edit_file_after_naked_write(self, tmp_path):
         tool, _ = self._make(tmp_path, "sql_summary", "school_db")
         tool.write_file("q_001.yaml", "name: original\n", file_type="sql_summary")

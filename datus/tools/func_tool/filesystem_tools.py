@@ -195,52 +195,6 @@ class FilesystemFuncTool(BaseTool):
             logger.error(f"Error reading file {path}: {str(e)}")
             return FuncToolResult(success=0, error=str(e))
 
-    def read_multiple_files(self, paths: List[str]) -> FuncToolResult:
-        """
-        Read the contents of multiple files.
-
-        Args:
-            paths: List of file paths to read
-
-        Returns:
-            dict: A dictionary with the execution result, containing these keys:
-                  - 'success' (int): 1 for success, 0 for failure.
-                  - 'error' (Optional[str]): Error message on failure.
-                  - 'result' (Optional[dict]): Dictionary mapping paths to their contents on success.
-        """
-        try:
-            results = {}
-
-            for raw_path in paths:
-                path = self._normalize(raw_path)
-                target_path = self._get_safe_path(path)
-                if not target_path or not target_path.exists():
-                    results[raw_path] = f"File not found: {raw_path}"
-                    continue
-
-                if not target_path.is_file():
-                    results[raw_path] = f"Path is not a file: {raw_path}"
-                    continue
-
-                if not self._is_allowed_file(target_path):
-                    results[raw_path] = f"File type not allowed: {raw_path}"
-                    continue
-
-                try:
-                    content = target_path.read_text(encoding="utf-8")
-                    results[raw_path] = content
-                except UnicodeDecodeError:
-                    results[raw_path] = f"Cannot read binary file: {raw_path}"
-                except PermissionError:
-                    results[raw_path] = f"Permission denied: {raw_path}"
-
-            return FuncToolResult(result=results)
-
-        except Exception as e:
-            logger.error(f"Error reading multiple files: {str(e)}")
-            return FuncToolResult(success=0, error=str(e))
-
-
     def write_file(self, path: str, content: str, file_type: str = "") -> FuncToolResult:
         """
         Create a new file or overwrite an existing file.

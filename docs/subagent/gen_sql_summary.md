@@ -84,7 +84,7 @@ agentic_nodes:
 ```
 
 **Built-in configurations** (automatically enabled):
-- **Tools**: Filesystem tools (`read_file`, `write_file`, `edit_file`, `list_directory`) and `generate_sql_summary_id`
+- **Tools**: Filesystem tools (`read_file`, `write_file`, `edit_file`, `glob`) and `generate_sql_summary_id`
 - **Hooks**: User confirmation workflow in interactive mode
 - **System Prompt**: Built-in template version 1.0
 - **Workspace**: `~/.datus/data/{namespace}/reference_sql`

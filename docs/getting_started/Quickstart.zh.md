@@ -229,10 +229,10 @@ Datus 会展示其思考过程，说明分析步骤，并给出详细报告。
     +---------------------------------------------------------------------------------------------------------------------------------------+
     |                                                    Action Stream                                                                      |
     +=======================================================================================================================================+
-    | 🔧 Tool call - search_files('{"path": "/Users/yt/.datus/workspace", "pattern": ...') - ✓                                            |
+    | 🔧 Tool call - glob('{"pattern": "*", "path": "/Users/yt/.datus/workspace"}') - ✓                                                    |
     |     No matches found (0.5s)                                                                                                          |
     | 💬 Thinking: Let me check the directory structure to see what's available:                                                           |
-    | 🔧 Tool call - list_directory('{"path": "/Users/yt/.datus/workspace"}') - ✓ (0.5s)                                                   |
+    | 🔧 Tool call - glob('{"pattern": "**/*", "path": "/Users/yt/.datus/workspace"}') - ✓ (0.5s)                                          |
     | 💬 Thinking: Now let me analyze the gold-Bitcoin correlation by examining the data and performing a comprehensive correlation        |
     | analysis:                                                                                                                            |
     | 🔧 Tool call - read_query('{"sql": "SELECT \n    COUNT(*) as total_records,\n...') - ✓                                               |
