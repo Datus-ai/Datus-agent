@@ -768,11 +768,11 @@ class TestSyncToStorage:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _sync_reference_sql_to_db
+# Tests: _sync_reference_sql_to_db / _sync_reference_template_to_db
 # ---------------------------------------------------------------------------
 
 
-class TestSyncReferenceTemplateToDb:
+class TestSyncReferenceSqlToDb:
     def test_valid_template_yaml(self, tmp_path):
         import yaml
 
@@ -849,6 +849,140 @@ class TestSyncReferenceTemplateToDb:
 
         assert result["success"] is True
         assert "already exists" in result["message"]
+
+
+class TestSyncReferenceTemplateToDb:
+    def test_valid_template_yaml(self, tmp_path):
+        import yaml
+
+        yaml_file = tmp_path / "tpl.yaml"
+        yaml_file.write_text(
+            yaml.dump(
+                {
+                    "sql": "SELECT * FROM t WHERE x = '{{val}}'",
+                    "name": "test_reference_template",
+                    "summary": "Test reference template",
+                    "search_text": "test reference template val",
+                    "subject_tree": "Sales/Revenue",
+                    "comment": "Helpful template",
+                    "tags": "test",
+                }
+            )
+        )
+
+        mock_config = MagicMock()
+
+        with (
+            patch("datus.storage.reference_template.store.ReferenceTemplateRAG") as mock_rag_cls,
+            patch(
+                "datus.storage.reference_template.init_utils.exists_reference_templates",
+                return_value=set(),
+            ),
+            patch(
+                "datus.storage.reference_template.init_utils.gen_reference_template_id",
+                return_value="new_tpl_id",
+            ),
+            patch(
+                "datus.storage.reference_template.template_file_processor.extract_template_parameters",
+                return_value=[{"name": "val", "type": "string"}],
+            ),
+        ):
+            mock_rag = mock_rag_cls.return_value
+            mock_rag.upsert_batch = MagicMock()
+
+            result = GenerationHooks._sync_reference_template_to_db(str(yaml_file), mock_config)
+
+        assert result["success"] is True
+        assert "Synced reference template" in result["message"]
+        mock_rag.upsert_batch.assert_called_once()
+        stored = mock_rag.upsert_batch.call_args.args[0][0]
+        assert stored == {
+            "id": "new_tpl_id",
+            "name": "test_reference_template",
+            "template": "SELECT * FROM t WHERE x = '{{val}}'",
+            "parameters": json.dumps([{"name": "val", "type": "string"}]),
+            "comment": "Helpful template",
+            "summary": "Test reference template",
+            "search_text": "test reference template val",
+            "filepath": str(yaml_file),
+            "subject_path": ["Sales", "Revenue"],
+            "tags": "test",
+        }
+
+    def test_missing_sql_field(self, tmp_path):
+        import yaml
+
+        yaml_file = tmp_path / "bad.yaml"
+        yaml_file.write_text(yaml.dump({"name": "no_sql"}))
+
+        result = GenerationHooks._sync_reference_template_to_db(str(yaml_file), MagicMock())
+
+        assert result["success"] is False
+        assert "No reference_template data" in result["error"]
+
+    def test_blank_sql_returns_error(self, tmp_path):
+        import yaml
+
+        yaml_file = tmp_path / "blank.yaml"
+        yaml_file.write_text(yaml.dump({"sql": "   ", "name": "blank"}))
+
+        result = GenerationHooks._sync_reference_template_to_db(str(yaml_file), MagicMock())
+
+        assert result["success"] is False
+        assert "non-empty string" in result["error"]
+
+    def test_duplicate_skipped(self, tmp_path):
+        import yaml
+
+        yaml_file = tmp_path / "dup.yaml"
+        yaml_file.write_text(yaml.dump({"sql": "SELECT 1", "name": "dup_tpl"}))
+
+        mock_config = MagicMock()
+        with (
+            patch("datus.storage.reference_template.store.ReferenceTemplateRAG"),
+            patch(
+                "datus.storage.reference_template.init_utils.exists_reference_templates",
+                return_value={"existing_tpl_id"},
+            ),
+            patch(
+                "datus.storage.reference_template.init_utils.gen_reference_template_id",
+                return_value="existing_tpl_id",
+            ),
+        ):
+            result = GenerationHooks._sync_reference_template_to_db(str(yaml_file), mock_config)
+
+        assert result["success"] is True
+        assert "already exists" in result["message"]
+
+    def test_storage_error_returns_failure(self, tmp_path):
+        import yaml
+
+        yaml_file = tmp_path / "boom.yaml"
+        yaml_file.write_text(yaml.dump({"sql": "SELECT 1", "name": "boom_tpl"}))
+
+        mock_config = MagicMock()
+        with (
+            patch("datus.storage.reference_template.store.ReferenceTemplateRAG") as mock_rag_cls,
+            patch(
+                "datus.storage.reference_template.init_utils.exists_reference_templates",
+                return_value=set(),
+            ),
+            patch(
+                "datus.storage.reference_template.init_utils.gen_reference_template_id",
+                return_value="boom_id",
+            ),
+            patch(
+                "datus.storage.reference_template.template_file_processor.extract_template_parameters",
+                return_value=[],
+            ),
+        ):
+            mock_rag = mock_rag_cls.return_value
+            mock_rag.upsert_batch.side_effect = RuntimeError("boom")
+
+            result = GenerationHooks._sync_reference_template_to_db(str(yaml_file), mock_config)
+
+        assert result["success"] is False
+        assert result["error"] == "boom"
 
 
 # ---------------------------------------------------------------------------
