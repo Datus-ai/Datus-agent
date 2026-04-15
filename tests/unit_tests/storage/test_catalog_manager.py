@@ -474,6 +474,77 @@ class TestUpdateSemanticModel:
         # Should not raise
         updater.update_semantic_model(old_values, update_values)
 
+    def test_update_semantic_model_description_propagates_non_not_found_exception(self):
+        """Non-NOT_FOUND DatusException from update_entry on table must propagate."""
+        import pytest
+
+        updater = self._make_updater()
+
+        class FakeStorage:
+            def update_entry(self, entry_id, values):
+                raise DatusException(
+                    ErrorCode.STORAGE_INVALID_ARGUMENT,
+                    message_args={"error_message": "bad input"},
+                )
+
+        updater.semantic_model_storage = FakeStorage()
+
+        old_values = {"table_name": "orders", "semantic_model_name": "orders_model"}
+        update_values = {"description": "desc"}
+
+        with pytest.raises(DatusException) as excinfo:
+            updater.update_semantic_model(old_values, update_values)
+        assert excinfo.value.code == ErrorCode.STORAGE_INVALID_ARGUMENT
+
+    def test_update_semantic_model_columns_propagates_non_not_found_exception(self):
+        """Non-NOT_FOUND DatusException from update_entry on a column must propagate."""
+        import pytest
+
+        updater = self._make_updater()
+
+        class FakeStorage:
+            def update_entry(self, entry_id, values):
+                raise DatusException(
+                    ErrorCode.STORAGE_FAILED,
+                    message_args={"error_message": "backend down"},
+                )
+
+        updater.semantic_model_storage = FakeStorage()
+
+        old_values = {
+            "table_name": "orders",
+            "semantic_model_name": "orders_model",
+            "dimensions": [{"name": "region", "description": "old"}],
+        }
+        update_values = {"dimensions": [{"name": "region", "description": "new"}]}
+
+        with pytest.raises(DatusException) as excinfo:
+            updater.update_semantic_model(old_values, update_values)
+        assert excinfo.value.code == ErrorCode.STORAGE_FAILED
+
+    def test_update_semantic_model_columns_swallows_not_found(self):
+        """STORAGE_ENTRY_NOT_FOUND from column update is logged and swallowed."""
+        updater = self._make_updater()
+
+        class FakeStorage:
+            def update_entry(self, entry_id, values):
+                raise DatusException(
+                    ErrorCode.STORAGE_ENTRY_NOT_FOUND,
+                    message_args={"entry_id": entry_id},
+                )
+
+        updater.semantic_model_storage = FakeStorage()
+
+        old_values = {
+            "table_name": "orders",
+            "semantic_model_name": "orders_model",
+            "measures": [{"name": "total", "agg": "SUM"}],
+        }
+        update_values = {"measures": [{"name": "total", "agg": "AVERAGE"}]}
+
+        # Should not raise — NOT_FOUND is intentionally tolerated for partial drift
+        updater.update_semantic_model(old_values, update_values)
+
     def test_update_semantic_model_dimensions(self):
         """update_semantic_model updates dimension columns via update_entry."""
         updater = self._make_updater()

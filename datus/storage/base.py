@@ -538,13 +538,15 @@ class BaseEmbeddingStore(StorageBase):
                     },
                 )
 
-        # Re-embed when the vector source column is updated
+        # Re-embed when the vector source column is updated.
+        # Only overwrite the vector when we got a non-None embedding back; on failure or empty
+        # source text, leave the existing vector untouched so the row stays usable.
         if self.vector_source_name in update_values:
             new_text = update_values[self.vector_source_name]
             if new_text:
                 try:
                     vectors = self.model.model.generate_embeddings([str(new_text)])
-                    if vectors and len(vectors) > 0:
+                    if vectors and len(vectors) > 0 and vectors[0] is not None:
                         update_values[self.vector_column_name] = vectors[0]
                 except Exception as e:
                     logger.warning(f"Failed to re-embed on update for {self.table_name}: {e}")

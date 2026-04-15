@@ -558,6 +558,59 @@ class TestUpdate:
 
         assert original_vector != updated_vector, "Vector should change when vector source text changes"
 
+    def test_update_keeps_existing_vector_when_re_embed_returns_none(self, tmp_path, monkeypatch):
+        """If the embedding model returns [None] (e.g., BadRequestError), preserve the existing vector
+        rather than writing None into the vector column."""
+        store = self._make_store(tmp_path)
+        store.store_batch([self._make_row(1)])
+
+        original = store.query_with_filter(where=eq("identifier", "id_1"), select_fields=["vector"])
+        original_vector = original.column("vector")[0].as_py()
+
+        # Patch the underlying embedding function on the class to bypass pydantic field guards.
+        embedding_cls = type(store.model.model)
+        monkeypatch.setattr(
+            embedding_cls,
+            "generate_embeddings",
+            lambda self, texts: [None] * len(list(texts)),
+        )
+
+        store.update(
+            where=eq("identifier", "id_1"),
+            update_values={"definition": "Some new definition that would otherwise be re-embedded"},
+        )
+
+        updated = store.query_with_filter(where=eq("identifier", "id_1"), select_fields=["vector"])
+        updated_vector = updated.column("vector")[0].as_py()
+
+        # Vector must be unchanged — never overwritten with None
+        assert updated_vector == original_vector
+        assert updated_vector is not None
+
+    def test_update_keeps_existing_vector_when_re_embed_raises(self, tmp_path, monkeypatch):
+        """If the embedding model raises, the update still proceeds and the existing vector is kept."""
+        store = self._make_store(tmp_path)
+        store.store_batch([self._make_row(1)])
+
+        original = store.query_with_filter(where=eq("identifier", "id_1"), select_fields=["vector"])
+        original_vector = original.column("vector")[0].as_py()
+
+        def _boom(self, texts):
+            raise RuntimeError("embedding backend down")
+
+        embedding_cls = type(store.model.model)
+        monkeypatch.setattr(embedding_cls, "generate_embeddings", _boom)
+
+        store.update(
+            where=eq("identifier", "id_1"),
+            update_values={"definition": "Yet another definition that triggers embedding"},
+        )
+
+        updated = store.query_with_filter(where=eq("identifier", "id_1"), select_fields=["vector"])
+        updated_vector = updated.column("vector")[0].as_py()
+
+        assert updated_vector == original_vector
+
 
 # ---------------------------------------------------------------------------
 # query_with_filter

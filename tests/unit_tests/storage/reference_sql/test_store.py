@@ -655,8 +655,8 @@ class TestRenameReferenceSqlSubjectTreeYaml:
         finally:
             os.unlink(tmp_file.name)
 
-    def test_rename_only_does_not_touch_subject_tree(self, ref_sql_storage):
-        """Renaming without moving should leave YAML subject_tree untouched."""
+    def test_rename_only_syncs_name_to_yaml(self, ref_sql_storage):
+        """Renaming without moving should update the YAML ``name`` field but leave subject_tree alone."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8") as tmp_file:
             yaml.dump(
                 {
@@ -685,6 +685,76 @@ class TestRenameReferenceSqlSubjectTreeYaml:
                 updated_doc = yaml.safe_load(f)
             # YAML subject_tree untouched when only the entry name changes
             assert updated_doc["subject_tree"] == "Analytics/Reports"
+            # YAML name must reflect the new entry name
+            assert updated_doc["name"] == "new_name"
+            # Other fields preserved
+            assert updated_doc["sql"] == "SELECT 1"
+        finally:
+            os.unlink(tmp_file.name)
+
+    def test_rename_only_skips_yaml_when_name_does_not_match(self, ref_sql_storage):
+        """If the YAML's ``name`` does not match old_name, the file is not rewritten (safety guard)."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8") as tmp_file:
+            yaml.dump(
+                {
+                    "name": "different_name",  # intentionally NOT old_name
+                    "sql": "SELECT 1",
+                    "summary": "summary",
+                    "search_text": "search",
+                    "subject_tree": "Analytics/Reports",
+                },
+                tmp_file,
+            )
+
+        try:
+            item = _make_sql_item(7, subject_path=["Analytics", "Reports"], name="old_name")
+            item["filepath"] = tmp_file.name
+            ref_sql_storage.batch_store_sql([item])
+
+            result = ref_sql_storage.rename(
+                ["Analytics", "Reports", "old_name"],
+                ["Analytics", "Reports", "new_name"],
+            )
+            assert result is True
+
+            with open(tmp_file.name, encoding="utf-8") as f:
+                updated_doc = yaml.safe_load(f)
+            # Mismatched name must not be clobbered
+            assert updated_doc["name"] == "different_name"
+        finally:
+            os.unlink(tmp_file.name)
+
+    def test_rename_move_and_rename_syncs_both_subject_tree_and_name(self, ref_sql_storage):
+        """A combined move + rename should update both subject_tree and name."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8") as tmp_file:
+            yaml.dump(
+                {
+                    "name": "old_name",
+                    "sql": "SELECT 1",
+                    "summary": "summary",
+                    "search_text": "search",
+                    "subject_tree": "Analytics/Reports",
+                },
+                tmp_file,
+            )
+
+        try:
+            ref_sql_storage.subject_tree.find_or_create_path(["Analytics", "Dashboards"])
+
+            item = _make_sql_item(8, subject_path=["Analytics", "Reports"], name="old_name")
+            item["filepath"] = tmp_file.name
+            ref_sql_storage.batch_store_sql([item])
+
+            result = ref_sql_storage.rename(
+                ["Analytics", "Reports", "old_name"],
+                ["Analytics", "Dashboards", "new_name"],
+            )
+            assert result is True
+
+            with open(tmp_file.name, encoding="utf-8") as f:
+                updated_doc = yaml.safe_load(f)
+            assert updated_doc["subject_tree"] == "Analytics/Dashboards"
+            assert updated_doc["name"] == "new_name"
         finally:
             os.unlink(tmp_file.name)
 

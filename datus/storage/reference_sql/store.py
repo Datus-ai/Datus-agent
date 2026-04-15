@@ -289,12 +289,20 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
 
         result = super().rename(old_path, new_path)
 
-        # Sync subject_tree to YAML only when the parent path actually changes
+        # Sync subject_tree to YAML only when the parent path actually changes;
+        # also sync the top-level ``name`` field when the entry basename changes.
         old_parent = old_path[:-1] if len(old_path) >= 2 else []
         new_parent = new_path[:-1] if len(new_path) >= 2 else []
-        if result and old_parent != new_parent and filepaths:
+        old_name = old_path[-1] if old_path else ""
+        new_name = new_path[-1] if new_path else ""
+        if result and filepaths:
+            parent_changed = old_parent != new_parent
+            name_changed = old_name != new_name
             for filepath in filepaths:
-                self._sync_reference_sql_subject_tree_to_yaml(filepath, new_parent)
+                if parent_changed:
+                    self._sync_reference_sql_subject_tree_to_yaml(filepath, new_parent)
+                if name_changed:
+                    self._sync_reference_sql_name_to_yaml(filepath, old_name, new_name)
 
         return result
 
@@ -323,6 +331,38 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
             logger.info(f"Updated subject_tree in reference SQL yaml file: {filepath}")
         except Exception as e:
             logger.error(f"Failed to sync subject_tree to yaml {filepath}: {e}")
+
+    def _sync_reference_sql_name_to_yaml(self, filepath: str, old_name: str, new_name: str) -> None:
+        """Update the top-level ``name`` field in a reference SQL YAML file after a rename.
+
+        Only rewrites the file when the existing ``name`` matches ``old_name``; this avoids
+        clobbering files that contain a different entry but happen to share a filepath.
+
+        Args:
+            filepath: Path to the YAML file
+            old_name: The previous entry name (for safety check)
+            new_name: The new entry name
+        """
+        if not os.path.exists(filepath):
+            return
+
+        try:
+            with open(filepath, encoding="utf-8") as f:
+                doc = yaml.safe_load(f)
+
+            if not isinstance(doc, dict):
+                return
+            if doc.get("name") != old_name:
+                return
+
+            doc["name"] = new_name
+
+            with open(filepath, "w", encoding="utf-8") as f:
+                yaml.safe_dump(doc, f, allow_unicode=True, sort_keys=False)
+
+            logger.info(f"Updated name '{old_name}' -> '{new_name}' in reference SQL yaml file: {filepath}")
+        except Exception as e:
+            logger.error(f"Failed to sync name to yaml {filepath}: {e}")
 
     def sync_yaml_subject_tree_for_subtree(self, root_node_id: int) -> None:
         """Sync the ``subject_tree`` field in reference SQL YAML files for a subtree.

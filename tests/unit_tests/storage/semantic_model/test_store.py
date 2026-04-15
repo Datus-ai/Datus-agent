@@ -527,7 +527,7 @@ class TestUpdateEntryYamlSync:
             tmp.close()
 
             # Call private method directly — should log error but not raise
-            sem_storage._sync_semantic_update_to_yaml(tmp.name, "table", "orders", {"description": "new"})
+            sem_storage._sync_semantic_update_to_yaml(tmp.name, "table", "orders", "orders", {"description": "new"})
         finally:
             os.unlink(tmp.name)
 
@@ -559,6 +559,59 @@ class TestUpdateEntryYamlSync:
                 reloaded = list(yaml.safe_load_all(f))
             # Original region dimension should be untouched
             assert reloaded[0]["data_source"]["dimensions"][0]["description"] == "Region"
+        finally:
+            os.unlink(tmp.name)
+
+    def test_sync_yaml_multi_data_source_targets_matching_doc(self, sem_storage):
+        """When a YAML file holds multiple data_source docs, only the matching one is rewritten."""
+        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False, encoding="utf-8")
+        try:
+            docs = [
+                {"data_source": {"name": "customers", "description": "Customers original"}},
+                {"data_source": {"name": "orders", "description": "Orders original"}},
+            ]
+            yaml.safe_dump_all(docs, tmp, allow_unicode=True, sort_keys=False)
+            tmp.close()
+
+            table_obj = _make_table_object("orders", description="Orders original", yaml_path=tmp.name)
+            sem_storage.store_batch([table_obj])
+
+            sem_storage.update_entry("table:orders", {"description": "Orders updated"})
+
+            with open(tmp.name, encoding="utf-8") as f:
+                reloaded = list(yaml.safe_load_all(f))
+
+            ds_by_name = {d["data_source"]["name"]: d["data_source"] for d in reloaded}
+            assert ds_by_name["orders"]["description"] == "Orders updated"
+            # The unrelated data_source must not be touched
+            assert ds_by_name["customers"]["description"] == "Customers original"
+        finally:
+            os.unlink(tmp.name)
+
+    def test_sync_yaml_multi_data_source_no_match_does_not_mutate(self, sem_storage):
+        """When no data_source name matches and >1 docs exist, no doc is rewritten."""
+        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False, encoding="utf-8")
+        try:
+            docs = [
+                {"data_source": {"name": "customers", "description": "Customers original"}},
+                {"data_source": {"name": "products", "description": "Products original"}},
+            ]
+            yaml.safe_dump_all(docs, tmp, allow_unicode=True, sort_keys=False)
+            tmp.close()
+
+            # The vector-DB row points at this file, but its name "orders" matches no doc
+            table_obj = _make_table_object("orders", description="Orders DB", yaml_path=tmp.name)
+            sem_storage.store_batch([table_obj])
+
+            sem_storage.update_entry("table:orders", {"description": "Should not appear"})
+
+            with open(tmp.name, encoding="utf-8") as f:
+                reloaded = list(yaml.safe_load_all(f))
+
+            ds_by_name = {d["data_source"]["name"]: d["data_source"] for d in reloaded}
+            # Both unrelated docs must remain pristine
+            assert ds_by_name["customers"]["description"] == "Customers original"
+            assert ds_by_name["products"]["description"] == "Products original"
         finally:
             os.unlink(tmp.name)
 
