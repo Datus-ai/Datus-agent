@@ -284,7 +284,7 @@ class SubAgentTaskTool:
         """Create a new AgenticNode instance for the given subagent type.
 
         Builtin types (SYS_SUB_AGENTS + gen_sql/gen_report/explore) are created
-        via ``_create_builtin_node`` with ``_as_subagent=True`` so their
+        via ``_create_builtin_node`` with ``is_subagent=True`` so their
         constructors skip SubAgentTaskTool setup entirely.
 
         Custom agents go through ``Node.new_instance`` which doesn't support
