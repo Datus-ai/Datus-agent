@@ -125,6 +125,7 @@ def agent_config() -> AgentConfig:
     agent_config = load_acceptance_config(namespace="bird_sqlite")
     if not agent_config.current_database and agent_config.service.databases:
         agent_config.current_database = "california_schools"
+    Path(agent_config.rag_storage_path()).mkdir(parents=True, exist_ok=True)
     return agent_config
 
 
@@ -637,8 +638,6 @@ class TestNode:
         """Test schema linking node"""
         # Take first test case from the list
         _current_database = agent_config.current_database
-        print("$$$$", agent_config)
-        print("$$$$", search_metrics_input)
         try:
             for case in search_metrics_input:
                 input_data = SearchMetricsInput(**case["input"])
@@ -652,7 +651,6 @@ class TestNode:
                 assert node.type == NodeType.TYPE_SEARCH_METRICS
                 assert isinstance(node.input, SearchMetricsInput)
                 result = node.run()
-                print("$$$$", result)
                 logger.debug(f"Search metrics node result: {result}")
                 assert node.status == "completed", f"Node execution failed with status: {node.status}, {node.result}"
                 assert isinstance(result, SearchMetricsResult), "Result type mismatch"
