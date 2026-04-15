@@ -1060,9 +1060,12 @@ agent:
       max_turns: 30     # Optional: defaults to 30
 
   scheduler:
-    airflow_url: "${AIRFLOW_URL}"
+    name: airflow_prod
+    type: airflow
+    api_base_url: "${AIRFLOW_URL}"
     username: "${AIRFLOW_USER}"
     password: "${AIRFLOW_PASSWORD}"
+    dags_folder: "${AIRFLOW_DAGS_DIR}"
 ```
 
 **Requirements:**
@@ -1085,8 +1088,8 @@ graph LR
 
 | Tool | Description |
 |------|-------------|
-| `submit_sql_job` | Submit a scheduled SQL job with cron expression |
-| `submit_sparksql_job` | Submit a scheduled SparkSQL job |
+| `submit_sql_job` | Submit a scheduled SQL job from a `.sql` file with cron expression |
+| `submit_sparksql_job` | Submit a scheduled SparkSQL job from a `.sql` file |
 | `trigger_scheduler_job` | Manually trigger an existing job run |
 | `pause_job` | Pause a scheduled job |
 | `resume_job` | Resume a paused job |

@@ -55,17 +55,19 @@ graph LR
 
 提交新作业时：
 
-1. LLM 从用户请求中识别 SQL 查询、连接名和调度计划
+1. LLM 从用户请求中识别 SQL 文件路径、连接名和调度计划
 2. 调用 `list_scheduler_connections` 发现可用的 Airflow 连接
-3. `submit_sql_job` 或 `submit_sparksql_job` 使用指定的 cron 调度创建 Airflow DAG
+3. `submit_sql_job` 或 `submit_sparksql_job` 读取 `.sql` 文件并使用指定的 cron 调度创建 Airflow DAG
 4. 作业 ID 和状态以 `scheduler_result` 形式返回
+
+> **注意：** `submit_sql_job` 和 `submit_sparksql_job` 需要一个 `sql_file_path` 参数，指向主机上已有的 `.sql` 文件。scheduler 节点不包含文件系统工具（write_file 等），因此 SQL 文件必须在调用 scheduler subagent 之前准备好。
 
 ## 可用工具
 
 | 工具 | 说明 |
 |------|------|
-| `submit_sql_job` | 提交带 cron 表达式和 Airflow 连接的定时 SQL 作业 |
-| `submit_sparksql_job` | 提交定时 SparkSQL 作业 |
+| `submit_sql_job` | 从 `.sql` 文件提交带 cron 表达式和 Airflow 连接的定时 SQL 作业 |
+| `submit_sparksql_job` | 从 `.sql` 文件提交定时 SparkSQL 作业 |
 | `trigger_scheduler_job` | 手动立即触发一次现有作业运行 |
 | `pause_job` | 暂停定时作业（停止后续运行） |
 | `resume_job` | 恢复已暂停的作业 |
@@ -89,9 +91,14 @@ agent:
       max_turns: 30     # 可选：默认为 30
 
   scheduler:
-    airflow_url: "${AIRFLOW_URL}"
+    name: airflow_prod
+    type: airflow
+    api_base_url: "${AIRFLOW_URL}"       # 例如 http://localhost:8080/api/v1
     username: "${AIRFLOW_USER}"
     password: "${AIRFLOW_PASSWORD}"
+    dags_folder: "${AIRFLOW_DAGS_DIR}"   # 生成的 DAG 文件写入目录
+    dag_discovery_timeout: 60            # 可选：等待 DAG 发现的超时秒数
+    dag_discovery_poll_interval: 5       # 可选：轮询间隔秒数
 ```
 
 ### 配置参数
@@ -100,15 +107,21 @@ agent:
 |------|------|------|--------|
 | `model` | 否 | 使用的 LLM 模型 | 使用已配置的默认模型 |
 | `max_turns` | 否 | 最大对话轮数 | 30 |
-| `scheduler.airflow_url` | 是 | Airflow Web 服务器 URL | — |
+| `scheduler.name` | 是 | 此调度器的人类可读名称 | — |
+| `scheduler.type` | 是 | 调度器类型（目前为 `airflow`） | — |
+| `scheduler.api_base_url` | 是 | Airflow REST API 基础 URL | — |
 | `scheduler.username` | 是 | Airflow 登录用户名 | — |
 | `scheduler.password` | 是 | Airflow 登录密码 | — |
+| `scheduler.dags_folder` | 是 | 生成的 DAG 文件目录 | — |
+| `scheduler.dag_discovery_timeout` | 否 | 等待 Airflow 发现新 DAG 的超时秒数 | 60 |
+| `scheduler.dag_discovery_poll_interval` | 否 | DAG 发现的轮询间隔 | 5 |
 
 所有敏感值支持 `${ENV_VAR}` 环境变量替换。
 
 **前置条件**：
 - 已安装 `datus-scheduler-core` 和 `datus-scheduler-airflow` 包
 - Agent 主机可访问 Airflow 实例
+- `dags_folder` 目录对 agent 进程可写，且 Airflow scheduler 可访问
 
 ## 常用 Cron 表达式
 
@@ -158,7 +171,7 @@ agent:
 ### 提交每日 SQL 作业
 
 ```bash
-/scheduler 提交一个每天早上 8 点运行的日常 SQL 作业，SQL 为 SELECT SUM(revenue) FROM sales，使用 postgres_prod 连接
+/scheduler 提交一个每天早上 8 点运行的日常 SQL 作业，SQL 文件为 /opt/sql/daily_revenue.sql，使用 postgres_prod 连接
 ```
 
 ### 暂停运行中的作业

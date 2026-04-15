@@ -1058,9 +1058,12 @@ agent:
       max_turns: 30     # 可选：默认为 30
 
   scheduler:
-    airflow_url: "${AIRFLOW_URL}"
+    name: airflow_prod
+    type: airflow
+    api_base_url: "${AIRFLOW_URL}"
     username: "${AIRFLOW_USER}"
     password: "${AIRFLOW_PASSWORD}"
+    dags_folder: "${AIRFLOW_DAGS_DIR}"
 ```
 
 **前置条件**：
@@ -1083,8 +1086,8 @@ graph LR
 
 | 工具 | 说明 |
 |------|------|
-| `submit_sql_job` | 提交带 cron 表达式的定时 SQL 作业 |
-| `submit_sparksql_job` | 提交定时 SparkSQL 作业 |
+| `submit_sql_job` | 从 `.sql` 文件提交带 cron 表达式的定时 SQL 作业 |
+| `submit_sparksql_job` | 从 `.sql` 文件提交定时 SparkSQL 作业 |
 | `trigger_scheduler_job` | 手动触发一次现有作业运行 |
 | `pause_job` | 暂停定时作业 |
 | `resume_job` | 恢复已暂停的作业 |

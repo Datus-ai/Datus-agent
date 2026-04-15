@@ -55,17 +55,19 @@ graph LR
 
 When submitting a new job:
 
-1. LLM identifies the SQL query, connection, and schedule from the user request
+1. LLM identifies the SQL file path, connection, and schedule from the user request
 2. `list_scheduler_connections` is called to discover available Airflow connections
-3. `submit_sql_job` or `submit_sparksql_job` creates the Airflow DAG with the specified cron schedule
+3. `submit_sql_job` or `submit_sparksql_job` reads the `.sql` file and creates the Airflow DAG with the specified cron schedule
 4. The job ID and status are returned in `scheduler_result`
+
+> **Note:** `submit_sql_job` and `submit_sparksql_job` require a `sql_file_path` pointing to an existing `.sql` file on the host. The scheduler node does not include filesystem tools (write_file, etc.), so SQL files must be prepared before invoking the scheduler subagent.
 
 ## Available Tools
 
 | Tool | Description |
 |------|-------------|
-| `submit_sql_job` | Submit a scheduled SQL job with cron expression and Airflow connection |
-| `submit_sparksql_job` | Submit a scheduled SparkSQL job |
+| `submit_sql_job` | Submit a scheduled SQL job from a `.sql` file with cron expression and Airflow connection |
+| `submit_sparksql_job` | Submit a scheduled SparkSQL job from a `.sql` file |
 | `trigger_scheduler_job` | Manually trigger an immediate run of an existing job |
 | `pause_job` | Pause a scheduled job (stops future runs) |
 | `resume_job` | Resume a previously paused job |
@@ -89,9 +91,14 @@ agent:
       max_turns: 30     # Optional: defaults to 30
 
   scheduler:
-    airflow_url: "${AIRFLOW_URL}"
+    name: airflow_prod
+    type: airflow
+    api_base_url: "${AIRFLOW_URL}"       # e.g. http://localhost:8080/api/v1
     username: "${AIRFLOW_USER}"
     password: "${AIRFLOW_PASSWORD}"
+    dags_folder: "${AIRFLOW_DAGS_DIR}"   # where generated DAG files are written
+    dag_discovery_timeout: 60            # Optional: seconds to wait for DAG discovery
+    dag_discovery_poll_interval: 5       # Optional: polling interval in seconds
 ```
 
 ### Configuration Parameters
@@ -100,15 +107,21 @@ agent:
 |-----------|----------|-------------|---------|
 | `model` | No | LLM model to use | Uses default configured model |
 | `max_turns` | No | Maximum conversation turns | 30 |
-| `scheduler.airflow_url` | Yes | Airflow web server URL | — |
+| `scheduler.name` | Yes | Human-readable name for this scheduler | — |
+| `scheduler.type` | Yes | Scheduler type (currently `airflow`) | — |
+| `scheduler.api_base_url` | Yes | Airflow REST API base URL | — |
 | `scheduler.username` | Yes | Airflow login username | — |
 | `scheduler.password` | Yes | Airflow login password | — |
+| `scheduler.dags_folder` | Yes | Directory for generated DAG files | — |
+| `scheduler.dag_discovery_timeout` | No | Seconds to wait for Airflow to discover new DAGs | 60 |
+| `scheduler.dag_discovery_poll_interval` | No | Polling interval for DAG discovery | 5 |
 
 All sensitive values support `${ENV_VAR}` substitution.
 
 **Requirements:**
 - `datus-scheduler-core` and `datus-scheduler-airflow` packages installed
 - Airflow instance accessible from the agent host
+- `dags_folder` writable by the agent process and accessible by the Airflow scheduler
 
 ## Common Cron Expressions
 
@@ -158,7 +171,7 @@ For monitoring queries, `scheduler_result` contains run history and log content:
 ### Submit a daily SQL job
 
 ```bash
-/scheduler Submit a daily SQL job that runs SELECT SUM(revenue) FROM sales at 8am every morning using the postgres_prod connection
+/scheduler Submit a daily SQL job from /opt/sql/daily_revenue.sql at 8am every morning using the postgres_prod connection
 ```
 
 ### Pause a running job
