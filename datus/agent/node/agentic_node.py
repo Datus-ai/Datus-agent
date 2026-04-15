@@ -372,8 +372,8 @@ class AgenticNode(Node):
                     last_turn = turn_usage[-1] if isinstance(turn_usage, list) else turn_usage
                     if isinstance(last_turn, dict):
                         return last_turn.get("total_tokens", 0)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to get turn usage for token counting: {e}")
 
         return 0
 
@@ -692,7 +692,7 @@ class AgenticNode(Node):
     def _setup_sub_agent_task_tool(self):
         """Setup SubAgentTaskTool based on subagents config or node default.
 
-        Skipped when ``_as_subagent`` is True (nodes created by SubAgentTaskTool)
+        Skipped when ``_is_subagent`` is True (nodes created by SubAgentTaskTool)
         to enforce strict 2-level depth — subagent nodes never get their own task tool.
         """
         if self._is_subagent:
