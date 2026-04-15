@@ -111,56 +111,55 @@ class TestUpdateColumnsFieldMapping:
     are passed to _update_columns in update_semantic_model.
     """
 
-    def _make_updater(self):
-        """Create a bare CatalogUpdater for pure method tests."""
+    def _make_updater(self, fake_storage):
+        """Create a bare CatalogUpdater wired to ``fake_storage`` for pure method tests."""
         obj = object.__new__(CatalogUpdater)
         obj.datasource_id = "test_datasource"
+        obj.semantic_model_storage = fake_storage
         return obj
 
     def test_type_to_column_type_mapping_detects_change(self):
         """column_type field maps from 'type' key in source data — verified via real method."""
-        updater = self._make_updater()
         calls = []
 
         class FakeStorage:
-            def update(self, where, values, unique_filter=None):
-                calls.append(values)
+            def update_entry(self, entry_id, values):
+                calls.append((entry_id, values))
+
+        updater = self._make_updater(FakeStorage())
 
         old = [{"name": "col1", "type": "string", "description": "A column"}]
         new = [{"name": "col1", "type": "integer", "description": "A column"}]
 
         updater._update_columns(
-            storages=[FakeStorage()],
-            catalog_name="cat",
-            database_name="db",
-            schema_name="sch",
             table_name="t",
+            semantic_model_name="t_model",
             old_columns=old,
             new_columns=new,
             kind_field="is_dimension",
             allowed_fields={"description", "expr", "column_type"},
         )
         assert len(calls) == 1
-        assert calls[0].get("column_type") == "integer"
-        assert "description" not in calls[0]  # unchanged
+        entry_id, values = calls[0]
+        assert entry_id == "column:t.col1"
+        assert values.get("column_type") == "integer"
+        assert "description" not in values  # unchanged
 
     def test_no_changes_when_values_identical(self):
         """When old and new columns are identical, _update_columns makes no updates."""
-        updater = self._make_updater()
         calls = []
 
         class FakeStorage:
-            def update(self, where, values, unique_filter=None):
-                calls.append(values)
+            def update_entry(self, entry_id, values):
+                calls.append((entry_id, values))
+
+        updater = self._make_updater(FakeStorage())
 
         item = [{"name": "col1", "type": "string", "description": "desc", "expr": "x"}]
 
         updater._update_columns(
-            storages=[FakeStorage()],
-            catalog_name="cat",
-            database_name="db",
-            schema_name="sch",
             table_name="t",
+            semantic_model_name="t_model",
             old_columns=item,
             new_columns=item,
             kind_field="is_dimension",
@@ -170,56 +169,56 @@ class TestUpdateColumnsFieldMapping:
 
     def test_description_change_detected(self):
         """A changed description field triggers an update with only the changed value."""
-        updater = self._make_updater()
         calls = []
 
         class FakeStorage:
-            def update(self, where, values, unique_filter=None):
-                calls.append(values)
+            def update_entry(self, entry_id, values):
+                calls.append((entry_id, values))
+
+        updater = self._make_updater(FakeStorage())
 
         old = [{"name": "col1", "type": "string", "description": "old desc"}]
         new = [{"name": "col1", "type": "string", "description": "new desc"}]
 
         updater._update_columns(
-            storages=[FakeStorage()],
-            catalog_name="cat",
-            database_name="db",
-            schema_name="sch",
             table_name="t",
+            semantic_model_name="t_model",
             old_columns=old,
             new_columns=new,
             kind_field="is_dimension",
             allowed_fields={"description", "expr", "column_type"},
         )
         assert len(calls) == 1
-        assert calls[0] == {"description": "new desc"}
+        entry_id, values = calls[0]
+        assert entry_id == "column:t.col1"
+        assert values == {"description": "new desc"}
 
     def test_missing_old_field_detected_as_change(self):
         """If old_item lacks a field that new_item has, _update_columns detects it as a change."""
-        updater = self._make_updater()
         calls = []
 
         class FakeStorage:
-            def update(self, where, values, unique_filter=None):
-                calls.append(values)
+            def update_entry(self, entry_id, values):
+                calls.append((entry_id, values))
+
+        updater = self._make_updater(FakeStorage())
 
         old = [{"name": "col1"}]
         new = [{"name": "col1", "description": "new desc", "type": "string"}]
 
         updater._update_columns(
-            storages=[FakeStorage()],
-            catalog_name="cat",
-            database_name="db",
-            schema_name="sch",
             table_name="t",
+            semantic_model_name="t_model",
             old_columns=old,
             new_columns=new,
             kind_field="is_dimension",
             allowed_fields={"description", "expr", "column_type"},
         )
         assert len(calls) == 1
-        assert "description" in calls[0]
-        assert "column_type" in calls[0]
+        entry_id, values = calls[0]
+        assert entry_id == "column:t.col1"
+        assert "description" in values
+        assert "column_type" in values
 
 
 # ---------------------------------------------------------------------------
