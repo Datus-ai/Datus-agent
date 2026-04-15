@@ -350,7 +350,7 @@ class ChannelBridge:
         # accumulation (e.g. "Hi" + " again!" must not become "Hi" + "again!").
         if not is_delta:
             combined_text = combined_text.strip()
-        if not combined_text.strip() and not sql:
+        if not combined_text and not sql:
             return None
 
         ir = None

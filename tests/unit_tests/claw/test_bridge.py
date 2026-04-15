@@ -651,6 +651,22 @@ class TestEventToOutbound:
         # Leading space must be preserved so accumulation works: "Hi" + " again!" = "Hi again!"
         assert result.text == " again! How are you?"
 
+    def test_delta_whitespace_only_not_dropped(self, bridge):
+        """A delta chunk that is whitespace-only (e.g. ' ') must not be discarded."""
+        msg = _make_inbound()
+        data = SSEMessageData(
+            type=SSEDataType.APPEND_MESSAGE,
+            payload=SSEMessagePayload(
+                message_id="m1",
+                role="assistant",
+                content=[IMessageContent(type="thinking", payload={"content": " "})],
+            ),
+        )
+        result = bridge._event_to_outbound(data, msg)
+        assert result is not None
+        assert result.is_delta is True
+        assert result.text == " "
+
     def test_non_delta_strips_whitespace(self, bridge):
         """Non-delta (markdown) messages should strip leading/trailing whitespace."""
         msg = _make_inbound()
