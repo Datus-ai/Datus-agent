@@ -1459,111 +1459,15 @@ class TestChatAgenticNodeExecutionMode:
 
 
 # ===========================================================================
-# BI Tools Setup Tests
+# BI Tools Removed from Chat Node Tests
 # ===========================================================================
 
 
-def _mock_bi_core(mock_adapter_cls):
-    """Build a mock datus_bi_core module for testing without the real package."""
-    from unittest.mock import MagicMock
+class TestChatAgenticNodeNoBITools:
+    """Verify ChatAgenticNode no longer has BI tools (moved to GenDashboardAgenticNode)."""
 
-    mock_module = MagicMock()
-    mock_module.adapter_registry.get.return_value = mock_adapter_cls
-    mock_module.AuthParam = MagicMock()
-    return mock_module
-
-
-class TestChatAgenticNodeBITools:
-    """Verify _setup_bi_tools correctly initializes BI tools from config."""
-
-    def _make_bi_agent_config(self, real_agent_config):
-        """Add bi_platform and dashboard config to an existing AgentConfig."""
-        from datus.configuration.agent_config import DashboardConfig
-
-        # Add bi_platform to chat node config
-        real_agent_config.agentic_nodes["chat"]["bi_platform"] = "superset"
-
-        # Add dashboard config
-        real_agent_config.dashboard_config = {
-            "superset": DashboardConfig(
-                platform="superset",
-                api_url="http://localhost:8088",
-                username="admin",
-                password="admin",
-                dataset_db={"uri": "postgresql+psycopg2://user:pass@localhost/db", "schema": "public"},
-            ),
-        }
-        return real_agent_config
-
-    def test_bi_tools_loaded_when_configured(self, real_agent_config, mock_llm_create):
-        """BI tools should be loaded when bi_platform and dashboard config are set."""
-        import sys
-        from unittest.mock import MagicMock, patch
-
-        from datus.agent.node.chat_agentic_node import ChatAgenticNode
-        from datus.configuration.node_type import NodeType
-
-        cfg = self._make_bi_agent_config(real_agent_config)
-
-        mock_adapter_cls = MagicMock(return_value=MagicMock())
-        bi_core_mock = _mock_bi_core(mock_adapter_cls)
-
-        with (
-            patch("datus.agent.node.chat_agentic_node.BIFuncTool") as mock_bi_tool_cls,
-            patch.dict(sys.modules, {"datus_bi_core": bi_core_mock}),
-        ):
-            mock_bi_instance = MagicMock()
-            mock_bi_instance.available_tools.return_value = []
-            mock_bi_tool_cls.return_value = mock_bi_instance
-
-            node = ChatAgenticNode(
-                node_id="test_bi",
-                description="Test BI tools",
-                node_type=NodeType.TYPE_CHAT,
-                agent_config=cfg,
-            )
-
-        assert node.bi_func_tool is not None
-        mock_bi_tool_cls.assert_called_once()
-        call_kwargs = mock_bi_tool_cls.call_args
-        assert call_kwargs[1]["dataset_db_uri"] == "postgresql+psycopg2://user:pass@localhost/db"
-        assert call_kwargs[1]["dataset_db_schema"] == "public"
-        assert call_kwargs[1]["datasource_name"] == ""
-
-    def test_bi_tools_passes_datasource_name(self, real_agent_config, mock_llm_create):
-        """datasource_name from dataset_db config is passed to BIFuncTool."""
-        import sys
-        from unittest.mock import MagicMock, patch
-
-        from datus.agent.node.chat_agentic_node import ChatAgenticNode
-        from datus.configuration.node_type import NodeType
-
-        cfg = self._make_bi_agent_config(real_agent_config)
-        cfg.dashboard_config["superset"].dataset_db["datasource_name"] = "My-PostgreSQL"
-
-        mock_adapter_cls = MagicMock(return_value=MagicMock())
-        bi_core_mock = _mock_bi_core(mock_adapter_cls)
-
-        with (
-            patch("datus.agent.node.chat_agentic_node.BIFuncTool") as mock_bi_tool_cls,
-            patch.dict(sys.modules, {"datus_bi_core": bi_core_mock}),
-        ):
-            mock_bi_instance = MagicMock()
-            mock_bi_instance.available_tools.return_value = []
-            mock_bi_tool_cls.return_value = mock_bi_instance
-
-            ChatAgenticNode(
-                node_id="test_ds_name",
-                description="Test datasource name",
-                node_type=NodeType.TYPE_CHAT,
-                agent_config=cfg,
-            )
-
-        call_kwargs = mock_bi_tool_cls.call_args
-        assert call_kwargs[1]["datasource_name"] == "My-PostgreSQL"
-
-    def test_bi_tools_not_loaded_without_bi_platform(self, real_agent_config, mock_llm_create):
-        """BI tools should NOT be loaded when bi_platform is not configured."""
+    def test_no_bi_func_tool_attribute(self, real_agent_config, mock_llm_create):
+        """Chat node should not have a bi_func_tool attribute."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
         from datus.configuration.node_type import NodeType
 
@@ -1574,50 +1478,115 @@ class TestChatAgenticNodeBITools:
             agent_config=real_agent_config,
         )
 
-        assert node.bi_func_tool is None
+        assert not hasattr(node, "bi_func_tool")
 
-    def test_bi_tools_read_connector_rebound_on_db_switch(self, real_agent_config, mock_llm_create):
-        """_read_connector should be rebound when database connection changes."""
-        import sys
-        from unittest.mock import MagicMock, patch
-
+    def test_no_bi_tool_names_in_tools_list(self, real_agent_config, mock_llm_create):
+        """Chat node tools list should not contain any BI tool names."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
         from datus.configuration.node_type import NodeType
 
-        cfg = self._make_bi_agent_config(real_agent_config)
+        node = ChatAgenticNode(
+            node_id="test_no_bi_tools",
+            description="Test no BI tool names",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
 
-        mock_adapter_cls = MagicMock(return_value=MagicMock())
-        bi_core_mock = _mock_bi_core(mock_adapter_cls)
+        bi_tool_names = {
+            "list_dashboards",
+            "get_dashboard",
+            "list_charts",
+            "list_datasets",
+            "create_dashboard",
+            "update_dashboard",
+            "delete_dashboard",
+            "create_chart",
+            "update_chart",
+            "add_chart_to_dashboard",
+            "delete_chart",
+            "create_dataset",
+            "list_bi_databases",
+            "delete_dataset",
+            "write_query",
+        }
+        tool_names = {tool.name for tool in node.tools}
+        assert tool_names.isdisjoint(bi_tool_names), f"Chat node still has BI tools: {tool_names & bi_tool_names}"
 
-        with (
-            patch("datus.agent.node.chat_agentic_node.BIFuncTool") as mock_bi_tool_cls,
-            patch.dict(sys.modules, {"datus_bi_core": bi_core_mock}),
-        ):
-            mock_bi_instance = MagicMock()
-            mock_bi_instance.available_tools.return_value = []
-            mock_bi_tool_cls.return_value = mock_bi_instance
+    def test_no_setup_bi_tools_method(self, real_agent_config, mock_llm_create):
+        """Chat node should not have _setup_bi_tools method."""
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+        from datus.configuration.node_type import NodeType
 
-            node = ChatAgenticNode(
-                node_id="test_rebind",
-                description="Test connector rebind",
-                node_type=NodeType.TYPE_CHAT,
-                agent_config=cfg,
-            )
+        node = ChatAgenticNode(
+            node_id="test_no_method",
+            description="Test no BI method",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
 
-        # Simulate DB switch
-        new_connector = MagicMock()
-        new_db_func_tool = MagicMock()
-        new_db_func_tool.connector = new_connector
-        node.db_func_tool = new_db_func_tool
-        node.bi_func_tool = MagicMock()
+        assert not hasattr(node, "_setup_bi_tools")
 
-        with patch("datus.agent.node.chat_agentic_node.db_manager_instance") as mock_db_mgr:
-            mock_conn = MagicMock()
-            mock_db_mgr.return_value.get_conn.return_value = mock_conn
-            with patch("datus.agent.node.chat_agentic_node.DBFuncTool") as mock_db_tool_cls:
-                new_tool = MagicMock()
-                new_tool.connector = new_connector
-                mock_db_tool_cls.return_value = new_tool
-                node._update_database_connection("other_db")
 
-        assert node.bi_func_tool._read_connector == new_connector
+# ===========================================================================
+# Scheduler Tools Removed from Chat Node Tests
+# ===========================================================================
+
+
+class TestChatAgenticNodeNoSchedulerTools:
+    """Verify ChatAgenticNode no longer has scheduler tools (moved to SchedulerAgenticNode)."""
+
+    def test_no_scheduler_tools_attribute(self, real_agent_config, mock_llm_create):
+        """Chat node should not have a scheduler_tools attribute."""
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        node = ChatAgenticNode(
+            node_id="test_no_scheduler",
+            description="Test no scheduler tools",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
+
+        assert not hasattr(node, "scheduler_tools")
+
+    def test_no_scheduler_tool_names_in_tools_list(self, real_agent_config, mock_llm_create):
+        """Chat node tools list should not contain any scheduler tool names."""
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        node = ChatAgenticNode(
+            node_id="test_no_scheduler_tools",
+            description="Test no scheduler tool names",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
+
+        scheduler_tool_names = {
+            "submit_sql_job",
+            "submit_sparksql_job",
+            "trigger_scheduler_job",
+            "pause_job",
+            "resume_job",
+            "delete_job",
+            "update_job",
+            "get_scheduler_job",
+            "list_scheduler_jobs",
+            "list_scheduler_connections",
+            "list_job_runs",
+            "get_run_log",
+        }
+        tool_names = {tool.name for tool in node.tools}
+        assert tool_names.isdisjoint(scheduler_tool_names), (
+            f"Chat node still has scheduler tools: {tool_names & scheduler_tool_names}"
+        )
+
+    def test_no_setup_scheduler_tools_method(self, real_agent_config, mock_llm_create):
+        """Chat node should not have _setup_scheduler_tools method."""
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        node = ChatAgenticNode(
+            node_id="test_no_scheduler_method",
+            description="Test no scheduler method",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
+
+        assert not hasattr(node, "_setup_scheduler_tools")

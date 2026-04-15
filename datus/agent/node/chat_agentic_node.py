@@ -21,7 +21,6 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager, Ac
 from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool, PlatformDocSearchTool
-from datus.tools.func_tool.bi_tools import BIFuncTool
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
 from datus.tools.mcp_tools import MCPServer
@@ -92,7 +91,6 @@ class ChatAgenticNode(AgenticNode):
 
         # Initialize tool attributes BEFORE calling parent constructor
         self.db_func_tool: Optional[DBFuncTool] = None
-        self.bi_func_tool: Optional[BIFuncTool] = None
         self.context_search_tools: Optional[ContextSearchTools] = None
         self.date_parsing_tools: Optional[DateParsingTools] = None
         self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
@@ -101,9 +99,6 @@ class ChatAgenticNode(AgenticNode):
 
         # SubAgent task delegation tool
         self.sub_agent_task_tool = None
-
-        # Scheduler tools
-        self.scheduler_tools = None
 
         # Plan mode attributes
         self.plan_mode_active = False
@@ -151,7 +146,6 @@ class ChatAgenticNode(AgenticNode):
         self.db_func_tool = DBFuncTool(conn, agent_config=self.agent_config)
         self.context_search_tools = ContextSearchTools(self.agent_config)
         self.reference_template_tools = ReferenceTemplateTools(self.agent_config, db_func_tool=self.db_func_tool)
-        self._setup_bi_tools()
         self._setup_date_parsing_tools()
         self._setup_filesystem_tools()
         self._setup_skill_tools()
@@ -159,78 +153,11 @@ class ChatAgenticNode(AgenticNode):
         # Setup ask_user tool for clarification questions (interactive mode only)
         if self.execution_mode == "interactive":
             self._setup_ask_user_tool()
-        self._setup_scheduler_tools()
         self._rebuild_tools()
         self._setup_platform_doc_tools()
 
         # Setup permission hooks after all tools are initialized
         self._setup_permission_hooks()
-
-    def _setup_bi_tools(self):
-        """Setup BI tools if bi_platform is configured for this agentic node."""
-        try:
-            node_config = self.node_config or {}
-            bi_platform = node_config.get("bi_platform")
-            if not bi_platform:
-                return
-
-            dash_cfg = getattr(self.agent_config, "dashboard_config", {}).get(bi_platform)
-            if not dash_cfg:
-                logger.warning(f"bi_platform '{bi_platform}' configured but no dashboard config found")
-                return
-
-            from datus_bi_core import AuthParam, adapter_registry
-
-            adapter_cls = adapter_registry.get(bi_platform)
-            if not adapter_cls:
-                logger.warning(f"No BI adapter registered for platform '{bi_platform}'")
-                return
-
-            api_url = dash_cfg.api_url
-            auth_params = AuthParam(
-                username=dash_cfg.username,
-                password=dash_cfg.password,
-                api_key=dash_cfg.api_key,
-                extra=dash_cfg.extra or {},
-            )
-            # Derive dialect from dataset_db config, not from the source database type.
-            dialect = ""
-            if dash_cfg.dataset_db:
-                dialect = dash_cfg.dataset_db.get("dialect", "")
-                if not dialect:
-                    ds_uri = dash_cfg.dataset_db.get("uri", "")
-                    if ds_uri:
-                        try:
-                            from sqlalchemy.engine.url import make_url
-
-                            dialect = make_url(ds_uri).get_backend_name()
-                        except Exception:
-                            pass
-            adapter = adapter_cls(api_base_url=api_url, auth_params=auth_params, dialect=dialect)
-            dataset_db_uri = ""
-            dataset_db_schema = ""
-            if dash_cfg.dataset_db:
-                dataset_db_uri = dash_cfg.dataset_db.get("uri", "")
-                dataset_db_schema = dash_cfg.dataset_db.get("schema", "")
-            datasource_name = ""
-            if dash_cfg.dataset_db:
-                datasource_name = dash_cfg.dataset_db.get("datasource_name", "")
-            read_connector = None
-            if self.db_func_tool and hasattr(self.db_func_tool, "connector"):
-                read_connector = self.db_func_tool.connector
-            self.bi_func_tool = BIFuncTool(
-                adapter,
-                dataset_db_uri=dataset_db_uri,
-                dataset_db_schema=dataset_db_schema,
-                read_connector=read_connector,
-                datasource_name=datasource_name,
-            )
-            self.tools.extend(self.bi_func_tool.available_tools())
-            logger.info(f"BI tools initialized for platform '{bi_platform}'")
-        except ImportError as e:
-            logger.warning(f"BI adapter package not installed for '{bi_platform}': {e}")
-        except Exception as e:
-            logger.error(f"Failed to setup BI tools: {e}")
 
     def _setup_date_parsing_tools(self):
         """Setup date parsing tools."""
@@ -249,20 +176,6 @@ class ChatAgenticNode(AgenticNode):
             logger.debug(f"Setup filesystem tools with root path: {root_path}")
         except Exception as e:
             logger.error(f"Failed to setup filesystem tools: {e}")
-
-    def _setup_scheduler_tools(self):
-        """Setup scheduler tools if schedulers are configured."""
-        if not getattr(self.agent_config, "scheduler_config", None):
-            return
-        try:
-            from datus.tools.func_tool.scheduler_tools import SchedulerTools
-
-            self.scheduler_tools = SchedulerTools(self.agent_config)
-            logger.debug("Setup scheduler tools for scheduler: %s", self.agent_config.scheduler_config.get("name", ""))
-        except ImportError:
-            logger.debug("datus-scheduler-core not installed, skipping scheduler tools")
-        except Exception as exc:
-            logger.error("Failed to setup scheduler tools: %s", exc)
 
     def _setup_platform_doc_tools(self):
         """Setup platform documentation search tools."""
@@ -339,8 +252,6 @@ class ChatAgenticNode(AgenticNode):
             # 1. Populate the node-level tool_registry
             if self.db_func_tool:
                 self.tool_registry.register_tools("db_tools", self.db_func_tool.available_tools())
-            if self.bi_func_tool:
-                self.tool_registry.register_tools("bi_tools", self.bi_func_tool.available_tools())
             if self.context_search_tools:
                 self.tool_registry.register_tools("context_search_tools", self.context_search_tools.available_tools())
             if self.reference_template_tools:
@@ -359,9 +270,6 @@ class ChatAgenticNode(AgenticNode):
                 self.tool_registry.register_tools("tools", self.ask_user_tool.available_tools())
             if self._platform_doc_tool:
                 self.tool_registry.register_tools("tools", self._platform_doc_tool.available_tools())
-            if self.scheduler_tools:
-                self.tool_registry.register_tools("scheduler_tools", self.scheduler_tools.available_tools())
-
             # 2. Create PermissionHooks sharing the same tool_registry instance
             broker = self._get_or_create_broker()
             self.permission_hooks = PermissionHooks(
@@ -381,8 +289,6 @@ class ChatAgenticNode(AgenticNode):
         self.tools = []
         if self.db_func_tool:
             self.tools.extend(self.db_func_tool.available_tools())
-        if self.bi_func_tool:
-            self.tools.extend(self.bi_func_tool.available_tools())
         if self.context_search_tools:
             self.tools.extend(self.context_search_tools.available_tools())
         if self.reference_template_tools:
@@ -397,16 +303,12 @@ class ChatAgenticNode(AgenticNode):
             self.tools.extend(self.sub_agent_task_tool.available_tools())
         if self.ask_user_tool:
             self.tools.extend(self.ask_user_tool.available_tools())
-        if self.scheduler_tools:
-            self.tools.extend(self.scheduler_tools.available_tools())
 
     def _update_database_connection(self, database_name: str):
         """Update database connection to a different database."""
         db_manager = db_manager_instance(self.agent_config.namespaces)
         conn = db_manager.get_conn(self.agent_config.current_database, database_name)
         self.db_func_tool = DBFuncTool(conn, agent_config=self.agent_config)
-        if self.bi_func_tool and self.db_func_tool and hasattr(self.db_func_tool, "connector"):
-            self.bi_func_tool._read_connector = self.db_func_tool.connector  # update connector after namespace switch
         self._rebuild_tools()
 
     # ── Permission Helpers ──────────────────────────────────────────────

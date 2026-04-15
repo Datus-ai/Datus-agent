@@ -61,6 +61,8 @@ class NodeType:
     TYPE_EXPLORE = "explore"  # For read-only data exploration and context gathering
     TYPE_GEN_TABLE = "gen_table"  # For wide table generation from JOIN SQL
     TYPE_GEN_SKILL = "gen_skill"  # For interactive skill creation and optimization
+    TYPE_GEN_DASHBOARD = "gen_dashboard"  # For BI dashboard creation and management
+    TYPE_SCHEDULER = "scheduler"  # For job scheduler management and monitoring
 
     ACTION_TYPES = [
         TYPE_SCHEMA_LINKING,
@@ -82,6 +84,8 @@ class NodeType:
         TYPE_EXPLORE,
         TYPE_GEN_TABLE,
         TYPE_GEN_SKILL,
+        TYPE_GEN_DASHBOARD,
+        TYPE_SCHEDULER,
     ]
 
     NODE_TYPE_DESCRIPTIONS = {
@@ -110,6 +114,8 @@ class NodeType:
         TYPE_EXPLORE: "Read-only data exploration and context gathering",
         TYPE_GEN_TABLE: "Wide table generation from JOIN SQL with CTAS",
         TYPE_GEN_SKILL: "Interactive skill creation and optimization",
+        TYPE_GEN_DASHBOARD: "BI dashboard creation and management",
+        TYPE_SCHEDULER: "Job scheduler management and monitoring",
     }
 
     @classmethod
@@ -165,6 +171,14 @@ class NodeType:
             input_data_cls = SemanticNodeInput
         elif node_type == NodeType.TYPE_GEN_SKILL:
             input_data_cls = SkillCreatorNodeInput
+        elif node_type == NodeType.TYPE_GEN_DASHBOARD:
+            from datus.schemas.gen_dashboard_agentic_node_models import GenDashboardNodeInput
+
+            input_data_cls = GenDashboardNodeInput
+        elif node_type == NodeType.TYPE_SCHEDULER:
+            from datus.schemas.scheduler_agentic_node_models import SchedulerNodeInput
+
+            input_data_cls = SchedulerNodeInput
         else:
             raise NotImplementedError(f"node_type {node_type} not implemented")
 

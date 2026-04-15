@@ -28,6 +28,8 @@ __all__ = [
     "GenExtKnowledgeAgenticNode",
     "ExploreAgenticNode",
     "SkillCreatorAgenticNode",
+    "GenDashboardAgenticNode",
+    "SchedulerAgenticNode",
     "Node",
 ]
 
@@ -42,6 +44,7 @@ from .doc_search_node import DocSearchNode
 from .execute_sql_node import ExecuteSQLNode
 from .explore_agentic_node import ExploreAgenticNode
 from .fix_node import FixNode
+from .gen_dashboard_agentic_node import GenDashboardAgenticNode
 from .gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
 from .gen_metrics_agentic_node import GenMetricsAgenticNode
 from .gen_report_agentic_node import GenReportAgenticNode
@@ -54,6 +57,7 @@ from .output_node import OutputNode
 from .parallel_node import ParallelNode
 from .reason_sql_node import ReasonSQLNode
 from .reflect_node import ReflectNode
+from .scheduler_agentic_node import SchedulerAgenticNode
 from .schema_linking_node import SchemaLinkingNode
 from .search_metrics_node import SearchMetricsNode
 from .selection_node import SelectionNode

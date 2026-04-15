@@ -52,6 +52,8 @@ NODE_CLASS_MAP = {
     "explore": NodeType.TYPE_EXPLORE,
     "gen_table": NodeType.TYPE_GEN_TABLE,
     "gen_skill": NodeType.TYPE_GEN_SKILL,
+    "gen_dashboard": NodeType.TYPE_GEN_DASHBOARD,
+    "scheduler": NodeType.TYPE_SCHEDULER,
 }
 
 # Descriptions for built-in system subagents (used in task tool description for LLM)
@@ -134,6 +136,22 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "Both modes: the agent analyzes the input, proposes a table schema, asks for confirmation, "
         "and executes the DDL. For semantic model generation on the new table, "
         "use gen_semantic_model separately. Returns JSON with {response, tokens_used}."
+    ),
+    "gen_dashboard": (
+        "Create, update, and manage BI dashboards (Superset, Grafana). "
+        "Handles the full workflow: write_query to materialize data, create datasets, "
+        "create charts with appropriate visualizations, assemble dashboards. "
+        "Also supports read operations: list/get dashboards, list charts and datasets. "
+        "Prompt: describe what you want to visualize or which dashboard to inspect. "
+        "Returns JSON with {response, dashboard_result, tokens_used}."
+    ),
+    "scheduler": (
+        "Submit, monitor, update, and troubleshoot scheduled jobs on Airflow. "
+        "Handles the full lifecycle: submit SQL/SparkSQL jobs with cron schedules, "
+        "monitor job status and run history, view run logs, troubleshoot failures, "
+        "update job SQL/config, pause/resume/delete jobs, trigger manual runs. "
+        "Prompt: describe what scheduler operation you need. "
+        "Returns JSON with {response, scheduler_result, tokens_used}."
     ),
 }
 
@@ -330,6 +348,7 @@ class SubAgentTaskTool:
             return GenTableAgenticNode(
                 agent_config=self.agent_config,
                 execution_mode=self._resolve_execution_mode(),
+                node_id=f"task_gen_table_{uuid.uuid4().hex[:8]}",
             )
         elif subagent_type == "gen_skill":
             from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
@@ -343,6 +362,22 @@ class SubAgentTaskTool:
                 tools=None,
                 node_name="gen_skill",
                 execution_mode=self._resolve_execution_mode(),
+            )
+        elif subagent_type == "gen_dashboard":
+            from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
+
+            return GenDashboardAgenticNode(
+                agent_config=self.agent_config,
+                execution_mode=self._resolve_execution_mode(),
+                node_id=f"task_gen_dashboard_{uuid.uuid4().hex[:8]}",
+            )
+        elif subagent_type == "scheduler":
+            from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
+
+            return SchedulerAgenticNode(
+                agent_config=self.agent_config,
+                execution_mode=self._resolve_execution_mode(),
+                node_id=f"task_scheduler_{uuid.uuid4().hex[:8]}",
             )
         else:
             raise ValueError(f"Unknown builtin subagent type: {subagent_type}")
@@ -378,6 +413,8 @@ class SubAgentTaskTool:
             "gen_sql_summary": (NodeType.TYPE_SQL_SUMMARY, "gen_sql_summary"),
             "gen_ext_knowledge": (NodeType.TYPE_EXT_KNOWLEDGE, "gen_ext_knowledge"),
             "gen_table": (NodeType.TYPE_GEN_TABLE, "gen_table"),
+            "gen_dashboard": (NodeType.TYPE_GEN_DASHBOARD, "gen_dashboard"),
+            "scheduler": (NodeType.TYPE_SCHEDULER, "scheduler"),
         }
         if subagent_type in builtin_type_map:
             return builtin_type_map[subagent_type]
@@ -610,6 +647,26 @@ class SubAgentTaskTool:
 
             return ExtKnowledgeNodeInput(user_message=prompt)
 
+        from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
+
+        if isinstance(node, GenDashboardAgenticNode):
+            from datus.schemas.gen_dashboard_agentic_node_models import GenDashboardNodeInput
+
+            return GenDashboardNodeInput(
+                user_message=prompt,
+                database=self.agent_config.current_database,
+            )
+
+        from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
+
+        if isinstance(node, SchedulerAgenticNode):
+            from datus.schemas.scheduler_agentic_node_models import SchedulerNodeInput
+
+            return SchedulerNodeInput(
+                user_message=prompt,
+                database=self.agent_config.current_database,
+            )
+
         from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
 
         if isinstance(node, GenReportAgenticNode):
@@ -739,6 +796,28 @@ class SubAgentTaskTool:
                 }
             )
 
+        # Dashboard result: has 'dashboard_result' key
+        dashboard_result = output.get("dashboard_result")
+        if dashboard_result is not None:
+            return FuncToolResult(
+                result={
+                    "response": response,
+                    "dashboard_result": dashboard_result,
+                    "tokens_used": tokens,
+                }
+            )
+
+        # Scheduler result: has 'scheduler_result' key
+        scheduler_result = output.get("scheduler_result")
+        if scheduler_result is not None:
+            return FuncToolResult(
+                result={
+                    "response": response,
+                    "scheduler_result": scheduler_result,
+                    "tokens_used": tokens,
+                }
+            )
+
         # Generic format
         return FuncToolResult(
             result={
@@ -786,6 +865,10 @@ class SubAgentTaskTool:
                 '- Use task(type="gen_report") for metric attribution, root cause analysis, '
                 "or analyzing why a metric/reference_sql result changed",
                 '- Use task(type="gen_skill") when the user wants to create a new skill or optimize an existing skill',
+                '- Use task(type="gen_dashboard") for creating/updating/inspecting BI dashboards, '
+                "charts, and datasets on Superset or Grafana",
+                '- Use task(type="scheduler") for submitting, monitoring, updating, '
+                "and troubleshooting scheduled jobs on Airflow",
                 "- In plan mode, use task() for each SQL sub-step",
                 "- Always provide a short 'description' summarizing the task goal",
             ]

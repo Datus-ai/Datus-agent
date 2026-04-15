@@ -132,7 +132,9 @@ class Node(ABC):
         elif node_type == NodeType.TYPE_GEN_TABLE:
             from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
 
-            node = GenTableAgenticNode(agent_config=agent_config, execution_mode="workflow")
+            node = GenTableAgenticNode(
+                agent_config=agent_config, execution_mode="workflow", node_id=node_id, node_name=node_name
+            )
             if input_data is not None:
                 node.input = input_data
             return node
@@ -140,6 +142,24 @@ class Node(ABC):
             from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
             return SkillCreatorAgenticNode(node_id, description, node_type, input_data, agent_config, tools, node_name)
+        elif node_type == NodeType.TYPE_GEN_DASHBOARD:
+            from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
+
+            node = GenDashboardAgenticNode(
+                agent_config=agent_config, execution_mode="workflow", node_id=node_id, node_name=node_name
+            )
+            if input_data is not None:
+                node.input = input_data
+            return node
+        elif node_type == NodeType.TYPE_SCHEDULER:
+            from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
+
+            node = SchedulerAgenticNode(
+                agent_config=agent_config, execution_mode="workflow", node_id=node_id, node_name=node_name
+            )
+            if input_data is not None:
+                node.input = input_data
+            return node
         else:
             raise ValueError(f"Invalid node type: {node_type}")
 
@@ -405,6 +425,18 @@ class Node(ABC):
                     input_data = GenReportNodeInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_EXPLORE:
                     input_data = ExploreNodeInput(**input_data)
+                elif node_dict["type"] == NodeType.TYPE_GEN_DASHBOARD:
+                    from datus.schemas.gen_dashboard_agentic_node_models import GenDashboardNodeInput
+
+                    input_data = GenDashboardNodeInput(**input_data)
+                elif node_dict["type"] == NodeType.TYPE_SCHEDULER:
+                    from datus.schemas.scheduler_agentic_node_models import SchedulerNodeInput
+
+                    input_data = SchedulerNodeInput(**input_data)
+                elif node_dict["type"] == NodeType.TYPE_GEN_TABLE:
+                    from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
+
+                    input_data = SemanticNodeInput(**input_data)
             except Exception as e:
                 logger.warning(f"Failed to convert input data for {node_dict['type']}: {e}")
                 input_data = None
@@ -447,6 +479,18 @@ class Node(ABC):
                     result_data = GenReportNodeResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_EXPLORE:
                     result_data = ExploreNodeResult(**result_data)
+                elif node_dict["type"] == NodeType.TYPE_GEN_DASHBOARD:
+                    from datus.schemas.gen_dashboard_agentic_node_models import GenDashboardNodeResult
+
+                    result_data = GenDashboardNodeResult(**result_data)
+                elif node_dict["type"] == NodeType.TYPE_SCHEDULER:
+                    from datus.schemas.scheduler_agentic_node_models import SchedulerNodeResult
+
+                    result_data = SchedulerNodeResult(**result_data)
+                elif node_dict["type"] == NodeType.TYPE_GEN_TABLE:
+                    from datus.schemas.semantic_agentic_node_models import SemanticNodeResult
+
+                    result_data = SemanticNodeResult(**result_data)
                 elif "success" in result_data:
                     result_data = BaseResult(**result_data)
             except Exception as e:

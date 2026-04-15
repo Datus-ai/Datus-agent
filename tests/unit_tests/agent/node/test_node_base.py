@@ -346,6 +346,59 @@ class TestNodeFromDict:
         node = Node.from_dict(node_dict, agent_config=self.agent_config)
         assert isinstance(node.result, GenerateSQLResult)
 
+    @patch("datus.tools.func_tool.database.DBFuncTool.create_dynamic")
+    @patch("datus.models.base.LLMBaseModel.create_model")
+    def test_from_dict_gen_table_input(self, mock_create_model, mock_db_create):
+        """from_dict should deserialize SemanticNodeInput for TYPE_GEN_TABLE."""
+        mock_create_model.return_value = MagicMock()
+        mock_db_func_tool = MagicMock(spec=[])
+        mock_db_func_tool.available_tools = MagicMock(return_value=[])
+        mock_db_create.return_value = mock_db_func_tool
+        node_dict = {
+            "id": "fd_gen_table",
+            "description": "gen_table test",
+            "type": NodeType.TYPE_GEN_TABLE,
+            "input": {"user_message": "Create orders table"},
+            "status": "completed",
+            "result": None,
+            "start_time": None,
+            "end_time": None,
+            "dependencies": [],
+            "metadata": {},
+        }
+        node = Node.from_dict(node_dict, agent_config=self.agent_config)
+        assert node.input is not None
+        assert node.input.user_message == "Create orders table"
+
+    @patch("datus.tools.func_tool.database.DBFuncTool.create_dynamic")
+    @patch("datus.models.base.LLMBaseModel.create_model")
+    def test_from_dict_gen_table_result(self, mock_create_model, mock_db_create):
+        """from_dict should deserialize SemanticNodeResult for TYPE_GEN_TABLE."""
+        mock_create_model.return_value = MagicMock()
+        mock_db_func_tool = MagicMock(spec=[])
+        mock_db_func_tool.available_tools = MagicMock(return_value=[])
+        mock_db_create.return_value = mock_db_func_tool
+        node_dict = {
+            "id": "fd_gen_table_result",
+            "description": "gen_table result test",
+            "type": NodeType.TYPE_GEN_TABLE,
+            "input": None,
+            "status": "completed",
+            "result": {
+                "success": True,
+                "response": "Table created",
+                "semantic_models": [],
+                "tokens_used": 200,
+            },
+            "start_time": None,
+            "end_time": None,
+            "dependencies": [],
+            "metadata": {},
+        }
+        node = Node.from_dict(node_dict, agent_config=self.agent_config)
+        assert node.result is not None
+        assert node.result.response == "Table created"
+
     def test_from_dict_handles_corrupt_input_gracefully(self):
         """from_dict should not raise even if result dict is malformed."""
         node_dict = {

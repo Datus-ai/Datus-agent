@@ -198,6 +198,8 @@ class TestResolveNodeType:
             "explore": NodeType.TYPE_EXPLORE,
             "gen_table": NodeType.TYPE_GEN_TABLE,
             "gen_skill": NodeType.TYPE_GEN_SKILL,
+            "gen_dashboard": NodeType.TYPE_GEN_DASHBOARD,
+            "scheduler": NodeType.TYPE_SCHEDULER,
         }
         assert set(NODE_CLASS_MAP.keys()) == set(expected_map.keys()), (
             f"NODE_CLASS_MAP keys differ: got {set(NODE_CLASS_MAP.keys())}"
@@ -890,10 +892,13 @@ class TestCreateBuiltinNode:
 
     @patch("datus.agent.node.gen_table_agentic_node.GenTableAgenticNode.__init__", return_value=None)
     def test_gen_table(self, mock_init, task_tool):
+        from unittest.mock import ANY
+
         task_tool._create_builtin_node("gen_table")
         mock_init.assert_called_once_with(
             agent_config=task_tool.agent_config,
             execution_mode="interactive",
+            node_id=ANY,
         )
 
     def test_unknown_builtin_raises(self, task_tool):
@@ -958,6 +963,8 @@ class TestBuiltinNodeInheritsExecutionMode:
                 "datus.agent.node.gen_ext_knowledge_agentic_node.GenExtKnowledgeAgenticNode.__init__",
             ),
             ("gen_table", "datus.agent.node.gen_table_agentic_node.GenTableAgenticNode.__init__"),
+            ("gen_dashboard", "datus.agent.node.gen_dashboard_agentic_node.GenDashboardAgenticNode.__init__"),
+            ("scheduler", "datus.agent.node.scheduler_agentic_node.SchedulerAgenticNode.__init__"),
         ],
     )
     def test_builtin_node_uses_workflow_mode(self, task_tool, subagent_type, init_path):
@@ -1134,6 +1141,54 @@ class TestConvertToFuncResultBuiltIn:
         result = task_tool._convert_to_func_result(output)
         assert "sql_file_path" in result.result
         assert "semantic_models" not in result.result
+
+    def test_dashboard_result(self, task_tool):
+        """Dashboard result should preserve dashboard_result dict."""
+        output = {
+            "response": "Created dashboard",
+            "dashboard_result": {"dashboard_id": 42, "url": "http://superset/dashboard/42"},
+            "tokens_used": 600,
+        }
+        result = task_tool._convert_to_func_result(output)
+        assert result.success == 1
+        assert result.result["dashboard_result"] == {"dashboard_id": 42, "url": "http://superset/dashboard/42"}
+        assert result.result["response"] == "Created dashboard"
+        assert result.result["tokens_used"] == 600
+
+    def test_dashboard_result_empty_dict(self, task_tool):
+        """Empty dashboard_result dict should still be preserved (not fall to generic)."""
+        output = {
+            "response": "No dashboard changes",
+            "dashboard_result": {},
+            "tokens_used": 100,
+        }
+        result = task_tool._convert_to_func_result(output)
+        assert result.success == 1
+        assert result.result["dashboard_result"] == {}
+
+    def test_scheduler_result(self, task_tool):
+        """Scheduler result should preserve scheduler_result dict."""
+        output = {
+            "response": "Job submitted",
+            "scheduler_result": {"job_id": "dag_123", "status": "scheduled"},
+            "tokens_used": 300,
+        }
+        result = task_tool._convert_to_func_result(output)
+        assert result.success == 1
+        assert result.result["scheduler_result"] == {"job_id": "dag_123", "status": "scheduled"}
+        assert result.result["response"] == "Job submitted"
+        assert result.result["tokens_used"] == 300
+
+    def test_scheduler_result_empty_dict(self, task_tool):
+        """Empty scheduler_result dict should still be preserved."""
+        output = {
+            "response": "No scheduler changes",
+            "scheduler_result": {},
+            "tokens_used": 50,
+        }
+        result = task_tool._convert_to_func_result(output)
+        assert result.success == 1
+        assert result.result["scheduler_result"] == {}
 
 
 # ── Built-in subagent: end-to-end task execution ──────────────────
