@@ -1403,6 +1403,8 @@ class GenerationHooks(AgentHooks):
 
             # The template content is stored in the "sql" field by SqlSummaryAgenticNode
             template_content = reference_template_data.get("sql", "")
+            if not isinstance(template_content, str) or not template_content.strip():
+                return {"success": False, "error": "Reference template 'sql' must be a non-empty string"}
             comment = reference_template_data.get("comment", "")
             item_id = reference_template_data.get("id", "")
 
