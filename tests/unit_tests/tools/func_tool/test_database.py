@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from datus.tools.func_tool.database import DBFuncTool
+from datus.utils.exceptions import DatusException
 
 
 class TestDBFuncToolCompressorModelName:
@@ -638,7 +639,7 @@ class TestGetConnectorRouting:
         assert conn_source is not conn_target
 
     def test_explicit_database_raises_when_not_configured(self):
-        """When caller explicitly passes a database that doesn't exist, raise ValueError (no silent fallback)."""
+        """When caller explicitly passes a database that doesn't exist, raise DatusException (no silent fallback)."""
         from datus.tools.db_tools.db_manager import DBManager
 
         mock_connector = Mock()
@@ -662,7 +663,7 @@ class TestGetConnectorRouting:
             mock_sem.return_value.get_size.return_value = 0
             tool = DBFuncTool(mock_db_manager, agent_config=mock_config, default_database="default_db")
 
-        with pytest.raises(ValueError, match="not configured"):
+        with pytest.raises(DatusException, match="not configured"):
             tool._get_connector("unknown_db")
 
     def test_default_database_fallback_to_namespace(self):

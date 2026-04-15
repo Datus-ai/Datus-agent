@@ -42,6 +42,8 @@ class TestBuildReconciliationChecks:
             assert "target_query" in check
             assert isinstance(check["source_query"], str)
             assert len(check["source_query"]) > 0
+            assert isinstance(check["target_query"], str)
+            assert len(check["target_query"]) > 0
 
     def test_check_names_present(self, sample_columns):
         checks = build_reconciliation_checks(

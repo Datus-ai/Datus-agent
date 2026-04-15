@@ -12,14 +12,15 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 # Types considered numeric for aggregate checks
+# Use word boundary (\b) to prevent partial matches (e.g., INTERVAL matching INT)
 _NUMERIC_TYPE_PATTERN = re.compile(
-    r"^(INTEGER|INT|INT[248]?|BIGINT|SMALLINT|TINYINT|FLOAT|FLOAT[48]?|DOUBLE|REAL|DECIMAL|NUMERIC|HUGEINT|LARGEINT)",
+    r"^(INTEGER|INT[248]?|BIGINT|SMALLINT|TINYINT|FLOAT[48]?|DOUBLE|REAL|DECIMAL|NUMERIC|HUGEINT|LARGEINT)\b",
     re.IGNORECASE,
 )
 
 # Types considered date/time for min/max checks
 _DATE_TYPE_PATTERN = re.compile(
-    r"^(DATE|TIMESTAMP|DATETIME|TIME)",
+    r"^(DATE|TIMESTAMP|DATETIME|TIME)\b",
     re.IGNORECASE,
 )
 
@@ -38,7 +39,8 @@ def _is_minmax_type(col_type: str) -> bool:
 
 def _quote_identifier(name: str) -> str:
     """Quote a SQL identifier with double quotes to handle reserved words and special characters."""
-    return f'"{name}"'
+    escaped = name.replace('"', '""')
+    return f'"{escaped}"'
 
 
 def build_reconciliation_checks(

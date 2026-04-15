@@ -224,8 +224,10 @@ class DBFuncTool:
         except (KeyError, ValueError) as e:
             if database:
                 # Caller explicitly requested a specific database — do NOT fall back silently.
-                raise ValueError(
-                    f"Database '{database}' is not configured. Available databases: {', '.join(self._databases)}."
+                raise DatusException(
+                    ErrorCode.COMMON_VALIDATION_FAILED,
+                    message=f"Database '{database}' is not configured. "
+                    f"Available databases: {', '.join(self._databases)}.",
                 ) from e
             # Fallback to current namespace only for the default database (backward compatibility)
             logger.debug(f"Falling back to namespace lookup for '{db_name}': {e}")
@@ -781,6 +783,8 @@ class DBFuncTool:
             db_configs = self.agent_config.current_db_configs() if self.agent_config else {}
             db_list = []
             for name in self._databases:
+                if not self._database_matches_scope(catalog, name):
+                    continue
                 db_type = db_configs[name].type if name in db_configs else "unknown"
                 available = True
                 error_msg = ""
@@ -1314,6 +1318,12 @@ class DBFuncTool:
                 connector.connection.commit()
 
             row_count = getattr(result, "row_count", None)
+            if (min_rows is not None or max_rows is not None) and row_count is None:
+                return FuncToolResult(
+                    success=0,
+                    error="Connector did not report row_count but min_rows/max_rows was requested. "
+                    "Cannot verify the safety bound. Note: the write has already been committed.",
+                )
             if min_rows is not None and row_count is not None and row_count < min_rows:
                 return FuncToolResult(
                     success=0,
