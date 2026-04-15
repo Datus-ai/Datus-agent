@@ -11,10 +11,10 @@ user_invocable: true
 
 # Scheduler Workflow
 
-For multi-step scheduler workflows, the chat node delegates to the scheduler subagent via task(type='scheduler').
+For scheduler operations in chat mode, delegate to the scheduler subagent via `task(type="scheduler", prompt=..., description=...)`.
 
 Standard operating procedures for managing scheduled jobs via the Datus scheduler tools.
-Load this skill when you need to perform multi-step scheduler operations.
+Load this skill when you need to perform scheduler operations.
 
 For single-step operations (check status, list jobs, pause/resume), call the scheduler tools directly without loading this skill.
 

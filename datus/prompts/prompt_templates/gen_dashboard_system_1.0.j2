@@ -52,7 +52,9 @@ If the user provides a SQL query or the data needs transformation:
 {% if has_dashboard_write | default(false) %}
 ### 4. Assemble Dashboard
 - Use `create_dashboard(title="...", description="...")` to create a new dashboard.
+{% if has_chart_write | default(false) %}
 - Use `add_chart_to_dashboard(chart_id="<id>", dashboard_id="<id>")` to add charts.
+{% endif %}
 {% endif %}
 
 ## Chart Type Guide

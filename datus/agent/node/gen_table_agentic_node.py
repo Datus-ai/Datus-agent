@@ -92,7 +92,7 @@ class GenTableAgenticNode(AgenticNode):
         try:
             self.db_func_tool = DBFuncTool.create_dynamic(
                 self.agent_config,
-                sub_agent_name=self.NODE_NAME,
+                sub_agent_name=self._configured_node_name,
             )
             # Standard read-only tools (list_tables, describe_table, read_query, etc.)
             self.tools.extend(self.db_func_tool.available_tools())
