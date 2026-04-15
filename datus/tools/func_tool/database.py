@@ -222,7 +222,12 @@ class DBFuncTool:
         try:
             connector = self._db_manager.get_conn(db_name, db_name)
         except (KeyError, ValueError) as e:
-            # Fallback to current namespace for backward compatibility
+            if database:
+                # Caller explicitly requested a specific database — do NOT fall back silently.
+                raise ValueError(
+                    f"Database '{database}' is not configured. Available databases: {', '.join(self._databases)}."
+                ) from e
+            # Fallback to current namespace only for the default database (backward compatibility)
             logger.debug(f"Falling back to namespace lookup for '{db_name}': {e}")
             connector = self._db_manager.get_conn(self._namespace, db_name)
 
@@ -1383,6 +1388,25 @@ class DBFuncTool:
                 error=f"Invalid mode '{mode}'. Supported modes: 'replace', 'append'.",
             )
 
+        # Validate source_sql: must be a single read-only statement
+        from datus.utils.sql_utils import _first_statement, parse_sql_type, strip_sql_comments
+
+        cleaned_sql = strip_sql_comments(source_sql).strip().rstrip(";").strip()
+        if not cleaned_sql:
+            return FuncToolResult(success=0, error="source_sql is empty.")
+        if _first_statement(cleaned_sql) != cleaned_sql:
+            return FuncToolResult(
+                success=0,
+                error="Multi-statement source_sql is not allowed. Please submit one SELECT query.",
+            )
+        sql_type = parse_sql_type(cleaned_sql, "")
+        if sql_type not in (SQLType.SELECT, SQLType.METADATA_SHOW):
+            return FuncToolResult(
+                success=0,
+                error=f"source_sql must be a SELECT query, got {sql_type.value.upper()}. "
+                "Only read-only queries are allowed as transfer source.",
+            )
+
         # Get connectors — both must be available; do NOT fall back to a different database
         try:
             source_conn = self._get_connector(source_database)
@@ -1426,23 +1450,7 @@ class DBFuncTool:
                 "Please add WHERE conditions to transfer in smaller batches.",
             )
 
-        # Handle empty result
-        if row_count == 0:
-            logger.info(f"Source query returned 0 rows, nothing to transfer to {target_table}")
-            return FuncToolResult(
-                result={
-                    "message": "Transfer completed (empty result set)",
-                    "source_sql": source_sql,
-                    "source_database": source_database,
-                    "target_table": target_table,
-                    "target_database": target_database or self._default_database,
-                    "mode": mode,
-                    "rows_transferred": 0,
-                    "batch_size": batch_size,
-                }
-            )
-
-        # TRUNCATE for replace mode (bypass _ALLOWED_DDL_RE which doesn't include TRUNCATE)
+        # TRUNCATE for replace mode BEFORE empty check — mode="replace" must clear old data
         if mode == "replace":
             try:
                 truncate_result = target_conn.execute_ddl(f"TRUNCATE TABLE {target_table}")
@@ -1453,6 +1461,24 @@ class DBFuncTool:
                     )
             except Exception as e:
                 return FuncToolResult(success=0, error=f"Failed to truncate target table: {str(e)}")
+
+        # Handle empty result (after truncate so replace mode still clears old data)
+        if row_count == 0:
+            logger.info(f"Source query returned 0 rows, nothing to transfer to {target_table}")
+            return FuncToolResult(
+                result={
+                    "message": "Transfer completed (empty result set — target table truncated)"
+                    if mode == "replace"
+                    else "Transfer completed (empty result set)",
+                    "source_sql": source_sql,
+                    "source_database": source_database,
+                    "target_table": target_table,
+                    "target_database": target_database or self._default_database,
+                    "mode": mode,
+                    "rows_transferred": 0,
+                    "batch_size": batch_size,
+                }
+            )
 
         # Convert pandas NaT/NaN to Python None for DBAPI2 compatibility
         df = df.where(df.notna(), other=None)
