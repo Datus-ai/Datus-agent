@@ -122,7 +122,7 @@ class TestGenSemanticModelAgenticNodeInit:
                 agent_config=real_agent_config,
                 execution_mode="workflow",
             )
-            assert node.max_turns == 30
+            assert node.max_turns == 40
         finally:
             if original is not None:
                 real_agent_config.agentic_nodes["gen_semantic_model"] = original
