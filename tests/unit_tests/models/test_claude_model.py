@@ -962,7 +962,10 @@ class TestCountSessionTokensFallback:
                 messages="ok",
                 action_type="final_response",
                 status=ActionStatus.SUCCESS,
-                output={"raw_output": "answer", "usage": {"last_call_input_tokens": 500, "input_tokens": 800, "total_tokens": 1200}},
+                output={
+                    "raw_output": "answer",
+                    "usage": {"last_call_input_tokens": 500, "input_tokens": 800, "total_tokens": 1200},
+                },
             ),
             ActionHistory(
                 action_id="a2",
@@ -970,7 +973,10 @@ class TestCountSessionTokensFallback:
                 messages="ok2",
                 action_type="final_response",
                 status=ActionStatus.SUCCESS,
-                output={"raw_output": "answer2", "usage": {"last_call_input_tokens": 900, "input_tokens": 1500, "total_tokens": 2000}},
+                output={
+                    "raw_output": "answer2",
+                    "usage": {"last_call_input_tokens": 900, "input_tokens": 1500, "total_tokens": 2000},
+                },
             ),
         ]
 
