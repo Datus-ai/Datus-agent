@@ -378,9 +378,11 @@ class TestUpdateColumnsMethod:
     def test_update_columns_value_error_is_handled(self):
         """DatusException from update_entry (entry not found) is caught and logged, not raised."""
         updater = self._make_updater()
+        calls = []
 
         class FakeStorage:
             def update_entry(self, entry_id, values):
+                calls.append((entry_id, values))
                 raise DatusException(ErrorCode.STORAGE_ENTRY_NOT_FOUND, message_args={"entry_id": entry_id})
 
         updater.semantic_model_storage = FakeStorage()
@@ -397,6 +399,10 @@ class TestUpdateColumnsMethod:
             kind_field="is_dimension",
             allowed_fields={"description"},
         )
+        # Verify update_entry was actually invoked — guards against vacuous pass
+        # if a future refactor silently skips the call.
+        assert len(calls) == 1
+        assert calls[0] == ("column:t.col1", {"description": "new"})
 
 
 # ---------------------------------------------------------------------------
@@ -460,9 +466,11 @@ class TestUpdateSemanticModel:
     def test_update_semantic_model_description_value_error_handled(self):
         """DatusException from update_entry for table is caught and does not raise."""
         updater = self._make_updater()
+        calls = []
 
         class FakeStorage:
             def update_entry(self, entry_id, values):
+                calls.append((entry_id, values))
                 raise DatusException(ErrorCode.STORAGE_ENTRY_NOT_FOUND, message_args={"entry_id": entry_id})
 
         updater.semantic_model_storage = FakeStorage()
@@ -472,6 +480,10 @@ class TestUpdateSemanticModel:
 
         # Should not raise
         updater.update_semantic_model(old_values, update_values)
+        # Verify update_entry was actually invoked — guards against vacuous pass
+        # if a future refactor silently skips the call.
+        assert len(calls) == 1
+        assert calls[0] == ("table:orders", {"description": "desc"})
 
     def test_update_semantic_model_description_propagates_non_not_found_exception(self):
         """Non-NOT_FOUND DatusException from update_entry on table must propagate."""
@@ -524,9 +536,11 @@ class TestUpdateSemanticModel:
     def test_update_semantic_model_columns_swallows_not_found(self):
         """STORAGE_ENTRY_NOT_FOUND from column update is logged and swallowed."""
         updater = self._make_updater()
+        calls = []
 
         class FakeStorage:
             def update_entry(self, entry_id, values):
+                calls.append((entry_id, values))
                 raise DatusException(
                     ErrorCode.STORAGE_ENTRY_NOT_FOUND,
                     message_args={"entry_id": entry_id},
@@ -543,6 +557,9 @@ class TestUpdateSemanticModel:
 
         # Should not raise — NOT_FOUND is intentionally tolerated for partial drift
         updater.update_semantic_model(old_values, update_values)
+        # Verify update_entry was actually invoked on the column entry — guards against
+        # vacuous pass if change-detection silently skips the column.
+        assert any(entry_id == "column:orders.total" and v == {"agg": "AVERAGE"} for entry_id, v in calls)
 
     def test_update_semantic_model_dimensions(self):
         """update_semantic_model updates dimension columns via update_entry."""
