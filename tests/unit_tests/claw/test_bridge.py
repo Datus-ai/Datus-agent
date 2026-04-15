@@ -1267,9 +1267,10 @@ class TestNonStreamingAdapter:
     """Tests that non-streaming adapters skip deltas and don't get stream_id."""
 
     @pytest_asyncio.fixture
-    async def setup(self):
+    async def setup(self, tmp_path):
         adapter = _StubAdapter()  # supports_streaming = False
         agent_config = MagicMock()
+        agent_config.session_dir = str(tmp_path / "sessions")
         task_manager = MagicMock()
         bridge = ChannelBridge(agent_config, task_manager)
         return bridge, adapter, task_manager
@@ -1319,9 +1320,10 @@ class TestStreamResponseConfig:
     """Tests that channel_config.stream_response=False disables streaming on capable adapters."""
 
     @pytest_asyncio.fixture
-    async def setup(self):
+    async def setup(self, tmp_path):
         adapter = _StreamingStubAdapter()  # supports_streaming = True
         agent_config = MagicMock()
+        agent_config.session_dir = str(tmp_path / "sessions")
         task_manager = MagicMock()
         bridge = ChannelBridge(agent_config, task_manager)
         return bridge, adapter, task_manager
@@ -1372,9 +1374,10 @@ class TestStreamMessageIdSeparator:
     """Tests that \\n\\n separator is prepended when SSE message_id changes during streaming."""
 
     @pytest_asyncio.fixture
-    async def setup(self):
+    async def setup(self, tmp_path):
         adapter = _StreamingStubAdapter()
         agent_config = MagicMock()
+        agent_config.session_dir = str(tmp_path / "sessions")
         task_manager = MagicMock()
         bridge = ChannelBridge(agent_config, task_manager)
         return bridge, adapter, task_manager
@@ -1473,8 +1476,9 @@ class TestVerboseOverride:
     """Tests for set_verbose / get_verbose per-conversation override."""
 
     @pytest.fixture
-    def bridge(self):
+    def bridge(self, tmp_path):
         agent_config = MagicMock()
+        agent_config.session_dir = str(tmp_path / "sessions")
         task_manager = MagicMock()
         return ChannelBridge(agent_config, task_manager)
 
