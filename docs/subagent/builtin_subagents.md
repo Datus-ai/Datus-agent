@@ -1120,7 +1120,7 @@ graph LR
 The scheduler subagent is invoked automatically by the chat agent via `task(type="scheduler")`, or launched manually:
 
 ```bash
-/scheduler Submit a daily SQL job to run every morning at 8am
+/scheduler Submit /opt/sql/daily_revenue.sql as a daily job at 8am using the postgres_prod connection
 ```
 
 You can also create a custom subagent using the `scheduler` node class:

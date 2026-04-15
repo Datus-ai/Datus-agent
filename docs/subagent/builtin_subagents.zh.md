@@ -1118,7 +1118,7 @@ graph LR
 scheduler subagent 通常由聊天 agent 通过 `task(type="scheduler")` 自动调用，也可手动启动：
 
 ```bash
-/scheduler 提交一个每天早上 8 点运行的日常 SQL 作业
+/scheduler 提交 /opt/sql/daily_revenue.sql 作为每天早上 8 点运行的定时作业，使用 postgres_prod 连接
 ```
 
 也可以使用 `scheduler` 节点类创建自定义 subagent：

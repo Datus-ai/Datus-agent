@@ -24,7 +24,7 @@ pip install datus-scheduler-core datus-scheduler-airflow
 Invoke the subagent from the chat interface:
 
 ```bash
-/scheduler Submit a daily SQL job to run every morning at 8am
+/scheduler Submit /opt/sql/daily_revenue.sql as a daily job at 8am using the postgres_prod connection
 ```
 
 ## How It Works

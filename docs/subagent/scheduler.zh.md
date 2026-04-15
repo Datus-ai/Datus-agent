@@ -24,7 +24,7 @@ pip install datus-scheduler-core datus-scheduler-airflow
 从对话界面调用 subagent：
 
 ```bash
-/scheduler 提交一个每天早上 8 点运行的日常 SQL 作业
+/scheduler 提交 /opt/sql/daily_revenue.sql 作为每天早上 8 点运行的定时作业，使用 postgres_prod 连接
 ```
 
 ## 工作原理
