@@ -35,6 +35,7 @@ class TestBuildReconciliationChecks:
             columns=sample_columns,
             key_columns=["id"],
         )
+        assert len(checks) > 0
         for check in checks:
             assert "name" in check
             assert "source_query" in check
@@ -59,8 +60,8 @@ class TestBuildReconciliationChecks:
         assert "numeric_aggregate" in check_names
 
 
-class TestRowCountCheck:
-    """Test row count reconciliation check."""
+class TestIndividualCheckSQL:
+    """Test SQL correctness for each individual check type."""
 
     def test_row_count_sql(self):
         checks = build_reconciliation_checks(
@@ -74,10 +75,8 @@ class TestRowCountCheck:
         assert "src.t" in row_count["source_query"]
         assert "COUNT(*)" in row_count["target_query"].upper()
         assert "tgt.t" in row_count["target_query"]
-
-
-class TestNullRatioCheck:
-    """Test null ratio reconciliation check."""
+        assert "SELECT" in row_count["source_query"].upper()
+        assert "FROM" in row_count["source_query"].upper()
 
     def test_null_ratio_for_nullable_columns(self):
         columns = [
@@ -96,10 +95,8 @@ class TestNullRatioCheck:
         assert "COUNT" in sql
         assert "NULL" in sql
         assert "name" in null_checks[0]["source_query"]
-
-
-class TestMinMaxCheck:
-    """Test min/max reconciliation check."""
+        # non-nullable column "id" should NOT appear in null ratio query
+        assert '"id"' not in null_checks[0]["source_query"]
 
     def test_min_max_for_numeric_columns(self):
         columns = [
@@ -119,9 +116,23 @@ class TestMinMaxCheck:
         assert "MIN" in sql
         assert "MAX" in sql
 
-
-class TestNumericAggregateCheck:
-    """Test numeric aggregate (SUM/AVG) reconciliation check."""
+    def test_min_max_includes_date_columns(self):
+        columns = [
+            {"name": "id", "type": "INTEGER", "nullable": False},
+            {"name": "created_at", "type": "DATE", "nullable": True},
+        ]
+        checks = build_reconciliation_checks(
+            source_table="src.t",
+            target_table="tgt.t",
+            columns=columns,
+            key_columns=["id"],
+        )
+        min_max_checks = [c for c in checks if c["name"] == "min_max"]
+        assert len(min_max_checks) > 0
+        sql = min_max_checks[0]["source_query"].upper()
+        assert "MIN" in sql
+        assert "MAX" in sql
+        assert "created_at" in min_max_checks[0]["source_query"]
 
     def test_aggregate_for_numeric_columns(self):
         columns = [
@@ -141,10 +152,6 @@ class TestNumericAggregateCheck:
         assert "SUM" in sql
         assert "AVG" in sql
 
-
-class TestDuplicateKeyCheck:
-    """Test duplicate key reconciliation check."""
-
     def test_duplicate_key_sql(self):
         columns = [{"name": "id", "type": "INTEGER", "nullable": False}]
         checks = build_reconciliation_checks(
@@ -158,10 +165,6 @@ class TestDuplicateKeyCheck:
         assert "GROUP BY" in sql
         assert "HAVING" in sql
         assert "COUNT" in sql
-
-
-class TestSampleDiffCheck:
-    """Test key-based sample diff check."""
 
     def test_sample_diff_sql(self):
         columns = [
@@ -179,8 +182,8 @@ class TestSampleDiffCheck:
         assert "LIMIT" in sample_check["source_query"].upper()
 
 
-class TestNoKeyColumns:
-    """Test behavior when no key columns are provided."""
+class TestCheckSkipping:
+    """Test that checks are skipped when required columns are absent."""
 
     def test_skips_key_dependent_checks(self):
         columns = [
@@ -210,10 +213,6 @@ class TestNoKeyColumns:
         checks_empty = build_reconciliation_checks("s", "t", columns, key_columns=[])
         assert [c["name"] for c in checks_none] == [c["name"] for c in checks_empty]
 
-
-class TestAllNonNullable:
-    """Test behavior when all columns are non-nullable."""
-
     def test_all_non_nullable_skips_null_ratio(self):
         columns = [
             {"name": "id", "type": "INTEGER", "nullable": False},
@@ -228,10 +227,6 @@ class TestAllNonNullable:
         )
         check_names = [c["name"] for c in checks]
         assert "null_ratio" not in check_names
-
-
-class TestNoNumericColumns:
-    """Test behavior when there are no numeric columns."""
 
     def test_no_numeric_columns_skips_aggregates(self):
         columns = [
@@ -248,3 +243,42 @@ class TestNoNumericColumns:
         check_names = [c["name"] for c in checks]
         assert "numeric_aggregate" not in check_names
         assert "min_max" not in check_names
+
+
+class TestIdentifierQuoting:
+    """Test that column identifiers are quoted in generated SQL."""
+
+    def test_column_names_are_quoted(self):
+        columns = [
+            {"name": "order", "type": "INTEGER", "nullable": False},
+            {"name": "group", "type": "VARCHAR", "nullable": True},
+        ]
+        checks = build_reconciliation_checks(
+            source_table="src.t",
+            target_table="tgt.t",
+            columns=columns,
+            key_columns=["order"],
+        )
+        null_check = next(c for c in checks if c["name"] == "null_ratio")
+        assert '"group"' in null_check["source_query"]
+
+        distinct_check = next(c for c in checks if c["name"] == "distinct_count")
+        assert '"order"' in distinct_check["source_query"]
+
+    def test_composite_key_duplicate_check(self):
+        columns = [
+            {"name": "id", "type": "INTEGER", "nullable": False},
+            {"name": "region", "type": "VARCHAR", "nullable": False},
+            {"name": "amount", "type": "DECIMAL", "nullable": True},
+        ]
+        checks = build_reconciliation_checks(
+            source_table="src.t",
+            target_table="tgt.t",
+            columns=columns,
+            key_columns=["id", "region"],
+        )
+        dup_check = next(c for c in checks if c["name"] == "duplicate_key")
+        sql = dup_check["target_query"]
+        assert '"id"' in sql
+        assert '"region"' in sql
+        assert "GROUP BY" in sql.upper()

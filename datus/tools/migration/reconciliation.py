@@ -36,6 +36,11 @@ def _is_minmax_type(col_type: str) -> bool:
     return _is_numeric_type(col_type) or _is_date_type(col_type)
 
 
+def _quote_identifier(name: str) -> str:
+    """Quote a SQL identifier with double quotes to handle reserved words and special characters."""
+    return f'"{name}"'
+
+
 def build_reconciliation_checks(
     source_table: str,
     target_table: str,
@@ -72,9 +77,10 @@ def build_reconciliation_checks(
         src_parts = []
         tgt_parts = []
         for col in nullable_cols:
-            name = col["name"]
-            src_parts.append(f"COUNT(*) - COUNT({name}) AS {name}_null_count")
-            tgt_parts.append(f"COUNT(*) - COUNT({name}) AS {name}_null_count")
+            qname = _quote_identifier(col["name"])
+            alias = col["name"].replace('"', "")
+            src_parts.append(f"COUNT(*) - COUNT({qname}) AS {_quote_identifier(alias + '_null_count')}")
+            tgt_parts.append(f"COUNT(*) - COUNT({qname}) AS {_quote_identifier(alias + '_null_count')}")
 
         src_parts.append("COUNT(*) AS total")
         tgt_parts.append("COUNT(*) AS total")
@@ -93,9 +99,12 @@ def build_reconciliation_checks(
         src_parts = []
         tgt_parts = []
         for col in minmax_cols:
-            name = col["name"]
-            src_parts.append(f"MIN({name}) AS {name}_min, MAX({name}) AS {name}_max")
-            tgt_parts.append(f"MIN({name}) AS {name}_min, MAX({name}) AS {name}_max")
+            qname = _quote_identifier(col["name"])
+            alias = col["name"].replace('"', "")
+            min_alias = _quote_identifier(alias + "_min")
+            max_alias = _quote_identifier(alias + "_max")
+            src_parts.append(f"MIN({qname}) AS {min_alias}, MAX({qname}) AS {max_alias}")
+            tgt_parts.append(f"MIN({qname}) AS {min_alias}, MAX({qname}) AS {max_alias}")
 
         checks.append(
             {
@@ -108,8 +117,12 @@ def build_reconciliation_checks(
     # 4. Distinct count — for key columns or all columns
     distinct_cols = key_columns if has_keys else [c["name"] for c in columns]
     if distinct_cols:
-        src_parts = [f"COUNT(DISTINCT {c}) AS {c}_distinct" for c in distinct_cols]
-        tgt_parts = [f"COUNT(DISTINCT {c}) AS {c}_distinct" for c in distinct_cols]
+        src_parts = [
+            f"COUNT(DISTINCT {_quote_identifier(c)}) AS {_quote_identifier(c + '_distinct')}" for c in distinct_cols
+        ]
+        tgt_parts = [
+            f"COUNT(DISTINCT {_quote_identifier(c)}) AS {_quote_identifier(c + '_distinct')}" for c in distinct_cols
+        ]
         checks.append(
             {
                 "name": "distinct_count",
@@ -120,25 +133,44 @@ def build_reconciliation_checks(
 
     # 5. Duplicate key — only if key columns provided
     if has_keys:
-        key_str = ", ".join(key_columns)
-        checks.append(
-            {
-                "name": "duplicate_key",
-                "source_query": (
-                    f"SELECT {key_str}, COUNT(*) AS cnt FROM {source_table} "
-                    f"GROUP BY {key_str} HAVING COUNT(*) > 1 LIMIT 5"
-                ),
-                "target_query": (
-                    f"SELECT {key_str}, COUNT(*) AS cnt FROM {target_table} "
-                    f"GROUP BY {key_str} HAVING COUNT(*) > 1 LIMIT 5"
-                ),
-            }
-        )
+        quoted_keys = [_quote_identifier(k) for k in key_columns]
+        key_str = ", ".join(quoted_keys)
+        if len(key_columns) > 1:
+            # Composite key: use subquery to correctly detect duplicate key combinations
+            all_keys = ", ".join(quoted_keys)
+            checks.append(
+                {
+                    "name": "duplicate_key",
+                    "source_query": (
+                        f"SELECT {all_keys}, COUNT(*) AS cnt FROM {source_table} "
+                        f"GROUP BY {key_str} HAVING COUNT(*) > 1 LIMIT 5"
+                    ),
+                    "target_query": (
+                        f"SELECT {all_keys}, COUNT(*) AS cnt FROM {target_table} "
+                        f"GROUP BY {key_str} HAVING COUNT(*) > 1 LIMIT 5"
+                    ),
+                }
+            )
+        else:
+            checks.append(
+                {
+                    "name": "duplicate_key",
+                    "source_query": (
+                        f"SELECT {key_str}, COUNT(*) AS cnt FROM {source_table} "
+                        f"GROUP BY {key_str} HAVING COUNT(*) > 1 LIMIT 5"
+                    ),
+                    "target_query": (
+                        f"SELECT {key_str}, COUNT(*) AS cnt FROM {target_table} "
+                        f"GROUP BY {key_str} HAVING COUNT(*) > 1 LIMIT 5"
+                    ),
+                }
+            )
 
     # 6. Sample diff — key-based sample, only if key columns provided
     if has_keys:
-        key_order = ", ".join(key_columns)
-        all_cols = ", ".join(c["name"] for c in columns)
+        quoted_keys = [_quote_identifier(k) for k in key_columns]
+        key_order = ", ".join(quoted_keys)
+        all_cols = ", ".join(_quote_identifier(c["name"]) for c in columns)
         checks.append(
             {
                 "name": "sample_diff",
@@ -153,9 +185,12 @@ def build_reconciliation_checks(
         src_parts = []
         tgt_parts = []
         for col in numeric_cols:
-            name = col["name"]
-            src_parts.append(f"SUM({name}) AS {name}_sum, AVG({name}) AS {name}_avg")
-            tgt_parts.append(f"SUM({name}) AS {name}_sum, AVG({name}) AS {name}_avg")
+            qname = _quote_identifier(col["name"])
+            alias = col["name"].replace('"', "")
+            sum_alias = _quote_identifier(alias + "_sum")
+            avg_alias = _quote_identifier(alias + "_avg")
+            src_parts.append(f"SUM({qname}) AS {sum_alias}, AVG({qname}) AS {avg_alias}")
+            tgt_parts.append(f"SUM({qname}) AS {sum_alias}, AVG({qname}) AS {avg_alias}")
 
         checks.append(
             {

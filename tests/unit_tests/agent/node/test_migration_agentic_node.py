@@ -16,9 +16,22 @@ Design principle: NO mock except LLM.
 
 import pytest
 
-from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
-from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
-from tests.unit_tests.mock_llm_model import build_simple_response
+from tests.unit_tests.agent.node._builtin_node_test_helpers import (
+    check_execute_stream_basic_workflow,
+    check_execute_stream_error_handling,
+    check_execute_stream_raises_without_input,
+    check_filesystem_tools,
+    check_inherits_agentic_node,
+    check_max_turns,
+    check_node_factory,
+    check_node_factory_with_input,
+    check_node_id,
+    check_node_name,
+    check_node_type_constant,
+    check_node_type_in_action_types,
+    check_standard_db_tools,
+    check_tools_include,
+)
 
 
 class TestMigrationAgenticNodeInit:
@@ -27,75 +40,53 @@ class TestMigrationAgenticNodeInit:
     def test_node_name(self, real_agent_config, mock_llm_create):
         from datus.agent.node.migration_agentic_node import MigrationAgenticNode
 
-        node = MigrationAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        assert node.NODE_NAME == "migration"
-        assert node.get_node_name() == "migration"
+        check_node_name(MigrationAgenticNode, real_agent_config, "migration")
 
     def test_inherits_agentic_node(self, real_agent_config, mock_llm_create):
-        from datus.agent.node.agentic_node import AgenticNode
         from datus.agent.node.migration_agentic_node import MigrationAgenticNode
 
-        node = MigrationAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        assert isinstance(node, AgenticNode)
+        check_inherits_agentic_node(MigrationAgenticNode, real_agent_config)
 
     def test_node_id(self, real_agent_config, mock_llm_create):
         from datus.agent.node.migration_agentic_node import MigrationAgenticNode
 
-        node = MigrationAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        assert node.id == "migration_node"
+        check_node_id(MigrationAgenticNode, real_agent_config, "migration_node")
 
     def test_setup_tools_includes_ddl(self, real_agent_config, mock_llm_create):
         from datus.agent.node.migration_agentic_node import MigrationAgenticNode
 
-        node = MigrationAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        tool_names = [tool.name for tool in node.tools]
-        assert "execute_ddl" in tool_names
+        check_tools_include(MigrationAgenticNode, real_agent_config, "execute_ddl")
 
     def test_setup_tools_includes_execute_write(self, real_agent_config, mock_llm_create):
         from datus.agent.node.migration_agentic_node import MigrationAgenticNode
 
-        node = MigrationAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        tool_names = [tool.name for tool in node.tools]
-        assert "execute_write" in tool_names
+        check_tools_include(MigrationAgenticNode, real_agent_config, "execute_write")
 
     def test_setup_tools_includes_transfer_query_result(self, real_agent_config, mock_llm_create):
         from datus.agent.node.migration_agentic_node import MigrationAgenticNode
 
-        node = MigrationAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        tool_names = [tool.name for tool in node.tools]
-        assert "transfer_query_result" in tool_names
+        check_tools_include(MigrationAgenticNode, real_agent_config, "transfer_query_result")
 
     def test_setup_tools_includes_standard_db_tools(self, real_agent_config, mock_llm_create):
         from datus.agent.node.migration_agentic_node import MigrationAgenticNode
 
-        node = MigrationAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        tool_names = [tool.name for tool in node.tools]
-        assert "list_tables" in tool_names
-        assert "describe_table" in tool_names
-        assert "read_query" in tool_names
-        assert "get_table_ddl" in tool_names
+        check_standard_db_tools(MigrationAgenticNode, real_agent_config)
 
     def test_setup_tools_includes_filesystem_tools(self, real_agent_config, mock_llm_create):
         from datus.agent.node.migration_agentic_node import MigrationAgenticNode
 
-        node = MigrationAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        tool_names = [tool.name for tool in node.tools]
-        assert "read_file" in tool_names
+        check_filesystem_tools(MigrationAgenticNode, real_agent_config)
 
     def test_default_max_turns(self, real_agent_config, mock_llm_create):
         from datus.agent.node.migration_agentic_node import MigrationAgenticNode
 
-        node = MigrationAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        assert node.max_turns == 40
+        check_max_turns(MigrationAgenticNode, real_agent_config, 40)
 
     def test_does_not_include_gen_job_only_tools(self, real_agent_config, mock_llm_create):
         """migration should NOT be confused with gen_job — verify it has transfer_query_result."""
         from datus.agent.node.migration_agentic_node import MigrationAgenticNode
 
-        node = MigrationAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        tool_names = [tool.name for tool in node.tools]
-        # migration MUST have transfer_query_result
-        assert "transfer_query_result" in tool_names
+        check_tools_include(MigrationAgenticNode, real_agent_config, "transfer_query_result")
 
 
 class TestMigrationExecution:
@@ -104,106 +95,54 @@ class TestMigrationExecution:
     @pytest.mark.asyncio
     async def test_execute_stream_raises_without_input(self, real_agent_config, mock_llm_create):
         from datus.agent.node.migration_agentic_node import MigrationAgenticNode
-        from datus.utils.exceptions import DatusException
 
-        node = MigrationAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        assert node.input is None
-
-        with pytest.raises(DatusException) as exc_info:
-            async for _ in node.execute_stream():
-                pass
-        assert "input" in str(exc_info.value).lower()
+        await check_execute_stream_raises_without_input(MigrationAgenticNode, real_agent_config)
 
     @pytest.mark.asyncio
     async def test_execute_stream_basic_workflow(self, real_agent_config, mock_llm_create):
         from datus.agent.node.migration_agentic_node import MigrationAgenticNode
 
-        mock_llm_create.reset(
-            responses=[
-                build_simple_response("Migration completed successfully."),
-            ]
+        await check_execute_stream_basic_workflow(
+            MigrationAgenticNode,
+            real_agent_config,
+            mock_llm_create,
+            "Migrate users table from duckdb to greenplum",
         )
-
-        node = MigrationAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        node.input = SemanticNodeInput(user_message="Migrate users table from duckdb to greenplum")
-
-        action_manager = ActionHistoryManager()
-        actions = []
-        async for action in node.execute_stream(action_manager):
-            actions.append(action)
-
-        assert len(actions) >= 2
-        assert actions[0].role == ActionRole.USER
-        assert actions[0].status == ActionStatus.PROCESSING
-        assert actions[-1].status == ActionStatus.SUCCESS
 
     @pytest.mark.asyncio
     async def test_execute_stream_error_handling(self, real_agent_config, mock_llm_create):
         from datus.agent.node.migration_agentic_node import MigrationAgenticNode
 
-        async def _raise_error(*args, **kwargs):
-            raise RuntimeError("LLM connection error")
-            yield  # noqa: makes this an async generator
-
-        node = MigrationAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        node.input = SemanticNodeInput(user_message="Migrate data")
-        mock_llm_create.generate_with_tools_stream = _raise_error
-
-        action_manager = ActionHistoryManager()
-        actions = []
-        async for action in node.execute_stream(action_manager):
-            actions.append(action)
-
-        assert len(actions) >= 2
-        last = actions[-1]
-        assert last.status == ActionStatus.FAILED
-        assert last.action_type == "error"
+        await check_execute_stream_error_handling(
+            MigrationAgenticNode,
+            real_agent_config,
+            mock_llm_create,
+            "Migrate data",
+        )
 
 
 class TestMigrationNodeType:
     """Tests for MigrationAgenticNode type registration."""
 
     def test_node_type_constant_exists(self):
-        from datus.configuration.node_type import NodeType
-
-        assert hasattr(NodeType, "TYPE_MIGRATION")
-        assert NodeType.TYPE_MIGRATION == "migration"
+        check_node_type_constant("TYPE_MIGRATION", "migration")
 
     def test_node_type_in_action_types(self):
-        from datus.configuration.node_type import NodeType
-
-        assert NodeType.TYPE_MIGRATION in NodeType.ACTION_TYPES
+        check_node_type_in_action_types("TYPE_MIGRATION")
 
     def test_node_factory_creates_migration(self, real_agent_config, mock_llm_create):
         from datus.agent.node.migration_agentic_node import MigrationAgenticNode
-        from datus.agent.node.node import Node
         from datus.configuration.node_type import NodeType
 
-        node = Node.new_instance(
-            node_id="test_migration",
-            description="Test migration factory",
-            node_type=NodeType.TYPE_MIGRATION,
-            input_data=None,
-            agent_config=real_agent_config,
-            tools=[],
-        )
-        assert isinstance(node, MigrationAgenticNode)
-        assert node.execution_mode == "workflow"
+        check_node_factory(MigrationAgenticNode, NodeType.TYPE_MIGRATION, real_agent_config)
 
     def test_node_factory_with_input_data(self, real_agent_config, mock_llm_create):
         from datus.agent.node.migration_agentic_node import MigrationAgenticNode
-        from datus.agent.node.node import Node
         from datus.configuration.node_type import NodeType
 
-        input_data = SemanticNodeInput(user_message="Migrate users from duckdb to greenplum")
-        node = Node.new_instance(
-            node_id="test_migration",
-            description="Test migration factory",
-            node_type=NodeType.TYPE_MIGRATION,
-            input_data=input_data,
-            agent_config=real_agent_config,
-            tools=[],
+        check_node_factory_with_input(
+            MigrationAgenticNode,
+            NodeType.TYPE_MIGRATION,
+            real_agent_config,
+            "Migrate users from duckdb to greenplum",
         )
-        assert isinstance(node, MigrationAgenticNode)
-        assert node.input is not None
-        assert node.input.user_message == "Migrate users from duckdb to greenplum"

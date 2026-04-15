@@ -7,7 +7,7 @@ Unit tests for GenJobAgenticNode.
 
 Tests cover:
 - Node creation in workflow and interactive modes
-- Tools setup (DBFuncTool + execute_ddl + execute_write + transfer_query_result)
+- Tools setup (DBFuncTool + execute_ddl + execute_write, no transfer_query_result)
 - Max turns configuration
 - Node type registration and factory creation
 
@@ -21,9 +21,24 @@ Design principle: NO mock except LLM.
 
 import pytest
 
-from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
-from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
-from tests.unit_tests.mock_llm_model import build_simple_response
+from tests.unit_tests.agent.node._builtin_node_test_helpers import (
+    check_dynamic_db_func_tool,
+    check_execute_stream_basic_workflow,
+    check_execute_stream_error_handling,
+    check_execute_stream_raises_without_input,
+    check_filesystem_tools,
+    check_inherits_agentic_node,
+    check_max_turns,
+    check_node_factory,
+    check_node_factory_with_input,
+    check_node_id,
+    check_node_name,
+    check_node_type_constant,
+    check_node_type_in_action_types,
+    check_standard_db_tools,
+    check_tools_exclude,
+    check_tools_include,
+)
 
 # ---------------------------------------------------------------------------
 # Initialization Tests
@@ -36,74 +51,54 @@ class TestGenJobAgenticNodeInit:
     def test_node_name(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
-        node = GenJobAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        assert node.NODE_NAME == "gen_job"
-        assert node.get_node_name() == "gen_job"
+        check_node_name(GenJobAgenticNode, real_agent_config, "gen_job")
 
     def test_inherits_agentic_node(self, real_agent_config, mock_llm_create):
-        from datus.agent.node.agentic_node import AgenticNode
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
-        node = GenJobAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        assert isinstance(node, AgenticNode)
+        check_inherits_agentic_node(GenJobAgenticNode, real_agent_config)
 
     def test_node_id(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
-        node = GenJobAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        assert node.id == "gen_job_node"
+        check_node_id(GenJobAgenticNode, real_agent_config, "gen_job_node")
 
     def test_setup_tools_includes_ddl(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
-        node = GenJobAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        tool_names = [tool.name for tool in node.tools]
-        assert "execute_ddl" in tool_names
+        check_tools_include(GenJobAgenticNode, real_agent_config, "execute_ddl")
 
     def test_setup_tools_includes_execute_write(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
-        node = GenJobAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        tool_names = [tool.name for tool in node.tools]
-        assert "execute_write" in tool_names
+        check_tools_include(GenJobAgenticNode, real_agent_config, "execute_write")
 
     def test_setup_tools_excludes_transfer_query_result(self, real_agent_config, mock_llm_create):
         """gen_job is single-database ETL — transfer_query_result belongs to migration subagent."""
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
-        node = GenJobAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        tool_names = [tool.name for tool in node.tools]
-        assert "transfer_query_result" not in tool_names
+        check_tools_exclude(GenJobAgenticNode, real_agent_config, "transfer_query_result")
 
     def test_setup_tools_includes_standard_db_tools(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
-        node = GenJobAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        tool_names = [tool.name for tool in node.tools]
-        assert "list_tables" in tool_names
-        assert "describe_table" in tool_names
-        assert "read_query" in tool_names
-        assert "get_table_ddl" in tool_names
+        check_standard_db_tools(GenJobAgenticNode, real_agent_config)
 
     def test_setup_tools_includes_filesystem_tools(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
-        node = GenJobAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        tool_names = [tool.name for tool in node.tools]
-        assert "read_file" in tool_names
+        check_filesystem_tools(GenJobAgenticNode, real_agent_config)
 
     def test_default_max_turns(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
-        node = GenJobAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        assert node.max_turns == 30
+        check_max_turns(GenJobAgenticNode, real_agent_config, 30)
 
     def test_uses_dynamic_db_func_tool(self, real_agent_config, mock_llm_create):
         """gen_job should use create_dynamic for multi-connector support."""
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
-        node = GenJobAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        assert node.db_func_tool is not None
+        check_dynamic_db_func_tool(GenJobAgenticNode, real_agent_config)
 
 
 # ---------------------------------------------------------------------------
@@ -117,61 +112,30 @@ class TestGenJobExecution:
     @pytest.mark.asyncio
     async def test_execute_stream_raises_without_input(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
-        from datus.utils.exceptions import DatusException
 
-        node = GenJobAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        # input is None by default
-        assert node.input is None
-
-        with pytest.raises(DatusException) as exc_info:
-            async for _ in node.execute_stream():
-                pass
-        assert "input" in str(exc_info.value).lower()
+        await check_execute_stream_raises_without_input(GenJobAgenticNode, real_agent_config)
 
     @pytest.mark.asyncio
     async def test_execute_stream_basic_workflow(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
-        mock_llm_create.reset(
-            responses=[
-                build_simple_response("ETL job completed successfully."),
-            ]
+        await check_execute_stream_basic_workflow(
+            GenJobAgenticNode,
+            real_agent_config,
+            mock_llm_create,
+            "Create an ETL job to load data into summary table",
         )
-
-        node = GenJobAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        node.input = SemanticNodeInput(user_message="Create an ETL job to load data into summary table")
-
-        action_manager = ActionHistoryManager()
-        actions = []
-        async for action in node.execute_stream(action_manager):
-            actions.append(action)
-
-        assert len(actions) >= 2
-        assert actions[0].role == ActionRole.USER
-        assert actions[0].status == ActionStatus.PROCESSING
-        assert actions[-1].status == ActionStatus.SUCCESS
 
     @pytest.mark.asyncio
     async def test_execute_stream_error_handling(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
-        async def _raise_error(*args, **kwargs):
-            raise RuntimeError("LLM connection error")
-            yield  # noqa: makes this an async generator
-
-        node = GenJobAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        node.input = SemanticNodeInput(user_message="Build ETL job")
-        mock_llm_create.generate_with_tools_stream = _raise_error
-
-        action_manager = ActionHistoryManager()
-        actions = []
-        async for action in node.execute_stream(action_manager):
-            actions.append(action)
-
-        assert len(actions) >= 2
-        last = actions[-1]
-        assert last.status == ActionStatus.FAILED
-        assert last.action_type == "error"
+        await check_execute_stream_error_handling(
+            GenJobAgenticNode,
+            real_agent_config,
+            mock_llm_create,
+            "Build ETL job",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -183,46 +147,24 @@ class TestGenJobNodeType:
     """Tests for GenJobAgenticNode type registration."""
 
     def test_node_type_constant_exists(self):
-        from datus.configuration.node_type import NodeType
-
-        assert hasattr(NodeType, "TYPE_GEN_JOB")
-        assert NodeType.TYPE_GEN_JOB == "gen_job"
+        check_node_type_constant("TYPE_GEN_JOB", "gen_job")
 
     def test_node_type_in_action_types(self):
-        from datus.configuration.node_type import NodeType
-
-        assert NodeType.TYPE_GEN_JOB in NodeType.ACTION_TYPES
+        check_node_type_in_action_types("TYPE_GEN_JOB")
 
     def test_node_factory_creates_gen_job(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
-        from datus.agent.node.node import Node
         from datus.configuration.node_type import NodeType
 
-        node = Node.new_instance(
-            node_id="test_gen_job",
-            description="Test gen_job factory",
-            node_type=NodeType.TYPE_GEN_JOB,
-            input_data=None,
-            agent_config=real_agent_config,
-            tools=[],
-        )
-        assert isinstance(node, GenJobAgenticNode)
-        assert node.execution_mode == "workflow"
+        check_node_factory(GenJobAgenticNode, NodeType.TYPE_GEN_JOB, real_agent_config)
 
     def test_node_factory_with_input_data(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
-        from datus.agent.node.node import Node
         from datus.configuration.node_type import NodeType
 
-        input_data = SemanticNodeInput(user_message="Build a summary table")
-        node = Node.new_instance(
-            node_id="test_gen_job",
-            description="Test gen_job factory",
-            node_type=NodeType.TYPE_GEN_JOB,
-            input_data=input_data,
-            agent_config=real_agent_config,
-            tools=[],
+        check_node_factory_with_input(
+            GenJobAgenticNode,
+            NodeType.TYPE_GEN_JOB,
+            real_agent_config,
+            "Build a summary table",
         )
-        assert isinstance(node, GenJobAgenticNode)
-        assert node.input is not None
-        assert node.input.user_message == "Build a summary table"

@@ -140,6 +140,12 @@ class TestUnsupportedTypes:
         with pytest.raises(UnsupportedTypeError):
             map_columns_between_dialects(columns, "duckdb", "starrocks")
 
+    def test_unmapped_type_raises_error(self):
+        """Type not in unsupported set but also not in dialect map should raise."""
+        columns = [{"name": "data", "type": "JSONB", "nullable": True}]
+        with pytest.raises(UnsupportedTypeError):
+            map_columns_between_dialects(columns, "duckdb", "greenplum")
+
 
 class TestHugeintHandling:
     """Test HUGEINT mapping behavior."""
@@ -207,6 +213,11 @@ class TestUnsupportedDialect:
         columns = [{"name": "col", "type": "INTEGER", "nullable": True}]
         with pytest.raises(ValueError, match="Unsupported.*dialect"):
             map_columns_between_dialects(columns, "duckdb", "oracle")
+
+    def test_both_dialects_unsupported(self):
+        columns = [{"name": "col", "type": "INTEGER", "nullable": True}]
+        with pytest.raises(ValueError, match="Unsupported.*dialect"):
+            map_columns_between_dialects(columns, "oracle", "oracle")
 
 
 class TestEmptyInput:

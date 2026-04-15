@@ -1304,6 +1304,10 @@ class DBFuncTool:
             if not result.success:
                 return FuncToolResult(success=0, error=result.error)
 
+            # Commit to release locks (critical for SQLAlchemy-based connectors)
+            if hasattr(connector, "connection") and hasattr(connector.connection, "commit"):
+                connector.connection.commit()
+
             row_count = getattr(result, "row_count", None)
             if min_rows is not None and row_count is not None and row_count < min_rows:
                 return FuncToolResult(

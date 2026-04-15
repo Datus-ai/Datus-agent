@@ -395,6 +395,28 @@ class TestDBFuncToolExecuteWrite:
 
         assert "execute_write" not in tool_names
 
+    def test_execute_write_missing_method(self):
+        """Connector that doesn't support the write method should return error."""
+        mock_connector = Mock(spec=["dialect", "get_databases"])  # no execute_insert/update/delete
+        mock_connector.dialect = "generic"
+        mock_connector.get_databases.return_value = []
+        tool = self._make_tool(mock_connector)
+        result = tool.execute_write("INSERT INTO t VALUES (1)")
+        assert result.success == 0
+        assert "not support" in result.error.lower() or "does not support" in result.error.lower()
+
+    def test_execute_write_exception_during_execution(self):
+        """Connector that raises during execution should return error."""
+        mock_connector = Mock()
+        mock_connector.dialect = "sqlite"
+        mock_connector.get_databases.return_value = []
+        mock_connector.execute_insert.side_effect = RuntimeError("connection reset")
+
+        tool = self._make_tool(mock_connector)
+        result = tool.execute_write("INSERT INTO t VALUES (1)")
+        assert result.success == 0
+        assert "failed" in result.error.lower()
+
 
 class TestDescribeTableDuckDBSchemaPrefix:
     """Verify that describe_table correctly splits 'schema.table' for DuckDB."""
@@ -614,6 +636,79 @@ class TestGetConnectorRouting:
         assert conn_source is mock_source
         assert conn_target is mock_target
         assert conn_source is not conn_target
+
+    def test_fallback_to_namespace_when_direct_lookup_fails(self):
+        """When get_conn(db_name, db_name) fails, should fallback to get_conn(namespace, db_name)."""
+        from datus.tools.db_tools.db_manager import DBManager
+
+        mock_connector = Mock()
+        mock_connector.dialect = "duckdb"
+        mock_connector.get_databases.return_value = []
+
+        mock_db_manager = Mock(spec=DBManager)
+        # First call (db_name, db_name) raises, second call (namespace, db_name) succeeds
+        mock_db_manager.get_conn.side_effect = [KeyError("not found"), mock_connector]
+        mock_db_manager.first_conn.return_value = mock_connector
+
+        mock_config = Mock()
+        mock_config.active_model.return_value.model = "gpt-5.4"
+        mock_config.current_database = "default_db"
+        mock_config.current_db_configs.return_value = {"default_db": Mock(), "other_db": Mock()}
+
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            tool = DBFuncTool(mock_db_manager, agent_config=mock_config, default_database="default_db")
+
+        conn = tool._get_connector("other_db")
+        assert conn is mock_connector
+        # Should have been called twice: first (db_name, db_name) then (namespace, db_name)
+        assert mock_db_manager.get_conn.call_count == 2
+
+    def test_list_databases_connector_raises_marks_unavailable(self):
+        """When _get_connector raises for a database, entry should have available=False."""
+        from datus.tools.db_tools.db_manager import DBManager
+
+        mock_source = Mock()
+        mock_source.dialect = "duckdb"
+        mock_source.get_databases.return_value = []
+
+        mock_db_manager = Mock(spec=DBManager)
+        mock_db_manager.first_conn.return_value = mock_source
+
+        def _get_conn(ns, name):
+            if name == "broken_db":
+                raise ConnectionError("adapter not installed")
+            return mock_source
+
+        mock_db_manager.get_conn.side_effect = _get_conn
+
+        mock_config = Mock()
+        mock_config.active_model.return_value.model = "gpt-5.4"
+        mock_config.current_database = "source_db"
+        databases = {"source_db": Mock(), "broken_db": Mock()}
+        mock_config.current_db_configs.return_value = databases
+
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            tool = DBFuncTool(mock_db_manager, agent_config=mock_config, default_database=list(databases.keys())[0])
+        assert tool._is_multi_connector is True
+
+        result = tool.list_databases()
+
+        assert result.success == 1
+        db_list = result.result
+        broken = next((e for e in db_list if e["name"] == "broken_db"), None)
+        assert broken is not None
+        assert broken["available"] is False
+        assert "error" in broken
 
 
 class TestTransferQueryResult:
@@ -924,85 +1019,28 @@ class TestTransferQueryResult:
             assert result.success == 0, f"Expected rejection for target_table='{bad_name}'"
             assert "invalid" in result.error.lower() or "identifier" in result.error.lower()
 
-
-class TestListDatabasesMultiConnector:
-    """Tests for list_databases in multi-connector mode error paths."""
-
-    def _make_multi_tool(self, db_manager, config, databases):
-        with (
-            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
-        ):
-            mock_rag.return_value.schema_store.table_size.return_value = 0
-            mock_sem.return_value.get_size.return_value = 0
-            tool = DBFuncTool(db_manager, agent_config=config, default_database=list(databases.keys())[0])
-        return tool
-
-    def test_list_databases_connector_raises_marks_unavailable(self):
-        """When _get_connector raises for a database, entry should have available=False."""
-        from datus.tools.db_tools.db_manager import DBManager
-
-        mock_source = Mock()
-        mock_source.dialect = "duckdb"
-        mock_source.get_databases.return_value = []
-
-        mock_db_manager = Mock(spec=DBManager)
-        mock_db_manager.first_conn.return_value = mock_source
-
-        def _get_conn(ns, name):
-            if name == "broken_db":
-                raise ConnectionError("adapter not installed")
-            return mock_source
-
-        mock_db_manager.get_conn.side_effect = _get_conn
-
-        mock_config = Mock()
-        mock_config.active_model.return_value.model = "gpt-5.4"
-        mock_config.current_database = "source_db"
-        databases = {"source_db": Mock(), "broken_db": Mock()}
-        mock_config.current_db_configs.return_value = databases
-
-        tool = self._make_multi_tool(mock_db_manager, mock_config, databases)
-        assert tool._is_multi_connector is True
-
-        result = tool.list_databases()
-
-        assert result.success == 1
-        db_list = result.result
-        broken = next((e for e in db_list if e["name"] == "broken_db"), None)
-        assert broken is not None
-        assert broken["available"] is False
-        assert "error" in broken
-
-
-class TestTransferQueryResultTargetConnectorError:
-    """Tests for transfer_query_result when _get_connector raises for target."""
-
-    def _make_tool_with_failing_target(self, source_connector):
-        with (
-            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
-        ):
-            mock_rag.return_value.schema_store.table_size.return_value = 0
-            mock_sem.return_value.get_size.return_value = 0
-            tool = DBFuncTool(source_connector)
-
-        def get_connector(database=None):
-            if database == "target_db":
-                raise ConnectionError("target adapter not installed")
-            return source_connector
-
-        tool._get_connector = Mock(side_effect=get_connector)
-        tool._default_database = "source_db"
-        return tool
-
     def test_transfer_target_connector_raises_returns_error(self):
         """When _get_connector raises for target_database, should return success=0."""
         source = Mock()
         source.dialect = "duckdb"
         source.get_databases.return_value = []
 
-        tool = self._make_tool_with_failing_target(source)
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            tool = DBFuncTool(source)
+
+        def get_connector(database=None):
+            if database == "target_db":
+                raise ConnectionError("target adapter not installed")
+            return source
+
+        tool._get_connector = Mock(side_effect=get_connector)
+        tool._default_database = "source_db"
+
         result = tool.transfer_query_result(
             source_sql="SELECT 1",
             source_database="source_db",
@@ -1012,41 +1050,6 @@ class TestTransferQueryResultTargetConnectorError:
 
         assert result.success == 0
         assert "target" in result.error.lower()
-
-
-class TestGetConnectorFallback:
-    """Test _get_connector fallback from db_name to namespace routing."""
-
-    def test_fallback_to_namespace_when_direct_lookup_fails(self):
-        """When get_conn(db_name, db_name) fails, should fallback to get_conn(namespace, db_name)."""
-        from datus.tools.db_tools.db_manager import DBManager
-
-        mock_connector = Mock()
-        mock_connector.dialect = "duckdb"
-        mock_connector.get_databases.return_value = []
-
-        mock_db_manager = Mock(spec=DBManager)
-        # First call (db_name, db_name) raises, second call (namespace, db_name) succeeds
-        mock_db_manager.get_conn.side_effect = [KeyError("not found"), mock_connector]
-        mock_db_manager.first_conn.return_value = mock_connector
-
-        mock_config = Mock()
-        mock_config.active_model.return_value.model = "gpt-5.4"
-        mock_config.current_database = "default_db"
-        mock_config.current_db_configs.return_value = {"default_db": Mock(), "other_db": Mock()}
-
-        with (
-            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
-        ):
-            mock_rag.return_value.schema_store.table_size.return_value = 0
-            mock_sem.return_value.get_size.return_value = 0
-            tool = DBFuncTool(mock_db_manager, agent_config=mock_config, default_database="default_db")
-
-        conn = tool._get_connector("other_db")
-        assert conn is mock_connector
-        # Should have been called twice: first (db_name, db_name) then (namespace, db_name)
-        assert mock_db_manager.get_conn.call_count == 2
 
 
 class TestPathTraversalGuard:

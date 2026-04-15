@@ -372,14 +372,14 @@ class SubAgentTaskTool:
 
             return GenJobAgenticNode(
                 agent_config=self.agent_config,
-                execution_mode="interactive",
+                execution_mode=self._resolve_execution_mode(),
             )
         elif subagent_type == "migration":
             from datus.agent.node.migration_agentic_node import MigrationAgenticNode
 
             return MigrationAgenticNode(
                 agent_config=self.agent_config,
-                execution_mode="interactive",
+                execution_mode=self._resolve_execution_mode(),
             )
         elif subagent_type == "gen_skill":
             from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode

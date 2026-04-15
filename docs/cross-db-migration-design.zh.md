@@ -387,7 +387,7 @@ skills/data-migration/
 migration:
   model: claude_benchmark
   system_prompt: migration
-  prompt_version: "1.1"
+  prompt_version: "1.0"
   agent_description: "Migrate a table from a source database to a target database, rebuild the target table, load data, and reconcile source vs target."
   max_turns: 40
   skills: "data-migration, table-validation"
@@ -406,7 +406,7 @@ migration:
 
 ## Prompt 设计
 
-### 新增 `migration_system_1.1.j2`
+### 新增 `migration_system_1.0.j2`
 
 #### 职责
 
@@ -478,7 +478,7 @@ migration:
 - 对数 SQL 生成（`datus/tools/migration/reconciliation.py`）— 已实现
 - `data-migration` skill — 已实现
 - `migration` 配置型 subagent（`conf/agent.yml`）— 已实现
-- `migration_system_1.1.j2` — 已实现
+- `migration_system_1.0.j2` — 已实现
 - `gen_job` 内置 subagent（`GenJobAgenticNode`）— 已实现
 - `gen_job_system_1.0.j2` — 已实现
 - 多 connector 路由修复（`_get_connector`、`_needs_multi_connector`、`describe_table`）— 已实现

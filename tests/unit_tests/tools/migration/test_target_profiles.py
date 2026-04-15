@@ -33,6 +33,11 @@ class TestGreenplumProfile:
         profile = GreenplumProfile()
         assert profile.ddl_suffix() == ""
 
+    def test_format_table_name_default_schema(self):
+        """Unqualified table name should get 'public' prefix by default."""
+        profile = GreenplumProfile()
+        assert profile.format_table_name("users") == "public.users"
+
 
 class TestStarRocksProfile:
     """Test StarRocks profile behavior."""
@@ -119,6 +124,39 @@ class TestStarRocksProfile:
         assert "order_id" in suffix
         assert "DISTRIBUTED BY HASH" in suffix
         assert "BUCKETS" in suffix
+
+    def test_select_key_columns_empty_input(self):
+        """Empty columns list should return empty list."""
+        profile = StarRocksProfile(database="test")
+        assert profile.select_key_columns([]) == []
+
+    @pytest.mark.parametrize(
+        "key_columns",
+        [
+            ["user_id"],
+            ["user_id", "order_id"],
+            ["user_id", "order_id", "product_id"],
+        ],
+    )
+    def test_ddl_suffix_key_count_variants(self, key_columns):
+        """DUPLICATE KEY and DISTRIBUTED BY HASH must list exactly the given keys."""
+        profile = StarRocksProfile(database="test")
+        suffix = profile.ddl_suffix(key_columns)
+        assert "DUPLICATE KEY" in suffix
+        assert "DISTRIBUTED BY HASH" in suffix
+        for col in key_columns:
+            assert col in suffix
+
+    def test_custom_catalog_attribute(self):
+        """catalog attribute should be settable and format_table_name still works."""
+        profile = StarRocksProfile(database="demo", catalog="my_catalog")
+        assert profile.catalog == "my_catalog"
+        assert profile.format_table_name("orders") == "demo.orders"
+
+    def test_custom_catalog_already_qualified(self):
+        """Already-qualified table name is returned as-is even with custom catalog."""
+        profile = StarRocksProfile(database="demo", catalog="my_catalog")
+        assert profile.format_table_name("other_db.orders") == "other_db.orders"
 
 
 class TestBuildTargetDDLGreenplum:
@@ -221,56 +259,11 @@ class TestBuildTargetDDLWithoutProfile:
         # Default profile should produce DUPLICATE KEY and preserve the table name
         assert "test.users" in ddl
 
-
-class TestSelectKeyColumnsEdgeCases:
-    """Additional edge-case tests for StarRocksProfile.select_key_columns."""
-
-    def test_select_key_columns_empty_input(self):
-        """Empty columns list should return empty list."""
-        profile = StarRocksProfile(database="test")
-        assert profile.select_key_columns([]) == []
-
-
-class TestDDLSuffixKeyVariants:
-    """Test StarRocks ddl_suffix with varying numbers of key columns."""
-
-    @pytest.mark.parametrize(
-        "key_columns",
-        [
-            ["user_id"],
-            ["user_id", "order_id"],
-            ["user_id", "order_id", "product_id"],
-        ],
-    )
-    def test_ddl_suffix_key_count_variants(self, key_columns):
-        """DUPLICATE KEY and DISTRIBUTED BY HASH must list exactly the given keys."""
-        profile = StarRocksProfile(database="test")
-        suffix = profile.ddl_suffix(key_columns)
-        assert "DUPLICATE KEY" in suffix
-        assert "DISTRIBUTED BY HASH" in suffix
-        for col in key_columns:
-            assert col in suffix
-
-
-class TestFormatTableNameDefaultSchema:
-    """Test GreenplumProfile.format_table_name with default schema."""
-
-    def test_format_table_name_default_schema(self):
-        """Unqualified table name should get 'public' prefix by default."""
-        profile = GreenplumProfile()
-        assert profile.format_table_name("users") == "public.users"
-
-
-class TestStarRocksCustomCatalog:
-    """Test StarRocksProfile with a custom catalog."""
-
-    def test_custom_catalog_attribute(self):
-        """catalog attribute should be settable and format_table_name still works."""
-        profile = StarRocksProfile(database="demo", catalog="my_catalog")
-        assert profile.catalog == "my_catalog"
-        assert profile.format_table_name("orders") == "demo.orders"
-
-    def test_custom_catalog_already_qualified(self):
-        """Already-qualified table name is returned as-is even with custom catalog."""
-        profile = StarRocksProfile(database="demo", catalog="my_catalog")
-        assert profile.format_table_name("other_db.orders") == "other_db.orders"
+    def test_starrocks_empty_database_produces_valid_name(self):
+        columns = [
+            {"name": "id", "type": "INTEGER", "nullable": False},
+        ]
+        ddl = build_target_ddl(columns, "duckdb", "starrocks", "users")
+        assert "CREATE TABLE" in ddl
+        # Should not produce ".users" (leading dot)
+        assert ".users" not in ddl or "users" in ddl.split("TABLE")[1].strip().split("(")[0]

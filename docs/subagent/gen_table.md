@@ -149,8 +149,8 @@ gen_table:
 | Table creation (CTAS) | Yes | Yes |
 | Table creation (DDL) | Yes | Yes |
 | Data writes (INSERT/UPDATE/DELETE) | No | Yes |
-| Cross-database migration | No | Yes |
+| Cross-database migration | No | No (use [migration](migration.md)) |
 | User confirmation (ask_user) | Always required | Available |
 | Default max_turns | 20 | 30 |
 
-Use **gen_table** when you need interactive table creation with user confirmation. Use **gen_job** when you need ETL pipelines or cross-database migration.
+Use **gen_table** when you need interactive table creation with user confirmation. Use **gen_job** when you need single-database ETL pipelines. For cross-database migration, use [migration](migration.md).

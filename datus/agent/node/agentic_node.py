@@ -752,6 +752,7 @@ class AgenticNode(Node):
             "describe_table",
             "execute_ddl",
             "execute_write",
+            "transfer_query_result",
             "execute_sql",
             "get_sample_data",
         ]:
