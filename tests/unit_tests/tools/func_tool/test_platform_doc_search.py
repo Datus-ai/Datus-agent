@@ -206,9 +206,12 @@ class TestWebSearchDocument:
         config.tavily_api_key = "test-tavily-key"
         return PlatformDocSearchTool(agent_config=config)
 
-    def test_no_tavily_key_returns_empty(self, doc_search_tool):
+    def test_no_tavily_key_returns_empty(self):
         """When tavily_api_key is None, should return early with empty result."""
-        result = doc_search_tool.web_search_document(keywords=["test"])
+        config = Mock()
+        config.tavily_api_key = None
+        tool = PlatformDocSearchTool(agent_config=config)
+        result = tool.web_search_document(keywords=["test"])
         assert result.success == 1
         assert result.result == []
 
