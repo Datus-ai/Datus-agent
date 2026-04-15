@@ -193,6 +193,30 @@ class TestQueryMetricsCompression:
         assert result.result["columns"] == ["metric_time__day", "revenue", "cost"]
         assert result.result["metadata"] == {"sql": "SELECT ...", "row_count": 1}
 
+    def test_query_metrics_sanitizes_non_serializable_metadata(self, semantic_tools):
+        """Test that non-JSON-serializable metadata values are converted to strings."""
+
+        class FakePlan:
+            def __str__(self):
+                return "<FakePlan: node1 -> node2>"
+
+        query_result = QueryResult(
+            columns=["revenue"],
+            data=[{"revenue": 100}],
+            metadata={"dataflow_plan": FakePlan(), "sql": "SELECT 1", "count": 42},
+        )
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
+            result = semantic_tools.query_metrics(metrics=["revenue"])
+
+        assert result.success == 1
+        meta = result.result["metadata"]
+        # Non-serializable object should be converted to str
+        assert meta["dataflow_plan"] == "<FakePlan: node1 -> node2>"
+        # Serializable values should be preserved as-is
+        assert meta["sql"] == "SELECT 1"
+        assert meta["count"] == 42
+
     def test_query_metrics_compressed_data_contains_original_columns(self, semantic_tools):
         """Test that compressed result includes original column names."""
         query_result = QueryResult(
