@@ -1,10 +1,11 @@
 agent:
   # Set home to tests directory so data paths resolve to tests/data instead of ~/.datus/data
   # Using relative path for portability across different environments
-  home: ~/.datus/tests
+  home: .datus_test_data
   target: deepseek
-  workspace_root: ~/.datus/tests/workspace
-  knowledge_base_home: ~/.datus/tests/workspace/knowledge_base # Configuration to simulate real-world scenarios
+  workspace_root: .datus_test_data/workspace
+
+  knowledge_base_home: .datus_test_data/knowledge_base # Configuration to simulate real-world scenarios
   models:
     deepseek:
       type: deepseek

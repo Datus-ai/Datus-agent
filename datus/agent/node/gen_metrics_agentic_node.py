@@ -61,11 +61,11 @@ class GenMetricsAgenticNode(AgenticNode):
         self.subject_tree = subject_tree
 
         # Get max_turns from agentic_nodes configuration, default to 30
-        self.max_turns = 30
+        self.max_turns = 40
         if agent_config and hasattr(agent_config, "agentic_nodes") and self.NODE_NAME in agent_config.agentic_nodes:
             agentic_node_config = agent_config.agentic_nodes[self.NODE_NAME]
             if isinstance(agentic_node_config, dict):
-                self.max_turns = agentic_node_config.get("max_turns", 30)
+                self.max_turns = agentic_node_config.get("max_turns", 40)
 
         self.metrics_dir = str(agent_config.path_manager.semantic_model_path(agent_config.current_database))
         self.knowledge_base_dir = str(agent_config.path_manager.knowledge_base_home)

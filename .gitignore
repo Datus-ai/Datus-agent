@@ -61,3 +61,4 @@ test.py
 evaluation_details.json
 conf/agent.yml.bak
 .gstack/
+/.datus_test_data
