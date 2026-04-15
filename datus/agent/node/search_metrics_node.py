@@ -85,7 +85,7 @@ class SearchMetricsNode(Node):
         logger.debug(f"Checking if rag storage path exists: {path}")
         if not os.path.exists(path):
             logger.info("RAG storage path does not exist.")
-            return self.get_bad_result("RAG storage path does not exist.")
+            return self.get_bad_result(f"RAG storage path `{path}` does not exist.")
         else:
             try:
                 result = self._search_metrics()
