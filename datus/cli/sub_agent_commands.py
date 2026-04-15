@@ -42,6 +42,7 @@ class SubAgentCommands:
             # Also update available_subagents set for command parsing
             if hasattr(self.cli_instance, "available_subagents"):
                 self.cli_instance.available_subagents = set(SYS_SUB_AGENTS)
+                self.cli_instance.available_subagents.add("chat")
                 if self.cli_instance.agent_config.agentic_nodes:
                     self.cli_instance.available_subagents.update(
                         name for name in self.cli_instance.agent_config.agentic_nodes.keys() if name != "chat"

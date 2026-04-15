@@ -55,6 +55,7 @@ class GenReportAgenticNode(AgenticNode):
         node_name: Optional[str] = None,
         execution_mode: Literal["interactive", "workflow"] = "interactive",
         scope: Optional[str] = None,
+        is_subagent: bool = False,
     ):
         """
         Initialize the GenReportAgenticNode.
@@ -68,6 +69,7 @@ class GenReportAgenticNode(AgenticNode):
             tools: List of tools (will be populated in setup_tools)
             node_name: Name of the node configuration in agent.yml
             execution_mode: Execution mode - "interactive" (default) or "workflow"
+            is_subagent: When True, skip SubAgentTaskTool setup (2-level depth enforcement)
         """
         self.execution_mode = execution_mode
         # Determine node name from node_type if not provided
@@ -97,6 +99,7 @@ class GenReportAgenticNode(AgenticNode):
             tools=tools or [],
             mcp_servers={},  # No MCP servers for report nodes by default
             scope=scope,
+            is_subagent=is_subagent,
         )
 
         # Setup tools based on configuration
@@ -105,6 +108,11 @@ class GenReportAgenticNode(AgenticNode):
         # Setup ask_user tool for clarification questions (interactive mode only)
         if self.execution_mode == "interactive":
             self._setup_ask_user_tool()
+
+        # Setup subagent task tool based on configuration (default: explore)
+        self._setup_sub_agent_task_tool()
+        if self.sub_agent_task_tool:
+            self.tools.extend(self.sub_agent_task_tool.available_tools())
 
         logger.debug(f"GenReportAgenticNode tools: {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
 
@@ -310,6 +318,7 @@ class GenReportAgenticNode(AgenticNode):
             "has_semantic_tools": bool(self.semantic_tools),
             "has_db_tools": bool(self.db_func_tool),
             "has_ask_user_tool": self.ask_user_tool is not None,
+            "has_task_tool": bool(self.sub_agent_task_tool),
             "agent_config": self.agent_config,
             "conversation_summary": conversation_summary,
         }

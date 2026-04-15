@@ -47,11 +47,11 @@ class TestSubagentCompleterInit:
         for sys_sub in SYS_SUB_AGENTS:
             assert sys_sub in completer._available_subagents
 
-    def test_loaded_subagents_exclude_chat(self, real_agent_config):
-        """Loaded subagents exclude the 'chat' node."""
+    def test_loaded_subagents_include_chat(self, real_agent_config):
+        """Loaded subagents include 'chat' for explicit /chat routing."""
         completer = SubagentCompleter(real_agent_config)
 
-        assert "chat" not in completer._available_subagents
+        assert "chat" in completer._available_subagents
 
     def test_loaded_subagents_include_custom_nodes(self, real_agent_config):
         """Custom agentic_nodes not in SYS_SUB_AGENTS and not 'chat' are included."""

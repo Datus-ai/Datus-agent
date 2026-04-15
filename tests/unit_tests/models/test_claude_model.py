@@ -949,14 +949,12 @@ class TestGenerateWithToolsRouting:
 
 class TestCountSessionTokensFallback:
     @pytest.mark.asyncio
-    async def test_fallback_to_action_history(self):
-        """When session turn_usage returns 0, fall back to action history usage."""
+    async def test_uses_last_call_input_tokens_from_latest_action(self):
+        """Primary: uses last_call_input_tokens from the most recent action with usage."""
         from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 
-        # Create a mock agentic node
         mock_node = MagicMock()
         mock_node._session = MagicMock()
-        mock_node._session.get_session_usage = AsyncMock(return_value={"total_tokens": 0})
         mock_node.actions = [
             ActionHistory(
                 action_id="a1",
@@ -964,7 +962,7 @@ class TestCountSessionTokensFallback:
                 messages="ok",
                 action_type="final_response",
                 status=ActionStatus.SUCCESS,
-                output={"raw_output": "answer", "usage": {"total_tokens": 500}},
+                output={"raw_output": "answer", "usage": {"last_call_input_tokens": 500, "input_tokens": 800, "total_tokens": 1200}},
             ),
             ActionHistory(
                 action_id="a2",
@@ -972,23 +970,23 @@ class TestCountSessionTokensFallback:
                 messages="ok2",
                 action_type="final_response",
                 status=ActionStatus.SUCCESS,
-                output={"raw_output": "answer2", "usage": {"total_tokens": 300}},
+                output={"raw_output": "answer2", "usage": {"last_call_input_tokens": 900, "input_tokens": 1500, "total_tokens": 2000}},
             ),
         ]
 
         from datus.agent.node.agentic_node import AgenticNode
 
         result = await AgenticNode._count_session_tokens(mock_node)
-        assert result == 800
+        # Should return last_call_input_tokens from the LAST action (900), not sum
+        assert result == 900
 
     @pytest.mark.asyncio
-    async def test_session_usage_preferred_over_fallback(self):
-        """When session turn_usage returns >0, use that instead of fallback."""
+    async def test_falls_back_to_input_tokens_when_no_last_call(self):
+        """When last_call_input_tokens is 0, fall back to input_tokens."""
         from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 
         mock_node = MagicMock()
         mock_node._session = MagicMock()
-        mock_node._session.get_session_usage = AsyncMock(return_value={"total_tokens": 1234})
         mock_node.actions = [
             ActionHistory(
                 action_id="a1",
@@ -996,14 +994,14 @@ class TestCountSessionTokensFallback:
                 messages="ok",
                 action_type="final_response",
                 status=ActionStatus.SUCCESS,
-                output={"usage": {"total_tokens": 999}},
+                output={"usage": {"last_call_input_tokens": 0, "input_tokens": 999, "total_tokens": 1500}},
             ),
         ]
 
         from datus.agent.node.agentic_node import AgenticNode
 
         result = await AgenticNode._count_session_tokens(mock_node)
-        assert result == 1234
+        assert result == 999
 
 
 class TestInjectOAuthHeaders:

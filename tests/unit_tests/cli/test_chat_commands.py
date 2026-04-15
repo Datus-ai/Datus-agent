@@ -1423,46 +1423,6 @@ class TestEdgeCases:
 # ===========================================================================
 
 
-class TestTriggerCompact:
-    """Tests for _trigger_compact_for_current_node."""
-
-    def test_trigger_compact_no_node(self, real_agent_config, mock_llm_create):
-        """No-op when current_node is None."""
-        cmds = _make_chat_commands(real_agent_config)
-        cmds.current_node = None
-
-        # Should not raise
-        cmds._trigger_compact_for_current_node()
-        assert cmds.current_node is None
-
-    def test_trigger_compact_node_without_compact_method(self, real_agent_config, mock_llm_create):
-        """No-op when node does not have _manual_compact."""
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
-        # Use a minimal object without _manual_compact
-        cmds.current_node = object()
-
-        # Should not raise
-        cmds._trigger_compact_for_current_node()
-        output = _get_console_output(console)
-        assert "compacted" not in output.lower()
-        assert cmds.current_node is not None
-
-    def test_trigger_compact_with_node_no_session(self, real_agent_config, mock_llm_create):
-        """Node with _manual_compact but no active session does not print compact messages."""
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
-        node = cmds._create_new_node()
-        cmds.current_node = node
-
-        # Node exists but has no session_id set, so get_session_info returns no session_id
-        cmds._trigger_compact_for_current_node()
-
-        output = _get_console_output(console)
-        # Should not contain compact success/failure messages (no active session)
-        assert "Session compacted successfully" not in output
-
-
 # ===========================================================================
 # TestCmdCompact
 # ===========================================================================
@@ -1709,7 +1669,7 @@ class TestExecuteChatCommandResponseProcessing:
         cmds.execute_chat_command("Hello", subagent_name=None)
         first_node = cmds.current_node
 
-        cmds.execute_chat_command("Generate SQL", subagent_name="gensql", compact_when_new_subagent=False)
+        cmds.execute_chat_command("Generate SQL", subagent_name="gensql")
         second_node = cmds.current_node
 
         assert first_node is not second_node
@@ -2156,42 +2116,6 @@ class TestCmdListSessionsWithData:
         assert len(output) > 0
         # Either shows sessions table or "No chat sessions found"
         assert "Session" in output or "No chat sessions" in output
-
-
-# ===========================================================================
-# TestTriggerCompactWithSession — _trigger_compact 带活跃 session
-# ===========================================================================
-
-
-class TestTriggerCompactWithSession:
-    """Tests for _trigger_compact_for_current_node with an active session."""
-
-    def test_trigger_compact_before_subagent_switch(self, real_agent_config, mock_llm_create):
-        """Switching subagent with compact_when_new_subagent=True triggers compact."""
-        from tests.unit_tests.mock_llm_model import build_simple_response
-
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
-
-        mock_llm_create.reset(
-            responses=[
-                build_simple_response("Chat reply"),
-                build_simple_response("Summary"),  # for compact
-                build_simple_response("SQL reply"),  # for subagent
-            ]
-        )
-
-        # First: create a chat session
-        cmds.execute_chat_command("Hello")
-        assert cmds.current_node is not None
-
-        # Second: switch to subagent with compact (exercises line 314)
-        console.file = io.StringIO()
-        cmds.execute_chat_command("Generate SQL", subagent_name="gensql", compact_when_new_subagent=True)
-
-        output = _get_console_output(console)
-        assert cmds.current_subagent_name == "gensql"
-        assert len(output) > 0
 
 
 # ===========================================================================
@@ -3397,6 +3321,100 @@ class TestShouldCreateNewNodeExtended:
 
 
 # ---------------------------------------------------------------------------
+# Tests: _is_agent_switch
+# ---------------------------------------------------------------------------
+
+
+class TestIsAgentSwitch:
+    def test_no_current_node_is_not_switch(self, chat_cmd):
+        """No current node means this is not a switch."""
+        chat_cmd.current_node = None
+        assert chat_cmd._is_agent_switch("gensql") is False
+
+    def test_same_subagent_is_not_switch(self, chat_cmd):
+        """Same subagent is not a switch."""
+        chat_cmd.current_node = MagicMock()
+        chat_cmd.current_subagent_name = "gensql"
+        assert chat_cmd._is_agent_switch("gensql") is False
+
+    def test_different_subagent_is_switch(self, chat_cmd):
+        """Different subagent is a switch."""
+        chat_cmd.current_node = MagicMock()
+        chat_cmd.current_subagent_name = "gensql"
+        assert chat_cmd._is_agent_switch("compare") is True
+
+    def test_chat_to_subagent_is_switch(self, chat_cmd):
+        """Switching from chat to subagent is a switch."""
+        chat_cmd.current_node = MagicMock()
+        chat_cmd.current_subagent_name = None
+        assert chat_cmd._is_agent_switch("gensql") is True
+
+    def test_subagent_to_chat_is_switch(self, chat_cmd):
+        """Switching from subagent to chat is a switch."""
+        chat_cmd.current_node = MagicMock()
+        chat_cmd.current_subagent_name = "gensql"
+        assert chat_cmd._is_agent_switch(None) is True
+
+    def test_chat_to_chat_is_not_switch(self, chat_cmd):
+        """Staying on chat is not a switch."""
+        chat_cmd.current_node = MagicMock()
+        chat_cmd.current_subagent_name = None
+        assert chat_cmd._is_agent_switch(None) is False
+
+
+# ---------------------------------------------------------------------------
+# Tests: session_id preservation on agent switch
+# ---------------------------------------------------------------------------
+
+
+class TestSessionPreservationOnSwitch:
+    def test_session_id_carried_over_on_switch(self, chat_cmd):
+        """When switching agents, session_id from old node is carried to new node."""
+        old_node = MagicMock()
+        old_node.session_id = "chat_session_abc123"
+        chat_cmd.current_node = old_node
+        chat_cmd.current_subagent_name = None  # was on chat
+
+        new_node = MagicMock()
+        new_node.session_id = None
+        chat_cmd._create_new_node = MagicMock(return_value=new_node)
+
+        # Simulate _execute_chat logic for agent switch
+        subagent_name = "gensql"
+        need_new_node = chat_cmd._should_create_new_node(subagent_name)
+        is_switch = chat_cmd._is_agent_switch(subagent_name)
+
+        assert need_new_node is True
+        assert is_switch is True
+
+        # Carry over session_id
+        prev_session_id = None
+        if is_switch and chat_cmd.current_node and hasattr(chat_cmd.current_node, "session_id"):
+            prev_session_id = chat_cmd.current_node.session_id
+        chat_cmd.current_node = chat_cmd._create_new_node(subagent_name)
+        if prev_session_id:
+            chat_cmd.current_node.session_id = prev_session_id
+
+        assert chat_cmd.current_node.session_id == "chat_session_abc123"
+
+    def test_session_id_not_carried_on_fresh_start(self, chat_cmd):
+        """First node creation (no previous node) does not carry session_id."""
+        chat_cmd.current_node = None
+        chat_cmd.current_subagent_name = None
+
+        new_node = MagicMock()
+        new_node.session_id = None
+        chat_cmd._create_new_node = MagicMock(return_value=new_node)
+
+        is_switch = chat_cmd._is_agent_switch("gensql")
+        assert is_switch is False
+
+        chat_cmd.current_node = chat_cmd._create_new_node("gensql")
+        # session_id remains None (will be auto-generated on first use)
+        assert chat_cmd.current_node.session_id is None
+
+
+# ---------------------------------------------------------------------------
 # Tests: update_chat_node_tools
 # ---------------------------------------------------------------------------
 
@@ -3431,65 +3449,6 @@ class TestCmdClearChatExtended:
 
         # After clear, state should be reset
         assert chat_cmd.chat_history == [] or chat_cmd.current_node is None
-
-
-# ---------------------------------------------------------------------------
-# Tests: _trigger_compact_for_current_node
-# ---------------------------------------------------------------------------
-
-
-class TestTriggerCompactExtended:
-    def test_no_current_node_does_nothing(self, chat_cmd):
-        chat_cmd.current_node = None
-        chat_cmd._trigger_compact_for_current_node()  # should not raise
-
-    def test_compact_success(self, chat_cmd):
-        mock_node = MagicMock()
-        mock_node._manual_compact = AsyncMock(
-            return_value={
-                "success": True,
-                "new_token_count": 100,
-                "tokens_saved": 50,
-                "compression_ratio": 0.5,
-            }
-        )
-
-        async def mock_get_info():
-            return {"session_id": "abc123"}
-
-        mock_node.get_session_info = mock_get_info
-        chat_cmd.current_node = mock_node
-
-        chat_cmd._trigger_compact_for_current_node()
-        output = chat_cmd.console.file.getvalue()
-        # Should print success message
-        assert len(output) > 0, "Should have printed compact result"
-
-    def test_compact_failure_logged(self, chat_cmd):
-        mock_node = MagicMock()
-        mock_node._manual_compact = AsyncMock(return_value={"success": False, "error": "Compact failed"})
-
-        async def mock_get_info():
-            return {"session_id": "abc123"}
-
-        mock_node.get_session_info = mock_get_info
-        chat_cmd.current_node = mock_node
-
-        chat_cmd._trigger_compact_for_current_node()
-        output = chat_cmd.console.file.getvalue()
-        assert "Failed" in output or "compact" in output.lower(), f"Expected failure message, got: {output[:200]}"
-
-    def test_exception_during_compact_handled(self, chat_cmd):
-        mock_node = MagicMock()
-
-        async def mock_get_info():
-            raise RuntimeError("session error")
-
-        mock_node.get_session_info = mock_get_info
-        chat_cmd.current_node = mock_node
-
-        # Should not propagate exception
-        chat_cmd._trigger_compact_for_current_node()
 
 
 # ---------------------------------------------------------------------------

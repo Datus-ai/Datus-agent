@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
 from datus_db_core import BaseSqlConnector
 
-from datus.cli._cli_utils import prompt_input
+from datus.cli._cli_utils import prompt_input, select_choice
 from datus.cli.agent_commands import AgentCommands
 from datus.cli.autocomplete import AtReferenceCompleter, CustomPygmentsStyle, CustomSqlLexer, SubagentCompleter
 from datus.cli.bi_dashboard import BiDashboardCommands
@@ -88,6 +88,8 @@ class DatusCLI:
 
         # Plan mode support
         self.plan_mode_active = False
+        # Default agent for /message routing ("" = chat node)
+        self.default_agent = ""
 
         # Load agent config first so path-dependent helpers use the configured home.
         self.agent_config = load_agent_config(**vars(self.args))
@@ -103,6 +105,7 @@ class DatusCLI:
 
         # Initialize available subagents early (needed by autocomplete)
         self.available_subagents = set(SYS_SUB_AGENTS)
+        self.available_subagents.add("chat")
         if hasattr(self.agent_config, "agentic_nodes") and self.agent_config.agentic_nodes:
             self.available_subagents.update(name for name in self.agent_config.agentic_nodes.keys() if name != "chat")
 
@@ -174,6 +177,7 @@ class DatusCLI:
             ".table_schema": self.metadata_commands.cmd_table_schema,
             ".indexes": self.metadata_commands.cmd_indexes,
             ".namespace": self._cmd_switch_namespace,
+            ".agent": self._cmd_agent,
             ".subagent": self.sub_agent_commands.cmd,
             ".mcp": self._cmd_mcp,
             ".skill": self._cmd_skill,
@@ -275,11 +279,12 @@ class DatusCLI:
         self.console.print(echoed)
 
     def _get_prompt_text(self):
-        """Get the current prompt text based on mode"""
+        """Get the current prompt text based on mode and default agent"""
         if self.plan_mode_active:
             return "[PLAN MODE] Datus> "
-        else:
-            return "Datus> "
+        if self.default_agent:
+            return f"Datus ({self.default_agent})> "
+        return "Datus> "
 
     def _update_prompt(self):
         """Update the prompt display (called when mode changes)"""
@@ -568,6 +573,39 @@ class DatusCLI:
             # Perhaps we should reload the data here.
             self.at_completer.reload_data()
 
+    def _cmd_agent(self, args: str):
+        """Set or show the default agent for message routing.
+
+        No args  -> interactive selector (up/down + Enter)
+        <name>   -> set directly
+        """
+        args = args.strip()
+        if not args:
+            # Interactive selector
+            current_default = self.default_agent or "chat"
+            choices = {
+                name: (f"{name}  [current]" if name == current_default else name)
+                for name in sorted(self.available_subagents)
+            }
+            self.console.print("[bold]Select default agent:[/] (Up/Down to navigate, Enter to confirm)")
+            selected = select_choice(self.console, choices, default=current_default)
+            if selected == current_default:
+                self.console.print(f"[dim]Default agent unchanged: {current_default}[/]")
+                return
+            args = selected
+
+        if args not in self.available_subagents:
+            self.console.print(f"[bold red]Error:[/] Unknown agent '{args}'. Run '.agent' to see available agents.")
+            return
+
+        # "chat" resets to empty string (the chat node)
+        if args == "chat":
+            self.default_agent = ""
+            self.console.print("[bold green]Default agent reset to: chat[/]")
+        else:
+            self.default_agent = args
+            self.console.print(f"[bold green]Default agent set to: {args}[/]")
+
     def _cmd_switch_namespace(self, args: str):
         if args.strip() == "":
             self._cmd_list_namespaces()
@@ -635,15 +673,16 @@ class DatusCLI:
                 potential_subagent = parts[0]
                 if potential_subagent in self.available_subagents:
                     # Sub-agent syntax: /subagent_name message
-                    subagent_name = potential_subagent
+                    # "/chat message" explicitly routes to the chat node
+                    subagent_name = "" if potential_subagent == "chat" else potential_subagent
                     actual_message = parts[1]
                     return CommandType.CHAT, subagent_name, actual_message
                 else:
                     # Regular chat: /message (first part is not a valid subagent)
-                    return CommandType.CHAT, "", message
+                    return CommandType.CHAT, self.default_agent, message
             else:
                 # Regular chat: /message
-                return CommandType.CHAT, "", message
+                return CommandType.CHAT, self.default_agent, message
 
         # Internal commands (.prefix)
         if text.startswith("."):
@@ -662,10 +701,10 @@ class DatusCLI:
             if sql_type != SQLType.UNKNOWN:
                 return CommandType.SQL, "", text
             else:
-                return CommandType.CHAT, "", text.strip()
+                return CommandType.CHAT, self.default_agent, text.strip()
         except Exception:
             # If any exception occurs, treat as chat
-            return CommandType.CHAT, "", text.strip()
+            return CommandType.CHAT, self.default_agent, text.strip()
 
     def _execute_sql(self, sql: str, system: bool = False):
         """Execute a SQL query and display results."""
@@ -956,7 +995,9 @@ class DatusCLI:
 
         lines.append("[bold]Chat Commands (/ prefix):[/]")
         chat_cmds = [
-            ("/<message>", "Chat with the AI assistant"),
+            ("/<message>", "Chat with the AI assistant (uses default agent)"),
+            ("/chat <message>", "Chat with the chat node explicitly"),
+            ("/<agent> <message>", "Chat with a specific agent"),
         ]
         for cmd, desc in chat_cmds:
             lines.append(f"    {cmd:<{CMD_WIDTH}}{desc}")
@@ -980,6 +1021,9 @@ class DatusCLI:
             (".schema schema_name", "Switch current schema"),
             (".table_schema table_name", "Show table field details"),
             (".indexes table_name", "Show indexes for a table"),
+            (".agent", "Interactive selector to switch default agent"),
+            ("     .agent <name>", "Set default agent directly (e.g., .agent gen_sql)"),
+            ("     .agent chat", "Reset default agent to chat node"),
             (".namespace namespace", "Switch current namespace"),
             (".mcp", "Manage MCP (Model Configuration Protocol) servers"),
             ("     .mcp list", "List all MCP servers"),

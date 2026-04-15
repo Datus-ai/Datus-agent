@@ -184,8 +184,15 @@ class SubAgentTaskTool:
     for every task invocation to ensure fully independent context.
     """
 
-    def __init__(self, agent_config: AgentConfig):
+    def __init__(
+        self,
+        agent_config: AgentConfig,
+        allowed_subagents: Optional[List[str]] = None,
+        parent_node_name: Optional[str] = None,
+    ):
         self.agent_config = agent_config
+        self._allowed_subagents = allowed_subagents
+        self._parent_node_name = parent_node_name
         self._action_bus: Optional["ActionBus"] = None
         self._interaction_broker: Optional["InteractionBroker"] = None
         self._parent_node: Optional["AgenticNode"] = None
@@ -274,7 +281,15 @@ class SubAgentTaskTool:
     # ── node creation ─────────────────────────────────────────────────
 
     def _create_node(self, subagent_type: str):
-        """Create a new AgenticNode instance for the given subagent type."""
+        """Create a new AgenticNode instance for the given subagent type.
+
+        Builtin types (SYS_SUB_AGENTS + gen_sql/gen_report/explore) are created
+        via ``_create_builtin_node`` with ``_as_subagent=True`` so their
+        constructors skip SubAgentTaskTool setup entirely.
+
+        Custom agents go through ``Node.new_instance`` which doesn't support
+        ``_as_subagent``, so we strip the task tool post-construction.
+        """
         # Builtin system subagents have non-standard constructors
         if subagent_type in SYS_SUB_AGENTS:
             return self._create_builtin_node(subagent_type)
@@ -285,13 +300,24 @@ class SubAgentTaskTool:
 
         from datus.agent.node.node import Node
 
-        return Node.new_instance(
+        node = Node.new_instance(
             node_id=node_id,
             description=description,
             node_type=node_type,
             agent_config=self.agent_config,
             node_name=node_name,
         )
+
+        # Custom agents go through Node.new_instance which can't pass
+        # _as_subagent, so strip any nested task tool post-construction.
+        nested_tool = getattr(node, "sub_agent_task_tool", None)
+        if isinstance(nested_tool, SubAgentTaskTool):
+            if node.tools:
+                task_tool_names = {t.name for t in nested_tool.available_tools()}
+                node.tools = [t for t in node.tools if t.name not in task_tool_names]
+            node.sub_agent_task_tool = None
+
+        return node
 
     def _resolve_execution_mode(self) -> Literal["interactive", "workflow"]:
         """Resolve execution_mode from the parent node, defaulting to 'interactive'."""
@@ -345,6 +371,7 @@ class SubAgentTaskTool:
                 tools=None,
                 node_name="gen_sql",
                 execution_mode=self._resolve_execution_mode(),
+                is_subagent=True,
             )
         elif subagent_type == "gen_report":
             from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
@@ -358,6 +385,7 @@ class SubAgentTaskTool:
                 tools=None,
                 node_name="gen_report",
                 execution_mode=self._resolve_execution_mode(),
+                is_subagent=True,
             )
         elif subagent_type == "gen_table":
             from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
@@ -912,30 +940,33 @@ class SubAgentTaskTool:
         return "\n".join(lines)
 
     def _get_available_types(self) -> List[str]:
-        """Discover available subagent types."""
+        """Discover available subagent types, filtered by allowed_subagents and excluding self."""
+        if self._allowed_subagents is not None:
+            # Explicit list mode: return only those types, exclude self
+            return [t for t in self._allowed_subagents if t != self._parent_node_name]
+
+        # Wildcard mode (*): discover all types, exclude self
         types = ["explore"]
 
         # Add built-in system subagents (always available)
         types.extend(sorted(SYS_SUB_AGENTS))
 
-        if not self.agent_config or not hasattr(self.agent_config, "agentic_nodes"):
-            return types
+        if self.agent_config and hasattr(self.agent_config, "agentic_nodes"):
+            current_database = self.agent_config.current_database
 
-        current_database = self.agent_config.current_database
-
-        for name, config in self.agent_config.agentic_nodes.items():
-            if name in ("chat", "explore") or name in SYS_SUB_AGENTS:
-                continue
-
-            # If scoped_context is configured, namespace must match current namespace
-            try:
-                sub_config = SubAgentConfig.model_validate(config)
-                if sub_config.has_scoped_context() and not sub_config.is_in_namespace(current_database):
+            for name, config in self.agent_config.agentic_nodes.items():
+                if name in ("chat", "explore") or name in SYS_SUB_AGENTS:
                     continue
-            except Exception as e:
-                logger.debug(f"Skipping invalid subagent config '{name}': {e}")
-                continue
 
-            types.append(name)
+                # If scoped_context is configured, namespace must match current namespace
+                try:
+                    sub_config = SubAgentConfig.model_validate(config)
+                    if sub_config.has_scoped_context() and not sub_config.is_in_namespace(current_database):
+                        continue
+                except Exception as e:
+                    logger.debug(f"Skipping invalid subagent config '{name}': {e}")
+                    continue
 
-        return types
+                types.append(name)
+
+        return [t for t in types if t != self._parent_node_name]

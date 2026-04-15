@@ -63,6 +63,7 @@ class GenSQLAgenticNode(AgenticNode):
         node_name: Optional[str] = None,
         execution_mode: Literal["interactive", "workflow"] = "interactive",
         scope: Optional[str] = None,
+        is_subagent: bool = False,
     ):
         """
         Initialize the GenSQLAgenticNode as a workflow-compatible node.
@@ -76,6 +77,7 @@ class GenSQLAgenticNode(AgenticNode):
             tools: List of tools (will be populated in setup_tools)
             node_name: Name of the node configuration in agent.yml (e.g., "gensql", "gen_sql")
             execution_mode: Execution mode - "interactive" (default) or "workflow"
+            is_subagent: When True, skip SubAgentTaskTool setup (2-level depth enforcement)
         """
         self.execution_mode = execution_mode
         # Determine node name from node_type if not provided
@@ -115,6 +117,7 @@ class GenSQLAgenticNode(AgenticNode):
             tools=tools or [],
             mcp_servers={},  # Initialize empty, will setup after parent init
             scope=scope,
+            is_subagent=is_subagent,
         )
 
         # Initialize MCP servers based on configuration (after node_config is available)
@@ -131,6 +134,11 @@ class GenSQLAgenticNode(AgenticNode):
         # Setup ask_user tool for clarification questions (interactive mode only)
         if self.execution_mode == "interactive":
             self._setup_ask_user_tool()
+
+        # Setup subagent task tool based on configuration (default: explore)
+        self._setup_sub_agent_task_tool()
+        if self.sub_agent_task_tool:
+            self.tools.extend(self.sub_agent_task_tool.available_tools())
 
         logger.debug(f"GenSQLAgenticNode tools: {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
 
@@ -237,6 +245,8 @@ class GenSQLAgenticNode(AgenticNode):
             self.tools.extend(self._platform_doc_tool.available_tools())
         if self.ask_user_tool:
             self.tools.extend(self.ask_user_tool.available_tools())
+        if self.sub_agent_task_tool:
+            self.tools.extend(self.sub_agent_task_tool.available_tools())
 
     # Default tools when not configured in agent.yml
     DEFAULT_TOOLS = "db_tools.*, filesystem_tools.*"
@@ -617,6 +627,7 @@ class GenSQLAgenticNode(AgenticNode):
         )
         context["conversation_summary"] = conversation_summary
         context["has_ask_user_tool"] = self.ask_user_tool is not None
+        context["has_task_tool"] = bool(self.sub_agent_task_tool)
         from datus.utils.time_utils import get_default_current_date
 
         ref = self.date_parsing_tools.reference_date if self.date_parsing_tools else None

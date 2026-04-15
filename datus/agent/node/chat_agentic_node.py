@@ -54,6 +54,8 @@ class ChatAgenticNode(AgenticNode):
     - Session-based conversation management with MCP server integration
     """
 
+    DEFAULT_SUBAGENTS = "*"
+
     def __init__(
         self,
         node_id: str,
@@ -64,6 +66,7 @@ class ChatAgenticNode(AgenticNode):
         tools: Optional[list] = None,
         scope: Optional[str] = None,
         execution_mode: Literal["interactive", "workflow"] = "interactive",
+        is_subagent: bool = False,
     ):
         """
         Initialize the ChatAgenticNode.
@@ -97,9 +100,6 @@ class ChatAgenticNode(AgenticNode):
         self._platform_doc_tool: Optional[PlatformDocSearchTool] = None
         self.reference_template_tools: Optional[ReferenceTemplateTools] = None
 
-        # SubAgent task delegation tool
-        self.sub_agent_task_tool = None
-
         # Plan mode attributes
         self.plan_mode_active = False
         self.plan_hooks = None
@@ -117,6 +117,7 @@ class ChatAgenticNode(AgenticNode):
             tools=tools or [],
             mcp_servers={},
             scope=scope,
+            is_subagent=is_subagent,
         )
 
         # Execution mode: "interactive" enables ask_user tool; "workflow"
@@ -226,21 +227,6 @@ class ChatAgenticNode(AgenticNode):
             logger.debug(f"Setup skill tools: {self.skill_manager.get_skill_count()} skills discovered")
         except Exception as e:
             logger.error(f"Failed to setup skill tools: {e}")
-
-    def _setup_sub_agent_task_tool(self):
-        """Setup SubAgent task delegation tool."""
-        try:
-            from datus.tools.func_tool.sub_agent_task_tool import SubAgentTaskTool
-
-            self.sub_agent_task_tool = SubAgentTaskTool(
-                agent_config=self.agent_config,
-            )
-            self.sub_agent_task_tool.set_action_bus(self.action_bus)
-            self.sub_agent_task_tool.set_interaction_broker(self.interaction_broker)
-            self.sub_agent_task_tool.set_parent_node(self)
-        except Exception as e:
-            logger.error(f"Failed to setup SubAgent task tool: {e}")
-            self.sub_agent_task_tool = None
 
     def _setup_permission_hooks(self):
         """Setup permission hooks and register all tool categories."""

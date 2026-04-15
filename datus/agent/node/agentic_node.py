@@ -45,6 +45,8 @@ class AgenticNode(Node):
     with tool integration and automatic context management.
     """
 
+    DEFAULT_SUBAGENTS = "explore"
+
     def __init__(
         self,
         node_id: str,
@@ -55,6 +57,7 @@ class AgenticNode(Node):
         tools: Optional[List[Tool]] = None,
         mcp_servers: Optional[Dict[str, MCPServerStdio]] = None,
         scope: Optional[str] = None,
+        is_subagent: bool = False,
     ):
         """
         Initialize the agentic node.
@@ -68,6 +71,7 @@ class AgenticNode(Node):
             tools: List of function tools available to this node
             mcp_servers: Dictionary of MCP servers available to this node
             scope: Optional session scope for directory isolation
+            is_subagent: When True, skip SubAgentTaskTool setup (2-level depth enforcement)
         """
         # Initialize Node base class
         super().__init__(node_id, description, node_type, input_data, agent_config, tools)
@@ -87,6 +91,8 @@ class AgenticNode(Node):
         self.skill_manager: Optional["SkillManager"] = None
         self.skill_func_tool = None
         self.ask_user_tool = None
+        self.sub_agent_task_tool = None
+        self._is_subagent = is_subagent
         self._permission_callback: Optional[Callable[[str, str, Dict[str, Any]], Awaitable[bool]]] = None
 
         # ActionBus - merges tool sub-actions into the main action stream
@@ -335,25 +341,41 @@ class AgenticNode(Node):
 
     async def _count_session_tokens(self) -> int:
         """
-        Count the total tokens in the current session.
+        Estimate current context window usage in tokens.
 
-        Reads from session's turn_usage table first. Falls back to summing
-        usage from action history (for native API paths that bypass the SDK).
+        Returns the last API call's input_tokens from the most recent execute,
+        which represents the actual conversation size in the context window.
+        Falls back to the last turn's total_tokens from turn_usage table.
 
         Returns:
-            Total token count in the session
+            Estimated context window token usage
         """
-        if self._session and hasattr(self._session, "get_session_usage"):
-            usage = await self._session.get_session_usage()
-            total = usage.get("total_tokens", 0) if usage else 0
-            if total > 0:
-                return total
-        # Fallback: sum usage from action history (native Anthropic API path)
-        total_from_actions = 0
-        for action in self.actions:
-            if isinstance(action.output, dict) and "usage" in action.output:
-                total_from_actions += action.output["usage"].get("total_tokens", 0)
-        return total_from_actions
+        # Primary: get last_call_input_tokens from the most recent assistant action
+        for action in reversed(self.actions):
+            if isinstance(action.output, dict) and isinstance(action.output.get("usage"), dict):
+                usage = action.output["usage"]
+                last_call = usage.get("last_call_input_tokens", 0)
+                if last_call > 0:
+                    return last_call
+                # Fallback within action: use input_tokens (still per-turn, not cumulative sum)
+                input_tokens = usage.get("input_tokens", 0)
+                if input_tokens > 0:
+                    return input_tokens
+                break
+
+        # Fallback: get the latest turn's total_tokens from turn_usage table
+        if self._session and hasattr(self._session, "get_turn_usage"):
+            try:
+                turn_usage = await self._session.get_turn_usage()
+                if turn_usage:
+                    # turn_usage is a list of per-turn records; use the last one
+                    last_turn = turn_usage[-1] if isinstance(turn_usage, list) else turn_usage
+                    if isinstance(last_turn, dict):
+                        return last_turn.get("total_tokens", 0)
+            except Exception:
+                pass
+
+        return 0
 
     async def _manual_compact(self) -> dict:
         """
@@ -508,6 +530,7 @@ class AgenticNode(Node):
             "sql_file_threshold",
             "sql_preview_lines",
             "bi_platform",
+            "subagents",
         ]
         for attr in direct_attributes:
             # Handle both dict and object access patterns
@@ -665,6 +688,41 @@ class AgenticNode(Node):
         except Exception as e:
             logger.error(f"Failed to setup ask_user tool: {e}")
             self.ask_user_tool = None
+
+    def _setup_sub_agent_task_tool(self):
+        """Setup SubAgentTaskTool based on subagents config or node default.
+
+        Skipped when ``_as_subagent`` is True (nodes created by SubAgentTaskTool)
+        to enforce strict 2-level depth — subagent nodes never get their own task tool.
+        """
+        if self._is_subagent:
+            return
+
+        subagents_str = self.node_config.get("subagents")
+        if subagents_str is None:
+            subagents_str = self.DEFAULT_SUBAGENTS
+
+        if subagents_str == "*":
+            allowed = None  # None = SubAgentTaskTool discovers all types
+        else:
+            allowed = [s.strip() for s in subagents_str.split(",") if s.strip()]
+            if not allowed:
+                return  # Empty = no task tool
+
+        try:
+            from datus.tools.func_tool.sub_agent_task_tool import SubAgentTaskTool
+
+            self.sub_agent_task_tool = SubAgentTaskTool(
+                agent_config=self.agent_config,
+                allowed_subagents=allowed,
+                parent_node_name=self.get_node_name(),
+            )
+            self.sub_agent_task_tool.set_action_bus(self.action_bus)
+            self.sub_agent_task_tool.set_interaction_broker(self.interaction_broker)
+            self.sub_agent_task_tool.set_parent_node(self)
+        except Exception as e:
+            logger.error(f"Failed to setup SubAgent task tool: {e}")
+            self.sub_agent_task_tool = None
 
     def _ensure_skill_tools_in_tools(self) -> None:
         """

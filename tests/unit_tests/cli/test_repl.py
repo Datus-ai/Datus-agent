@@ -47,6 +47,7 @@ def _make_cli(agent_config, available_subagents=None):
     cli.agent_ready = False
     cli.agent_initializing = False
     cli.plan_mode_active = False
+    cli.default_agent = ""
     cli.at_completer = MagicMock()
     cli.db_connector = MagicMock()
     cli.db_manager = MagicMock()
@@ -768,3 +769,150 @@ class TestPrintWelcome:
         real_agent_config._current_database = ""
         output = self._get_output(cli)
         assert "No database selected" in output
+
+
+# ---------------------------------------------------------------------------
+# Tests: _cmd_agent
+# ---------------------------------------------------------------------------
+
+
+class TestCmdAgent:
+    def test_cmd_agent_set_valid(self, cli):
+        """'.agent gen_sql' sets default_agent to gen_sql."""
+        cli.available_subagents = {"chat", "gen_sql", "gen_report"}
+        cli._cmd_agent("gen_sql")
+        assert cli.default_agent == "gen_sql"
+        output = cli.console.file.getvalue()
+        assert "gen_sql" in output
+
+    def test_cmd_agent_set_chat_resets(self, cli):
+        """'.agent chat' resets default_agent to empty string."""
+        cli.available_subagents = {"chat", "gen_sql"}
+        cli.default_agent = "gen_sql"
+        cli._cmd_agent("chat")
+        assert cli.default_agent == ""
+        output = cli.console.file.getvalue()
+        assert "chat" in output
+
+    def test_cmd_agent_set_invalid(self, cli):
+        """'.agent nonexistent' prints error and doesn't change default."""
+        cli.available_subagents = {"chat", "gen_sql"}
+        cli.default_agent = ""
+        cli._cmd_agent("nonexistent")
+        assert cli.default_agent == ""
+        output = cli.console.file.getvalue()
+        assert "Unknown agent" in output
+
+    def test_cmd_agent_no_args_interactive(self, cli):
+        """'.agent' (no args) calls select_choice for interactive selection."""
+        cli.available_subagents = {"chat", "gen_sql"}
+        cli.default_agent = ""
+        with patch("datus.cli.repl.select_choice", return_value="gen_sql") as mock_select:
+            cli._cmd_agent("")
+        mock_select.assert_called_once()
+        assert cli.default_agent == "gen_sql"
+
+    def test_cmd_agent_interactive_no_change(self, cli):
+        """Interactive selection of same agent prints 'unchanged'."""
+        cli.available_subagents = {"chat", "gen_sql"}
+        cli.default_agent = ""
+        with patch("datus.cli.repl.select_choice", return_value="chat"):
+            cli._cmd_agent("")
+        assert cli.default_agent == ""
+        output = cli.console.file.getvalue()
+        assert "unchanged" in output
+
+
+# ---------------------------------------------------------------------------
+# Tests: _parse_command with default_agent routing
+# ---------------------------------------------------------------------------
+
+
+class TestParseCommandDefaultAgent:
+    def test_slash_message_uses_default_agent(self, cli):
+        """'/message' uses default_agent when no explicit subagent prefix."""
+        cli.available_subagents = {"chat", "gen_sql"}
+        cli.default_agent = "gen_sql"
+        cmd_type, cmd, args = cli._parse_command("/show revenue")
+        assert cmd_type == CommandType.CHAT
+        assert cmd == "gen_sql"
+        assert args == "show revenue"
+
+    def test_explicit_subagent_overrides_default(self, cli):
+        """'/gen_report msg' uses gen_report even when default is gen_sql."""
+        cli.available_subagents = {"chat", "gen_sql", "gen_report"}
+        cli.default_agent = "gen_sql"
+        cmd_type, cmd, args = cli._parse_command("/gen_report show revenue")
+        assert cmd_type == CommandType.CHAT
+        assert cmd == "gen_report"
+        assert args == "show revenue"
+
+    def test_chat_explicit_maps_to_empty(self, cli):
+        """'/chat msg' always maps subagent_name to '' regardless of default."""
+        cli.available_subagents = {"chat", "gen_sql"}
+        cli.default_agent = "gen_sql"
+        cmd_type, cmd, args = cli._parse_command("/chat show revenue")
+        assert cmd_type == CommandType.CHAT
+        assert cmd == ""
+        assert args == "show revenue"
+
+    def test_bare_text_uses_default_agent(self, cli):
+        """Bare natural language text uses default_agent."""
+        cli.available_subagents = {"chat", "gen_sql"}
+        cli.default_agent = "gen_sql"
+        with patch("datus.cli.repl.parse_sql_type") as mock_parse:
+            from datus.utils.constants import SQLType
+
+            mock_parse.return_value = SQLType.UNKNOWN
+            cmd_type, cmd, args = cli._parse_command("show me the revenue")
+        assert cmd_type == CommandType.CHAT
+        assert cmd == "gen_sql"
+
+    def test_bare_text_default_chat(self, cli):
+        """Bare text with default_agent='' routes to chat."""
+        cli.default_agent = ""
+        with patch("datus.cli.repl.parse_sql_type") as mock_parse:
+            from datus.utils.constants import SQLType
+
+            mock_parse.return_value = SQLType.UNKNOWN
+            cmd_type, cmd, args = cli._parse_command("hello world")
+        assert cmd_type == CommandType.CHAT
+        assert cmd == ""
+
+    def test_single_word_slash_uses_default(self, cli):
+        """'/message' (single word, not a subagent) uses default_agent."""
+        cli.available_subagents = {"chat", "gen_sql"}
+        cli.default_agent = "gen_sql"
+        cmd_type, cmd, args = cli._parse_command("/hello")
+        assert cmd_type == CommandType.CHAT
+        assert cmd == "gen_sql"
+        assert args == "hello"
+
+
+# ---------------------------------------------------------------------------
+# Tests: _get_prompt_text with default_agent
+# ---------------------------------------------------------------------------
+
+
+class TestGetPromptTextWithAgent:
+    def test_prompt_shows_default_agent(self, cli):
+        """Prompt displays agent name when default_agent is set."""
+        cli.default_agent = "gen_sql"
+        cli.plan_mode_active = False
+        text = cli._get_prompt_text()
+        assert "gen_sql" in text
+        assert "Datus" in text
+
+    def test_prompt_normal_when_no_default(self, cli):
+        """Prompt shows normal 'Datus>' when default_agent is empty."""
+        cli.default_agent = ""
+        cli.plan_mode_active = False
+        text = cli._get_prompt_text()
+        assert text == "Datus> "
+
+    def test_plan_mode_overrides_agent_prompt(self, cli):
+        """Plan mode prompt takes precedence over agent prompt."""
+        cli.default_agent = "gen_sql"
+        cli.plan_mode_active = True
+        text = cli._get_prompt_text()
+        assert "PLAN" in text

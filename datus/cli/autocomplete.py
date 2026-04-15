@@ -213,6 +213,7 @@ class SQLCompleter(Completer):
             # ".show": None,
             ".namespace": None,
             ".mcp": None,
+            ".agent": None,
             ".subagent": None,
             ".subagent list": None,
             ".subagent add": None,
@@ -1059,6 +1060,7 @@ class SubagentCompleter(Completer):
     def _load_subagents(self) -> List[str]:
         """Load available subagents from configuration and include built-in subagents."""
         subagents = list(SYS_SUB_AGENTS)
+        subagents.append("chat")
         if hasattr(self.agent_config, "agentic_nodes") and self.agent_config.agentic_nodes:
             for name, sub_config in self.agent_config.agentic_nodes.items():
                 if name != "chat" and name not in SYS_SUB_AGENTS:  # Exclude default chat and avoid duplicates
