@@ -57,6 +57,7 @@ SYS_SUB_AGENTS = {
     "gen_skill",
     "gen_dashboard",
     "scheduler",
+    "feedback",
 }
 
 

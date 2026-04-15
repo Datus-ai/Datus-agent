@@ -18,6 +18,7 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
 from datus.schemas.date_parser_node_models import DateParserInput, DateParserResult
 from datus.schemas.explore_agentic_node_models import ExploreNodeInput, ExploreNodeResult
+from datus.schemas.feedback_agentic_node_models import FeedbackNodeInput, FeedbackNodeResult
 from datus.schemas.fix_node_models import FixInput
 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput, GenSQLNodeResult
 from datus.schemas.node_models import (
@@ -225,6 +226,13 @@ class Node(ABC):
                 node_name=node_name,
                 is_subagent=is_subagent,
             )
+            if input_data is not None:
+                node.input = input_data
+            return node
+        elif node_type == NodeType.TYPE_FEEDBACK:
+            from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
+
+            node = FeedbackAgenticNode(agent_config=agent_config, execution_mode="workflow")
             if input_data is not None:
                 node.input = input_data
             return node
@@ -505,6 +513,8 @@ class Node(ABC):
                     from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 
                     input_data = SemanticNodeInput(**input_data)
+                elif node_dict["type"] == NodeType.TYPE_FEEDBACK:
+                    input_data = FeedbackNodeInput(**input_data)
             except Exception as e:
                 logger.warning(f"Failed to convert input data for {node_dict['type']}: {e}")
                 input_data = None
@@ -559,6 +569,8 @@ class Node(ABC):
                     from datus.schemas.semantic_agentic_node_models import SemanticNodeResult
 
                     result_data = SemanticNodeResult(**result_data)
+                elif node_dict["type"] == NodeType.TYPE_FEEDBACK:
+                    result_data = FeedbackNodeResult(**result_data)
                 elif "success" in result_data:
                     result_data = BaseResult(**result_data)
             except Exception as e:

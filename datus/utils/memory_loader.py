@@ -22,6 +22,8 @@ MEMORY_BASE_DIR = ".datus/memory"
 
 # Allowlist: the only built-in node that gets memory.
 # Any name NOT found in _ALL_BUILTIN_NODES is treated as a custom subagent and also gets memory.
+# Note: 'feedback' intentionally omitted — the feedback node's purpose is to update the
+# caller's memory (e.g. chat), not to maintain a memory file of its own.
 _MEMORY_ENABLED_BUILTINS = frozenset({"chat"})
 _ALL_BUILTIN_NODES = SYS_SUB_AGENTS | {"explore", "compare"}
 
@@ -30,7 +32,9 @@ def has_memory(node_name: str) -> bool:
     """Determine if a node should have persistent memory.
 
     Enabled for 'chat' and custom subagents only.
-    Built-in system subagents (gen_sql, gen_report, etc.), explore, and compare do not get memory.
+    Built-in system subagents (gen_sql, gen_report, feedback, etc.), explore, and
+    compare do not get their own memory file. The feedback node updates the caller
+    node's memory instead of maintaining its own.
     """
     if node_name in _MEMORY_ENABLED_BUILTINS:
         return True

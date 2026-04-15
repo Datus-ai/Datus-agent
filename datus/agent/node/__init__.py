@@ -30,6 +30,7 @@ __all__ = [
     "SkillCreatorAgenticNode",
     "GenDashboardAgenticNode",
     "SchedulerAgenticNode",
+    "FeedbackAgenticNode",
     "Node",
 ]
 
@@ -43,6 +44,7 @@ from .date_parser_node import DateParserNode
 from .doc_search_node import DocSearchNode
 from .execute_sql_node import ExecuteSQLNode
 from .explore_agentic_node import ExploreAgenticNode
+from .feedback_agentic_node import FeedbackAgenticNode
 from .fix_node import FixNode
 from .gen_dashboard_agentic_node import GenDashboardAgenticNode
 from .gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode

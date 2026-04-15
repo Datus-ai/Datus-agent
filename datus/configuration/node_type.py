@@ -12,6 +12,7 @@ from datus.schemas.date_parser_node_models import DateParserInput
 from datus.schemas.doc_search_node_models import DocSearchInput
 from datus.schemas.explore_agentic_node_models import ExploreNodeInput
 from datus.schemas.ext_knowledge_agentic_node_models import ExtKnowledgeNodeInput
+from datus.schemas.feedback_agentic_node_models import FeedbackNodeInput
 from datus.schemas.fix_node_models import FixInput
 from datus.schemas.gen_report_agentic_node_models import GenReportNodeInput
 from datus.schemas.gen_skill_agentic_node_models import SkillCreatorNodeInput
@@ -65,6 +66,7 @@ class NodeType:
     TYPE_GEN_SKILL = "gen_skill"  # For interactive skill creation and optimization
     TYPE_GEN_DASHBOARD = "gen_dashboard"  # For BI dashboard creation and management
     TYPE_SCHEDULER = "scheduler"  # For job scheduler management and monitoring
+    TYPE_FEEDBACK = "feedback"  # For conversation feedback analysis and knowledge archival
 
     ACTION_TYPES = [
         TYPE_SCHEMA_LINKING,
@@ -90,6 +92,7 @@ class NodeType:
         TYPE_GEN_SKILL,
         TYPE_GEN_DASHBOARD,
         TYPE_SCHEDULER,
+        TYPE_FEEDBACK,
     ]
 
     NODE_TYPE_DESCRIPTIONS = {
@@ -122,6 +125,7 @@ class NodeType:
         TYPE_GEN_SKILL: "Interactive skill creation and optimization",
         TYPE_GEN_DASHBOARD: "BI dashboard creation and management",
         TYPE_SCHEDULER: "Job scheduler management and monitoring",
+        TYPE_FEEDBACK: "Conversation feedback analysis and knowledge archival",
     }
 
     @classmethod
@@ -189,6 +193,8 @@ class NodeType:
             from datus.schemas.scheduler_agentic_node_models import SchedulerNodeInput
 
             input_data_cls = SchedulerNodeInput
+        elif node_type == NodeType.TYPE_FEEDBACK:
+            input_data_cls = FeedbackNodeInput
         else:
             raise NotImplementedError(f"node_type {node_type} not implemented")
 

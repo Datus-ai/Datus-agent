@@ -2158,6 +2158,41 @@ class TestCmdListSessionsWithData:
 
 
 # ===========================================================================
+# TestTriggerCompactWithSession — _trigger_compact 带活跃 session
+# ===========================================================================
+
+
+class TestTriggerCompactWithSession:
+    """Tests for subagent switch without compact."""
+
+    def test_no_compact_on_subagent_switch(self, real_agent_config, mock_llm_create):
+        """Switching subagent should NOT trigger compact."""
+        from tests.unit_tests.mock_llm_model import build_simple_response
+
+        console = Console(file=io.StringIO(), no_color=True)
+        cmds = _make_chat_commands(real_agent_config, console=console)
+
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response("Chat reply"),
+                build_simple_response("SQL reply"),
+            ]
+        )
+
+        # First: create a chat session
+        cmds.execute_chat_command("Hello")
+        assert cmds.current_node is not None
+
+        # Second: switch to subagent — no compact should be triggered
+        console.file = io.StringIO()
+        cmds.execute_chat_command("Generate SQL", subagent_name="gensql")
+
+        output = _get_console_output(console)
+        assert cmds.current_subagent_name == "gensql"
+        assert "compacting" not in output.lower()
+
+
+# ===========================================================================
 # TestCmdClearChatWithSession — cmd_clear_chat 带 session 的 delete 路径
 # ===========================================================================
 

@@ -879,6 +879,18 @@ class SubAgentTaskTool:
                 }
             )
 
+        # Feedback result: has 'items_saved' key
+        items_saved = output.get("items_saved")
+        if items_saved is not None:
+            return FuncToolResult(
+                result={
+                    "response": response,
+                    "items_saved": items_saved,
+                    "storage_summary": output.get("storage_summary"),
+                    "tokens_used": tokens,
+                }
+            )
+
         # Generic format
         return FuncToolResult(
             result={
@@ -966,15 +978,20 @@ class SubAgentTaskTool:
         return [t for t in self._discover_all_types() if t != self._parent_node_name]
 
     def _discover_all_types(self) -> List[str]:
-        """Return every subagent type that can currently be instantiated."""
+        """Return every subagent type that can currently be instantiated.
+
+        'feedback' is a top-level AgenticNode (invoked directly by the CLI/API),
+        not a delegatable subagent, so it is excluded here even though it lives
+        in SYS_SUB_AGENTS (which only guards reserved system names).
+        """
         types = ["explore"]
-        types.extend(sorted(SYS_SUB_AGENTS))
+        types.extend(sorted(name for name in SYS_SUB_AGENTS if name != "feedback"))
 
         if self.agent_config and hasattr(self.agent_config, "agentic_nodes"):
             current_database = self.agent_config.current_database
 
             for name, config in self.agent_config.agentic_nodes.items():
-                if name in ("chat", "explore") or name in SYS_SUB_AGENTS:
+                if name in ("chat", "explore", "feedback") or name in SYS_SUB_AGENTS:
                     continue
 
                 # If scoped_context is configured, namespace must match current namespace

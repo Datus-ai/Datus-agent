@@ -829,9 +829,13 @@ class TestBuildTaskDescriptionFileStorage:
 @pytest.mark.ci
 class TestGetAvailableTypesBuiltIn:
     def test_includes_all_builtin_types(self, task_tool):
-        """All 4 SYS_SUB_AGENTS appear in available types."""
+        """All SYS_SUB_AGENTS appear in available types, except 'feedback'
+        which is a top-level node and not task()-delegatable."""
         types = task_tool._get_available_types()
         for name in SYS_SUB_AGENTS:
+            if name == "feedback":
+                assert name not in types, "feedback must not be exposed as a delegatable subagent"
+                continue
             assert name in types, f"{name} not found in available types"
 
     def test_no_duplicates(self, task_tool):
@@ -851,10 +855,12 @@ class TestGetAvailableTypesBuiltIn:
         assert types.count("gen_sql_summary") == 1
 
     def test_builtin_types_sorted(self, task_tool):
-        """Built-in types appear in sorted order after gen_sql."""
+        """Built-in types appear in sorted order after gen_sql (excluding 'feedback',
+        which is not task()-delegatable)."""
         types = task_tool._get_available_types()
         builtin_in_list = [t for t in types if t in SYS_SUB_AGENTS]
-        assert builtin_in_list == sorted(SYS_SUB_AGENTS)
+        expected = sorted(name for name in SYS_SUB_AGENTS if name != "feedback")
+        assert builtin_in_list == expected
 
 
 # ── Built-in subagent: _resolve_node_type ──────────────────────────
@@ -1157,6 +1163,10 @@ class TestBuildTaskDescriptionBuiltIn:
     def test_contains_all_builtin_types(self, task_tool):
         desc = task_tool._build_task_description()
         for name in SYS_SUB_AGENTS:
+            if name == "feedback":
+                # feedback is a top-level node; must not be advertised to the LLM
+                assert name not in desc, "feedback must not appear in task description"
+                continue
             assert name in desc, f"{name} not found in task description"
 
     def test_contains_builtin_descriptions(self, task_tool):
