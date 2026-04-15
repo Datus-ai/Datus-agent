@@ -345,11 +345,6 @@ class ChannelBridge:
         content_items = getattr(data.payload, "content", [])
         is_delta = is_thinking_only_content(content_items)
 
-        # Strip whitespace for complete messages only.  Delta (streaming) chunks
-        # must preserve leading/trailing spaces so that token boundaries survive
-        # accumulation (e.g. "Hi" + " again!" must not become "Hi" + "again!").
-        if not is_delta:
-            combined_text = combined_text.strip()
         if not combined_text and not sql:
             return None
 
