@@ -1519,3 +1519,146 @@ class TestGetDetailedUsage:
             assert "legacy-session" in sessions
         finally:
             manager.close_all_sessions()
+
+
+# ---------------------------------------------------------------------------
+# Tests: copy_session
+# ---------------------------------------------------------------------------
+
+
+class TestCopySession:
+    """Tests for SessionManager.copy_session with real SQLite data."""
+
+    def _setup_source_session(self, sm, session_id, messages):
+        """Create a source session and populate it with messages."""
+        sm.get_session(session_id)
+        db_path = os.path.join(sm.session_dir, f"{session_id}.db")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("INSERT OR IGNORE INTO agent_sessions (session_id) VALUES (?)", (session_id,))
+            for idx, msg in enumerate(messages):
+                created_at = msg.get("created_at", f"2025-01-01T00:00:{idx:02d}")
+                msg_copy = {k: v for k, v in msg.items() if k != "created_at"}
+                conn.execute(
+                    "INSERT INTO agent_messages (session_id, message_data, created_at) VALUES (?, ?, ?)",
+                    (session_id, json.dumps(msg_copy), created_at),
+                )
+            conn.commit()
+
+    def test_copy_session_changes_prefix(self, sm):
+        """Copied session_id uses target_node_name prefix, not the source prefix."""
+        source_id = "chat_session_abc12345"
+        self._setup_source_session(
+            sm,
+            source_id,
+            [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi there"},
+            ],
+        )
+
+        new_id = sm.copy_session(source_id, "gensql")
+
+        assert new_id.startswith("gensql_session_")
+        assert new_id != source_id
+
+    def test_copy_session_preserves_all_messages(self, sm):
+        """All messages from the source session are copied to the new session."""
+        source_id = "chat_session_copy1"
+        self._setup_source_session(
+            sm,
+            source_id,
+            [
+                {"role": "user", "content": "Q1", "created_at": "2025-01-01T00:00:00"},
+                {"role": "assistant", "content": "A1", "created_at": "2025-01-01T00:00:01"},
+                {"role": "user", "content": "Q2", "created_at": "2025-01-01T00:00:02"},
+                {"role": "assistant", "content": "A2", "created_at": "2025-01-01T00:00:03"},
+            ],
+        )
+
+        new_id = sm.copy_session(source_id, "gen_report")
+
+        msgs = _read_messages(sm.session_dir, new_id)
+        assert len(msgs) == 4
+        assert msgs[0]["content"] == "Q1"
+        assert msgs[1]["content"] == "A1"
+        assert msgs[2]["content"] == "Q2"
+        assert msgs[3]["content"] == "A2"
+
+    def test_copy_session_new_db_file_created(self, sm):
+        """A separate .db file is created for the new session."""
+        source_id = "chat_session_dbcheck"
+        self._setup_source_session(sm, source_id, [{"role": "user", "content": "test"}])
+
+        new_id = sm.copy_session(source_id, "explore")
+
+        new_db = os.path.join(sm.session_dir, f"{new_id}.db")
+        assert os.path.exists(new_db)
+        # Source DB should still exist untouched
+        source_db = os.path.join(sm.session_dir, f"{source_id}.db")
+        assert os.path.exists(source_db)
+
+    def test_copy_session_cached(self, sm):
+        """The new session should be cached in SessionManager._sessions."""
+        source_id = "chat_session_cached"
+        self._setup_source_session(sm, source_id, [{"role": "user", "content": "test"}])
+
+        new_id = sm.copy_session(source_id, "gensql")
+
+        assert new_id in sm._sessions
+
+    def test_copy_nonexistent_source_returns_fresh_id(self, sm):
+        """When source DB doesn't exist, return a fresh session_id (no crash)."""
+        new_id = sm.copy_session("nonexistent_session_xxx", "gensql")
+
+        assert new_id.startswith("gensql_session_")
+        # No DB file should be created since there was nothing to copy
+        new_db = os.path.join(sm.session_dir, f"{new_id}.db")
+        assert not os.path.exists(new_db)
+
+    def test_copy_session_copies_turn_usage(self, sm):
+        """turn_usage rows are also copied to the new session."""
+        source_id = "chat_session_usage"
+        # Create session via get_session so the DB file exists with base tables
+        sm.get_session(source_id)
+        db_path = os.path.join(sm.session_dir, f"{source_id}.db")
+
+        # Populate messages and turn_usage directly
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("INSERT OR IGNORE INTO agent_sessions (session_id) VALUES (?)", (source_id,))
+            conn.execute(
+                "INSERT INTO agent_messages (session_id, message_data, created_at) VALUES (?, ?, ?)",
+                (source_id, json.dumps({"role": "user", "content": "test"}), "2025-01-01T00:00:00"),
+            )
+            # turn_usage may or may not already exist; create if missing
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS turn_usage ("
+                "session_id TEXT NOT NULL, branch_id TEXT NOT NULL DEFAULT 'main', "
+                "user_turn_number INTEGER NOT NULL, requests INTEGER DEFAULT 0, "
+                "input_tokens INTEGER DEFAULT 0, output_tokens INTEGER DEFAULT 0, "
+                "total_tokens INTEGER DEFAULT 0, input_tokens_details TEXT, "
+                "output_tokens_details TEXT, created_at TEXT)"
+            )
+            conn.execute(
+                "INSERT INTO turn_usage "
+                "(session_id, branch_id, user_turn_number, requests, input_tokens, "
+                "output_tokens, total_tokens, input_tokens_details, output_tokens_details, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (source_id, "main", 1, 2, 100, 50, 150, "{}", "{}", "2025-01-01T00:00:00"),
+            )
+            conn.commit()
+
+        # Verify source turn_usage exists before copy
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.execute("SELECT COUNT(*) FROM turn_usage WHERE session_id = ?", (source_id,))
+            assert cursor.fetchone()[0] == 1
+
+        new_id = sm.copy_session(source_id, "gensql")
+
+        # Verify turn_usage was copied
+        new_db = os.path.join(sm.session_dir, f"{new_id}.db")
+        with sqlite3.connect(new_db) as conn:
+            cursor = conn.execute("SELECT session_id, total_tokens FROM turn_usage WHERE session_id = ?", (new_id,))
+            rows = cursor.fetchall()
+        assert len(rows) == 1
+        assert rows[0][0] == new_id
+        assert rows[0][1] == 150

@@ -288,7 +288,7 @@ class SubAgentTaskTool:
         constructors skip SubAgentTaskTool setup entirely.
 
         Custom agents go through ``Node.new_instance`` which doesn't support
-        ``_as_subagent``, so we strip the task tool post-construction.
+        ``is_subagent``, so we strip the task tool post-construction.
         """
         # Builtin system subagents have non-standard constructors
         if subagent_type in SYS_SUB_AGENTS:
@@ -309,7 +309,7 @@ class SubAgentTaskTool:
         )
 
         # Custom agents go through Node.new_instance which can't pass
-        # _as_subagent, so strip any nested task tool post-construction.
+        # is_subagent, so strip any nested task tool post-construction.
         nested_tool = getattr(node, "sub_agent_task_tool", None)
         if isinstance(nested_tool, SubAgentTaskTool):
             if node.tools:

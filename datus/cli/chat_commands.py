@@ -82,6 +82,25 @@ class ChatCommands:
         effective_new = subagent_name or ""
         return effective_current != effective_new
 
+    def _copy_session_for_switch(self, prev_session_id: str, new_node) -> str:
+        """Copy session data from the previous node to a new session matching the new node's name prefix.
+
+        Uses :meth:`SessionManager.copy_session` so that the new session_id prefix
+        matches ``new_node.get_node_name()`` and :meth:`_extract_node_type_from_session_id`
+        resolves the correct type on ``.resume``.
+
+        Returns:
+            New session_id with the correct node-name prefix.
+        """
+        from datus.models.session_manager import SessionManager
+
+        try:
+            session_manager = SessionManager(self.cli.agent_config.session_dir, scope=self.cli.scope)
+            return session_manager.copy_session(prev_session_id, new_node.get_node_name())
+        except Exception as e:
+            logger.warning(f"Failed to copy session on agent switch, starting fresh: {e}")
+            return new_node.session_id  # fall back to whatever the node already has (None → auto-generate)
+
     def _create_new_node(self, subagent_name: str = None):
         """Create new node based on subagent_name and configuration.
 
@@ -191,13 +210,14 @@ class ChatCommands:
 
                 # Get or create node
                 if need_new_node:
-                    # Carry over session_id when switching agents to preserve conversation
+                    # Copy session when switching agents to preserve conversation
+                    # while keeping the session_id prefix consistent with the new node type.
                     prev_session_id = None
                     if is_switch and self.current_node and hasattr(self.current_node, "session_id"):
                         prev_session_id = self.current_node.session_id
                     self.current_node = self._create_new_node(subagent_name)
                     if prev_session_id:
-                        self.current_node.session_id = prev_session_id
+                        self.current_node.session_id = self._copy_session_for_switch(prev_session_id, self.current_node)
                     self.current_subagent_name = subagent_name if subagent_name else None
                     if not is_switch:
                         self.all_turn_actions = []

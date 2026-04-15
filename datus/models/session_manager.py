@@ -170,6 +170,85 @@ class SessionManager:
         else:
             logger.warning(f"Attempted to delete non-existent session: {session_id}")
 
+    def copy_session(self, source_session_id: str, target_node_name: str) -> str:
+        """Copy a session to a new one with a different node-name prefix.
+
+        All messages and turn_usage rows are copied.  The new session_id uses
+        ``target_node_name`` as prefix so that
+        :meth:`ChatCommands._extract_node_type_from_session_id` resolves the
+        correct node type.
+
+        Args:
+            source_session_id: The session to copy from.
+            target_node_name: Node name for the new session_id prefix
+                (e.g. ``"gensql"``, ``"chat"``).
+
+        Returns:
+            The new session ID.
+        """
+        self._validate_session_id(source_session_id)
+        new_session_id = f"{target_node_name}_session_{uuid.uuid4().hex[:8]}"
+
+        source_db_path = os.path.join(self.session_dir, f"{source_session_id}.db")
+        if not os.path.exists(source_db_path):
+            # No persisted session data to copy; return new id so the node starts fresh
+            return new_session_id
+
+        # Read all messages from source
+        with sqlite3.connect(source_db_path, timeout=5.0) as src_conn:
+            cursor = src_conn.cursor()
+            cursor.execute(
+                "SELECT message_data, created_at FROM agent_messages WHERE session_id = ? ORDER BY created_at, id",
+                (source_session_id,),
+            )
+            message_rows = cursor.fetchall()
+
+            # Read turn_usage if the table exists
+            turn_usage_rows: list = []
+            try:
+                cursor.execute(
+                    "SELECT branch_id, user_turn_number, requests, input_tokens, "
+                    "output_tokens, total_tokens, input_tokens_details, "
+                    "output_tokens_details, created_at "
+                    "FROM turn_usage WHERE session_id = ?",
+                    (source_session_id,),
+                )
+                turn_usage_rows = cursor.fetchall()
+            except sqlite3.OperationalError:
+                pass
+
+        # Create new session DB
+        new_db_path = os.path.join(self.session_dir, f"{new_session_id}.db")
+        new_session = AdvancedSQLiteSession(session_id=new_session_id, db_path=new_db_path, create_tables=True)
+        self._sessions[new_session_id] = new_session
+
+        with sqlite3.connect(new_db_path, timeout=5.0) as new_conn:
+            new_conn.execute(
+                "INSERT OR IGNORE INTO agent_sessions (session_id) VALUES (?)",
+                (new_session_id,),
+            )
+            for message_data, created_at in message_rows:
+                new_conn.execute(
+                    "INSERT INTO agent_messages (session_id, message_data, created_at) VALUES (?, ?, ?)",
+                    (new_session_id, message_data, created_at),
+                )
+            for usage_row in turn_usage_rows:
+                new_conn.execute(
+                    "INSERT OR IGNORE INTO turn_usage "
+                    "(session_id, branch_id, user_turn_number, requests, input_tokens, "
+                    "output_tokens, total_tokens, input_tokens_details, "
+                    "output_tokens_details, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (new_session_id, *usage_row),
+                )
+            new_conn.commit()
+
+        logger.info(
+            f"Copied session {source_session_id} -> {new_session_id} "
+            f"({len(message_rows)} messages, {len(turn_usage_rows)} turn_usage rows)"
+        )
+        return new_session_id
+
     def rewind_session(
         self,
         source_session_id: str,

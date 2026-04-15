@@ -3368,8 +3368,8 @@ class TestIsAgentSwitch:
 
 
 class TestSessionPreservationOnSwitch:
-    def test_session_id_carried_over_on_switch(self, chat_cmd):
-        """When switching agents, session_id from old node is carried to new node."""
+    def test_session_copied_on_switch_with_correct_prefix(self, chat_cmd):
+        """When switching agents, session is copied and new id has the target node prefix."""
         old_node = MagicMock()
         old_node.session_id = "chat_session_abc123"
         chat_cmd.current_node = old_node
@@ -3377,7 +3377,11 @@ class TestSessionPreservationOnSwitch:
 
         new_node = MagicMock()
         new_node.session_id = None
+        new_node.get_node_name.return_value = "gensql"
         chat_cmd._create_new_node = MagicMock(return_value=new_node)
+
+        # Mock _copy_session_for_switch to return a properly-prefixed session_id
+        chat_cmd._copy_session_for_switch = MagicMock(return_value="gensql_session_def456")
 
         # Simulate _execute_chat logic for agent switch
         subagent_name = "gensql"
@@ -3387,15 +3391,41 @@ class TestSessionPreservationOnSwitch:
         assert need_new_node is True
         assert is_switch is True
 
-        # Carry over session_id
         prev_session_id = None
         if is_switch and chat_cmd.current_node and hasattr(chat_cmd.current_node, "session_id"):
             prev_session_id = chat_cmd.current_node.session_id
         chat_cmd.current_node = chat_cmd._create_new_node(subagent_name)
         if prev_session_id:
-            chat_cmd.current_node.session_id = prev_session_id
+            chat_cmd.current_node.session_id = chat_cmd._copy_session_for_switch(prev_session_id, chat_cmd.current_node)
 
-        assert chat_cmd.current_node.session_id == "chat_session_abc123"
+        # Verify the new session_id has the target node prefix, not the source prefix
+        assert chat_cmd.current_node.session_id == "gensql_session_def456"
+        chat_cmd._copy_session_for_switch.assert_called_once_with("chat_session_abc123", new_node)
+
+    def test_copy_session_delegates_to_session_manager(self, chat_cmd):
+        """_copy_session_for_switch delegates to SessionManager.copy_session."""
+        new_node = MagicMock()
+        new_node.get_node_name.return_value = "gensql"
+
+        with patch("datus.models.session_manager.SessionManager") as mock_sm_cls:
+            mock_sm = mock_sm_cls.return_value
+            mock_sm.copy_session.return_value = "gensql_session_xyz789"
+
+            result = chat_cmd._copy_session_for_switch("chat_session_abc123", new_node)
+
+        assert result == "gensql_session_xyz789"
+        mock_sm.copy_session.assert_called_once_with("chat_session_abc123", "gensql")
+
+    def test_copy_session_fallback_on_error(self, chat_cmd):
+        """If copy_session fails, fall back to the node's existing session_id."""
+        new_node = MagicMock()
+        new_node.session_id = "fallback_session_id"
+        new_node.get_node_name.return_value = "gensql"
+
+        with patch("datus.models.session_manager.SessionManager", side_effect=Exception("no dir")):
+            result = chat_cmd._copy_session_for_switch("chat_session_abc123", new_node)
+
+        assert result == "fallback_session_id"
 
     def test_session_id_not_carried_on_fresh_start(self, chat_cmd):
         """First node creation (no previous node) does not carry session_id."""

@@ -692,22 +692,26 @@ class AgenticNode(Node):
     def _setup_sub_agent_task_tool(self):
         """Setup SubAgentTaskTool based on subagents config or node default.
 
-        Skipped when ``_is_subagent`` is True (nodes created by SubAgentTaskTool)
+        Skipped when ``is_subagent`` is True (nodes created by SubAgentTaskTool)
         to enforce strict 2-level depth — subagent nodes never get their own task tool.
         """
         if self._is_subagent:
             return
 
+        from datus.schemas.agent_models import SubAgentConfig
+
         subagents_str = self.node_config.get("subagents")
         if subagents_str is None:
             subagents_str = self.DEFAULT_SUBAGENTS
 
-        if subagents_str == "*":
+        parsed = SubAgentConfig(subagents=subagents_str).subagent_list
+        if not parsed:
+            return  # Empty = no task tool
+
+        if parsed == ["*"]:
             allowed = None  # None = SubAgentTaskTool discovers all types
         else:
-            allowed = [s.strip() for s in subagents_str.split(",") if s.strip()]
-            if not allowed:
-                return  # Empty = no task tool
+            allowed = parsed
 
         try:
             from datus.tools.func_tool.sub_agent_task_tool import SubAgentTaskTool
