@@ -637,6 +637,8 @@ class TestNode:
         """Test schema linking node"""
         # Take first test case from the list
         _current_database = agent_config.current_database
+        print("$$$$", agent_config)
+        print("$$$$", search_metrics_input)
         try:
             for case in search_metrics_input:
                 input_data = SearchMetricsInput(**case["input"])
@@ -650,8 +652,9 @@ class TestNode:
                 assert node.type == NodeType.TYPE_SEARCH_METRICS
                 assert isinstance(node.input, SearchMetricsInput)
                 result = node.run()
+                print("$$$$", result)
                 logger.debug(f"Search metrics node result: {result}")
-                assert node.status == "completed", f"Node execution failed with status: {node.status}"
+                assert node.status == "completed", f"Node execution failed with status: {node.status}, {node.result}"
                 assert isinstance(result, SearchMetricsResult), "Result type mismatch"
                 assert result.success is True, f"Node execution failed: {result}"
         except Exception as e:
