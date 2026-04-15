@@ -45,8 +45,9 @@ jobs:
         run: |
           DATUS_TEST_HOME="${GITHUB_WORKSPACE}/.datus_test_data"
           echo "DATUS_TEST_HOME=$DATUS_TEST_HOME" >> $GITHUB_ENV
-          sed -i "s|home: ~/.datus/tests|home: $DATUS_TEST_HOME|g" tests/conf/agent.yml
-          sed -i "s|workspace_root: ~/.datus/tests/workspace|workspace_root: $DATUS_TEST_HOME/workspace|g" tests/conf/agent.yml
+          sed -i "s|home: .datus_test_data|home: $DATUS_TEST_HOME|g" tests/conf/agent.yml
+          sed -i "s|workspace_root: .datus_test_data/workspace|workspace_root: $DATUS_TEST_HOME/workspace|g" tests/conf/agent.yml
+          sed -i "s|knowledge_base_home: .datus_test_data/knowledge_base|knowledge_base_home: $DATUS_TEST_HOME/knowledge_base|g" tests/conf/agent.yml
 
       - name: Load environment variables
         run: |
