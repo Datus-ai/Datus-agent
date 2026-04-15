@@ -117,19 +117,30 @@ def build_reconciliation_checks(
     # 4. Distinct count — for key columns or all columns
     distinct_cols = key_columns if has_keys else [c["name"] for c in columns]
     if distinct_cols:
-        src_parts = [
-            f"COUNT(DISTINCT {_quote_identifier(c)}) AS {_quote_identifier(c + '_distinct')}" for c in distinct_cols
-        ]
-        tgt_parts = [
-            f"COUNT(DISTINCT {_quote_identifier(c)}) AS {_quote_identifier(c + '_distinct')}" for c in distinct_cols
-        ]
-        checks.append(
-            {
-                "name": "distinct_count",
-                "source_query": f"SELECT {', '.join(src_parts)} FROM {source_table}",
-                "target_query": f"SELECT {', '.join(tgt_parts)} FROM {target_table}",
-            }
-        )
+        if has_keys and len(distinct_cols) > 1:
+            # Composite key: use SELECT DISTINCT to catch tuple permutation errors
+            key_expr = ", ".join(_quote_identifier(c) for c in distinct_cols)
+            checks.append(
+                {
+                    "name": "distinct_count",
+                    "source_query": f"SELECT COUNT(*) AS distinct_key_count FROM (SELECT DISTINCT {key_expr} FROM {source_table}) t",
+                    "target_query": f"SELECT COUNT(*) AS distinct_key_count FROM (SELECT DISTINCT {key_expr} FROM {target_table}) t",
+                }
+            )
+        else:
+            src_parts = [
+                f"COUNT(DISTINCT {_quote_identifier(c)}) AS {_quote_identifier(c + '_distinct')}" for c in distinct_cols
+            ]
+            tgt_parts = [
+                f"COUNT(DISTINCT {_quote_identifier(c)}) AS {_quote_identifier(c + '_distinct')}" for c in distinct_cols
+            ]
+            checks.append(
+                {
+                    "name": "distinct_count",
+                    "source_query": f"SELECT {', '.join(src_parts)} FROM {source_table}",
+                    "target_query": f"SELECT {', '.join(tgt_parts)} FROM {target_table}",
+                }
+            )
 
     # 5. Duplicate key — only if key columns provided
     if has_keys:

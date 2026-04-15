@@ -265,6 +265,26 @@ class TestIdentifierQuoting:
         distinct_check = next(c for c in checks if c["name"] == "distinct_count")
         assert '"order"' in distinct_check["source_query"]
 
+    def test_composite_key_distinct_count_uses_subquery(self):
+        columns = [
+            {"name": "id", "type": "INTEGER", "nullable": False},
+            {"name": "region", "type": "VARCHAR", "nullable": False},
+            {"name": "amount", "type": "DECIMAL", "nullable": True},
+        ]
+        checks = build_reconciliation_checks(
+            source_table="src.t",
+            target_table="tgt.t",
+            columns=columns,
+            key_columns=["id", "region"],
+        )
+        distinct_check = next(c for c in checks if c["name"] == "distinct_count")
+        sql = distinct_check["source_query"].upper()
+        # Composite key should use SELECT DISTINCT subquery, not per-column COUNT(DISTINCT)
+        assert "SELECT DISTINCT" in sql
+        assert "COUNT(*)" in sql
+        assert '"id"' in distinct_check["source_query"]
+        assert '"region"' in distinct_check["source_query"]
+
     def test_composite_key_duplicate_check(self):
         columns = [
             {"name": "id", "type": "INTEGER", "nullable": False},
