@@ -634,6 +634,39 @@ class TestEventToOutbound:
         result = bridge._event_to_outbound(data, msg)
         assert result is None
 
+    def test_delta_preserves_leading_trailing_whitespace(self, bridge):
+        """Delta (thinking) chunks must preserve leading/trailing whitespace for correct accumulation."""
+        msg = _make_inbound()
+        data = SSEMessageData(
+            type=SSEDataType.APPEND_MESSAGE,
+            payload=SSEMessagePayload(
+                message_id="m1",
+                role="assistant",
+                content=[IMessageContent(type="thinking", payload={"content": " again! How are you?"})],
+            ),
+        )
+        result = bridge._event_to_outbound(data, msg)
+        assert result is not None
+        assert result.is_delta is True
+        # Leading space must be preserved so accumulation works: "Hi" + " again!" = "Hi again!"
+        assert result.text == " again! How are you?"
+
+    def test_non_delta_strips_whitespace(self, bridge):
+        """Non-delta (markdown) messages should strip leading/trailing whitespace."""
+        msg = _make_inbound()
+        data = SSEMessageData(
+            type=SSEDataType.CREATE_MESSAGE,
+            payload=SSEMessagePayload(
+                message_id="m1",
+                role="assistant",
+                content=[IMessageContent(type="markdown", payload={"content": "  Hello World  "})],
+            ),
+        )
+        result = bridge._event_to_outbound(data, msg)
+        assert result is not None
+        assert result.is_delta is False
+        assert result.text == "Hello World"
+
     def test_tool_call_cached_not_output(self, bridge):
         """call-tool alone should NOT produce output; it gets cached."""
         msg = _make_inbound()

@@ -338,14 +338,20 @@ class ChannelBridge:
                 if code_text:
                     text_parts.append(f"```{code_type}\n{code_text}\n```")
 
-        combined_text = "\n\n".join(text_parts).strip()
-        if not combined_text and not sql:
-            return None
+        combined_text = "\n\n".join(text_parts)
 
         # Detect delta messages: events whose content is only thinking chunks.
         # Delta text is partial and cannot be parsed into rich-text IR.
         content_items = getattr(data.payload, "content", [])
         is_delta = is_thinking_only_content(content_items)
+
+        # Strip whitespace for complete messages only.  Delta (streaming) chunks
+        # must preserve leading/trailing spaces so that token boundaries survive
+        # accumulation (e.g. "Hi" + " again!" must not become "Hi" + "again!").
+        if not is_delta:
+            combined_text = combined_text.strip()
+        if not combined_text.strip() and not sql:
+            return None
 
         ir = None
         if combined_text and not is_delta:
