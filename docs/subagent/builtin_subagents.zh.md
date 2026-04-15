@@ -4,7 +4,7 @@
 
 **内置 Subagent**  是集成在 Datus Agent 系统中的专用 AI 助手。每个subagent专注于数据工程自动化的特定方面——分析 SQL、生成语义模型、将查询转换为可复用指标——共同构成从原始 SQL 到具备知识感知的数据产品的闭环工作流。
 
-本文档涵盖七个核心subagent：
+本文档涵盖九个核心subagent：
 
 1. **[gen_sql_summary](#gen_sql_summary)** — 总结和分类 SQL 查询
 2. **[gen_semantic_model](#gen_semantic_model)** — 生成 MetricFlow 语义模型
@@ -13,6 +13,8 @@
 5. **[explore](#explore)** — 只读数据探索和上下文收集
 6. **[gen_sql](#gen_sql)** — 具备深度专业知识的专用 SQL 生成
 7. **[gen_report](#gen_report)** — 灵活的报告生成，支持可配置工具
+8. **[gen_dashboard](#gen_dashboard)** — Superset 和 Grafana 的 BI 仪表盘 CRUD
+9. **[scheduler](#scheduler)** — Airflow 作业生命周期管理
 
 ## 配置
 
@@ -49,6 +51,15 @@ agent:
       model: claude     # 可选：默认使用已配置的模型
       max_turns: 30     # 可选：默认为 30
       tools: "semantic_tools.*, context_search_tools.list_subject_tree"  # 可选：默认使用语义+上下文工具
+
+    gen_dashboard:
+      model: claude     # 可选：默认使用已配置的模型
+      max_turns: 30     # 可选：默认为 30
+      bi_platform: superset  # 可选：显式指定平台（省略时从 dashboard 配置自动检测）
+
+    scheduler:
+      model: claude     # 可选：默认使用已配置的模型
+      max_turns: 30     # 可选：默认为 30
 ```
 
 **可选配置参数**：
@@ -912,6 +923,213 @@ agent:
 
 ---
 
+## gen_dashboard
+
+### 概览
+
+gen_dashboard subagent 在 Superset 和 Grafana 上创建、更新和管理 BI 仪表盘。它由聊天 agent 通过 `task(type="gen_dashboard")` 调用，使用 `BIFuncTool` 中的 BI 工具，通过 LLM function calling 驱动完整的仪表盘创建工作流。
+
+### 关键特性
+
+- **多平台支持**：支持 Apache Superset 和 Grafana；平台可通过 `bi_platform` 显式指定，或从 `agent.dashboard` 配置自动检测
+- **动态工具暴露**：工具根据 adapter Mixin 能力动态暴露——只有平台实际支持的操作才作为 LLM 工具出现
+- **数据物化桥接**：`write_query` 将源数据库查询结果写入 BI 平台自有数据库，解耦源数据与可视化层
+- **Skill 引导工作流**：内置 `gen-dashboard` skill 为各平台提供分步工作流指导
+
+### 配置
+
+```yaml
+agent:
+  agentic_nodes:
+    gen_dashboard:
+      model: claude           # 可选：默认使用已配置的模型
+      max_turns: 30           # 可选：默认为 30
+      bi_platform: superset   # 可选：从 dashboard 配置自动检测
+
+  dashboard:
+    superset:
+      api_url: "http://localhost:8088"
+      username: "${SUPERSET_USER}"
+      password: "${SUPERSET_PASSWORD}"
+      dataset_db:
+        uri: "${SUPERSET_DB_URI}"
+        schema: "public"
+    grafana:
+      api_url: "http://localhost:3000"
+      api_key: "${GRAFANA_API_KEY}"
+      dataset_db:
+        uri: "${GRAFANA_DB_URI}"
+        datasource_name: "PostgreSQL"
+```
+
+**前置条件**：
+- `agent.yml` 中包含 `agent.dashboard` 配置段及平台凭据
+- 已安装 `datus-bi-superset` 或 `datus-bi-grafana` 包（`pip install datus-agent[bi]`）
+
+### 工作原理
+
+```mermaid
+graph LR
+    A[chat agent] -->|task type=gen_dashboard| B[GenDashboardAgenticNode]
+    B --> C[_setup_bi_tools]
+    C --> D[adapter_registry.get platform]
+    D --> E[BIFuncTool.available_tools]
+    E --> F[LLM Function Calling]
+    F -->|Superset| G[write_query → create_dataset → create_chart → create_dashboard]
+    F -->|Grafana| H[write_query → create_dashboard → create_chart]
+```
+
+### 可用工具
+
+工具根据平台 adapter 实现的 Mixin 动态暴露：
+
+| 工具 | 所需能力 | 说明 |
+|------|---------|------|
+| `list_dashboards` | 所有 adapter | 列出/搜索仪表盘 |
+| `get_dashboard` | 所有 adapter | 获取仪表盘详情 |
+| `list_charts` | 所有 adapter | 列出仪表盘下的图表 |
+| `list_datasets` | 所有 adapter | 列出数据集/数据源 |
+| `create_dashboard` | `DashboardWriteMixin` | 创建仪表盘 |
+| `update_dashboard` | `DashboardWriteMixin` | 更新仪表盘标题/描述 |
+| `delete_dashboard` | `DashboardWriteMixin` | 删除仪表盘 |
+| `create_chart` | `ChartWriteMixin` | 创建图表/面板 |
+| `update_chart` | `ChartWriteMixin` | 更新图表配置 |
+| `add_chart_to_dashboard` | `ChartWriteMixin` | 将图表添加到仪表盘 |
+| `delete_chart` | `ChartWriteMixin` | 删除图表 |
+| `create_dataset` | `DatasetWriteMixin` | 注册数据集 |
+| `list_bi_databases` | `DatasetWriteMixin` | 列出 BI 平台数据库连接 |
+| `delete_dataset` | `DatasetWriteMixin` | 删除数据集 |
+| `write_query` | 已配置 `dataset_db_uri` | 将查询结果物化到 BI 数据库 |
+
+### 输出格式
+
+```json
+{
+  "response": "已创建包含 3 个营收趋势图表的销售仪表盘。",
+  "dashboard_result": {
+    "dashboard_id": 42,
+    "url": "http://localhost:8088/superset/dashboard/42/"
+  },
+  "tokens_used": 3210
+}
+```
+
+### 使用方式
+
+gen_dashboard subagent 通常由聊天 agent 通过 `task(type="gen_dashboard")` 自动调用，也可手动启动：
+
+```bash
+/gen_dashboard 创建一个包含按地区划分的营收趋势的销售仪表盘
+```
+
+也可以使用 `gen_dashboard` 节点类创建自定义 subagent：
+
+```yaml
+agent:
+  agentic_nodes:
+    sales_dashboard:
+      node_class: gen_dashboard
+      bi_platform: superset
+      max_turns: 30
+```
+
+---
+
+## scheduler
+
+### 概览
+
+scheduler subagent 在 Apache Airflow 上提交、监控、更新和排查定时作业。它由聊天 agent 通过 `task(type="scheduler")` 调用，通过 LLM function calling 提供完整的 Airflow 作业生命周期管理。
+
+### 关键特性
+
+- **完整作业生命周期**：提交、触发、暂停、恢复、更新和删除 Airflow DAG 作业
+- **SQL 和 SparkSQL 支持**：支持提交 SQL 和 SparkSQL 两种作业类型
+- **监控能力**：列出作业运行记录、获取运行日志、排查故障
+- **连接发现**：列出可用的 Airflow 连接，用于作业配置
+
+### 配置
+
+```yaml
+agent:
+  agentic_nodes:
+    scheduler:
+      model: claude     # 可选：默认使用已配置的模型
+      max_turns: 30     # 可选：默认为 30
+
+  scheduler:
+    airflow_url: "${AIRFLOW_URL}"
+    username: "${AIRFLOW_USER}"
+    password: "${AIRFLOW_PASSWORD}"
+```
+
+**前置条件**：
+- `agent.yml` 中包含 `agent.scheduler` 配置段及 Airflow 凭据
+- 已安装 `datus-scheduler-core` 和 `datus-scheduler-airflow` 包
+
+### 工作原理
+
+```mermaid
+graph LR
+    A[chat agent] -->|task type=scheduler| B[SchedulerAgenticNode]
+    B --> C[LLM Function Calling]
+    C --> D[submit_sql_job / submit_sparksql_job]
+    C --> E[trigger_scheduler_job]
+    C --> F[pause_job / resume_job]
+    C --> G[list_job_runs / get_run_log]
+```
+
+### 可用工具
+
+| 工具 | 说明 |
+|------|------|
+| `submit_sql_job` | 提交带 cron 表达式的定时 SQL 作业 |
+| `submit_sparksql_job` | 提交定时 SparkSQL 作业 |
+| `trigger_scheduler_job` | 手动触发一次现有作业运行 |
+| `pause_job` | 暂停定时作业 |
+| `resume_job` | 恢复已暂停的作业 |
+| `delete_job` | 删除定时作业 |
+| `update_job` | 更新作业调度或配置 |
+| `get_scheduler_job` | 获取作业详情和当前状态 |
+| `list_scheduler_jobs` | 列出所有定时作业 |
+| `list_scheduler_connections` | 列出可用的 Airflow 连接 |
+| `list_job_runs` | 列出某作业的近期运行记录 |
+| `get_run_log` | 获取特定作业运行的日志 |
+
+### 输出格式
+
+```json
+{
+  "response": "已提交每日 SQL 作业 'daily_revenue'，每天早上 8:00 运行。",
+  "scheduler_result": {
+    "job_id": "daily_revenue_dag",
+    "status": "active",
+    "schedule": "0 8 * * *"
+  },
+  "tokens_used": 1580
+}
+```
+
+### 使用方式
+
+scheduler subagent 通常由聊天 agent 通过 `task(type="scheduler")` 自动调用，也可手动启动：
+
+```bash
+/scheduler 提交一个每天早上 8 点运行的日常 SQL 作业
+```
+
+也可以使用 `scheduler` 节点类创建自定义 subagent：
+
+```yaml
+agent:
+  agentic_nodes:
+    etl_scheduler:
+      node_class: scheduler
+      max_turns: 30
+```
+
+---
+
 ## 总结
 
 | subagent | 用途 | 输出 | 存储位置 | 关键特性                      |
@@ -923,6 +1141,8 @@ agent:
 | `explore` | 只读数据探索 | 结构化上下文 | N/A | 严格只读、快速（15 轮）、三方向探索 |
 | `gen_sql` | 生成优化 SQL | SQL 查询 / SQL 文件 | N/A | 深度 SQL 专业知识、自动验证、基于文件的输出 |
 | `gen_report` | 灵活报告生成 | 结构化报告 | N/A | 可配置工具、可扩展、自定义报告 subagent |
+| `gen_dashboard` | BI 仪表盘 CRUD（Superset、Grafana） | 仪表盘结果 | N/A | 动态工具暴露、数据物化、多平台支持 |
+| `scheduler` | Airflow 作业生命周期管理 | 调度结果 | N/A | 提交/监控/更新/删除作业，支持 SQL 和 SparkSQL |
 
 **所有 subagent 的内置特性：**
 - 最小化配置（仅 `model` 和 `max_turns` 可选）

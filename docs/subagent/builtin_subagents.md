@@ -4,7 +4,7 @@
 
 The **Builtin Subagent** are specialized AI assistants integrated within the Datus Agent system. Each subagent focuses on a specific aspect of data engineering automation — analyzing SQL, generating semantic models, and converting queries into reusable metrics — together forming a closed-loop workflow from raw SQL to knowledge-aware data products.
 
-This document covers seven core subagents:
+This document covers nine core subagents:
 
 1. **[gen_sql_summary](#gen_sql_summary)** — Summarizes and classifies SQL queries
 2. **[gen_semantic_model](#gen_semantic_model)** — Generates MetricFlow semantic models
@@ -13,6 +13,8 @@ This document covers seven core subagents:
 5. **[explore](#explore)** — Read-only data exploration and context gathering
 6. **[gen_sql](#gen_sql)** — Specialized SQL generation with deep expertise
 7. **[gen_report](#gen_report)** — Flexible report generation with configurable tools
+8. **[gen_dashboard](#gen_dashboard)** — BI dashboard CRUD for Superset and Grafana
+9. **[scheduler](#scheduler)** — Airflow job lifecycle management
 
 ## Configuration
 
@@ -49,6 +51,15 @@ agent:
       model: claude     # Optional: defaults to configured model
       max_turns: 30     # Optional: defaults to 30
       tools: "semantic_tools.*, context_search_tools.list_subject_tree"  # Optional: defaults to semantic + context tools
+
+    gen_dashboard:
+      model: claude     # Optional: defaults to configured model
+      max_turns: 30     # Optional: defaults to 30
+      bi_platform: superset  # Optional: explicit platform (auto-detected from dashboard config if omitted)
+
+    scheduler:
+      model: claude     # Optional: defaults to configured model
+      max_turns: 30     # Optional: defaults to 30
 ```
 
 **Optional configuration parameters:**
@@ -914,6 +925,213 @@ Then use it via `/attribution_report Analyze the conversion attribution for camp
 
 ---
 
+## gen_dashboard
+
+### Overview
+
+The gen_dashboard subagent creates, updates, and manages BI dashboards on Superset and Grafana. It is invoked by the chat agent via `task(type="gen_dashboard")` and uses the BI tools from `BIFuncTool` to drive the full dashboard creation workflow through LLM function calling.
+
+### Key Features
+
+- **Multi-platform**: Supports Apache Superset and Grafana; platform is explicit via `bi_platform` config or auto-detected from `agent.dashboard` config
+- **Dynamic tool exposure**: Tools are exposed based on adapter Mixin capabilities — only operations the platform actually supports appear as LLM tools
+- **Data materialization**: `write_query` bridges source database results to the BI platform's own database, decoupling source data from visualization
+- **Skill-guided workflows**: The built-in `gen-dashboard` skill provides step-by-step workflow guidance for each platform
+
+### Configuration
+
+```yaml
+agent:
+  agentic_nodes:
+    gen_dashboard:
+      model: claude           # Optional: defaults to configured model
+      max_turns: 30           # Optional: defaults to 30
+      bi_platform: superset   # Optional: auto-detected from dashboard config
+
+  dashboard:
+    superset:
+      api_url: "http://localhost:8088"
+      username: "${SUPERSET_USER}"
+      password: "${SUPERSET_PASSWORD}"
+      dataset_db:
+        uri: "${SUPERSET_DB_URI}"
+        schema: "public"
+    grafana:
+      api_url: "http://localhost:3000"
+      api_key: "${GRAFANA_API_KEY}"
+      dataset_db:
+        uri: "${GRAFANA_DB_URI}"
+        datasource_name: "PostgreSQL"
+```
+
+**Requirements:**
+- `agent.dashboard` section in `agent.yml` with platform credentials
+- `datus-bi-superset` or `datus-bi-grafana` package installed (`pip install datus-agent[bi]`)
+
+### How It Works
+
+```mermaid
+graph LR
+    A[chat agent] -->|task type=gen_dashboard| B[GenDashboardAgenticNode]
+    B --> C[_setup_bi_tools]
+    C --> D[adapter_registry.get platform]
+    D --> E[BIFuncTool.available_tools]
+    E --> F[LLM Function Calling]
+    F -->|Superset| G[write_query → create_dataset → create_chart → create_dashboard]
+    F -->|Grafana| H[write_query → create_dashboard → create_chart]
+```
+
+### Available Tools
+
+Tools are exposed dynamically based on which Mixins the platform adapter implements:
+
+| Tool | Required Capability | Description |
+|------|--------------------|----|
+| `list_dashboards` | All adapters | List and search dashboards |
+| `get_dashboard` | All adapters | Get dashboard details |
+| `list_charts` | All adapters | List charts in a dashboard |
+| `list_datasets` | All adapters | List datasets/datasources |
+| `create_dashboard` | `DashboardWriteMixin` | Create a new dashboard |
+| `update_dashboard` | `DashboardWriteMixin` | Update dashboard title/description |
+| `delete_dashboard` | `DashboardWriteMixin` | Delete a dashboard |
+| `create_chart` | `ChartWriteMixin` | Create a chart or panel |
+| `update_chart` | `ChartWriteMixin` | Update chart configuration |
+| `add_chart_to_dashboard` | `ChartWriteMixin` | Add chart to a dashboard |
+| `delete_chart` | `ChartWriteMixin` | Delete a chart |
+| `create_dataset` | `DatasetWriteMixin` | Register a dataset |
+| `list_bi_databases` | `DatasetWriteMixin` | List BI platform database connections |
+| `delete_dataset` | `DatasetWriteMixin` | Delete a dataset |
+| `write_query` | `dataset_db_uri` configured | Materialize query results to BI database |
+
+### Output Format
+
+```json
+{
+  "response": "Created sales dashboard with 3 revenue trend charts.",
+  "dashboard_result": {
+    "dashboard_id": 42,
+    "url": "http://localhost:8088/superset/dashboard/42/"
+  },
+  "tokens_used": 3210
+}
+```
+
+### Usage
+
+The gen_dashboard subagent is invoked automatically by the chat agent via `task(type="gen_dashboard")`, or launched manually:
+
+```bash
+/gen_dashboard Create a sales dashboard with revenue trends by region
+```
+
+You can also create a custom subagent using the `gen_dashboard` node class:
+
+```yaml
+agent:
+  agentic_nodes:
+    sales_dashboard:
+      node_class: gen_dashboard
+      bi_platform: superset
+      max_turns: 30
+```
+
+---
+
+## scheduler
+
+### Overview
+
+The scheduler subagent submits, monitors, updates, and troubleshoots scheduled jobs on Apache Airflow. It is invoked by the chat agent via `task(type="scheduler")` and provides the full Airflow job lifecycle through LLM function calling.
+
+### Key Features
+
+- **Full job lifecycle**: Submit, trigger, pause, resume, update, and delete Airflow DAG jobs
+- **SQL and SparkSQL support**: Submit both SQL and SparkSQL job types
+- **Monitoring**: List job runs, fetch run logs, and troubleshoot failures
+- **Connection discovery**: List available Airflow connections for job configuration
+
+### Configuration
+
+```yaml
+agent:
+  agentic_nodes:
+    scheduler:
+      model: claude     # Optional: defaults to configured model
+      max_turns: 30     # Optional: defaults to 30
+
+  scheduler:
+    airflow_url: "${AIRFLOW_URL}"
+    username: "${AIRFLOW_USER}"
+    password: "${AIRFLOW_PASSWORD}"
+```
+
+**Requirements:**
+- `agent.scheduler` section in `agent.yml` with Airflow credentials
+- `datus-scheduler-core` and `datus-scheduler-airflow` packages installed
+
+### How It Works
+
+```mermaid
+graph LR
+    A[chat agent] -->|task type=scheduler| B[SchedulerAgenticNode]
+    B --> C[LLM Function Calling]
+    C --> D[submit_sql_job / submit_sparksql_job]
+    C --> E[trigger_scheduler_job]
+    C --> F[pause_job / resume_job]
+    C --> G[list_job_runs / get_run_log]
+```
+
+### Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `submit_sql_job` | Submit a scheduled SQL job with cron expression |
+| `submit_sparksql_job` | Submit a scheduled SparkSQL job |
+| `trigger_scheduler_job` | Manually trigger an existing job run |
+| `pause_job` | Pause a scheduled job |
+| `resume_job` | Resume a paused job |
+| `delete_job` | Delete a scheduled job |
+| `update_job` | Update job schedule or configuration |
+| `get_scheduler_job` | Get job details and current status |
+| `list_scheduler_jobs` | List all scheduled jobs |
+| `list_scheduler_connections` | List available Airflow connections |
+| `list_job_runs` | List recent runs for a job |
+| `get_run_log` | Fetch logs for a specific job run |
+
+### Output Format
+
+```json
+{
+  "response": "Submitted daily SQL job 'daily_revenue' scheduled at 8:00 AM every day.",
+  "scheduler_result": {
+    "job_id": "daily_revenue_dag",
+    "status": "active",
+    "schedule": "0 8 * * *"
+  },
+  "tokens_used": 1580
+}
+```
+
+### Usage
+
+The scheduler subagent is invoked automatically by the chat agent via `task(type="scheduler")`, or launched manually:
+
+```bash
+/scheduler Submit a daily SQL job to run every morning at 8am
+```
+
+You can also create a custom subagent using the `scheduler` node class:
+
+```yaml
+agent:
+  agentic_nodes:
+    etl_scheduler:
+      node_class: scheduler
+      max_turns: 30
+```
+
+---
+
 ## Summary
 
 | Subagent | Purpose | Output | Stored In | Key Features                                        |
@@ -925,6 +1143,8 @@ Then use it via `/attribution_report Analyze the conversion attribution for camp
 | `explore` | Read-only data exploration | Structured context | N/A | Strictly read-only, fast (15 turns), three-direction exploration |
 | `gen_sql` | Generate optimized SQL | SQL query / SQL file | N/A | Deep SQL expertise, auto-validation, file-based output |
 | `gen_report` | Flexible report generation | Structured report | N/A | Configurable tools, extensible, custom report subagents |
+| `gen_dashboard` | BI dashboard CRUD (Superset, Grafana) | Dashboard result | N/A | Dynamic tool exposure, data materialization, multi-platform |
+| `scheduler` | Airflow job lifecycle management | Scheduler result | N/A | Submit/monitor/update/delete jobs, SQL and SparkSQL support |
 
 **Built-in Features Across All Subagents:**
 - Minimal configuration required (only `model` and `max_turns` optional)
