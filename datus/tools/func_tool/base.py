@@ -142,7 +142,7 @@ def trans_to_function_tool(bound_method: Callable) -> FunctionTool:
         name=tool_template.name,
         description=tool_template.description,
         params_json_schema=corrected_schema,
-        on_invoke_tool=async_invoker,
-        strict_json_schema=False,  # Prevent agents SDK from regenerating 'required'
+        on_invoke_tool=async_invoker,  # <--- Assign the async function
+        strict_json_schema=False,  # Prevent agents SDK from regenerating 'required' as it has been applied in tool_template
     )
     return final_tool
