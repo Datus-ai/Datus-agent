@@ -68,6 +68,10 @@ def trans_to_function_tool(bound_method: Callable) -> FunctionTool:
         if prop_name in corrected_schema.get("required", []):
             continue
 
+        param = sig.parameters.get(prop_name)
+        if param is None or param.default is not None:
+            continue
+
         anyof = prop_schema.get("anyOf")
         if not isinstance(anyof, list) or len(anyof) != 2:
             continue

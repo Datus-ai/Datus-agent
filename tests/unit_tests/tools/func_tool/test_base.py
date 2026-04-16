@@ -178,6 +178,7 @@ class TestTransToFunctionTool:
                 opt_str: str | None = None,
                 opt_int: int | None = None,
                 opt_list: list[str] | None = None,
+                opt_str_with_default_not_none: str | None = "auto",
             ) -> FuncToolResult:
                 return FuncToolResult()
 
@@ -192,6 +193,7 @@ class TestTransToFunctionTool:
         assert props["opt_int"]["type"] == "integer"
         assert "anyOf" not in props["opt_list"]
         assert props["opt_list"]["type"] == "array"
+        assert "anyOf" in props["opt_str_with_default_not_none"]
 
     def test_required_param_keeps_anyof_untouched(self):
         """Required parameters should not have their schema modified."""
