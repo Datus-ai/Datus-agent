@@ -70,9 +70,9 @@ dependencies = [
     "lxml>=5.0.0",
     "markdown-it-py>=3.0.0",
     "tabulate>=0.9.0",
-    "datus-semantic-core>=0.1.0",
+    "datus-semantic-core>=0.1.1",
     # BI platform adapters (core models & interfaces)
-    "datus-bi-core>=0.1.0",
+    "datus-bi-core>=0.1.1",
 ]
 
 [project.urls]
