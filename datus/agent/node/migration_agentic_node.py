@@ -47,6 +47,7 @@ class MigrationAgenticNode(AgenticNode):
         self,
         agent_config: AgentConfig,
         execution_mode: Literal["interactive", "workflow"] = "interactive",
+        is_subagent: bool = False,
     ):
         self.execution_mode = execution_mode
 
@@ -66,6 +67,7 @@ class MigrationAgenticNode(AgenticNode):
             agent_config=agent_config,
             tools=[],
             mcp_servers={},
+            is_subagent=is_subagent,
         )
 
         self.db_func_tool: Optional[DBFuncTool] = None

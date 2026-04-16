@@ -899,6 +899,7 @@ class TestCreateBuiltinNode:
         mock_init.assert_called_once_with(
             agent_config=task_tool.agent_config,
             execution_mode="interactive",
+            is_subagent=True,
         )
 
     @patch("datus.agent.node.gen_metrics_agentic_node.GenMetricsAgenticNode.__init__", return_value=None)
@@ -907,6 +908,7 @@ class TestCreateBuiltinNode:
         mock_init.assert_called_once_with(
             agent_config=task_tool.agent_config,
             execution_mode="interactive",
+            is_subagent=True,
         )
 
     @patch("datus.agent.node.sql_summary_agentic_node.SqlSummaryAgenticNode.__init__", return_value=None)
@@ -916,6 +918,7 @@ class TestCreateBuiltinNode:
             node_name="gen_sql_summary",
             agent_config=task_tool.agent_config,
             execution_mode="interactive",
+            is_subagent=True,
         )
 
     @patch("datus.agent.node.gen_ext_knowledge_agentic_node.GenExtKnowledgeAgenticNode.__init__", return_value=None)
@@ -925,6 +928,7 @@ class TestCreateBuiltinNode:
             node_name="gen_ext_knowledge",
             agent_config=task_tool.agent_config,
             execution_mode="interactive",
+            is_subagent=True,
         )
 
     @patch("datus.agent.node.gen_table_agentic_node.GenTableAgenticNode.__init__", return_value=None)
@@ -932,6 +936,48 @@ class TestCreateBuiltinNode:
         from unittest.mock import ANY
 
         task_tool._create_builtin_node("gen_table")
+        mock_init.assert_called_once_with(
+            agent_config=task_tool.agent_config,
+            execution_mode="interactive",
+            node_id=ANY,
+            is_subagent=True,
+        )
+
+    @patch("datus.agent.node.gen_job_agentic_node.GenJobAgenticNode.__init__", return_value=None)
+    def test_gen_job(self, mock_init, task_tool):
+        task_tool._create_builtin_node("gen_job")
+        mock_init.assert_called_once_with(
+            agent_config=task_tool.agent_config,
+            execution_mode="interactive",
+            is_subagent=True,
+        )
+
+    @patch("datus.agent.node.migration_agentic_node.MigrationAgenticNode.__init__", return_value=None)
+    def test_migration(self, mock_init, task_tool):
+        task_tool._create_builtin_node("migration")
+        mock_init.assert_called_once_with(
+            agent_config=task_tool.agent_config,
+            execution_mode="interactive",
+            is_subagent=True,
+        )
+
+    @patch("datus.agent.node.gen_dashboard_agentic_node.GenDashboardAgenticNode.__init__", return_value=None)
+    def test_gen_dashboard(self, mock_init, task_tool):
+        from unittest.mock import ANY
+
+        task_tool._create_builtin_node("gen_dashboard")
+        mock_init.assert_called_once_with(
+            agent_config=task_tool.agent_config,
+            execution_mode="interactive",
+            node_id=ANY,
+            is_subagent=True,
+        )
+
+    @patch("datus.agent.node.scheduler_agentic_node.SchedulerAgenticNode.__init__", return_value=None)
+    def test_scheduler(self, mock_init, task_tool):
+        from unittest.mock import ANY
+
+        task_tool._create_builtin_node("scheduler")
         mock_init.assert_called_once_with(
             agent_config=task_tool.agent_config,
             execution_mode="interactive",

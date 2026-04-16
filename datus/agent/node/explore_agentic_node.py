@@ -53,6 +53,7 @@ class ExploreAgenticNode(AgenticNode):
         agent_config: Optional[AgentConfig] = None,
         tools: Optional[list] = None,
         node_name: Optional[str] = None,
+        is_subagent: bool = False,
     ):
         self.configured_node_name = node_name
 
@@ -77,6 +78,7 @@ class ExploreAgenticNode(AgenticNode):
             agent_config=agent_config,
             tools=tools or [],
             mcp_servers={},
+            is_subagent=is_subagent,
         )
 
         # Setup read-only tools. When input_data is None (e.g. factory path),

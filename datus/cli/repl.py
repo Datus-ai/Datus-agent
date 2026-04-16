@@ -583,10 +583,7 @@ class DatusCLI:
         if not args:
             # Interactive selector
             current_default = self.default_agent or "chat"
-            choices = {
-                name: (f"{name}  [current]" if name == current_default else name)
-                for name in sorted(self.available_subagents)
-            }
+            choices = {name: name for name in sorted(self.available_subagents)}
             self.console.print("[bold]Select default agent:[/] (Up/Down to navigate, Enter to confirm)")
             selected = select_choice(self.console, choices, default=current_default)
             if selected == current_default:

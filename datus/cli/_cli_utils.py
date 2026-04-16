@@ -93,6 +93,8 @@ def select_choice(
                 is_sel = i == selected[0]
                 if key == _FREE_TEXT_SENTINEL:
                     label = f"  [/] {display}"
+                elif key == display:
+                    label = f"  {display}"
                 else:
                     label = f"  [{key}] {display}"
                 if is_sel:

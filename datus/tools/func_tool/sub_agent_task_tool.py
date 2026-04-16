@@ -323,6 +323,7 @@ class SubAgentTaskTool:
             return GenSemanticModelAgenticNode(
                 agent_config=self.agent_config,
                 execution_mode=self._resolve_execution_mode(),
+                is_subagent=True,
             )
         elif subagent_type == "gen_metrics":
             from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
@@ -330,6 +331,7 @@ class SubAgentTaskTool:
             return GenMetricsAgenticNode(
                 agent_config=self.agent_config,
                 execution_mode=self._resolve_execution_mode(),
+                is_subagent=True,
             )
         elif subagent_type == "gen_sql_summary":
             from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
@@ -338,6 +340,7 @@ class SubAgentTaskTool:
                 node_name="gen_sql_summary",
                 agent_config=self.agent_config,
                 execution_mode=self._resolve_execution_mode(),
+                is_subagent=True,
             )
         elif subagent_type == "gen_ext_knowledge":
             from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
@@ -346,6 +349,7 @@ class SubAgentTaskTool:
                 node_name="gen_ext_knowledge",
                 agent_config=self.agent_config,
                 execution_mode=self._resolve_execution_mode(),
+                is_subagent=True,
             )
         elif subagent_type == "gen_sql":
             from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
@@ -390,6 +394,7 @@ class SubAgentTaskTool:
             return GenJobAgenticNode(
                 agent_config=self.agent_config,
                 execution_mode=self._resolve_execution_mode(),
+                is_subagent=True,
             )
         elif subagent_type == "migration":
             from datus.agent.node.migration_agentic_node import MigrationAgenticNode
@@ -397,6 +402,7 @@ class SubAgentTaskTool:
             return MigrationAgenticNode(
                 agent_config=self.agent_config,
                 execution_mode=self._resolve_execution_mode(),
+                is_subagent=True,
             )
         elif subagent_type == "gen_skill":
             from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
@@ -419,6 +425,7 @@ class SubAgentTaskTool:
                 agent_config=self.agent_config,
                 execution_mode=self._resolve_execution_mode(),
                 node_id=f"task_gen_dashboard_{uuid.uuid4().hex[:8]}",
+                is_subagent=True,
             )
         elif subagent_type == "scheduler":
             from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
@@ -427,6 +434,7 @@ class SubAgentTaskTool:
                 agent_config=self.agent_config,
                 execution_mode=self._resolve_execution_mode(),
                 node_id=f"task_scheduler_{uuid.uuid4().hex[:8]}",
+                is_subagent=True,
             )
         else:
             raise ValueError(f"Unknown builtin subagent type: {subagent_type}")

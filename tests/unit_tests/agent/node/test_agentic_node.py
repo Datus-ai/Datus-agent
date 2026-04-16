@@ -648,6 +648,73 @@ class TestCountSessionTokens:
         result = await node._count_session_tokens()
         assert result == 0
 
+    @pytest.mark.asyncio
+    async def test_count_tokens_ignores_subagent_depth_actions(self):
+        """Sub-agent (depth>0) ASSISTANT actions must not pollute parent context estimate.
+
+        Regression: the scan must skip child/tool usage so that only root-level
+        (depth == 0) assistant actions contribute to the context window estimate.
+        Here the only depth>0 assistant has large usage; the parent's estimate
+        should fall back to turn_usage (or 0) instead of reading the child's.
+        """
+        node = _make_node()
+        subagent_action = ActionHistory.create_action(
+            role=ActionRole.ASSISTANT,
+            action_type="chat",
+            messages="sub",
+            input_data={},
+            output_data={"usage": {"last_call_input_tokens": 99999, "input_tokens": 99999, "total_tokens": 99999}},
+            status=ActionStatus.SUCCESS,
+        )
+        subagent_action.depth = 1  # simulate sub-agent nesting
+        node.actions.append(subagent_action)
+
+        mock_session = MagicMock()
+        mock_session.get_turn_usage = AsyncMock(return_value=[{"user_turn_number": 1, "total_tokens": 321}])
+        node._session = mock_session
+
+        result = await node._count_session_tokens()
+        # Must NOT return 99999 from the depth>0 action; fall back to turn_usage's 321.
+        assert result == 321
+
+    @pytest.mark.asyncio
+    async def test_count_tokens_breaks_at_root_user_message(self):
+        """Scan stops at the most recent root-level USER action to scope to the current turn.
+
+        An older ASSISTANT action preceding the latest root USER message must
+        NOT be used, even if it has usage. This guards against bleed-over from
+        the previous turn's usage into the current turn's estimate.
+        """
+        node = _make_node()
+        # Older turn's assistant reply with usage (should be ignored after USER break).
+        old_assistant = ActionHistory.create_action(
+            role=ActionRole.ASSISTANT,
+            action_type="chat",
+            messages="old",
+            input_data={},
+            output_data={"usage": {"last_call_input_tokens": 7777}},
+            status=ActionStatus.SUCCESS,
+        )
+        old_assistant.depth = 0
+        # Latest root user message marks the boundary of the current turn.
+        latest_user = ActionHistory.create_action(
+            role=ActionRole.USER,
+            action_type="chat",
+            messages="new question",
+            input_data={},
+            status=ActionStatus.SUCCESS,
+        )
+        latest_user.depth = 0
+        node.actions.extend([old_assistant, latest_user])
+
+        mock_session = MagicMock()
+        mock_session.get_turn_usage = AsyncMock(return_value=[{"user_turn_number": 1, "total_tokens": 111}])
+        node._session = mock_session
+
+        result = await node._count_session_tokens()
+        # Reverse scan hits latest_user first -> break -> fall back to turn_usage (111).
+        assert result == 111
+
 
 # ---------------------------------------------------------------------------
 # Concrete subclass for testing

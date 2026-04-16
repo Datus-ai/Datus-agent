@@ -48,6 +48,7 @@ class GenMetricsAgenticNode(AgenticNode):
         execution_mode: Literal["interactive", "workflow"] = "interactive",
         subject_tree: Optional[list] = None,
         scope: Optional[str] = None,
+        is_subagent: bool = False,
     ):
         """
         Initialize the GenMetricsAgenticNode.
@@ -84,6 +85,7 @@ class GenMetricsAgenticNode(AgenticNode):
             tools=[],
             mcp_servers={},
             scope=scope,
+            is_subagent=is_subagent,
         )
 
         # Initialize metrics storage for context queries

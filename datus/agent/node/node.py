@@ -152,12 +152,25 @@ class Node(ABC):
         elif node_type == NodeType.TYPE_EXPLORE:
             from datus.agent.node.explore_agentic_node import ExploreAgenticNode
 
-            return ExploreAgenticNode(node_id, description, node_type, input_data, agent_config, tools, node_name)
+            return ExploreAgenticNode(
+                node_id,
+                description,
+                node_type,
+                input_data,
+                agent_config,
+                tools,
+                node_name,
+                is_subagent=is_subagent,
+            )
         elif node_type == NodeType.TYPE_GEN_TABLE:
             from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
 
             node = GenTableAgenticNode(
-                agent_config=agent_config, execution_mode="workflow", node_id=node_id, node_name=node_name
+                agent_config=agent_config,
+                execution_mode="workflow",
+                node_id=node_id,
+                node_name=node_name,
+                is_subagent=is_subagent,
             )
             if input_data is not None:
                 node.input = input_data
@@ -165,26 +178,39 @@ class Node(ABC):
         elif node_type == NodeType.TYPE_GEN_JOB:
             from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
-            node = GenJobAgenticNode(agent_config=agent_config, execution_mode="workflow")
+            node = GenJobAgenticNode(agent_config=agent_config, execution_mode="workflow", is_subagent=is_subagent)
             if input_data is not None:
                 node.input = input_data
             return node
         elif node_type == NodeType.TYPE_MIGRATION:
             from datus.agent.node.migration_agentic_node import MigrationAgenticNode
 
-            node = MigrationAgenticNode(agent_config=agent_config, execution_mode="workflow")
+            node = MigrationAgenticNode(agent_config=agent_config, execution_mode="workflow", is_subagent=is_subagent)
             if input_data is not None:
                 node.input = input_data
             return node
         elif node_type == NodeType.TYPE_GEN_SKILL:
             from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
-            return SkillCreatorAgenticNode(node_id, description, node_type, input_data, agent_config, tools, node_name)
+            return SkillCreatorAgenticNode(
+                node_id,
+                description,
+                node_type,
+                input_data,
+                agent_config,
+                tools,
+                node_name,
+                is_subagent=is_subagent,
+            )
         elif node_type == NodeType.TYPE_GEN_DASHBOARD:
             from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
 
             node = GenDashboardAgenticNode(
-                agent_config=agent_config, execution_mode="workflow", node_id=node_id, node_name=node_name
+                agent_config=agent_config,
+                execution_mode="workflow",
+                node_id=node_id,
+                node_name=node_name,
+                is_subagent=is_subagent,
             )
             if input_data is not None:
                 node.input = input_data
@@ -193,7 +219,11 @@ class Node(ABC):
             from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
 
             node = SchedulerAgenticNode(
-                agent_config=agent_config, execution_mode="workflow", node_id=node_id, node_name=node_name
+                agent_config=agent_config,
+                execution_mode="workflow",
+                node_id=node_id,
+                node_name=node_name,
+                is_subagent=is_subagent,
             )
             if input_data is not None:
                 node.input = input_data

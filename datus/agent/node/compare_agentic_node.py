@@ -30,6 +30,7 @@ class CompareAgenticNode(AgenticNode):
         self,
         node_name: str = "compare",
         agent_config: Optional[AgentConfig] = None,
+        is_subagent: bool = False,
     ):
         """
         Initialize CompareAgenticNode.
@@ -37,6 +38,7 @@ class CompareAgenticNode(AgenticNode):
         Args:
             node_name: Name of the node configuration in agent.yml (default: "compare")
             agent_config: Agent configuration
+            is_subagent: When True, skip SubAgentTaskTool setup (2-level depth enforcement)
         """
         self.configured_node_name = node_name
 
@@ -54,6 +56,7 @@ class CompareAgenticNode(AgenticNode):
             agent_config=agent_config,
             tools=[],
             mcp_servers={},
+            is_subagent=is_subagent,
         )
 
         # Get max_turns from agentic_nodes configuration, default to 30

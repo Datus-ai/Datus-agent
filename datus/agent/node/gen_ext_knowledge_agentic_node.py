@@ -71,6 +71,7 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
         build_mode: str = "incremental",
         subject_tree: Optional[list] = None,
         scope: Optional[str] = None,
+        is_subagent: bool = False,
     ):
         """
         Initialize the GenExtKnowledgeAgenticNode.
@@ -123,6 +124,7 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
             tools=[],
             mcp_servers={},
             scope=scope,
+            is_subagent=is_subagent,
         )
 
         # Initialize external knowledge storage for context queries

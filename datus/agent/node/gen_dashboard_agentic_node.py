@@ -42,6 +42,7 @@ class GenDashboardAgenticNode(AgenticNode):
         execution_mode: Literal["interactive", "workflow"] = "interactive",
         node_id: Optional[str] = None,
         node_name: Optional[str] = None,
+        is_subagent: bool = False,
     ):
         self.execution_mode = execution_mode
         # Support custom node_name for alias subagents (e.g. my_dashboard: {node_class: gen_dashboard})
@@ -64,6 +65,7 @@ class GenDashboardAgenticNode(AgenticNode):
             agent_config=agent_config,
             tools=[],
             mcp_servers={},
+            is_subagent=is_subagent,
         )
 
         self.bi_func_tool = None
