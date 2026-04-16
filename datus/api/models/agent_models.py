@@ -107,7 +107,13 @@ class EditAgentInput(BaseModel):
     tools: Optional[List[str]] = None
     mcp: Optional[List[str]] = None
     skills: Optional[List[str]] = None
-    scoped_context: Optional[dict] = None
+    catalogs: Optional[List[str]] = Field(
+        default_factory=list,
+        description="Catalog access patterns (e.g., 'production_db.*', 'production_db.public.*')",
+    )
+    subjects: Optional[List[str]] = Field(
+        default_factory=list, description="Subject access patterns (e.g., 'Finance.Revenue.*')"
+    )
     permissions: Optional[dict] = None
     hooks: Optional[dict] = None
     rules: Optional[list[str]] = None
