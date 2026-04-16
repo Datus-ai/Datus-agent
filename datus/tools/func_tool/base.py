@@ -51,6 +51,34 @@ def trans_to_function_tool(bound_method: Callable) -> FunctionTool:
     if "self" in corrected_schema.get("required", []):
         corrected_schema["required"].remove("self")
 
+    # Remove params with default values from 'required' — the agents SDK marks
+    # every parameter as required regardless of Python default values.
+    sig = inspect.signature(bound_method)
+    params_with_defaults = {
+        name for name, param in sig.parameters.items() if param.default is not inspect.Parameter.empty
+    }
+    required = corrected_schema.get("required", [])
+    corrected_schema["required"] = [p for p in required if p not in params_with_defaults]
+
+    # Simplify anyOf[type, null] → type for optional params that are not required.
+    # Since the param is already excluded from 'required', the null branch is redundant
+    # and confusing for the LLM.
+    properties = corrected_schema.get("properties", {})
+    for prop_name, prop_schema in properties.items():
+        if prop_name in corrected_schema.get("required", []):
+            continue
+
+        anyof = prop_schema.get("anyOf")
+        if not isinstance(anyof, list) or len(anyof) != 2:
+            continue
+
+        non_null_types = [t for t in anyof if t.get("type") != "null"]
+        if len(non_null_types) != 1:
+            continue
+
+        prop_schema.clear()
+        prop_schema.update(non_null_types[0])
+
     # The invoker MUST be an 'async' function.
     # We define a closure to correctly capture the 'bound_method' for each iteration.
     def create_async_invoker(method_to_call: Callable) -> Callable:
@@ -114,6 +142,7 @@ def trans_to_function_tool(bound_method: Callable) -> FunctionTool:
         name=tool_template.name,
         description=tool_template.description,
         params_json_schema=corrected_schema,
-        on_invoke_tool=async_invoker,  # <--- Assign the async function
+        on_invoke_tool=async_invoker,
+        strict_json_schema=False,  # Prevent agents SDK from regenerating 'required'
     )
     return final_tool

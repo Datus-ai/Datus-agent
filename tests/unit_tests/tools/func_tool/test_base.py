@@ -100,3 +100,109 @@ class TestTransToFunctionTool:
 
         assert result["success"] == 1
         assert result["result"] == "test"
+
+    def test_required_excludes_params_with_defaults(self):
+        """Parameters with default values should not be in the 'required' list."""
+
+        class FakeTool:
+            def method(
+                self,
+                req: str,
+                opt: str | None = None,
+                with_default: int = 100,
+                opt_str: str | None = None,
+            ) -> FuncToolResult:
+                return FuncToolResult(result=req)
+
+        fake = FakeTool()
+        tool = self._make_tool_from_method(fake.method)
+
+        assert tool.params_json_schema.get("required") == ["req"]
+
+    def test_required_all_params_required(self):
+        """All params without defaults should be in 'required'."""
+
+        class FakeTool:
+            def method(self, a: str, b: int, c: float) -> FuncToolResult:
+                return FuncToolResult(result=a)
+
+        fake = FakeTool()
+        tool = self._make_tool_from_method(fake.method)
+
+        assert set(tool.params_json_schema.get("required", [])) == {"a", "b", "c"}
+
+    def test_required_no_params(self):
+        """Methods with no parameters should have empty 'required' list."""
+
+        class FakeTool:
+            def method(self) -> FuncToolResult:
+                return FuncToolResult(result="ok")
+
+        fake = FakeTool()
+        tool = self._make_tool_from_method(fake.method)
+
+        assert tool.params_json_schema.get("required", []) == []
+
+    def test_required_all_optional(self):
+        """All optional params should result in empty 'required' list."""
+
+        class FakeTool:
+            def method(self, a: str | None = None, b: int = 0) -> FuncToolResult:
+                return FuncToolResult(result="ok")
+
+        fake = FakeTool()
+        tool = self._make_tool_from_method(fake.method)
+
+        assert tool.params_json_schema.get("required", []) == []
+
+    def test_required_self_not_in_list(self):
+        """The 'self' parameter should never appear in 'required' or 'properties'."""
+
+        class FakeTool:
+            def method(self, name: str, opt: str | None = None) -> FuncToolResult:
+                return FuncToolResult(result=name)
+
+        fake = FakeTool()
+        tool = self._make_tool_from_method(fake.method)
+
+        assert "self" not in tool.params_json_schema.get("properties", {})
+        assert "self" not in tool.params_json_schema.get("required", [])
+        assert tool.params_json_schema.get("required") == ["name"]
+
+    def test_optional_type_simplifies_anyof_to_plain_type(self):
+        """Optional[str] should produce {\"type\": \"string\"} not anyOf[str, null]."""
+
+        class FakeTool:
+            def method(
+                self,
+                opt_str: str | None = None,
+                opt_int: int | None = None,
+                opt_list: list[str] | None = None,
+            ) -> FuncToolResult:
+                return FuncToolResult()
+
+        fake = FakeTool()
+        tool = self._make_tool_from_method(fake.method)
+
+        props = tool.params_json_schema["properties"]
+        # All three should have a plain "type" key, not "anyOf"
+        assert "anyOf" not in props["opt_str"]
+        assert props["opt_str"]["type"] == "string"
+        assert "anyOf" not in props["opt_int"]
+        assert props["opt_int"]["type"] == "integer"
+        assert "anyOf" not in props["opt_list"]
+        assert props["opt_list"]["type"] == "array"
+
+    def test_required_param_keeps_anyof_untouched(self):
+        """Required parameters should not have their schema modified."""
+
+        class FakeTool:
+            def method(self, req_opt: str | None) -> FuncToolResult:
+                return FuncToolResult()
+
+        fake = FakeTool()
+        tool = self._make_tool_from_method(fake.method)
+
+        assert tool.params_json_schema.get("required") == ["req_opt"]
+        # Required Optional params keep the anyOf since they are in required
+        assert "anyOf" in tool.params_json_schema["properties"]["req_opt"]
