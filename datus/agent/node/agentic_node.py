@@ -392,8 +392,18 @@ class AgenticNode(Node):
             logger.debug("Skipped compaction for ephemeral session")
             return {"success": False, "summary": "", "summary_token": 0}
 
-        if not self.model or not self._session:
-            logger.warning("Cannot compact: no model or session available")
+        if not self.model:
+            logger.warning("Cannot compact: no model available")
+            return {"success": False, "summary": "", "summary_token": 0}
+
+        # Lazily materialize the SQLite session when only session_id is known.
+        # This happens after .resume, which sets self.session_id but leaves
+        # self._session as None until the first execute call.
+        if self._session is None and self.session_id:
+            self._get_or_create_session()
+
+        if not self._session:
+            logger.warning("Cannot compact: no session available")
             return {"success": False, "summary": "", "summary_token": 0}
 
         try:

@@ -551,6 +551,33 @@ class TestManualCompact:
         assert node._session is None
         assert node.session_id is None
 
+    @pytest.mark.asyncio
+    async def test_manual_compact_lazy_loads_session_after_resume(self):
+        """After .resume sets session_id but leaves _session None, compact must still work.
+
+        Regression: previously _manual_compact aborted with
+        "Cannot compact: no model or session available" because resume does not
+        eagerly open the SQLite session.
+        """
+        node = _make_node()
+        node.ephemeral = False
+        node.session_id = "resumed_session"
+        node._session = None  # Simulate post-resume state
+        mock_model = MagicMock()
+        mock_model.generate_with_tools = AsyncMock(
+            return_value={"content": "Resumed summary", "usage": {"output_tokens": 50}}
+        )
+        # create_session is what _get_or_create_session will call via self.model.
+        mock_model.create_session = MagicMock(return_value=MagicMock())
+        node.model = mock_model
+
+        result = await node._manual_compact()
+
+        # _get_or_create_session should have been invoked to materialize the session.
+        mock_model.create_session.assert_called_once_with("resumed_session")
+        assert result["success"] is True
+        assert result["summary"] == "Resumed summary"
+
 
 # ---------------------------------------------------------------------------
 # TestCountSessionTokens
