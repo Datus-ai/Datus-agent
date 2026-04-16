@@ -202,8 +202,7 @@ class SessionManager:
         with sqlite3.connect(source_db_path, timeout=5.0) as src_conn:
             cursor = src_conn.cursor()
             cursor.execute(
-                "SELECT id, message_data, created_at FROM agent_messages "
-                "WHERE session_id = ? ORDER BY id",
+                "SELECT id, message_data, created_at FROM agent_messages WHERE session_id = ? ORDER BY id",
                 (source_session_id,),
             )
             message_rows = cursor.fetchall()
@@ -246,8 +245,7 @@ class SessionManager:
             # Preserve id to keep message_structure.message_id references valid.
             for msg_id, message_data, created_at in message_rows:
                 new_conn.execute(
-                    "INSERT INTO agent_messages (id, session_id, message_data, created_at) "
-                    "VALUES (?, ?, ?, ?)",
+                    "INSERT INTO agent_messages (id, session_id, message_data, created_at) VALUES (?, ?, ?, ?)",
                     (msg_id, new_session_id, message_data, created_at),
                 )
             for (
@@ -420,8 +418,7 @@ class SessionManager:
             )
             for msg_id, _, message_data, created_at in kept_rows:
                 new_conn.execute(
-                    "INSERT INTO agent_messages (id, session_id, message_data, created_at) "
-                    "VALUES (?, ?, ?, ?)",
+                    "INSERT INTO agent_messages (id, session_id, message_data, created_at) VALUES (?, ?, ?, ?)",
                     (msg_id, new_session_id, message_data, created_at),
                 )
             for (
