@@ -232,10 +232,12 @@ class SessionManager:
             except sqlite3.OperationalError:
                 pass
 
-        # Create new session DB
+        # Materialize tables in the new DB first (short-lived session is released
+        # before bulk inserts), then use a single raw connection with executemany
+        # for all writes. Avoids two concurrent connections on the same file and
+        # is substantially faster for long histories.
         new_db_path = os.path.join(self.session_dir, f"{new_session_id}.db")
-        new_session = AdvancedSQLiteSession(session_id=new_session_id, db_path=new_db_path, create_tables=True)
-        self._sessions[new_session_id] = new_session
+        AdvancedSQLiteSession(session_id=new_session_id, db_path=new_db_path, create_tables=True)
 
         with sqlite3.connect(new_db_path, timeout=5.0) as new_conn:
             new_conn.execute(
@@ -243,48 +245,34 @@ class SessionManager:
                 (new_session_id,),
             )
             # Preserve id to keep message_structure.message_id references valid.
-            for msg_id, message_data, created_at in message_rows:
-                new_conn.execute(
-                    "INSERT INTO agent_messages (id, session_id, message_data, created_at) VALUES (?, ?, ?, ?)",
-                    (msg_id, new_session_id, message_data, created_at),
-                )
-            for (
-                message_id,
-                branch_id,
-                message_type,
-                sequence_number,
-                user_turn_number,
-                branch_turn_number,
-                tool_name,
-                created_at,
-            ) in structure_rows:
-                new_conn.execute(
-                    "INSERT INTO message_structure "
-                    "(session_id, message_id, branch_id, message_type, sequence_number, "
-                    "user_turn_number, branch_turn_number, tool_name, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        new_session_id,
-                        message_id,
-                        branch_id,
-                        message_type,
-                        sequence_number,
-                        user_turn_number,
-                        branch_turn_number,
-                        tool_name,
-                        created_at,
-                    ),
-                )
-            for usage_row in turn_usage_rows:
-                new_conn.execute(
-                    "INSERT OR IGNORE INTO turn_usage "
-                    "(session_id, branch_id, user_turn_number, requests, input_tokens, "
-                    "output_tokens, total_tokens, input_tokens_details, "
-                    "output_tokens_details, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (new_session_id, *usage_row),
-                )
+            new_conn.executemany(
+                "INSERT INTO agent_messages (id, session_id, message_data, created_at) VALUES (?, ?, ?, ?)",
+                [
+                    (msg_id, new_session_id, message_data, created_at)
+                    for msg_id, message_data, created_at in message_rows
+                ],
+            )
+            new_conn.executemany(
+                "INSERT INTO message_structure "
+                "(session_id, message_id, branch_id, message_type, sequence_number, "
+                "user_turn_number, branch_turn_number, tool_name, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [(new_session_id, *row) for row in structure_rows],
+            )
+            new_conn.executemany(
+                "INSERT OR IGNORE INTO turn_usage "
+                "(session_id, branch_id, user_turn_number, requests, input_tokens, "
+                "output_tokens, total_tokens, input_tokens_details, "
+                "output_tokens_details, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [(new_session_id, *row) for row in turn_usage_rows],
+            )
             new_conn.commit()
+
+        # Cache a fresh session pointing at the populated DB (tables already exist).
+        self._sessions[new_session_id] = AdvancedSQLiteSession(
+            session_id=new_session_id, db_path=new_db_path, create_tables=False
+        )
 
         logger.info(
             f"Copied session {source_session_id} -> {new_session_id} "

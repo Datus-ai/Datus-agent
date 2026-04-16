@@ -350,9 +350,19 @@ class AgenticNode(Node):
         Returns:
             Estimated context window token usage
         """
-        # Primary: get last_call_input_tokens from the most recent assistant action
+        # Primary: get last_call_input_tokens from the most recent root assistant action.
+        # Scope to root-level actions (depth == 0) so child/tool usage from sub-agents
+        # doesn't leak into the parent session's context estimate.
         for action in reversed(self.actions):
-            if isinstance(action.output, dict) and isinstance(action.output.get("usage"), dict):
+            # Stop at the last root-level user message to scope to the current turn
+            if action.role == ActionRole.USER and action.depth == 0:
+                break
+            if (
+                action.role == ActionRole.ASSISTANT
+                and action.depth == 0
+                and isinstance(action.output, dict)
+                and isinstance(action.output.get("usage"), dict)
+            ):
                 usage = action.output["usage"]
                 last_call = usage.get("last_call_input_tokens", 0)
                 if last_call > 0:

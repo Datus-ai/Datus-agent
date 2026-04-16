@@ -68,6 +68,7 @@ class SkillCreatorAgenticNode(AgenticNode):
         tools: Optional[list] = None,
         node_name: Optional[str] = None,
         execution_mode: Literal["interactive", "workflow"] = "interactive",
+        is_subagent: bool = False,
     ):
         self.configured_node_name = node_name
         self.execution_mode = execution_mode
@@ -99,6 +100,7 @@ class SkillCreatorAgenticNode(AgenticNode):
             agent_config=agent_config,
             tools=tools or [],
             mcp_servers={},
+            is_subagent=is_subagent,
         )
 
         # Setup tools

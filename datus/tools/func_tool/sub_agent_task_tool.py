@@ -283,12 +283,10 @@ class SubAgentTaskTool:
     def _create_node(self, subagent_type: str):
         """Create a new AgenticNode instance for the given subagent type.
 
-        Builtin types (SYS_SUB_AGENTS + gen_sql/gen_report/explore) are created
-        via ``_create_builtin_node`` with ``is_subagent=True`` so their
-        constructors skip SubAgentTaskTool setup entirely.
-
-        Custom agents go through ``Node.new_instance`` which doesn't support
-        ``is_subagent``, so we strip the task tool post-construction.
+        Both builtin (SYS_SUB_AGENTS) and custom agents propagate
+        ``is_subagent=True`` so the child's constructor skips SubAgentTaskTool
+        setup entirely — enforcing strict 2-level depth at the source rather
+        than stripping tools post-construction.
         """
         # Builtin system subagents have non-standard constructors
         if subagent_type in SYS_SUB_AGENTS:
@@ -300,24 +298,14 @@ class SubAgentTaskTool:
 
         from datus.agent.node.node import Node
 
-        node = Node.new_instance(
+        return Node.new_instance(
             node_id=node_id,
             description=description,
             node_type=node_type,
             agent_config=self.agent_config,
             node_name=node_name,
+            is_subagent=True,
         )
-
-        # Custom agents go through Node.new_instance which can't pass
-        # is_subagent, so strip any nested task tool post-construction.
-        nested_tool = getattr(node, "sub_agent_task_tool", None)
-        if isinstance(nested_tool, SubAgentTaskTool):
-            if node.tools:
-                task_tool_names = {t.name for t in nested_tool.available_tools()}
-                node.tools = [t for t in node.tools if t.name not in task_tool_names]
-            node.sub_agent_task_tool = None
-
-        return node
 
     def _resolve_execution_mode(self) -> Literal["interactive", "workflow"]:
         """Resolve execution_mode from the parent node, defaulting to 'interactive'."""
@@ -394,6 +382,7 @@ class SubAgentTaskTool:
                 agent_config=self.agent_config,
                 execution_mode=self._resolve_execution_mode(),
                 node_id=f"task_gen_table_{uuid.uuid4().hex[:8]}",
+                is_subagent=True,
             )
         elif subagent_type == "gen_job":
             from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
@@ -421,6 +410,7 @@ class SubAgentTaskTool:
                 tools=None,
                 node_name="gen_skill",
                 execution_mode=self._resolve_execution_mode(),
+                is_subagent=True,
             )
         elif subagent_type == "gen_dashboard":
             from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
@@ -940,15 +930,36 @@ class SubAgentTaskTool:
         return "\n".join(lines)
 
     def _get_available_types(self) -> List[str]:
-        """Discover available subagent types, filtered by allowed_subagents and excluding self."""
+        """Discover available subagent types, filtered by allowed_subagents and excluding self.
+
+        In explicit list mode, unknown types are filtered out with a warning so
+        that a misconfigured ``subagents: "foo, bar"`` surfaces as a log message
+        instead of a cryptic ``_create_node`` failure at runtime.
+        """
         if self._allowed_subagents is not None:
-            # Explicit list mode: return only those types, exclude self
-            return [t for t in self._allowed_subagents if t != self._parent_node_name]
+            # Explicit list mode: filter against the discoverable universe,
+            # warn on unknown names, and exclude self.
+            discoverable = self._discover_all_types()
+            result: List[str] = []
+            for t in self._allowed_subagents:
+                if t == self._parent_node_name:
+                    continue
+                if t not in discoverable:
+                    logger.warning(
+                        f"Subagent type '{t}' in allowed_subagents is not a known type "
+                        f"(parent={self._parent_node_name}); skipping. "
+                        f"Known types: {sorted(discoverable)}"
+                    )
+                    continue
+                result.append(t)
+            return result
 
-        # Wildcard mode (*): discover all types, exclude self
+        # Wildcard mode (*): all discovered types, excluding self.
+        return [t for t in self._discover_all_types() if t != self._parent_node_name]
+
+    def _discover_all_types(self) -> List[str]:
+        """Return every subagent type that can currently be instantiated."""
         types = ["explore"]
-
-        # Add built-in system subagents (always available)
         types.extend(sorted(SYS_SUB_AGENTS))
 
         if self.agent_config and hasattr(self.agent_config, "agentic_nodes"):
@@ -969,4 +980,4 @@ class SubAgentTaskTool:
 
                 types.append(name)
 
-        return [t for t in types if t != self._parent_node_name]
+        return types

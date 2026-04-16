@@ -1022,7 +1022,7 @@ class DatusCLI:
             (".table_schema table_name", "Show table field details"),
             (".indexes table_name", "Show indexes for a table"),
             (".agent", "Interactive selector to switch default agent"),
-            ("     .agent <name>", "Set default agent directly (e.g., .agent gen_sql)"),
+            ("     .agent <name>", "Set default agent directly (e.g., .agent gensql)"),
             ("     .agent chat", "Reset default agent to chat node"),
             (".namespace namespace", "Switch current namespace"),
             (".mcp", "Manage MCP (Model Configuration Protocol) servers"),

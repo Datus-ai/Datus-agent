@@ -4,7 +4,7 @@
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ScopedContextLists(BaseModel):
@@ -74,6 +74,37 @@ class SubAgentConfig(BaseModel):
 
     class Config:
         populate_by_name = True
+
+    @field_validator("subagents", mode="before")
+    @classmethod
+    def _normalize_subagents(cls, value: Any) -> Optional[str]:
+        """Normalize the subagents field.
+
+        - ``None`` / empty / blank strings collapse to ``None``.
+        - Leading/trailing whitespace and duplicate entries are stripped.
+        - If ``*`` appears anywhere, it is collapsed to the single canonical
+          wildcard ``"*"`` (``*, foo`` -> ``"*"``).
+        """
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise TypeError("subagents must be a string")
+        stripped = value.strip()
+        if not stripped:
+            return None
+        tokens: List[str] = []
+        seen: set = set()
+        for raw in stripped.split(","):
+            tok = raw.strip()
+            if not tok or tok in seen:
+                continue
+            seen.add(tok)
+            tokens.append(tok)
+        if not tokens:
+            return None
+        if "*" in tokens:
+            return "*"
+        return ",".join(tokens)
 
     def has_scoped_context(self) -> bool:
         return self.scoped_context and not self.scoped_context.is_empty

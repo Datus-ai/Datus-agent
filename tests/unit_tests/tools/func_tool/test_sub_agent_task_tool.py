@@ -154,6 +154,41 @@ class TestGetAvailableTypes:
         types = tool._get_available_types()
         assert "global_agent" in types
 
+    def test_explicit_list_filters_out_unknown_types(self, caplog):
+        """Unknown types in explicit allowed_subagents are skipped with a warning."""
+        config = Mock(spec=AgentConfig)
+        config.current_database = "default"
+        config.agentic_nodes = {"chat": {"model": "default"}}
+        tool = SubAgentTaskTool(
+            agent_config=config,
+            allowed_subagents=["gen_sql", "nonexistent_foo", "explore"],
+            parent_node_name="chat",
+        )
+
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="datus.tools.func_tool.sub_agent_task_tool"):
+            types = tool._get_available_types()
+
+        assert "gen_sql" in types
+        assert "explore" in types
+        assert "nonexistent_foo" not in types
+        assert any("nonexistent_foo" in rec.message for rec in caplog.records)
+
+    def test_explicit_list_excludes_self(self):
+        """The parent node name is excluded even if listed in allowed_subagents."""
+        config = Mock(spec=AgentConfig)
+        config.current_database = "default"
+        config.agentic_nodes = {"chat": {"model": "default"}}
+        tool = SubAgentTaskTool(
+            agent_config=config,
+            allowed_subagents=["gen_sql", "explore"],
+            parent_node_name="gen_sql",
+        )
+        types = tool._get_available_types()
+        assert "gen_sql" not in types
+        assert "explore" in types
+
 
 # ── _resolve_node_type ─────────────────────────────────────────────
 
@@ -901,6 +936,7 @@ class TestCreateBuiltinNode:
             agent_config=task_tool.agent_config,
             execution_mode="interactive",
             node_id=ANY,
+            is_subagent=True,
         )
 
     def test_unknown_builtin_raises(self, task_tool):
@@ -912,6 +948,20 @@ class TestCreateBuiltinNode:
         with patch.object(task_tool, "_create_builtin_node", return_value=Mock()) as mock_builtin:
             task_tool._create_node("gen_semantic_model")
             mock_builtin.assert_called_once_with("gen_semantic_model")
+
+    def test_create_node_custom_passes_is_subagent_true(self, task_tool):
+        """Custom agents must receive ``is_subagent=True`` via Node.new_instance.
+
+        This enforces 2-level depth at the source: the child never constructs a
+        SubAgentTaskTool, so there is nothing to strip post-construction.
+        """
+        with patch("datus.agent.node.node.Node.new_instance", return_value=Mock()) as mock_new_instance:
+            task_tool._create_node("sales_analyst")
+
+        mock_new_instance.assert_called_once()
+        call_kwargs = mock_new_instance.call_args.kwargs
+        assert call_kwargs["is_subagent"] is True
+        assert call_kwargs["node_name"] == "sales_analyst"
 
 
 # ── _resolve_execution_mode ─────────────────────────────────────────

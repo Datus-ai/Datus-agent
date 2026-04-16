@@ -57,6 +57,7 @@ class Node(ABC):
         agent_config: Optional[AgentConfig] = None,
         tools: Optional[List[Tool]] = None,
         node_name: Optional[str] = None,
+        is_subagent: bool = False,
     ):
         from datus.agent.node import (
             BeginNode,
@@ -113,17 +114,40 @@ class Node(ABC):
             return DateParserNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_CHAT:
             return ChatAgenticNode(
-                node_id, description, node_type, input_data, agent_config, tools, execution_mode="workflow"
+                node_id,
+                description,
+                node_type,
+                input_data,
+                agent_config,
+                tools,
+                execution_mode="workflow",
+                is_subagent=is_subagent,
             )
         elif node_type == NodeType.TYPE_GENSQL:
             return GenSQLAgenticNode(
-                node_id, description, node_type, input_data, agent_config, tools, node_name, execution_mode="workflow"
+                node_id,
+                description,
+                node_type,
+                input_data,
+                agent_config,
+                tools,
+                node_name,
+                execution_mode="workflow",
+                is_subagent=is_subagent,
             )
         elif node_type == NodeType.TYPE_GEN_REPORT:
             from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
 
             return GenReportAgenticNode(
-                node_id, description, node_type, input_data, agent_config, tools, node_name, execution_mode="workflow"
+                node_id,
+                description,
+                node_type,
+                input_data,
+                agent_config,
+                tools,
+                node_name,
+                execution_mode="workflow",
+                is_subagent=is_subagent,
             )
         elif node_type == NodeType.TYPE_EXPLORE:
             from datus.agent.node.explore_agentic_node import ExploreAgenticNode

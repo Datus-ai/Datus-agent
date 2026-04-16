@@ -47,6 +47,7 @@ class GenTableAgenticNode(AgenticNode):
         execution_mode: Literal["interactive", "workflow"] = "interactive",
         node_id: Optional[str] = None,
         node_name: Optional[str] = None,
+        is_subagent: bool = False,
     ):
         self.execution_mode = execution_mode
         # Support custom node_name for alias subagents (e.g. my_table: {node_class: gen_table})
@@ -69,6 +70,7 @@ class GenTableAgenticNode(AgenticNode):
             agent_config=agent_config,
             tools=[],
             mcp_servers={},
+            is_subagent=is_subagent,
         )
 
         self.db_func_tool: Optional[DBFuncTool] = None

@@ -128,17 +128,12 @@ class GenSQLAgenticNode(AgenticNode):
             f"GenSQLAgenticNode final mcp_servers: {len(self.mcp_servers)} servers - {list(self.mcp_servers.keys())}"
         )
 
-        # Setup tools based on configuration
+        # Setup tools based on configuration (includes subagent task tool wiring)
         self.setup_tools()
 
         # Setup ask_user tool for clarification questions (interactive mode only)
         if self.execution_mode == "interactive":
             self._setup_ask_user_tool()
-
-        # Setup subagent task tool based on configuration (default: explore)
-        self._setup_sub_agent_task_tool()
-        if self.sub_agent_task_tool:
-            self.tools.extend(self.sub_agent_task_tool.available_tools())
 
         logger.debug(f"GenSQLAgenticNode tools: {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
 
@@ -268,6 +263,13 @@ class GenSQLAgenticNode(AgenticNode):
         # Ensure filesystem tools are always available (required for memory and file operations)
         if not self.filesystem_func_tool:
             self._setup_filesystem_tools()
+
+        # Rebuild subagent task tool so repeated setup_tools() calls (e.g. via
+        # ChatCommands.update_chat_node_tools after a namespace switch) keep the
+        # "task" tool available for delegation.
+        self._setup_sub_agent_task_tool()
+        if self.sub_agent_task_tool:
+            self.tools.extend(self.sub_agent_task_tool.available_tools())
 
         logger.debug(f"Setup {len(self.tools)} tools: {[tool.name for tool in self.tools]}")
 
