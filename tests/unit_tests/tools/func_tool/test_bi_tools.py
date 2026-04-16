@@ -40,6 +40,14 @@ class _DatasetInfo:
         return self.__dict__
 
 
+class _ChartDataResult:
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
+
+    def model_dump(self):
+        return self.__dict__
+
+
 class MockDashboardWriteMixin:
     def create_dashboard(self, spec):
         return _DashboardInfo(id=10, name=spec.title)
@@ -79,6 +87,8 @@ class MockDatasetWriteMixin:
 class FullMockAdapter(MockDashboardWriteMixin, MockChartWriteMixin, MockDatasetWriteMixin):
     """Mock adapter implementing all mixins."""
 
+    supports_chart_data = True
+
     def list_dashboards(self, search="", page_size=20):
         return [_DashboardInfo(id=1, name="Test Dashboard")]
 
@@ -94,9 +104,27 @@ class FullMockAdapter(MockDashboardWriteMixin, MockChartWriteMixin, MockDatasetW
     def get_chart(self, chart_id, dashboard_id=None):
         return _ChartInfo(id=chart_id, name="Test Chart", chart_type="bar")
 
+    def get_chart_data(self, chart_id, dashboard_id=None, limit=None):
+        rows = [
+            {"category": "A", "value": 10},
+            {"category": "B", "value": 20},
+        ]
+        if limit is not None:
+            rows = rows[:limit]
+        return _ChartDataResult(
+            chart_id=chart_id,
+            columns=["category", "value"],
+            rows=rows,
+            row_count=len(rows),
+            sql="SELECT category, value FROM orders",
+            extra={},
+        )
+
 
 class ReadOnlyMockAdapter:
     """Mock adapter with only read operations."""
+
+    supports_chart_data = False
 
     def list_dashboards(self, search="", page_size=20):
         return []
@@ -106,6 +134,38 @@ class ReadOnlyMockAdapter:
 
     def list_charts(self, dashboard_id):
         return []
+
+    def get_chart(self, chart_id, dashboard_id=None):
+        return None
+
+    def list_datasets(self, dashboard_id=""):
+        return []
+
+
+class MethodOnlyChartDataAdapter:
+    """Mock adapter that implements get_chart_data without any support flag."""
+
+    def list_dashboards(self, search="", page_size=20):
+        return [_DashboardInfo(id=1, name="Test Dashboard")]
+
+    def get_dashboard_info(self, dashboard_id):
+        return _DashboardInfo(id=dashboard_id, name="Test")
+
+    def list_charts(self, dashboard_id):
+        return []
+
+    def get_chart(self, chart_id, dashboard_id=None):
+        return _ChartInfo(id=chart_id, name="Test Chart", chart_type="bar")
+
+    def get_chart_data(self, chart_id, dashboard_id=None, limit=None):
+        return _ChartDataResult(
+            chart_id=chart_id,
+            columns=["value"],
+            rows=[{"value": 1}],
+            row_count=1,
+            sql="SELECT 1 AS value",
+            extra={},
+        )
 
     def list_datasets(self, dashboard_id=""):
         return []
@@ -155,6 +215,8 @@ class TestBIFuncToolAvailableTools:
             assert "list_dashboards" in tool_names
             assert "get_dashboard" in tool_names
             assert "list_charts" in tool_names
+            assert "get_chart" in tool_names
+            assert "get_chart_data" in tool_names
             assert "list_datasets" in tool_names
             # Write tools
             assert "create_dashboard" in tool_names
@@ -178,9 +240,19 @@ class TestBIFuncToolAvailableTools:
             # list_dashboards is now part of BIAdapterBase — always present
             assert "list_dashboards" in tool_names
             assert "get_dashboard" in tool_names
+            assert "get_chart" in tool_names
             # No write tools
             assert "create_dashboard" not in tool_names
             assert "create_chart" not in tool_names
+
+    def test_method_override_enables_chart_data_tool_without_flag(self):
+        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
+            from datus.tools.func_tool.bi_tools import BIFuncTool
+
+            tool = BIFuncTool(MethodOnlyChartDataAdapter())
+            tool_names = {t.name for t in tool.available_tools()}
+
+            assert "get_chart_data" in tool_names
 
 
 class TestBIFuncToolReadOps:
@@ -207,6 +279,22 @@ class TestBIFuncToolReadOps:
         result = tool.list_charts("1")
         assert result.success == 1
         assert len(result.result) == 1
+
+    def test_get_chart_success(self):
+        tool = self._make_tool()
+        result = tool.get_chart("1")
+        assert result.success == 1
+        assert result.result["id"] == "1"
+        assert result.result["name"] == "Test Chart"
+
+    def test_get_chart_data_success(self):
+        tool = self._make_tool()
+        result = tool.get_chart_data("1", limit=1)
+        assert result.success == 1
+        assert result.result["chart_id"] == "1"
+        assert result.result["columns"] == ["category", "value"]
+        assert result.result["row_count"] == 1
+        assert result.result["rows"] == [{"category": "A", "value": 10}]
 
 
 class TestBIFuncToolWriteOps:
@@ -386,11 +474,48 @@ class TestBIFuncToolWriteOps:
         assert result.success == 0
         assert "not found" in result.error
 
+    def test_get_chart_not_found(self):
+        tool = self._make_tool()
+        tool.adapter.get_chart = lambda chart_id, dashboard_id=None: None
+        result = tool.get_chart("999")
+        assert result.success == 0
+        assert "not found" in result.error
+
+    def test_get_chart_data_not_found(self):
+        tool = self._make_tool()
+        tool.adapter.get_chart_data = lambda chart_id, dashboard_id=None, limit=None: None
+        result = tool.get_chart_data("999")
+        assert result.success == 0
+        assert "not found" in result.error
+
     def test_list_charts_exception(self):
         tool = self._make_tool()
         tool.adapter.list_charts = lambda dashboard_id: (_ for _ in ()).throw(RuntimeError("fail"))
         result = tool.list_charts("1")
         assert result.success == 0
+
+    def test_get_chart_exception(self):
+        tool = self._make_tool()
+        tool.adapter.get_chart = lambda chart_id, dashboard_id=None: (_ for _ in ()).throw(RuntimeError("fail"))
+        result = tool.get_chart("1")
+        assert result.success == 0
+
+    def test_get_chart_data_exception(self):
+        tool = self._make_tool()
+        tool.adapter.get_chart_data = lambda chart_id, dashboard_id=None, limit=None: (_ for _ in ()).throw(
+            RuntimeError("fail")
+        )
+        result = tool.get_chart_data("1")
+        assert result.success == 0
+
+    def test_get_chart_data_unsupported(self):
+        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
+            from datus.tools.func_tool.bi_tools import BIFuncTool
+
+            tool = BIFuncTool(ReadOnlyMockAdapter())
+        result = tool.get_chart_data("1")
+        assert result.success == 0
+        assert "does not support" in result.error
 
     def test_list_datasets_exception(self):
         tool = self._make_tool()

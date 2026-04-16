@@ -25,7 +25,8 @@ class BIFuncTool:
     LLM function calling layer for BI adapters.
 
     Dynamically exposes tools based on adapter capabilities:
-    - All adapters: list_dashboards, get_dashboard, list_charts, list_datasets
+    - All adapters: list_dashboards, get_dashboard, list_charts, get_chart, list_datasets
+    - Supported adapters: get_chart_data
     - DashboardWriteMixin: create_dashboard, update_dashboard
     - ChartWriteMixin: create_chart, update_chart, add_chart_to_dashboard
     - DatasetWriteMixin: create_dataset, list_bi_databases
@@ -82,6 +83,53 @@ class BIFuncTool:
             return FuncToolResult(result=[r.model_dump() for r in results])
         except Exception as exc:
             logger.warning(f"list_charts failed: {exc}")
+            return FuncToolResult(success=0, error=str(exc))
+
+    def get_chart(self, chart_id: str, dashboard_id: str = "") -> FuncToolResult:
+        """Get detailed information about a specific chart or panel by its ID.
+
+        For Grafana, pass dashboard_id because panels are scoped to a dashboard.
+        """
+        try:
+            dashboard_arg = dashboard_id.strip() or None
+            result = self.adapter.get_chart(chart_id, dashboard_id=dashboard_arg)
+            if result is None:
+                return FuncToolResult(success=0, error=f"Chart {chart_id} not found")
+            return FuncToolResult(result=result.model_dump())
+        except Exception as exc:
+            logger.warning(f"get_chart failed: {exc}")
+            return FuncToolResult(success=0, error=str(exc))
+
+    def get_chart_data(self, chart_id: str, dashboard_id: str = "", limit: int = 0) -> FuncToolResult:
+        """Get backend query results for a specific chart.
+
+        Supported on adapters that expose chart query execution.
+        """
+        if not self._supports_chart_data():
+            return FuncToolResult(
+                success=0,
+                error="This adapter does not support get_chart_data",
+            )
+
+        try:
+            dashboard_arg = dashboard_id.strip() or None
+            limit_arg = None
+            if limit not in (None, "", 0, "0"):
+                limit_arg = int(limit)
+                if limit_arg < 0:
+                    return FuncToolResult(success=0, error="limit must be a non-negative integer")
+            result = self.adapter.get_chart_data(chart_id, dashboard_id=dashboard_arg, limit=limit_arg)
+            if result is None:
+                return FuncToolResult(success=0, error=f"Chart {chart_id} data not found")
+            return FuncToolResult(result=result.model_dump())
+        except NotImplementedError as exc:
+            logger.warning(f"get_chart_data unsupported: {exc}")
+            return FuncToolResult(
+                success=0,
+                error="This adapter does not support get_chart_data",
+            )
+        except Exception as exc:
+            logger.warning(f"get_chart_data failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
     def list_datasets(self, dashboard_id: str = "") -> FuncToolResult:
@@ -456,6 +504,22 @@ class BIFuncTool:
             logger.debug(f"Could not resolve dataset_db_id: {exc}")
         return None
 
+    def _supports_chart_data(self) -> bool:
+        adapter_method = getattr(type(self.adapter), "get_chart_data", None)
+        if not callable(adapter_method):
+            return False
+
+        try:
+            from datus_bi_core import BIAdapterBase
+
+            base_method = getattr(BIAdapterBase, "get_chart_data", None)
+        except Exception:
+            base_method = None
+
+        if not callable(base_method):
+            return True
+        return adapter_method is not base_method
+
     # ------------------------------------------------------------------ #
     # Dynamic tool registration
     # ------------------------------------------------------------------ #
@@ -479,7 +543,15 @@ class BIFuncTool:
             has_chart_write = hasattr(self.adapter, "create_chart")
             has_dataset_write = hasattr(self.adapter, "create_dataset")
 
-        methods: List = [self.list_dashboards, self.get_dashboard, self.list_charts, self.list_datasets]
+        methods: List = [
+            self.list_dashboards,
+            self.get_dashboard,
+            self.list_charts,
+            self.get_chart,
+            self.list_datasets,
+        ]
+        if self._supports_chart_data():
+            methods.append(self.get_chart_data)
 
         if has_dash_write:
             methods += [self.create_dashboard, self.update_dashboard, self.delete_dashboard]

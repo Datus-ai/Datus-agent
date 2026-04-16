@@ -99,6 +99,8 @@ class TestGenDashboardAgenticInit:
         assert "list_dashboards" in tool_names, f"Missing list_dashboards, got: {tool_names}"
         assert "get_dashboard" in tool_names, f"Missing get_dashboard, got: {tool_names}"
         assert "list_charts" in tool_names, f"Missing list_charts, got: {tool_names}"
+        assert "get_chart" in tool_names, f"Missing get_chart, got: {tool_names}"
+        assert "get_chart_data" in tool_names, f"Missing get_chart_data, got: {tool_names}"
         assert "list_datasets" in tool_names, f"Missing list_datasets, got: {tool_names}"
 
         # Write tools should be present (Superset adapter supports all mixins)

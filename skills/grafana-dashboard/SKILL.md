@@ -76,6 +76,20 @@ Repeat Step 3 for each chart. All panels use the same `dashboard_id`.
 
 For charts needing different data shapes, run additional `write_query` calls in Step 1 to create multiple materialized tables.
 
+### Step 4: Validate the Published Dashboard (`bi-validation`)
+
+After creating the dashboard and panels, load `bi-validation` and verify:
+
+- the dashboard exists and is reachable via `get_dashboard`
+- the expected panels appear via `list_charts`
+- each panel can be inspected via `get_chart(chart_id, dashboard_id)`
+- panel titles and chart types match the intended configuration
+- panel SQL points at the materialized tables and uses the correct time alias when required
+- the configuration check covers every panel on the dashboard
+- `get_chart_data` is not available in Grafana yet, so report the data check as unsupported / N/A unless you have a separate reference query or known expected values
+
+Do not report success until this validation pass completes.
+
 ## Viewing & Querying
 
 | Action | Tool | Notes |
@@ -83,6 +97,7 @@ For charts needing different data shapes, run additional `write_query` calls in 
 | List dashboards | `list_dashboards(search="keyword")` | Filter by keyword |
 | Get dashboard details | `get_dashboard(dashboard_id="...")` | Full info including panels |
 | List charts in dashboard | `list_charts(dashboard_id="...")` | All panels with SQL |
+| Get chart details | `get_chart(chart_id="...", dashboard_id="...")` | Full panel metadata; dashboard_id required in Grafana |
 | List datasources | `list_datasets()` | Grafana datasources |
 
 ## Updating

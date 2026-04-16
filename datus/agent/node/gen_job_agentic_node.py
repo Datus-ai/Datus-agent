@@ -199,12 +199,18 @@ class GenJobAgenticNode(AgenticNode):
             enhanced_message = user_input.user_message
             enhanced_parts = []
 
-            if user_input.catalog or user_input.database or user_input.db_schema:
+            from datus.utils.node_utils import resolve_database_name_for_prompt
+
+            effective_db = resolve_database_name_for_prompt(
+                self.db_func_tool.connector if self.db_func_tool else None,
+                user_input.database or "",
+            )
+            if user_input.catalog or effective_db or user_input.db_schema:
                 context_parts = []
                 if user_input.catalog:
                     context_parts.append(f"catalog: {user_input.catalog}")
-                if user_input.database:
-                    context_parts.append(f"database: {user_input.database}")
+                if effective_db:
+                    context_parts.append(f"database: {effective_db}")
                 if user_input.db_schema:
                     context_parts.append(f"schema: {user_input.db_schema}")
                 context_part_str = f"Context: {', '.join(context_parts)}"

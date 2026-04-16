@@ -997,6 +997,8 @@ graph LR
 | `list_dashboards` | 所有 adapter | 列出/搜索仪表盘 |
 | `get_dashboard` | 所有 adapter | 获取仪表盘详情 |
 | `list_charts` | 所有 adapter | 列出仪表盘下的图表 |
+| `get_chart` | 所有 adapter | 获取单个图表或面板详情 |
+| `get_chart_data` | 支持的 adapter | 获取图表查询结果，用于数值校验 |
 | `list_datasets` | 所有 adapter | 列出数据集/数据源 |
 | `create_dashboard` | `DashboardWriteMixin` | 创建仪表盘 |
 | `update_dashboard` | `DashboardWriteMixin` | 更新仪表盘标题/描述 |
@@ -1165,4 +1167,3 @@ agent:
 - 自动工作空间管理
 
 这些subagent共同自动化了 **数据工程知识管道** ——从 **数据探索 → 查询生成 → 模型定义 → 指标生成 → 业务知识捕获 → 可搜索的知识库**。
-

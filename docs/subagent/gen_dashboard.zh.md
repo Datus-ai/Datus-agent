@@ -68,6 +68,8 @@ graph LR
 | `list_dashboards` | 所有 adapter | 列出/搜索现有仪表盘 |
 | `get_dashboard` | 所有 adapter | 获取仪表盘详情和元数据 |
 | `list_charts` | 所有 adapter | 列出仪表盘下的图表 |
+| `get_chart` | 所有 adapter | 获取单个图表或面板的详细配置 |
+| `get_chart_data` | 支持的 adapter | 获取图表查询结果，用于数值校验 |
 | `list_datasets` | 所有 adapter | 列出数据集或数据源 |
 | `create_dashboard` | `DashboardWriteMixin` | 创建新仪表盘 |
 | `update_dashboard` | `DashboardWriteMixin` | 更新仪表盘标题或描述 |

@@ -999,6 +999,8 @@ Tools are exposed dynamically based on which Mixins the platform adapter impleme
 | `list_dashboards` | All adapters | List and search dashboards |
 | `get_dashboard` | All adapters | Get dashboard details |
 | `list_charts` | All adapters | List charts in a dashboard |
+| `get_chart` | All adapters | Get details for a specific chart or panel |
+| `get_chart_data` | Supported adapters | Get chart query result rows for numeric validation |
 | `list_datasets` | All adapters | List datasets/datasources |
 | `create_dashboard` | `DashboardWriteMixin` | Create a new dashboard |
 | `update_dashboard` | `DashboardWriteMixin` | Update dashboard title/description |

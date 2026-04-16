@@ -733,11 +733,17 @@ class GenSQLAgenticNode(AgenticNode):
                 logger.info(f"Plan mode activated (auto_mode={auto_mode})")
 
             # Add context to user message if provided
+            from datus.utils.node_utils import resolve_database_name_for_prompt
+
+            effective_db = resolve_database_name_for_prompt(
+                self.db_func_tool.connector if self.db_func_tool else None,
+                user_input.database or "",
+            )
             enhanced_message = build_enhanced_message(
                 user_message=user_input.user_message,
                 db_type=self.agent_config.db_type,
                 catalog=user_input.catalog,
-                database=user_input.database,
+                database=effective_db,
                 db_schema=user_input.db_schema,
                 external_knowledge=user_input.external_knowledge,
                 schemas=user_input.schemas,
