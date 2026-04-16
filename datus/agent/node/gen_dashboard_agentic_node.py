@@ -83,10 +83,65 @@ class GenDashboardAgenticNode(AgenticNode):
         self.tools = []
         self._setup_db_read_connector()
         self._setup_bi_tools()
+        self._setup_dashboard_skills()
         if self.execution_mode == "interactive":
             self._setup_ask_user_tool()
 
         logger.debug(f"Setup {len(self.tools)} tools for {self.NODE_NAME}: {[tool.name for tool in self.tools]}")
+
+    def _setup_dashboard_skills(self):
+        """Dynamically inject the platform-specific dashboard skill based on bi_platform.
+
+        Uses the naming convention: {platform}-dashboard (e.g. superset-dashboard, grafana-dashboard).
+        Also exposes the shared bi-validation skill so the model can validate the
+        published dashboard without duplicating the checklist into each platform skill.
+
+        Only injects when BI tools were successfully initialized — otherwise the
+        skills would reference non-existent tools like create_dashboard, get_chart, etc.
+
+        Platform workflow skills (e.g. superset-dashboard) are only injected when
+        write tools are available. Read-only adapters get bi-validation only.
+        """
+        if not self.bi_func_tool:
+            return
+        bi_platform = self._resolve_bi_platform()
+        if not bi_platform:
+            return
+
+        skills_to_inject = []
+
+        # Platform workflow skill requires write tools (create_dashboard, create_chart, etc.)
+        tool_names = {tool.name for tool in self.bi_func_tool.available_tools()}
+        has_write_tools = "create_dashboard" in tool_names or "create_chart" in tool_names
+        if has_write_tools:
+            skills_to_inject.append(f"{bi_platform}-dashboard")
+
+        # bi-validation uses read tools (get_chart, get_chart_data) — safe for read-only
+        skills_to_inject.append("bi-validation")
+
+        self.node_config["skills"] = self._merge_skill_patterns(
+            self.node_config.get("skills"),
+            skills_to_inject,
+        )
+        self._setup_skill_func_tools()
+
+    @staticmethod
+    def _merge_skill_patterns(existing_skills: Any, injected_skills: list[str]) -> str:
+        """Merge injected skill patterns into existing node skill filters without duplicates."""
+        merged_patterns: list[str] = []
+
+        if isinstance(existing_skills, str):
+            merged_patterns.extend([pattern.strip() for pattern in existing_skills.split(",") if pattern.strip()])
+        elif isinstance(existing_skills, list):
+            merged_patterns.extend(
+                [pattern.strip() for pattern in existing_skills if isinstance(pattern, str) and pattern.strip()]
+            )
+
+        for skill in injected_skills:
+            if skill not in merged_patterns:
+                merged_patterns.append(skill)
+
+        return ", ".join(merged_patterns)
 
     def _setup_db_read_connector(self):
         """Create a source DB connector for write_query support (no tools exposed)."""
@@ -119,6 +174,7 @@ class GenDashboardAgenticNode(AgenticNode):
 
             from datus_bi_core import AuthParam, adapter_registry
 
+            adapter_registry.discover_adapters()
             adapter_cls = adapter_registry.get(bi_platform)
             if not adapter_cls:
                 logger.warning(f"No BI adapter registered for platform '{bi_platform}'")
@@ -254,16 +310,28 @@ class GenDashboardAgenticNode(AgenticNode):
     def _fallback_system_prompt(self, context: dict) -> str:
         """Inline fallback prompt when template is not found."""
         platform = context.get("bi_platform", "unknown")
+        has_write_query = context.get("has_write_query", False)
+        workflow_steps = []
+        if has_write_query:
+            workflow_steps.append(
+                "1. Use write_query to materialize data into the dashboard database (if available and needed)"
+            )
+            workflow_steps.append("2. Use create_dataset to register the data in the BI platform")
+            workflow_steps.append("3. Use create_chart with appropriate chart type, metrics, and dimensions")
+            workflow_steps.append("4. Use create_dashboard to create the dashboard")
+            workflow_steps.append("5. Use add_chart_to_dashboard to add charts to the dashboard")
+        else:
+            workflow_steps.append("1. Use create_dataset to register BI-accessible data or a SQL-backed dataset")
+            workflow_steps.append("2. Use create_chart with appropriate chart type, metrics, and dimensions")
+            workflow_steps.append("3. Use create_dashboard to create the dashboard")
+            workflow_steps.append("4. Use add_chart_to_dashboard to add charts to the dashboard")
+
         return (
             f"You are a BI dashboard specialist working with {platform}.\n\n"
             "Available tools are listed in your tool definitions. "
             "For creating dashboards, follow this workflow:\n"
-            "1. Use write_query to materialize data into the dashboard database (if needed)\n"
-            "2. Use create_dataset to register the data in the BI platform\n"
-            "3. Use create_chart with appropriate chart type, metrics, and dimensions\n"
-            "4. Use create_dashboard to create the dashboard\n"
-            "5. Use add_chart_to_dashboard to add charts to the dashboard\n\n"
-            "For read operations, use list_dashboards, get_dashboard, list_charts, list_datasets."
+            f"{'\n'.join(workflow_steps)}\n\n"
+            "For read operations, use list_dashboards, get_dashboard, list_charts, get_chart, list_datasets."
         )
 
     # ── Execution ───────────────────────────────────────────────────────
@@ -393,10 +461,13 @@ class GenDashboardAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"{self.get_node_name()} execution error: {e}")
 
+            partial = self._collect_created_resources(action_history_manager)
+
             error_result = GenDashboardNodeResult(
                 success=False,
                 error=str(e),
                 response="Sorry, I encountered an error while processing your request.",
+                dashboard_result=partial if partial else None,
                 tokens_used=0,
             )
 
@@ -410,3 +481,38 @@ class GenDashboardAgenticNode(AgenticNode):
             )
             action_history_manager.add_action(error_action)
             yield error_action
+
+    # ── Helpers ─────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _collect_created_resources(action_history_manager: ActionHistoryManager) -> dict:
+        """Scan action history for resources created before a failure.
+
+        Returns a dict summarising dashboards, charts, and datasets that were
+        already created, so that a retry can clean up or reuse them.
+        """
+        created: dict[str, list] = {"dashboards": [], "charts": [], "datasets": []}
+        resource_tools = {"create_dashboard": "dashboards", "create_chart": "charts", "create_dataset": "datasets"}
+
+        for action in action_history_manager.get_actions():
+            if action.status != ActionStatus.SUCCESS:
+                continue
+            if action.action_type not in resource_tools:
+                continue
+
+            output = action.output
+            if not isinstance(output, dict):
+                continue
+
+            result = output.get("result")
+            if not isinstance(result, dict):
+                continue
+
+            resource_id = result.get("id")
+            resource_name = result.get("name", "")
+            if resource_id is not None:
+                category = resource_tools[action.action_type]
+                created[category].append({"id": resource_id, "name": resource_name})
+
+        # Strip empty categories
+        return {k: v for k, v in created.items() if v}

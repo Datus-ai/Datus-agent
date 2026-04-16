@@ -80,10 +80,54 @@ class SchedulerAgenticNode(AgenticNode):
 
         self.tools = []
         self._setup_scheduler_tools()
+        self._setup_scheduler_skills()
         if self.execution_mode == "interactive":
             self._setup_ask_user_tool()
 
         logger.debug(f"Setup {len(self.tools)} tools for {self.NODE_NAME}: {[tool.name for tool in self.tools]}")
+
+    def _setup_scheduler_skills(self):
+        """Inject scheduler-validation skill when scheduler tools are available.
+
+        Only injects when scheduler tools were successfully initialized —
+        otherwise the skill would reference non-existent tools like
+        trigger_scheduler_job and list_job_runs.
+
+        Note: platform-specific workflow skills (e.g. airflow-workflow) are NOT
+        injected here because they require tools (task, read_query, write_file)
+        that only exist in the chat node. They are exposed via the chat node's
+        global skill list instead.
+        """
+        if not self.scheduler_tools:
+            return
+
+        scheduler_config = getattr(self.agent_config, "scheduler_config", {}) or {}
+        platform = scheduler_config.get("type", "airflow")
+
+        skills_to_inject = [f"{platform}-workflow", "scheduler-validation"]
+        self.node_config["skills"] = self._merge_skill_patterns(
+            self.node_config.get("skills"),
+            skills_to_inject,
+        )
+        self._setup_skill_func_tools()
+
+    @staticmethod
+    def _merge_skill_patterns(existing_skills, injected_skills: list[str]) -> str:
+        """Merge injected skill patterns into existing node skill filters without duplicates."""
+        merged_patterns: list[str] = []
+
+        if isinstance(existing_skills, str):
+            merged_patterns.extend([pattern.strip() for pattern in existing_skills.split(",") if pattern.strip()])
+        elif isinstance(existing_skills, list):
+            merged_patterns.extend(
+                [pattern.strip() for pattern in existing_skills if isinstance(pattern, str) and pattern.strip()]
+            )
+
+        for skill in injected_skills:
+            if skill not in merged_patterns:
+                merged_patterns.append(skill)
+
+        return ", ".join(merged_patterns)
 
     def _setup_scheduler_tools(self):
         """Setup scheduler tools if scheduler_config is present."""
@@ -283,10 +327,13 @@ class SchedulerAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"{self.get_node_name()} execution error: {e}")
 
+            partial = self._collect_submitted_jobs(action_history_manager)
+
             error_result = SchedulerNodeResult(
                 success=False,
                 error=str(e),
                 response="Sorry, I encountered an error while processing your request.",
+                scheduler_result=partial if partial else None,
                 tokens_used=0,
             )
 
@@ -300,3 +347,37 @@ class SchedulerAgenticNode(AgenticNode):
             )
             action_history_manager.add_action(error_action)
             yield error_action
+
+    # ── Helpers ─────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _collect_submitted_jobs(action_history_manager: ActionHistoryManager) -> dict:
+        """Scan action history for jobs submitted before a failure.
+
+        Returns a dict summarising jobs that were already created,
+        so that a retry can clean up or reuse them.
+        """
+        jobs: list[dict] = []
+        job_tools = {"submit_sql_job", "submit_sparksql_job"}
+
+        for action in action_history_manager.get_actions():
+            if action.status != ActionStatus.SUCCESS:
+                continue
+            if action.action_type not in job_tools:
+                continue
+
+            output = action.output
+            if not isinstance(output, dict):
+                continue
+
+            result = output.get("result")
+            if not isinstance(result, dict):
+                continue
+
+            job_id = result.get("job_id")
+            if job_id:
+                jobs.append(
+                    {"job_id": job_id, "job_name": result.get("job_name", ""), "status": result.get("status", "")}
+                )
+
+        return {"submitted_jobs": jobs} if jobs else {}

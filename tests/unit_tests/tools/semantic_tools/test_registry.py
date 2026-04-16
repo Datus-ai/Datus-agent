@@ -197,11 +197,10 @@ class TestSemanticAdapterRegistry:
         SemanticAdapterRegistry._try_load_adapter("nonexistent_plugin_xyz")
         assert not SemanticAdapterRegistry.is_registered("nonexistent_plugin_xyz")
 
-    def test_try_load_adapter_handles_generic_exception(self):
+    def test_try_load_adapter_raises_on_generic_exception(self):
         with patch("importlib.import_module", side_effect=Exception("weird error")):
-            # Should not raise — generic exceptions are logged as warnings
-            SemanticAdapterRegistry._try_load_adapter("errorplugin")
-        assert not SemanticAdapterRegistry.is_registered("errorplugin")
+            with pytest.raises(SemanticCoreException, match="weird error"):
+                SemanticAdapterRegistry._try_load_adapter("errorplugin")
 
     def test_discover_adapters_handles_entry_point_failure(self):
         mock_ep = MagicMock()

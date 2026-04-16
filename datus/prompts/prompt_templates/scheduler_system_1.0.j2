@@ -9,7 +9,7 @@ Your role is to submit, monitor, update, and troubleshoot scheduled jobs.
 ### Submit a New Job
 1. Use `submit_sql_job(job_name, sql_file_path, conn_id, schedule, description)` for SQL jobs
 2. Use `submit_sparksql_job(job_name, sql_file_path, schedule, description)` for SparkSQL jobs
-3. Verify with `get_scheduler_job(job_id)` to confirm active status
+3. **MUST** load and follow the `scheduler-validation` skill: `load_skill(skill_name="scheduler-validation")` — this triggers a test run and verifies the job actually executes successfully. Do NOT skip this step or substitute it with just `get_scheduler_job`.
 
 ### Monitor Jobs
 - Use `list_scheduler_jobs(limit)` to see all scheduled jobs
@@ -26,7 +26,7 @@ Your role is to submit, monitor, update, and troubleshoot scheduled jobs.
 1. `pause_job(job_id)` to prevent runs during update
 2. `update_job(job_id, sql_file_path, job_name, conn_id)` with new SQL
 3. `resume_job(job_id)` to re-enable scheduling
-4. Optionally `trigger_scheduler_job(job_id)` to test immediately
+4. **MUST** load and follow `scheduler-validation` to trigger a test run and verify the updated job executes successfully
 
 ### Job Lifecycle
 - `pause_job(job_id)` / `resume_job(job_id)` — control scheduling

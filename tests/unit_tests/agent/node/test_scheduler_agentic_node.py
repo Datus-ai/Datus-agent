@@ -610,3 +610,103 @@ class TestSchedulerPromptVersion:
                 call_kwargs = mock_pm.return_value.render_template.call_args
                 version = call_kwargs.kwargs.get("version")
                 assert version == "1.5", f"Expected version '1.5', got '{version}'"
+
+
+# ---------------------------------------------------------------------------
+# Partial Resource Collection Tests
+# ---------------------------------------------------------------------------
+
+
+class TestCollectSubmittedJobs:
+    """Tests for SchedulerAgenticNode._collect_submitted_jobs."""
+
+    @staticmethod
+    def _make_action(action_type, status, output=None):
+        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+
+        return ActionHistory.create_action(
+            role=ActionRole.ASSISTANT,
+            action_type=action_type,
+            messages="",
+            input_data={},
+            output_data=output,
+            status=ActionStatus.SUCCESS if status == "success" else ActionStatus.FAILED,
+        )
+
+    def test_collects_submitted_sql_jobs(self):
+        from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
+        from datus.schemas.action_history import ActionHistoryManager
+
+        ahm = ActionHistoryManager()
+        ahm.add_action(
+            self._make_action(
+                "submit_sql_job",
+                "success",
+                {"result": {"job_id": "daily_report", "job_name": "daily_report", "status": "active"}},
+            )
+        )
+
+        result = SchedulerAgenticNode._collect_submitted_jobs(ahm)
+
+        assert len(result["submitted_jobs"]) == 1
+        assert result["submitted_jobs"][0]["job_id"] == "daily_report"
+
+    def test_collects_both_sql_and_sparksql_jobs(self):
+        from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
+        from datus.schemas.action_history import ActionHistoryManager
+
+        ahm = ActionHistoryManager()
+        ahm.add_action(
+            self._make_action(
+                "submit_sql_job",
+                "success",
+                {"result": {"job_id": "job1", "job_name": "job1", "status": "active"}},
+            )
+        )
+        ahm.add_action(
+            self._make_action(
+                "submit_sparksql_job",
+                "success",
+                {"result": {"job_id": "job2", "job_name": "job2", "status": "active"}},
+            )
+        )
+
+        result = SchedulerAgenticNode._collect_submitted_jobs(ahm)
+
+        assert len(result["submitted_jobs"]) == 2
+
+    def test_skips_failed_submissions(self):
+        from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
+        from datus.schemas.action_history import ActionHistoryManager
+
+        ahm = ActionHistoryManager()
+        ahm.add_action(
+            self._make_action(
+                "submit_sql_job",
+                "success",
+                {"result": {"job_id": "ok_job", "job_name": "ok_job", "status": "active"}},
+            )
+        )
+        ahm.add_action(
+            self._make_action(
+                "submit_sql_job",
+                "failed",
+                {"result": {"job_id": "bad_job", "job_name": "bad_job", "status": "error"}},
+            )
+        )
+
+        result = SchedulerAgenticNode._collect_submitted_jobs(ahm)
+
+        assert len(result["submitted_jobs"]) == 1
+        assert result["submitted_jobs"][0]["job_id"] == "ok_job"
+
+    def test_returns_empty_dict_when_no_jobs(self):
+        from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
+        from datus.schemas.action_history import ActionHistoryManager
+
+        ahm = ActionHistoryManager()
+        ahm.add_action(self._make_action("get_scheduler_job", "success", {"result": {"status": "active"}}))
+
+        result = SchedulerAgenticNode._collect_submitted_jobs(ahm)
+
+        assert result == {}
