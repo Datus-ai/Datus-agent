@@ -616,13 +616,11 @@ class TestExplorerServiceCreateMetric:
         import os
 
         from datus.api.models.explorer_models import EditMetricInput
-        from datus.utils.path_manager import DatusPathManager
 
         svc = ExplorerService(agent_config=real_agent_config)
         await svc.create_directory(CreateDirectoryInput(subject_path=["metric_create_test"]))
 
-        pm = DatusPathManager(datus_home=real_agent_config.home)
-        metrics_dir = pm.semantic_model_path(real_agent_config.current_namespace) / "metrics"
+        metrics_dir = real_agent_config.path_manager.semantic_model_path() / "metrics"
         os.makedirs(metrics_dir, exist_ok=True)
 
         request = EditMetricInput(
@@ -642,13 +640,11 @@ class TestExplorerServiceCreateMetric:
         import os
 
         from datus.api.models.explorer_models import EditMetricInput
-        from datus.utils.path_manager import DatusPathManager
 
         svc = ExplorerService(agent_config=real_agent_config)
         await svc.create_directory(CreateDirectoryInput(subject_path=["dup_file_dir"]))
 
-        pm = DatusPathManager(datus_home=real_agent_config.home)
-        metrics_dir = pm.semantic_model_path(real_agent_config.current_namespace) / "metrics"
+        metrics_dir = real_agent_config.path_manager.semantic_model_path() / "metrics"
         os.makedirs(metrics_dir, exist_ok=True)
 
         # Pre-create the file on disk
@@ -669,13 +665,11 @@ class TestExplorerServiceCreateMetric:
         import os
 
         from datus.api.models.explorer_models import EditMetricInput
-        from datus.utils.path_manager import DatusPathManager
 
         svc = ExplorerService(agent_config=real_agent_config)
         await svc.create_directory(CreateDirectoryInput(subject_path=["tagged_dir"]))
 
-        pm = DatusPathManager(datus_home=real_agent_config.home)
-        metrics_dir = pm.semantic_model_path(real_agent_config.current_namespace) / "metrics"
+        metrics_dir = real_agent_config.path_manager.semantic_model_path() / "metrics"
         os.makedirs(metrics_dir, exist_ok=True)
 
         yaml_content = (

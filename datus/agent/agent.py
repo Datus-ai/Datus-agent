@@ -440,9 +440,7 @@ class Agent:
                     # Only clear semantic_models/{namespace} directory when NOT using --from_adapter
                     # because MetricFlow adapter needs to read YAML files from this directory
                     if not (hasattr(self.args, "from_adapter") and self.args.from_adapter):
-                        semantic_yaml_dir = self.global_config.path_manager.semantic_model_path(
-                            self.global_config.current_database
-                        )
+                        semantic_yaml_dir = self.global_config.path_manager.semantic_model_path()
                         force = self._force_delete
                         if semantic_yaml_dir.exists() and not safe_rmtree(
                             semantic_yaml_dir, "semantic YAML directory", force=force
@@ -490,9 +488,7 @@ class Agent:
                     # Only clear semantic_models/{namespace} directory when NOT using --from_adapter
                     # because MetricFlow adapter needs to read YAML files from this directory
                     if not (hasattr(self.args, "from_adapter") and self.args.from_adapter):
-                        semantic_yaml_dir = self.global_config.path_manager.semantic_model_path(
-                            self.global_config.current_database
-                        )
+                        semantic_yaml_dir = self.global_config.path_manager.semantic_model_path()
                         force = self._force_delete
                         if semantic_yaml_dir.exists() and not safe_rmtree(
                             semantic_yaml_dir, "semantic YAML directory", force=force
@@ -540,10 +536,8 @@ class Agent:
                 return result
             elif component == "ext_knowledge":
                 if kb_update_strategy == "overwrite":
-                    # Also clear ext_knowledge/{namespace} directory
-                    ext_knowledge_dir = self.global_config.path_manager.ext_knowledge_path(
-                        self.global_config.current_database
-                    )
+                    # Also clear the ext_knowledge directory
+                    ext_knowledge_dir = self.global_config.path_manager.ext_knowledge_path()
                     force = self._force_delete
                     if ext_knowledge_dir.exists() and not safe_rmtree(
                         ext_knowledge_dir, "external knowledge directory", force=force
@@ -584,10 +578,8 @@ class Agent:
                 }
             elif component == "reference_sql":
                 if kb_update_strategy == "overwrite":
-                    # Also clear sql_summaries/{namespace} directory (YAML files)
-                    sql_summary_dir = self.global_config.path_manager.sql_summary_path(
-                        self.global_config.current_database
-                    )
+                    # Also clear the sql_summaries directory (YAML files)
+                    sql_summary_dir = self.global_config.path_manager.sql_summary_path()
                     force = self._force_delete
                     if sql_summary_dir.exists() and not safe_rmtree(
                         sql_summary_dir, "SQL summary directory", force=force

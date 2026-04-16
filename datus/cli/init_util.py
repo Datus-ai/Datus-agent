@@ -202,8 +202,8 @@ def init_semantic_model(
                 logger.info("Dropped existing semantic_model table")
             finally:
                 db.close()
-            # Also clear semantic_models/{namespace} directory (YAML files)
-            semantic_yaml_dir = agent_config.path_manager.semantic_model_path(agent_config.current_database)
+            # Also clear the semantic_models directory (YAML files)
+            semantic_yaml_dir = agent_config.path_manager.semantic_model_path()
             if semantic_yaml_dir.exists() and not safe_rmtree(
                 semantic_yaml_dir, "semantic YAML directory", force=force
             ):

@@ -522,8 +522,13 @@ class TestLanceVectorBackendLogicalIsolation:
             assert db._isolation == IsolationType.LOGICAL
             assert db._datasource_id == "tenant_a"
 
-    def test_connect_physical_uses_namespace_as_dir(self):
-        """connect() in PHYSICAL mode uses datus_db_{namespace} as directory name."""
+    def test_connect_physical_uses_shared_datus_db_dir(self):
+        """connect() in PHYSICAL mode uses the shared ``datus_db`` directory.
+
+        Project isolation now happens one level up by sharding ``data_dir`` as
+        ``{home}/data/{project_name}``, so all namespaces within a project
+        share a single ``datus_db`` directory regardless of isolation mode.
+        """
         import unittest.mock
 
         backend = LanceVectorBackend()
@@ -531,7 +536,7 @@ class TestLanceVectorBackendLogicalIsolation:
         with unittest.mock.patch("datus.storage.vector.lance_backend.lancedb") as mock_lancedb:
             mock_lancedb.connect.return_value = MagicMock()
             db = backend.connect(namespace="tenant_a")
-            mock_lancedb.connect.assert_called_once_with("/tmp/test/datus_db_tenant_a")
+            mock_lancedb.connect.assert_called_once_with("/tmp/test/datus_db")
             assert db._datasource_id is None
 
 

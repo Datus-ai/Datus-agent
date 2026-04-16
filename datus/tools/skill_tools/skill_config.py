@@ -24,20 +24,22 @@ class SkillConfig(BaseModel):
     Example configuration:
         skills:
           directories:
+            - ./.datus/skills
             - ~/.datus/skills
-            - ./skills
           warn_duplicates: true
           whitelist_from_compaction: true
 
     Attributes:
-        directories: List of directories to scan for skills
+        directories: List of directories to scan for skills. Project-level
+            directories (``./.datus/skills``) take precedence over the global
+            fallback (``~/.datus/skills``).
         warn_duplicates: Warn when duplicate skill names are found
         whitelist_from_compaction: Preserve skill content during session compaction
     """
 
     directories: List[str] = Field(
-        default_factory=lambda: ["~/.datus/skills", "./skills"],
-        description="Directories to scan for SKILL.md files",
+        default_factory=lambda: ["./.datus/skills", "~/.datus/skills"],
+        description="Directories to scan for SKILL.md files (project-level first, global fallback)",
     )
     warn_duplicates: bool = Field(default=True, description="Warn on duplicate skill names")
     whitelist_from_compaction: bool = Field(

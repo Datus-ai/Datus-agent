@@ -491,76 +491,75 @@ class TestAvailableTools:
 
 # ---------------------------------------------------------------------------
 # KB path_normalizer round-trip: write/read/edit with the silent prefix
-# normalizer (covers the knowledge_base_home re-scope refactor contract).
+# normalizer (covers the project-scoped ``subject/`` layout contract).
 # ---------------------------------------------------------------------------
 
 
 class _StubCfg:
-    def __init__(self, ns: str):
-        self.current_namespace = ns
+    """Minimal agent_config stand-in; no longer namespace-scoped."""
 
 
 class TestFilesystemFuncToolKbNormalizerRoundTrip:
     """Contract tests for FilesystemFuncTool + KB path_normalizer."""
 
-    def _make(self, tmp_path: Path, kind: str, namespace: str):
+    def _make(self, tmp_path: Path, kind: str):
         kb_root = tmp_path / "kb"
         kb_root.mkdir()
         tool = FilesystemFuncTool(
             root_path=str(kb_root),
-            path_normalizer=make_kb_path_normalizer(_StubCfg(namespace), default_kind=kind),
+            path_normalizer=make_kb_path_normalizer(_StubCfg(), default_kind=kind),
         )
         return tool, kb_root
 
     def test_naked_filename_lands_in_typed_subdir(self, tmp_path):
-        tool, kb_root = self._make(tmp_path, "semantic", "school_db")
+        tool, kb_root = self._make(tmp_path, "semantic")
         result = tool.write_file("orders.yml", "id: orders\n", file_type="semantic_model")
         assert result.success == 1
-        on_disk = kb_root / "semantic_models" / "school_db" / "orders.yml"
+        on_disk = kb_root / "semantic_models" / "orders.yml"
         assert on_disk.is_file()
         assert on_disk.read_text() == "id: orders\n"
 
     def test_read_naked_filename_after_naked_write(self, tmp_path):
         """LLM forgets prefix on both write and subsequent read — both must succeed."""
-        tool, _ = self._make(tmp_path, "semantic", "school_db")
+        tool, _ = self._make(tmp_path, "semantic")
         tool.write_file("orders.yml", "payload\n", file_type="semantic_model")
         assert tool.read_file("orders.yml").result == "payload\n"
 
     def test_read_with_full_prefix_after_naked_write(self, tmp_path):
-        tool, _ = self._make(tmp_path, "semantic", "school_db")
+        tool, _ = self._make(tmp_path, "semantic")
         tool.write_file("orders.yml", "payload\n", file_type="semantic_model")
-        assert tool.read_file("semantic_models/school_db/orders.yml").result == "payload\n"
+        assert tool.read_file("semantic_models/orders.yml").result == "payload\n"
 
     def test_edit_file_after_naked_write(self, tmp_path):
-        tool, _ = self._make(tmp_path, "sql_summary", "school_db")
+        tool, _ = self._make(tmp_path, "sql_summary")
         tool.write_file("q_001.yaml", "name: original\n", file_type="sql_summary")
         edit_result = tool.edit_file("q_001.yaml", "original", "edited")
         assert edit_result.success == 1, edit_result.error
         assert tool.read_file("q_001.yaml").result == "name: edited\n"
 
     def test_write_with_full_prefix_does_not_double_prefix(self, tmp_path):
-        tool, kb_root = self._make(tmp_path, "semantic", "school_db")
+        tool, kb_root = self._make(tmp_path, "semantic")
         tool.write_file(
-            "semantic_models/school_db/customers.yml",
+            "semantic_models/customers.yml",
             "id: customers\n",
             file_type="semantic_model",
         )
-        assert (kb_root / "semantic_models" / "school_db" / "customers.yml").is_file()
-        assert not (kb_root / "semantic_models" / "school_db" / "semantic_models").exists()
+        assert (kb_root / "semantic_models" / "customers.yml").is_file()
+        assert not (kb_root / "semantic_models" / "semantic_models").exists()
 
     def test_cross_kind_read_works(self, tmp_path):
         """A semantic-mode tool must still read peer sql_summaries by full path."""
-        tool, kb_root = self._make(tmp_path, "semantic", "school_db")
-        peer = kb_root / "sql_summaries" / "school_db" / "q_001.yaml"
+        tool, kb_root = self._make(tmp_path, "semantic")
+        peer = kb_root / "sql_summaries" / "q_001.yaml"
         peer.parent.mkdir(parents=True)
         peer.write_text("peer content\n")
-        assert tool.read_file("sql_summaries/school_db/q_001.yaml").result == "peer content\n"
+        assert tool.read_file("sql_summaries/q_001.yaml").result == "peer content\n"
 
     def test_cross_kind_write_is_rejected_under_strict(self, tmp_path):
         """Writing to a peer kind's subdir must fail closed (sandbox enforcement)."""
-        tool, _ = self._make(tmp_path, "semantic", "school_db")
+        tool, _ = self._make(tmp_path, "semantic")
         result = tool.write_file(
-            "sql_summaries/school_db/q_001.yaml",
+            "sql_summaries/q_001.yaml",
             "bad\n",
             file_type="semantic_model",
         )

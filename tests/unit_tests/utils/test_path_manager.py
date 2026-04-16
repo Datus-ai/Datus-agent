@@ -43,47 +43,32 @@ class TestDatusPathManagerInit:
         pm.update_home(str(new_home))
         assert pm.datus_home == new_home.resolve()
 
+    def test_default_project_name_is_empty(self, tmp_path):
+        pm = DatusPathManager(datus_home=str(tmp_path))
+        assert pm.project_name == ""
+
+    def test_project_name_and_root_preserved(self, tmp_path):
+        project_root = tmp_path / "proj"
+        pm = DatusPathManager(
+            datus_home=str(tmp_path / "home"),
+            project_name="-tmp-proj",
+            project_root=str(project_root),
+        )
+        assert pm.project_name == "-tmp-proj"
+        assert pm.project_root == project_root.resolve()
+
+    def test_project_root_defaults_to_cwd(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        pm = DatusPathManager(datus_home=str(tmp_path / "home"))
+        assert pm.project_root == tmp_path.resolve()
+
     def test_knowledge_base_home_defaults_to_datus_home(self, tmp_path):
         pm = DatusPathManager(datus_home=str(tmp_path / "datus"))
         assert pm.knowledge_base_home == pm.datus_home
 
-    def test_knowledge_base_home_custom_path(self, tmp_path):
-        datus_home = tmp_path / "datus"
-        kb_home = tmp_path / "shared_kb"
-        pm = DatusPathManager(datus_home=str(datus_home), knowledge_base_home=str(kb_home))
-        assert pm.datus_home == datus_home.resolve()
-        assert pm.knowledge_base_home == kb_home.resolve()
-
-    def test_knowledge_base_home_tilde_expansion(self, tmp_path):
-        pm = DatusPathManager(datus_home=str(tmp_path), knowledge_base_home="~/custom_kb")
-        assert "~" not in str(pm.knowledge_base_home)
-
-    def test_knowledge_base_home_accepts_path_object(self, tmp_path):
-        kb_home = tmp_path / "kb"
-        pm = DatusPathManager(datus_home=str(tmp_path), knowledge_base_home=kb_home)
-        assert pm.knowledge_base_home == kb_home.resolve()
-
     def test_knowledge_base_home_empty_string_falls_back_to_datus_home(self, tmp_path):
         pm = DatusPathManager(datus_home=str(tmp_path / "datus"), knowledge_base_home="")
         assert pm.knowledge_base_home == pm.datus_home
-
-    def test_update_home_resets_knowledge_base_home_and_warns(self, tmp_path):
-        import warnings
-
-        kb_home = tmp_path / "old_kb"
-        pm = DatusPathManager(datus_home=str(tmp_path / "old_datus"), knowledge_base_home=str(kb_home))
-        assert pm.knowledge_base_home == kb_home.resolve()
-
-        new_home = tmp_path / "new_datus"
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            pm.update_home(str(new_home))
-
-        # Deprecation warning emitted
-        assert any(issubclass(warning.category, DeprecationWarning) for warning in w)
-        # knowledge_base_home is reset to track the new datus_home (no cross-tenant leak)
-        assert pm.knowledge_base_home == new_home.resolve()
-        assert pm.datus_home == new_home.resolve()
 
 
 class TestDatusPathManagerProperties:
@@ -91,15 +76,18 @@ class TestDatusPathManagerProperties:
 
     @pytest.fixture
     def pm(self, tmp_path):
-        return DatusPathManager(datus_home=str(tmp_path / "datus"))
+        # Bind to a fixed project_name so sharded dirs are deterministic in tests.
+        return DatusPathManager(
+            datus_home=str(tmp_path / "datus"),
+            project_name="proj",
+            project_root=str(tmp_path / "project"),
+        )
 
     @pytest.mark.parametrize(
         "attr,suffix",
         [
             ("conf_dir", "conf"),
-            ("data_dir", "data"),
             ("logs_dir", "logs"),
-            ("sessions_dir", "sessions"),
             ("template_dir", "template"),
             ("sample_dir", "sample"),
             ("run_dir", "run"),
@@ -107,28 +95,36 @@ class TestDatusPathManagerProperties:
             ("save_dir", "save"),
             ("workspace_dir", "workspace"),
             ("trajectory_dir", "trajectory"),
-            ("semantic_models_dir", "semantic_models"),
-            ("sql_summaries_dir", "sql_summaries"),
-            ("ext_knowledge_dir", "ext_knowledge"),
         ],
     )
-    def test_directory_property(self, pm, attr, suffix):
+    def test_shared_directory_property(self, pm, attr, suffix):
+        """Global, un-sharded directories stay under datus_home."""
         assert getattr(pm, attr) == pm.datus_home / suffix
 
-    def test_knowledge_dirs_follow_knowledge_base_home_override(self, tmp_path):
-        datus_home = tmp_path / "datus"
-        kb_home = tmp_path / "shared_kb"
-        pm = DatusPathManager(datus_home=str(datus_home), knowledge_base_home=str(kb_home))
+    def test_sessions_dir_sharded_by_project_name(self, pm):
+        assert pm.sessions_dir == pm.datus_home / "sessions" / "proj"
 
-        # These three should live under the custom knowledge_base_home
-        assert pm.semantic_models_dir == kb_home.resolve() / "semantic_models"
-        assert pm.sql_summaries_dir == kb_home.resolve() / "sql_summaries"
-        assert pm.ext_knowledge_dir == kb_home.resolve() / "ext_knowledge"
+    def test_data_dir_sharded_by_project_name(self, pm):
+        assert pm.data_dir == pm.datus_home / "data" / "proj"
 
-        # Other dirs should still live under datus_home
-        assert pm.data_dir == datus_home.resolve() / "data"
-        assert pm.logs_dir == datus_home.resolve() / "logs"
-        assert pm.sessions_dir == datus_home.resolve() / "sessions"
+    def test_sessions_dir_unsharded_when_no_project_name(self, tmp_path):
+        pm = DatusPathManager(datus_home=str(tmp_path / "home"))
+        assert pm.sessions_dir == pm.datus_home / "sessions"
+
+    def test_data_dir_unsharded_when_no_project_name(self, tmp_path):
+        pm = DatusPathManager(datus_home=str(tmp_path / "home"))
+        assert pm.data_dir == pm.datus_home / "data"
+
+    def test_subject_dir_anchored_to_project_root(self, pm, tmp_path):
+        assert pm.subject_dir == (tmp_path / "project").resolve() / "subject"
+
+    def test_kb_dirs_live_under_subject(self, pm):
+        assert pm.semantic_models_dir == pm.subject_dir / "semantic_models"
+        assert pm.sql_summaries_dir == pm.subject_dir / "sql_summaries"
+        assert pm.ext_knowledge_dir == pm.subject_dir / "ext_knowledge"
+
+    def test_project_skills_dir(self, pm, tmp_path):
+        assert pm.project_skills_dir == (tmp_path / "project").resolve() / ".datus" / "skills"
 
 
 class TestDatusPathManagerConfigPaths:
@@ -161,16 +157,15 @@ class TestDatusPathManagerDataPaths:
 
     @pytest.fixture
     def pm(self, tmp_path):
-        return DatusPathManager(datus_home=str(tmp_path / "datus"))
+        return DatusPathManager(
+            datus_home=str(tmp_path / "datus"),
+            project_name="proj",
+            project_root=str(tmp_path / "project"),
+        )
 
     def test_rag_storage_path_creates_dir(self, pm):
         path = pm.rag_storage_path()
         assert path == pm.data_dir / "datus_db"
-        assert path.exists()
-
-    def test_sub_agent_path_creates_dir(self, pm):
-        path = pm.sub_agent_path("my_agent")
-        assert path == pm.data_dir / "sub_agents" / "my_agent"
         assert path.exists()
 
     def test_session_db_path(self, pm):
@@ -179,18 +174,18 @@ class TestDatusPathManagerDataPaths:
         assert pm.sessions_dir.exists()
 
     def test_semantic_model_path_creates_dir(self, pm):
-        path = pm.semantic_model_path("ns1")
-        assert path == pm.semantic_models_dir / "ns1"
+        path = pm.semantic_model_path()
+        assert path == pm.semantic_models_dir
         assert path.exists()
 
     def test_sql_summary_path_creates_dir(self, pm):
-        path = pm.sql_summary_path("ns2")
-        assert path == pm.sql_summaries_dir / "ns2"
+        path = pm.sql_summary_path()
+        assert path == pm.sql_summaries_dir
         assert path.exists()
 
     def test_ext_knowledge_path_creates_dir(self, pm):
-        path = pm.ext_knowledge_path("ns3")
-        assert path == pm.ext_knowledge_dir / "ns3"
+        path = pm.ext_knowledge_path()
+        assert path == pm.ext_knowledge_dir
         assert path.exists()
 
 
@@ -243,7 +238,11 @@ class TestEnsureDirs:
 
     @pytest.fixture
     def pm(self, tmp_path):
-        return DatusPathManager(datus_home=str(tmp_path / "datus"))
+        return DatusPathManager(
+            datus_home=str(tmp_path / "datus"),
+            project_name="proj",
+            project_root=str(tmp_path / "project"),
+        )
 
     def test_ensure_all_dirs_creates_them(self, pm):
         pm.ensure_dirs()
@@ -270,6 +269,13 @@ class TestEnsureDirs:
         pm.ensure_dirs("conf")
         pm.ensure_dirs("conf")
         assert pm.conf_dir.exists()
+
+    def test_ensure_subject_tree_dirs(self, pm):
+        pm.ensure_dirs("subject", "semantic_models", "sql_summaries", "ext_knowledge")
+        assert pm.subject_dir.exists()
+        assert pm.semantic_models_dir.exists()
+        assert pm.sql_summaries_dir.exists()
+        assert pm.ext_knowledge_dir.exists()
 
     def test_ensure_templates_creates_template_dir_and_copies_defaults(self, pm):
         with patch("datus.utils.resource_utils.copy_data_file") as mock_copy:
@@ -398,21 +404,21 @@ class TestResetPathManager:
         reset_path_manager(outer_token)
         assert get_path_manager().datus_home == (Path.home() / ".datus").resolve()
 
-    def test_context_var_preserves_knowledge_base_home_round_trip(self, tmp_path):
-        """Regression: ContextVar used to store only datus_home string, losing knowledge_base_home."""
-        datus_home = tmp_path / "tenant"
-        kb_home = tmp_path / "shared_kb"
-        pm = DatusPathManager(datus_home=str(datus_home), knowledge_base_home=str(kb_home))
+    def test_context_var_preserves_project_shard_round_trip(self, tmp_path):
+        """Storing a DatusPathManager via ContextVar preserves project_name sharding."""
+        project_root = tmp_path / "proj"
+        pm = DatusPathManager(
+            datus_home=str(tmp_path / "home"),
+            project_name="-tmp-proj",
+            project_root=str(project_root),
+        )
 
         token = set_current_path_manager(pm)
         try:
-            # get_path_manager() must return a manager whose knowledge_base_home matches the original
             retrieved = get_path_manager()
-            assert retrieved.knowledge_base_home == kb_home.resolve()
-            assert retrieved.datus_home == datus_home.resolve()
-            # And the three KB dirs must reflect the stored knowledge_base_home, not fall back to datus_home
-            assert retrieved.semantic_models_dir == kb_home.resolve() / "semantic_models"
-            assert retrieved.sql_summaries_dir == kb_home.resolve() / "sql_summaries"
-            assert retrieved.ext_knowledge_dir == kb_home.resolve() / "ext_knowledge"
+            assert retrieved.project_name == "-tmp-proj"
+            assert retrieved.subject_dir == project_root.resolve() / "subject"
+            assert retrieved.data_dir == pm.datus_home / "data" / "-tmp-proj"
+            assert retrieved.sessions_dir == pm.datus_home / "sessions" / "-tmp-proj"
         finally:
             reset_path_manager(token)

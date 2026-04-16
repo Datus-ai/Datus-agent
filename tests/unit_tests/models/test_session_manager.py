@@ -111,9 +111,14 @@ class TestSessionManagerInit:
     """Tests for SessionManager.__init__."""
 
     def test_init_creates_session_dir(self, sm):
-        """SessionManager creates the session directory on init."""
+        """SessionManager creates the session directory on init.
+
+        After the project-aware refactor the default sessions root is
+        ``{home}/sessions/{project_name}``; assert on the prefix (``sessions``
+        followed by a separator) instead of a strict ``endswith``.
+        """
         assert os.path.isdir(sm.session_dir)
-        assert sm.session_dir.endswith("sessions")
+        assert f"{os.sep}sessions{os.sep}" in sm.session_dir or sm.session_dir.endswith("sessions")
 
     def test_init_sessions_cache_is_empty(self, sm):
         """SessionManager starts with an empty session cache."""
@@ -1081,8 +1086,10 @@ class TestSessionManagerCustomDir:
         """SessionManager(session_dir=None) uses the default path_manager sessions dir directly."""
         manager = SessionManager(session_dir=None)
         try:
-            # Default should end with 'sessions' (no scope subdirectory)
-            assert manager.session_dir.endswith("sessions")
+            # Default lives under the project-sharded ``sessions/{project_name}/``
+            # tree. Assert the path contains the ``sessions`` segment and the
+            # directory exists; sharding appends a project subdir after it.
+            assert f"{os.sep}sessions{os.sep}" in manager.session_dir or manager.session_dir.endswith("sessions")
             assert os.path.isdir(manager.session_dir)
         finally:
             manager.close_all_sessions()

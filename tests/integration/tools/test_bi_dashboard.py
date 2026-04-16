@@ -344,10 +344,7 @@ class TestE2EIntegration:
             if os.path.isdir(dirpath):
                 shutil.rmtree(dirpath)
 
-        from datus.utils.path_manager import DatusPathManager
-
-        path_manager = DatusPathManager(agent_config.home)
-        semantic_model_dir = path_manager.semantic_model_path(agent_config.current_namespace)
+        semantic_model_dir = agent_config.path_manager.semantic_model_path()
         if semantic_model_dir.exists():
             shutil.rmtree(semantic_model_dir)
 
@@ -380,11 +377,9 @@ class TestE2EIntegration:
                 sub_agent_name = bi_commands._build_sub_agent_name(platform, dashboard.name or "")
                 attr_name = f"{sub_agent_name}_attribution"
 
-                # Clean sub-agent old data
-                for sa_name in [sub_agent_name, attr_name]:
-                    sa_path = agent_config.sub_agent_storage_path(sa_name)
-                    if os.path.exists(sa_path):
-                        shutil.rmtree(sa_path)
+                # Sub-agent directories are no longer maintained under data/;
+                # agentic_nodes is tracked purely in config, so nothing to clean up here.
+                _ = [sub_agent_name, attr_name]
 
                 result = _assemble(bi_adapter, dashboard, chart_selections, datasets, dialect)
 

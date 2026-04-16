@@ -5,7 +5,9 @@ agent:
   target: deepseek
   workspace_root: .datus_test_data/workspace
 
-  knowledge_base_home: .datus_test_data/knowledge_base # Configuration to simulate real-world scenarios
+  # Note: knowledge_base_home is deprecated. Knowledge-base content is now
+  # anchored to {cwd}/subject/ automatically; this field is accepted but ignored
+  # (a DeprecationWarning is emitted when set).
   models:
     deepseek:
       type: deepseek

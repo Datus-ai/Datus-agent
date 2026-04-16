@@ -862,7 +862,7 @@ class BiDashboardCommands:
         metrics = set()
         if files := metrics_result.get("semantic_models", []):
             # Get base directory for semantic models
-            base_dir = self.agent_config.path_manager.semantic_model_path(self.agent_config.current_database)
+            base_dir = self.agent_config.path_manager.semantic_model_path()
             for file in files:
                 # Convert relative path to absolute path if needed
                 file_path = file if Path(file).is_absolute() else base_dir / file

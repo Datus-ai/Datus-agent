@@ -242,7 +242,7 @@ async def process_template_item(
 
         logger.info(f"Generated template summary: {sql_summary_file}")
 
-        file_path = agent_config.path_manager.sql_summary_path(agent_config.current_namespace) / sql_summary_file
+        file_path = agent_config.path_manager.sql_summary_path() / sql_summary_file
         import yaml
 
         try:

@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import hashlib
 import os
 import re
 from dataclasses import asdict, dataclass, field, fields
@@ -20,6 +21,35 @@ from datus.utils.path_utils import get_files_from_glob_pattern
 
 # Regex for validating platform/identifier names (no special chars that break paths)
 _SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9_\-]+$")
+
+# Filesystem limits for sharded directory names.
+# Common filesystems (ext4, APFS, NTFS) cap single-component names at 255 bytes.
+# We leave room for prefixes/extensions by truncating to 200 chars + md5 suffix.
+_PROJECT_NAME_MAX_LEN = 200
+
+
+def _normalize_project_name(cwd: str) -> str:
+    """Sanitize a CWD path into a flat project name.
+
+    Rules:
+    - Replace every ``/`` (and backslash on Windows) with ``-``.
+    - Strip leading ``-`` so the segment does not start with a dot-like char.
+    - When the result is empty (e.g. root ``/``), fall back to ``_root``.
+    - When the normalized name exceeds :data:`_PROJECT_NAME_MAX_LEN` characters,
+      keep the trailing ``_PROJECT_NAME_MAX_LEN - 8`` characters and append a
+      7-char md5 digest so the name stays filesystem-safe while remaining
+      mostly human-readable.
+    """
+    if not cwd:
+        return "_root"
+    name = cwd.replace("\\", "/").replace("/", "-").lstrip("-")
+    if not name:
+        return "_root"
+    if len(name) > _PROJECT_NAME_MAX_LEN:
+        digest = hashlib.md5(name.encode("utf-8")).hexdigest()[:7]
+        tail_len = _PROJECT_NAME_MAX_LEN - len(digest) - 1
+        name = f"{name[-tail_len:]}-{digest}"
+    return name
 
 
 @dataclass
@@ -343,13 +373,26 @@ class AgentConfig:
         # Resolve home early so dependent helpers can use a stable path manager.
         self.home = kwargs.get("home", "~/.datus")
         self.knowledge_base_home = kwargs.get("knowledge_base_home")
+        if self.knowledge_base_home:
+            import warnings
+
+            warnings.warn(
+                "agent.knowledge_base_home is deprecated; knowledge-base content "
+                "(semantic_models, sql_summaries, ext_knowledge) is now anchored to "
+                "{cwd}/subject/. The setting is ignored.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        # project_name must be computed before _set_path_manager so shard-aware
+        # directories (sessions/, data/) bind to the right project.
+        self._project_name = kwargs.get("project_name") or _normalize_project_name(os.getcwd())
+        self._project_root = Path(kwargs.get("project_root") or os.getcwd()).resolve()
         self._set_path_manager(self.home, self.knowledge_base_home)
         models_raw = kwargs["models"]
         self.target = kwargs["target"]
         self.models = {name: load_model_config(cfg) for name, cfg in models_raw.items()}
         self._benchmark_config_dict = kwargs.get("benchmark", {})
         self._current_database = ""
-        self._project_name = kwargs.get("project_name", os.path.basename(os.getcwd()))
         self.nodes = nodes
         self.export_config: Dict[str, Any] = kwargs.get("export", {})
         self.api_config: Dict[str, Any] = kwargs.get("api", {}) or {}
@@ -402,12 +445,11 @@ class AgentConfig:
         # not full local directory / backend initialization.
         self._skip_init_dirs = kwargs.get("skip_init_dirs", False)
         if self._skip_init_dirs:
-            home_path = self.path_manager.datus_home
-            self.rag_base_path = str(home_path / "data")
+            self.rag_base_path = str(self.path_manager.data_dir)
             self._save_dir = ""
             self._trajectory_dir = ""
             self.benchmark_configs = {}
-            self.session_dir = kwargs.get("session_dir", str(home_path / "sessions"))
+            self.session_dir = kwargs.get("session_dir", str(self.path_manager.sessions_dir))
         else:
             self._init_dirs()
 
@@ -490,6 +532,11 @@ class AgentConfig:
         if not value:
             return
         self._project_name = value
+        # Rebuild path_manager so sessions_dir/data_dir reflect the new project.
+        self._set_path_manager(self.home, self.knowledge_base_home)
+        if not getattr(self, "_skip_init_dirs", False):
+            self.rag_base_path = str(self.path_manager.data_dir)
+            self.session_dir = str(self.path_manager.sessions_dir)
         if hasattr(self, "_backend_config"):
             from datus.storage.backend_holder import init_backends
 
@@ -840,7 +887,12 @@ class AgentConfig:
     def _set_path_manager(self, home: str, knowledge_base_home: Optional[str] = None) -> None:
         from datus.utils.path_manager import DatusPathManager, set_current_path_manager
 
-        self.path_manager = DatusPathManager(home, knowledge_base_home=knowledge_base_home)
+        self.path_manager = DatusPathManager(
+            home,
+            knowledge_base_home=knowledge_base_home,
+            project_name=self._project_name,
+            project_root=self._project_root,
+        )
         set_current_path_manager(self.path_manager)
 
     def _current_db_config(self) -> Dict[str, DbConfig]:
@@ -877,14 +929,9 @@ class AgentConfig:
         return self.models[name]
 
     def rag_storage_path(self) -> str:
-        isolation = "physical"
-        if hasattr(self, "_backend_config") and self._backend_config:
-            iso = getattr(self._backend_config, "isolation", None)
-            if hasattr(iso, "value"):
-                isolation = iso.value
-            elif iso:
-                isolation = str(iso)
-        return rag_storage_path(self.rag_base_path, self._project_name, isolation=isolation)
+        # rag_base_path is already sharded by project_name (``{home}/data/{project_name}``),
+        # so all isolation modes converge on the same ``datus_db`` subdirectory.
+        return os.path.join(self.rag_base_path, "datus_db")
 
     def document_storage_path(self, platform: str) -> str:
         """Per-platform document storage path (namespace-independent).
@@ -973,10 +1020,15 @@ class AgentConfig:
 
 
 def rag_storage_path(rag_base_path: str = "data", namespace: str = "", isolation: str = "physical") -> str:
-    if isolation == "logical":
-        return os.path.join(rag_base_path, "datus_db")
-    db_name = f"datus_db_{namespace}" if namespace else "datus_db"
-    return os.path.join(rag_base_path, db_name)
+    """Return the RAG storage path.
+
+    Project isolation is now achieved by sharding ``rag_base_path`` itself
+    (``{home}/data/{project_name}``); the legacy ``namespace`` segment and the
+    ``datus_db_{namespace}`` directory naming are no longer applied. Kept for
+    backward-compatible callers that import this helper directly.
+    """
+    del namespace, isolation  # unused, retained for signature compatibility
+    return os.path.join(rag_base_path, "datus_db")
 
 
 def resolve_env(value: str) -> str:

@@ -42,9 +42,6 @@ class StubAgentConfig:
     def rag_storage_path(self) -> str:
         return os.path.join(self.rag_base_path, "global")
 
-    def sub_agent_storage_path(self, sub_agent_name: str) -> str:
-        return os.path.join(self.rag_base_path, "sub_agents", sub_agent_name)
-
     def sub_agent_config(self, sub_agent_name: str):
         return self.agentic_nodes.get(sub_agent_name, {})
 

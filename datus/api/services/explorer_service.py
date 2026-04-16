@@ -763,7 +763,6 @@ class ExplorerService:
 
             from datus.api.models.config_models import ErrorCode
             from datus.cli.generation_hooks import GenerationHooks
-            from datus.utils.path_manager import DatusPathManager
 
             logger.info(f"Creating metric at parent path: {request.subject_path}")
 
@@ -833,9 +832,9 @@ class ExplorerService:
                     errorMessage=f"Metric '{metric_name}' already exists at path: {'/'.join(parent_path)}",
                 )
 
-            # Step 3: Determine file path
-            path_manager = DatusPathManager(datus_home=self.agent_config.home)
-            semantic_dir = path_manager.semantic_model_path(self.agent_config.current_namespace)
+            # Step 3: Determine file path. Use the agent_config's own path_manager so
+            # the project_root/subject anchoring propagates to derived paths.
+            semantic_dir = self.agent_config.path_manager.semantic_model_path()
             file_path = os.path.join(str(semantic_dir), "metrics", f"{metric_name}.yml")
 
             # Step 4: Check for file conflict

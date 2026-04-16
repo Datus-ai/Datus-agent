@@ -888,8 +888,8 @@ def do_init_sql_and_log_result(
                 logger.info("Dropped existing reference_sql table")
             finally:
                 db.close()
-            # Also clear sql_summaries/{namespace} directory (YAML files)
-            sql_summary_dir = agent_config.path_manager.sql_summary_path(agent_config.current_database)
+            # Also clear the sql_summaries directory (YAML files)
+            sql_summary_dir = agent_config.path_manager.sql_summary_path()
             if sql_summary_dir.exists() and not safe_rmtree(sql_summary_dir, "SQL summary directory", force=force):
                 console.print("[yellow]Cancelled by user[/yellow]")
                 return False, None

@@ -31,7 +31,8 @@ class GenerationCancelledException(Exception):
     """Exception raised when user cancels generation flow."""
 
 
-# Maps generation kind → top-level KB subdir name beneath knowledge_base_home.
+# Maps generation kind → top-level KB subdir name beneath the project's subject/
+# directory (e.g. ``{project_root}/subject/semantic_models``).
 _KIND_TO_SUBDIR = {
     "semantic": "semantic_models",
     "metric": "semantic_models",
@@ -53,23 +54,27 @@ _FILE_TYPE_ALIASES = {
 def normalize_kb_relative_path(
     path: str,
     kind: Optional[str],
-    namespace: Optional[str],
+    namespace: Optional[str] = None,
 ) -> str:
     """
     Silently normalize a relative path so that it lands under the typed
-    sub-directory of ``knowledge_base_home``, even when the caller forgets
-    the ``{subdir}/{namespace}/`` prefix.
+    sub-directory of the project's ``subject/`` tree, even when the caller
+    forgets the ``{subdir}/`` prefix.
 
     Rules:
       * Empty / absolute paths → unchanged.
       * "." / "./" → unchanged (workspace-root directory operations).
       * Path starts with a parent-traversal segment (``..``) → unchanged so
         the downstream sandbox check decides whether to reject.
-      * Unknown ``kind`` or missing ``namespace`` → unchanged.
+      * Unknown ``kind`` → unchanged.
       * Path already starts with any known KB subdir (semantic_models /
         sql_summaries / ext_knowledge) → unchanged (caller is being explicit).
-      * Otherwise → prepend ``{subdir}/{namespace}/``.
+      * Otherwise → prepend ``{subdir}/``.
+
+    The ``namespace`` parameter is accepted for backward compatibility but is
+    ignored: KB content is no longer namespace-scoped at the filesystem level.
     """
+    del namespace  # no longer used; project isolation happens at subject_dir level
     if not path or os.path.isabs(path):
         return path
     if path in (".", "./"):
@@ -79,15 +84,13 @@ def normalize_kb_relative_path(
         return path
     if parts[0] == "..":
         return path
-    if not namespace:
-        return path
     subdir = _KIND_TO_SUBDIR.get(kind or "")
     if not subdir:
         return path
     head = parts[0]
     if head in set(_KIND_TO_SUBDIR.values()):
         return path
-    return f"{subdir}/{namespace}/{'/'.join(parts)}"
+    return f"{subdir}/{'/'.join(parts)}"
 
 
 def resolve_kb_sandbox_path(
@@ -98,28 +101,27 @@ def resolve_kb_sandbox_path(
 ) -> Optional[str]:
     """
     Resolve an LLM-reported file path to an absolute path under the sandbox
-    ``{knowledge_base_dir}/{kind_subdir}/<namespace>/`` for the given ``kind``.
+    ``{knowledge_base_dir}/{kind_subdir}/`` for the given ``kind``.
 
     Used by workflow-mode ``_save_to_db()`` helpers where the path comes from
     the model's final JSON (not from a ``write_file`` tool result), so it must
-    be validated against the per-kind, per-namespace sandbox before syncing —
-    otherwise a fabricated response could cause an arbitrary file on disk to
-    be imported. Returns ``None`` when the path escapes the sandbox so callers
-    can skip it.
+    be validated against the per-kind sandbox before syncing — otherwise a
+    fabricated response could cause an arbitrary file on disk to be imported.
+    Returns ``None`` when the path escapes the sandbox so callers can skip it.
     """
+    del agent_config  # namespace scoping removed; retained for signature compat
     if not raw_path:
         return None
-    namespace = getattr(agent_config, "current_namespace", None) if agent_config else None
     if os.path.isabs(raw_path):
         candidate = os.path.normpath(raw_path)
     else:
-        normalized = normalize_kb_relative_path(raw_path, kind, namespace)
+        normalized = normalize_kb_relative_path(raw_path, kind)
         candidate = os.path.normpath(os.path.join(knowledge_base_dir, normalized))
     subdir = _KIND_TO_SUBDIR.get(kind or "")
-    if not subdir or not namespace:
+    if not subdir:
         return candidate
     try:
-        sandbox = os.path.realpath(os.path.join(knowledge_base_dir, subdir, namespace))
+        sandbox = os.path.realpath(os.path.join(knowledge_base_dir, subdir))
         candidate_real = os.path.realpath(candidate)
         if os.path.commonpath([sandbox, candidate_real]) != sandbox:
             logger.warning(
@@ -134,8 +136,8 @@ def resolve_kb_sandbox_path(
 
 def make_kb_path_normalizer(agent_config: "AgentConfig", default_kind: Optional[str] = None):
     """
-    Build a `FilesystemFuncTool.path_normalizer` closure that resolves the
-    namespace lazily so sub-agent switches mid-session are honored.
+    Build a ``FilesystemFuncTool.path_normalizer`` closure that silently prefixes
+    relative paths with the correct KB subdir under ``subject/``.
 
     The closure accepts an optional ``strict_kind`` kwarg. When set (used for
     mutating tool ops — ``write_file`` / ``edit_file``), cross-kind writes are
@@ -143,11 +145,11 @@ def make_kb_path_normalizer(agent_config: "AgentConfig", default_kind: Optional[
     path already prefixed with ``sql_summaries/`` or ``ext_knowledge/``. Reads
     stay lax so the LLM can still browse peer KB artifacts.
     """
+    del agent_config  # namespace scoping removed; retained for signature compat
     expected_subdir = _KIND_TO_SUBDIR.get(default_kind or "")
     known_subdirs = set(_KIND_TO_SUBDIR.values())
 
     def _normalize(path: str, file_type: Optional[str], *, strict_kind: bool = False) -> str:
-        namespace = getattr(agent_config, "current_namespace", None) if agent_config else None
         if strict_kind and expected_subdir and path and not os.path.isabs(path):
             parts = [p for p in path.replace("\\", "/").split("/") if p]
             head = parts[0] if parts else ""
@@ -156,19 +158,10 @@ def make_kb_path_normalizer(agent_config: "AgentConfig", default_kind: Optional[
                     f"Write to '{head}/' is not allowed from a {default_kind!r} node; "
                     f"this node may only write under '{expected_subdir}/'."
                 )
-            # Even within the correct kind, reject prefixes that would write
-            # into a peer namespace (e.g. semantic_models/other_db/foo.yml
-            # from a node whose current_namespace is 'db').
-            if head == expected_subdir and namespace and len(parts) >= 2 and parts[1] != namespace:
-                raise ValueError(
-                    f"Write to '{head}/{parts[1]}/' is not allowed from namespace "
-                    f"{namespace!r}; this node may only write under "
-                    f"'{expected_subdir}/{namespace}/'."
-                )
             kind = default_kind
         else:
             kind = _FILE_TYPE_ALIASES.get(file_type or "", default_kind)
-        return normalize_kb_relative_path(path, kind, namespace)
+        return normalize_kb_relative_path(path, kind)
 
     return _normalize
 
@@ -217,37 +210,36 @@ class GenerationHooks(AgentHooks):
             resolver = getattr(path_manager, resolver_name, None)
             if resolver is None:
                 return None
-            namespace = getattr(self.agent_config, "current_namespace", None)
-            return str(resolver(namespace))
+            return str(resolver())
         except Exception as e:
             logger.warning(f"Failed to resolve base_dir for kind={kind}: {e}")
             return None
 
     def _get_kb_home(self) -> Optional[str]:
-        """Return ``str(knowledge_base_home)`` from the live agent_config, or None."""
+        """Return the project-scoped ``subject/`` directory as a string, or None."""
         if not self.agent_config:
             return None
         path_manager = getattr(self.agent_config, "path_manager", None)
         if path_manager is None:
             return None
         try:
-            return str(path_manager.knowledge_base_home)
+            return str(path_manager.subject_dir)
         except Exception as e:
-            logger.warning(f"Failed to resolve knowledge_base_home from agent_config: {e}")
+            logger.warning(f"Failed to resolve subject_dir from agent_config: {e}")
             return None
 
     def _resolve_path(self, path: str, kind: str) -> str:
         """
         Resolve a file path reported by a generation tool to an absolute path
-        under ``knowledge_base_home``, or return an empty string when the path
-        escapes the workspace so callers skip it (fail closed — never open
-        arbitrary files outside the KB).
+        under the project ``subject/`` directory, or return an empty string
+        when the path escapes the workspace so callers skip it (fail closed —
+        never open arbitrary files outside the KB).
 
         Relative paths are first normalized via :func:`normalize_kb_relative_path`
-        (so naked filenames like ``orders.yaml`` get the ``{subdir}/{namespace}/``
-        prefix matching the LLM's actual write location) and then joined with
-        ``knowledge_base_home``. Absolute paths are accepted only when they
-        resolve inside ``knowledge_base_home``.
+        (so naked filenames like ``orders.yaml`` get the ``{subdir}/`` prefix
+        matching the LLM's actual write location) and then joined with the
+        subject directory. Absolute paths are accepted only when they resolve
+        inside the subject directory.
         """
         if not path:
             return path
@@ -257,8 +249,7 @@ class GenerationHooks(AgentHooks):
         if os.path.isabs(path):
             candidate = os.path.normpath(path)
         else:
-            namespace = getattr(self.agent_config, "current_namespace", None) if self.agent_config else None
-            normalized = normalize_kb_relative_path(path, kind, namespace)
+            normalized = normalize_kb_relative_path(path, kind)
             candidate = os.path.normpath(os.path.join(kb_home, normalized))
         try:
             base_abs = os.path.realpath(kb_home)
@@ -266,7 +257,7 @@ class GenerationHooks(AgentHooks):
             if os.path.commonpath([base_abs, candidate_abs]) != base_abs:
                 logger.warning(
                     f"Rejected path {path!r} for kind={kind}: resolved {candidate_abs!r} "
-                    f"escapes knowledge_base_home {base_abs!r}."
+                    f"escapes subject_dir {base_abs!r}."
                 )
                 return ""
         except ValueError:

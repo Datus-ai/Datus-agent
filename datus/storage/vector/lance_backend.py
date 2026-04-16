@@ -410,18 +410,16 @@ class LanceVectorBackend(BaseVectorBackend):
         self._isolation = IsolationType(config.get("isolation", IsolationType.PHYSICAL.value))
 
     def connect(self, namespace: str = "") -> LanceVectorDatabase:
+        # Project isolation is handled one level up by sharding ``data_dir`` as
+        # ``{home}/data/{project_name}``. All tenants within a project therefore
+        # share a single ``datus_db`` directory; LOGICAL mode additionally scopes
+        # rows via ``datasource_id``.
+        # todo 为什么用lance, 可能是任意backend
+        db_path = os.path.join(self._data_dir, "datus_db")
+        raw_db = lancedb.connect(db_path)
         if self._isolation == IsolationType.LOGICAL:
-            # All namespaces share the same "datus_db" directory;
-            # namespace becomes the datasource_id for column-level filtering.
-            db_path = os.path.join(self._data_dir, "datus_db")
-            raw_db = lancedb.connect(db_path)
             return LanceVectorDatabase(raw_db, isolation=self._isolation, datasource_id=namespace)
-        else:
-            # PHYSICAL: each namespace gets its own directory with datus_db_ prefix.
-            db_name = f"datus_db_{namespace}" if namespace else "datus_db"
-            db_path = os.path.join(self._data_dir, db_name)
-            raw_db = lancedb.connect(db_path)
-            return LanceVectorDatabase(raw_db)
+        return LanceVectorDatabase(raw_db)
 
     def close(self) -> None:
         pass  # LanceDB connections are lightweight

@@ -406,15 +406,54 @@ class TestAgentConfigApiSection:
         assert cfg.api_config == api
 
 
-class TestAgentConfigKnowledgeHome:
-    """End-to-end tests for the knowledge_base_home config option."""
+class TestNormalizeProjectName:
+    """Tests for the _normalize_project_name helper."""
 
-    def _make(self, tmp_path, *, home=None, knowledge_base_home=None):
+    def test_replaces_slashes(self):
+        from datus.configuration.agent_config import _normalize_project_name
+
+        assert _normalize_project_name("/Users/me/proj") == "Users-me-proj"
+
+    def test_strips_leading_dash_only(self):
+        from datus.configuration.agent_config import _normalize_project_name
+
+        # Leading slash -> leading '-' which is stripped.
+        assert _normalize_project_name("/a/b/c") == "a-b-c"
+
+    def test_root_falls_back_to_underscore_root(self):
+        from datus.configuration.agent_config import _normalize_project_name
+
+        assert _normalize_project_name("/") == "_root"
+
+    def test_empty_falls_back_to_underscore_root(self):
+        from datus.configuration.agent_config import _normalize_project_name
+
+        assert _normalize_project_name("") == "_root"
+
+    def test_long_path_truncated_with_md5(self):
+        from datus.configuration.agent_config import _PROJECT_NAME_MAX_LEN, _normalize_project_name
+
+        long_cwd = "/" + "/".join("seg" + str(i) for i in range(200))
+        name = _normalize_project_name(long_cwd)
+        assert len(name) <= _PROJECT_NAME_MAX_LEN
+        # 7-char md5 suffix appended
+        assert name[-8] == "-"
+
+    def test_backslashes_treated_like_slashes(self):
+        from datus.configuration.agent_config import _normalize_project_name
+
+        assert _normalize_project_name("C:\\Users\\me\\proj") == "C:-Users-me-proj"
+
+
+class TestAgentConfigProjectLayout:
+    """Verify AgentConfig derives project-aware storage paths correctly."""
+
+    def _make(self, tmp_path, *, project_name=None, project_root=None, knowledge_base_home=None):
         from datus.configuration.agent_config import AgentConfig, NodeConfig
 
         kwargs = dict(
             nodes={"test": NodeConfig(model="test-model", input=None)},
-            home=str(home or (tmp_path / "datus")),
+            home=str(tmp_path / "datus_home"),
             target="mock",
             models={
                 "mock": {
@@ -426,82 +465,54 @@ class TestAgentConfigKnowledgeHome:
             },
             skip_init_dirs=True,
         )
+        if project_name is not None:
+            kwargs["project_name"] = project_name
+        if project_root is not None:
+            kwargs["project_root"] = str(project_root)
         if knowledge_base_home is not None:
             kwargs["knowledge_base_home"] = knowledge_base_home
         return AgentConfig(**kwargs)
 
-    def test_knowledge_base_home_unset_falls_back_to_home(self, tmp_path):
+    def test_sessions_and_data_sharded_by_project_name(self, tmp_path):
+        project_root = tmp_path / "my_project"
+        cfg = self._make(tmp_path, project_name="demo_project", project_root=project_root)
+
+        datus_home = (tmp_path / "datus_home").resolve()
+        assert cfg.path_manager.data_dir == datus_home / "data" / "demo_project"
+        assert cfg.path_manager.sessions_dir == datus_home / "sessions" / "demo_project"
+
+    def test_subject_tree_anchored_to_project_root(self, tmp_path):
+        project_root = tmp_path / "my_project"
+        cfg = self._make(tmp_path, project_name="demo_project", project_root=project_root)
+
+        subject = project_root.resolve() / "subject"
+        assert cfg.path_manager.subject_dir == subject
+        assert cfg.path_manager.semantic_models_dir == subject / "semantic_models"
+        assert cfg.path_manager.sql_summaries_dir == subject / "sql_summaries"
+        assert cfg.path_manager.ext_knowledge_dir == subject / "ext_knowledge"
+
+    def test_project_name_auto_derived_from_cwd_when_absent(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         cfg = self._make(tmp_path)
-        # When not configured, KB dirs should live under home
-        assert cfg.path_manager.knowledge_base_home == cfg.path_manager.datus_home
-        assert cfg.path_manager.semantic_models_dir == cfg.path_manager.datus_home / "semantic_models"
 
-    def test_knowledge_base_home_custom_path_propagates_to_path_manager(self, tmp_path):
-        datus_home = tmp_path / "datus"
-        kb_home = tmp_path / "shared_kb"
-        cfg = self._make(tmp_path, home=datus_home, knowledge_base_home=str(kb_home))
+        # Should be a sanitized version of tmp_path (all '/' replaced with '-')
+        assert cfg.project_name
+        assert "/" not in cfg.project_name
 
-        assert cfg.knowledge_base_home == str(kb_home)
-        assert cfg.path_manager.knowledge_base_home == kb_home.resolve()
-        # All three KB dirs should live under kb_home
-        assert cfg.path_manager.semantic_models_dir == kb_home.resolve() / "semantic_models"
-        assert cfg.path_manager.sql_summaries_dir == kb_home.resolve() / "sql_summaries"
-        assert cfg.path_manager.ext_knowledge_dir == kb_home.resolve() / "ext_knowledge"
-        # Non-KB dirs should stay under datus_home
-        assert cfg.path_manager.logs_dir == datus_home.resolve() / "logs"
-        assert cfg.path_manager.sessions_dir == datus_home.resolve() / "sessions"
-        assert cfg.path_manager.data_dir == datus_home.resolve() / "data"
+    def test_knowledge_base_home_deprecation_warning(self, tmp_path):
+        import warnings
 
-    def test_override_by_args_updates_knowledge_base_home(self, tmp_path):
-        cfg = self._make(tmp_path)
-        new_kb = tmp_path / "new_kb"
-        # action="namespace" keeps override_by_args from touching current_namespace
-        cfg.override_by_args(knowledge_base_home=str(new_kb), action="namespace")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            self._make(tmp_path, knowledge_base_home=str(tmp_path / "ignored_kb"))
 
-        assert cfg.knowledge_base_home == str(new_kb)
-        assert cfg.path_manager.knowledge_base_home == new_kb.resolve()
-        assert cfg.path_manager.semantic_models_dir == new_kb.resolve() / "semantic_models"
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
-    def test_load_agent_config_reads_knowledge_base_home_from_yaml(self, tmp_path, monkeypatch):
-        """End-to-end: YAML with knowledge_base_home → load_agent_config → path_manager."""
-        import yaml
+    def test_setting_project_name_rebuilds_path_manager(self, tmp_path):
+        cfg = self._make(tmp_path, project_name="first", project_root=tmp_path)
+        first_data = cfg.path_manager.data_dir
 
-        from datus.configuration.agent_config_loader import load_agent_config
-
-        datus_home = tmp_path / "tenant_home"
-        kb_home = tmp_path / "tenant_kb"
-
-        yaml_content = {
-            "agent": {
-                "home": str(datus_home),
-                "knowledge_base_home": str(kb_home),
-                "target": "mock",
-                "models": {
-                    "mock": {
-                        "type": "openai",
-                        "api_key": "k",
-                        "model": "m",
-                        "base_url": "http://localhost:0",
-                    }
-                },
-                "namespace": {
-                    "dummy": {
-                        "type": "sqlite",
-                        "name": "dummy",
-                        "uri": f"sqlite:///{tmp_path}/dummy.db",
-                    }
-                },
-            }
-        }
-        config_path = tmp_path / "agent.yml"
-        config_path.write_text(yaml.safe_dump(yaml_content), encoding="utf-8")
-
-        cfg = load_agent_config(config=str(config_path), reload=True)
-
-        assert cfg.path_manager.knowledge_base_home == kb_home.resolve()
-        assert cfg.path_manager.semantic_models_dir == kb_home.resolve() / "semantic_models"
-        assert cfg.path_manager.sql_summaries_dir == kb_home.resolve() / "sql_summaries"
-        assert cfg.path_manager.ext_knowledge_dir == kb_home.resolve() / "ext_knowledge"
-        # Other dirs still under datus_home
-        assert cfg.path_manager.datus_home == datus_home.resolve()
-        assert cfg.path_manager.logs_dir == datus_home.resolve() / "logs"
+        cfg.project_name = "second"
+        assert cfg.path_manager.data_dir != first_data
+        assert cfg.path_manager.data_dir == (tmp_path / "datus_home").resolve() / "data" / "second"
+        assert cfg.path_manager.sessions_dir == (tmp_path / "datus_home").resolve() / "sessions" / "second"

@@ -21,7 +21,7 @@ class TestSkillConfig:
     def test_skill_config_defaults(self):
         """Test SkillConfig with default values."""
         config = SkillConfig()
-        assert config.directories == ["~/.datus/skills", "./skills"]
+        assert config.directories == ["./.datus/skills", "~/.datus/skills"]
         assert config.warn_duplicates is True
         assert config.whitelist_from_compaction is True
 
@@ -50,13 +50,13 @@ class TestSkillConfig:
     def test_skill_config_from_dict_empty(self):
         """Test creating SkillConfig from empty dictionary."""
         config = SkillConfig.from_dict({})
-        assert config.directories == ["~/.datus/skills", "./skills"]
+        assert config.directories == ["./.datus/skills", "~/.datus/skills"]
         assert config.warn_duplicates is True
 
     def test_skill_config_from_dict_partial(self):
         """Test creating SkillConfig from partial dictionary."""
         config = SkillConfig.from_dict({"warn_duplicates": False})
-        assert config.directories == ["~/.datus/skills", "./skills"]
+        assert config.directories == ["./.datus/skills", "~/.datus/skills"]
         assert config.warn_duplicates is False
 
     def test_skill_config_serialization(self):

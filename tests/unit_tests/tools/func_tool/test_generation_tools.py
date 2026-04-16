@@ -238,8 +238,7 @@ class TestEndMetricGenerationPreflight:
     def _patch_path_resolution(tools, kb_root):
         """Make end_metric_generation treat absolute paths as-is."""
         mock_pm = Mock()
-        mock_pm.knowledge_base_home = str(kb_root)
-        tools.agent_config.current_namespace = "ns"
+        mock_pm.subject_dir = str(kb_root)
         return patch(
             "datus.tools.func_tool.generation_tools.get_path_manager",
             return_value=mock_pm,

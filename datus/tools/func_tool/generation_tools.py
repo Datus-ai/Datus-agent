@@ -222,18 +222,17 @@ class GenerationTools:
                 f"metric_sqls={metric_sqls}"
             )
 
-            # Resolve absolute paths against knowledge_base_home, applying the same
-            # silent prefix normalization as FilesystemFuncTool so the LLM-reported
-            # path matches where the file was actually written.
+            # Resolve relative paths against the project's subject/ tree,
+            # applying the same silent prefix normalization as FilesystemFuncTool
+            # so the LLM-reported path matches where the file was actually written.
             from datus.cli.generation_hooks import normalize_kb_relative_path
 
-            kb_home = str(get_path_manager(agent_config=self.agent_config).knowledge_base_home)
-            namespace = self.agent_config.current_namespace
+            subject_root = str(get_path_manager(agent_config=self.agent_config).subject_dir)
 
             def _resolve(path: str, kind: str) -> str:
                 if not path or os.path.isabs(path):
                     return path
-                return os.path.normpath(os.path.join(kb_home, normalize_kb_relative_path(path, kind, namespace)))
+                return os.path.normpath(os.path.join(subject_root, normalize_kb_relative_path(path, kind)))
 
             abs_metric = _resolve(metric_file, "metric")
             abs_semantic = _resolve(semantic_model_file, "semantic")

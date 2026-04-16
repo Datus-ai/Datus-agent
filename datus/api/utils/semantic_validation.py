@@ -108,9 +108,13 @@ def _validate_deep(
         if lint_issues:
             return False, [issue.as_readable_str() for issue in lint_issues]
 
-        # Step 3: Collect all existing semantic model files in the namespace
+        # Step 3: Collect all existing semantic model files for the current project.
+        # The ``namespace`` argument is retained only for signature compatibility —
+        # the KB now lives at ``{project_root}/subject/semantic_models`` without
+        # per-namespace subdirectories.
+        del namespace  # unused after refactor; kept in signature for compatibility
         path_manager = DatusPathManager(datus_home=Path(datus_home))
-        semantic_yaml_dir = path_manager.semantic_model_path(namespace)
+        semantic_yaml_dir = path_manager.semantic_model_path()
         file_paths = collect_yaml_config_file_paths(directory=str(semantic_yaml_dir))
 
         # Replace the original file with the temp file for validation

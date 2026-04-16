@@ -107,8 +107,8 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
         self._last_verification_result: Optional[VerifyResult] = None
         self._verification_attempt_count: int = 0
 
-        self.ext_knowledge_dir = str(agent_config.path_manager.ext_knowledge_path(agent_config.current_database))
-        self.knowledge_base_dir = str(agent_config.path_manager.knowledge_base_home)
+        self.ext_knowledge_dir = str(agent_config.path_manager.ext_knowledge_path())
+        self.knowledge_base_dir = str(agent_config.path_manager.subject_dir)
 
         from datus.configuration.node_type import NodeType
 

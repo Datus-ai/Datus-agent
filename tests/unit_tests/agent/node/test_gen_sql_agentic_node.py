@@ -1503,8 +1503,10 @@ class TestEndToEndGenerationHooksInteraction:
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
         from datus.cli.generation_hooks import GenerationHooks
 
-        # Create a real YAML file for GenerationHooks to read
-        yaml_path = os.path.join(str(tmp_path), "test_semantic_model.yaml")
+        # Create a real YAML file under the project subject_dir so GenerationHooks
+        # path containment check accepts it.
+        semantic_dir = real_agent_config.path_manager.semantic_model_path()
+        yaml_path = os.path.join(str(semantic_dir), "test_semantic_model.yaml")
         _create_test_semantic_yaml(yaml_path)
 
         # Create a fake end_semantic_model_generation tool that returns the expected result format
@@ -1613,8 +1615,10 @@ class TestEndToEndGenerationHooksInteraction:
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
         from datus.cli.generation_hooks import GenerationHooks
 
-        # Create a real YAML file for GenerationHooks to read
-        yaml_path = os.path.join(str(tmp_path), "test_semantic_decline.yaml")
+        # Create a real YAML file under the project subject_dir so GenerationHooks
+        # path containment check accepts it.
+        semantic_dir = real_agent_config.path_manager.semantic_model_path()
+        yaml_path = os.path.join(str(semantic_dir), "test_semantic_decline.yaml")
         _create_test_semantic_yaml(yaml_path)
 
         # Create a fake end_semantic_model_generation tool

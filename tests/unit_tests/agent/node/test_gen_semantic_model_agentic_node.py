@@ -609,17 +609,16 @@ class TestSaveToDb:
 
 
 class TestGenSemanticModelFilesystemRootPath:
-    """FilesystemFuncTool is sandboxed to knowledge_base_home (not the type-specific subdir)."""
+    """FilesystemFuncTool is sandboxed to subject_dir (not the type-specific subdir)."""
 
-    def test_filesystem_root_is_kb_home(self, real_agent_config, mock_llm_create):
+    def test_filesystem_root_is_subject_dir(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
 
         node = GenSemanticModelAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        expected = str(real_agent_config.path_manager.knowledge_base_home)
+        expected = str(real_agent_config.path_manager.subject_dir)
 
         assert node.filesystem_func_tool is not None
         assert node.filesystem_func_tool.config.root_path == expected
         assert node.filesystem_func_tool._path_normalizer is not None
 
-        ns = real_agent_config.current_namespace
-        assert node.filesystem_func_tool._path_normalizer("orders.yml", None) == f"semantic_models/{ns}/orders.yml"
+        assert node.filesystem_func_tool._path_normalizer("orders.yml", None) == "semantic_models/orders.yml"

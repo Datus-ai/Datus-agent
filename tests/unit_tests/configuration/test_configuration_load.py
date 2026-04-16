@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from datus.configuration.agent_config import AgentConfig
@@ -58,8 +60,12 @@ def test_configuration_load(database: str, agent_config: AgentConfig):
     )
 
     assert agent_config.schema_linking_rate == "slow"
-    # rag_storage_path() now uses project_name (from cwd), not database name
-    assert "data/datus_db_" in agent_config.rag_storage_path()
+    # rag_storage_path() lives under the project-sharded data_dir now:
+    # ``{home}/data/{project_name}/datus_db``. The name ``datus_db`` is fixed;
+    # project isolation happens via the parent directory.
+    storage_path = agent_config.rag_storage_path()
+    assert storage_path.endswith("datus_db")
+    assert f"/data/{agent_config.project_name}/datus_db" in storage_path.replace(os.sep, "/")
 
     with pytest.raises(DatusException, match="Missing required field: database"):
         agent_config.current_namespace = ""
