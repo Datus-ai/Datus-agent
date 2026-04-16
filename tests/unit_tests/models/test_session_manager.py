@@ -1662,3 +1662,36 @@ class TestCopySession:
         assert len(rows) == 1
         assert rows[0][0] == new_id
         assert rows[0][1] == 150
+
+    def test_copy_session_get_items_returns_copied_messages(self, sm):
+        """Copied session must return history via AdvancedSQLiteSession.get_items().
+
+        Regression for the bug where switching agents printed
+        "Copied session ... (N messages, ...)" but the new agent's LLM call
+        did not include the history.  AdvancedSQLiteSession.get_items() joins
+        agent_messages with message_structure, so copy_session must preserve
+        message_structure rows and agent_messages.id references.
+        """
+        import asyncio
+
+        source_id = "chat_session_items"
+        # Populate via AdvancedSQLiteSession.add_items so message_structure is
+        # created by the SDK exactly as in production.
+        source_db = os.path.join(sm.session_dir, f"{source_id}.db")
+        source = AdvancedSQLiteSession(session_id=source_id, db_path=source_db, create_tables=True)
+        items = [
+            {"role": "user", "content": "Q1"},
+            {"role": "assistant", "content": "A1"},
+            {"role": "user", "content": "Q2"},
+            {"role": "assistant", "content": "A2"},
+        ]
+        asyncio.run(source.add_items(items))
+
+        new_id = sm.copy_session(source_id, "gensql")
+
+        # Open via the SDK class to exercise the real read path.
+        new_db = os.path.join(sm.session_dir, f"{new_id}.db")
+        new_session = AdvancedSQLiteSession(session_id=new_id, db_path=new_db, create_tables=True)
+        read_items = asyncio.run(new_session.get_items())
+        assert len(read_items) == 4
+        assert [it.get("content") for it in read_items] == ["Q1", "A1", "Q2", "A2"]
