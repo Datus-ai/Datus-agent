@@ -175,6 +175,79 @@ class TestChatServiceCompactSession:
         # Should handle gracefully
         assert result is not None
 
+    async def test_compact_persists_summary_into_session(self, real_agent_config, mock_llm_create):
+        """End-to-end: compact must keep the .db alive and write a
+        user-marker + assistant-summary pair back into the same session.
+
+        This is the regression coverage for the original bug where compact
+        deleted the .db and stored the summary only in the discarded node's
+        memory, so UI history reads got an empty session and the next
+        chat turn had no summary context.
+        """
+        from datus.api.models.cli_models import CompactSessionInput
+
+        svc = ChatService(
+            agent_config=real_agent_config,
+            task_manager=ChatTaskManager(),
+            project_id="test-proj",
+        )
+
+        # Route the mock LLM's session manager to the real on-disk session_dir
+        # so that ChatAgenticNode._get_or_create_session loads the same .db
+        # we pre-populate below.
+        real_sm = SessionManager(session_dir=svc._session_dir)
+        mock_llm_create._session_manager = real_sm
+
+        # Pre-create a real chat session with two Q/A pairs.
+        session_id = "chat_session_compact_test"
+        seeded = real_sm.create_session(session_id)
+        await seeded.add_items(
+            [
+                {"role": "user", "content": "What tables are there?"},
+                {"role": "assistant", "content": [{"type": "output_text", "text": "Tables: schools, frpm"}]},
+                {"role": "user", "content": "Describe schools."},
+                {"role": "assistant", "content": [{"type": "output_text", "text": "schools has cols a, b, c"}]},
+            ]
+        )
+
+        # Patch the mock LLM's generate_with_tools to return a deterministic
+        # summary for the summarization prompt issued inside _manual_compact.
+        from unittest.mock import AsyncMock as _AsyncMock
+
+        mock_llm_create.generate_with_tools = _AsyncMock(
+            return_value={"content": "Summary of conversation", "usage": {"output_tokens": 42}}
+        )
+
+        request = CompactSessionInput(session_id=session_id)
+        result = await svc.compact_session(request)
+
+        assert result.success is True
+        assert result.data.success is True
+
+        # The .db file must still exist — compact no longer deletes it.
+        import os
+
+        db_path = os.path.join(svc._session_dir, f"{session_id}.db")
+        assert os.path.exists(db_path), "Session .db must be preserved after compact"
+
+        # Re-open the session via a fresh SessionManager to bypass any
+        # in-memory caches and verify on-disk state.
+        verify_sm = SessionManager(session_dir=svc._session_dir)
+        verify_session = verify_sm.get_session(session_id)
+        items = await verify_session.get_items()
+
+        # After compact, the session must contain exactly the user-marker
+        # and assistant-summary pair we wrote in _manual_compact.
+        assert len(items) == 2
+        assert items[0]["role"] == "user"
+        assert "compacted" in items[0]["content"].lower()
+        assert items[1]["role"] == "assistant"
+        # Assistant content is a list of typed parts; the first part is the summary text.
+        content = items[1]["content"]
+        assert isinstance(content, list)
+        assert content[0]["type"] == "output_text"
+        assert content[0]["text"] == "Summary of conversation"
+
 
 @pytest.mark.asyncio
 class TestChatServiceStreamChat:

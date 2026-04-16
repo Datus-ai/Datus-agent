@@ -419,9 +419,6 @@ class AgenticNode(Node):
         try:
             logger.info(f"Starting manual compacting for session {self.session_id}")
 
-            # Store old session info for logging
-            old_session_id = self.session_id
-
             # 1. Generate summary using LLM with existing session
             summarization_prompt = (
                 "Summarize our conversation up to this point. The summary should be a concise yet comprehensive "
@@ -447,24 +444,37 @@ class AgenticNode(Node):
                 logger.error(f"Failed to generate summary with LLM: {e}")
                 return {"success": False, "summary": "", "summary_token": 0}
 
-            # 2. Store summary for next session creation
+            # 2. Persist summary back into the session: clear the existing history
+            #    and append a user/assistant pair so the summary becomes the new
+            #    visible turn. Subsequent LLM requests will pick it up as context
+            #    via the OpenAI Agents SDK session, and UI history reads will
+            #    surface the summary instead of an empty session.
+            try:
+                await self._session.clear_session()
+                await self._session.add_items(
+                    [
+                        {
+                            "role": "user",
+                            "content": "[Previous conversation was compacted to save context. Summary below.]",
+                        },
+                        {
+                            "role": "assistant",
+                            "content": [{"type": "output_text", "text": summary}],
+                        },
+                    ]
+                )
+            except Exception as persist_err:
+                logger.error(f"Failed to persist compact summary: {persist_err}")
+                return {"success": False, "summary": "", "summary_token": 0}
+
+            # Keep last_summary for backward compatibility with any callers that
+            # still read the attribute directly. The summary now lives in the
+            # session itself, so this is no longer the source of truth.
             self.last_summary = summary
-            logger.info(f"Stored summary for next session: {len(summary)} characters")
-
-            # 3. Clear current session
-            if old_session_id:
-                try:
-                    self.model.delete_session(old_session_id)
-                    logger.debug(f"Deleted old session: {old_session_id}")
-                except Exception as e:
-                    logger.warning(f"Failed to delete old session {old_session_id}: {e}")
-
-            # Clear session references
-            self.session_id = None
-            self._session = None
 
             logger.info(
-                f"Manual compacting completed. Cleared session: {old_session_id}, Summary stored: {len(summary)} chars"
+                f"Manual compacting completed. Session {self.session_id} cleared and "
+                f"summary persisted ({len(summary)} chars, {summary_token} output tokens)"
             )
             return {"success": True, "summary": summary, "summary_token": summary_token}
 
