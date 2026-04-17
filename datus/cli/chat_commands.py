@@ -37,6 +37,34 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _drop_if_matches_final(
+    pending: Optional[ActionHistory],
+    final_action: ActionHistory,
+    incremental_actions: list,
+) -> Optional[ActionHistory]:
+    """Reconcile a pending ASSISTANT action with an incoming *_response action.
+
+    The model layer tags the tail LLM text with is_thinking=False and the node
+    wraps the same text into a *_response action. When both are present we drop
+    the pending entry so the final response is not rendered twice. If the texts
+    differ (e.g. LLM emitted thinking before any tool call, then the node built
+    the final response from a later turn), flush the pending entry into the
+    incremental stream so the thinking is preserved.
+    """
+    if pending is None:
+        return None
+    pending_text = ""
+    if isinstance(pending.output, dict):
+        pending_text = (pending.output.get("raw_output") or "").strip()
+    final_text = ""
+    if isinstance(final_action.output, dict):
+        final_text = (final_action.output.get("response") or "").strip()
+    if pending_text and pending_text == final_text:
+        return None
+    incremental_actions.append(pending)
+    return None
+
+
 class ChatCommands:
     """Handles all chat-related commands and functionality."""
 
@@ -250,12 +278,18 @@ class ChatCommands:
             action_display = ActionHistoryDisplay(self.console)
             incremental_actions = []
             node_final_action = None  # Node's final ASSISTANT action (e.g. chat_response)
+            # Buffer for ASSISTANT text tagged as non-thinking by the model layer.
+            # Tail text often duplicates the node's *_response; defer rendering
+            # so we can drop it when the *_response arrives, but flush it on any
+            # other action so mid-turn thinking before a tool call is preserved.
+            pending_non_thinking = None
 
             if interactive:
                 self.console.print("[dim]Press ESC or Ctrl+C to interrupt[/dim]")
 
                 async def run_chat_stream():
                     """Run chat stream — INTERACTION actions flow into incremental_actions."""
+                    nonlocal node_final_action, pending_non_thinking
                     streaming_ctx.set_event_loop(asyncio.get_running_loop())
                     async for action in current_node.execute_stream_with_interactions(
                         action_history_manager=self.cli.actions
@@ -265,14 +299,6 @@ class ChatCommands:
                             continue
                         # Skip TOOL PROCESSING entries — SUCCESS version follows
                         if action.role == ActionRole.TOOL and action.status == ActionStatus.PROCESSING:
-                            continue
-                        # Skip non-thinking ASSISTANT actions (final output) —
-                        # rendered by the final response display below instead.
-                        if (
-                            action.role == ActionRole.ASSISTANT
-                            and isinstance(action.output, dict)
-                            and not action.output.get("is_thinking", True)
-                        ):
                             continue
                         # Node final actions (e.g. chat_response) — keep for
                         # final response rendering but skip streaming trace.
@@ -286,10 +312,30 @@ class ChatCommands:
                             and action.action_type.endswith("_response")
                             and action.depth == 0
                         ):
-                            nonlocal node_final_action
                             node_final_action = action
+                            pending_non_thinking = _drop_if_matches_final(
+                                pending_non_thinking, action, incremental_actions
+                            )
                             continue
+                        # Defer ASSISTANT text flagged as non-thinking — it may
+                        # be the tail text that duplicates the upcoming *_response.
+                        if (
+                            action.role == ActionRole.ASSISTANT
+                            and isinstance(action.output, dict)
+                            and not action.output.get("is_thinking", True)
+                        ):
+                            pending_non_thinking = action
+                            continue
+                        # Any other action: flush pending first to preserve order.
+                        if pending_non_thinking is not None:
+                            incremental_actions.append(pending_non_thinking)
+                            pending_non_thinking = None
                         incremental_actions.append(action)
+                    # Stream ended: flush remaining pending only when no node
+                    # final action captured it (otherwise it was already handled).
+                    if pending_non_thinking is not None and node_final_action is None:
+                        incremental_actions.append(pending_non_thinking)
+                        pending_non_thinking = None
 
                 streaming_ctx = action_display.display_streaming_actions(
                     incremental_actions,
@@ -315,7 +361,7 @@ class ChatCommands:
             else:
 
                 async def run_stream():
-                    nonlocal node_final_action
+                    nonlocal node_final_action, pending_non_thinking
                     async for action in current_node.execute_stream_with_interactions(
                         action_history_manager=self.cli.actions
                     ):
@@ -328,14 +374,6 @@ class ChatCommands:
                                     await auto_submit_interaction(broker, action)
                             continue
                         if action.role == ActionRole.TOOL and action.status == ActionStatus.PROCESSING:
-                            continue
-                        # Skip non-thinking ASSISTANT actions (final output) —
-                        # rendered by the final response display below instead.
-                        if (
-                            action.role == ActionRole.ASSISTANT
-                            and isinstance(action.output, dict)
-                            and not action.output.get("is_thinking", True)
-                        ):
                             continue
                         # Node final actions (e.g. chat_response) — keep for
                         # final response rendering but skip streaming trace.
@@ -350,8 +388,26 @@ class ChatCommands:
                             and action.depth == 0
                         ):
                             node_final_action = action
+                            pending_non_thinking = _drop_if_matches_final(
+                                pending_non_thinking, action, incremental_actions
+                            )
                             continue
+                        # Defer ASSISTANT text flagged as non-thinking — it may
+                        # be the tail text that duplicates the upcoming *_response.
+                        if (
+                            action.role == ActionRole.ASSISTANT
+                            and isinstance(action.output, dict)
+                            and not action.output.get("is_thinking", True)
+                        ):
+                            pending_non_thinking = action
+                            continue
+                        if pending_non_thinking is not None:
+                            incremental_actions.append(pending_non_thinking)
+                            pending_non_thinking = None
                         incremental_actions.append(action)
+                    if pending_non_thinking is not None and node_final_action is None:
+                        incremental_actions.append(pending_non_thinking)
+                        pending_non_thinking = None
 
                 with action_display.display_streaming_actions(incremental_actions):
                     try:

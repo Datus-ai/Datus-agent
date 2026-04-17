@@ -3785,3 +3785,93 @@ class TestMakeInputCollector:
         action = self._make_action("request_batch", {"contents": ["Q1?", "Q2?"], "choices": [{}, {}]})
         result = collector(action, console)
         assert result is None
+
+
+# ===========================================================================
+# _drop_if_matches_final (thinking pending reconcile helper)
+# ===========================================================================
+
+
+@pytest.mark.ci
+class TestDropIfMatchesFinal:
+    """Unit tests for the helper that drops a deferred ASSISTANT text when its
+    content equals the node's final *_response body, or flushes it otherwise."""
+
+    def _assistant(self, raw: str) -> ActionHistory:
+        return ActionHistory(
+            action_id="a1",
+            role=ActionRole.ASSISTANT,
+            messages="",
+            action_type="response",
+            input={},
+            output={"raw_output": raw, "is_thinking": False},
+            status=ActionStatus.SUCCESS,
+        )
+
+    def _final(self, response: str) -> ActionHistory:
+        return ActionHistory(
+            action_id="f1",
+            role=ActionRole.ASSISTANT,
+            messages="",
+            action_type="chat_response",
+            input={},
+            output={"response": response},
+            status=ActionStatus.SUCCESS,
+        )
+
+    def test_pending_none_returns_none(self):
+        from datus.cli.chat_commands import _drop_if_matches_final
+
+        incremental: list = []
+        result = _drop_if_matches_final(None, self._final("hi"), incremental)
+        assert result is None
+        assert incremental == []
+
+    def test_texts_equal_drops_pending(self):
+        from datus.cli.chat_commands import _drop_if_matches_final
+
+        incremental: list = []
+        pending = self._assistant("  Hello world  ")
+        final = self._final("Hello world")
+        result = _drop_if_matches_final(pending, final, incremental)
+        assert result is None
+        assert incremental == []  # pending was NOT flushed
+
+    def test_texts_differ_flushes_pending(self):
+        from datus.cli.chat_commands import _drop_if_matches_final
+
+        incremental: list = []
+        pending = self._assistant("mid-turn thought")
+        final = self._final("actual final answer")
+        result = _drop_if_matches_final(pending, final, incremental)
+        assert result is None
+        assert incremental == [pending]
+
+    def test_non_dict_outputs_still_flush(self):
+        """When either side's output is non-dict, be conservative and flush."""
+        from datus.cli.chat_commands import _drop_if_matches_final
+
+        incremental: list = []
+        pending = ActionHistory(
+            action_id="a2",
+            role=ActionRole.ASSISTANT,
+            messages="raw",
+            action_type="response",
+            input={},
+            output="not a dict",
+            status=ActionStatus.SUCCESS,
+        )
+        final = self._final("anything")
+        _drop_if_matches_final(pending, final, incremental)
+        assert incremental == [pending]
+
+    def test_empty_pending_text_flushes_without_match(self):
+        """Empty pending text should not accidentally match an empty final."""
+        from datus.cli.chat_commands import _drop_if_matches_final
+
+        incremental: list = []
+        pending = self._assistant("")
+        final = self._final("")
+        _drop_if_matches_final(pending, final, incremental)
+        # Both empty → no text to compare; flushed to stay safe.
+        assert incremental == [pending]
