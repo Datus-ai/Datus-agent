@@ -4,7 +4,7 @@
 
 The **Builtin Subagent** are specialized AI assistants integrated within the Datus Agent system. Each subagent focuses on a specific aspect of data engineering automation — analyzing SQL, generating semantic models, and converting queries into reusable metrics — together forming a closed-loop workflow from raw SQL to knowledge-aware data products.
 
-This document covers twelve core subagents:
+This document covers thirteen core subagents:
 
 1. **[gen_sql_summary](#gen_sql_summary)** — Summarizes and classifies SQL queries
 2. **[gen_semantic_model](#gen_semantic_model)** — Generates MetricFlow semantic models
@@ -16,8 +16,9 @@ This document covers twelve core subagents:
 8. **[gen_table](gen_table.md)** — Database table creation via CTAS or natural language
 9. **[gen_job](gen_job.md)** — Single-database ETL job execution
 10. **[migration](migration.md)** — Cross-database migration with reconciliation
-11. **[gen_dashboard](#gen_dashboard)** — BI dashboard CRUD for Superset and Grafana
-12. **[scheduler](#scheduler)** — Airflow job lifecycle management
+11. **[gen_skill](#gen_skill)** — Skill creation and optimization
+12. **[gen_dashboard](#gen_dashboard)** — BI dashboard CRUD for Superset and Grafana
+13. **[scheduler](#scheduler)** — Airflow job lifecycle management
 
 ## Configuration
 
@@ -59,6 +60,9 @@ agent:
       max_turns: 20     # Optional: defaults to 20
 
     gen_job:
+      max_turns: 30     # Optional: defaults to 30
+
+    gen_skill:
       max_turns: 30     # Optional: defaults to 30
 
     gen_dashboard:
@@ -934,6 +938,52 @@ Then use it via `/attribution_report Analyze the conversion attribution for camp
 
 ---
 
+## gen_skill
+
+### Overview
+
+The `gen_skill` subagent guides users through creating or optimizing Datus skills. It can inspect existing skills, scaffold new skill directories, edit `SKILL.md`, validate the result, and search prior sessions for usage patterns.
+
+### Key Features
+
+- **Interactive skill authoring**: interview-style workflow with `ask_user`
+- **Scoped filesystem access**: read-only workspace tools plus write access to the configured skills directory
+- **Skill-aware editing**: load existing skills before revising them
+- **Validation support**: built-in `validate_skill` checks before finishing
+
+### Configuration
+
+```yaml
+agent:
+  agentic_nodes:
+    gen_skill:
+      model: claude
+      max_turns: 30
+```
+
+### Output Format
+
+```json
+{
+  "response": "Created a new validation skill for finance dashboards.",
+  "skill_name": "finance-dashboard-validation",
+  "skill_path": "/path/to/skills/finance-dashboard-validation",
+  "tokens_used": 1980
+}
+```
+
+### Usage
+
+Launch it directly:
+
+```bash
+/gen_skill Create a skill that validates daily revenue dashboards before publishing
+```
+
+Or let the chat agent delegate via `task(type="gen_skill")`.
+
+---
+
 ## gen_dashboard
 
 ### Overview
@@ -1148,17 +1198,21 @@ agent:
 
 ## Summary
 
-| Subagent | Purpose | Output | Stored In | Key Features                                        |
-|----------|---------|--------|-----------|-----------------------------------------------------|
+| Subagent | Purpose | Output | Stored In | Key Features |
+|----------|---------|--------|-----------|--------------|
 | `gen_sql_summary` | Summarize and classify SQL queries | YAML (SQL summary) | `/data/reference_sql` | Subject tree categorization, auto context retrieval |
-| `gen_semantic_model` | Generate semantic model from tables | YAML (semantic model) | `/data/semantic_models` | DDL → MetricFlow model, built-in validation         |
-| `gen_metrics` | Generate metrics from SQL | YAML (metric) | `/data/semantic_models` | SQL → MetricFlow metric, subject tree support       |
-| `gen_ext_knowledge` | Generate business concepts | YAML (external knowledge) | `/data/ext_knowledge` | Question&SQL → knowledge, subject tree support      |
-| `explore` | Read-only data exploration | Structured context | N/A | Strictly read-only, fast (15 turns), three-direction exploration |
+| `gen_semantic_model` | Generate semantic model from tables | YAML (semantic model) | `/data/semantic_models` | DDL to MetricFlow model, built-in validation |
+| `gen_metrics` | Generate metrics from SQL | YAML (metric) | `/data/semantic_models` | SQL to MetricFlow metric, subject tree support |
+| `gen_ext_knowledge` | Generate business concepts | YAML (external knowledge) | `/data/ext_knowledge` | Question plus SQL to knowledge extraction |
+| `explore` | Read-only data exploration | Structured context | N/A | Strictly read-only, fast turn budget, three exploration directions |
 | `gen_sql` | Generate optimized SQL | SQL query / SQL file | N/A | Deep SQL expertise, auto-validation, file-based output |
 | `gen_report` | Flexible report generation | Structured report | N/A | Configurable tools, extensible, custom report subagents |
-| `gen_dashboard` | BI dashboard CRUD (Superset, Grafana) | Dashboard result | N/A | Dynamic tool exposure, data materialization, multi-platform |
-| `scheduler` | Airflow job lifecycle management | Scheduler result | N/A | Submit/monitor/update/delete jobs, SQL and SparkSQL support |
+| `gen_table` | Create tables interactively | DDL + execution result | Database | DDL confirmation, CTAS or natural-language schema creation |
+| `gen_job` | Build single-database ETL jobs | Job result | Database | ETL flow with DDL/DML execution |
+| `migration` | Run cross-database migrations | Migration result | Target database | Type mapping, transfer, mandatory reconciliation |
+| `gen_skill` | Create or optimize skills | Skill path | Skills directory | Interactive authoring, validation, skill loading |
+| `gen_dashboard` | BI dashboard CRUD (Superset, Grafana) | Dashboard result | BI platform | Dynamic tool exposure, data materialization, multi-platform |
+| `scheduler` | Airflow job lifecycle management | Scheduler result | Airflow | Submit, monitor, update, and troubleshoot jobs |
 
 **Built-in Features Across All Subagents:**
 - Minimal configuration required (only `model` and `max_turns` optional)

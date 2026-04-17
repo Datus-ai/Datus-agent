@@ -41,6 +41,7 @@ class SchedulerAgenticNode(AgenticNode):
         execution_mode: Literal["interactive", "workflow"] = "interactive",
         node_id: Optional[str] = None,
         node_name: Optional[str] = None,
+        scope: Optional[str] = None,
         is_subagent: bool = False,
     ):
         self.execution_mode = execution_mode
@@ -64,6 +65,7 @@ class SchedulerAgenticNode(AgenticNode):
             agent_config=agent_config,
             tools=[],
             mcp_servers={},
+            scope=scope,
             is_subagent=is_subagent,
         )
 
@@ -162,7 +164,8 @@ class SchedulerAgenticNode(AgenticNode):
         prompt_version: Optional[str] = None,
     ) -> str:
         version = prompt_version or self.node_config.get("prompt_version")
-        template_name = f"{self.NODE_NAME}_system"
+        system_prompt_name = self.node_config.get("system_prompt") or self.get_node_name()
+        template_name = f"{system_prompt_name}_system"
 
         try:
             template_vars = {

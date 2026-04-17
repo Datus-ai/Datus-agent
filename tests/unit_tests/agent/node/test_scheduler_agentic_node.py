@@ -110,6 +110,14 @@ class TestSchedulerAgenticNodeInit:
             node = SchedulerAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
             assert node.id == "scheduler_node"
 
+    def test_scope_is_preserved(self, real_agent_config, mock_llm_create):
+        _add_scheduler_config(real_agent_config)
+        with patch(_SCHEDULER_TOOLS_PATCH, return_value=_make_mock_scheduler_tools()):
+            from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
+
+            node = SchedulerAgenticNode(agent_config=real_agent_config, execution_mode="workflow", scope="team-a")
+            assert node.scope == "team-a"
+
     def test_max_turns_from_config(self, real_agent_config, mock_llm_create):
         _add_scheduler_config(real_agent_config, max_turns=25)
         with patch(_SCHEDULER_TOOLS_PATCH, return_value=_make_mock_scheduler_tools()):
@@ -571,6 +579,25 @@ class TestSchedulerCustomNodeName:
             )
             assert node.get_node_name() == "my_jobs"
             assert node.max_turns == 10
+
+    def test_alias_system_prompt_template_name(self, real_agent_config, mock_llm_create):
+        """Alias config should be able to choose its own prompt template."""
+        _add_scheduler_config(real_agent_config)
+        real_agent_config.agentic_nodes["etl_scheduler"] = {
+            "system_prompt": "etl_scheduler",
+            "max_turns": 15,
+        }
+        with patch(_SCHEDULER_TOOLS_PATCH, return_value=_make_mock_scheduler_tools()):
+            from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
+
+            node = SchedulerAgenticNode(
+                agent_config=real_agent_config, execution_mode="workflow", node_name="etl_scheduler"
+            )
+            with patch("datus.prompts.prompt_manager.get_prompt_manager") as mock_pm:
+                mock_pm.return_value.render_template.return_value = "test prompt"
+                node._get_system_prompt()
+                call_kwargs = mock_pm.return_value.render_template.call_args.kwargs
+                assert call_kwargs["template_name"] == "etl_scheduler_system"
 
 
 # ---------------------------------------------------------------------------

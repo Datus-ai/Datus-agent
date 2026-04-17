@@ -55,10 +55,14 @@ def create_interactive_node(
                 node_name=subagent_name, agent_config=agent_config, execution_mode="interactive", scope=scope
             )
 
-        elif subagent_name == "gen_table":
+        elif subagent_name == "gen_table" or node_class_type == "gen_table":
             from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
 
-            return GenTableAgenticNode(agent_config=agent_config, execution_mode="interactive")
+            return GenTableAgenticNode(
+                agent_config=agent_config,
+                execution_mode="interactive",
+                node_name=subagent_name if node_class_type == "gen_table" else None,
+            )
 
         elif subagent_name == "gen_job":
             from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
@@ -104,17 +108,39 @@ def create_interactive_node(
                 node_name=subagent_name,
             )
 
-        elif subagent_name == "gen_skill":
+        elif subagent_name == "gen_skill" or node_class_type == "gen_skill":
             from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
             return SkillCreatorAgenticNode(
-                node_id=f"gen_skill{node_id_suffix}",
-                description="Skill generation node",
+                node_id=f"{subagent_name}{node_id_suffix}" if subagent_name else f"gen_skill{node_id_suffix}",
+                description=f"Skill generation node for {subagent_name or 'gen_skill'}",
                 node_type="gen_skill",
                 input_data=None,
                 agent_config=agent_config,
                 tools=None,
-                node_name="gen_skill",
+                node_name=subagent_name if node_class_type == "gen_skill" else "gen_skill",
+            )
+
+        elif subagent_name == "gen_dashboard" or node_class_type == "gen_dashboard":
+            from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
+
+            return GenDashboardAgenticNode(
+                agent_config=agent_config,
+                execution_mode="interactive",
+                node_id=f"{subagent_name}{node_id_suffix}",
+                node_name=subagent_name if node_class_type == "gen_dashboard" else None,
+                scope=scope,
+            )
+
+        elif subagent_name == "scheduler" or node_class_type == "scheduler":
+            from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
+
+            return SchedulerAgenticNode(
+                agent_config=agent_config,
+                execution_mode="interactive",
+                node_id=f"{subagent_name}{node_id_suffix}",
+                node_name=subagent_name if node_class_type == "scheduler" else None,
+                scope=scope,
             )
 
         else:

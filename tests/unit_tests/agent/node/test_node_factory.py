@@ -112,7 +112,7 @@ class TestCreateInteractiveNode:
     def test_gen_table(self, mock_init):
         config = _mock_agent_config()
         create_interactive_node("gen_table", config)
-        mock_init.assert_called_once_with(agent_config=config, execution_mode="interactive")
+        mock_init.assert_called_once_with(agent_config=config, execution_mode="interactive", node_name=None)
 
     @patch("datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode.__init__", return_value=None)
     def test_default_subagent_is_gensql(self, mock_init):
@@ -122,6 +122,52 @@ class TestCreateInteractiveNode:
         call_kwargs = mock_init.call_args[1]
         assert call_kwargs["node_id"] == "my_custom_sql_cli"
         assert call_kwargs["node_type"] == "gensql"
+
+    @patch("datus.agent.node.gen_table_agentic_node.GenTableAgenticNode.__init__", return_value=None)
+    @patch("datus.agent.node.node_factory._resolve_node_class_type", return_value="gen_table")
+    def test_config_driven_gen_table(self, mock_resolve, mock_init):
+        config = _mock_agent_config()
+        create_interactive_node("wide_table_builder", config)
+        mock_init.assert_called_once_with(
+            agent_config=config,
+            execution_mode="interactive",
+            node_name="wide_table_builder",
+        )
+
+    @patch("datus.agent.node.gen_skill_agentic_node.SkillCreatorAgenticNode.__init__", return_value=None)
+    @patch("datus.agent.node.node_factory._resolve_node_class_type", return_value="gen_skill")
+    def test_config_driven_gen_skill(self, mock_resolve, mock_init):
+        config = _mock_agent_config()
+        create_interactive_node("skill_designer", config, node_id_suffix="_cli")
+        mock_init.assert_called_once()
+        call_kwargs = mock_init.call_args[1]
+        assert call_kwargs["node_id"] == "skill_designer_cli"
+        assert call_kwargs["node_name"] == "skill_designer"
+        assert call_kwargs["node_type"] == "gen_skill"
+
+    @patch("datus.agent.node.gen_dashboard_agentic_node.GenDashboardAgenticNode.__init__", return_value=None)
+    @patch("datus.agent.node.node_factory._resolve_node_class_type", return_value="gen_dashboard")
+    def test_config_driven_gen_dashboard(self, mock_resolve, mock_init):
+        config = _mock_agent_config()
+        create_interactive_node("sales_dashboard", config, node_id_suffix="_cli", scope="team-a")
+        mock_init.assert_called_once()
+        call_kwargs = mock_init.call_args[1]
+        assert call_kwargs["node_id"] == "sales_dashboard_cli"
+        assert call_kwargs["node_name"] == "sales_dashboard"
+        assert call_kwargs["execution_mode"] == "interactive"
+        assert call_kwargs["scope"] == "team-a"
+
+    @patch("datus.agent.node.scheduler_agentic_node.SchedulerAgenticNode.__init__", return_value=None)
+    @patch("datus.agent.node.node_factory._resolve_node_class_type", return_value="scheduler")
+    def test_config_driven_scheduler(self, mock_resolve, mock_init):
+        config = _mock_agent_config()
+        create_interactive_node("etl_scheduler", config, node_id_suffix="_cli", scope="team-a")
+        mock_init.assert_called_once()
+        call_kwargs = mock_init.call_args[1]
+        assert call_kwargs["node_id"] == "etl_scheduler_cli"
+        assert call_kwargs["node_name"] == "etl_scheduler"
+        assert call_kwargs["execution_mode"] == "interactive"
+        assert call_kwargs["scope"] == "team-a"
 
 
 # ---------------------------------------------------------------------------

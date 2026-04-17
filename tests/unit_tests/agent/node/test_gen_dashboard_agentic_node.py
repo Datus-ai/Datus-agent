@@ -259,6 +259,14 @@ class TestGenDashboardAgenticNodeInit:
             node = GenDashboardAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
             assert node.id == "gen_dashboard_node"
 
+    def test_scope_is_preserved(self, real_agent_config, mock_llm_create):
+        _add_dashboard_config(real_agent_config)
+        with patch.dict(sys.modules, _BI_MODULES_PATCH):
+            from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
+
+            node = GenDashboardAgenticNode(agent_config=real_agent_config, execution_mode="workflow", scope="team-a")
+            assert node.scope == "team-a"
+
     def test_max_turns_from_config(self, real_agent_config, mock_llm_create):
         _add_dashboard_config(real_agent_config)
         with patch.dict(sys.modules, _BI_MODULES_PATCH):
@@ -961,6 +969,26 @@ class TestGenDashboardCustomNodeName:
             )
             assert node.get_node_name() == "my_bi"
             assert node.max_turns == 10
+
+    def test_alias_system_prompt_template_name(self, real_agent_config, mock_llm_create):
+        """Alias config should be able to choose its own prompt template."""
+        _add_dashboard_config(real_agent_config)
+        real_agent_config.agentic_nodes["sales_dashboard"] = {
+            "system_prompt": "sales_dashboard",
+            "bi_platform": "superset",
+            "max_turns": 15,
+        }
+        with patch.dict(sys.modules, _BI_MODULES_PATCH):
+            from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
+
+            node = GenDashboardAgenticNode(
+                agent_config=real_agent_config, execution_mode="workflow", node_name="sales_dashboard"
+            )
+            with patch("datus.prompts.prompt_manager.get_prompt_manager") as mock_pm:
+                mock_pm.return_value.render_template.return_value = "test prompt"
+                node._get_system_prompt()
+                call_kwargs = mock_pm.return_value.render_template.call_args.kwargs
+                assert call_kwargs["template_name"] == "sales_dashboard_system"
 
 
 # ---------------------------------------------------------------------------

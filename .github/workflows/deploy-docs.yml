@@ -54,6 +54,8 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           echo "DOCS_SKIP_DEPLOY=false" >> "${GITHUB_ENV}"
+          echo "DOCS_BUILD_CONFIG=mkdocs.yml" >> "${GITHUB_ENV}"
+          echo "DOCS_SOURCE_REF=" >> "${GITHUB_ENV}"
           # workflow_dispatch with explicit version input
           if [[ "${EVENT_NAME}" == "workflow_dispatch" && -n "${INPUT_VERSION}" ]]; then
             VERSION="${INPUT_VERSION}"
@@ -62,19 +64,17 @@ jobs:
               echo "::error::Invalid version format: ${VERSION}"
               exit 1
             fi
-            # Checkout the tag so docs content matches the version
+            # Build docs from the tagged content while keeping the current
+            # workflow and main-branch docs configuration.
             if git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null; then
-              git checkout "v${VERSION}"
               CHECKED_OUT_REF="v${VERSION}"
             elif git rev-parse -q --verify "refs/tags/${VERSION}" >/dev/null; then
-              git checkout "${VERSION}"
               CHECKED_OUT_REF="${VERSION}"
             else
               echo "::error::Tag v${VERSION} or ${VERSION} not found"
               exit 1
             fi
-            # Reinstall deps from the tag's requirements to match the checked-out version
-            pip install -r requirements-docs.txt
+            echo "DOCS_SOURCE_REF=${CHECKED_OUT_REF}" >> "${GITHUB_ENV}"
             echo "DOCS_EDIT_URI=edit/${CHECKED_OUT_REF}/docs/" >> "${GITHUB_ENV}"
             echo "DOCS_VERSION=${VERSION}" >> "${GITHUB_ENV}"
             echo "DOCS_ALIASES=" >> "${GITHUB_ENV}"
@@ -98,6 +98,7 @@ jobs:
               echo "DOCS_EDIT_URI=edit/${GITHUB_REF_NAME}/docs/" >> "${GITHUB_ENV}"
               exit 0
             fi
+            echo "DOCS_SOURCE_REF=${GITHUB_REF_NAME}" >> "${GITHUB_ENV}"
             echo "DOCS_EDIT_URI=edit/${GITHUB_REF_NAME}/docs/" >> "${GITHUB_ENV}"
             echo "DOCS_VERSION=${VERSION}" >> "${GITHUB_ENV}"
             echo "DOCS_ALIASES=" >> "${GITHUB_ENV}"
@@ -117,23 +118,32 @@ jobs:
             echo "DOCS_SET_DEFAULT=" >> "${GITHUB_ENV}"
             echo "DOCS_EDIT_URI=edit/main/docs/" >> "${GITHUB_ENV}"
           fi
-      - run: mkdocs build --strict
+      - name: Prepare docs build context
+        if: env.DOCS_SKIP_DEPLOY != 'true' && env.DOCS_SOURCE_REF != ''
+        run: |
+          BUILD_ROOT="$(mktemp -d)"
+          python ci/prepare_docs_build.py \
+            --base-config mkdocs.yml \
+            --output-root "${BUILD_ROOT}" \
+            --source-ref "${DOCS_SOURCE_REF}"
+          echo "DOCS_BUILD_CONFIG=${BUILD_ROOT}/mkdocs.yml" >> "${GITHUB_ENV}"
+      - run: mkdocs build --strict -f "${DOCS_BUILD_CONFIG}"
         if: env.DOCS_SKIP_DEPLOY != 'true'
       - name: Deploy versioned docs
         if: env.DOCS_SKIP_DEPLOY != 'true'
         run: |
           if [[ -n "${DOCS_ALIASES}" ]]; then
-            mike deploy --push --update-aliases "${DOCS_VERSION}" "${DOCS_ALIASES}"
+            mike deploy -F "${DOCS_BUILD_CONFIG}" --push --update-aliases "${DOCS_VERSION}" "${DOCS_ALIASES}"
           else
-            mike deploy --push "${DOCS_VERSION}"
+            mike deploy -F "${DOCS_BUILD_CONFIG}" --push "${DOCS_VERSION}"
           fi
       - name: Set default docs version
         if: env.DOCS_SKIP_DEPLOY != 'true'
         run: |
           if [[ -n "${DOCS_SET_DEFAULT}" ]]; then
-            mike set-default --push "${DOCS_SET_DEFAULT}"
+            mike set-default -F "${DOCS_BUILD_CONFIG}" --push "${DOCS_SET_DEFAULT}"
           elif [[ "${DOCS_HAS_PUBLISHED_VERSIONS}" == "false" ]]; then
-            mike set-default --push "${DOCS_VERSION}"
+            mike set-default -F "${DOCS_BUILD_CONFIG}" --push "${DOCS_VERSION}"
           fi
       - name: Hide legacy docs versions
         if: env.DOCS_SKIP_DEPLOY != 'true'

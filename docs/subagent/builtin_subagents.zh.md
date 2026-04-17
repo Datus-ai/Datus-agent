@@ -4,7 +4,7 @@
 
 **内置 Subagent**  是集成在 Datus Agent 系统中的专用 AI 助手。每个subagent专注于数据工程自动化的特定方面——分析 SQL、生成语义模型、将查询转换为可复用指标——共同构成从原始 SQL 到具备知识感知的数据产品的闭环工作流。
 
-本文档涵盖十二个核心subagent：
+本文档涵盖十三个核心 subagent：
 
 1. **[gen_sql_summary](#gen_sql_summary)** — 总结和分类 SQL 查询
 2. **[gen_semantic_model](#gen_semantic_model)** — 生成 MetricFlow 语义模型
@@ -16,8 +16,9 @@
 8. **[gen_table](gen_table.zh.md)** — 数据库建表（CTAS 或自然语言描述）
 9. **[gen_job](gen_job.zh.md)** — 单库 ETL 作业执行
 10. **[migration](migration.zh.md)** — 跨库迁移与对数校验
-11. **[gen_dashboard](#gen_dashboard)** — Superset 和 Grafana 的 BI 仪表盘 CRUD
-12. **[scheduler](#scheduler)** — Airflow 作业生命周期管理
+11. **[gen_skill](#gen_skill)** — skill 创建与优化
+12. **[gen_dashboard](#gen_dashboard)** — Superset 和 Grafana 的 BI 仪表盘 CRUD
+13. **[scheduler](#scheduler)** — Airflow 作业生命周期管理
 
 ## 配置
 
@@ -59,6 +60,9 @@ agent:
       max_turns: 20     # 可选：默认为 20
 
     gen_job:
+      max_turns: 30     # 可选：默认为 30
+
+    gen_skill:
       max_turns: 30     # 可选：默认为 30
 
     gen_dashboard:
@@ -226,7 +230,7 @@ tags: "revenue, region, aggregation"       # 逗号分隔的标签
 
 ### 快速开始
 
-使用 `datus --namespace <namespace>` 启动 Datus CLI，然后使用subagent命令：
+使用 `datus --database <namespace>` 启动 Datus CLI，然后使用subagent命令：
 
 ```bash
 /gen_semantic_model generate a semantic model for table <table_name>
@@ -353,7 +357,7 @@ data_source:
 
 ### 快速开始
 
-使用 `datus --namespace <namespace>` 启动 Datus CLI，然后使用指标生成subagent：
+使用 `datus --database <namespace>` 启动 Datus CLI，然后使用指标生成subagent：
 
 ```bash
 /gen_metrics Generate a metric from this SQL: SELECT SUM(amount) FROM transactions, the corresponding question is total amount of all transactions
@@ -932,6 +936,52 @@ agent:
 
 ---
 
+## gen_skill
+
+### 概览
+
+`gen_skill` subagent 用于引导用户创建或优化 Datus skill。它可以检查现有 skill、脚手架新的 skill 目录、编辑 `SKILL.md`、执行校验，并检索历史会话中的使用模式。
+
+### 关键特性
+
+- **交互式 skill 编写**：通过 `ask_user` 进行访谈式创建
+- **受控文件系统权限**：对工作区只读，对配置的 skills 目录可写
+- **skill 感知编辑**：修改前先加载已有 skill
+- **内置校验**：结束前可调用 `validate_skill` 检查结果
+
+### 配置
+
+```yaml
+agent:
+  agentic_nodes:
+    gen_skill:
+      model: claude
+      max_turns: 30
+```
+
+### 输出格式
+
+```json
+{
+  "response": "已创建一个用于财务仪表盘校验的新 skill。",
+  "skill_name": "finance-dashboard-validation",
+  "skill_path": "/path/to/skills/finance-dashboard-validation",
+  "tokens_used": 1980
+}
+```
+
+### 使用方式
+
+直接启动：
+
+```bash
+/gen_skill 创建一个在发布前校验每日收入仪表盘的 skill
+```
+
+也可以由聊天 agent 通过 `task(type="gen_skill")` 自动委派。
+
+---
+
 ## gen_dashboard
 
 ### 概览
@@ -1146,17 +1196,21 @@ agent:
 
 ## 总结
 
-| subagent | 用途 | 输出 | 存储位置 | 关键特性                      |
-|----------|---------|--------|-----------|---------------------------|
-| `gen_sql_summary` | 总结和分类 SQL 查询 | YAML（SQL 摘要） | `/data/reference_sql` | 主题树分类、自动上下文检索             |
-| `gen_semantic_model` | 从表生成语义模型 | YAML（语义模型） | `/data/semantic_models` | DDL → MetricFlow 模型、内置验证  |
-| `gen_metrics` | 从 SQL 生成指标 | YAML（指标） | `/data/semantic_models` | SQL → MetricFlow 指标、主题树支持 |
-| `gen_ext_knowledge` | 生成业务概念 | YAML（外部知识） | `/data/ext_knowledge` | 问题&SQL → 知识、主题树支持        |
-| `explore` | 只读数据探索 | 结构化上下文 | N/A | 严格只读、快速（15 轮）、三方向探索 |
-| `gen_sql` | 生成优化 SQL | SQL 查询 / SQL 文件 | N/A | 深度 SQL 专业知识、自动验证、基于文件的输出 |
-| `gen_report` | 灵活报告生成 | 结构化报告 | N/A | 可配置工具、可扩展、自定义报告 subagent |
-| `gen_dashboard` | BI 仪表盘 CRUD（Superset、Grafana） | 仪表盘结果 | N/A | 动态工具暴露、数据物化、多平台支持 |
-| `scheduler` | Airflow 作业生命周期管理 | 调度结果 | N/A | 提交/监控/更新/删除作业，支持 SQL 和 SparkSQL |
+| subagent | 用途 | 输出 | 存储位置 | 关键特性 |
+|----------|------|------|----------|----------|
+| `gen_sql_summary` | 总结和分类 SQL 查询 | YAML（SQL 摘要） | `/data/reference_sql` | 主题树分类、自动上下文检索 |
+| `gen_semantic_model` | 从表生成语义模型 | YAML（语义模型） | `/data/semantic_models` | DDL 到 MetricFlow 模型、内置验证 |
+| `gen_metrics` | 从 SQL 生成指标 | YAML（指标） | `/data/semantic_models` | SQL 到 MetricFlow 指标、主题树支持 |
+| `gen_ext_knowledge` | 生成业务概念 | YAML（外部知识） | `/data/ext_knowledge` | 从问题与 SQL 中提取业务知识 |
+| `explore` | 只读数据探索 | 结构化上下文 | N/A | 严格只读、低轮数、三方向探索 |
+| `gen_sql` | 生成优化 SQL | SQL 查询 / SQL 文件 | N/A | 深度 SQL 专长、自动验证、支持文件输出 |
+| `gen_report` | 灵活报告生成 | 结构化报告 | N/A | 工具可配置、可扩展、自定义报告 subagent |
+| `gen_table` | 交互式建表 | DDL + 执行结果 | 数据库 | DDL 确认、CTAS 或自然语言建表 |
+| `gen_job` | 构建单库 ETL 作业 | 作业结果 | 数据库 | 包含 DDL/DML 的 ETL 流程 |
+| `migration` | 执行跨库迁移 | 迁移结果 | 目标数据库 | 类型映射、数据传输、强制对数校验 |
+| `gen_skill` | 创建或优化 skill | skill 路径 | skills 目录 | 交互式编写、校验、加载现有 skill |
+| `gen_dashboard` | BI 仪表盘 CRUD（Superset、Grafana） | 仪表盘结果 | BI 平台 | 动态工具暴露、数据物化、多平台支持 |
+| `scheduler` | Airflow 作业生命周期管理 | 调度结果 | Airflow | 提交、监控、更新和排障 |
 
 **所有 subagent 的内置特性：**
 - 最小化配置（仅 `model` 和 `max_turns` 可选）

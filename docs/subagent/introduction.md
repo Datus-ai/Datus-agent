@@ -2,389 +2,154 @@
 
 ## Overview
 
-Subagents are specialized AI assistants in Datus that focus on specific tasks. Unlike the default chat assistant that handles general SQL queries, subagents are optimized for particular workflows like generating semantic models, creating metrics, or analyzing SQL queries.
+Subagents are specialized AI assistants in Datus. They share the same project configuration as the main chat agent, but run with their own prompt, tool surface, session, and optional scoped context.
 
-## What is a Subagent?
+A subagent can be:
 
-A **subagent** is a task-specific AI assistant with:
+- A built-in system subagent such as `gen_sql`, `explore`, or `scheduler`
+- A custom subagent defined in `agent.agentic_nodes` in `agent.yml`
 
-- **Specialized System Prompts**: Optimized instructions for specific tasks
-- **Custom Tools**: Tailored toolset for the task (e.g., file operations, validation)
-- **Scoped Context**: Optional dedicated context (tables, metrics,reference SQL) specific to this subagent
-- **Independent Sessions**: Separate conversation history from main chat
-- **Task-Focused Workflow**: Guided steps for completing specific objectives
+## What a Subagent Includes
 
-## Available Subagents
+A subagent can have:
 
-### 1. `gen_semantic_model`
+- **Dedicated system prompt**: separate prompt template and prompt version
+- **Custom tools**: native tools, MCP tools, skills, and node-specific rules
+- **Scoped context**: optional limits for tables, metrics, and reference SQL
+- **Independent session**: separate conversation history from the main chat node
+- **Delegation policy**: optional `task()` access to other subagents via the `subagents` field
 
-**Purpose**: Generate MetricFlow semantic models from database tables.
+## Built-in Subagents
 
-**Use Case**: Convert a database table structure into a YAML semantic model definition.
+The current built-in set comes from `SYS_SUB_AGENTS` in code:
 
-**Prerequisites**: This subagent relies on [datus-semantic-metricflow](../adapters/semantic_adapters.md), install it first with `pip install datus-semantic-metricflow`.
+1. `explore`: read-only schema, knowledge, and file exploration
+2. `gen_sql`: specialized SQL generation
+3. `gen_report`: structured report generation
+4. `gen_semantic_model`: MetricFlow semantic model generation
+5. `gen_metrics`: MetricFlow metric generation
+6. `gen_sql_summary`: SQL summary generation
+7. `gen_ext_knowledge`: business knowledge extraction
+8. `gen_table`: interactive table creation
+9. `gen_job`: single-database ETL job execution
+10. `migration`: cross-database migration
+11. `gen_skill`: skill creation and optimization
+12. `gen_dashboard`: BI dashboard creation and management
+13. `scheduler`: Airflow job lifecycle management
 
-**Launch Command**:
-```bash
-/gen_semantic_model Generate a semantic model for the transactions table
-```
+See [Built-in subagents](./builtin_subagents.md) for details.
 
-**Key Features**:
+## Custom Subagents
 
-- Automatically fetches table DDL
-- Identifies measures, dimensions, and identifiers
-- Validates using MetricFlow
-- Syncs to Knowledge Base
+Custom subagents are configured under `agent.agentic_nodes`.
 
-**See Also**: [Semantic Model Generation Guide](./gen_semantic_model.md)
+The `.subagent` wizard currently creates `gen_sql`-style or `gen_report`-style custom subagents. If you want to alias more specialized node classes such as `explore`, `gen_table`, `gen_skill`, `gen_dashboard`, or `scheduler`, edit `agent.yml` manually.
 
----
+Example:
 
-### 2. `gen_metrics`
-
-**Purpose**: Convert SQL queries into reusable MetricFlow metric definitions.
-
-**Use Case**: Transform ad-hoc SQL calculations into standardized metrics.
-
-**Prerequisites**: This subagent relies on [datus-semantic-metricflow](../adapters/semantic_adapters.md), install it first with `pip install datus-semantic-metricflow`.
-
-**Launch Command**:
-```bash
-/gen_metrics Generate a metric from this SQL: SELECT SUM(revenue) / COUNT(DISTINCT customer_id) FROM transactions
-```
-
-**Key Features**:
-
-- Analyzes SQL business logic
-- Determines appropriate metric type (ratio, measure_proxy, etc.)
-- Appends to existing semantic model files
-- Checks for duplicates
-
-**See Also**: [Metrics Generation Guide](./gen_metrics.md)
-
----
-
-### 3. `gen_sql_summary`
-
-**Purpose**: Analyze and catalog SQL queries for knowledge reuse.
-
-**Use Case**: Build a searchable library of SQL queries with semantic classification.
-
-**Launch Command**:
-```bash
-/gen_sql_summary Analyze this SQL: SELECT region, SUM(revenue) FROM sales GROUP BY region
-```
-
-**Key Features**:
-
-- Generates unique ID for SQL queries
-- Classifies by domain/layer/tags
-- Creates detailed summaries for vector search
-- Supports Chinese and English
-
-**See Also**: [SQL Summary Guide](./gen_sql_summary.md)
-
----
-
-### 4. `gen_ext_knowledge`
-
-**Purpose**: Generate and manage business concepts and domain-specific definitions.
-
-**Use Case**: Document business knowledge that isn't stored in database schemas, such as business rules, calculation logic, and domain-specific concepts.
-
-**Launch Command**:
-```bash
-/gen_ext_knowledge Extract knowledge from this sql
-Question: What is the highest eligible free rate for K-12 students?
-SQL: SELECT `Free Meal Count (K-12)` / `Enrollment (K-12)` FROM frpm WHERE `County Name` = 'Alameda'
-```
-
-**Key Features**:
-
-- **Knowledge Gap Discovery**: Agent attempts to solve the problem first, then compares with reference SQL to identify implicit business knowledge
-- Generates structured YAML with unique IDs
-- Supports subject path categorization (e.g., `education/schools/data_integration`)
-- Checks for duplicates before creating new entries
-- Syncs to Knowledge Base for semantic search
-
-**See Also**: [External Knowledge Generation Guide](./builtin_subagents.md#gen_ext_knowledge)
-
----
-
-### 5. `explore`
-
-**Purpose**: Read-only data exploration subagent for gathering context before SQL generation.
-
-**Use Case**: Quickly collect schema information, data samples, and knowledge base context to support downstream SQL generation tasks.
-
-**Key Features**:
-
-- Strictly read-only — never modifies data or files
-- Fast exploration with a 15-turn limit
-- Three exploration directions: Schema+Sample, Knowledge, and File
-- Optimized for tool-calling with smaller, cost-effective models
-
-**See Also**: [Explore Subagent Details](./builtin_subagents.md#explore)
-
----
-
-### 6. `gen_sql`
-
-**Purpose**: Generate optimized SQL queries through a specialized SQL expert subagent.
-
-**Use Case**: Delegate complex SQL generation tasks that require multi-step reasoning, complex joins, or domain-specific logic.
-
-**Key Features**:
-
-- Deep SQL expertise with query validation before returning results
-- Supports inline SQL and file-based SQL for complex queries (50+ lines)
-- Modification support with unified diff format
-- Automatic executability validation
-
-**See Also**: [Gen SQL Subagent Details](./builtin_subagents.md#gen_sql)
-
----
-
-### 7. `gen_report`
-
-**Purpose**: A flexible report generation assistant that combines semantic tools, database tools, and context search capabilities to produce structured reports.
-
-**Use Case**: Generate structured reports with data analysis and insights. Can also be extended by specialized report nodes for domain-specific reporting tasks (e.g., attribution analysis).
-
-**Launch Command**:
-```bash
-/gen_report Analyze the revenue trend for the last quarter and provide insights
-```
-
-**Key Features**:
-
-- Configurable tools: supports `semantic_tools.*`, `db_tools.*`, and `context_search_tools.*`
-- Generates structured report content with SQL queries and analysis
-- Extensible: can be subclassed for specialized report types
-- Configuration-driven: tool setup and system prompts driven by `agent.yml`
-
-**See Also**: [Gen Report Subagent Details](./builtin_subagents.md#gen_report)
-
----
-
-### 8. Custom Subagents
-
-You can define custom subagents in `agent.yml` for organization-specific workflows.
-
-**Example Configuration**:
 ```yaml
-agentic_nodes:
-  my_custom_agent:
-    model: claude
-    system_prompt: my_custom_prompt
-    prompt_version: "1.0"
-    tools: db_tools.*, context_search_tools.*
-    max_turns: 30
-    agent_description: "Custom workflow assistant"
+agent:
+  agentic_nodes:
+    finance_report:
+      node_class: gen_report
+      model: claude
+      system_prompt: finance_report
+      prompt_version: "1.0"
+      prompt_language: en
+      agent_description: "Finance reporting assistant"
+      tools: semantic_tools.*, db_tools.*, context_search_tools.list_subject_tree
+      subagents: explore, gen_sql
+      max_turns: 30
+      scoped_context:
+        namespace: finance
+        tables: mart.finance_daily, mart.finance_budget
+        metrics: finance.revenue.daily_revenue
+        sqls: finance.revenue.region_rollup
+      rules:
+        - Prefer existing finance metrics before writing new SQL
 ```
+
+Notes:
+
+- `node_class` defaults to `gen_sql` if omitted
+- When writing `scoped_context` manually, set `namespace` explicitly
+- `subagents` controls which task types this node may delegate to
 
 ## How to Use Subagents
 
-### Method 1: CLI Command (Recommended)
+### Method 1: CLI Slash Command
 
-Use the slash command to launch a subagent:
+Start the CLI:
 
 ```bash
 datus --database production
-
-# Launch subagent with specific task
-/gen_metrics Generate a revenue metric
 ```
 
-**Workflow**:
+Then launch a subagent with `/[name]`:
 
-1. Type `/[subagent_name]` followed by your request
-2. Subagent processes the task using specialized tools
-3. Review generated output (YAML, SQL, etc.)
-4. Confirm whether to sync to Knowledge Base
+```text
+/gen_metrics Generate a revenue metric from this SQL: SELECT SUM(revenue) FROM orders
+/finance_report Analyze quarter-over-quarter revenue changes
+```
 
 ### Method 2: Web Interface
 
-Access subagents through the web chatbot:
+Start the web interface:
 
 ```bash
-datus web --database production
+datus --web --database production
 ```
 
-**Steps**:
+Open a specific subagent directly:
 
-1. Click "🔧 Access Specialized Subagents" on the main page
-2. Select the subagent you need (e.g., "gen_metrics")
-3. Click "🚀 Use [subagent_name]"
-4. Chat with the specialized assistant
+```bash
+datus --web --database production --subagent finance_report
+```
 
-**Direct URL Access**:
+Direct URLs also work:
+
 ```text
 http://localhost:8501/?subagent=gen_metrics
-http://localhost:8501/?subagent=gen_semantic_model
-http://localhost:8501/?subagent=gen_sql_summary
+http://localhost:8501/?subagent=finance_report
 ```
 
-### Method 3: Subagent as Tool (Automatic Delegation)
+### Method 3: Subagent as Tool (`task()`)
 
-In addition to manually launching subagents, the default chat assistant can **automatically delegate** complex tasks to specialized subagents via the `task()` tool. This happens transparently — users simply ask questions normally, and the chat agent decides whether to handle them directly or delegate.
+The main chat agent can delegate complex work to specialized subagents through the `task()` tool.
 
 ```mermaid
 graph LR
     A[User Question] --> B[Chat Agent]
-    B --> C{Complex?}
-    C -->|No| D[Direct Response]
-    C -->|Yes| E[Delegate to Subagent]
-    E --> F[explore / gen_sql / ...]
-    F --> G[Result returned to Chat Agent]
+    B --> C{Needs delegation?}
+    C -->|No| D[Direct response]
+    C -->|Yes| E[task(type=...)]
+    E --> F[Specialized subagent]
+    F --> G[Result returned]
     G --> D
 ```
 
-**Key Characteristics**:
+Important behavior:
 
-- **Transparent to users**: No special commands needed — the chat agent routes automatically
-- **Intelligent routing**: Chooses the right subagent based on task complexity
-- **All subagent types supported**: Any registered subagent can be delegated to
+- `chat` defaults to `subagents: "*"` and can delegate to all discoverable subagents
+- Most other agentic nodes default to `subagents: explore`
+- Setting `subagents` to an empty value disables the `task()` tool
+- Subagent nodes do not get their own nested `task()` tool; delegation depth is capped at two levels
 
-**Available Task Types**:
+### Common Task Types
 
 | Type | Purpose |
 |------|---------|
-| `explore` | Gather context (schema, data samples, knowledge) before SQL generation |
-| `gen_sql` | Generate optimized SQL queries with multi-step reasoning |
-| `gen_semantic_model` | Generate MetricFlow semantic model YAML files |
-| `gen_metrics` | Convert SQL queries into MetricFlow metric definitions |
-| `gen_sql_summary` | Analyze and summarize SQL queries for knowledge reuse |
+| `explore` | Gather schema, sample data, knowledge, or file context |
+| `gen_sql` | Generate SQL with deeper multi-step reasoning |
+| `gen_report` | Produce structured reports and analysis |
+| `gen_semantic_model` | Generate MetricFlow semantic models |
+| `gen_metrics` | Generate MetricFlow metrics |
+| `gen_sql_summary` | Summarize SQL into reusable knowledge |
 | `gen_ext_knowledge` | Extract business knowledge from question-SQL pairs |
-| `gen_report` | Generate structured reports with data analysis and insights |
-| Custom types | Any custom subagent defined in `agent.yml` |
-
-**When does the chat agent delegate?**
-
-| Scenario | Behavior |
-|----------|----------|
-| Simple questions (SELECT, COUNT, GROUP BY on known tables) | Handles directly |
-| Need to discover tables/columns or understand domain terms | Delegates to `explore` |
-| Complex SQL with multi-table joins or domain-specific logic | Delegates to `gen_sql` |
-
-**Example Interaction**:
-
-```
-User: What's the average revenue per customer by region last quarter?
-
-# Chat agent internally:
-# 1. Calls task(type="explore") to discover relevant tables and metrics
-# 2. Calls task(type="gen_sql") to generate the complex SQL
-# 3. Returns the final SQL with explanation to the user
-```
-
-## Subagent vs Default Chat
-
-| Aspect | Default Chat | Subagent |
-|--------|-------------|----------|
-| **Purpose** | General SQL queries | Specific task workflows |
-| **Tools** | DB tools, search tools | Task-specific tools (file ops, validation) |
-| **Session** | Single conversation | Independent per subagent |
-| **Prompts** | General SQL assistance | Task-optimized instructions |
-| **Output** | SQL queries + explanations | Structured artifacts (YAML, files) |
-| **Validation** | Optional | Built-in (e.g., MetricFlow validation) |
-
-> **Note**: With Method 3 (Automatic Delegation), the boundary between "default chat" and "subagent" becomes fluid. The chat agent acts as an orchestration layer that transparently uses subagents when needed, so users get the benefits of specialized subagents without manually switching modes.
-
-**When to Use Default Chat**:
-
-- Ad-hoc SQL queries
-- Data exploration
-- Quick questions about your database
-
-**When to Use Subagent**:
-
-- Generate standardized artifacts (semantic models, metrics)
-- Follow specific workflows (classification, validation)
-- Build knowledge repositories
-
-
-## Configuration
-
-### Basic Configuration
-
-Define subagents in `conf/agent.yml`:
-
-```yaml
-agentic_nodes:
-  gen_metrics:
-    model: claude                          # LLM model
-    system_prompt: gen_metrics             # Prompt template name
-    prompt_version: "1.0"                  # Template version
-    tools: generation_tools.*, filesystem_tools.*, semantic_tools.*  # Available tools
-    hooks: generation_hooks                # User confirmation
-    max_turns: 40                          # Max conversation turns
-    workspace_root: /path/to/workspace     # File workspace
-    agent_description: "Metric generation assistant"
-    rules:                                 # Custom rules
-      - Use check_metric_exists to avoid duplicates
-      - Validate with validate_semantic tool
-```
-
-### Key Parameters
-
-| Parameter | Required | Description | Example |
-|-----------|----------|-------------|---------|
-| `model` | Yes | LLM model name | `claude`, `deepseek`, `openai` |
-| `system_prompt` | Yes | Prompt template identifier | `gen_metrics`, `gen_semantic_model` |
-| `prompt_version` | No | Template version | `"1.0"`, `"2.0"` |
-| `tools` | Yes | Comma-separated tool patterns | `db_tools.*, semantic_tools.*` |
-| `hooks` | No | Enable confirmation workflow | `generation_hooks` |
-| `mcp` | No | MCP server names | `filesystem_mcp` |
-| `max_turns` | No | Max conversation turns | `30`, `40` |
-| `workspace_root` | No | File operation directory | `/path/to/workspace` |
-| `agent_description` | No | Assistant description | `"SQL analysis assistant"` |
-| `rules` | No | Custom behavior rules | List of strings |
-
-### Tool Patterns
-
-**Wildcard Pattern** (all methods):
-```yaml
-tools: db_tools.*, generation_tools.*, filesystem_tools.*
-```
-
-**Specific Methods**:
-```yaml
-tools: db_tools.list_tables, db_tools.get_table_ddl, generation_tools.check_metric_exists
-```
-
-**Available Tool Types**:
-
-- `db_tools.*`: Database operations (list tables, get DDL, execute queries)
-- `generation_tools.*`: Generation helpers (check duplicates, context preparation)
-- `filesystem_tools.*`: File operations (read, write, edit files)
-- `context_search_tools.*`: Knowledge Base search (find metrics, semantic models)
-- `semantic_tools.*`: Semantic layer operations (list metrics, query metrics, validate)
-- `date_parsing_tools.*`: Date/time parsing and normalization
-
-### MCP Servers
-
-MCP (Model Context Protocol) servers provide additional tools:
-
-**Built-in MCP Servers**:
-
-- `filesystem_mcp`: File system operations within workspace
-
-**Configuration**:
-```yaml
-mcp: filesystem_mcp
-```
-
-> **Note**: MetricFlow integration is now provided through native `semantic_tools.*` via the [datus-semantic-metricflow](../adapters/semantic_adapters.md) adapter, not through MCP servers.
-
-## Summary
-
-Subagents provide **specialized, workflow-optimized AI assistants** for specific tasks:
-
-- **Task-Focused**: Optimized prompts and tools for specific workflows
-- **Independent Sessions**: Separate conversation history per subagent
-- **Artifact Generation**: Create standardized files (YAML, documentation)
-- **Built-in Validation**: Automatic checks and validation (e.g., MetricFlow)
-- **Knowledge Base Integration**: Sync generated artifacts for reuse
-- **Flexible Configuration**: Customize tools, prompts, and behavior
-- **Automatic Delegation**: Chat agent can transparently delegate to subagents via the `task()` tool
+| `gen_table` | Create tables interactively |
+| `gen_job` | Build single-database ETL jobs |
+| `migration` | Run cross-database migration workflows |
+| `gen_skill` | Create or optimize skills |
+| `gen_dashboard` | Create or manage BI dashboards |
+| `scheduler` | Submit or operate Airflow jobs |
+| Custom names | Any discoverable custom subagent defined in `agent.yml` |

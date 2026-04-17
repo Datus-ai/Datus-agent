@@ -15,7 +15,7 @@
 
 ## 工作原理
 
-使用 `datus --namespace <namespace>` 启动 Datus CLI，然后使用子代理命令：
+使用 `datus --database <namespace>` 启动 Datus CLI，然后使用子代理命令：
 
 ```text
   /gen_semantic_model generate a semantic model for table <table_name>
@@ -131,4 +131,3 @@ data_source:
 - ✓ 知识库集成
 - ✓ 防止重复
 - ✓ MetricFlow 兼容性
-

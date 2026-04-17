@@ -36,7 +36,7 @@ JOIN customers c ON o.customer_id = c.id  -- ❌ 不支持 JOIN
 
 ## 工作原理
 
-使用 `datus --namespace <namespace>` 启动 Datus CLI，然后使用指标生成子代理：
+使用 `datus --database <namespace>` 启动 Datus CLI，然后使用指标生成子代理：
 
 ```bash
 /gen_metrics Generate a metric from this SQL: SELECT SUM(amount) FROM transactions, the coresponding question is total amount of all transactions
@@ -260,4 +260,3 @@ metric:
 ✅ **交互式工作流**：同步前审阅和批准
 ✅ **知识库集成**：语义搜索以发现指标
 ✅ **文件管理**：将指标组织在独立于语义模型的专用文件中
-

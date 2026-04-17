@@ -52,18 +52,22 @@ The assistant will:
 
 Access specialized subagents for different tasks directly from the web interface.
 
-**Available Subagents** (shown in expandable section):
+**Available Subagents**:
 
-- `gen_semantic_model`: Generate semantic models from database tables
-- `gen_metrics`: Convert SQL queries to MetricFlow metrics
-- `gen_sql_summary`: Analyze and classify SQL queries
+The available list comes from built-in subagents plus any custom entries under `agent.agentic_nodes` for the current database. Common examples include:
+
+- `gen_sql`
+- `gen_report`
+- `gen_semantic_model`
+- `gen_metrics`
+- `gen_dashboard`
+- `scheduler`
 
 **How to Use**:
 
-1. Click "🔧 Access Specialized Subagents" on the main page
-2. Select the subagent you need
-3. Click "🚀 Use [subagent_name]"
-4. Chat with the specialized assistant
+1. Open the main chatbot page
+2. Switch to the subagent you need
+3. Chat with the specialized assistant
 
 **Direct URL Access**:
 
@@ -72,6 +76,13 @@ You can bookmark subagent URLs for quick access:
 ```
 http://localhost:8501/?subagent=gen_metrics
 http://localhost:8501/?subagent=gen_semantic_model
+http://localhost:8501/?subagent=finance_report
+```
+
+You can also launch the web UI directly into a subagent from the CLI:
+
+```bash
+datus --web --database production --subagent finance_report
 ```
 
 ### 3. Session Management

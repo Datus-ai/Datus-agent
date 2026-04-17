@@ -157,7 +157,7 @@ agent:
 ### 运行 Bootstrap 命令
 
 ```bash
-datus-agent bootstrap-bi --namespace superset
+datus-agent bootstrap-bi --database superset
 ```
 
 ### 交互流程
