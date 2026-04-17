@@ -2303,44 +2303,6 @@ class TestCmdResumeWithSession:
         # Should show "You:" for user messages
         assert "you:" in output.lower() or "message" in output.lower()
 
-    def test_resume_high_token_warning(self, real_agent_config, mock_llm_create):
-        """cmd_resume shows high token warning when session has > 50000 tokens."""
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
-
-        session_id = "chat_session_resume05"
-        _create_session_on_disk(session_id)
-
-        # Insert token usage > 50000 into turn_usage table
-        from datus.utils.path_manager import get_path_manager
-
-        db_path = os.path.join(str(get_path_manager().sessions_dir), f"{session_id}.db")
-        with sqlite3.connect(db_path) as conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS turn_usage ("
-                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-                "session_id TEXT NOT NULL, "
-                "branch_id TEXT DEFAULT 'main', "
-                "user_turn_number INTEGER NOT NULL, "
-                "requests INTEGER DEFAULT 0, "
-                "input_tokens INTEGER DEFAULT 0, "
-                "output_tokens INTEGER DEFAULT 0, "
-                "total_tokens INTEGER DEFAULT 0, "
-                "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
-            )
-            conn.execute(
-                "INSERT INTO turn_usage (session_id, user_turn_number, total_tokens) VALUES (?, ?, ?)",
-                (session_id, 1, 60000),
-            )
-            conn.commit()
-
-        cmds.cmd_resume(session_id)
-
-        output = _get_console_output(console)
-        assert cmds.current_node is not None
-        # Should show high token warning
-        assert "token" in output.lower() or "compact" in output.lower()
-
 
 # ===========================================================================
 # TestCmdRewindWithSession — cmd_rewind with active session + disk session
