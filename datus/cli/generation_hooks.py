@@ -51,11 +51,7 @@ _FILE_TYPE_ALIASES = {
 }
 
 
-def normalize_kb_relative_path(
-    path: str,
-    kind: Optional[str],
-    namespace: Optional[str] = None,
-) -> str:
+def normalize_kb_relative_path(path: str, kind: Optional[str]) -> str:
     """
     Silently normalize a relative path so that it lands under the typed
     sub-directory of the project's ``subject/`` tree, even when the caller
@@ -70,11 +66,7 @@ def normalize_kb_relative_path(
       * Path already starts with any known KB subdir (semantic_models /
         sql_summaries / ext_knowledge) → unchanged (caller is being explicit).
       * Otherwise → prepend ``{subdir}/``.
-
-    The ``namespace`` parameter is accepted for backward compatibility but is
-    ignored: KB content is no longer namespace-scoped at the filesystem level.
     """
-    del namespace  # no longer used; project isolation happens at subject_dir level
     if not path or os.path.isabs(path):
         return path
     if path in (".", "./"):
@@ -96,7 +88,6 @@ def normalize_kb_relative_path(
 def resolve_kb_sandbox_path(
     raw_path: str,
     kind: str,
-    agent_config: "AgentConfig",
     knowledge_base_dir: str,
 ) -> Optional[str]:
     """
@@ -109,7 +100,6 @@ def resolve_kb_sandbox_path(
     fabricated response could cause an arbitrary file on disk to be imported.
     Returns ``None`` when the path escapes the sandbox so callers can skip it.
     """
-    del agent_config  # namespace scoping removed; retained for signature compat
     if not raw_path:
         return None
     if os.path.isabs(raw_path):
@@ -134,7 +124,7 @@ def resolve_kb_sandbox_path(
     return candidate
 
 
-def make_kb_path_normalizer(agent_config: "AgentConfig", default_kind: Optional[str] = None):
+def make_kb_path_normalizer(default_kind: Optional[str] = None):
     """
     Build a ``FilesystemFuncTool.path_normalizer`` closure that silently prefixes
     relative paths with the correct KB subdir under ``subject/``.
@@ -145,7 +135,6 @@ def make_kb_path_normalizer(agent_config: "AgentConfig", default_kind: Optional[
     path already prefixed with ``sql_summaries/`` or ``ext_knowledge/``. Reads
     stay lax so the LLM can still browse peer KB artifacts.
     """
-    del agent_config  # namespace scoping removed; retained for signature compat
     expected_subdir = _KIND_TO_SUBDIR.get(default_kind or "")
     known_subdirs = set(_KIND_TO_SUBDIR.values())
 

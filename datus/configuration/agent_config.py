@@ -591,15 +591,12 @@ class AgentConfig:
         # Backends are project-agnostic; the new project will be picked up by
         # the next ``create_rdb_for_store`` / ``create_vector_connection`` call.
         # Drop cached per-project storage handles so old project bindings do
-        # not leak into the new project.
+        # not leak into the new project, atomically so concurrent storage
+        # lookups never see a partially-torn-down state.
         if hasattr(self, "_backend_config"):
-            from datus.storage.registry import clear_storage_registry
+            from datus.storage.registry import rebind_project
 
-            clear_storage_registry()
-            # Restore backend config since clear_storage_registry() called reset_backends()
-            from datus.storage.backend_holder import init_backends
-
-            init_backends(self._backend_config, data_dir=str(self.path_manager.data_dir))
+            rebind_project(self._backend_config, data_dir=str(self.path_manager.data_dir))
 
     @property
     def current_namespace(self) -> str:

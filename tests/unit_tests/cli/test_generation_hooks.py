@@ -1514,41 +1514,30 @@ class TestNormalizeKbRelativePath:
     def test_unknown_kind_unchanged(self):
         assert normalize_kb_relative_path("orders.yaml", "unknown") == "orders.yaml"
 
-    def test_namespace_arg_accepted_but_ignored(self):
-        """The legacy namespace argument is accepted for compat but ignored."""
-        assert normalize_kb_relative_path("orders.yaml", "semantic", "legacy_ns") == "semantic_models/orders.yaml"
-
 
 # ---------------------------------------------------------------------------
 # Tests: make_kb_path_normalizer factory
 # ---------------------------------------------------------------------------
 
 
-class _StubCfg:
-    """Minimal agent_config stand-in for normalizer factory tests."""
-
-    def __init__(self, ns: str = ""):
-        self.current_namespace = ns
-
-
 class TestMakeKbPathNormalizer:
     def test_uses_default_kind_when_file_type_missing(self):
-        normalizer = make_kb_path_normalizer(_StubCfg(), default_kind="semantic")
+        normalizer = make_kb_path_normalizer(default_kind="semantic")
         assert normalizer("orders.yaml", None) == "semantic_models/orders.yaml"
 
     def test_file_type_overrides_default_kind(self):
-        normalizer = make_kb_path_normalizer(_StubCfg(), default_kind="semantic")
+        normalizer = make_kb_path_normalizer(default_kind="semantic")
         assert normalizer("q_001.yaml", "sql_summary") == "sql_summaries/q_001.yaml"
 
     def test_file_type_aliases_recognized(self):
-        normalizer = make_kb_path_normalizer(_StubCfg(), default_kind=None)
+        normalizer = make_kb_path_normalizer(default_kind=None)
         assert normalizer("orders.yaml", "semantic_model") == "semantic_models/orders.yaml"
         assert normalizer("metrics/x.yaml", "metric") == "semantic_models/metrics/x.yaml"
         assert normalizer("notes.yaml", "ext_knowledge") == "ext_knowledge/notes.yaml"
 
     def test_strict_kind_rejects_cross_kind_write(self):
         """Mutating ops (strict_kind=True) must reject writes to peer kinds' subdirs."""
-        normalizer = make_kb_path_normalizer(_StubCfg(), default_kind="semantic")
+        normalizer = make_kb_path_normalizer(default_kind="semantic")
         # Read-lax: cross-kind reads still allowed.
         assert normalizer("sql_summaries/q.yaml", None) == "sql_summaries/q.yaml"
         # Write-strict: the same cross-kind path is refused.
@@ -1557,7 +1546,7 @@ class TestMakeKbPathNormalizer:
 
     def test_strict_kind_ignores_file_type_override(self):
         """In strict mode, file_type cannot be used to switch kinds."""
-        normalizer = make_kb_path_normalizer(_StubCfg(), default_kind="semantic")
+        normalizer = make_kb_path_normalizer(default_kind="semantic")
         # Without strict: file_type override is honored.
         assert normalizer("q.yaml", "sql_summary") == "sql_summaries/q.yaml"
         # With strict: override is ignored; default_kind wins.
@@ -1565,7 +1554,7 @@ class TestMakeKbPathNormalizer:
 
     def test_strict_kind_allows_own_kind_prefix(self):
         """Own-kind prefix is accepted in strict mode."""
-        normalizer = make_kb_path_normalizer(_StubCfg(), default_kind="semantic")
+        normalizer = make_kb_path_normalizer(default_kind="semantic")
         assert normalizer("semantic_models/orders.yml", None, strict_kind=True) == "semantic_models/orders.yml"
 
 
@@ -1582,7 +1571,7 @@ class TestHookAndToolPathAgreement:
 
         tool = FilesystemFuncTool(
             root_path=str(subject_root),
-            path_normalizer=make_kb_path_normalizer(real_agent_config, default_kind="semantic"),
+            path_normalizer=make_kb_path_normalizer(default_kind="semantic"),
         )
         write_result = tool.write_file("orders.yml", "id: orders\n", file_type="semantic_model")
         assert write_result.success == 1
@@ -1612,22 +1601,18 @@ class TestHookAndToolPathAgreement:
 # ---------------------------------------------------------------------------
 
 
-class _SandboxCfg:
-    """Minimal agent_config stand-in for resolve_kb_sandbox_path tests."""
-
-
 class TestResolveKbSandboxPath:
     def test_empty_path_returns_none(self, tmp_path):
-        assert resolve_kb_sandbox_path("", "sql_summary", _SandboxCfg(), str(tmp_path)) is None
+        assert resolve_kb_sandbox_path("", "sql_summary", str(tmp_path)) is None
 
     def test_bare_filename_is_prefixed_under_sandbox(self, tmp_path):
         kb = tmp_path
-        resolved = resolve_kb_sandbox_path("q_001.yaml", "sql_summary", _SandboxCfg(), str(kb))
+        resolved = resolve_kb_sandbox_path("q_001.yaml", "sql_summary", str(kb))
         assert resolved == os.path.normpath(str(kb / "sql_summaries" / "q_001.yaml"))
 
     def test_fully_prefixed_relative_path_passes_through(self, tmp_path):
         kb = tmp_path
-        resolved = resolve_kb_sandbox_path("sql_summaries/q.yaml", "sql_summary", _SandboxCfg(), str(kb))
+        resolved = resolve_kb_sandbox_path("sql_summaries/q.yaml", "sql_summary", str(kb))
         assert resolved == os.path.normpath(str(kb / "sql_summaries" / "q.yaml"))
 
     def test_absolute_path_inside_sandbox_accepted(self, tmp_path):
@@ -1635,32 +1620,32 @@ class TestResolveKbSandboxPath:
         (kb / "sql_summaries").mkdir(parents=True)
         inside = kb / "sql_summaries" / "q.yaml"
         inside.write_text("x")
-        resolved = resolve_kb_sandbox_path(str(inside), "sql_summary", _SandboxCfg(), str(kb))
+        resolved = resolve_kb_sandbox_path(str(inside), "sql_summary", str(kb))
         assert os.path.realpath(resolved) == os.path.realpath(str(inside))
 
     def test_absolute_path_outside_sandbox_rejected(self, tmp_path):
         """A fabricated absolute path outside the sandbox must be refused so
         _save_to_db never syncs an arbitrary on-disk file."""
-        assert resolve_kb_sandbox_path("/etc/passwd", "sql_summary", _SandboxCfg(), str(tmp_path)) is None
+        assert resolve_kb_sandbox_path("/etc/passwd", "sql_summary", str(tmp_path)) is None
 
     def test_cross_kind_prefix_rejected(self, tmp_path):
         """Workflow returning ``ext_knowledge/foo.yaml`` from a
         sql_summary node must be refused — the prompt-compliant output here
         is restricted to ``sql_summaries/``."""
-        assert resolve_kb_sandbox_path("ext_knowledge/foo.yaml", "sql_summary", _SandboxCfg(), str(tmp_path)) is None
+        assert resolve_kb_sandbox_path("ext_knowledge/foo.yaml", "sql_summary", str(tmp_path)) is None
 
     def test_traversal_escape_rejected(self, tmp_path):
         """``../../etc/passwd`` resolves outside the sandbox → rejected."""
-        assert resolve_kb_sandbox_path("../../etc/passwd", "sql_summary", _SandboxCfg(), str(tmp_path)) is None
+        assert resolve_kb_sandbox_path("../../etc/passwd", "sql_summary", str(tmp_path)) is None
 
     def test_unknown_kind_no_containment_check(self, tmp_path):
         """For an unknown kind we cannot compute a sandbox — fall back to
         just normalizing against knowledge_base_dir."""
-        resolved = resolve_kb_sandbox_path("foo.yaml", "unknown", _SandboxCfg(), str(tmp_path))
+        resolved = resolve_kb_sandbox_path("foo.yaml", "unknown", str(tmp_path))
         assert resolved == os.path.normpath(str(tmp_path / "foo.yaml"))
 
     def test_commonpath_value_error_fails_closed(self, tmp_path):
         """Simulate os.path.commonpath raising (e.g. mixed drives on
         Windows) — the resolver must fail closed with None."""
         with patch("datus.cli.generation_hooks.os.path.commonpath", side_effect=ValueError("mixed drives")):
-            assert resolve_kb_sandbox_path("q.yaml", "sql_summary", _SandboxCfg(), str(tmp_path)) is None
+            assert resolve_kb_sandbox_path("q.yaml", "sql_summary", str(tmp_path)) is None

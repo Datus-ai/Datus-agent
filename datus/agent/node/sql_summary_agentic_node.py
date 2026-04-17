@@ -155,7 +155,7 @@ class SqlSummaryAgenticNode(AgenticNode):
         try:
             self.filesystem_func_tool = FilesystemFuncTool(
                 root_path=self.knowledge_base_dir,
-                path_normalizer=make_kb_path_normalizer(self.agent_config, default_kind="sql_summary"),
+                path_normalizer=make_kb_path_normalizer(default_kind="sql_summary"),
             )
 
             self.tools.extend(self.filesystem_func_tool.available_tools())
@@ -629,9 +629,7 @@ class SqlSummaryAgenticNode(AgenticNode):
 
             from datus.cli.generation_hooks import resolve_kb_sandbox_path
 
-            full_path = resolve_kb_sandbox_path(
-                sql_summary_file, "sql_summary", self.agent_config, self.knowledge_base_dir
-            )
+            full_path = resolve_kb_sandbox_path(sql_summary_file, "sql_summary", self.knowledge_base_dir)
             if not full_path:
                 logger.warning(f"SQL summary file rejected by sandbox check: {sql_summary_file!r}")
                 return

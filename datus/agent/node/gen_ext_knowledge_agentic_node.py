@@ -460,7 +460,7 @@ Do NOT give up. Continue iterating until verify_sql returns success=1.
 
             self.filesystem_func_tool = FilesystemFuncTool(
                 root_path=self.knowledge_base_dir,
-                path_normalizer=make_kb_path_normalizer(self.agent_config, default_kind="ext_knowledge"),
+                path_normalizer=make_kb_path_normalizer(default_kind="ext_knowledge"),
             )
             self.tools.append(trans_to_function_tool(self.filesystem_func_tool.read_file))
             self.tools.append(trans_to_function_tool(self.filesystem_func_tool.edit_file))
@@ -1053,9 +1053,7 @@ Rules:
 
             from datus.cli.generation_hooks import resolve_kb_sandbox_path
 
-            full_path = resolve_kb_sandbox_path(
-                ext_knowledge_file, "ext_knowledge", self.agent_config, self.knowledge_base_dir
-            )
+            full_path = resolve_kb_sandbox_path(ext_knowledge_file, "ext_knowledge", self.knowledge_base_dir)
             if not full_path:
                 logger.warning(f"External knowledge file rejected by sandbox check: {ext_knowledge_file!r}")
                 return

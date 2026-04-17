@@ -495,10 +495,6 @@ class TestAvailableTools:
 # ---------------------------------------------------------------------------
 
 
-class _StubCfg:
-    """Minimal agent_config stand-in; no longer namespace-scoped."""
-
-
 class TestFilesystemFuncToolKbNormalizerRoundTrip:
     """Contract tests for FilesystemFuncTool + KB path_normalizer."""
 
@@ -507,7 +503,7 @@ class TestFilesystemFuncToolKbNormalizerRoundTrip:
         kb_root.mkdir()
         tool = FilesystemFuncTool(
             root_path=str(kb_root),
-            path_normalizer=make_kb_path_normalizer(_StubCfg(), default_kind=kind),
+            path_normalizer=make_kb_path_normalizer(default_kind=kind),
         )
         return tool, kb_root
 

@@ -133,7 +133,7 @@ class GenMetricsAgenticNode(AgenticNode):
         try:
             self.filesystem_func_tool = FilesystemFuncTool(
                 root_path=self.knowledge_base_dir,
-                path_normalizer=make_kb_path_normalizer(self.agent_config, default_kind="metric"),
+                path_normalizer=make_kb_path_normalizer(default_kind="metric"),
             )
 
             self.tools.extend(self.filesystem_func_tool.available_tools())

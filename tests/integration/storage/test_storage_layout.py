@@ -9,9 +9,13 @@ Validates the end-to-end wiring of ``AgentConfig`` + ``DatusPathManager``:
 * Knowledge-base dirs land under ``{project_root}/subject/``.
 * Sessions and data dirs are sharded by ``project_name`` under ``datus_home``.
 * Switching ``project_name`` at runtime rebuilds the sharded paths.
+* Live backends (``create_vector_connection`` / ``create_rdb_for_store``)
+  actually write under ``{data_dir}/{project}/datus_db`` — this catches
+  regressions where path-manager properties diverge from backend internals.
 
 All external dependencies (LLM APIs, databases, remote stores) are avoided by
-using ``skip_init_dirs=True``; this is a pure filesystem-layout contract test.
+using ``skip_init_dirs=True`` for the path-contract tests; the backend
+landing-path test exercises the real sqlite/lance backends on a tmp path.
 """
 
 from pathlib import Path
@@ -135,3 +139,56 @@ class TestStorageLayoutIntegration:
 )
 def test_normalize_project_name_cases(cwd, expected):
     assert _normalize_project_name(cwd) == expected
+
+
+class TestBackendLandingPath:
+    """Exercise the real sqlite/lance backends and assert on-disk locations.
+
+    ``skip_init_dirs=True`` used by the other tests bypasses the storage layer
+    entirely, so we rely on this test to catch drift between
+    ``DatusPathManager.data_dir`` and the path the backends actually open.
+    """
+
+    @pytest.fixture
+    def _backends(self):
+        from datus.storage.backend_holder import reset_backends
+
+        yield
+        reset_backends()
+
+    def test_vector_connection_lands_under_project_shard(self, tmp_path, _backends):
+        from datus_storage_base.backend_config import StorageBackendConfig
+
+        from datus.storage.backend_holder import create_vector_connection, init_backends
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        init_backends(StorageBackendConfig(), data_dir=str(data_dir))
+
+        vec_db = create_vector_connection("proj_x")
+        try:
+            expected = data_dir / "proj_x" / "datus_db"
+            assert expected.exists(), f"LanceDB should have been opened at {expected}"
+        finally:
+            vec_db.close()
+
+    def test_rdb_store_file_lands_under_project_shard(self, tmp_path, _backends):
+        from datus_storage_base.backend_config import StorageBackendConfig
+        from datus_storage_base.rdb.base import ColumnDef, TableDefinition
+
+        from datus.storage.backend_holder import create_rdb_for_store, init_backends
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        init_backends(StorageBackendConfig(), data_dir=str(data_dir))
+
+        rdb = create_rdb_for_store("subject_tree", "proj_x")
+        # SQLite only materializes the .db file on first DDL; trigger it.
+        rdb.ensure_table(
+            TableDefinition(
+                table_name="probe",
+                columns=[ColumnDef(name="id", col_type="INTEGER", primary_key=True, autoincrement=True)],
+            )
+        )
+        expected = data_dir / "proj_x" / "datus_db" / "subject_tree.db"
+        assert expected.is_file(), f"SQLite file should have been created at {expected}"

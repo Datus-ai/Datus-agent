@@ -195,7 +195,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
         try:
             self.filesystem_func_tool = FilesystemFuncTool(
                 root_path=self.knowledge_base_dir,
-                path_normalizer=make_kb_path_normalizer(self.agent_config, default_kind="semantic"),
+                path_normalizer=make_kb_path_normalizer(default_kind="semantic"),
             )
 
             self.tools.extend(self.filesystem_func_tool.available_tools())
@@ -624,9 +624,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
 
             from datus.cli.generation_hooks import resolve_kb_sandbox_path
 
-            full_path = resolve_kb_sandbox_path(
-                semantic_model_file, "semantic", self.agent_config, self.knowledge_base_dir
-            )
+            full_path = resolve_kb_sandbox_path(semantic_model_file, "semantic", self.knowledge_base_dir)
             if not full_path:
                 logger.warning(f"Semantic model file rejected by sandbox check: {semantic_model_file!r}")
                 return
