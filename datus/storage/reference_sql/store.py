@@ -225,14 +225,25 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
 
         return result
 
-    # ``comment`` is intentionally excluded: it is an internal reserved field that
-    # must not round-trip through edits, so pre-existing YAML comments stay untouched.
+    # ``comment`` (the YAML data key, not ``#`` annotations) is intentionally excluded:
+    # it is an internal reserved field, and dropping it here means an incoming
+    # update_values["comment"] is ignored so the existing ``comment:`` key in the
+    # file is not overwritten. This says nothing about ``#`` annotations — see the
+    # sync method's docstring for that caveat.
     _SYNCABLE_FIELDS = {"sql", "summary", "search_text", "tags"}
 
     def _sync_reference_sql_update_to_yaml(self, filepath: str, update_values: Dict[str, Any]) -> None:
         """Sync update_values to the source YAML file for a reference SQL entry.
 
-        Only fields in _SYNCABLE_FIELDS are written back to the YAML file.
+        Only keys in _SYNCABLE_FIELDS are written back to the YAML file; all other
+        keys in ``update_values`` (including the reserved ``comment`` data key) are
+        ignored, leaving those YAML keys untouched.
+
+        Caveat — ``#`` annotations: this helper goes through ``yaml.safe_load`` /
+        ``yaml.safe_dump``, which do not preserve hand-authored ``#`` comments or
+        blank lines. Any such annotations in the source file are lost whenever an
+        update actually rewrites the file. Preserving them would require a
+        round-trip loader (e.g. ``ruamel.yaml(typ="rt")``); that is out of scope.
 
         Args:
             filepath: Path to the YAML file to update
