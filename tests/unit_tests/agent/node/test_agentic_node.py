@@ -625,6 +625,7 @@ class TestManualCompact:
         assert len(items) == 2
         assert items[0]["role"] == "user"
         assert "compacted" in items[0]["content"].lower()
+        assert items[1]["type"] == "message"
         assert items[1]["role"] == "assistant"
         assert isinstance(items[1]["content"], list)
         assert items[1]["content"][0]["type"] == "output_text"

@@ -458,6 +458,7 @@ class AgenticNode(Node):
                             "content": "[Previous conversation was compacted to save context. Summary below.]",
                         },
                         {
+                            "type": "message",
                             "role": "assistant",
                             "content": [{"type": "output_text", "text": summary}],
                         },
