@@ -26,6 +26,7 @@ from datus.api.models.chat_models import (
 )
 from datus.api.models.cli_models import (
     ChatHistoryData,
+    ChatModelData,
     ChatSessionData,
     CompactSessionData,
     CompactSessionInput,
@@ -169,6 +170,21 @@ async def get_chat_history(
     session_id: str = Query(..., description="Session ID to retrieve history for"),
 ) -> Result[ChatHistoryData]:
     return svc.chat.get_history(session_id, user_id=ctx.user_id)
+
+
+# ========== Current Chat Model ==========
+
+
+@router.get(
+    "/model",
+    response_model=Result[ChatModelData],
+    summary="Get Current Chat Model",
+    description="Return the active chat model identity (type and model)",
+)
+async def get_chat_model(
+    svc: ServiceDep,
+) -> Result[ChatModelData]:
+    return svc.chat.get_model()
 
 
 # ========== User Interaction ==========
