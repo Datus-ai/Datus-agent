@@ -22,6 +22,13 @@ from datus.utils.path_utils import get_files_from_glob_pattern
 # Regex for validating platform/identifier names (no special chars that break paths)
 _SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9_\-]+$")
 
+# Character class accepted by the backend-side ``_safe_path_segment`` validators
+# (datus.storage.rdb.sqlite_backend / datus.storage.vector.lance_backend).  Any
+# character outside this class in a CWD-derived project name would cause
+# backend init to raise ``DatusException``, so the CWD normalizer sanitizes
+# offending characters down to ``_`` before returning.
+_PROJECT_SEGMENT_SAFE_RE = re.compile(r"[^A-Za-z0-9_.\-]")
+
 # Filesystem limits for sharded directory names.
 # Common filesystems (ext4, APFS, NTFS) cap single-component names at 255 bytes.
 # We leave room for prefixes/extensions by truncating to 200 chars + md5 suffix.
@@ -29,10 +36,15 @@ _PROJECT_NAME_MAX_LEN = 200
 
 
 def _normalize_project_name(cwd: str) -> str:
-    """Sanitize a CWD path into a flat project name.
+    """Sanitize a CWD path into a flat, filesystem-safe project name.
 
     Rules:
-    - Replace every ``/`` (and backslash on Windows) with ``-``.
+    - Replace every ``/`` (and backslash on Windows) with ``-`` so the
+      directory hierarchy is still legible in the produced name.
+    - Replace every remaining character outside
+      ``[A-Za-z0-9_.\\-]`` (the backend-accepted class) with ``_`` so the
+      result survives the backend-side ``_safe_path_segment`` check even for
+      CWDs containing spaces, colons, or other special characters.
     - Strip leading ``-`` so the segment does not start with a dot-like char.
     - When the result is empty (e.g. root ``/``), fall back to ``_root``.
     - When the normalized name exceeds :data:`_PROJECT_NAME_MAX_LEN` characters,
@@ -45,6 +57,7 @@ def _normalize_project_name(cwd: str) -> str:
     name = cwd.replace("\\", "/").replace("/", "-").lstrip("-")
     if not name:
         return "_root"
+    name = _PROJECT_SEGMENT_SAFE_RE.sub("_", name)
     if len(name) > _PROJECT_NAME_MAX_LEN:
         digest = hashlib.md5(name.encode("utf-8")).hexdigest()[:7]
         tail_len = _PROJECT_NAME_MAX_LEN - len(digest) - 1
@@ -1063,18 +1076,6 @@ class AgentConfig:
                 extra=auth_params.get("extra", {}),
                 dataset_db=dataset_db,
             )
-
-
-def rag_storage_path(rag_base_path: str = "data", namespace: str = "", isolation: str = "physical") -> str:
-    """Return the RAG storage path.
-
-    Project isolation is now achieved by sharding ``rag_base_path`` itself
-    (``{home}/data/{project_name}``); the legacy ``namespace`` segment and the
-    ``datus_db_{namespace}`` directory naming are no longer applied. Kept for
-    backward-compatible callers that import this helper directly.
-    """
-    del namespace, isolation  # unused, retained for signature compatibility
-    return os.path.join(rag_base_path, "datus_db")
 
 
 def resolve_env(value: str) -> str:

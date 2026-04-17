@@ -23,7 +23,6 @@ from datus.configuration.agent_config import (
     ModelConfig,
     file_stem_from_uri,
     load_model_config,
-    rag_storage_path,
     resolve_env,
 )
 from datus.utils.exceptions import DatusException
@@ -94,21 +93,6 @@ class TestFileStemFromUri:
     def test_no_extension(self):
         result = file_stem_from_uri("mydb")
         assert result == "mydb"
-
-
-# ---------------------------------------------------------------------------
-# rag_storage_path
-# ---------------------------------------------------------------------------
-
-
-class TestRagStoragePath:
-    def test_unified_datus_db_path(self):
-        path = rag_storage_path("/data")
-        assert path.endswith("datus_db")
-
-    def test_includes_base_path(self):
-        path = rag_storage_path("/custom/base")
-        assert "/custom/base" in path
 
 
 # ---------------------------------------------------------------------------
@@ -442,7 +426,32 @@ class TestNormalizeProjectName:
     def test_backslashes_treated_like_slashes(self):
         from datus.configuration.agent_config import _normalize_project_name
 
-        assert _normalize_project_name("C:\\Users\\me\\proj") == "C:-Users-me-proj"
+        # ``:`` is outside the backend-accepted segment class and is sanitized to ``_``.
+        assert _normalize_project_name("C:\\Users\\me\\proj") == "C_-Users-me-proj"
+
+    def test_special_chars_sanitized_to_underscore(self):
+        """Chars outside [A-Za-z0-9_.-] are replaced so backend _safe_path_segment accepts the result."""
+        from datus.configuration.agent_config import _normalize_project_name
+
+        assert _normalize_project_name("/Users/Felix Liu/proj") == "Users-Felix_Liu-proj"
+        assert _normalize_project_name("/a(b)/c@d") == "a_b_-c_d"
+
+    def test_derived_name_passes_backend_segment_check(self):
+        """Automatically derived names must pass the backend-side segment validator."""
+        from datus.configuration.agent_config import _normalize_project_name
+        from datus.storage.rdb.sqlite_backend import _safe_path_segment
+
+        for cwd in [
+            "/Users/Felix Liu/proj",
+            "/a(b)/c@d",
+            "C:\\Users\\me\\proj",
+            "/",
+            "",
+            "/tmp/x.y/z",
+        ]:
+            name = _normalize_project_name(cwd)
+            # Must not raise.
+            assert _safe_path_segment(name, "project") == name
 
 
 class TestAgentConfigProjectLayout:
