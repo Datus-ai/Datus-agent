@@ -1038,6 +1038,9 @@ class ChatCommands:
                 self.console.print(f"  New Token Count: {result.get('new_token_count', 'N/A')}")
                 self.console.print(f"  Tokens Saved: {result.get('tokens_saved', 'N/A')}")
                 self.console.print(f"  Compression Ratio: {result.get('compression_ratio', 'N/A')}")
+
+                # Reload in-memory state from the compacted session
+                self._reload_state_from_session()
             else:
                 error_msg = result.get("error", "Unknown error occurred")
                 self.console.print(f"[bold red]✗ Failed to compact session:[/] {error_msg}")
@@ -1045,6 +1048,64 @@ class ChatCommands:
         except Exception as e:
             logger.error(f"Error during manual compact: {e}")
             self.console.print(f"[bold red]Error:[/] {str(e)}")
+
+    def _reload_state_from_session(self):
+        """Reload in-memory state from the current session after compaction.
+
+        Clears accumulated action/chat history and rebuilds it from the
+        persisted session messages, then re-renders the conversation on
+        screen so the CLI display matches the compacted DB state.
+        """
+        from datus.models.session_manager import SessionManager
+
+        session_id = self.current_node.session_id
+        session_manager = SessionManager(self.cli.agent_config.session_dir, scope=self.cli.scope)
+        messages = session_manager.get_session_messages(session_id)
+
+        # Reset in-memory state
+        self.all_turn_actions = []
+        self.last_actions = []
+        self.chat_history = []
+        self._trace_verbose = False
+        if self.current_node:
+            self.current_node.actions = []
+
+        # Rebuild state from session messages
+        if messages:
+            from rich.rule import Rule
+
+            self.console.print()
+            action_display = ActionHistoryDisplay(self.console)
+            last_assistant_actions = []
+            current_user_msg = ""
+
+            for msg in messages:
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")
+                if role == "user":
+                    current_user_msg = content
+                    self.console.print(f"[bold blue]You:[/] {content}")
+                else:
+                    actions = msg.get("actions")
+                    if actions:
+                        action_display.render_action_history(actions)
+                        last_assistant_actions = actions
+                    sql = msg.get("sql")
+                    if sql:
+                        self._display_sql_with_copy(sql)
+                    if content:
+                        stripped = content.strip()
+                        is_json = stripped.startswith("{") and stripped.endswith("}")
+                        if not (is_json and (sql or actions)):
+                            self._display_markdown_response(content)
+                    # Rebuild all_turn_actions
+                    if actions and current_user_msg:
+                        self.all_turn_actions.append((current_user_msg, actions))
+                    current_user_msg = ""
+                self.console.print(Rule(style="dim"))
+
+            if last_assistant_actions:
+                self.last_actions = last_assistant_actions
 
     def cmd_list_sessions(self, args: str):
         """List all available chat sessions."""

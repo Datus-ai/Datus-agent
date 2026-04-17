@@ -17,6 +17,25 @@ TEST_DATA_DIR = Path(__file__).parent / "data"
 TEST_CONF_DIR = Path(__file__).parent / "conf"
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _disable_langsmith_tracing():
+    """Disable LangSmith/LangChain tracing for the entire test session.
+
+    Overrides any inherited env vars so UT runs never upload traces, even when
+    the developer's shell has LANGSMITH_TRACING=true or an API key set.
+    """
+    for key in (
+        "LANGCHAIN_API_KEY",
+        "LANGSMITH_API_KEY",
+        "LANGCHAIN_ENDPOINT",
+        "LANGSMITH_ENDPOINT",
+    ):
+        os.environ.pop(key, None)
+    os.environ["LANGSMITH_TRACING"] = "false"
+    os.environ["LANGCHAIN_TRACING_V2"] = "false"
+    yield
+
+
 @pytest.fixture
 def mock_args():
     """Create a mock arguments object for testing."""

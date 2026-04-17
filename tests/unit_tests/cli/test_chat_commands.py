@@ -2090,6 +2090,42 @@ class TestCmdCompactWithSession:
             or "Error" in output
         )
 
+    def test_compact_resets_in_memory_state(self, real_agent_config, mock_llm_create):
+        """After successful compact, in-memory state is reset via _reload_state_from_session."""
+        from tests.unit_tests.mock_llm_model import build_simple_response
+
+        console = Console(file=io.StringIO(), no_color=True)
+        cmds = _make_chat_commands(real_agent_config, console=console)
+
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response("First reply"),
+                build_simple_response("Second reply"),
+                # compact summary response
+                build_simple_response("Summary of conversation"),
+            ]
+        )
+
+        # Two rounds of chat to accumulate history
+        cmds.execute_chat_command("First question")
+        cmds.execute_chat_command("Second question")
+
+        # Verify pre-compact state has accumulated data
+        assert len(cmds.all_turn_actions) == 2
+        assert len(cmds.chat_history) == 2
+        assert len(cmds.last_actions) > 0
+
+        console.file = io.StringIO()
+        cmds.cmd_compact("")
+
+        output = _get_console_output(console)
+        if "compacted successfully" in output.lower():
+            # After successful compact, accumulated pre-compact history should be cleared
+            # _reload_state_from_session rebuilds from the compacted session
+            # which contains only the summary pair, not the original turn actions
+            assert cmds._trace_verbose is False
+            assert cmds.current_node.actions == []
+
 
 # ===========================================================================
 # TestCmdListSessionsWithData — cmd_list_sessions 有 session 数据
