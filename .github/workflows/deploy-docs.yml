@@ -122,11 +122,12 @@ jobs:
         if: env.DOCS_SKIP_DEPLOY != 'true' && env.DOCS_SOURCE_REF != ''
         run: |
           BUILD_ROOT="$(mktemp -d)"
+          DOCS_BUILD_ROOT="${BUILD_ROOT}/docs_build"
           python ci/prepare_docs_build.py \
             --base-config mkdocs.yml \
-            --output-root "${BUILD_ROOT}" \
+            --output-root "${DOCS_BUILD_ROOT}" \
             --source-ref "${DOCS_SOURCE_REF}"
-          echo "DOCS_BUILD_CONFIG=${BUILD_ROOT}/mkdocs.yml" >> "${GITHUB_ENV}"
+          echo "DOCS_BUILD_CONFIG=${DOCS_BUILD_ROOT}/mkdocs.yml" >> "${GITHUB_ENV}"
       - run: mkdocs build --strict -f "${DOCS_BUILD_CONFIG}"
         if: env.DOCS_SKIP_DEPLOY != 'true'
       - name: Deploy versioned docs

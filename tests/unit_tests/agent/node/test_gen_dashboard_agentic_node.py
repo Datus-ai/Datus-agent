@@ -974,18 +974,27 @@ class TestGenDashboardCustomNodeName:
         """Alias config should be able to choose its own prompt template."""
         _add_dashboard_config(real_agent_config)
         real_agent_config.agentic_nodes["sales_dashboard"] = {
-            "system_prompt": "sales_dashboard",
+            "system_prompt": "gen_dashboard",
             "bi_platform": "superset",
             "max_turns": 15,
         }
         with patch.dict(sys.modules, _BI_MODULES_PATCH):
             from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
 
-            node = GenDashboardAgenticNode(
-                agent_config=real_agent_config, execution_mode="workflow", node_name="sales_dashboard"
-            )
             with patch("datus.prompts.prompt_manager.get_prompt_manager") as mock_pm:
                 mock_pm.return_value.render_template.return_value = "test prompt"
+                node = GenDashboardAgenticNode(
+                    agent_config=real_agent_config, execution_mode="workflow", node_name="sales_dashboard"
+                )
+                node._get_system_prompt()
+                call_kwargs = mock_pm.return_value.render_template.call_args.kwargs
+                assert call_kwargs["template_name"] == "gen_dashboard_system"
+
+                mock_pm.return_value.render_template.reset_mock()
+                real_agent_config.agentic_nodes["sales_dashboard"].pop("system_prompt")
+                node = GenDashboardAgenticNode(
+                    agent_config=real_agent_config, execution_mode="workflow", node_name="sales_dashboard"
+                )
                 node._get_system_prompt()
                 call_kwargs = mock_pm.return_value.render_template.call_args.kwargs
                 assert call_kwargs["template_name"] == "sales_dashboard_system"

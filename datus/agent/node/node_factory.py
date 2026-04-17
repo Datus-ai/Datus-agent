@@ -112,8 +112,8 @@ def create_interactive_node(
             from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
             return SkillCreatorAgenticNode(
-                node_id=f"{subagent_name}{node_id_suffix}" if subagent_name else f"gen_skill{node_id_suffix}",
-                description=f"Skill generation node for {subagent_name or 'gen_skill'}",
+                node_id=f"{subagent_name}{node_id_suffix}",
+                description=f"Skill generation node for {subagent_name}",
                 node_type="gen_skill",
                 input_data=None,
                 agent_config=agent_config,
