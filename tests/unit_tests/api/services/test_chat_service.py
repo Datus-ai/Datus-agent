@@ -98,6 +98,42 @@ class TestChatServiceDeleteSession:
         assert chat_svc.session_exists("to-delete") is False
 
 
+class TestChatServiceGetModel:
+    """Tests for get_model."""
+
+    def test_get_model_returns_active_model_identity(self, chat_svc):
+        """get_model returns the active ModelConfig's type and model."""
+        result = chat_svc.get_model()
+        assert result.success is True
+        assert result.data is not None
+        assert result.data.current.type == "openai"
+        assert result.data.current.model == "mock-model"
+
+    def test_get_model_reflects_active_model_changes(self, chat_svc):
+        """get_model follows the AgentConfig.active_model() result."""
+        fake_active = MagicMock(type="claude", model="claude-3-sonnet")
+        with patch.object(chat_svc.agent_config, "active_model", return_value=fake_active):
+            result = chat_svc.get_model()
+
+        assert result.success is True
+        assert result.data.current.type == "claude"
+        assert result.data.current.model == "claude-3-sonnet"
+
+    def test_get_model_handles_lookup_error(self, chat_svc):
+        """get_model returns a typed error when active_model() raises."""
+        with patch.object(
+            chat_svc.agent_config,
+            "active_model",
+            side_effect=ValueError("no model"),
+        ):
+            result = chat_svc.get_model()
+
+        assert result.success is False
+        assert result.errorCode == "MODEL_LOOKUP_ERROR"
+        assert "no model" in (result.errorMessage or "")
+        assert result.data is None
+
+
 class TestChatServiceGetHistory:
     """Tests for get_history."""
 
