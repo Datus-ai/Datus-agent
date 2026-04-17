@@ -522,18 +522,14 @@ class TestAgentConfigProjectLayout:
 
         assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
-    def test_setting_project_name_rebuilds_path_manager(self, tmp_path):
+    def test_project_name_is_read_only(self, tmp_path):
+        """project_name is immutable post-construction; no runtime switching."""
         cfg = self._make(tmp_path, project_name="first", project_root=tmp_path)
-        first_project_data = cfg.path_manager.project_data_dir
-
-        cfg.project_name = "second"
-        assert cfg.path_manager.project_data_dir != first_project_data
-        datus_home = (tmp_path / "datus_home").resolve()
-        assert cfg.path_manager.project_data_dir == datus_home / "data" / "second"
-        assert cfg.path_manager.sessions_dir == datus_home / "sessions" / "second"
+        with pytest.raises(AttributeError):
+            cfg.project_name = "second"  # type: ignore[misc]
 
     def test_invalid_project_name_rejected(self, tmp_path):
-        """YAML project_name must match _SAFE_NAME_RE — slashes / dots are rejected."""
+        """YAML project_name must match _PROJECT_NAME_RE — slashes are rejected."""
         with pytest.raises(DatusException):
             self._make(tmp_path, project_name="bad/name", project_root=tmp_path)
 
@@ -542,8 +538,3 @@ class TestAgentConfigProjectLayout:
 
         with pytest.raises(DatusException):
             self._make(tmp_path, project_name="a" * (_PROJECT_NAME_MAX_LEN + 1), project_root=tmp_path)
-
-    def test_project_name_setter_validates(self, tmp_path):
-        cfg = self._make(tmp_path, project_name="first", project_root=tmp_path)
-        with pytest.raises(DatusException):
-            cfg.project_name = "bad name with spaces"

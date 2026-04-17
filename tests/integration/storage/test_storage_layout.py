@@ -93,17 +93,6 @@ class TestStorageLayoutIntegration:
         assert produced.exists() and produced.is_dir()
         assert produced == project_root.resolve() / "subject" / "semantic_models"
 
-    def test_switching_project_name_rebuilds_shards(self, tmp_path):
-        datus_home = tmp_path / "home"
-        project_root = tmp_path / "my_project"
-        cfg = _make_config(home=datus_home, project_name="initial", project_root=project_root)
-
-        cfg.project_name = "rotated"
-        assert cfg.path_manager.data_dir == datus_home.resolve() / "data" / "rotated"
-        assert cfg.path_manager.sessions_dir == datus_home.resolve() / "sessions" / "rotated"
-        # Subject tree stays pinned to project_root — sharding happens on datus_home.
-        assert cfg.path_manager.subject_dir == project_root.resolve() / "subject"
-
     def test_auto_project_name_from_cwd(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         datus_home = tmp_path / "home"

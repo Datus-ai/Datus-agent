@@ -584,6 +584,16 @@ class AgentConfig:
 
     @property
     def project_name(self) -> str:
+        """Immutable project identifier derived at construction time.
+
+        ``project_name`` is pinned to the ``AgentConfig`` instance: the CLI
+        runs a single project per process, and the API serves multiple
+        projects by instantiating one ``AgentConfig`` per request / tenant.
+        Neither use case requires runtime mutation, so there is no setter.
+        Callers that want to "switch projects" should construct a fresh
+        ``AgentConfig``; the storage registry's LRU cache already isolates
+        concurrent project entries by project-keyed cache entries.
+        """
         return self._project_name
 
     @property
@@ -597,31 +607,6 @@ class AgentConfig:
         self._project_root = resolved
         if getattr(self, "path_manager", None) is not None:
             self.path_manager._project_root = resolved
-
-    @project_name.setter
-    def project_name(self, value: str):
-        if not value:
-            return
-        # Runtime switches must obey the same character/length rules as the
-        # YAML-time value so backend sub-layouts stay filesystem-safe.
-        self._project_name = _validate_project_name(value)
-        # Rebuild path_manager so sessions_dir/project_data_dir reflect the new project.
-        self._set_path_manager(self.home, self.knowledge_base_home)
-        # Keep derived paths in sync with the new project even when
-        # ``skip_init_dirs=True`` (SaaS mode); otherwise subsequent reads
-        # through ``rag_base_path``/``session_dir`` would still hit the
-        # previous project's shard.
-        self.rag_base_path = str(self.path_manager.project_data_dir)
-        self.session_dir = str(self.path_manager.sessions_dir)
-        # Backends are project-agnostic; the new project will be picked up by
-        # the next ``create_rdb_for_store`` / ``create_vector_connection`` call.
-        # Drop cached per-project storage handles so old project bindings do
-        # not leak into the new project, atomically so concurrent storage
-        # lookups never see a partially-torn-down state.
-        if hasattr(self, "_backend_config"):
-            from datus.storage.registry import rebind_project
-
-            rebind_project(self._backend_config, data_dir=str(self.path_manager.data_dir))
 
     @property
     def current_namespace(self) -> str:

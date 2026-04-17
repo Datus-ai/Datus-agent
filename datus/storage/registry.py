@@ -199,25 +199,3 @@ def clear_storage_registry() -> None:
         _factory_registry.clear()
         _get_subject_tree_cached.cache_clear()
         reset_backends()
-
-
-def rebind_project(
-    backend_config: Optional[StorageBackendConfig],
-    data_dir: str,
-) -> None:
-    """Atomically tear down caches+backends and re-init for a new project shard.
-
-    Used by ``AgentConfig.project_name`` setter when switching projects at
-    runtime. Holding ``_registry_lock`` across the full teardown+init window
-    means concurrent ``get_storage()`` callers block until the swap is complete
-    and then observe the new backend state consistently, instead of racing
-    against a transient empty-factory / null-backend window.
-    """
-    from datus.storage.backend_holder import init_backends, reset_backends
-
-    with _registry_lock:
-        _get_storage_cached.cache_clear()
-        _factory_registry.clear()
-        _get_subject_tree_cached.cache_clear()
-        reset_backends()
-        init_backends(backend_config, data_dir=data_dir)
