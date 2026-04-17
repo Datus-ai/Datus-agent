@@ -26,6 +26,41 @@ import pytest
 from datus.configuration.agent_config import AgentConfig, NodeConfig
 from tests.unit_tests.mock_llm_model import MockLLMModel
 
+
+@pytest.fixture(autouse=True, scope="session")
+def _disable_langsmith_tracing():
+    """Disable LangSmith/LangChain tracing for the unit test session only.
+
+    Scoped to tests/unit_tests/ so integration/nightly/regression suites that
+    intentionally exercise real tracing pipelines remain unaffected.
+    Overrides any inherited env vars so UT runs never upload traces, even when
+    the developer's shell has LANGSMITH_TRACING=true or an API key set.
+    """
+    saved = {
+        k: os.environ.get(k)
+        for k in (
+            "LANGCHAIN_API_KEY",
+            "LANGSMITH_API_KEY",
+            "LANGCHAIN_ENDPOINT",
+            "LANGSMITH_ENDPOINT",
+            "LANGSMITH_TRACING",
+            "LANGCHAIN_TRACING_V2",
+        )
+    }
+    for key in ("LANGCHAIN_API_KEY", "LANGSMITH_API_KEY", "LANGCHAIN_ENDPOINT", "LANGSMITH_ENDPOINT"):
+        os.environ.pop(key, None)
+    os.environ["LANGSMITH_TRACING"] = "false"
+    os.environ["LANGCHAIN_TRACING_V2"] = "false"
+    try:
+        yield
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
 # ---------------------------------------------------------------------------
 # Singleton cleanup
 # ---------------------------------------------------------------------------

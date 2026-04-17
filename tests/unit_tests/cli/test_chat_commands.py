@@ -2119,12 +2119,15 @@ class TestCmdCompactWithSession:
         cmds.cmd_compact("")
 
         output = _get_console_output(console)
-        if "compacted successfully" in output.lower():
-            # After successful compact, accumulated pre-compact history should be cleared
-            # _reload_state_from_session rebuilds from the compacted session
-            # which contains only the summary pair, not the original turn actions
-            assert cmds._trace_verbose is False
-            assert cmds.current_node.actions == []
+        # Compact must succeed; this is the precondition for the reload behavior
+        # under test. A silent failure here would have previously made the
+        # remaining assertions vacuous.
+        assert "compacted successfully" in output.lower(), f"compact did not succeed; output={output!r}"
+        # After successful compact, _reload_state_from_session rebuilds from
+        # the compacted session (which contains only the summary pair), so
+        # pre-compact accumulated turn actions must be cleared.
+        assert cmds._trace_verbose is False
+        assert cmds.current_node.actions == []
 
 
 # ===========================================================================

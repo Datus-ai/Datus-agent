@@ -1301,15 +1301,6 @@ class ChatCommands:
                             self.all_turn_actions.append((current_user_msg, actions))
                         current_user_msg = ""
 
-            # Get session info to check token usage
-            info = session_manager.get_session_info(target_session_id)
-            total_tokens = info.get("total_tokens", 0)
-            if total_tokens > 50000:
-                self.console.print(
-                    "[yellow]Note: This session has high token usage. "
-                    "Consider using .compact to reduce context size.[/]"
-                )
-
             self.console.print("[green]You can now continue the conversation.[/]")
 
         except Exception as e:

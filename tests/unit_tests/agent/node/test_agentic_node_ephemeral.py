@@ -33,7 +33,6 @@ def _make_node(**overrides):
     node._session = None
     node.ephemeral = False
     node.session_id = None
-    node.last_summary = None
     node.model = None
     # Apply overrides
     for k, v in overrides.items():
@@ -101,19 +100,19 @@ class TestEphemeralSession:
         mock_model.create_session.assert_called_once_with("normal_session_456")
         assert session is mock_session
 
-    def test_ephemeral_session_with_last_summary(self):
-        """Ephemeral session returns and clears last_summary just like normal sessions."""
+    def test_ephemeral_session_summary_slot_is_none(self):
+        """After the compact-persistence refactor, _get_or_create_session
+        no longer carries forward a compacted summary through a node
+        attribute; the summary slot must always be None."""
         node = _make_node(
             ephemeral=True,
             session_id="eph_summary_001",
-            last_summary="Previous conversation summary",
             model=MagicMock(),
         )
 
         session, summary = node._get_or_create_session()
 
-        assert summary == "Previous conversation summary"
-        assert node.last_summary is None
+        assert summary is None
         assert session is not None
 
 

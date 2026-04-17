@@ -64,7 +64,6 @@ def _make_node(agent_config=None, **overrides):
     node._session = None
     node.ephemeral = False
     node.session_id = None
-    node.last_summary = None
     node.model = None
     node.tools = []
     node.mcp_servers = {}
@@ -821,7 +820,6 @@ def _make_simple_node(**overrides):
     node._session = None
     node.ephemeral = False
     node.session_id = None
-    node.last_summary = None
     node.model = None
     node.tools = []
     node.mcp_servers = {}
@@ -1132,18 +1130,19 @@ class TestGetOrCreateSession:
         call_kwargs = mock_sqlite_cls.call_args
         assert call_kwargs[1].get("db_path") == ":memory:" or ":memory:" in str(call_kwargs)
 
-    def test_returns_last_summary_and_clears_it(self):
+    def test_summary_is_no_longer_returned_via_get_or_create_session(self):
+        """Compacted summary now lives inside the session history itself, not
+        on a node attribute. _get_or_create_session must always return None
+        for the summary slot."""
         node = _make_simple_node()
         mock_model = MagicMock()
         mock_session = MagicMock()
         mock_model.create_session.return_value = mock_session
         node.model = mock_model
         node.session_id = "s"
-        node.last_summary = "previous conversation summary"
 
         _, summary = node._get_or_create_session()
-        assert summary == "previous conversation summary"
-        assert node.last_summary is None
+        assert summary is None
 
 
 # ---------------------------------------------------------------------------
@@ -1291,8 +1290,6 @@ class TestManualCompactExtended:
         result = asyncio.run(node._manual_compact())
         assert result["success"] is True
         assert result["summary"] == "summary text"
-        # last_summary kept for backward compatibility with legacy callers.
-        assert node.last_summary == "summary text"
         # Session must be preserved — summary now lives inside the session.
         assert node._session is mock_session
         assert node.session_id == "sess_compact"
