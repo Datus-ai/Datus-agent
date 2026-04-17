@@ -9,6 +9,8 @@ This module provides the main interactive shell for the CLI.
 
 from __future__ import annotations
 
+import asyncio
+import contextvars
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -94,6 +96,28 @@ class DatusCLI:
         # Load agent config first so path-dependent helpers use the configured home.
         self.agent_config = load_agent_config(**vars(self.args))
         self.configuration_manager = configuration_manager()
+
+        # Bind the process-wide path-manager ContextVar once so implicit callers
+        # (e.g. ``get_path_manager()`` inside storage init) resolve against the
+        # loaded agent_config instead of an empty default.  Required before
+        # background tasks are scheduled, since ContextVars are snapshotted at
+        # task-creation / context-copy time.
+        from datus.utils.path_manager import set_current_path_manager
+
+        set_current_path_manager(agent_config=self.agent_config)
+
+        # Background event loop for async init tasks.  A single daemon thread
+        # hosts the loop; individual init work runs as coroutines that inherit
+        # the current ContextVar snapshot (see ``_async_init_agent``).  Using
+        # a managed loop instead of spawning ad-hoc ``threading.Thread`` means
+        # we only pay the ContextVar-copy cost once per background task.
+        self._bg_loop = asyncio.new_event_loop()
+        self._bg_loop_thread = threading.Thread(
+            target=self._bg_loop.run_forever,
+            name="datus-cli-bg-loop",
+            daemon=True,
+        )
+        self._bg_loop_thread.start()
 
         if args.history_file:
             history_file = Path(args.history_file).expanduser().resolve()
@@ -399,20 +423,35 @@ class DatusCLI:
                 self.console.print(f"[bold red]Error:[/] {str(e)}")
 
     def _async_init_agent(self):
-        """Initialize the agent asynchronously in a background thread."""
+        """Initialize the agent asynchronously as a background coroutine.
+
+        The work itself is blocking (agent construction + storage pre-load),
+        so it runs via ``loop.run_in_executor`` inside the coroutine.  Wrapping
+        it in a coroutine lets us schedule it on our managed background loop
+        and carry the caller's ContextVar snapshot across execution units,
+        which the previous naked-``threading.Thread`` approach did not do.
+        """
         if self.agent_initializing or self.agent_ready:
             return
 
         self.agent_initializing = True
         self.console.print("[dim]Initializing AI capabilities in background...[/]")
 
-        # Start initialization in a separate thread
-        thread = threading.Thread(target=self._background_init_agent)
-        thread.daemon = True  # Daemon thread will exit when main thread exits
-        thread.start()
+        # Capture the current ContextVar state so the background task sees
+        # ``set_current_path_manager`` bindings made in the main thread.
+        ctx = contextvars.copy_context()
+
+        async def _runner() -> None:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, ctx.run, self._background_init_agent)
+
+        # Schedule the coroutine on the managed background loop.  call_soon_threadsafe
+        # is the standard way to bridge from a foreign thread into an asyncio loop.
+        self._bg_loop.call_soon_threadsafe(lambda: self._bg_loop.create_task(_runner()))
 
     def _background_init_agent(self):
-        """Background thread function to initialize the agent."""
+        """Background function that initializes the agent (runs inside the
+        background loop's executor)."""
         try:
             # Create a mock args object based on CLI args
             from argparse import Namespace
