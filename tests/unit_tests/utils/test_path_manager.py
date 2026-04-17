@@ -104,8 +104,13 @@ class TestDatusPathManagerProperties:
     def test_sessions_dir_sharded_by_project_name(self, pm):
         assert pm.sessions_dir == pm.datus_home / "sessions" / "proj"
 
-    def test_data_dir_sharded_by_project_name(self, pm):
-        assert pm.data_dir == pm.datus_home / "data" / "proj"
+    def test_data_dir_is_project_agnostic(self, pm):
+        """data_dir is the storage-backend root; each backend owns its project isolation."""
+        assert pm.data_dir == pm.datus_home / "data"
+
+    def test_project_data_dir_sharded_by_project_name(self, pm):
+        """project_data_dir is the project-scoped helper for non-backend callers."""
+        assert pm.project_data_dir == pm.datus_home / "data" / "proj"
 
     def test_sessions_dir_unsharded_when_no_project_name(self, tmp_path):
         pm = DatusPathManager(datus_home=str(tmp_path / "home"))
@@ -114,6 +119,10 @@ class TestDatusPathManagerProperties:
     def test_data_dir_unsharded_when_no_project_name(self, tmp_path):
         pm = DatusPathManager(datus_home=str(tmp_path / "home"))
         assert pm.data_dir == pm.datus_home / "data"
+
+    def test_project_data_dir_falls_back_to_data_dir_without_project(self, tmp_path):
+        pm = DatusPathManager(datus_home=str(tmp_path / "home"))
+        assert pm.project_data_dir == pm.datus_home / "data"
 
     def test_subject_dir_anchored_to_project_root(self, pm, tmp_path):
         assert pm.subject_dir == (tmp_path / "project").resolve() / "subject"
@@ -165,7 +174,9 @@ class TestDatusPathManagerDataPaths:
 
     def test_rag_storage_path_creates_dir(self, pm):
         path = pm.rag_storage_path()
-        assert path == pm.data_dir / "datus_db"
+        # rag_storage_path is a non-backend helper; it lands under
+        # project_data_dir (e.g. document/ co-located paths).
+        assert path == pm.project_data_dir / "datus_db"
         assert path.exists()
 
     def test_session_db_path(self, pm):
@@ -418,7 +429,8 @@ class TestResetPathManager:
             retrieved = get_path_manager()
             assert retrieved.project_name == "-tmp-proj"
             assert retrieved.subject_dir == project_root.resolve() / "subject"
-            assert retrieved.data_dir == pm.datus_home / "data" / "-tmp-proj"
+            assert retrieved.data_dir == pm.datus_home / "data"
+            assert retrieved.project_data_dir == pm.datus_home / "data" / "-tmp-proj"
             assert retrieved.sessions_dir == pm.datus_home / "sessions" / "-tmp-proj"
         finally:
             reset_path_manager(token)

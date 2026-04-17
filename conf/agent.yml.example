@@ -2,13 +2,20 @@ agent:
   home: ~/.datus
   # Storage layout (refactored):
   #   * ~/.datus/sessions/{project_name}/        — sessions sharded per project
-  #   * ~/.datus/data/{project_name}/            — vector/document data per project
+  #   * ~/.datus/data/                           — storage-backend root; each
+  #       backend owns its project isolation (e.g. the built-in sqlite/lance
+  #       backends use a ``{project_name}/`` subdirectory, a future Postgres
+  #       backend could use a schema name instead)
   #   * ~/.datus/{conf,logs,template,run,...}    — global, shared across projects
   #   * {cwd}/subject/{semantic_models,sql_summaries,ext_knowledge}/ — project KB
   #   * {cwd}/.datus/skills/                     — project-level skills (optional)
   #
   # ``project_name`` is derived from the current working directory (``/`` → ``-``)
   # so every CWD gets its own sessions/data shard without extra configuration.
+  # Set ``agent.project_name`` to override — useful when running datus from
+  # symlinks, monorepo subdirs, or CI sandboxes that should share the same
+  # sessions/data shards.  Must match ``^[a-zA-Z0-9_-]+$`` and be ≤ 200 chars.
+  # project_name: my_project
   #
   # ``knowledge_base_home`` is deprecated and ignored — KB content is anchored
   # to ``{cwd}/subject/`` automatically.

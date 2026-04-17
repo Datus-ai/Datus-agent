@@ -53,7 +53,7 @@ class ExplorerService:
         self.reference_sql_rag = ReferenceSqlRAG(agent_config, datasource_id=self.datasource_id)
         self.knowledge_rag = ExtKnowledgeRAG(agent_config, datasource_id=self.datasource_id)
         self.semantic_model_rag = SemanticModelRAG(agent_config, datasource_id=self.datasource_id)
-        self.subject_tree_store = get_subject_tree_store(namespace=self.datasource_id)
+        self.subject_tree_store = get_subject_tree_store(project=agent_config.project_name)
 
     def _gen_reference_sql_id(self, sql: str) -> str:
         """Generate a stable identifier for reference SQL entries."""

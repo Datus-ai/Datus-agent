@@ -70,7 +70,7 @@ class TestCreateRdbForStoreSqlite:
 
     def test_sqlite_creates_database(self, tmp_path):
         """SQLite config creates a SqliteRdbDatabase with correct db_file."""
-        init_backends(StorageBackendConfig(), data_dir=str(tmp_path), namespace="test")
+        init_backends(StorageBackendConfig(), data_dir=str(tmp_path), project="test")
         db = create_rdb_for_store("test")
         assert isinstance(db, SqliteRdbDatabase)
         assert db.db_file.endswith("test.db")

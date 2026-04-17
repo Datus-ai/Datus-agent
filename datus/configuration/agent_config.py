@@ -52,6 +52,31 @@ def _normalize_project_name(cwd: str) -> str:
     return name
 
 
+def _validate_project_name(value: str) -> str:
+    """Validate an explicit ``agent.project_name`` from config.
+
+    ``project_name`` participates in filesystem paths (sessions/, data/ shards
+    and backend-chosen sub-layouts), so it must not contain path separators,
+    dot-like segments, or whitespace.  Enforces the same character class as
+    other sharded identifiers (``_SAFE_NAME_RE``) and the length cap used for
+    the CWD-derived path.
+
+    Raises:
+        DatusException: when ``value`` contains forbidden characters or is
+            longer than :data:`_PROJECT_NAME_MAX_LEN`.
+    """
+    if not _SAFE_NAME_RE.match(value) or len(value) > _PROJECT_NAME_MAX_LEN:
+        raise DatusException(
+            code=ErrorCode.COMMON_FIELD_INVALID,
+            message=(
+                f"Invalid agent.project_name {value!r}: must match "
+                f"{_SAFE_NAME_RE.pattern} and be at most "
+                f"{_PROJECT_NAME_MAX_LEN} characters."
+            ),
+        )
+    return value
+
+
 @dataclass
 class DbConfig:
     path_pattern: str = field(default="", init=True)
@@ -384,8 +409,15 @@ class AgentConfig:
                 stacklevel=2,
             )
         # project_name must be computed before _set_path_manager so shard-aware
-        # directories (sessions/, data/) bind to the right project.
-        self._project_name = kwargs.get("project_name") or _normalize_project_name(os.getcwd())
+        # directories (sessions/, data/) bind to the right project.  When the
+        # user explicitly sets ``agent.project_name`` in YAML we must validate
+        # it (no slashes/dots/whitespace) since it participates in filesystem
+        # paths; when not set we derive a sanitized name from the CWD.
+        raw_project_name = kwargs.get("project_name")
+        if raw_project_name:
+            self._project_name = _validate_project_name(raw_project_name)
+        else:
+            self._project_name = _normalize_project_name(os.getcwd())
         self._project_root = Path(kwargs.get("project_root") or os.getcwd()).resolve()
         self._set_path_manager(self.home, self.knowledge_base_home)
         models_raw = kwargs["models"]
@@ -445,7 +477,7 @@ class AgentConfig:
         # not full local directory / backend initialization.
         self._skip_init_dirs = kwargs.get("skip_init_dirs", False)
         if self._skip_init_dirs:
-            self.rag_base_path = str(self.path_manager.data_dir)
+            self.rag_base_path = str(self.path_manager.project_data_dir)
             self._save_dir = ""
             self._trajectory_dir = ""
             self.benchmark_configs = {}
@@ -474,7 +506,12 @@ class AgentConfig:
             # Initialize storage backend configuration (rdb + vector)
             backend_config = StorageBackendConfig.from_dict(storage_config)
             self._backend_config = backend_config
-            init_backends(backend_config, data_dir=self.rag_base_path, namespace=self._project_name)
+            # Pass the parent data dir; each backend owns its project isolation.
+            init_backends(
+                backend_config,
+                data_dir=str(self.path_manager.data_dir),
+                project=self._project_name,
+            )
 
         # Initialize unified permission system
         self.permissions_config = self._init_permissions_config(kwargs.get("permissions", {}))
@@ -531,16 +568,22 @@ class AgentConfig:
     def project_name(self, value: str):
         if not value:
             return
-        self._project_name = value
-        # Rebuild path_manager so sessions_dir/data_dir reflect the new project.
+        # Runtime switches must obey the same character/length rules as the
+        # YAML-time value so backend sub-layouts stay filesystem-safe.
+        self._project_name = _validate_project_name(value)
+        # Rebuild path_manager so sessions_dir/project_data_dir reflect the new project.
         self._set_path_manager(self.home, self.knowledge_base_home)
         if not getattr(self, "_skip_init_dirs", False):
-            self.rag_base_path = str(self.path_manager.data_dir)
+            self.rag_base_path = str(self.path_manager.project_data_dir)
             self.session_dir = str(self.path_manager.sessions_dir)
         if hasattr(self, "_backend_config"):
             from datus.storage.backend_holder import init_backends
 
-            init_backends(self._backend_config, data_dir=self.rag_base_path, namespace=value)
+            init_backends(
+                self._backend_config,
+                data_dir=str(self.path_manager.data_dir),
+                project=self._project_name,
+            )
 
     @property
     def current_namespace(self) -> str:
@@ -752,8 +795,11 @@ class AgentConfig:
         # Trajectory directory is now fixed at {agent.home}/trajectory
         self._trajectory_dir = str(path_manager.trajectory_dir)
 
-        # Use fixed path from path_manager: {home}/data
-        self.rag_base_path = str(path_manager.data_dir)
+        # Project-scoped RAG base: {home}/data/{project_name}.  Storage backends
+        # receive the parent (``path_manager.data_dir``) and handle their own
+        # project isolation; the path-based helper is kept for non-backend
+        # callers such as document storage.
+        self.rag_base_path = str(path_manager.project_data_dir)
 
         self._init_benchmark_configs()
         self.session_dir = str(path_manager.sessions_dir)

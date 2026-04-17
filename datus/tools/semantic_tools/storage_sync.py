@@ -64,7 +64,7 @@ class SemanticStorageManager:
         if self.subject_tree_store is None:
             from datus.storage.registry import get_subject_tree_store
 
-            self.subject_tree_store = get_subject_tree_store(namespace=self.agent_config.current_database or "")
+            self.subject_tree_store = get_subject_tree_store(project=self.agent_config.project_name)
         return self.subject_tree_store
 
     def store_semantic_model(

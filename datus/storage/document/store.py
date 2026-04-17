@@ -436,5 +436,5 @@ def document_store(platform: str) -> DocumentStore:
 
     from datus.storage.backend_holder import create_vector_connection
 
-    db = create_vector_connection(namespace=f"{_DOCUMENT_NS_PREFIX}{platform}")
+    db = create_vector_connection(datasource_id=f"{_DOCUMENT_NS_PREFIX}{platform}")
     return DocumentStore(embedding_model=get_document_embedding_model(), db=db)

@@ -77,13 +77,16 @@ class SubjectTreeStore:
     Implements adjacency list model for tree structure.
     """
 
-    def __init__(self, namespace: str = ""):
+    def __init__(self, project: str = ""):
         """Initialize SubjectTreeStore.
 
         Args:
-            namespace: Namespace for RDB path isolation.  In PHYSICAL mode
-                each namespace gets its own SQLite file; in LOGICAL mode
-                all share one file.
+            project: Project identifier used by the underlying RDB backend for
+                isolation.  Leave empty to use the global project configured
+                via :func:`datus.storage.backend_holder.init_backends`.  The
+                backend owns the isolation strategy (sqlite uses a
+                ``{project}/`` subdirectory; other backends may use a schema
+                name or ignore it).
 
         Reads ``table_prefix``, ``extra_fields``, and ``scope_indices`` from
         the storage registry defaults (set via ``configure_storage_defaults()``).
@@ -115,7 +118,7 @@ class SubjectTreeStore:
                 if idx_name not in existing_idx_names:
                     table_def.indices = table_def.indices + [IndexDef(name=idx_name, columns=[col])]
 
-        self._rdb = create_rdb_for_store("subject_tree", namespace=namespace)
+        self._rdb = create_rdb_for_store("subject_tree", project=project)
         self._table = self._rdb.ensure_table(table_def)
         self._migrate_null_parents()
 
@@ -685,11 +688,11 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
             **kwargs,
         )
 
-        # Get per-namespace SubjectTreeStore from registry
-        from datus.storage.backend_holder import get_current_namespace
+        # Subject tree is project-scoped via the global backend config.
+        from datus.storage.backend_holder import get_current_project
         from datus.storage.registry import get_subject_tree_store
 
-        self.subject_tree = get_subject_tree_store(namespace=get_current_namespace())
+        self.subject_tree = get_subject_tree_store(project=get_current_project())
 
     def batch_store(
         self,

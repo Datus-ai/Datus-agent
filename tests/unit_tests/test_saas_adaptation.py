@@ -640,14 +640,15 @@ class TestAgentConfigSkipInitDirs:
         )
 
     def test_skip_init_dirs_sets_rag_base_path(self, tmp_path):
-        """With skip_init_dirs=True, rag_base_path is derived from the path_manager
-        and sharded by the auto-detected project_name."""
+        """With skip_init_dirs=True, rag_base_path points at the project-sharded
+        on-disk directory (``project_data_dir``).  ``data_dir`` is the backend
+        root and intentionally project-agnostic; the sharding happens one
+        level deeper via ``project_data_dir``."""
         config = self._make_config(tmp_path, skip_init_dirs=True)
-        expected = str(config.path_manager.data_dir)
+        expected = str(config.path_manager.project_data_dir)
         assert config.rag_base_path == expected
-        # Sharded under {home}/data/{project_name}/ — must not equal the
-        # un-sharded default any more.
-        assert config.rag_base_path != str((tmp_path / "saas_home").resolve() / "data")
+        # Must not equal the un-sharded backend root any more.
+        assert config.rag_base_path != str(config.path_manager.data_dir)
 
     def test_skip_init_dirs_empty_save_dir(self, tmp_path):
         """With skip_init_dirs=True, _save_dir and _trajectory_dir are empty strings."""

@@ -141,11 +141,9 @@ class SqliteRdbTable(RdbTable):
 class SqliteRdbDatabase(RdbDatabase):
     """SQLite implementation of database-level handle."""
 
-    def __init__(self, db_file: str, isolation: str = "physical", datasource_id: str = "") -> None:
+    def __init__(self, db_file: str) -> None:
         self._db_file = db_file
         self._local = threading.local()
-        self._isolation = isolation
-        self._datasource_id = datasource_id
         os.makedirs(os.path.dirname(self._db_file) or ".", exist_ok=True)
 
     # ========== Internal helpers ==========
@@ -277,27 +275,10 @@ class SqliteRdbDatabase(RdbDatabase):
     def close(self) -> None:
         pass  # SQLite connections are opened/closed per operation
 
-    # ========== Logical isolation helpers ==========
-
-    def _inject_datasource_record(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Force-set datasource_id into record dict for LOGICAL mode."""
-        if self._isolation == "logical" and self._datasource_id:
-            data["datasource_id"] = self._datasource_id
-        return data
-
-    def _inject_datasource_where(self, where: Optional[WhereClause]) -> Optional[WhereClause]:
-        """Prepend datasource_id condition to WHERE clause for LOGICAL mode."""
-        if self._isolation != "logical" or not self._datasource_id:
-            return where
-        ds_cond = ("datasource_id", WhereOp.EQ, self._datasource_id)
-        conditions = _normalize_where(where) if where else []
-        return [ds_cond] + list(conditions)
-
     # ========== Internal CRUD (called by SqliteRdbTable) ==========
 
     def _insert(self, table: str, record: Any) -> int:
         data = {k: v for k, v in dataclasses.asdict(record).items() if v is not None}
-        data = self._inject_datasource_record(data)
         columns = list(data.keys())
         placeholders = ", ".join(["?"] * len(columns))
         col_names = ", ".join(columns)
@@ -319,7 +300,6 @@ class SqliteRdbDatabase(RdbDatabase):
         columns: Optional[List[str]] = None,
         order_by: Optional[List[str]] = None,
     ) -> List[T]:
-        where = self._inject_datasource_where(where)
         col_str = ", ".join(columns) if columns else "*"
         where_sql, params = self._build_where(where)
         order_sql = self._build_order_by(order_by)
@@ -332,7 +312,6 @@ class SqliteRdbDatabase(RdbDatabase):
     def _update(self, table: str, data: Dict[str, Any], where: Optional[WhereClause] = None) -> int:
         if not data:
             return 0
-        where = self._inject_datasource_where(where)
         set_parts = [f"{col} = ?" for col in data.keys()]
         set_sql = ", ".join(set_parts)
         where_sql, where_params = self._build_where(where)
@@ -348,7 +327,6 @@ class SqliteRdbDatabase(RdbDatabase):
             raise IntegrityError(str(e)) from e
 
     def _delete(self, table: str, where: Optional[WhereClause] = None) -> int:
-        where = self._inject_datasource_where(where)
         where_sql, params = self._build_where(where)
         sql = f"DELETE FROM {table}{where_sql}"
         with self._auto_conn() as conn:
@@ -357,7 +335,6 @@ class SqliteRdbDatabase(RdbDatabase):
 
     def _upsert(self, table: str, record: Any, conflict_columns: List[str]) -> None:
         data = {k: v for k, v in dataclasses.asdict(record).items() if v is not None}
-        data = self._inject_datasource_record(data)
         columns = list(data.keys())
         placeholders = ", ".join(["?"] * len(columns))
         col_names = ", ".join(columns)
@@ -381,27 +358,34 @@ class SqliteRdbDatabase(RdbDatabase):
 
 
 class SqliteRdbBackend(BaseRdbBackend):
-    """SQLite backend — reusable singleton that produces ``SqliteRdbDatabase`` instances."""
+    """SQLite backend — reusable singleton that produces ``SqliteRdbDatabase`` instances.
+
+    This backend owns its project isolation strategy: the on-disk layout is
+    always ``{data_dir}/{project}/datus_db/{store_db_name}.db`` (falling back
+    to ``{data_dir}/datus_db/{store_db_name}.db`` when no project is set).
+    The ``namespace`` argument on :meth:`connect` is retained for
+    ``BaseRdbBackend`` compatibility but is ignored — legacy LOGICAL-style
+    row-scoping is not supported here.
+    """
 
     def __init__(self):
         self._data_dir: str = ""
-        self._isolation: str = "physical"
+        self._project: str = ""
 
     def initialize(self, config: Dict[str, Any]) -> None:
         self._data_dir = config.get("data_dir", "")
-        self._isolation = config.get("isolation", "physical")
+        self._project = config.get("project", "")
 
     def connect(self, namespace: str, store_db_name: str) -> SqliteRdbDatabase:
+        del namespace  # accepted for interface compatibility; see class docstring
         safe_store = _safe_path_segment(store_db_name, "store_db_name")
-        if self._isolation == "logical":
-            # LOGICAL: all namespaces share datus_db/, isolation via datasource_id column
-            base_path = os.path.join(self._data_dir, "datus_db")
-        else:
-            # PHYSICAL: each namespace gets its own directory
-            db_name = f"datus_db_{namespace}" if namespace else "datus_db"
-            base_path = os.path.join(self._data_dir, db_name)
-        db_file = os.path.join(base_path, f"{safe_store}.db")
-        return SqliteRdbDatabase(db_file, isolation=self._isolation, datasource_id=namespace)
+        safe_project = _safe_path_segment(self._project, "project") if self._project else ""
+        parts = [self._data_dir]
+        if safe_project:
+            parts.append(safe_project)
+        parts.extend(["datus_db", f"{safe_store}.db"])
+        db_file = os.path.join(*parts)
+        return SqliteRdbDatabase(db_file)
 
     def close(self) -> None:
         pass  # SQLite connections are opened/closed per operation

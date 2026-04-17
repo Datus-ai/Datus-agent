@@ -478,7 +478,10 @@ class TestAgentConfigProjectLayout:
         cfg = self._make(tmp_path, project_name="demo_project", project_root=project_root)
 
         datus_home = (tmp_path / "datus_home").resolve()
-        assert cfg.path_manager.data_dir == datus_home / "data" / "demo_project"
+        # data_dir is the backend root (no project suffix); project sharding
+        # is surfaced via project_data_dir and owned by backends.
+        assert cfg.path_manager.data_dir == datus_home / "data"
+        assert cfg.path_manager.project_data_dir == datus_home / "data" / "demo_project"
         assert cfg.path_manager.sessions_dir == datus_home / "sessions" / "demo_project"
 
     def test_subject_tree_anchored_to_project_root(self, tmp_path):
@@ -510,9 +513,26 @@ class TestAgentConfigProjectLayout:
 
     def test_setting_project_name_rebuilds_path_manager(self, tmp_path):
         cfg = self._make(tmp_path, project_name="first", project_root=tmp_path)
-        first_data = cfg.path_manager.data_dir
+        first_project_data = cfg.path_manager.project_data_dir
 
         cfg.project_name = "second"
-        assert cfg.path_manager.data_dir != first_data
-        assert cfg.path_manager.data_dir == (tmp_path / "datus_home").resolve() / "data" / "second"
-        assert cfg.path_manager.sessions_dir == (tmp_path / "datus_home").resolve() / "sessions" / "second"
+        assert cfg.path_manager.project_data_dir != first_project_data
+        datus_home = (tmp_path / "datus_home").resolve()
+        assert cfg.path_manager.project_data_dir == datus_home / "data" / "second"
+        assert cfg.path_manager.sessions_dir == datus_home / "sessions" / "second"
+
+    def test_invalid_project_name_rejected(self, tmp_path):
+        """YAML project_name must match _SAFE_NAME_RE — slashes / dots are rejected."""
+        with pytest.raises(DatusException):
+            self._make(tmp_path, project_name="bad/name", project_root=tmp_path)
+
+    def test_overlong_project_name_rejected(self, tmp_path):
+        from datus.configuration.agent_config import _PROJECT_NAME_MAX_LEN
+
+        with pytest.raises(DatusException):
+            self._make(tmp_path, project_name="a" * (_PROJECT_NAME_MAX_LEN + 1), project_root=tmp_path)
+
+    def test_project_name_setter_validates(self, tmp_path):
+        cfg = self._make(tmp_path, project_name="first", project_root=tmp_path)
+        with pytest.raises(DatusException):
+            cfg.project_name = "bad name with spaces"

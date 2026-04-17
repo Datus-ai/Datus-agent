@@ -63,3 +63,4 @@ conf/agent.yml.bak
 .gstack/
 /.datus_test_data
 subject/
+build/

@@ -17,7 +17,12 @@ _BACKENDS = discover_test_backends()
 
 @pytest.fixture
 def storage_test_namespace():
-    """Override in subdirectory conftest to customize namespace."""
+    """Override in subdirectory conftest to customize namespace.
+
+    Retained for backend-test environment plumbing (``clear_data`` / embedding
+    store per-datasource filtering); the value is no longer forwarded to
+    ``init_backends`` since project isolation is now backend-owned.
+    """
     return ""
 
 
@@ -29,7 +34,9 @@ def _init_storage_backends(request, tmp_path, storage_test_namespace):
         rdb=RdbBackendConfig(type=backend.rdb_type, params=backend.rdb_params),
         vector=VectorBackendConfig(type=backend.vector_type, params=backend.vector_params),
     )
-    init_backends(config=config, data_dir=str(tmp_path), namespace=storage_test_namespace)
+    # The fixture historically set a project shard to namespace; keep the same
+    # filesystem layout per test by mapping it to ``project``.
+    init_backends(config=config, data_dir=str(tmp_path), project=storage_test_namespace)
     yield backend
     # 1. Clear cache and reset backends (close connection pools)
     clear_storage_registry()

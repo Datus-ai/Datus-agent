@@ -15,7 +15,11 @@ Storage layout (refactored):
   own copy. There is no per-namespace subdirectory anymore.
 - ``{project_root}/.datus/skills/`` — project-level skills.
 - ``{datus_home}/sessions/{project_name}/`` — sessions sharded by project.
-- ``{datus_home}/data/{project_name}/`` — vector/document data sharded by project.
+- ``{datus_home}/data/`` — storage-backend root.  Each backend owns its own
+  project isolation strategy (e.g. a ``{project_name}/`` subdirectory for
+  file-based backends, a schema/collection name for remote backends).
+  Non-backend callers that still want a project-scoped on-disk location (e.g.
+  document/ storage) should use :pyattr:`DatusPathManager.project_data_dir`.
 - ``{datus_home}/{conf, logs, template, run, benchmark, workspace, skills, ...}``
   — global, shared across projects.
 """
@@ -129,8 +133,25 @@ class DatusPathManager:
 
     @property
     def data_dir(self) -> Path:
-        """Data directory: ``~/.datus/data/{project_name}`` (falls back to ``~/.datus/data``
-        when no project_name is configured)."""
+        """Storage-backend root: ``~/.datus/data``.
+
+        This is intentionally project-agnostic so each storage backend can own
+        its isolation strategy (e.g. a ``{project_name}/`` subdirectory, a
+        schema name, a collection prefix).  Callers that need an on-disk
+        project-scoped directory for non-backend use should use
+        :pyattr:`project_data_dir` instead.
+        """
+        return self._datus_home / "data"
+
+    @property
+    def project_data_dir(self) -> Path:
+        """Project-scoped local data directory: ``~/.datus/data/{project_name}``.
+
+        Falls back to ``~/.datus/data`` when no ``project_name`` is configured.
+        Intended for non-backend callers (e.g. ``document/`` storage) that
+        want a project-sharded on-disk location.  Storage backends should use
+        :pyattr:`data_dir` and apply their own isolation.
+        """
         if self._project_name:
             return self._datus_home / "data" / self._project_name
         return self._datus_home / "data"
@@ -285,9 +306,9 @@ class DatusPathManager:
         RAG storage path (unified per project).
 
         Returns:
-            Path: ``{data_dir}/datus_db`` (i.e. ``{home}/data/{project_name}/datus_db``)
+            Path: ``{project_data_dir}/datus_db`` (i.e. ``{home}/data/{project_name}/datus_db``)
         """
-        path = self.data_dir / "datus_db"
+        path = self.project_data_dir / "datus_db"
         # Ensure the directory exists
         path.mkdir(parents=True, exist_ok=True)
         return path

@@ -372,165 +372,32 @@ class TestMigrateMissingColumns:
 class TestSqliteRdbBackendConnect:
     """Tests for SqliteRdbBackend lifecycle and connect()."""
 
-    def test_connect_physical_with_namespace(self, tmp_path):
-        """PHYSICAL: connect() uses datus_db_{namespace}/ directory."""
+    def test_connect_builds_project_scoped_path(self, tmp_path):
+        """connect() places the store under ``{data_dir}/{project}/datus_db/``."""
         from datus.storage.rdb.sqlite_backend import SqliteRdbBackend
 
         b = SqliteRdbBackend()
-        b.initialize({"data_dir": str(tmp_path), "isolation": "physical"})
-        db = b.connect("my_ns", "test")
+        b.initialize({"data_dir": str(tmp_path), "project": "proj_a"})
+        db = b.connect("ignored_ns", "test")
         assert isinstance(db, SqliteRdbDatabase)
-        assert db.db_file == os.path.join(str(tmp_path), "datus_db_my_ns", "test.db")
+        assert db.db_file == os.path.join(str(tmp_path), "proj_a", "datus_db", "test.db")
 
-    def test_connect_physical_no_namespace(self, tmp_path):
-        """PHYSICAL: connect() with empty namespace uses datus_db/ directory."""
-        from datus.storage.rdb.sqlite_backend import SqliteRdbBackend
-
-        b = SqliteRdbBackend()
-        b.initialize({"data_dir": str(tmp_path), "isolation": "physical"})
-        db = b.connect("", "test")
-        assert db.db_file == os.path.join(str(tmp_path), "datus_db", "test.db")
-
-    def test_connect_logical_shares_datus_db(self, tmp_path):
-        """LOGICAL: connect() always uses datus_db/ regardless of namespace."""
-        from datus.storage.rdb.sqlite_backend import SqliteRdbBackend
-
-        b = SqliteRdbBackend()
-        b.initialize({"data_dir": str(tmp_path), "isolation": "logical"})
-        db_a = b.connect("ns_a", "test")
-        db_b = b.connect("ns_b", "test")
-        assert db_a.db_file == os.path.join(str(tmp_path), "datus_db", "test.db")
-        assert db_b.db_file == db_a.db_file
-
-    def test_connect_default_is_physical(self, tmp_path):
-        """Default isolation is PHYSICAL."""
+    def test_connect_without_project_falls_back(self, tmp_path):
+        """Without a project the layout is just ``{data_dir}/datus_db/``."""
         from datus.storage.rdb.sqlite_backend import SqliteRdbBackend
 
         b = SqliteRdbBackend()
         b.initialize({"data_dir": str(tmp_path)})
-        db = b.connect("ns", "test")
-        assert "datus_db_ns" in db.db_file
+        db = b.connect("", "test")
+        assert db.db_file == os.path.join(str(tmp_path), "datus_db", "test.db")
 
+    def test_connect_ignores_namespace_arg(self, tmp_path):
+        """The legacy namespace argument is retained for interface parity but unused."""
+        from datus.storage.rdb.sqlite_backend import SqliteRdbBackend
 
-# ---------------------------------------------------------------------------
-# LOGICAL isolation tests
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class _TenantItem:
-    """Test record model with datasource_id."""
-
-    name: str = ""
-    value: str = ""
-    datasource_id: str = ""
-    id: int = None
-
-
-@pytest.fixture
-def logical_table_def():
-    """Table definition with datasource_id column for LOGICAL isolation tests."""
-    return TableDefinition(
-        table_name="tenant_items",
-        columns=[
-            ColumnDef(name="id", col_type="INTEGER", primary_key=True, autoincrement=True),
-            ColumnDef(name="name", col_type="TEXT", nullable=False),
-            ColumnDef(name="value", col_type="TEXT"),
-            ColumnDef(name="datasource_id", col_type="TEXT", default=""),
-        ],
-        indices=[],
-    )
-
-
-class TestSqliteLogicalIsolation:
-    """Tests for LOGICAL mode datasource_id auto-injection and filtering."""
-
-    def _make_db(self, tmp_path, namespace: str) -> SqliteRdbDatabase:
-        db_file = os.path.join(str(tmp_path), "shared.db")
-        return SqliteRdbDatabase(db_file, isolation="logical", datasource_id=namespace)
-
-    def test_insert_injects_datasource_id(self, tmp_path, logical_table_def):
-        """In LOGICAL mode, insert() auto-injects datasource_id."""
-        db = self._make_db(tmp_path, "tenant_a")
-        table = db.ensure_table(logical_table_def)
-        table.insert(_TenantItem(name="item1", value="v1"))
-
-        # Query without isolation to see raw data
-        raw_db = SqliteRdbDatabase(os.path.join(str(tmp_path), "shared.db"))
-        raw_table = raw_db.ensure_table(logical_table_def)
-        rows = raw_table.query(_TenantItem)
-        assert len(rows) == 1
-        assert rows[0].datasource_id == "tenant_a"
-
-    def test_query_filters_by_datasource_id(self, tmp_path, logical_table_def):
-        """In LOGICAL mode, query() only returns rows for the current datasource."""
-        # Insert via raw DB (no isolation) to set up test data
-        raw_db = SqliteRdbDatabase(os.path.join(str(tmp_path), "shared.db"))
-        raw_table = raw_db.ensure_table(logical_table_def)
-        raw_table.insert(_TenantItem(name="a_item", value="v1", datasource_id="tenant_a"))
-        raw_table.insert(_TenantItem(name="b_item", value="v2", datasource_id="tenant_b"))
-
-        # Query via LOGICAL db for tenant_a
-        db_a = self._make_db(tmp_path, "tenant_a")
-        table_a = db_a.ensure_table(logical_table_def)
-        rows = table_a.query(_TenantItem)
-        assert len(rows) == 1
-        assert rows[0].name == "a_item"
-
-    def test_update_scoped_to_datasource(self, tmp_path, logical_table_def):
-        """In LOGICAL mode, update() only affects rows for the current datasource."""
-        raw_db = SqliteRdbDatabase(os.path.join(str(tmp_path), "shared.db"))
-        raw_table = raw_db.ensure_table(logical_table_def)
-        raw_table.insert(_TenantItem(name="shared", value="old_a", datasource_id="tenant_a"))
-        raw_table.insert(_TenantItem(name="shared", value="old_b", datasource_id="tenant_b"))
-
-        # Update via tenant_a — should only change tenant_a's row
-        db_a = self._make_db(tmp_path, "tenant_a")
-        table_a = db_a.ensure_table(logical_table_def)
-        table_a.update({"value": "new_a"}, where={"name": "shared"})
-
-        # Verify tenant_b's row is untouched
-        rows = raw_table.query(_TenantItem, order_by=["datasource_id"])
-        assert rows[0].value == "new_a"  # tenant_a updated
-        assert rows[1].value == "old_b"  # tenant_b untouched
-
-    def test_delete_scoped_to_datasource(self, tmp_path, logical_table_def):
-        """In LOGICAL mode, delete() only removes rows for the current datasource."""
-        raw_db = SqliteRdbDatabase(os.path.join(str(tmp_path), "shared.db"))
-        raw_table = raw_db.ensure_table(logical_table_def)
-        raw_table.insert(_TenantItem(name="item", value="v1", datasource_id="tenant_a"))
-        raw_table.insert(_TenantItem(name="item", value="v2", datasource_id="tenant_b"))
-
-        # Delete via tenant_a
-        db_a = self._make_db(tmp_path, "tenant_a")
-        table_a = db_a.ensure_table(logical_table_def)
-        count = table_a.delete(where={"name": "item"})
-        assert count == 1
-
-        # tenant_b's row still exists
-        rows = raw_table.query(_TenantItem)
-        assert len(rows) == 1
-        assert rows[0].datasource_id == "tenant_b"
-
-    def test_upsert_injects_datasource_id(self, tmp_path, logical_table_def):
-        """In LOGICAL mode, upsert() auto-injects datasource_id."""
-        db = self._make_db(tmp_path, "tenant_a")
-        table = db.ensure_table(logical_table_def)
-        table.upsert(_TenantItem(name="k1", value="v1"), ["name"])
-
-        raw_db = SqliteRdbDatabase(os.path.join(str(tmp_path), "shared.db"))
-        raw_table = raw_db.ensure_table(logical_table_def)
-        rows = raw_table.query(_TenantItem)
-        assert len(rows) == 1
-        assert rows[0].datasource_id == "tenant_a"
-
-    def test_physical_mode_no_injection(self, tmp_path, logical_table_def):
-        """In PHYSICAL mode, no datasource_id injection or filtering happens."""
-        db_file = os.path.join(str(tmp_path), "physical.db")
-        db = SqliteRdbDatabase(db_file, isolation="physical", datasource_id="tenant_a")
-        table = db.ensure_table(logical_table_def)
-        table.insert(_TenantItem(name="item", value="v1"))
-
-        rows = table.query(_TenantItem)
-        assert len(rows) == 1
-        assert rows[0].datasource_id == ""  # not injected
+        b = SqliteRdbBackend()
+        b.initialize({"data_dir": str(tmp_path), "project": "proj"})
+        db_a = b.connect("ns_a", "test")
+        db_b = b.connect("ns_b", "test")
+        assert db_a.db_file == db_b.db_file
+        assert db_a.db_file == os.path.join(str(tmp_path), "proj", "datus_db", "test.db")

@@ -403,19 +403,27 @@ def _safe_path_segment(value: str, field_name: str) -> str:
 
 
 class LanceVectorBackend(BaseVectorBackend):
-    """LanceDB implementation of the vector backend."""
+    """LanceDB implementation of the vector backend.
+
+    This backend owns its project isolation strategy: the on-disk layout is
+    ``{data_dir}/{project}/datus_db`` (falling back to ``{data_dir}/datus_db``
+    when no project is set).  ``connect(namespace=...)`` continues to carry
+    the ``datasource_id`` used by LOGICAL row-scoping; project and
+    datasource are orthogonal.
+    """
 
     def initialize(self, config: Dict[str, Any]) -> None:
         self._data_dir = config.get("data_dir", "")
         self._isolation = IsolationType(config.get("isolation", IsolationType.PHYSICAL.value))
+        self._project = config.get("project", "")
 
     def connect(self, namespace: str = "") -> LanceVectorDatabase:
-        # Project isolation is handled one level up by sharding ``data_dir`` as
-        # ``{home}/data/{project_name}``. All tenants within a project therefore
-        # share a single ``datus_db`` directory; LOGICAL mode additionally scopes
-        # rows via ``datasource_id``.
-        # todo 为什么用lance, 可能是任意backend
-        db_path = os.path.join(self._data_dir, "datus_db")
+        safe_project = _safe_path_segment(self._project, "project") if self._project else ""
+        parts = [self._data_dir]
+        if safe_project:
+            parts.append(safe_project)
+        parts.append("datus_db")
+        db_path = os.path.join(*parts)
         raw_db = lancedb.connect(db_path)
         if self._isolation == IsolationType.LOGICAL:
             return LanceVectorDatabase(raw_db, isolation=self._isolation, datasource_id=namespace)
