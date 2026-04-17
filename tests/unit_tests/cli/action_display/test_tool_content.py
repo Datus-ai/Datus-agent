@@ -423,7 +423,9 @@ class TestBuildSearchGeneric:
     def test_compact_no_items(self, fn, builder):
         a = _make(input_data={"function_name": fn}, output_data={"k": "v"})
         tc = builder(a, verbose=False)
-        assert "0 " in tc.compact_result
+        # Shape-aware: "0 <noun(s)> matched" so a stray "0 " elsewhere won't pass.
+        assert tc.compact_result.startswith("0 ")
+        assert tc.compact_result.endswith(" matched")
 
 
 # ── Builder class ──────────────────────────────────────────────────

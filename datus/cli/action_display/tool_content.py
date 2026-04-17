@@ -1136,8 +1136,8 @@ def _build_edit_file(action: ActionHistory, verbose: bool) -> ToolCallContent:
         if data:
             result = data.get("result")
             if edits_count:
-                noun = "occurrence" if edits_count == 1 else "occurrences"
-                tc.compact_result = f"{edits_count} {noun} replaced"
+                noun = "edit" if edits_count == 1 else "edits"
+                tc.compact_result = f"{edits_count} {noun} applied"
             elif isinstance(result, str) and "edit" in result.lower():
                 tc.compact_result = result.split("(")[-1].rstrip(")") if "(" in result else "Edited"
             elif data.get("success"):
