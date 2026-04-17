@@ -688,11 +688,11 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
             **kwargs,
         )
 
-        # Subject tree is project-scoped via the global backend config.
-        from datus.storage.backend_holder import get_current_project
+        # Subject tree is project-scoped via the active path_manager.
         from datus.storage.registry import get_subject_tree_store
+        from datus.utils.path_manager import get_path_manager
 
-        self.subject_tree = get_subject_tree_store(project=get_current_project())
+        self.subject_tree = get_subject_tree_store(project=get_path_manager().project_name)
 
     def batch_store(
         self,

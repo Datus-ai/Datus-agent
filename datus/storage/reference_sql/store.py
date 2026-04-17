@@ -439,7 +439,9 @@ class ReferenceSqlRAG:
         from datus.storage.registry import get_storage
 
         self.datasource_id = datasource_id or agent_config.current_database or ""
-        self.reference_sql_storage = get_storage(ReferenceSqlStorage, "reference_sql", namespace=self.datasource_id)
+        self.reference_sql_storage = get_storage(
+            ReferenceSqlStorage, "reference_sql", project=agent_config.project_name
+        )
         self._sub_agent_filter = _build_sub_agent_filter(
             agent_config, sub_agent_name, self.reference_sql_storage, "sqls"
         )

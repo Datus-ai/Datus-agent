@@ -3,12 +3,12 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 """
-Storage registry with per-namespace LRU cache.
+Storage registry with per-project LRU cache.
 
-Each (factory, namespace) pair gets its own storage instance with an isolated
-VectorDatabase connection.  Multi-tenant isolation is handled at the backend
-level via ``IsolationType.LOGICAL`` (datasource_id column) or ``PHYSICAL``
-(separate directories).
+Each (factory, project) pair gets its own storage instance with an isolated
+VectorDatabase connection. Multi-project isolation is handled at the
+backend level: PHYSICAL mode uses per-project directories, LOGICAL mode
+uses row-level ``datasource_id = <project>`` filtering on a shared db.
 """
 
 from __future__ import annotations
@@ -65,63 +65,46 @@ def get_storage_defaults() -> Dict[str, Any]:
 
 
 @lru_cache(maxsize=128)
-def _get_storage_cached(
-    factory_name: str, embedding_model_conf_name: str, cache_key: str, namespace: str
-) -> BaseEmbeddingStore:
-    """LRU-cached storage creation.
-
-    *cache_key* determines cache identity:
-    - PHYSICAL mode: ``cache_key == namespace`` → per-namespace instance
-    - LOGICAL mode: ``cache_key == "__logical__"`` → global singleton
-    """
+def _get_storage_cached(factory_name: str, embedding_model_conf_name: str, project: str) -> BaseEmbeddingStore:
+    """LRU-cached storage creation, keyed by (factory, embedding model, project)."""
     with _registry_lock:
         factory = _factory_registry[factory_name]
     kwargs = dict(_storage_defaults)
-    if namespace:
+    if project:
         from datus.storage.backend_holder import create_vector_connection
 
-        kwargs["db"] = create_vector_connection(datasource_id=namespace)
+        kwargs["db"] = create_vector_connection(project)
 
     store = factory(get_embedding_model(embedding_model_conf_name), **kwargs)
-    from datus.storage.backend_holder import get_current_project
     from datus.storage.subject_tree.store import BaseSubjectEmbeddingStore
 
     if isinstance(store, BaseSubjectEmbeddingStore):
-        # Subject tree is project-scoped; rebinding by the requested namespace
-        # here would route us to the wrong project-level store.  Use the
-        # active project (cache key mirrors it for lookup identity).
-        project = get_current_project()
-        store.subject_tree = _get_subject_tree_cached(project, project)
+        store.subject_tree = _get_subject_tree_cached(project)
     return store
 
 
 def get_storage(
     factory: Callable[..., BaseEmbeddingStore],
     embedding_model_conf_name: str,
-    namespace: str = "",
+    project: str = "",
 ) -> BaseEmbeddingStore:
-    """Return a storage instance.
+    """Return a storage instance scoped to *project*.
 
-    - PHYSICAL mode: per-namespace instance (each gets own db directory)
-    - LOGICAL mode: global singleton (shared db, isolation via datasource_id)
+    Project isolation semantics are owned by the active storage backend:
+      * PHYSICAL — per-project directory under ``{data_dir}/{project}/``
+      * LOGICAL — shared db with ``datasource_id = project`` row filter
 
-    Uses an LRU cache (maxsize=128) so that inactive namespaces are evicted.
-    Global defaults set via ``configure_storage_defaults()`` are automatically
-    forwarded to the factory constructor.
+    Uses an LRU cache (maxsize=128) so that inactive projects are evicted.
+    Global defaults set via ``configure_storage_defaults()`` are
+    automatically forwarded to the factory constructor.
     """
-    from datus.storage.backend_holder import get_isolation_type
-
     with _registry_lock:
         _factory_registry[factory.__name__] = factory
-    if get_isolation_type() == "logical":
-        cache_key = "__logical__"
-    else:
-        cache_key = namespace
-    return _get_storage_cached(factory.__name__, embedding_model_conf_name, cache_key, namespace)
+    return _get_storage_cached(factory.__name__, embedding_model_conf_name, project)
 
 
 @lru_cache(maxsize=128)
-def _get_subject_tree_cached(cache_key: str, project: str) -> "SubjectTreeStore":
+def _get_subject_tree_cached(project: str) -> "SubjectTreeStore":
     """LRU-cached SubjectTreeStore creation."""
     from datus.storage.subject_tree.store import SubjectTreeStore
 
@@ -129,20 +112,14 @@ def _get_subject_tree_cached(cache_key: str, project: str) -> "SubjectTreeStore"
 
 
 def get_subject_tree_store(project: str = "") -> "SubjectTreeStore":
-    """Return a SubjectTreeStore instance (LRU-cached per project).
-
-    The backend now owns project isolation (sqlite routes the store to a
-    ``{project}/`` subdirectory); this cache simply keys on the project
-    identifier so the same project reuses the same handle.
-    """
-    return _get_subject_tree_cached(project, project)
+    """Return a SubjectTreeStore instance (LRU-cached per project)."""
+    return _get_subject_tree_cached(project)
 
 
 def preload_all_storages(
     data_dir: str = "",
     config: Optional[StorageBackendConfig] = None,
     project: str = "",
-    datasource_id: str = "",
     **defaults: Any,
 ) -> None:
     """One-stop initialization: backends + defaults + all storage singletons.
@@ -153,16 +130,12 @@ def preload_all_storages(
     Args:
         data_dir: Root data directory for file-based backends (e.g.
             ``~/.datus/data``).  Passed to ``init_backends()``.
-        config: Storage backend configuration.
-            Controls which RDB (sqlite/postgresql) and vector (lance)
-            backends are used.  Defaults to sqlite + lance if omitted.
-        project: Project identifier for backend-owned path isolation.  The
-            built-in sqlite/lance backends place data under
-            ``{data_dir}/{project}/datus_db``.  SaaS deployments that
-            already pre-shard ``data_dir`` per tenant can leave this empty.
-        datasource_id: Optional LOGICAL row-scoping identifier forwarded to
-            vector storage factories (equivalent to the legacy ``namespace``
-            argument).
+        config: Storage backend configuration. Controls which RDB
+            (sqlite/postgresql) and vector (lance) backends are used.
+            Defaults to sqlite + lance if omitted.
+        project: Project identifier for per-project isolation, forwarded
+            to every storage factory.  Leave empty in SaaS deployments
+            that pre-shard ``data_dir`` at a higher layer.
         **defaults: Deployment-level defaults forwarded to
             ``configure_storage_defaults()`` and then to every
             storage constructor (e.g. ``table_prefix="tb_"``).
@@ -178,7 +151,7 @@ def preload_all_storages(
                 rdb=RdbBackendConfig(type="postgresql", params={...}),
                 vector=VectorBackendConfig(type="lance"),
             ),
-            datasource_id="ds_001",
+            project="ws1",
             table_prefix="tb_",
         )
 
@@ -189,7 +162,7 @@ def preload_all_storages(
     from datus.storage.backend_holder import init_backends
 
     # 1. Initialize backends (vector DB + RDB connections)
-    init_backends(config=config, data_dir=data_dir, project=project)
+    init_backends(config=config, data_dir=data_dir)
 
     # 2. Apply deployment-level defaults
     if defaults:
@@ -202,12 +175,12 @@ def preload_all_storages(
     from datus.storage.schema_metadata.store import SchemaStorage, SchemaValueStorage
     from datus.storage.semantic_model.store import SemanticModelStorage
 
-    get_storage(SchemaStorage, "database", namespace=datasource_id)
-    get_storage(SchemaValueStorage, "database", namespace=datasource_id)
-    get_storage(SemanticModelStorage, "semantic_model", namespace=datasource_id)
-    get_storage(MetricStorage, "metric", namespace=datasource_id)
-    get_storage(ReferenceSqlStorage, "reference_sql", namespace=datasource_id)
-    get_storage(ExtKnowledgeStore, "ext_knowledge", namespace=datasource_id)
+    get_storage(SchemaStorage, "database", project=project)
+    get_storage(SchemaValueStorage, "database", project=project)
+    get_storage(SemanticModelStorage, "semantic_model", project=project)
+    get_storage(MetricStorage, "metric", project=project)
+    get_storage(ReferenceSqlStorage, "reference_sql", project=project)
+    get_storage(ExtKnowledgeStore, "ext_knowledge", project=project)
     get_subject_tree_store(project=project)
     logger.info("All storage singletons pre-loaded")
 

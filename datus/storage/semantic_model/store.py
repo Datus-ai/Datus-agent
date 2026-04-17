@@ -273,7 +273,7 @@ class SemanticModelRAG:
 
         self.datasource_id = datasource_id or agent_config.current_database or ""
         self.storage: SemanticModelStorage = get_storage(
-            SemanticModelStorage, "semantic_model", namespace=self.datasource_id
+            SemanticModelStorage, "semantic_model", project=agent_config.project_name
         )
         self._sub_agent_filter = _build_sub_agent_filter(agent_config, sub_agent_name, self.storage, "tables")
 

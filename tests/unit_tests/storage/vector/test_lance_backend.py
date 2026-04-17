@@ -507,41 +507,36 @@ class TestLanceVectorBackendLogicalIsolation:
 
         assert backend._isolation == IsolationType.PHYSICAL
 
-    def test_connect_logical_uses_project_scoped_datus_db(self):
-        """connect() in LOGICAL mode lands under ``{data_dir}/{project}/datus_db``
-        and forwards ``namespace`` as the datasource_id for row scoping."""
+    def test_connect_logical_shares_db_dir_and_uses_project_as_datasource_id(self):
+        """LOGICAL: all projects share ``{data_dir}/datus_db`` and row-level
+        ``datasource_id`` stores the project identifier."""
         import unittest.mock
 
         backend = LanceVectorBackend()
-        backend.initialize({"data_dir": "/tmp/test", "isolation": "logical", "project": "proj"})
+        backend.initialize({"data_dir": "/tmp/test", "isolation": "logical"})
         with unittest.mock.patch("datus.storage.vector.lance_backend.lancedb") as mock_lancedb:
             mock_lancedb.connect.return_value = MagicMock()
-            db = backend.connect(namespace="tenant_a")
-            mock_lancedb.connect.assert_called_once_with("/tmp/test/proj/datus_db")
+            db = backend.connect("proj_a")
+            mock_lancedb.connect.assert_called_once_with("/tmp/test/datus_db")
             from datus.storage.vector.lance_backend import IsolationType
 
             assert db._isolation == IsolationType.LOGICAL
-            assert db._datasource_id == "tenant_a"
+            assert db._datasource_id == "proj_a"
 
-    def test_connect_physical_uses_project_scoped_datus_db_dir(self):
-        """connect() in PHYSICAL mode also lands under ``{data_dir}/{project}/datus_db``.
-
-        Project isolation is owned by the backend: the lance backend builds a
-        ``{project}/`` subdirectory regardless of LOGICAL/PHYSICAL (LOGICAL just
-        additionally scopes rows via ``datasource_id``).
-        """
+    def test_connect_physical_builds_project_scoped_dir(self):
+        """PHYSICAL: each project gets ``{data_dir}/{project}/datus_db``."""
         import unittest.mock
 
         backend = LanceVectorBackend()
-        backend.initialize({"data_dir": "/tmp/test", "isolation": "physical", "project": "proj"})
+        backend.initialize({"data_dir": "/tmp/test", "isolation": "physical"})
         with unittest.mock.patch("datus.storage.vector.lance_backend.lancedb") as mock_lancedb:
             mock_lancedb.connect.return_value = MagicMock()
-            db = backend.connect(namespace="tenant_a")
-            mock_lancedb.connect.assert_called_once_with("/tmp/test/proj/datus_db")
+            db = backend.connect("proj_a")
+            mock_lancedb.connect.assert_called_once_with("/tmp/test/proj_a/datus_db")
             assert db._datasource_id is None
 
-    def test_connect_without_project_falls_back_to_data_dir(self):
-        """Without a configured project the path degrades to ``{data_dir}/datus_db``."""
+    def test_connect_physical_without_project_falls_back(self):
+        """PHYSICAL mode with empty project degrades to ``{data_dir}/datus_db``."""
         import unittest.mock
 
         backend = LanceVectorBackend()
@@ -550,6 +545,20 @@ class TestLanceVectorBackendLogicalIsolation:
             mock_lancedb.connect.return_value = MagicMock()
             backend.connect()
             mock_lancedb.connect.assert_called_once_with("/tmp/test/datus_db")
+
+    def test_single_instance_reused_across_projects(self):
+        """A single LanceVectorBackend instance serves many projects via separate connect() calls."""
+        import unittest.mock
+
+        backend = LanceVectorBackend()
+        backend.initialize({"data_dir": "/tmp/test", "isolation": "physical"})
+        with unittest.mock.patch("datus.storage.vector.lance_backend.lancedb") as mock_lancedb:
+            mock_lancedb.connect.return_value = MagicMock()
+            backend.connect("proj_a")
+            backend.connect("proj_b")
+            paths = [c.args[0] for c in mock_lancedb.connect.call_args_list]
+            assert "/tmp/test/proj_a/datus_db" in paths
+            assert "/tmp/test/proj_b/datus_db" in paths
 
 
 # ---------------------------------------------------------------------------

@@ -26,7 +26,9 @@ class CatalogUpdater:
     def __init__(self, agent_config: AgentConfig, datasource_id: Optional[str] = None):
         self._agent_config = agent_config
         self.datasource_id = datasource_id or agent_config.current_database or ""
-        self.semantic_model_storage = get_storage(SemanticModelStorage, "semantic_model", namespace=self.datasource_id)
+        self.semantic_model_storage = get_storage(
+            SemanticModelStorage, "semantic_model", project=agent_config.project_name
+        )
 
     def _parse_json_field(self, value: Any) -> Optional[List[Dict[str, Any]]]:
         """Parse JSON string or return list directly."""

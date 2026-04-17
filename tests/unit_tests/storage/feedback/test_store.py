@@ -10,9 +10,9 @@ from datus.storage.feedback.store import FeedbackStore
 
 
 @pytest.fixture
-def feedback_store():
+def feedback_store(storage_test_project):
     """Create a FeedbackStore backed by the current test backend."""
-    return FeedbackStore()
+    return FeedbackStore(project=storage_test_project)
 
 
 class TestFeedbackStoreInit:

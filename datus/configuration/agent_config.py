@@ -516,15 +516,14 @@ class AgentConfig:
         from datus.storage.backend_holder import init_backends
 
         if not self._skip_init_dirs:
-            # Initialize storage backend configuration (rdb + vector)
+            # Initialize storage backend configuration (rdb + vector).
+            # Backends are stateless w.r.t. project; the active project is
+            # passed to every ``create_rdb_for_store`` / ``create_vector_connection``
+            # call at lookup time, so ``init_backends`` only wires backend-wide
+            # settings (data_dir, isolation).
             backend_config = StorageBackendConfig.from_dict(storage_config)
             self._backend_config = backend_config
-            # Pass the parent data dir; each backend owns its project isolation.
-            init_backends(
-                backend_config,
-                data_dir=str(self.path_manager.data_dir),
-                project=self._project_name,
-            )
+            init_backends(backend_config, data_dir=str(self.path_manager.data_dir))
 
         # Initialize unified permission system
         self.permissions_config = self._init_permissions_config(kwargs.get("permissions", {}))
@@ -589,14 +588,18 @@ class AgentConfig:
         if not getattr(self, "_skip_init_dirs", False):
             self.rag_base_path = str(self.path_manager.project_data_dir)
             self.session_dir = str(self.path_manager.sessions_dir)
+        # Backends are project-agnostic; the new project will be picked up by
+        # the next ``create_rdb_for_store`` / ``create_vector_connection`` call.
+        # Drop cached per-project storage handles so old project bindings do
+        # not leak into the new project.
         if hasattr(self, "_backend_config"):
+            from datus.storage.registry import clear_storage_registry
+
+            clear_storage_registry()
+            # Restore backend config since clear_storage_registry() called reset_backends()
             from datus.storage.backend_holder import init_backends
 
-            init_backends(
-                self._backend_config,
-                data_dir=str(self.path_manager.data_dir),
-                project=self._project_name,
-            )
+            init_backends(self._backend_config, data_dir=str(self.path_manager.data_dir))
 
     @property
     def current_namespace(self) -> str:

@@ -139,7 +139,12 @@ class SqliteRdbTable(RdbTable):
 
 
 class SqliteRdbDatabase(RdbDatabase):
-    """SQLite implementation of database-level handle."""
+    """SQLite implementation of database-level handle.
+
+    SQLite only supports PHYSICAL project isolation (per-project ``.db``
+    file under ``{data_dir}/{project}/datus_db/``); there is no LOGICAL
+    row-level partitioning in this backend.
+    """
 
     def __init__(self, db_file: str) -> None:
         self._db_file = db_file
@@ -358,34 +363,32 @@ class SqliteRdbDatabase(RdbDatabase):
 
 
 class SqliteRdbBackend(BaseRdbBackend):
-    """SQLite backend — reusable singleton that produces ``SqliteRdbDatabase`` instances.
+    """SQLite backend — stateless producer of ``SqliteRdbDatabase`` instances.
 
-    This backend owns its project isolation strategy: the on-disk layout is
-    always ``{data_dir}/{project}/datus_db/{store_db_name}.db`` (falling back
-    to ``{data_dir}/datus_db/{store_db_name}.db`` when no project is set).
-    The ``namespace`` argument on :meth:`connect` is retained for
-    ``BaseRdbBackend`` compatibility but is ignored — legacy LOGICAL-style
-    row-scoping is not supported here.
+    Project isolation is PHYSICAL only: each project gets its own on-disk
+    ``.db`` file at ``{data_dir}/{project}/datus_db/{store_db_name}.db``
+    (falls back to ``{data_dir}/datus_db/{store_db_name}.db`` when
+    ``project`` is empty). The backend itself does not remember a project;
+    the caller passes one on every ``connect()`` so a single instance can
+    serve many projects. SQLite does not support LOGICAL row-level
+    partitioning — pick the ``postgresql`` backend (or another pg-like
+    backend) if you need row-level tenant isolation.
     """
 
     def __init__(self):
         self._data_dir: str = ""
-        self._project: str = ""
 
     def initialize(self, config: Dict[str, Any]) -> None:
         self._data_dir = config.get("data_dir", "")
-        self._project = config.get("project", "")
 
-    def connect(self, namespace: str, store_db_name: str) -> SqliteRdbDatabase:
-        del namespace  # accepted for interface compatibility; see class docstring
+    def connect(self, project: str, store_db_name: str) -> SqliteRdbDatabase:
         safe_store = _safe_path_segment(store_db_name, "store_db_name")
-        safe_project = _safe_path_segment(self._project, "project") if self._project else ""
+        safe_project = _safe_path_segment(project, "project") if project else ""
         parts = [self._data_dir]
         if safe_project:
             parts.append(safe_project)
         parts.extend(["datus_db", f"{safe_store}.db"])
-        db_file = os.path.join(*parts)
-        return SqliteRdbDatabase(db_file)
+        return SqliteRdbDatabase(os.path.join(*parts))
 
     def close(self) -> None:
         pass  # SQLite connections are opened/closed per operation

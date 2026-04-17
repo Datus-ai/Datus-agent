@@ -94,7 +94,7 @@ def init_metrics(
         if build_model == "overwrite":
             from datus.storage.backend_holder import create_vector_connection
 
-            db = create_vector_connection(agent_config.current_database)
+            db = create_vector_connection(agent_config.project_name)
             try:
                 db.drop_table("metrics", ignore_missing=True)
                 logger.info("Dropped existing metrics table")
@@ -196,7 +196,7 @@ def init_semantic_model(
         if build_mode == "overwrite":
             from datus.storage.backend_holder import create_vector_connection
 
-            db = create_vector_connection(agent_config.current_database)
+            db = create_vector_connection(agent_config.project_name)
             try:
                 db.drop_table("semantic_model", ignore_missing=True)
                 logger.info("Dropped existing semantic_model table")

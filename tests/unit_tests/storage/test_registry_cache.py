@@ -23,22 +23,22 @@ class _FakeEmbeddingModel:
 
 
 class TestGetStorageLRUCache:
-    """Tests for per-namespace LRU caching in get_storage()."""
+    """Tests for per-project LRU caching in get_storage()."""
 
-    def test_same_namespace_returns_cached(self, reset_global_singletons):
-        """get_storage with same factory+namespace returns the same instance."""
+    def test_same_project_returns_cached(self, reset_global_singletons):
+        """get_storage with same factory+project returns the same instance."""
         from datus.storage.registry import get_storage
 
         def _factory(embedding_model, **kwargs):
             return BaseEmbeddingStore(table_name="test", embedding_model=embedding_model, **kwargs)
 
         with patch("datus.storage.registry.get_embedding_model", return_value=_FakeEmbeddingModel()):
-            s1 = get_storage(_factory, "database", namespace="ns1")
-            s2 = get_storage(_factory, "database", namespace="ns1")
+            s1 = get_storage(_factory, "database", project="proj_1")
+            s2 = get_storage(_factory, "database", project="proj_1")
             assert s1 is s2
 
-    def test_different_namespace_returns_different(self, reset_global_singletons):
-        """get_storage with different namespaces returns distinct instances."""
+    def test_different_project_returns_different(self, reset_global_singletons):
+        """get_storage with different projects returns distinct instances."""
         from datus.storage.registry import get_storage
 
         def _factory(embedding_model, **kwargs):
@@ -49,12 +49,12 @@ class TestGetStorageLRUCache:
             patch("datus.storage.backend_holder.get_vector_backend") as mock_backend,
         ):
             mock_backend.return_value = MagicMock()
-            s1 = get_storage(_factory, "database", namespace="ns_a")
-            s2 = get_storage(_factory, "database", namespace="ns_b")
+            s1 = get_storage(_factory, "database", project="proj_a")
+            s2 = get_storage(_factory, "database", project="proj_b")
             assert s1 is not s2
 
-    def test_empty_namespace_does_not_pass_db_kwarg(self, reset_global_singletons):
-        """get_storage with empty namespace does not pass a 'db' kwarg to factory."""
+    def test_empty_project_does_not_pass_db_kwarg(self, reset_global_singletons):
+        """get_storage with empty project does not pass a 'db' kwarg to factory."""
         from datus.storage.registry import get_storage
 
         received_kwargs = {}
@@ -64,7 +64,7 @@ class TestGetStorageLRUCache:
             return BaseEmbeddingStore(table_name="test", embedding_model=embedding_model, **kwargs)
 
         with patch("datus.storage.registry.get_embedding_model", return_value=_FakeEmbeddingModel()):
-            get_storage(_factory, "database", namespace="")
+            get_storage(_factory, "database", project="")
             assert "db" not in received_kwargs
 
     def test_clear_registry_clears_cache(self, reset_global_singletons):
@@ -81,12 +81,8 @@ class TestGetStorageLRUCache:
             clear_storage_registry()
             assert _get_storage_cached.cache_info().currsize == 0
 
-    def test_subject_store_binds_subject_tree_by_current_project(self, reset_global_singletons):
-        """Subject stores created via get_storage() bind the active project's subject tree.
-
-        Subject-tree isolation moved from datasource to project; the requested
-        ``namespace`` (datasource_id) no longer drives subject-tree lookup.
-        """
+    def test_subject_store_binds_subject_tree_by_requested_project(self, reset_global_singletons):
+        """Subject stores created via get_storage() bind the requested project's subject tree."""
         from datus.storage.metric.store import MetricStorage
         from datus.storage.registry import get_storage
 
@@ -95,21 +91,20 @@ class TestGetStorageLRUCache:
         with (
             patch("datus.storage.registry.get_embedding_model", return_value=_FakeEmbeddingModel()),
             patch("datus.storage.registry._get_subject_tree_cached", return_value=project_tree) as mock_tree,
-            patch("datus.storage.backend_holder.get_current_project", return_value="my_project"),
             patch("datus.storage.backend_holder.get_vector_backend") as mock_backend,
         ):
             mock_backend.return_value = MagicMock()
-            store = get_storage(MetricStorage, "metric", namespace="requested_ns")
+            store = get_storage(MetricStorage, "metric", project="my_project")
 
         assert store.subject_tree is project_tree
-        assert call("my_project", "my_project") in mock_tree.call_args_list
+        assert call("my_project") in mock_tree.call_args_list
 
 
 class TestPreloadAllStorages:
-    """Tests for preload_all_storages() with project/datasource_id."""
+    """Tests for preload_all_storages() with project."""
 
-    def test_preload_forwards_project_and_datasource_id(self, reset_global_singletons):
-        """preload_all_storages forwards project to init_backends and datasource_id to get_storage."""
+    def test_preload_forwards_project(self, reset_global_singletons):
+        """preload_all_storages forwards project to both init_backends and get_storage."""
         from datus.storage.registry import preload_all_storages
 
         with (
@@ -117,11 +112,11 @@ class TestPreloadAllStorages:
             patch("datus.storage.backend_holder.init_backends") as mock_init,
             patch("datus.storage.registry.get_subject_tree_store"),
         ):
-            preload_all_storages(data_dir="/tmp/test", project="my_project", datasource_id="ds_001")
-            mock_init.assert_called_once_with(config=None, data_dir="/tmp/test", project="my_project")
-            # All get_storage calls receive datasource_id as the ``namespace`` kwarg.
-            for call in mock_get_storage.call_args_list:
-                assert call.kwargs.get("namespace") == "ds_001"
+            preload_all_storages(data_dir="/tmp/test", project="my_project")
+            mock_init.assert_called_once_with(config=None, data_dir="/tmp/test")
+            # All get_storage calls receive project as a kwarg.
+            for call_args in mock_get_storage.call_args_list:
+                assert call_args.kwargs.get("project") == "my_project"
 
     def test_preload_applies_defaults(self, reset_global_singletons):
         """preload_all_storages applies deployment defaults."""
@@ -140,52 +135,54 @@ class TestPreloadAllStorages:
 class TestBackendHolderConfigPropagation:
     """Tests for config propagation in backend_holder.
 
-    Project path isolation is backend-owned, so ``project`` is what flows to
-    backends; ``isolation`` only matters for LOGICAL row-scoping in the vector
-    backend.
+    Backends are stateless w.r.t. project: ``initialize()`` only carries
+    backend-wide settings (``data_dir``, ``isolation``). The project
+    identifier is passed to ``connect()`` via ``create_*`` helpers, not
+    injected into backend config.
     """
 
-    def test_vector_backend_receives_isolation_and_project(self, reset_global_singletons):
-        """get_vector_backend() passes both isolation and project to vector config."""
+    def test_vector_backend_receives_isolation_but_not_project(self, reset_global_singletons):
+        """get_vector_backend() passes isolation to vector config; project is NOT injected."""
         from datus.storage.backend_holder import get_vector_backend, init_backends
 
         with patch("datus.storage.vector.VectorRegistry.create_backend") as mock_create:
             mock_create.return_value = MagicMock()
-            init_backends(data_dir="/tmp/test", project="proj")
+            init_backends(data_dir="/tmp/test")
             get_vector_backend()
             call_config = mock_create.call_args[0][1]
             assert "isolation" in call_config
-            assert call_config.get("project") == "proj"
+            assert "project" not in call_config
 
-    def test_rdb_backend_receives_project(self, reset_global_singletons):
-        """_get_rdb_backend() passes project to rdb config; isolation is not needed."""
+    def test_rdb_backend_receives_isolation_but_not_project(self, reset_global_singletons):
+        """_get_rdb_backend() passes isolation to rdb config; project is NOT injected."""
         from datus.storage.backend_holder import _get_rdb_backend, init_backends
 
         with patch("datus.storage.rdb.RdbRegistry.create_backend") as mock_create:
             mock_create.return_value = MagicMock()
-            init_backends(data_dir="/tmp/test", project="proj")
+            init_backends(data_dir="/tmp/test")
             _get_rdb_backend()
             call_config = mock_create.call_args[0][1]
-            assert call_config.get("project") == "proj"
+            assert "isolation" in call_config
+            assert "project" not in call_config
 
-    def test_create_vector_connection_default_has_empty_datasource_id(self, reset_global_singletons):
-        """create_vector_connection() defaults datasource_id to '' (no LOGICAL filter)."""
+    def test_create_vector_connection_forwards_project(self, reset_global_singletons):
+        """create_vector_connection(project=...) forwards project to backend.connect()."""
         from datus.storage.backend_holder import create_vector_connection, init_backends
 
         with patch("datus.storage.vector.VectorRegistry.create_backend") as mock_create:
             mock_backend = MagicMock()
             mock_create.return_value = mock_backend
-            init_backends(data_dir="/tmp/test", project="proj")
-            create_vector_connection()
-            mock_backend.connect.assert_called_once_with(namespace="")
+            init_backends(data_dir="/tmp/test")
+            create_vector_connection("my_project")
+            mock_backend.connect.assert_called_once_with("my_project")
 
-    def test_create_vector_connection_explicit_datasource_id(self, reset_global_singletons):
-        """create_vector_connection(datasource_id=...) forwards it as the vector-level namespace."""
-        from datus.storage.backend_holder import create_vector_connection, init_backends
+    def test_create_rdb_for_store_forwards_project(self, reset_global_singletons):
+        """create_rdb_for_store(store, project) forwards both to backend.connect()."""
+        from datus.storage.backend_holder import create_rdb_for_store, init_backends
 
-        with patch("datus.storage.vector.VectorRegistry.create_backend") as mock_create:
+        with patch("datus.storage.rdb.RdbRegistry.create_backend") as mock_create:
             mock_backend = MagicMock()
             mock_create.return_value = mock_backend
-            init_backends(data_dir="/tmp/test", project="proj")
-            create_vector_connection(datasource_id="ds_1")
-            mock_backend.connect.assert_called_once_with(namespace="ds_1")
+            init_backends(data_dir="/tmp/test")
+            create_rdb_for_store("task", "my_project")
+            mock_backend.connect.assert_called_once_with("my_project", "task")

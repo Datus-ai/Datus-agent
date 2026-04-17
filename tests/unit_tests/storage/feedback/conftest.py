@@ -4,6 +4,6 @@ import pytest
 
 
 @pytest.fixture
-def storage_test_namespace():
-    """Feedback store requires a namespace for data isolation."""
+def storage_test_project():
+    """Feedback store requires a project for data isolation."""
     return "test"

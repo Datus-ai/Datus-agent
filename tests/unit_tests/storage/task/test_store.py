@@ -10,9 +10,9 @@ from datus.storage.task.store import TaskStore
 
 
 @pytest.fixture
-def task_store():
+def task_store(storage_test_project):
     """Create a TaskStore backed by the current test backend."""
-    return TaskStore()
+    return TaskStore(project=storage_test_project)
 
 
 class TestTaskStoreInit:

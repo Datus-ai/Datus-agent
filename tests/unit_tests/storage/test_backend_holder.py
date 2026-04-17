@@ -69,8 +69,18 @@ class TestCreateRdbForStoreSqlite:
     """Tests for SQLite path in create_rdb_for_store."""
 
     def test_sqlite_creates_database(self, tmp_path):
-        """SQLite config creates a SqliteRdbDatabase with correct db_file."""
-        init_backends(StorageBackendConfig(), data_dir=str(tmp_path), project="test")
-        db = create_rdb_for_store("test")
+        """create_rdb_for_store builds a project-scoped SqliteRdbDatabase."""
+        init_backends(StorageBackendConfig(), data_dir=str(tmp_path))
+        db = create_rdb_for_store("test", "proj_a")
         assert isinstance(db, SqliteRdbDatabase)
         assert db.db_file.endswith("test.db")
+        assert "proj_a" in db.db_file
+
+    def test_single_backend_reused_across_projects(self, tmp_path):
+        """Backend instance is stateless: one init_backends call serves many projects."""
+        init_backends(StorageBackendConfig(), data_dir=str(tmp_path))
+        db_a = create_rdb_for_store("s", "proj_a")
+        db_b = create_rdb_for_store("s", "proj_b")
+        assert "proj_a" in db_a.db_file
+        assert "proj_b" in db_b.db_file
+        assert db_a.db_file != db_b.db_file

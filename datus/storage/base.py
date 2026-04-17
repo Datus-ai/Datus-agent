@@ -45,16 +45,18 @@ class StorageBase:
 
         Args:
             db: Optional pre-created VectorDatabase connection.
-                If provided, it is used directly instead of the global
-                namespace connection.  This allows stores like DocumentStore
-                to use per-platform isolated databases.
+                If provided, it is used directly instead of opening a new
+                connection bound to the active project. Stores that need
+                a composite-project scope (e.g. ``DocumentStore``) pass
+                their own ``db`` built from the desired project.
         """
         if db is not None:
             self.db: VectorDatabase = db
         else:
             from datus.storage.backend_holder import create_vector_connection
+            from datus.utils.path_manager import get_path_manager
 
-            self.db = create_vector_connection()
+            self.db = create_vector_connection(get_path_manager().project_name)
 
     def _get_current_timestamp(self) -> str:
         """Get current timestamp in ISO format (UTC)."""

@@ -311,7 +311,7 @@ class ExtKnowledgeRAG:
         from datus.storage.registry import get_storage
 
         self.datasource_id = datasource_id or agent_config.current_database or ""
-        self.store = get_storage(ExtKnowledgeStore, "ext_knowledge", namespace=self.datasource_id)
+        self.store = get_storage(ExtKnowledgeStore, "ext_knowledge", project=agent_config.project_name)
         self._sub_agent_filter = _build_sub_agent_filter(agent_config, sub_agent_name, self.store, "ext_knowledge")
 
     def _sub_agent_conditions(self) -> List:

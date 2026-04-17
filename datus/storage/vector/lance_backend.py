@@ -405,28 +405,33 @@ def _safe_path_segment(value: str, field_name: str) -> str:
 class LanceVectorBackend(BaseVectorBackend):
     """LanceDB implementation of the vector backend.
 
-    This backend owns its project isolation strategy: the on-disk layout is
-    ``{data_dir}/{project}/datus_db`` (falling back to ``{data_dir}/datus_db``
-    when no project is set).  ``connect(namespace=...)`` continues to carry
-    the ``datasource_id`` used by LOGICAL row-scoping; project and
-    datasource are orthogonal.
+    Stateless with respect to project: ``initialize(config)`` only records
+    ``data_dir`` and ``isolation``; the active project arrives on every
+    ``connect(project)`` so one instance can serve many projects.
+
+    Isolation modes:
+      * PHYSICAL — each project gets ``{data_dir}/{project}/datus_db``
+        (falls back to ``{data_dir}/datus_db`` when project is empty).
+      * LOGICAL — all projects share ``{data_dir}/datus_db`` and the
+        returned ``LanceVectorDatabase`` auto-scopes reads/writes by
+        ``datasource_id = project`` (``datasource_id`` is a legacy column
+        name whose **value** is the project identifier).
     """
 
     def initialize(self, config: Dict[str, Any]) -> None:
         self._data_dir = config.get("data_dir", "")
         self._isolation = IsolationType(config.get("isolation", IsolationType.PHYSICAL.value))
-        self._project = config.get("project", "")
 
-    def connect(self, namespace: str = "") -> LanceVectorDatabase:
-        safe_project = _safe_path_segment(self._project, "project") if self._project else ""
+    def connect(self, project: str = "") -> LanceVectorDatabase:
+        safe_project = _safe_path_segment(project, "project") if project else ""
+        if self._isolation == IsolationType.LOGICAL:
+            raw_db = lancedb.connect(os.path.join(self._data_dir, "datus_db"))
+            return LanceVectorDatabase(raw_db, isolation=self._isolation, datasource_id=safe_project or None)
         parts = [self._data_dir]
         if safe_project:
             parts.append(safe_project)
         parts.append("datus_db")
-        db_path = os.path.join(*parts)
-        raw_db = lancedb.connect(db_path)
-        if self._isolation == IsolationType.LOGICAL:
-            return LanceVectorDatabase(raw_db, isolation=self._isolation, datasource_id=namespace)
+        raw_db = lancedb.connect(os.path.join(*parts))
         return LanceVectorDatabase(raw_db)
 
     def close(self) -> None:

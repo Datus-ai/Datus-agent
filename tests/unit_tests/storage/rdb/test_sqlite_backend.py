@@ -370,20 +370,26 @@ class TestMigrateMissingColumns:
 
 
 class TestSqliteRdbBackendConnect:
-    """Tests for SqliteRdbBackend lifecycle and connect()."""
+    """Tests for SqliteRdbBackend lifecycle and connect().
+
+    The backend is stateless with respect to project: ``initialize()``
+    only carries ``data_dir``, and ``connect(project, store)`` builds
+    a per-project path at call time. One backend instance therefore
+    serves many projects.
+    """
 
     def test_connect_builds_project_scoped_path(self, tmp_path):
-        """connect() places the store under ``{data_dir}/{project}/datus_db/``."""
+        """connect(project, store) places the store under ``{data_dir}/{project}/datus_db/``."""
         from datus.storage.rdb.sqlite_backend import SqliteRdbBackend
 
         b = SqliteRdbBackend()
-        b.initialize({"data_dir": str(tmp_path), "project": "proj_a"})
-        db = b.connect("ignored_ns", "test")
+        b.initialize({"data_dir": str(tmp_path)})
+        db = b.connect("proj_a", "test")
         assert isinstance(db, SqliteRdbDatabase)
         assert db.db_file == os.path.join(str(tmp_path), "proj_a", "datus_db", "test.db")
 
     def test_connect_without_project_falls_back(self, tmp_path):
-        """Without a project the layout is just ``{data_dir}/datus_db/``."""
+        """connect("", store) collapses the layout to ``{data_dir}/datus_db/``."""
         from datus.storage.rdb.sqlite_backend import SqliteRdbBackend
 
         b = SqliteRdbBackend()
@@ -391,13 +397,14 @@ class TestSqliteRdbBackendConnect:
         db = b.connect("", "test")
         assert db.db_file == os.path.join(str(tmp_path), "datus_db", "test.db")
 
-    def test_connect_ignores_namespace_arg(self, tmp_path):
-        """The legacy namespace argument is retained for interface parity but unused."""
+    def test_single_instance_reused_across_projects(self, tmp_path):
+        """One initialized backend produces different per-project paths on each connect()."""
         from datus.storage.rdb.sqlite_backend import SqliteRdbBackend
 
         b = SqliteRdbBackend()
-        b.initialize({"data_dir": str(tmp_path), "project": "proj"})
-        db_a = b.connect("ns_a", "test")
-        db_b = b.connect("ns_b", "test")
-        assert db_a.db_file == db_b.db_file
-        assert db_a.db_file == os.path.join(str(tmp_path), "proj", "datus_db", "test.db")
+        b.initialize({"data_dir": str(tmp_path)})
+        db_a = b.connect("proj_a", "test")
+        db_b = b.connect("proj_b", "test")
+        assert db_a.db_file != db_b.db_file
+        assert db_a.db_file == os.path.join(str(tmp_path), "proj_a", "datus_db", "test.db")
+        assert db_b.db_file == os.path.join(str(tmp_path), "proj_b", "datus_db", "test.db")

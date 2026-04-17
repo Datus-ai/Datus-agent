@@ -435,6 +435,12 @@ def document_store(platform: str) -> DocumentStore:
         )
 
     from datus.storage.backend_holder import create_vector_connection
+    from datus.utils.path_manager import get_path_manager
 
-    db = create_vector_connection(datasource_id=f"{_DOCUMENT_NS_PREFIX}{platform}")
+    # Compose a project identifier for per-platform document isolation within
+    # the active project: e.g. ``my_project__document__snowflake``.
+    # _SEGMENT_RE (backend path validator) accepts the double-underscore form.
+    active_project = get_path_manager().project_name or "_root"
+    doc_project = f"{active_project}__{_DOCUMENT_NS_PREFIX}{platform}"
+    db = create_vector_connection(doc_project)
     return DocumentStore(embedding_model=get_document_embedding_model(), db=db)

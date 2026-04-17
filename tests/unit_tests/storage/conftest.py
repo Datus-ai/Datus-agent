@@ -16,27 +16,25 @@ _BACKENDS = discover_test_backends()
 
 
 @pytest.fixture
-def storage_test_namespace():
-    """Override in subdirectory conftest to customize namespace.
+def storage_test_project():
+    """Override in subdirectory conftest to customize the test project identifier.
 
-    Retained for backend-test environment plumbing (``clear_data`` / embedding
-    store per-datasource filtering); the value is no longer forwarded to
-    ``init_backends`` since project isolation is now backend-owned.
+    Used for backend-test environment plumbing (``clear_data``) and passed to
+    ``get_storage`` / ``create_rdb_for_store`` via tests. Backends are
+    project-agnostic at ``init_backends`` time (the value is not forwarded).
     """
     return ""
 
 
 @pytest.fixture(autouse=True, params=_BACKENDS, ids=lambda b: b.id)
-def _init_storage_backends(request, tmp_path, storage_test_namespace):
+def _init_storage_backends(request, tmp_path, storage_test_project):
     """Ensure storage backends are configured with a valid data_dir for every storage test."""
     backend = request.param
     config = StorageBackendConfig(
         rdb=RdbBackendConfig(type=backend.rdb_type, params=backend.rdb_params),
         vector=VectorBackendConfig(type=backend.vector_type, params=backend.vector_params),
     )
-    # The fixture historically set a project shard to namespace; keep the same
-    # filesystem layout per test by mapping it to ``project``.
-    init_backends(config=config, data_dir=str(tmp_path), project=storage_test_namespace)
+    init_backends(config=config, data_dir=str(tmp_path))
     yield backend
     # 1. Clear cache and reset backends (close connection pools)
     clear_storage_registry()
@@ -44,12 +42,12 @@ def _init_storage_backends(request, tmp_path, storage_test_namespace):
     # 2. Clear server-side data (after connection pools are closed)
     if backend.rdb_test_env is not None:
         try:
-            backend.rdb_test_env.clear_data(storage_test_namespace)
+            backend.rdb_test_env.clear_data(storage_test_project)
         except Exception:
             pass
     if backend.vector_test_env is not None:
         try:
-            backend.vector_test_env.clear_data(storage_test_namespace)
+            backend.vector_test_env.clear_data(storage_test_project)
         except Exception:
             pass
 

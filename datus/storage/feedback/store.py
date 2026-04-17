@@ -45,11 +45,18 @@ class FeedbackRecord:
 class FeedbackStore:
     """RDB-backed storage for user feedback data."""
 
-    def __init__(self):
-        """Initialize the feedback store."""
-        from datus.storage.backend_holder import create_rdb_for_store
+    def __init__(self, project: str = ""):
+        """Initialize the feedback store scoped to *project* (defaults to active).
 
-        self._rdb = create_rdb_for_store("feedback")
+        Args:
+            project: Project identifier used for backend isolation. When
+                empty, the active ``DatusPathManager.project_name`` is used.
+        """
+        from datus.storage.backend_holder import create_rdb_for_store
+        from datus.utils.path_manager import get_path_manager
+
+        resolved = project or get_path_manager().project_name
+        self._rdb = create_rdb_for_store("feedback", resolved)
         self._table = self._rdb.ensure_table(_FEEDBACK_TABLE)
 
     def record_feedback(self, task_id: str, status: str) -> Dict[str, Any]:
