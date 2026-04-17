@@ -450,6 +450,7 @@ class AgenticNode(Node):
                 await self._session.add_items(
                     [
                         {
+                            "type": "message",
                             "role": "user",
                             "content": "[Previous conversation was compacted to save context. Summary below.]",
                         },
