@@ -59,7 +59,9 @@ def _drop_if_matches_final(
     final_text = ""
     if isinstance(final_action.output, dict):
         final_text = (final_action.output.get("response") or "").strip()
-    if pending_text and pending_text == final_text:
+    # Drop the pending entry when it has nothing to contribute (empty text)
+    # or when its body duplicates the final response exactly.
+    if not pending_text or pending_text == final_text:
         return None
     incremental_actions.append(pending)
     return None
@@ -319,11 +321,15 @@ class ChatCommands:
                             continue
                         # Defer ASSISTANT text flagged as non-thinking — it may
                         # be the tail text that duplicates the upcoming *_response.
+                        # If a previous pending is still buffered, flush it first
+                        # so back-to-back non-thinking chunks are not dropped.
                         if (
                             action.role == ActionRole.ASSISTANT
                             and isinstance(action.output, dict)
                             and not action.output.get("is_thinking", True)
                         ):
+                            if pending_non_thinking is not None:
+                                incremental_actions.append(pending_non_thinking)
                             pending_non_thinking = action
                             continue
                         # Any other action: flush pending first to preserve order.
@@ -394,11 +400,15 @@ class ChatCommands:
                             continue
                         # Defer ASSISTANT text flagged as non-thinking — it may
                         # be the tail text that duplicates the upcoming *_response.
+                        # If a previous pending is still buffered, flush it first
+                        # so back-to-back non-thinking chunks are not dropped.
                         if (
                             action.role == ActionRole.ASSISTANT
                             and isinstance(action.output, dict)
                             and not action.output.get("is_thinking", True)
                         ):
+                            if pending_non_thinking is not None:
+                                incremental_actions.append(pending_non_thinking)
                             pending_non_thinking = action
                             continue
                         if pending_non_thinking is not None:

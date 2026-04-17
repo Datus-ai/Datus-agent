@@ -3847,8 +3847,8 @@ class TestDropIfMatchesFinal:
         assert result is None
         assert incremental == [pending]
 
-    def test_non_dict_outputs_still_flush(self):
-        """When either side's output is non-dict, be conservative and flush."""
+    def test_non_dict_pending_output_is_dropped(self):
+        """Non-dict pending output has no extractable text — drop it."""
         from datus.cli.chat_commands import _drop_if_matches_final
 
         incremental: list = []
@@ -3863,15 +3863,14 @@ class TestDropIfMatchesFinal:
         )
         final = self._final("anything")
         _drop_if_matches_final(pending, final, incremental)
-        assert incremental == [pending]
+        assert incremental == []
 
-    def test_empty_pending_text_flushes_without_match(self):
-        """Empty pending text should not accidentally match an empty final."""
+    def test_empty_pending_text_is_dropped(self):
+        """Empty pending text has nothing to contribute — drop it."""
         from datus.cli.chat_commands import _drop_if_matches_final
 
         incremental: list = []
         pending = self._assistant("")
-        final = self._final("")
+        final = self._final("anything")
         _drop_if_matches_final(pending, final, incremental)
-        # Both empty → no text to compare; flushed to stay safe.
-        assert incremental == [pending]
+        assert incremental == []

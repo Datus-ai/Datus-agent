@@ -1214,7 +1214,7 @@ def _build_get_detail(action: ActionHistory, verbose: bool) -> ToolCallContent:
                 name = result.get("name", "")
                 tc.compact_result = f"{name}" if name else "Retrieved"
             elif isinstance(result, str):
-                tc.compact_result = f"{result[:50]}" if result else "Retrieved"
+                tc.compact_result = _truncate_middle(result, 50) if result else "Retrieved"
     return tc
 
 

@@ -460,8 +460,9 @@ class ActionRenderer:
                     result.append(Text.from_markup(f"[dim]          {line}[/dim]"))
                 result.append(Text(""))
             else:
-                if tc.output_preview:
-                    result.append(Text.from_markup(f"[dim]          {rich_escape(tc.output_preview)}[/dim]"))
+                preview = tc.compact_result or tc.output_preview
+                if preview:
+                    result.append(Text.from_markup(f"[dim]          {rich_escape(preview)}[/dim]"))
             return result
         if action.role == ActionRole.ASSISTANT:
             content = _get_assistant_content(action)
