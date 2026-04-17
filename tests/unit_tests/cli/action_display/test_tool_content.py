@@ -344,6 +344,20 @@ class TestBuildReadQuery:
         tc = _build_read_query(a, verbose=False)
         assert tc.output_preview == ""
 
+    def test_compact_infers_cols_from_compressed_data(self):
+        """When column_count is absent, infer column count from the first CSV header row."""
+        a = _make(
+            input_data={"function_name": "read_query"},
+            output_data={
+                "raw_output": (
+                    '{"success": 1, "result": {"original_rows": 7, '
+                    '"compressed_data": "id,name,created_at\\n1,a,2024\\n2,b,2025"}}'
+                )
+            },
+        )
+        tc = _build_read_query(a, verbose=False)
+        assert tc.compact_result == "7 \u00d7 3 result"
+
 
 @pytest.mark.ci
 class TestBuildSearchTable:
@@ -354,7 +368,7 @@ class TestBuildSearchTable:
         )
         tc = _build_search_table(a, verbose=False)
         assert "2 tables" in tc.compact_result
-        assert "1 sample rows" in tc.compact_result
+        assert "1 sample row" in tc.compact_result
 
     def test_compact_with_compressed_sample_data(self):
         a = _make(
@@ -373,7 +387,7 @@ class TestBuildSearchTable:
         )
         tc = _build_search_table(a, verbose=False)
         assert "2 tables" in tc.compact_result
-        assert "1 sample rows" in tc.compact_result
+        assert "1 sample row" in tc.compact_result
 
     def test_compact_no_data(self):
         a = _make(input_data={"function_name": "search_table"})
@@ -1237,7 +1251,7 @@ class TestBuildSearchKnowledge:
             output_data={"result": [{"search_text": "q1", "explanation": "e1"}]},
         )
         tc = _build_search_knowledge(a, verbose=False)
-        assert "1 knowledge entries" in tc.compact_result
+        assert "1 knowledge entry matched" in tc.compact_result
 
 
 @pytest.mark.ci
@@ -1999,6 +2013,26 @@ class TestExtractFileContent:
 
         out = {"content": "body"}
         assert _extract_file_content(out) == "body"
+
+    def test_top_level_generic_key_is_ignored(self):
+        """Top-level ``text`` / ``data`` / ``output`` often hold wrappers, not bodies."""
+        from datus.cli.action_display.tool_content import _extract_file_content
+
+        # ``text`` at the top level must not be mistaken for the file body.
+        assert _extract_file_content({"text": '{"success": 1}'}) is None
+        assert _extract_file_content({"data": "wrapper"}) is None
+        assert _extract_file_content({"output": "wrapper"}) is None
+
+    def test_raw_output_wins_over_top_level_text(self):
+        """When both a wrapper ``text`` field and ``raw_output`` are present,
+        the real body inside ``raw_output`` takes precedence."""
+        from datus.cli.action_display.tool_content import _extract_file_content
+
+        out = {
+            "text": '{"success": 1, "result": "envelope-only"}',
+            "raw_output": {"success": 1, "result": "real body"},
+        }
+        assert _extract_file_content(out) == "real body"
 
     def test_non_dict_non_string_returns_none(self):
         from datus.cli.action_display.tool_content import _extract_file_content

@@ -1013,31 +1013,44 @@ def _build_search_table(action: ActionHistory, verbose: bool) -> ToolCallContent
                 sample_count = len(sample_data)
             else:
                 sample_count = 0
-            tc.compact_result = f"{metadata_count} tables and {sample_count} sample rows"
+            tc.compact_result = (
+                f"{metadata_count} {_plural_unit(metadata_count, 'table', 'tables')} "
+                f"and {sample_count} {_plural_unit(sample_count, 'sample row', 'sample rows')}"
+            )
     return tc
 
 
 def _build_search_metrics(action: ActionHistory, verbose: bool) -> ToolCallContent:
     """search_metrics: show metric count."""
-    return _build_search_generic(action, verbose, "metrics")
+    return _build_search_generic(action, verbose, "metric", "metrics")
 
 
 def _build_search_reference_sql(action: ActionHistory, verbose: bool) -> ToolCallContent:
     """search_reference_sql: show reference SQL count."""
-    return _build_search_generic(action, verbose, "reference SQLs")
+    return _build_search_generic(action, verbose, "reference SQL", "reference SQLs")
 
 
 def _build_search_external_knowledge(action: ActionHistory, verbose: bool) -> ToolCallContent:
     """search_external_knowledge / search_knowledge: show knowledge count."""
-    return _build_search_generic(action, verbose, "knowledge entries")
+    return _build_search_generic(action, verbose, "knowledge entry", "knowledge entries")
 
 
 def _build_search_documents(action: ActionHistory, verbose: bool) -> ToolCallContent:
     """search_documents: show document count."""
-    return _build_search_generic(action, verbose, "documents")
+    return _build_search_generic(action, verbose, "document", "documents")
 
 
-def _build_search_generic(action: ActionHistory, verbose: bool, unit: str) -> ToolCallContent:
+def _plural_unit(count: int, singular: str, plural: str) -> str:
+    """Pick ``singular`` for ``count == 1``, ``plural`` otherwise."""
+    return singular if count == 1 else plural
+
+
+def _build_search_generic(
+    action: ActionHistory,
+    verbose: bool,
+    unit_singular: str,
+    unit_plural: str,
+) -> ToolCallContent:
     """Shared builder for search_* tools that count items from parsed output."""
     tc = make_base_content(action)
     if verbose:
@@ -1047,7 +1060,7 @@ def _build_search_generic(action: ActionHistory, verbose: bool, unit: str) -> To
     else:
         items = _get_items_from_output(action.output)
         count = len(items) if isinstance(items, list) else 0
-        tc.compact_result = f"{count} {unit} matched"
+        tc.compact_result = f"{count} {_plural_unit(count, unit_singular, unit_plural)} matched"
     return tc
 
 
@@ -1329,7 +1342,7 @@ def _build_get_reference_sql(action: ActionHistory, verbose: bool) -> ToolCallCo
 
 def _build_search_reference_template(action: ActionHistory, verbose: bool) -> ToolCallContent:
     """search_reference_template: show template count."""
-    return _build_search_generic(action, verbose, "templates")
+    return _build_search_generic(action, verbose, "template", "templates")
 
 
 def _build_get_reference_template(action: ActionHistory, verbose: bool) -> ToolCallContent:
@@ -1380,12 +1393,12 @@ def _build_execute_reference_template(action: ActionHistory, verbose: bool) -> T
 
 def _build_search_semantic_objects(action: ActionHistory, verbose: bool) -> ToolCallContent:
     """search_semantic_objects: show semantic object count."""
-    return _build_search_generic(action, verbose, "semantic objects")
+    return _build_search_generic(action, verbose, "semantic object", "semantic objects")
 
 
 def _build_search_knowledge(action: ActionHistory, verbose: bool) -> ToolCallContent:
     """search_knowledge: show knowledge entry count."""
-    return _build_search_generic(action, verbose, "knowledge entries")
+    return _build_search_generic(action, verbose, "knowledge entry", "knowledge entries")
 
 
 def _build_get_knowledge(action: ActionHistory, verbose: bool) -> ToolCallContent:
@@ -1395,7 +1408,7 @@ def _build_get_knowledge(action: ActionHistory, verbose: bool) -> ToolCallConten
 
 def _build_list_metrics_semantic(action: ActionHistory, verbose: bool) -> ToolCallContent:
     """list_metrics (SemanticTools): show metric count."""
-    return _build_search_generic(action, verbose, "metrics")
+    return _build_search_generic(action, verbose, "metric", "metrics")
 
 
 def _build_get_dimensions(action: ActionHistory, verbose: bool) -> ToolCallContent:
@@ -1511,19 +1524,30 @@ def _build_read_file(action: ActionHistory, verbose: bool) -> ToolCallContent:
     return tc
 
 
+# Keys that typically hold the real file body inside a wrapper (FuncToolResult,
+# parsed JSON envelope, etc.). Ordered most-to-least specific.
 _FILE_BODY_KEYS = ("result", "content", "text", "body", "data", "output")
+
+# When falling back to top-level probing of the action.output dict, we narrow
+# the key set to avoid picking up JSON-encoded wrapper payloads that some SDKs
+# expose under generic names like ``text`` / ``data`` / ``output``.
+_FILE_BODY_STRICT_KEYS = ("result", "content", "body")
 
 
 def _extract_file_content(output_data) -> Optional[str]:
     """Pull the raw file body out of a read_file action output.
 
-    Tries several known shapes because different SDKs / serializers wrap the
-    FuncToolResult differently:
-      - ``{"raw_output": {"result": "...body..."}}`` (FuncToolResult dict)
-      - ``{"raw_output": "{...json...}"}`` (pre-serialized FuncToolResult)
-      - ``{"raw_output": "body"}`` (raw file body already surfaced)
-      - ``{"result" | "content" | "text" | "body" | "data" | "output": "..."}``
-      - ``"body"`` (output_data itself is the body)
+    Looks in the following order so we never accidentally return a JSON
+    envelope as the file body:
+
+    1. ``output_data.raw_output`` when it is a dict — the FuncToolResult shape.
+    2. ``output_data.raw_output`` when it is a string — parse JSON first, then
+       fall back to treating the string itself as the body.
+    3. ``output_data`` is a string — treat it as the body.
+    4. ``output_data`` top-level strict keys (``result`` / ``content`` /
+       ``body``) as a last resort. ``text`` / ``data`` / ``output`` are
+       intentionally excluded at the top level because MCP-style tools often
+       put a serialized wrapper under those names.
     """
     if output_data is None:
         return None
@@ -1532,20 +1556,13 @@ def _extract_file_content(output_data) -> Optional[str]:
     if not isinstance(output_data, dict):
         return None
 
-    # Direct string fields on the action output itself.
-    for key in _FILE_BODY_KEYS:
-        val = output_data.get(key)
-        if isinstance(val, str) and val:
-            return val
-
     raw = output_data.get("raw_output")
     if isinstance(raw, dict):
         for key in _FILE_BODY_KEYS:
             val = raw.get(key)
             if isinstance(val, str):
                 return val
-        return None
-    if isinstance(raw, str):
+    elif isinstance(raw, str):
         try:
             parsed = json.loads(raw)
             if isinstance(parsed, dict):
@@ -1557,6 +1574,12 @@ def _extract_file_content(output_data) -> Optional[str]:
             pass
         # Raw string that is not JSON — assume it is the file body itself.
         return raw
+
+    # Last-resort top-level probing using strict keys only.
+    for key in _FILE_BODY_STRICT_KEYS:
+        val = output_data.get(key)
+        if isinstance(val, str) and val:
+            return val
     return None
 
 
