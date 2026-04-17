@@ -38,7 +38,7 @@ def _default_paths(config_path: str = "") -> Tuple[Path, Path]:
 
     path_manager = DatusPathManager(get_agent_home(config_path))
     pid_file = path_manager.pid_file_path(_SERVICE_NAME)
-    log_file = Path("logs") / f"{_SERVICE_NAME}.log"
+    log_file = path_manager.logs_dir / f"{_SERVICE_NAME}.log"
     return pid_file, log_file
 
 
@@ -229,7 +229,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--daemon-log-file",
         type=str,
-        help=f"Daemon log file path (default: logs/{_SERVICE_NAME}.log)",
+        help=f"Daemon log file path (default: ~/.datus/logs/{_SERVICE_NAME}.log)",
     )
     return parser
 

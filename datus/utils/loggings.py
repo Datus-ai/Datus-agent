@@ -50,14 +50,11 @@ class DynamicLogManager:
 
     def __init__(self, debug=False, log_dir=None, path_manager=None, agent_config=None):
         self.debug = debug
-        # Auto-detect log directory if not specified
+        # Default to ~/.datus/logs (via path manager) when log_dir is not specified.
         if log_dir is None:
-            if _is_source_environment():
-                log_dir = "./logs"
-            else:
-                from datus.utils.path_manager import get_path_manager
+            from datus.utils.path_manager import get_path_manager
 
-                log_dir = str(get_path_manager(path_manager=path_manager, agent_config=agent_config).logs_dir)
+            log_dir = str(get_path_manager(path_manager=path_manager, agent_config=agent_config).logs_dir)
         # Expand user directory and convert to absolute path
         self.log_dir = os.path.abspath(os.path.expanduser(log_dir))
         self.root_logger = logging.getLogger()
@@ -171,9 +168,8 @@ def configure_logging(
     """Configure logging with the specified debug level.
     Args:
         debug: If True, set log level to DEBUG
-        log_dir: Directory for log files. If None, automatically determine:
-                 - "./logs" for source code environment
-                 - "~/.datus/logs" for packaged installation
+        log_dir: Directory for log files. If None, defaults to ``~/.datus/logs``
+                 (resolved via the active ``DatusPathManager``).
         console_output: If False, disable logging to console
     """
     # Suppress noisy third-party loggers
@@ -182,14 +178,11 @@ def configure_logging(
     global fileno
     fileno = debug
 
-    # Auto-detect log directory if not specified
+    # Default to ~/.datus/logs (via path manager) when log_dir is not specified.
     if log_dir is None:
-        if _is_source_environment():
-            log_dir = "./logs"
-        else:
-            from datus.utils.path_manager import get_path_manager
+        from datus.utils.path_manager import get_path_manager
 
-            log_dir = str(get_path_manager(path_manager=path_manager, agent_config=agent_config).logs_dir)
+        log_dir = str(get_path_manager(path_manager=path_manager, agent_config=agent_config).logs_dir)
 
     # Create or get log manager with specified parameters
     global _log_manager
@@ -253,21 +246,17 @@ def setup_web_chatbot_logging(
 
     Args:
         debug: Enable debug logging
-        log_dir: Directory for log files. If None, automatically determine:
-                 - "./logs" for source code environment
-                 - "~/.datus/logs" for packaged installation
+        log_dir: Directory for log files. If None, defaults to ``~/.datus/logs``
+                 (resolved via the active ``DatusPathManager``).
 
     Returns:
         structlog.BoundLogger: Configured logger for web chatbot
     """
-    # Auto-detect log directory if not specified
+    # Default to ~/.datus/logs (via path manager) when log_dir is not specified.
     if log_dir is None:
-        if _is_source_environment():
-            log_dir = "./logs"
-        else:
-            from datus.utils.path_manager import get_path_manager
+        from datus.utils.path_manager import get_path_manager
 
-            log_dir = str(get_path_manager(path_manager=path_manager, agent_config=agent_config).logs_dir)
+        log_dir = str(get_path_manager(path_manager=path_manager, agent_config=agent_config).logs_dir)
 
     # Expand user directory and convert to absolute path
     log_dir = os.path.abspath(os.path.expanduser(log_dir))

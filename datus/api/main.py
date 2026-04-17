@@ -37,7 +37,7 @@ def _default_paths(config_path: str = "") -> Tuple[Path, Path]:
 
     path_manager = DatusPathManager(get_agent_home(config_path))
     pid_file = path_manager.pid_file_path("datus-agent-api")
-    log_file = Path("logs") / "datus-agent-api.log"
+    log_file = path_manager.logs_dir / "datus-agent-api.log"
     return pid_file, log_file
 
 
@@ -92,7 +92,7 @@ def _daemon_worker(args: argparse.Namespace, agent_args: argparse.Namespace, pid
     os.setsid()
     os.umask(0)
 
-    configure_logging(args.debug, log_dir="logs", console_output=False)
+    configure_logging(args.debug, console_output=False)
     _redirect_stdio(log_file)
     _write_pid_file(pid_file, os.getpid())
 
@@ -293,7 +293,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--daemon-log-file",
         type=str,
-        help="Daemon log file path (default: logs/datus-agent-api.log)",
+        help="Daemon log file path (default: ~/.datus/logs/datus-agent-api.log)",
     )
     return parser
 
@@ -353,7 +353,7 @@ def main():
             print(f"Already running (pid={pid})", file=sys.stderr)
             raise SystemExit(0)
 
-        configure_logging(args.debug, log_dir="logs", console_output=False)
+        configure_logging(args.debug, console_output=False)
         logger.info(
             f"Starting Datus Agent API server (daemon) on {args.host}:{args.port} | "
             f"Workers: {args.workers}, Debug: {args.debug}"
