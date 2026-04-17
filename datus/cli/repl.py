@@ -39,6 +39,7 @@ from datus.cli.bi_dashboard import BiDashboardCommands
 from datus.cli.chat_commands import ChatCommands
 from datus.cli.context_commands import ContextCommands
 from datus.cli.metadata_commands import MetadataCommands
+from datus.cli.status_bar import StatusBarProvider
 from datus.cli.sub_agent_commands import SubAgentCommands
 from datus.configuration.agent_config_loader import configuration_manager, load_agent_config
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
@@ -140,6 +141,7 @@ class DatusCLI:
         self.metadata_commands = MetadataCommands(self)
         self.sub_agent_commands = SubAgentCommands(self)
         self.bi_dashboard_commands = BiDashboardCommands(self)
+        self._status_bar_provider = StatusBarProvider(self)
 
         # Dictionary of available commands - created after handlers are initialized
         self.commands = {
@@ -279,18 +281,32 @@ class DatusCLI:
         self.console.print(echoed)
 
     def _get_prompt_text(self):
-        """Get the current prompt text based on mode and default agent"""
-        if self.plan_mode_active:
-            return "[PLAN MODE] Datus> "
-        if self.default_agent:
-            return f"Datus ({self.default_agent})> "
-        return "Datus> "
+        """Input-line prompt text.
+
+        The Datus brand, plan mode, and current agent are now rendered by the
+        status bar on the line above, so the input line keeps a single minimal
+        indicator. Legacy call sites that expect a textual prompt still receive
+        a non-empty string here.
+        """
+        return "> "
 
     def _update_prompt(self):
         """Update the prompt display (called when mode changes)"""
         # The prompt will be updated on the next iteration of the main loop
         # This is a limitation of prompt_toolkit's PromptSession
         # For immediate feedback, we could force a redraw, but it's complex
+
+    def _build_prompt_message(self, prompt_text: str):
+        """Build multi-line prompt: status bar line + input prompt line."""
+        try:
+            state = self._status_bar_provider.current_state()
+            tokens = state.to_formatted_tokens()
+        except Exception as e:
+            logger.debug(f"status bar render failed: {e}")
+            tokens = []
+        tokens.append(("", "\n"))
+        tokens.append(("class:prompt", prompt_text))
+        return tokens
 
     def _init_prompt_session(self):
         # Setup prompt session with custom key bindings
@@ -310,6 +326,14 @@ class DatusCLI:
                     Style.from_dict(
                         {
                             "prompt": "ansigreen bold",
+                            "status-bar": "#9a9aaa",
+                            "status-bar.brand": "#ffd866 bold",
+                            "status-bar.plan": "#9a9aaa",
+                            "status-bar.sep": "#9a9aaa",
+                            "status-bar.agent": "#9a9aaa",
+                            "status-bar.model": "#9a9aaa",
+                            "status-bar.tokens": "#9a9aaa",
+                            "status-bar.ctx": "#9a9aaa",
                         }
                     ),
                 ]
@@ -351,7 +375,7 @@ class DatusCLI:
                 # Get user input (with optional prefill from rewind)
                 prefill = self._prefill_input or ""
                 user_input_raw = self.session.prompt(
-                    message=prompt_text,
+                    message=lambda pt=prompt_text: self._build_prompt_message(pt),
                     default=prefill,
                 )
                 if user_input_raw is None:

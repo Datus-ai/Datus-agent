@@ -83,6 +83,13 @@ def _make_cli(agent_config, available_subagents=None):
         "!bash": cli._cmd_bash,
     }
 
+    # Status bar provider so _build_prompt_message works in tests
+    from datus.cli.status_bar import StatusBarProvider
+
+    cli.chat_commands.current_subagent_name = None
+    cli.chat_commands.current_node = None
+    cli._status_bar_provider = StatusBarProvider(cli)
+
     return cli
 
 
@@ -238,15 +245,23 @@ class TestCheckAgentAvailable:
 
 
 class TestGetPromptText:
-    def test_normal_mode(self, cli):
-        cli.plan_mode_active = False
-        text = cli._get_prompt_text()
-        assert "Datus>" in text
-        assert "PLAN" not in text
+    """Input-line prompt is now a minimal marker; brand/mode live in the status bar."""
 
-    def test_plan_mode(self, cli):
+    def test_input_prompt_is_minimal(self, cli):
+        cli.plan_mode_active = False
+        assert cli._get_prompt_text() == "> "
+
+    def test_input_prompt_unchanged_in_plan_mode(self, cli):
         cli.plan_mode_active = True
-        text = cli._get_prompt_text()
+        # The input line no longer carries the PLAN marker — that lives on the
+        # status bar line built by _build_prompt_message.
+        assert cli._get_prompt_text() == "> "
+
+    def test_status_bar_reflects_plan_mode(self, cli):
+        cli.plan_mode_active = True
+        tokens = cli._build_prompt_message(cli._get_prompt_text())
+        text = "".join(value for _, value in tokens)
+        assert "Datus" in text
         assert "PLAN" in text
 
 
@@ -894,25 +909,33 @@ class TestParseCommandDefaultAgent:
 # ---------------------------------------------------------------------------
 
 
-class TestGetPromptTextWithAgent:
-    def test_prompt_shows_default_agent(self, cli):
-        """Prompt displays agent name when default_agent is set."""
+class TestStatusBarReflectsAgent:
+    """Agent/brand/mode identifiers now render on the status bar line."""
+
+    def _render_status_bar(self, cli) -> str:
+        tokens = cli._build_prompt_message(cli._get_prompt_text())
+        return "".join(value for _, value in tokens)
+
+    def test_status_bar_shows_default_agent(self, cli):
         cli.default_agent = "gen_sql"
         cli.plan_mode_active = False
-        text = cli._get_prompt_text()
+        text = self._render_status_bar(cli)
         assert "gen_sql" in text
         assert "Datus" in text
+        assert "PLAN" not in text
 
-    def test_prompt_normal_when_no_default(self, cli):
-        """Prompt shows normal 'Datus>' when default_agent is empty."""
+    def test_status_bar_falls_back_to_chat_when_no_default(self, cli):
         cli.default_agent = ""
         cli.plan_mode_active = False
-        text = cli._get_prompt_text()
-        assert text == "Datus> "
+        text = self._render_status_bar(cli)
+        assert "Datus" in text
+        assert "chat" in text
+        # labels no longer render
+        assert "Agent " not in text
 
-    def test_plan_mode_overrides_agent_prompt(self, cli):
-        """Plan mode prompt takes precedence over agent prompt."""
+    def test_status_bar_marks_plan_mode(self, cli):
         cli.default_agent = "gen_sql"
         cli.plan_mode_active = True
-        text = cli._get_prompt_text()
+        text = self._render_status_bar(cli)
         assert "PLAN" in text
+        assert "gen_sql" in text
