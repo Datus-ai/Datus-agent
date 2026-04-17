@@ -23,7 +23,7 @@ class TestBuildAgentArgs:
         from datus.cli.web.chatbot import _build_agent_args
 
         args = argparse.Namespace(
-            namespace="myns",
+            database="myns",
             config="conf/agent.yml",
             debug=False,
         )
@@ -39,7 +39,7 @@ class TestBuildAgentArgs:
     def test_debug_mode(self):
         from datus.cli.web.chatbot import _build_agent_args
 
-        args = argparse.Namespace(namespace="ns", config=None, debug=True)
+        args = argparse.Namespace(database="ns", config=None, debug=True)
         result = _build_agent_args(args)
 
         assert result.log_level == "DEBUG"
@@ -48,7 +48,7 @@ class TestBuildAgentArgs:
         """Fields not present on CLI args should have safe defaults."""
         from datus.cli.web.chatbot import _build_agent_args
 
-        args = argparse.Namespace(namespace="ns")
+        args = argparse.Namespace(database="ns")
         result = _build_agent_args(args)
 
         assert result.config is None
@@ -98,7 +98,7 @@ class TestCreateWebApp:
         from datus.cli.web.chatbot import create_web_app
 
         args = argparse.Namespace(
-            namespace="test",
+            database="test",
             config=None,
             host="localhost",
             port=8501,
@@ -129,7 +129,7 @@ class TestCreateWebApp:
         (dist_dir / "datus-chatbot.css").write_text("/* css */")
 
         args = argparse.Namespace(
-            namespace="test",
+            database="test",
             config=None,
             host="localhost",
             port=8501,
@@ -157,7 +157,7 @@ class TestCreateWebApp:
         from datus.cli.web.chatbot import _CDN_CHATBOT_JS, _CDN_REACT_JS, create_web_app
 
         args = argparse.Namespace(
-            namespace="test",
+            database="test",
             config=None,
             host="localhost",
             port=8501,
@@ -187,7 +187,7 @@ class TestCreateWebApp:
         from datus.cli.web.chatbot import create_web_app
 
         args = argparse.Namespace(
-            namespace="test",
+            database="test",
             config=None,
             host="localhost",
             port=8501,
@@ -219,7 +219,7 @@ class TestCreateWebApp:
         (dist_dir / "datus-chatbot.css").write_text("/* css */")
 
         args = argparse.Namespace(
-            namespace="test",
+            database="test",
             config=None,
             host="localhost",
             port=8501,
@@ -248,7 +248,7 @@ class TestCreateWebApp:
         from datus.cli.web.chatbot import create_web_app
 
         args = argparse.Namespace(
-            namespace="test",
+            database="test",
             config=None,
             host="myhost",
             port=9999,
@@ -282,7 +282,7 @@ class TestRunWebInterface:
         from datus.cli.web.chatbot import run_web_interface
 
         args = argparse.Namespace(
-            namespace="test",
+            database="test",
             config="conf/agent.yml",
             host="localhost",
             port=8501,
@@ -317,7 +317,7 @@ class TestRunWebInterface:
         from datus.cli.web.chatbot import run_web_interface
 
         args = argparse.Namespace(
-            namespace="test",
+            database="test",
             config=None,
             host="localhost",
             port=8501,
@@ -343,7 +343,7 @@ class TestRunWebInterface:
         from datus.cli.web.chatbot import run_web_interface
 
         args = argparse.Namespace(
-            namespace="test",
+            database="test",
             config=None,
             host="localhost",
             port=8501,

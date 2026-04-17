@@ -96,7 +96,7 @@ class TestCreateWebApp:
         from datus.cli.web.chatbot import create_web_app
 
         args = Namespace(
-            namespace="test",
+            database="test",
             config=None,
             host="localhost",
             port=8501,
@@ -121,7 +121,7 @@ class TestCreateWebApp:
         from datus.cli.web.chatbot import _build_agent_args
 
         args = Namespace(
-            namespace="myns",
+            database="myns",
             config="conf/agent.yml",
             debug=True,
         )
