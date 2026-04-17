@@ -37,8 +37,7 @@ agent:
         default: true
     bi_tools: {}
     schedulers: {}
-  storage:
-    workspace_root: ~/.datus/workspace
+  project_root: ~/.datus/workspace
 ```
 
 **To add more databases later:** Use `datus service add`.

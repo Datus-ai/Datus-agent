@@ -185,23 +185,14 @@ class TestResolveWorkspaceRoot:
         assert not result.startswith("~")
         assert os.path.expanduser("~/testdir") == result
 
-    def test_uses_storage_workspace_root(self):
+    def test_uses_project_root(self):
         node = _make_node()
         node.node_config = {}
-        cfg = MagicMock()
-        cfg.storage.workspace_root = "/storage/root"
+        cfg = MagicMock(spec=["project_root"])
+        cfg.project_root = "/project/root"
         node.agent_config = cfg
         result = node._resolve_workspace_root()
-        assert result == "/storage/root"
-
-    def test_uses_legacy_workspace_root(self):
-        node = _make_node()
-        node.node_config = {}
-        cfg = MagicMock(spec=[])  # no 'storage' attribute
-        cfg.workspace_root = "/legacy/root"
-        node.agent_config = cfg
-        result = node._resolve_workspace_root()
-        assert result == "/legacy/root"
+        assert result == "/project/root"
 
 
 # ---------------------------------------------------------------------------
@@ -977,12 +968,10 @@ class TestResolveWorkspaceRootExtended:
         result = node._resolve_workspace_root()
         assert result == "/tmp/ws"
 
-    def test_agent_config_workspace_root_used(self):
+    def test_agent_config_project_root_used(self):
         node = _make_simple_node()
-        mock_config = MagicMock()
-        mock_config.workspace_root = "/var/data/ws"
-        # no storage attribute
-        del mock_config.storage
+        mock_config = MagicMock(spec=["project_root"])
+        mock_config.project_root = "/var/data/ws"
         node.agent_config = mock_config
         result = node._resolve_workspace_root()
         assert result == "/var/data/ws"

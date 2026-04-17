@@ -323,7 +323,7 @@ class TestDBFuncToolExecuteWrite:
 
         mock_config = Mock()
         mock_config.active_model.return_value.model = "gpt-5.4"
-        mock_config.storage.workspace_root = str(tmp_path)
+        mock_config.project_root = str(tmp_path)
 
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,

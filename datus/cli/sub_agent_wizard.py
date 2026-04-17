@@ -1684,7 +1684,7 @@ class SubAgentWizard:
         prompt_context = prepare_template_context(
             node_config=self.data,
             agent_config=self.cli_instance.agent_config,
-            workspace_root=self.cli_instance.agent_config.workspace_root,
+            workspace_root=self.cli_instance.agent_config.project_root,
         )
         # Select template based on node_class for preview
         node_class = self.data.node_class or "gen_sql"

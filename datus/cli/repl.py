@@ -1088,13 +1088,9 @@ class DatusCLI:
             fallback = os.path.expanduser("~/.datus/workspace")
             os.makedirs(fallback, exist_ok=True)
             self.console.print(f"[dim]Using {fallback} as workspace instead.[/dim]")
-            # Override workspace_root in agent config so filesystem_tools uses it
-            if hasattr(self.agent_config, "workspace_root"):
-                self.agent_config.workspace_root = fallback
-            if hasattr(self.agent_config, "storage_configs"):
-                storage = getattr(self.agent_config, "storage_configs", {})
-                if isinstance(storage, dict):
-                    storage["workspace_root"] = fallback
+            # Redirect project_root so filesystem tools / _resolve_workspace_root use fallback.
+            if hasattr(self.agent_config, "project_root"):
+                self.agent_config.project_root = fallback
 
     def _print_welcome(self):
         """Print the welcome message."""

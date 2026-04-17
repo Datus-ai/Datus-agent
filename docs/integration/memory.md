@@ -139,16 +139,14 @@ The agent automatically decides what is worth saving:
 
 Auto Memory requires **no explicit configuration** -- eligible agents are automatically enabled.
 
-The memory directory location follows the `workspace_root` setting:
+The memory directory location follows the resolved workspace root:
 
 | Priority | Source |
 |----------|--------|
 | 1 | Node-specific `workspace_root` in `agentic_nodes` config |
-| 2 | `storage.workspace_root` in `agent.yml` |
-| 3 | Top-level `workspace_root` in `agent.yml` |
-| 4 | Current directory (`.`) |
+| 2 | `agent.project_root` in `agent.yml` (defaults to the launch CWD) |
 
-For example, when `workspace_root` is set to `~/my_project`, the chat agent's memory file is at:
+For example, when `agent.project_root` is set to `~/my_project`, the chat agent's memory file is at:
 
 ```text
 ~/my_project/.datus/memory/chat/MEMORY.md

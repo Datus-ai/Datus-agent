@@ -102,7 +102,7 @@ def mock_agent_config():
     config.permissions_config = None
     config.skills_config = None
     config.prompt_version = None
-    config.workspace_root = "."
+    config.project_root = "."
 
     # Prevent model creation by returning None for active_model
     config.active_model.return_value = None

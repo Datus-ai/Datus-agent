@@ -1554,11 +1554,9 @@ class TestReadQueryWithSqlFilePath:
         sql_file = tmp_path / "query.sql"
         sql_file.write_text(sql_content, encoding="utf-8")
 
-        # Set workspace_root to tmp_path via agent_config
-        mock_config = Mock()
-        mock_config.workspace_root = str(tmp_path)
-        # Make storage attr not exist so it falls to legacy path
-        del mock_config.storage
+        # Set project_root to tmp_path via agent_config
+        mock_config = Mock(spec=["project_root"])
+        mock_config.project_root = str(tmp_path)
         db_func_tool.agent_config = mock_config
 
         result = db_func_tool.read_query(sql=str(sql_file.relative_to(tmp_path)))
@@ -1577,9 +1575,8 @@ class TestReadQueryWithSqlFilePath:
         sql_file = sql_dir / "task.sql"
         sql_file.write_text(sql_content, encoding="utf-8")
 
-        mock_config = Mock()
-        mock_config.workspace_root = str(tmp_path)
-        del mock_config.storage
+        mock_config = Mock(spec=["project_root"])
+        mock_config.project_root = str(tmp_path)
         db_func_tool.agent_config = mock_config
 
         result = db_func_tool.read_query(sql="sql/session_1/task.sql")
@@ -1591,9 +1588,8 @@ class TestReadQueryWithSqlFilePath:
     @pytest.mark.ci
     def test_read_query_with_nonexistent_file(self, db_func_tool, tmp_path):
         """Non-existent SQL file should return error."""
-        mock_config = Mock()
-        mock_config.workspace_root = str(tmp_path)
-        del mock_config.storage
+        mock_config = Mock(spec=["project_root"])
+        mock_config.project_root = str(tmp_path)
         db_func_tool.agent_config = mock_config
 
         result = db_func_tool.read_query(sql="nonexistent/query.sql")
@@ -1618,9 +1614,8 @@ class TestReadQueryWithSqlFilePath:
         sql_file = tmp_path / "query.sql"
         sql_file.write_text(sql_content, encoding="utf-8")
 
-        mock_config = Mock()
-        mock_config.workspace_root = str(tmp_path)
-        del mock_config.storage
+        mock_config = Mock(spec=["project_root"])
+        mock_config.project_root = str(tmp_path)
         db_func_tool.agent_config = mock_config
 
         result = db_func_tool.read_query(sql="  query.sql  ")
@@ -1646,32 +1641,21 @@ class TestReadQueryWithSqlFilePath:
         assert actual_sql == sql_content
 
     @pytest.mark.ci
-    def test_resolve_workspace_root_priority(self, db_func_tool):
-        """Test workspace_root resolution priority: storage > legacy > default."""
-        # Priority 1: storage.workspace_root
-        mock_config = Mock()
-        mock_config.storage.workspace_root = "/from/storage"
-        mock_config.workspace_root = "/from/legacy"
+    def test_resolve_workspace_root_uses_project_root(self, db_func_tool):
+        """Test workspace_root resolution: project_root > default."""
+        mock_config = Mock(spec=["project_root"])
+        mock_config.project_root = "/from/project"
         db_func_tool.agent_config = mock_config
-        assert db_func_tool._resolve_workspace_root() == "/from/storage"
+        assert db_func_tool._resolve_workspace_root() == "/from/project"
 
-        # Priority 2: legacy workspace_root
-        mock_config2 = Mock()
-        del mock_config2.storage
-        mock_config2.workspace_root = "/from/legacy"
-        db_func_tool.agent_config = mock_config2
-        assert db_func_tool._resolve_workspace_root() == "/from/legacy"
-
-        # Priority 3: default "."
         db_func_tool.agent_config = None
         assert db_func_tool._resolve_workspace_root() == "."
 
     @pytest.mark.ci
     def test_resolve_workspace_root_expands_tilde(self, db_func_tool):
-        """Test that ~ in workspace_root is expanded to user home."""
-        mock_config = Mock()
-        del mock_config.storage
-        mock_config.workspace_root = "~/workspace"
+        """Test that ~ in project_root is expanded to user home."""
+        mock_config = Mock(spec=["project_root"])
+        mock_config.project_root = "~/workspace"
         db_func_tool.agent_config = mock_config
 
         result = db_func_tool._resolve_workspace_root()

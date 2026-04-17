@@ -174,8 +174,8 @@ class AgenticNode(Node):
             version = self.agent_config.prompt_version
 
         root_path = "."
-        if self.agent_config and hasattr(self.agent_config, "workspace_root"):
-            root_path = self.agent_config.workspace_root
+        if self.agent_config and hasattr(self.agent_config, "project_root"):
+            root_path = self.agent_config.project_root
 
         # Construct template name: {template_name}_system_{version}
         template_name = f"{self.get_node_name()}_system"
@@ -1171,45 +1171,25 @@ class AgenticNode(Node):
 
     def _resolve_workspace_root(self) -> str:
         """
-        Resolve workspace_root with priority: node-specific > global storage > legacy > cwd.
-        Expands ~ to user home directory if present.
+        Resolve workspace_root with priority: node-specific ``workspace_root`` >
+        ``agent_config.project_root`` (which itself defaults to the launch CWD).
 
-        Returns:
-            Resolved workspace_root path with ~ expanded
+        Expands ``~`` to the user home directory if present.
         """
         import os
 
-        workspace_root = None
-
-        # Priority 1: node-specific workspace_root (explicit per-node config)
         node_workspace_root = self.node_config.get("workspace_root")
         if node_workspace_root:
             workspace_root = node_workspace_root
             logger.debug(f"Using node-specific workspace_root: {workspace_root}")
-        elif (
-            self.agent_config
-            and hasattr(self.agent_config, "storage")
-            and hasattr(self.agent_config.storage, "workspace_root")
-        ):
-            global_workspace_root = self.agent_config.storage.workspace_root
-            if global_workspace_root:
-                workspace_root = global_workspace_root
-                logger.debug(f"Using global workspace_root: {workspace_root}")
-        elif self.agent_config and hasattr(self.agent_config, "workspace_root"):
-            legacy_workspace_root = self.agent_config.workspace_root
-            if legacy_workspace_root is not None:
-                workspace_root = legacy_workspace_root
-                logger.debug(f"Using legacy workspace_root: {workspace_root}")
-
-        # Default to current working directory (project directory)
-        if workspace_root is None:
+        elif self.agent_config and hasattr(self.agent_config, "project_root"):
+            workspace_root = self.agent_config.project_root
+            logger.debug(f"Using project_root as workspace_root: {workspace_root}")
+        else:
             workspace_root = os.getcwd()
             logger.debug(f"Using current directory as workspace_root: {workspace_root}")
 
-        # Expand ~ to user home directory
         expanded_path = os.path.expanduser(workspace_root)
-
         if expanded_path != workspace_root:
             logger.debug(f"Expanded workspace_root from '{workspace_root}' to '{expanded_path}'")
-
         return expanded_path

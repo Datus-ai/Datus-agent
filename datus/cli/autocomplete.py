@@ -851,14 +851,14 @@ class AtReferenceCompleter(Completer):
         self.metric_completer = MetricsCompleter(agent_config, sub_agent_name=sub_agent_name)
         self.sql_completer = ReferenceSqlCompleter(agent_config, sub_agent_name=sub_agent_name)
 
-        # Get workspace_root from chat node configuration or storage configuration
+        # Get workspace_root from chat node configuration, then fall back to project_root
         workspace_root = None
         if hasattr(agent_config, "nodes") and "chat" in agent_config.nodes:
             chat_node = agent_config.nodes["chat"]
             if hasattr(chat_node, "input") and chat_node.input and hasattr(chat_node.input, "workspace_root"):
                 workspace_root = chat_node.input.workspace_root
-        if not workspace_root and hasattr(agent_config, "workspace_root"):
-            workspace_root = agent_config.workspace_root
+        if not workspace_root and hasattr(agent_config, "project_root"):
+            workspace_root = agent_config.project_root
         if not workspace_root:
             workspace_root = "."
         self.workspace_root = workspace_root

@@ -156,9 +156,8 @@ def real_agent_config(tmp_path, reset_global_singletons):
             "bi_tools": {},
             "schedulers": {},
         },
-        "storage": {
-            "workspace_root": str(tmp_path / "workspace"),
-        },
+        "project_root": str(tmp_path / "workspace"),
+        "storage": {},
         "agentic_nodes": {
             "chat": {
                 "system_prompt": "chat",

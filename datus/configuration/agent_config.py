@@ -510,7 +510,6 @@ class AgentConfig:
         else:
             self._init_dirs()
 
-        self.workspace_root = None
         storage_config = kwargs.get("storage", {})
         # use default embedding model if not provided
         if storage_config:
@@ -521,7 +520,6 @@ class AgentConfig:
                 self.storage_configs = init_embedding_models(
                     storage_config, openai_configs=self.models, default_openai_config=self.active_model()
                 )
-            self.workspace_root = storage_config.get("workspace_root")
 
         from datus_storage_base.backend_config import StorageBackendConfig
 
@@ -587,6 +585,18 @@ class AgentConfig:
     @property
     def project_name(self) -> str:
         return self._project_name
+
+    @property
+    def project_root(self) -> str:
+        """Absolute project root directory (defaults to the CWD at launch)."""
+        return str(self._project_root)
+
+    @project_root.setter
+    def project_root(self, value: str) -> None:
+        resolved = Path(value).expanduser().resolve()
+        self._project_root = resolved
+        if getattr(self, "path_manager", None) is not None:
+            self.path_manager._project_root = resolved
 
     @project_name.setter
     def project_name(self, value: str):

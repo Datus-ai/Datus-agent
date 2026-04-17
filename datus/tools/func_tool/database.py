@@ -421,25 +421,11 @@ class DBFuncTool:
             return []
 
     def _resolve_workspace_root(self) -> str:
-        """Resolve workspace_root with priority: storage config > legacy config > default."""
-        workspace_root = None
-
-        if self.agent_config:
-            # Priority 1: storage.workspace_root
-            if hasattr(self.agent_config, "storage") and hasattr(self.agent_config.storage, "workspace_root"):
-                ws = self.agent_config.storage.workspace_root
-                if ws:
-                    workspace_root = ws
-
-            # Priority 2: legacy agent_config.workspace_root
-            if workspace_root is None and hasattr(self.agent_config, "workspace_root"):
-                ws = self.agent_config.workspace_root
-                if ws is not None:
-                    workspace_root = ws
-
-        if workspace_root is None:
+        """Resolve workspace_root from ``agent_config.project_root``; fall back to cwd."""
+        if self.agent_config and hasattr(self.agent_config, "project_root"):
+            workspace_root = self.agent_config.project_root
+        else:
             workspace_root = "."
-
         return os.path.expanduser(workspace_root)
 
     def _read_sql_from_file(self, file_path: str) -> str:

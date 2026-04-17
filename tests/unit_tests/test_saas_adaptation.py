@@ -703,11 +703,12 @@ class TestAgentConfigSkipInitDirs:
                     "base_url": "http://localhost:0",
                 },
             },
-            storage={"workspace_root": str(tmp_path / "workspace")},
+            project_root=str(tmp_path / "workspace"),
+            storage={"database": {"registry_name": "openai"}},
             skip_init_dirs=True,
         )
         assert config.storage_configs == {}
-        assert config.workspace_root == str(tmp_path / "workspace")
+        assert config.project_root == str((tmp_path / "workspace").resolve())
 
 
 # ===========================================================================

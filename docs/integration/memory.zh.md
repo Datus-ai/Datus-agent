@@ -139,16 +139,14 @@ Agent 会自动判断哪些信息值得保存：
 
 Auto Memory **无需显式配置**，符合条件的 Agent 自动启用。
 
-记忆目录位置跟随 `workspace_root` 设置：
+记忆目录位置跟随解析后的 workspace root：
 
 | 优先级 | 来源 |
 |--------|------|
 | 1 | `agentic_nodes` 中节点级 `workspace_root` |
-| 2 | `agent.yml` 中 `storage.workspace_root` |
-| 3 | `agent.yml` 中顶层 `workspace_root` |
-| 4 | 当前目录（`.`） |
+| 2 | `agent.yml` 中 `agent.project_root`（默认取启动时的 CWD） |
 
-例如，当 `workspace_root` 设置为 `~/my_project` 时，chat agent 的记忆文件位于：
+例如，当 `agent.project_root` 设置为 `~/my_project` 时，chat agent 的记忆文件位于：
 
 ```text
 ~/my_project/.datus/memory/chat/MEMORY.md

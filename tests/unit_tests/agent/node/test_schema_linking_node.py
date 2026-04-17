@@ -33,7 +33,7 @@ def _make_agent_config(rag_path="/tmp/nonexistent_rag"):
     cfg.permissions_config = None
     cfg.skills_config = None
     cfg.prompt_version = None
-    cfg.workspace_root = "."
+    cfg.project_root = "."
     return cfg
 
 

@@ -136,10 +136,13 @@ def create_rdb_for_store(store_db_name: str, project: str) -> RdbDatabase:
             ever handles a single tenant).
     """
     if not project:
+        import traceback
+
         logger.warning(
-            "create_rdb_for_store called with empty project; falling back to "
-            "the legacy un-sharded layout. In multi-tenant deployments this "
-            "can leak data across projects."
+            "create_rdb_for_store called with empty project (store_db_name=%s); "
+            "falling back to the legacy un-sharded layout. Caller stack:\n%s",
+            store_db_name,
+            "".join(traceback.format_stack()),
         )
     backend = _get_rdb_backend()
     return backend.connect(project, store_db_name)
@@ -157,10 +160,12 @@ def create_vector_connection(project: str) -> VectorDatabase:
             only safe in single-tenant processes.
     """
     if not project:
+        import traceback
+
         logger.warning(
-            "create_vector_connection called with empty project; falling "
-            "back to the legacy un-sharded layout. In multi-tenant "
-            "deployments this can leak data across projects."
+            "create_vector_connection called with empty project; falling back "
+            "to the legacy un-sharded layout. Caller stack:\n%s",
+            "".join(traceback.format_stack()),
         )
     backend = get_vector_backend()
     return backend.connect(project)

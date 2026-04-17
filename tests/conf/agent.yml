@@ -3,7 +3,7 @@ agent:
   # Using relative path for portability across different environments
   home: .datus_test_data
   target: deepseek
-  workspace_root: .datus_test_data/workspace
+  project_root: .datus_test_data/workspace
 
   # Note: knowledge_base_home is deprecated. Knowledge-base content is now
   # anchored to {cwd}/subject/ automatically; this field is accepted but ignored
