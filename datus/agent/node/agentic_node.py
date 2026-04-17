@@ -58,6 +58,7 @@ class AgenticNode(Node):
         mcp_servers: Optional[Dict[str, MCPServerStdio]] = None,
         scope: Optional[str] = None,
         is_subagent: bool = False,
+        memory_enabled: Optional[bool] = None,
     ):
         """
         Initialize the agentic node.
@@ -72,6 +73,12 @@ class AgenticNode(Node):
             mcp_servers: Dictionary of MCP servers available to this node
             scope: Optional session scope for directory isolation
             is_subagent: When True, skip SubAgentTaskTool setup (2-level depth enforcement)
+            memory_enabled: Whether this node should get the Auto Memory section injected
+                into its system prompt. When ``None`` (default), resolved from
+                ``has_memory(self.get_node_name())`` — built-in subagents (gen_sql,
+                gen_report, feedback, etc.) default to ``False``; only ``chat`` and
+                custom/user-defined subagents default to ``True``. Pass an explicit
+                bool to override.
         """
         # Initialize Node base class
         super().__init__(node_id, description, node_type, input_data, agent_config, tools)
@@ -90,6 +97,12 @@ class AgenticNode(Node):
         # which injects the caller's MEMORY.md — read this instead of inferring
         # it from the session id prefix. ``None`` when no switch occurred.
         self.caller_node_name: Optional[str] = None
+
+        # Whether memory context is injected into this node's system prompt.
+        # Resolves from has_memory() when not explicitly set by the caller.
+        from datus.utils.memory_loader import has_memory
+
+        self.memory_enabled: bool = memory_enabled if memory_enabled is not None else has_memory(self.get_node_name())
 
         # Permission and skill management
         self.permission_manager: Optional["PermissionManager"] = None
@@ -253,10 +266,14 @@ class AgenticNode(Node):
     def _inject_memory_context(self, base_prompt: str, override_node_name: Optional[str] = None) -> str:
         """Inject memory context into the system prompt.
 
-        Memory context is injected unconditionally — even when the target node's
-        MEMORY.md does not yet exist. The injected section still lists the memory
-        directory path and usage guidance so the agent can create the file on its
-        first write_file call.
+        Injection rules:
+        - When ``override_node_name`` is provided (feedback path): inject
+          unconditionally, targeting that node's memory directory. Feedback
+          uses this to attach the caller's memory even when the caller itself
+          would not have memory enabled by default.
+        - Otherwise: inject only if ``self.memory_enabled`` is True. Built-in
+          subagents (gen_sql, gen_report, etc.) default to disabled so their
+          prompts stay focused; ``chat`` and custom subagents default to enabled.
 
         Args:
             base_prompt: The prompt to append memory context to.
@@ -266,7 +283,12 @@ class AgenticNode(Node):
         """
         from datus.utils.memory_loader import get_memory_dir, load_memory_context
 
-        node_name = override_node_name or self.get_node_name()
+        if override_node_name:
+            node_name = override_node_name
+        else:
+            if not self.memory_enabled:
+                return base_prompt
+            node_name = self.get_node_name()
 
         try:
             workspace_root = self._resolve_workspace_root()

@@ -331,6 +331,137 @@ class TestExtractStorageInfo:
         assert items_saved == 2
         assert summary == {"ext_knowledge": 1, "sql_summary": 1}
 
+    @pytest.mark.asyncio
+    async def test_stream_populates_items_saved(self, real_agent_config, mock_llm_create):
+        """Regression: the current stream's task() tool calls must be counted.
+
+        Previously _extract_storage_info ran before self.actions was populated
+        from action_history_manager, so items_saved was always 0 in practice —
+        even though the per-method unit test passed because it pre-seeded
+        self.actions manually.
+        """
+        from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
+        from datus.schemas.action_history import ActionHistory
+
+        async def _stream_with_task_actions(*args, **kwargs):
+            ahm = kwargs.get("action_history_manager")
+            for sub_type in ("gen_ext_knowledge", "gen_sql_summary"):
+                act = ActionHistory.create_action(
+                    role=ActionRole.TOOL,
+                    action_type="task",
+                    messages="Tool call: task",
+                    input_data={
+                        "function_name": "task",
+                        "arguments": json.dumps({"type": sub_type, "prompt": "x"}),
+                    },
+                    output_data={"response": "ok"},
+                    status=ActionStatus.SUCCESS,
+                )
+                if ahm is not None:
+                    ahm.add_action(act)
+                yield act
+
+        node = FeedbackAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.input = FeedbackNodeInput(user_message="Analyze")
+        mock_llm_create.generate_with_tools_stream = _stream_with_task_actions
+
+        action_manager = ActionHistoryManager()
+        async for _ in node.execute_stream(action_manager):
+            pass
+
+        assert node.result is not None
+        assert node.result.success is True
+        assert node.result.items_saved == 2
+        assert node.result.storage_summary == {"ext_knowledge": 1, "sql_summary": 1}
+
+
+# ---------------------------------------------------------------------------
+# Memory Enablement Tests
+# ---------------------------------------------------------------------------
+
+
+class TestMemoryEnabled:
+    """Verify the ``memory_enabled`` attribute on AgenticNode gates Auto Memory injection."""
+
+    def test_chat_node_defaults_to_enabled(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+        from datus.configuration.node_type import NodeType
+
+        node = ChatAgenticNode(
+            node_id="test_chat_mem",
+            description="Test chat memory",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
+        assert node.memory_enabled is True
+
+    def test_feedback_node_defaults_to_disabled(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
+
+        node = FeedbackAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        assert node.memory_enabled is False
+
+    def test_builtin_subagent_skips_memory_injection(self, real_agent_config, mock_llm_create):
+        """Built-in subagents (memory_enabled=False) must NOT get the Auto Memory
+        section in their system prompt — only chat and custom agents do."""
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+        from datus.configuration.node_type import NodeType
+
+        node = GenSQLAgenticNode(
+            node_id="test_gensql_mem",
+            description="Test gensql memory",
+            node_type=NodeType.TYPE_GENSQL,
+            agent_config=real_agent_config,
+            node_name="gen_sql",
+            execution_mode="workflow",
+        )
+        assert node.memory_enabled is False
+
+        prompt = node._inject_memory_context("BASE PROMPT")
+        assert prompt == "BASE PROMPT"
+        assert "## Auto Memory" not in prompt
+
+    def test_explicit_override_forces_injection(self, real_agent_config, mock_llm_create):
+        """Passing override_node_name bypasses self.memory_enabled (feedback path)."""
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+        from datus.configuration.node_type import NodeType
+
+        node = GenSQLAgenticNode(
+            node_id="test_gensql_override",
+            description="Test gensql override",
+            node_type=NodeType.TYPE_GENSQL,
+            agent_config=real_agent_config,
+            node_name="gen_sql",
+            execution_mode="workflow",
+        )
+        assert node.memory_enabled is False
+
+        prompt = node._inject_memory_context("BASE PROMPT", override_node_name="chat")
+        assert "## Auto Memory" in prompt
+        assert ".datus/memory/chat" in prompt
+
+    def test_explicit_memory_enabled_override(self, real_agent_config, mock_llm_create):
+        """Passing memory_enabled=True to __init__ overrides has_memory() default."""
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+        from datus.configuration.node_type import NodeType
+
+        node = GenSQLAgenticNode(
+            node_id="test_gensql_mem_opt_in",
+            description="Test gensql opt-in memory",
+            node_type=NodeType.TYPE_GENSQL,
+            agent_config=real_agent_config,
+            node_name="gen_sql",
+            execution_mode="workflow",
+        )
+        # Default resolved via has_memory("gen_sql") → False
+        assert node.memory_enabled is False
+
+        # Flipping the attribute post-init should re-enable injection.
+        node.memory_enabled = True
+        prompt = node._inject_memory_context("BASE PROMPT")
+        assert "## Auto Memory" in prompt
+        assert ".datus/memory/gen_sql" in prompt
+
 
 # ---------------------------------------------------------------------------
 # NodeType and Node Factory Tests

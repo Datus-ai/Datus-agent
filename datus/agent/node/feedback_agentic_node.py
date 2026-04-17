@@ -271,6 +271,10 @@ class FeedbackAgenticNode(AgenticNode):
                                 if tokens_used > 0:
                                     break
 
+            # Persist stream actions into self.actions BEFORE extraction so that
+            # _extract_storage_info sees the current run's task() tool calls.
+            self.actions.extend(action_history_manager.get_actions())
+
             # Parse items_saved and storage_summary from response
             items_saved, storage_summary = self._extract_storage_info(response_content)
 
@@ -282,8 +286,6 @@ class FeedbackAgenticNode(AgenticNode):
                 tokens_used=int(tokens_used),
             )
             self.result = result
-
-            self.actions.extend(action_history_manager.get_actions())
 
             final_action = ActionHistory.create_action(
                 role=ActionRole.ASSISTANT,
