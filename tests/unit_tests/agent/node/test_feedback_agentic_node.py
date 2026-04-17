@@ -189,14 +189,16 @@ class TestFeedbackAgenticNodeExecution:
     @pytest.mark.asyncio
     async def test_input_not_set_raises(self, real_agent_config, mock_llm_create):
         from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
+        from datus.utils.exceptions import DatusException, ErrorCode
 
         node = FeedbackAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
         node.input = None
 
         action_manager = ActionHistoryManager()
-        with pytest.raises(ValueError, match="Feedback input not set"):
+        with pytest.raises(DatusException) as excinfo:
             async for _ in node.execute_stream(action_manager):
                 pass
+        assert excinfo.value.code == ErrorCode.COMMON_FIELD_REQUIRED
 
     @pytest.mark.asyncio
     async def test_execution_interrupted_propagates(self, real_agent_config, mock_llm_create):
@@ -292,7 +294,7 @@ class TestExtractStorageInfo:
         from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
 
         node = FeedbackAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        items_saved, summary = node._extract_storage_info("response text")
+        items_saved, summary = node._extract_storage_info([])
         assert items_saved == 0
         assert summary is None
 
@@ -302,8 +304,7 @@ class TestExtractStorageInfo:
 
         node = FeedbackAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
 
-        # Simulate task tool actions in node.actions
-        node.actions = [
+        actions = [
             ActionHistory.create_action(
                 role=ActionRole.TOOL,
                 action_type="task",
@@ -327,9 +328,29 @@ class TestExtractStorageInfo:
             ),
         ]
 
-        items_saved, summary = node._extract_storage_info("")
+        items_saved, summary = node._extract_storage_info(actions)
         assert items_saved == 2
         assert summary == {"ext_knowledge": 1, "sql_summary": 1}
+
+    def test_ignores_stale_instance_actions(self, real_agent_config, mock_llm_create):
+        """_extract_storage_info must count from the passed-in list, not self.actions,
+        so a reused node instance doesn't report stale counts from previous runs."""
+        from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
+        from datus.schemas.action_history import ActionHistory
+
+        node = FeedbackAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.actions = [
+            ActionHistory.create_action(
+                role=ActionRole.TOOL,
+                action_type="task",
+                messages="Previous run task",
+                input_data={"arguments": json.dumps({"type": "gen_ext_knowledge", "prompt": "prev"})},
+                status=ActionStatus.SUCCESS,
+            ),
+        ]
+        items_saved, summary = node._extract_storage_info([])
+        assert items_saved == 0
+        assert summary is None
 
     @pytest.mark.asyncio
     async def test_stream_populates_items_saved(self, real_agent_config, mock_llm_create):

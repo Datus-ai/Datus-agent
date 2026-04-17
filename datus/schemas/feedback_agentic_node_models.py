@@ -30,7 +30,7 @@ class FeedbackNodeResult(BaseResult):
 
     response: str = Field(..., description="AI assistant's feedback summary response")
     items_saved: int = Field(default=0, description="Number of items saved to knowledge base")
-    storage_summary: Optional[dict] = Field(
+    storage_summary: Optional[dict[str, int]] = Field(
         default=None, description="Summary of what was archived by category {knowledge: N, sql_pattern: N, ...}"
     )
     tokens_used: int = Field(default=0, description="Total tokens used in generation")

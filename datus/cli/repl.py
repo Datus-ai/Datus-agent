@@ -604,12 +604,17 @@ class DatusCLI:
         <name>   -> set directly
         """
         args = args.strip()
+        # Mirror SubagentCompleter._load_subagents(): drop HIDDEN_SYS_SUB_AGENTS
+        # (e.g. feedback — invokable via "/<name>" but not a default-agent
+        # choice) and out-of-namespace scoped subagents.
+        if getattr(self, "subagent_completer", None) is not None:
+            visible_subagents = set(self.subagent_completer._available_subagents)
+        else:
+            visible_subagents = {name for name in self.available_subagents if name not in HIDDEN_SYS_SUB_AGENTS}
+
         if not args:
-            # Interactive selector — hide internal/meta agents (e.g. feedback)
-            # that should remain invokable via "/<name>" but not shown as a
-            # default-agent choice.
             current_default = self.default_agent or "chat"
-            choices = {name: name for name in sorted(self.available_subagents) if name not in HIDDEN_SYS_SUB_AGENTS}
+            choices = {name: name for name in sorted(visible_subagents)}
             self.console.print("[bold]Select default agent:[/] (Up/Down to navigate, Enter to confirm)")
             selected = select_choice(self.console, choices, default=current_default)
             if selected == current_default:
@@ -617,7 +622,7 @@ class DatusCLI:
                 return
             args = selected
 
-        if args not in self.available_subagents or args in HIDDEN_SYS_SUB_AGENTS:
+        if args not in visible_subagents:
             self.console.print(f"[bold red]Error:[/] Unknown agent '{args}'. Run '.agent' to see available agents.")
             return
 

@@ -34,6 +34,11 @@ class FeedbackAgenticNode(AgenticNode):
     the task() tool and updates MEMORY.md via filesystem tools.
     """
 
+    # Default subagents feedback delegates archival to. Users can override via
+    # agent.yml (agentic_nodes.feedback.subagents = "...") — the base-class
+    # _setup_sub_agent_task_tool reads node_config first and falls back here.
+    DEFAULT_SUBAGENTS = "gen_ext_knowledge, gen_sql_summary, gen_metrics, gen_skill"
+
     def __init__(
         self,
         agent_config: Optional[AgentConfig] = None,
@@ -85,11 +90,6 @@ class FeedbackAgenticNode(AgenticNode):
         if self.execution_mode == "interactive":
             self._setup_ask_user_tool()
         self._rebuild_tools()
-
-    # Default subagents feedback delegates archival to. Users can override via
-    # agent.yml (agentic_nodes.feedback.subagents = "...") — the base-class
-    # _setup_sub_agent_task_tool reads node_config first and falls back here.
-    DEFAULT_SUBAGENTS = "gen_ext_knowledge, gen_sql_summary, gen_metrics, gen_skill"
 
     def _setup_filesystem_tools(self):
         """Setup filesystem tools for writing MEMORY.md and other files."""
@@ -185,7 +185,12 @@ class FeedbackAgenticNode(AgenticNode):
             action_history_manager = ActionHistoryManager()
 
         if self.input is None:
-            raise ValueError("Feedback input not set. Set self.input before calling execute_stream.")
+            from datus.utils.exceptions import DatusException, ErrorCode
+
+            raise DatusException(
+                code=ErrorCode.COMMON_FIELD_REQUIRED,
+                message_args={"field_name": "self.input (FeedbackNodeInput)"},
+            )
 
         user_input = self.input
 
@@ -271,12 +276,11 @@ class FeedbackAgenticNode(AgenticNode):
                                 if tokens_used > 0:
                                     break
 
-            # Persist stream actions into self.actions BEFORE extraction so that
-            # _extract_storage_info sees the current run's task() tool calls.
-            self.actions.extend(action_history_manager.get_actions())
-
-            # Parse items_saved and storage_summary from response
-            items_saved, storage_summary = self._extract_storage_info(response_content)
+            # Count storage from the current run's actions so reused node
+            # instances don't leak counts from previous runs.
+            current_actions = action_history_manager.get_actions()
+            items_saved, storage_summary = self._extract_storage_info(current_actions)
+            self.actions.extend(current_actions)
 
             result = FeedbackNodeResult(
                 success=True,
@@ -329,15 +333,15 @@ class FeedbackAgenticNode(AgenticNode):
             action_history_manager.add_action(error_action)
             yield error_action
 
-    def _extract_storage_info(self, response_content) -> tuple[int, Optional[dict]]:
+    def _extract_storage_info(self, actions: list) -> tuple[int, Optional[dict]]:
         """Extract items_saved count and storage_summary from action history.
 
         Counts successful task() tool calls to estimate items archived.
         """
         items_saved = 0
-        storage_summary = {}
+        storage_summary: dict = {}
 
-        for act in self.actions:
+        for act in actions:
             if act.role == ActionRole.TOOL and act.status == ActionStatus.SUCCESS:
                 action_type = act.action_type or ""
                 if action_type == "task" and act.input and isinstance(act.input, dict):
