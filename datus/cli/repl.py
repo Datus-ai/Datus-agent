@@ -45,7 +45,7 @@ from datus.configuration.agent_config_loader import configuration_manager, load_
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
 from datus.tools.db_tools.db_manager import db_manager_instance
-from datus.utils.constants import SYS_SUB_AGENTS, DBType, SQLType
+from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS, DBType, SQLType
 from datus.utils.exceptions import setup_exception_handler
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import parse_sql_type
@@ -605,9 +605,11 @@ class DatusCLI:
         """
         args = args.strip()
         if not args:
-            # Interactive selector
+            # Interactive selector — hide internal/meta agents (e.g. feedback)
+            # that should remain invokable via "/<name>" but not shown as a
+            # default-agent choice.
             current_default = self.default_agent or "chat"
-            choices = {name: name for name in sorted(self.available_subagents)}
+            choices = {name: name for name in sorted(self.available_subagents) if name not in HIDDEN_SYS_SUB_AGENTS}
             self.console.print("[bold]Select default agent:[/] (Up/Down to navigate, Enter to confirm)")
             selected = select_choice(self.console, choices, default=current_default)
             if selected == current_default:
@@ -615,7 +617,7 @@ class DatusCLI:
                 return
             args = selected
 
-        if args not in self.available_subagents:
+        if args not in self.available_subagents or args in HIDDEN_SYS_SUB_AGENTS:
             self.console.print(f"[bold red]Error:[/] Unknown agent '{args}'. Run '.agent' to see available agents.")
             return
 

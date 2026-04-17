@@ -169,6 +169,13 @@ class TestCreateInteractiveNode:
         assert call_kwargs["execution_mode"] == "interactive"
         assert call_kwargs["scope"] == "team-a"
 
+    @patch("datus.agent.node.feedback_agentic_node.FeedbackAgenticNode.__init__", return_value=None)
+    def test_feedback_routes_to_feedback_node(self, mock_init):
+        """`/feedback` must land on FeedbackAgenticNode, not the gensql fallback."""
+        config = _mock_agent_config()
+        create_interactive_node("feedback", config)
+        mock_init.assert_called_once_with(agent_config=config, execution_mode="interactive", scope=None)
+
 
 # ---------------------------------------------------------------------------
 # Tests: create_node_input
@@ -248,6 +255,13 @@ class TestCreateNodeInput:
                 "report",
                 {"catalog": "cat", "database": "db"},
                 {"user_message": "report", "catalog": "cat", "database": "db"},
+            ),
+            (
+                "datus.agent.node.feedback_agentic_node",
+                "FeedbackAgenticNode",
+                "analyze and archive",
+                {"database": "db"},
+                {"user_message": "analyze and archive", "database": "db"},
             ),
         ],
     )

@@ -60,6 +60,11 @@ SYS_SUB_AGENTS = {
     "feedback",
 }
 
+# Subset of SYS_SUB_AGENTS that stays invokable via "/<name> ..." but is hidden
+# from user-facing listings (autocomplete, ".agent" selector). Meta/internal
+# agents that the user shouldn't see as a routing choice belong here.
+HIDDEN_SYS_SUB_AGENTS = {"feedback"}
+
 
 class SQLType(str, Enum):
     """SQL statement types."""

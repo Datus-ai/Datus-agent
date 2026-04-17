@@ -242,11 +242,18 @@ class ChatCommands:
                     # Copy session when switching agents to preserve conversation
                     # while keeping the session_id prefix consistent with the new node type.
                     prev_session_id = None
-                    if is_switch and self.current_node and hasattr(self.current_node, "session_id"):
-                        prev_session_id = self.current_node.session_id
+                    prev_node_name = None
+                    if is_switch and self.current_node:
+                        prev_session_id = getattr(self.current_node, "session_id", None)
+                        prev_node_name = self.current_node.get_node_name()
                     self.current_node = self._create_new_node(subagent_name)
                     if prev_session_id:
                         self.current_node.session_id = self._copy_session_for_switch(prev_session_id, self.current_node)
+                    if prev_node_name:
+                        # Pass the previous node's name explicitly so downstream
+                        # nodes (e.g. feedback) can route memory to the caller
+                        # without having to parse the session id prefix.
+                        self.current_node.caller_node_name = prev_node_name
                     self.current_subagent_name = subagent_name if subagent_name else None
                     if not is_switch:
                         self.all_turn_actions = []
@@ -1247,7 +1254,10 @@ class ChatCommands:
                 list_items = []
                 for info in session_infos:
                     sid = info["session_id"]
-                    first_msg = (info.get("first_user_message", "") or "").replace("\n", " ").replace("\r", " ")
+                    raw_first_msg = info.get("first_user_message", "") or ""
+                    if not isinstance(raw_first_msg, str):
+                        raw_first_msg = str(raw_first_msg)
+                    first_msg = raw_first_msg.replace("\n", " ").replace("\r", " ")
                     if not first_msg:
                         first_msg = "(empty)"
                     updated = (info.get("updated_at") or info.get("latest_message_at") or "N/A")[:19]

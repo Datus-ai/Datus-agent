@@ -422,3 +422,141 @@ class TestFeedbackConstants:
         from datus.agent.node import __all__
 
         assert "FeedbackAgenticNode" in __all__
+
+
+# ---------------------------------------------------------------------------
+# System Prompt / Memory Injection Tests
+# ---------------------------------------------------------------------------
+
+
+class TestFeedbackSystemPrompt:
+    """Tests verifying that feedback reuses the standard _inject_memory_context
+    pipeline to attach the CALLER's memory (not its own)."""
+
+    def test_feedback_system_template_has_no_caller_variables(self):
+        """feedback_system_1.0.j2 must not reference caller_node_name/caller_memory_dir.
+
+        Memory path/conventions are injected via the shared memory_context template
+        through _finalize_system_prompt; duplicating them in feedback_system would
+        re-introduce the two-path problem this refactor eliminated.
+        """
+        from pathlib import Path
+
+        import datus
+
+        template_path = Path(datus.__file__).parent / "prompts" / "prompt_templates" / "feedback_system_1.0.j2"
+        content = template_path.read_text(encoding="utf-8")
+        assert "caller_node_name" not in content
+        assert "caller_memory_dir" not in content
+
+    def test_feedback_system_prompt_injects_caller_memory(self, real_agent_config, mock_llm_create):
+        """When feedback renders its system prompt, the caller's memory is injected
+        via the standard memory_context template under the Auto Memory section."""
+        from pathlib import Path
+
+        from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
+
+        node = FeedbackAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.caller_node_name = "chat"
+        node.input = FeedbackNodeInput(user_message="Analyze and archive")
+
+        workspace_root = Path(node._resolve_workspace_root())
+        caller_memory_dir = workspace_root / ".datus" / "memory" / "chat"
+        caller_memory_dir.mkdir(parents=True, exist_ok=True)
+        memory_content = "# Chat memory\n- user prefers DuckDB over SQLite for local analytics"
+        (caller_memory_dir / "MEMORY.md").write_text(memory_content, encoding="utf-8")
+
+        prompt = node._get_system_prompt()
+
+        assert "## Auto Memory" in prompt
+        # get_memory_dir returns a relative path; it should appear verbatim.
+        assert ".datus/memory/chat" in prompt
+        # The truncated memory content itself is embedded in <memory>…</memory>.
+        assert "user prefers DuckDB over SQLite for local analytics" in prompt
+
+    def test_feedback_system_prompt_injects_memory_for_caller_without_default_memory(
+        self, real_agent_config, mock_llm_create
+    ):
+        """Memory context is injected unconditionally: even when the caller node
+        (e.g. ``gen_sql``) does NOT opt into memory by default (``has_memory`` is
+        False for it), feedback still renders the Auto Memory section pointing at
+        that caller's memory directory so feedback can create/update it."""
+        from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
+        from datus.utils.memory_loader import has_memory
+
+        # Precondition: gen_sql is a built-in subagent without default memory.
+        assert has_memory("gen_sql") is False
+
+        node = FeedbackAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.caller_node_name = "gen_sql"
+        node.input = FeedbackNodeInput(user_message="Analyze and archive")
+
+        prompt = node._get_system_prompt()
+
+        assert "## Auto Memory" in prompt
+        assert ".datus/memory/gen_sql" in prompt
+
+    def test_feedback_system_prompt_skips_memory_when_caller_file_missing(self, real_agent_config, mock_llm_create):
+        """No MEMORY.md for the caller → Auto Memory section renders without <memory> content,
+        and the prompt still builds without error (graceful degradation)."""
+        from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
+
+        node = FeedbackAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.caller_node_name = "chat"
+        node.input = FeedbackNodeInput(user_message="Analyze and archive")
+
+        prompt = node._get_system_prompt()
+
+        # Auto Memory header is still present (chat has has_memory=True) and the
+        # caller's memory_dir is referenced, even though no content is loaded.
+        assert "## Auto Memory" in prompt
+        assert ".datus/memory/chat" in prompt
+        # With no MEMORY.md, the <memory> block is omitted by memory_context template.
+        assert "<memory>" not in prompt
+
+
+# ---------------------------------------------------------------------------
+# Caller Resolution Tests
+# ---------------------------------------------------------------------------
+
+
+class TestResolveCallerNodeName:
+    """Tests for FeedbackAgenticNode._resolve_caller_node_name().
+
+    The resolver reads the explicit ``caller_node_name`` attribute (set by the
+    CLI on node switch) and defaults to ``"chat"`` when no caller was set. It
+    no longer parses the ``source_session_id`` prefix — that coupling to the
+    session-id encoding has been removed.
+    """
+
+    def test_uses_caller_node_name_attribute(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
+
+        node = FeedbackAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.caller_node_name = "gen_sql"
+
+        assert node._resolve_caller_node_name() == "gen_sql"
+
+    def test_defaults_to_chat_when_unset(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
+
+        node = FeedbackAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+
+        assert node.caller_node_name is None
+        assert node._resolve_caller_node_name() == "chat"
+
+    def test_ignores_source_session_id(self, real_agent_config, mock_llm_create):
+        """Even when ``input.source_session_id`` looks like ``gen_sql_session_*``,
+        the resolver must return the default (``"chat"``) unless the explicit
+        ``caller_node_name`` attribute is set."""
+        from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
+
+        node = FeedbackAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.input = FeedbackNodeInput(
+            user_message="Analyze",
+            source_session_id="gen_sql_session_deadbeef",
+        )
+
+        # source_session_id is now advisory and used only for session-copy in
+        # execute_stream; it no longer influences caller resolution.
+        assert node._resolve_caller_node_name() == "chat"

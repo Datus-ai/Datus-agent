@@ -143,6 +143,15 @@ def create_interactive_node(
                 scope=scope,
             )
 
+        elif subagent_name == "feedback":
+            from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
+
+            return FeedbackAgenticNode(
+                agent_config=agent_config,
+                execution_mode="interactive",
+                scope=scope,
+            )
+
         else:
             from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 
@@ -296,6 +305,16 @@ def create_node_input(
         from datus.schemas.gen_skill_agentic_node_models import SkillCreatorNodeInput
 
         return SkillCreatorNodeInput(user_message=user_message)
+
+    from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
+
+    if isinstance(node, FeedbackAgenticNode):
+        from datus.schemas.feedback_agentic_node_models import FeedbackNodeInput
+
+        # source_session_id is not needed here: the CLI's _copy_session_for_switch
+        # already seeds the feedback node's session, and caller_node_name carries
+        # the memory-routing semantics.
+        return FeedbackNodeInput(user_message=user_message, database=database)
 
     else:
         from datus.schemas.chat_agentic_node_models import ChatNodeInput

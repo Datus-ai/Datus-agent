@@ -86,18 +86,10 @@ class FeedbackAgenticNode(AgenticNode):
             self._setup_ask_user_tool()
         self._rebuild_tools()
 
-    def _setup_sub_agent_task_tool(self):
-        """Setup SubAgent task delegation tool (same pattern as ChatAgenticNode)."""
-        try:
-            from datus.tools.func_tool.sub_agent_task_tool import SubAgentTaskTool
-
-            self.sub_agent_task_tool = SubAgentTaskTool(agent_config=self.agent_config)
-            self.sub_agent_task_tool.set_action_bus(self.action_bus)
-            self.sub_agent_task_tool.set_interaction_broker(self.interaction_broker)
-            self.sub_agent_task_tool.set_parent_node(self)
-        except Exception as e:
-            logger.error(f"Failed to setup SubAgent task tool: {e}")
-            self.sub_agent_task_tool = None
+    # Default subagents feedback delegates archival to. Users can override via
+    # agent.yml (agentic_nodes.feedback.subagents = "...") — the base-class
+    # _setup_sub_agent_task_tool reads node_config first and falls back here.
+    DEFAULT_SUBAGENTS = "gen_ext_knowledge, gen_sql_summary, gen_metrics, gen_skill"
 
     def _setup_filesystem_tools(self):
         """Setup filesystem tools for writing MEMORY.md and other files."""
@@ -119,18 +111,13 @@ class FeedbackAgenticNode(AgenticNode):
             self.tools.extend(self.ask_user_tool.available_tools())
 
     def _resolve_caller_node_name(self) -> str:
-        """Resolve the caller node name whose memory this feedback run should update.
+        """Return the caller node whose memory this feedback run should update.
 
-        Parses the source session id (format: ``{node_name}_session_{hex}``) provided
-        in the feedback input. Falls back to ``"chat"`` when no source session is set
-        or the prefix cannot be parsed — chat is the default top-level node in Datus.
+        The CLI (or other callers) set ``self.caller_node_name`` on the node
+        at switch time. Falls back to ``"chat"`` — Datus's default top-level
+        node — when no explicit caller was set.
         """
-        source_session_id = getattr(self.input, "source_session_id", None) if self.input else None
-        if source_session_id and "_session_" in source_session_id:
-            prefix = source_session_id.rsplit("_session_", 1)[0]
-            if prefix:
-                return prefix
-        return "chat"
+        return self.caller_node_name or "chat"
 
     def _get_system_prompt(
         self,
@@ -139,14 +126,9 @@ class FeedbackAgenticNode(AgenticNode):
         template_context: Optional[dict] = None,
     ) -> str:
         """Get the feedback system prompt."""
-        from datus.utils.memory_loader import get_memory_dir
-
         template_name = f"{self.configured_node_name}_system"
 
         try:
-            caller_node_name = self._resolve_caller_node_name()
-            caller_memory_dir = get_memory_dir(self._resolve_workspace_root(), caller_node_name)
-
             template_vars = {
                 "agent_config": self.agent_config,
                 "conversation_summary": conversation_summary,
@@ -156,8 +138,6 @@ class FeedbackAgenticNode(AgenticNode):
                 "knowledge_base_dir": str(self.agent_config.path_manager.knowledge_base_home),
                 "current_database": self.agent_config.current_database,
                 "workspace_root": self._resolve_workspace_root(),
-                "caller_node_name": caller_node_name,
-                "caller_memory_dir": caller_memory_dir,
             }
 
             if template_context:
@@ -168,7 +148,12 @@ class FeedbackAgenticNode(AgenticNode):
             base_prompt = get_prompt_manager(agent_config=self.agent_config).render_template(
                 template_name=template_name, **template_vars
             )
-            return self._finalize_system_prompt(base_prompt)
+            # Feedback has no memory of its own — inject the caller's memory via the
+            # standard memory_context template by overriding the node name.
+            return self._finalize_system_prompt(
+                base_prompt,
+                memory_node_name_override=self._resolve_caller_node_name(),
+            )
 
         except FileNotFoundError as e:
             from datus.utils.exceptions import DatusException, ErrorCode

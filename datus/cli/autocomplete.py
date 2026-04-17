@@ -21,7 +21,7 @@ from pygments.token import Token
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
 from datus.tools.db_tools import connector_registry
-from datus.utils.constants import SYS_SUB_AGENTS, DBType
+from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS, DBType
 from datus.utils.loggings import get_logger
 from datus.utils.path_utils import get_file_fuzzy_matches
 from datus.utils.reference_paths import REFERENCE_PATH_REGEX, normalize_reference_path
@@ -1058,8 +1058,13 @@ class SubagentCompleter(Completer):
         self._available_subagents = self._load_subagents()
 
     def _load_subagents(self) -> List[str]:
-        """Load available subagents from configuration and include built-in subagents."""
-        subagents = list(SYS_SUB_AGENTS)
+        """Load available subagents from configuration and include built-in subagents.
+
+        Excludes ``HIDDEN_SYS_SUB_AGENTS`` (e.g. ``feedback``) from the completion
+        list so meta/internal agents don't clutter the user-facing picker,
+        while remaining invokable via the explicit ``/<name> ...`` command path.
+        """
+        subagents = [name for name in SYS_SUB_AGENTS if name not in HIDDEN_SYS_SUB_AGENTS]
         subagents.append("chat")
         if hasattr(self.agent_config, "agentic_nodes") and self.agent_config.agentic_nodes:
             for name, sub_config in self.agent_config.agentic_nodes.items():

@@ -529,12 +529,29 @@ class SubAgentTaskTool:
         self, subagent_type: str, prompt: str, description: str = "", call_id: Optional[str] = None
     ) -> FuncToolResult:
         """Execute a subagent by running an AgenticNode's execute_stream."""
-        # Validate subagent type against the allowlist to prevent privilege escalation
+        # Validate subagent type against the allowlist to prevent privilege escalation.
+        # Normalize the LLM-supplied value first — strip whitespace/newlines and the
+        # surrounding quotes some models wrap around string arguments — before
+        # comparing against the discoverable allowlist.
         allowed_types = self._get_available_types()
-        if subagent_type not in allowed_types:
+        raw_subagent_type = subagent_type
+        normalized = subagent_type.strip().strip("\"'") if isinstance(subagent_type, str) else subagent_type
+        if normalized in allowed_types:
+            subagent_type = normalized
+        else:
+            logger.warning(
+                "Subagent type rejected: raw=%r normalized=%r parent=%r allowed=%r",
+                raw_subagent_type,
+                normalized,
+                self._parent_node_name,
+                allowed_types,
+            )
             return FuncToolResult(
                 success=0,
-                error=f"Unknown or disallowed subagent type: '{subagent_type}'. Available types: {allowed_types}",
+                error=(
+                    f"Unknown or disallowed subagent type: {raw_subagent_type!r} "
+                    f"(normalized {normalized!r}). Available types: {allowed_types}"
+                ),
             )
 
         node = self._create_node(subagent_type)

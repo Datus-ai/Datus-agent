@@ -26,7 +26,7 @@ from datus.cli.autocomplete import (
     insert_into_dict,
     insert_into_dict_with_dict,
 )
-from datus.utils.constants import SYS_SUB_AGENTS
+from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS
 
 
 class TestSubagentCompleterInit:
@@ -41,10 +41,12 @@ class TestSubagentCompleterInit:
         assert len(completer._available_subagents) > 0
 
     def test_loaded_subagents_include_sys_sub_agents(self, real_agent_config):
-        """Loaded subagents include all SYS_SUB_AGENTS."""
+        """Loaded subagents include all SYS_SUB_AGENTS except hidden ones."""
         completer = SubagentCompleter(real_agent_config)
 
         for sys_sub in SYS_SUB_AGENTS:
+            if sys_sub in HIDDEN_SYS_SUB_AGENTS:
+                continue
             assert sys_sub in completer._available_subagents
 
     def test_loaded_subagents_include_chat(self, real_agent_config):
@@ -113,6 +115,18 @@ class TestSubagentCompleterLoadSubagents:
 
         assert len(completer._available_subagents) == original_count + 1
         assert "new_sub" in completer._available_subagents
+
+    def test_hidden_sys_sub_agents_excluded(self, real_agent_config):
+        """Agents in HIDDEN_SYS_SUB_AGENTS (e.g. feedback) are registered as
+        valid subagents but must not surface in completions — they're reachable
+        via an explicit `/<name> ...` invocation only."""
+        from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS
+
+        assert "feedback" in HIDDEN_SYS_SUB_AGENTS
+
+        completer = SubagentCompleter(real_agent_config)
+        for hidden in HIDDEN_SYS_SUB_AGENTS:
+            assert hidden not in completer._available_subagents, f"{hidden} should be hidden from completions"
 
 
 class TestSubagentCompleterGetCompletions:

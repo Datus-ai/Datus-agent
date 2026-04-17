@@ -407,6 +407,53 @@ class TestTaskExecution:
         result = await task_tool.task(type="nonexistent", prompt="test")
         assert result.success == 0
         assert "disallowed subagent type" in result.error
+        # repr of the offending value is included so hidden characters become visible
+        assert "'nonexistent'" in result.error
+
+    @pytest.mark.asyncio
+    async def test_execute_type_with_whitespace_is_normalized(self, task_tool):
+        """LLM sometimes emits ``" gen_sql "`` — _execute_node must strip before matching."""
+        mock_action = Mock(spec=ActionHistory)
+        mock_action.status = ActionStatus.SUCCESS
+        mock_action.role = ActionRole.TOOL
+        mock_action.output = {"sql": "SELECT 1", "response": "ok", "tokens_used": 1, "success": True}
+
+        mock_node = MagicMock()
+
+        async def mock_stream(ahm):
+            yield mock_action
+
+        mock_node.execute_stream_with_interactions = mock_stream
+
+        with patch.object(task_tool, "_create_node", return_value=mock_node) as create:
+            with patch.object(task_tool, "_build_node_input", return_value=Mock()):
+                result = await task_tool.task(type="  gen_sql\n", prompt="test")
+
+        assert result.success == 1
+        # The normalized (stripped) type is what gets passed to _create_node.
+        create.assert_called_once_with("gen_sql")
+
+    @pytest.mark.asyncio
+    async def test_execute_type_with_quotes_is_normalized(self, task_tool):
+        """LLM sometimes wraps the type in quotes — outer quotes must be stripped."""
+        mock_action = Mock(spec=ActionHistory)
+        mock_action.status = ActionStatus.SUCCESS
+        mock_action.role = ActionRole.TOOL
+        mock_action.output = {"sql": "SELECT 1", "response": "ok", "tokens_used": 1, "success": True}
+
+        mock_node = MagicMock()
+
+        async def mock_stream(ahm):
+            yield mock_action
+
+        mock_node.execute_stream_with_interactions = mock_stream
+
+        with patch.object(task_tool, "_create_node", return_value=mock_node) as create:
+            with patch.object(task_tool, "_build_node_input", return_value=Mock()):
+                result = await task_tool.task(type='"gen_sql"', prompt="test")
+
+        assert result.success == 1
+        create.assert_called_once_with("gen_sql")
 
     @pytest.mark.asyncio
     async def test_execute_missing_type(self, task_tool):
