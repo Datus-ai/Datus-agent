@@ -179,6 +179,21 @@ class MetricsPanel(Vertical):
 
     can_focus = True
 
+    # Field labels that must always be read-only regardless of the panel's overall mode.
+    _ALWAYS_READONLY_LABELS = frozenset({"Dimensions"})
+
+    # Description textarea grows with content, bounded below so short metrics still look
+    # like a writable field and bounded above so very long descriptions don't push the
+    # rest of the panel out of view.
+    _DESCRIPTION_MIN_LINES = 2
+    _DESCRIPTION_MAX_LINES = 20
+
+    @classmethod
+    def _compute_description_lines(cls, text: str) -> int:
+        """Clamp a description's newline count into the panel's min/max bounds."""
+        raw_lines = (text or "").count("\n") + 1
+        return max(cls._DESCRIPTION_MIN_LINES, min(cls._DESCRIPTION_MAX_LINES, raw_lines))
+
     def __init__(self, metric: Dict[str, Any], readonly: bool = True) -> None:
         super().__init__()
         self.entry = metric
@@ -189,10 +204,11 @@ class MetricsPanel(Vertical):
         metric_name = self.entry.get("name", "Unnamed Metric")
         yield Label(f"📊 [bold cyan]Metric: {metric_name}[/]")
 
+        description_text = self.entry.get("description", "")
         description_field = InputWithLabel(
             "Description",
-            self.entry.get("description", ""),
-            lines=10,
+            description_text,
+            lines=self._compute_description_lines(description_text),
             readonly=self.readonly,
             language="markdown",
         )
@@ -204,11 +220,13 @@ class MetricsPanel(Vertical):
         dimensions_str = (
             ", ".join(dimensions_value) if isinstance(dimensions_value, list) else str(dimensions_value or "")
         )
+        # Dimensions are a metricflow-derived view of the metric's available group-by axes,
+        # not a user-editable field — pin it to read-only regardless of the panel's mode.
         dimensions_field = InputWithLabel(
             "Dimensions",
             dimensions_str,
             lines=2,
-            readonly=self.readonly,
+            readonly=True,
             language="markdown",
         )
         self.fields.append(dimensions_field)
@@ -237,10 +255,16 @@ class MetricsPanel(Vertical):
     def set_readonly(self, readonly: bool) -> None:
         """
         Toggle the read-only mode for all fields in this panel.
+
+        Fields listed in ``_ALWAYS_READONLY_LABELS`` are pinned to read-only and
+        ignore the toggle (e.g. Dimensions is derived, not user-editable).
         """
         self.readonly = readonly
         for field in self.fields:
-            field.set_readonly(readonly)
+            if field.label_text in self._ALWAYS_READONLY_LABELS:
+                field.set_readonly(True)
+            else:
+                field.set_readonly(readonly)
 
     def is_modified(self) -> bool:
         """
@@ -290,11 +314,9 @@ class ReferenceSqlPanel(Vertical):
         )
         self.fields.append(summary_field)
         yield summary_field
-        comment_field = InputWithLabel(
-            "Comment", self.entry.get("comment", ""), lines=2, readonly=self.readonly, language="markdown"
-        )
-        self.fields.append(comment_field)
-        yield comment_field
+        # Note: ``comment`` is an internal reserved storage field and is intentionally
+        # not exposed in the UI or round-tripped via edits; the underlying YAML's
+        # ``comment`` is left untouched on update.
         search_text_field = InputWithLabel(
             "Search Text", self.entry.get("search_text", ""), lines=2, readonly=self.readonly, language="markdown"
         )
@@ -314,10 +336,9 @@ class ReferenceSqlPanel(Vertical):
 
     def _fill_data(self):
         self.fields[0].set_value(self.entry.get("summary", ""))
-        self.fields[1].set_value(self.entry.get("comment", ""))
-        self.fields[2].set_value(self.entry.get("search_text", ""))
-        self.fields[3].set_value(self.entry.get("tags", ""))
-        self.fields[4].set_value(self.entry.get("sql", ""))
+        self.fields[1].set_value(self.entry.get("search_text", ""))
+        self.fields[2].set_value(self.entry.get("tags", ""))
+        self.fields[3].set_value(self.entry.get("sql", ""))
 
     def update_data(self, summary_data: Dict[str, Any]):
         self.entry.update(summary_data)
@@ -1726,8 +1747,7 @@ class SubjectScreen(ContextScreen):
 
             if summary := sql_entry.get("summary"):
                 details.add_row("Summary", summary)
-            if comment := sql_entry.get("comment"):
-                details.add_row("Comment", comment)
+            # ``comment`` is an internal reserved field and is intentionally hidden from the detail view.
             if search_text := sql_entry.get("search_text"):
                 details.add_row("Search Text", search_text)
             if tags := sql_entry.get("tags"):

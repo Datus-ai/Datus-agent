@@ -211,6 +211,7 @@ class InputWithLabel(Widget):
     InputWithLabel Label {
         padding: 1;
         width: 10%;
+        min-width: 18;
         text-align: right;
     }
     InputWithLabel TextArea {

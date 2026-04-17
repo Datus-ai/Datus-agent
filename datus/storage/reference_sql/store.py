@@ -225,7 +225,9 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
 
         return result
 
-    _SYNCABLE_FIELDS = {"sql", "comment", "summary", "search_text", "tags"}
+    # ``comment`` is intentionally excluded: it is an internal reserved field that
+    # must not round-trip through edits, so pre-existing YAML comments stay untouched.
+    _SYNCABLE_FIELDS = {"sql", "summary", "search_text", "tags"}
 
     def _sync_reference_sql_update_to_yaml(self, filepath: str, update_values: Dict[str, Any]) -> None:
         """Sync update_values to the source YAML file for a reference SQL entry.
