@@ -29,6 +29,12 @@ _SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9_\-]+$")
 # offending characters down to ``_`` before returning.
 _PROJECT_SEGMENT_SAFE_RE = re.compile(r"[^A-Za-z0-9_.\-]")
 
+# Regex matching the full project_name character class used by both the CWD
+# normalizer and the explicit validator. Keeping these aligned ensures that an
+# auto-derived name can always round-trip through ``agent.yml`` without being
+# rejected by ``_validate_project_name``.
+_PROJECT_NAME_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
+
 # Filesystem limits for sharded directory names.
 # Common filesystems (ext4, APFS, NTFS) cap single-component names at 255 bytes.
 # We leave room for prefixes/extensions by truncating to 200 chars + md5 suffix.
@@ -69,21 +75,22 @@ def _validate_project_name(value: str) -> str:
     """Validate an explicit ``agent.project_name`` from config.
 
     ``project_name`` participates in filesystem paths (sessions/, data/ shards
-    and backend-chosen sub-layouts), so it must not contain path separators,
-    dot-like segments, or whitespace.  Enforces the same character class as
-    other sharded identifiers (``_SAFE_NAME_RE``) and the length cap used for
-    the CWD-derived path.
+    and backend-chosen sub-layouts), so it must not contain path separators
+    or whitespace.  Enforces the same character class as the CWD normalizer
+    (``_PROJECT_NAME_RE``) so an auto-derived name can always round-trip
+    through ``agent.yml``. Also enforces the length cap used for the
+    CWD-derived path.
 
     Raises:
         DatusException: when ``value`` contains forbidden characters or is
             longer than :data:`_PROJECT_NAME_MAX_LEN`.
     """
-    if not _SAFE_NAME_RE.match(value) or len(value) > _PROJECT_NAME_MAX_LEN:
+    if not _PROJECT_NAME_RE.match(value) or len(value) > _PROJECT_NAME_MAX_LEN:
         raise DatusException(
             code=ErrorCode.COMMON_FIELD_INVALID,
             message=(
                 f"Invalid agent.project_name {value!r}: must match "
-                f"{_SAFE_NAME_RE.pattern} and be at most "
+                f"{_PROJECT_NAME_RE.pattern} and be at most "
                 f"{_PROJECT_NAME_MAX_LEN} characters."
             ),
         )
@@ -427,11 +434,16 @@ class AgentConfig:
         # it (no slashes/dots/whitespace) since it participates in filesystem
         # paths; when not set we derive a sanitized name from the CWD.
         raw_project_name = kwargs.get("project_name")
+        # Resolve project_root first so the auto-derived project_name tracks it
+        # instead of the launcher's CWD. Running the same project from different
+        # working directories would otherwise split sessions/data across shards
+        # while the KB stays under a single project_root/subject.
+        resolved_project_root = Path(kwargs.get("project_root") or os.getcwd()).resolve()
         if raw_project_name:
             self._project_name = _validate_project_name(raw_project_name)
         else:
-            self._project_name = _normalize_project_name(os.getcwd())
-        self._project_root = Path(kwargs.get("project_root") or os.getcwd()).resolve()
+            self._project_name = _normalize_project_name(str(resolved_project_root))
+        self._project_root = resolved_project_root
         self._set_path_manager(self.home, self.knowledge_base_home)
         models_raw = kwargs["models"]
         self.target = kwargs["target"]
@@ -585,9 +597,12 @@ class AgentConfig:
         self._project_name = _validate_project_name(value)
         # Rebuild path_manager so sessions_dir/project_data_dir reflect the new project.
         self._set_path_manager(self.home, self.knowledge_base_home)
-        if not getattr(self, "_skip_init_dirs", False):
-            self.rag_base_path = str(self.path_manager.project_data_dir)
-            self.session_dir = str(self.path_manager.sessions_dir)
+        # Keep derived paths in sync with the new project even when
+        # ``skip_init_dirs=True`` (SaaS mode); otherwise subsequent reads
+        # through ``rag_base_path``/``session_dir`` would still hit the
+        # previous project's shard.
+        self.rag_base_path = str(self.path_manager.project_data_dir)
+        self.session_dir = str(self.path_manager.sessions_dir)
         # Backends are project-agnostic; the new project will be picked up by
         # the next ``create_rdb_for_store`` / ``create_vector_connection`` call.
         # Drop cached per-project storage handles so old project bindings do

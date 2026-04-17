@@ -202,10 +202,16 @@ def init_semantic_model(
                 logger.info("Dropped existing semantic_model table")
             finally:
                 db.close()
-            # Also clear the semantic_models directory (YAML files)
+            # Also clear the project-scoped semantic_models directory (YAML files).
+            # Note: semantic_model_path() returns the project-wide
+            # ``{project_root}/subject/semantic_models`` root (no per-database
+            # subdirectory), so overwrite resets semantic models for every
+            # database sharing this project.
             semantic_yaml_dir = agent_config.path_manager.semantic_model_path()
             if semantic_yaml_dir.exists() and not safe_rmtree(
-                semantic_yaml_dir, "semantic YAML directory", force=force
+                semantic_yaml_dir,
+                f"project semantic YAML directory (shared by all databases in {agent_config.project_name!r})",
+                force=force,
             ):
                 console.print("[yellow]Cancelled by user[/yellow]")
                 return False, None

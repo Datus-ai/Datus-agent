@@ -130,9 +130,17 @@ def create_rdb_for_store(store_db_name: str, project: str) -> RdbDatabase:
 
     Args:
         store_db_name: Logical store name (e.g. ``"subject_tree"``).
-        project: Project identifier; must be non-empty except for the
-            degenerate "un-sharded" legacy case.
+        project: Project identifier; should be non-empty to avoid
+            cross-tenant bleed (empty values fall back to the legacy
+            un-sharded layout, which is only safe when the process only
+            ever handles a single tenant).
     """
+    if not project:
+        logger.warning(
+            "create_rdb_for_store called with empty project; falling back to "
+            "the legacy un-sharded layout. In multi-tenant deployments this "
+            "can leak data across projects."
+        )
     backend = _get_rdb_backend()
     return backend.connect(project, store_db_name)
 
@@ -144,8 +152,16 @@ def create_vector_connection(project: str) -> VectorDatabase:
         project: Project identifier passed to the backend's ``connect()``
             first argument. LOGICAL-mode backends translate this into a
             ``datasource_id``-style row filter; PHYSICAL-mode backends
-            treat it as a path component.
+            treat it as a path component. Should be non-empty; empty
+            strings fall back to the legacy un-sharded layout and are
+            only safe in single-tenant processes.
     """
+    if not project:
+        logger.warning(
+            "create_vector_connection called with empty project; falling "
+            "back to the legacy un-sharded layout. In multi-tenant "
+            "deployments this can leak data across projects."
+        )
     backend = get_vector_backend()
     return backend.connect(project)
 

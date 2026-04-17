@@ -92,7 +92,7 @@ def _daemon_worker(args: argparse.Namespace, agent_args: argparse.Namespace, pid
     os.setsid()
     os.umask(0)
 
-    configure_logging(args.debug, console_output=False)
+    configure_logging(args.debug, log_dir=str(log_file.parent), console_output=False)
     _redirect_stdio(log_file)
     _write_pid_file(pid_file, os.getpid())
 
@@ -353,7 +353,7 @@ def main():
             print(f"Already running (pid={pid})", file=sys.stderr)
             raise SystemExit(0)
 
-        configure_logging(args.debug, console_output=False)
+        configure_logging(args.debug, log_dir=str(log_file.parent), console_output=False)
         logger.info(
             f"Starting Datus Agent API server (daemon) on {args.host}:{args.port} | "
             f"Workers: {args.workers}, Debug: {args.debug}"

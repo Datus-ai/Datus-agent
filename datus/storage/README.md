@@ -24,9 +24,9 @@ Key features:
 
 ```python
 class StorageBase:
-    def __init__(self):
-        """Initialize the storage base."""
-        self.db = create_vector_connection()
+    def __init__(self, project: str):
+        """Initialize the storage base scoped to *project*."""
+        self.db = create_vector_connection(project)
 ```
 
 ### BaseEmbeddingStore

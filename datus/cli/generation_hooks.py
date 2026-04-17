@@ -22,6 +22,7 @@ from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.db_tools import connector_registry
 from datus.utils.constants import DBType
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -143,9 +144,12 @@ def make_kb_path_normalizer(default_kind: Optional[str] = None):
             parts = [p for p in path.replace("\\", "/").split("/") if p]
             head = parts[0] if parts else ""
             if head in known_subdirs and head != expected_subdir:
-                raise ValueError(
-                    f"Write to '{head}/' is not allowed from a {default_kind!r} node; "
-                    f"this node may only write under '{expected_subdir}/'."
+                raise DatusException(
+                    code=ErrorCode.TOOL_INVALID_INPUT,
+                    message=(
+                        f"Write to '{head}/' is not allowed from a {default_kind!r} node; "
+                        f"this node may only write under '{expected_subdir}/'."
+                    ),
                 )
             kind = default_kind
         else:

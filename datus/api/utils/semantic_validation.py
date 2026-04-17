@@ -89,8 +89,6 @@ def _validate_deep(
         parse_yaml_file_paths_to_model,
     )
 
-    from datus.utils.path_manager import DatusPathManager
-
     temp_dir = None
     temp_file_path = None
 
@@ -108,13 +106,18 @@ def _validate_deep(
         if lint_issues:
             return False, [issue.as_readable_str() for issue in lint_issues]
 
-        # Step 3: Collect all existing semantic model files for the current project.
-        # The ``namespace`` argument is retained only for signature compatibility —
-        # the KB now lives at ``{project_root}/subject/semantic_models`` without
-        # per-namespace subdirectories.
+        # Step 3: Collect all existing semantic model files from the same
+        # project tree as ``file_path``. Resolving via the CWD-based
+        # ``DatusPathManager.semantic_model_path()`` would make validation
+        # nondeterministic when the calling process's CWD does not match
+        # the project that owns ``file_path``.
         del namespace  # unused after refactor; kept in signature for compatibility
-        path_manager = DatusPathManager(datus_home=Path(datus_home))
-        semantic_yaml_dir = path_manager.semantic_model_path()
+        del datus_home  # resolution below is file_path-relative
+        target_path = Path(file_path).resolve()
+        semantic_yaml_dir = next(
+            (p for p in [target_path.parent, *target_path.parents] if p.name == "semantic_models"),
+            target_path.parent,
+        )
         file_paths = collect_yaml_config_file_paths(directory=str(semantic_yaml_dir))
 
         # Replace the original file with the temp file for validation

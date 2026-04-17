@@ -316,7 +316,7 @@ class SkillCreatorAgenticNode(AgenticNode):
             if skills_config and hasattr(skills_config, "directories"):
                 skill_directories = skills_config.directories
             else:
-                skill_directories = ["~/.datus/skills", "./skills"]
+                skill_directories = ["./.datus/skills", "~/.datus/skills"]
 
         context = {
             "has_db_tools": bool(self.db_func_tool),

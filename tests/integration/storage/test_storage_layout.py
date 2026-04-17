@@ -25,7 +25,8 @@ import pytest
 from datus.configuration.agent_config import AgentConfig, NodeConfig, _normalize_project_name
 
 
-# todo 不依赖外部的测试可以放到ut
+# TODO: this suite has no external dependencies (skip_init_dirs=True + tmp_path);
+# consider moving it under tests/unit_tests/ alongside test_agent_config.py.
 def _make_config(*, home: Path, project_name: str, project_root: Path) -> AgentConfig:
     return AgentConfig(
         nodes={"test": NodeConfig(model="mock", input=None)},

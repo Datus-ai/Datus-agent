@@ -71,9 +71,18 @@ class DatusPathManager:
         self._datus_home = self.resolve_home(datus_home)
         # Legacy field: kept only so external reads of ``knowledge_base_home`` do
         # not break. Knowledge-base dirs no longer derive from this value.
-        self._knowledge_base_home = (
-            Path(knowledge_base_home).expanduser().resolve() if knowledge_base_home else self._datus_home
-        )
+        if knowledge_base_home:
+            import warnings
+
+            warnings.warn(
+                "DatusPathManager(knowledge_base_home=...) is deprecated and no longer "
+                "influences KB paths; KB content is anchored under {project_root}/subject/.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            self._knowledge_base_home = Path(knowledge_base_home).expanduser().resolve()
+        else:
+            self._knowledge_base_home = self._datus_home
         self._project_name = project_name or ""
         self._project_root = Path(project_root).expanduser().resolve() if project_root else Path.cwd().resolve()
 
@@ -264,6 +273,7 @@ class DatusPathManager:
         "semantic_models": "semantic_models_dir",
         "sql_summaries": "sql_summaries_dir",
         "ext_knowledge": "ext_knowledge_dir",
+        "project_skills": "project_skills_dir",
     }
 
     # Configuration file paths
@@ -403,7 +413,7 @@ class DatusPathManager:
             *dirs: Directory names to ensure. If empty, ensures all standard directories.
                    Valid names: conf, data, logs, sessions, template, sample, run,
                    benchmark, save, workspace, trajectory, subject, semantic_models,
-                   sql_summaries, ext_knowledge
+                   sql_summaries, ext_knowledge, project_skills
 
         Raises:
             ValueError: If an invalid directory name is provided

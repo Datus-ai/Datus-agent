@@ -415,13 +415,15 @@ class TestNormalizeProjectName:
         assert _normalize_project_name("") == "_root"
 
     def test_long_path_truncated_with_md5(self):
+        import re
+
         from datus.configuration.agent_config import _PROJECT_NAME_MAX_LEN, _normalize_project_name
 
         long_cwd = "/" + "/".join("seg" + str(i) for i in range(200))
         name = _normalize_project_name(long_cwd)
         assert len(name) <= _PROJECT_NAME_MAX_LEN
-        # 7-char md5 suffix appended
-        assert name[-8] == "-"
+        # Expect "<prefix>-<7 hex chars>" at the tail.
+        assert re.search(r"-[0-9a-f]{7}$", name), name
 
     def test_backslashes_treated_like_slashes(self):
         from datus.configuration.agent_config import _normalize_project_name

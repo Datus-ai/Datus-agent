@@ -1537,12 +1537,16 @@ class TestMakeKbPathNormalizer:
 
     def test_strict_kind_rejects_cross_kind_write(self):
         """Mutating ops (strict_kind=True) must reject writes to peer kinds' subdirs."""
+        from datus.utils.exceptions import DatusException, ErrorCode
+
         normalizer = make_kb_path_normalizer(default_kind="semantic")
         # Read-lax: cross-kind reads still allowed.
         assert normalizer("sql_summaries/q.yaml", None) == "sql_summaries/q.yaml"
         # Write-strict: the same cross-kind path is refused.
-        with pytest.raises(ValueError, match="Write to 'sql_summaries/' is not allowed"):
+        with pytest.raises(DatusException) as exc_info:
             normalizer("sql_summaries/q.yaml", None, strict_kind=True)
+        assert exc_info.value.code == ErrorCode.TOOL_INVALID_INPUT
+        assert "Write to 'sql_summaries/' is not allowed" in str(exc_info.value)
 
     def test_strict_kind_ignores_file_type_override(self):
         """In strict mode, file_type cannot be used to switch kinds."""
