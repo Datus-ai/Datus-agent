@@ -290,7 +290,7 @@ class TestBuildListTables:
             output_data={"result": [1, 2]},
         )
         tc = _build_list_tables(a, verbose=False)
-        assert "2 tables" in tc.output_preview
+        assert "2 tables" in tc.compact_result
 
     def test_verbose(self):
         a = _make(
@@ -318,7 +318,7 @@ class TestBuildDescribeTable:
             output_data={"result": ["c1", "c2", "c3"]},
         )
         tc = _build_describe_table(a, verbose=False)
-        assert "3 columns" in tc.output_preview
+        assert "3 columns" in tc.compact_result
 
 
 @pytest.mark.ci
@@ -329,7 +329,7 @@ class TestBuildReadQuery:
             output_data={"original_rows": 42},
         )
         tc = _build_read_query(a, verbose=False)
-        assert "42 rows" in tc.output_preview
+        assert "42 rows" in tc.compact_result
 
     def test_compact_list_fallback(self):
         a = _make(
@@ -337,7 +337,7 @@ class TestBuildReadQuery:
             output_data={"result": [1, 2]},
         )
         tc = _build_read_query(a, verbose=False)
-        assert "2 items" in tc.output_preview
+        assert "2 items" in tc.compact_result
 
     def test_compact_no_data(self):
         a = _make(input_data={"function_name": "read_query"}, output_data={"k": "v"})
@@ -353,8 +353,8 @@ class TestBuildSearchTable:
             output_data={"metadata": [1, 2], "sample_data": [3]},
         )
         tc = _build_search_table(a, verbose=False)
-        assert "2 tables" in tc.output_preview
-        assert "1 sample rows" in tc.output_preview
+        assert "2 tables" in tc.compact_result
+        assert "1 sample rows" in tc.compact_result
 
     def test_compact_with_compressed_sample_data(self):
         a = _make(
@@ -372,8 +372,8 @@ class TestBuildSearchTable:
             },
         )
         tc = _build_search_table(a, verbose=False)
-        assert "2 tables" in tc.output_preview
-        assert "1 sample rows" in tc.output_preview
+        assert "2 tables" in tc.compact_result
+        assert "1 sample rows" in tc.compact_result
 
     def test_compact_no_data(self):
         a = _make(input_data={"function_name": "search_table"})
@@ -397,7 +397,7 @@ class TestBuildSearchGeneric:
     def test_compact_with_items(self, fn, builder, unit):
         a = _make(input_data={"function_name": fn}, output_data={"result": [1, 2, 3]})
         tc = builder(a, verbose=False)
-        assert f"3 {unit}" in tc.output_preview
+        assert f"3 {unit}" in tc.compact_result
 
     @pytest.mark.parametrize(
         "fn, builder",
@@ -409,7 +409,7 @@ class TestBuildSearchGeneric:
     def test_compact_no_items(self, fn, builder):
         a = _make(input_data={"function_name": fn}, output_data={"k": "v"})
         tc = builder(a, verbose=False)
-        assert "0 " in tc.output_preview
+        assert "0 " in tc.compact_result
 
 
 # ── Builder class ──────────────────────────────────────────────────
@@ -430,7 +430,7 @@ class TestToolCallContentBuilderDefault:
         builder = ToolCallContentBuilder()
         tc = builder.build(a, verbose=False)
         assert tc.label == "unknown_tool"
-        assert "Success" in tc.output_preview
+        assert "Success" in tc.compact_result
         assert "1.0s" in tc.duration_str
 
     def test_compact_failed_no_preview(self):
@@ -478,7 +478,7 @@ class TestToolCallContentBuilderRegistry:
         a = _make(input_data={"function_name": "brand_new_tool"}, output_data={"success": True})
         tc = ToolCallContentBuilder().build(a, verbose=False)
         assert tc.label == "brand_new_tool"
-        assert "Success" in tc.output_preview
+        assert "Success" in tc.compact_result
 
     def test_override_builtin(self):
         """Can override a built-in registration."""
@@ -494,7 +494,7 @@ class TestToolCallContentBuilderRegistry:
         """list_tables dispatched to _build_list_tables producing table count."""
         a = _make(input_data={"function_name": "list_tables"}, output_data={"result": [1, 2]})
         tc = ToolCallContentBuilder().build(a, verbose=False)
-        assert "2 tables" in tc.output_preview
+        assert "2 tables" in tc.compact_result
 
 
 # ── Parity: main/sub produce same content ──────────────────────────
@@ -784,16 +784,16 @@ class TestBuildGetTableDdl:
             },
         )
         tc = _build_get_table_ddl(a, verbose=False)
-        assert "catalog.db.my_table" in tc.output_preview
+        assert "catalog.db.my_table" in tc.compact_result
 
     def test_compact_no_identifier_fallback(self):
-        """Verify compact mode falls back to 'DDL retrieved' when no identifier."""
+        """When only the DDL body is present, show its character count."""
         a = _make(
             input_data={"function_name": "get_table_ddl"},
             output_data={"raw_output": '{"success": 1, "result": {"definition": "CREATE TABLE ..."}}'},
         )
         tc = _build_get_table_ddl(a, verbose=False)
-        assert "DDL retrieved" in tc.output_preview
+        assert tc.compact_result == "16 chars"
 
     def test_compact_no_data(self):
         """Verify compact mode produces empty preview with no output."""
@@ -831,7 +831,7 @@ class TestBuildWriteFile:
             output_data={"raw_output": '{"success": 1, "result": "File written successfully: /tmp/f.sql"}'},
         )
         tc = _build_write_file(a, verbose=False)
-        assert "File written" in tc.output_preview
+        assert "File written" in tc.compact_result
 
     def test_compact_success_with_success_flag(self):
         """Verify compact mode shows 'File written' when success flag is true."""
@@ -840,7 +840,7 @@ class TestBuildWriteFile:
             output_data={"raw_output": '{"success": 1, "result": {"path": "/tmp/f.sql"}}'},
         )
         tc = _build_write_file(a, verbose=False)
-        assert "File written" in tc.output_preview
+        assert "File written" in tc.compact_result
 
     def test_compact_no_data(self):
         """Verify compact mode with no output produces empty preview."""
@@ -912,7 +912,7 @@ class TestNewToolsRegistered:
             },
         )
         tc = ToolCallContentBuilder().build(a, verbose=False)
-        assert "db.t" in tc.output_preview
+        assert "db.t" in tc.compact_result
 
     def test_write_file_dispatches_correctly(self):
         """Verify write_file dispatched via builder produces correct output."""
@@ -921,7 +921,7 @@ class TestNewToolsRegistered:
             output_data={"raw_output": '{"success": 1, "result": "File written successfully"}'},
         )
         tc = ToolCallContentBuilder().build(a, verbose=False)
-        assert "File written" in tc.output_preview
+        assert "File written" in tc.compact_result
 
 
 # ── read_query compact: nested original_rows ──────────────────────
@@ -938,7 +938,8 @@ class TestBuildReadQueryNestedRows:
             output_data={"raw_output": '{"success": 1, "result": {"original_rows": 15, "compressed_data": "a\\n1"}}'},
         )
         tc = _build_read_query(a, verbose=False)
-        assert "15 rows" in tc.output_preview
+        # Column count is inferred from the compressed_data header line.
+        assert tc.compact_result == "15 \u00d7 1 result"
 
     def test_verbose_shows_only_data(self):
         """Verify verbose mode only shows CSV data preview with markup."""
@@ -1045,7 +1046,7 @@ class TestBuildSimpleList:
             output_data={"raw_output": '{"success": 1, "result": ["a", "b", "c"]}'},
         )
         tc = _build_simple_list(a, verbose=False, unit="items")
-        assert "3 items" in tc.output_preview
+        assert "3 items" in tc.compact_result
 
     def test_compact_no_list(self):
         a = _make(input_data={"function_name": "test"}, output_data={"raw_output": '{"success": 1}'})
@@ -1072,7 +1073,7 @@ class TestBuildGetDetail:
             output_data={"raw_output": '{"success": 1, "result": {"name": "my_metric", "description": "desc"}}'},
         )
         tc = _build_get_detail(a, verbose=False)
-        assert "my_metric" in tc.output_preview
+        assert "my_metric" in tc.compact_result
 
     def test_compact_no_name(self):
         a = _make(
@@ -1080,7 +1081,7 @@ class TestBuildGetDetail:
             output_data={"raw_output": '{"success": 1, "result": {"description": "no name"}}'},
         )
         tc = _build_get_detail(a, verbose=False)
-        assert "Retrieved" in tc.output_preview
+        assert "Retrieved" in tc.compact_result
 
 
 @pytest.mark.ci
@@ -1093,7 +1094,7 @@ class TestBuildSimpleAction:
             output_data={"raw_output": '{"success": 1, "result": "ok"}'},
         )
         tc = _build_simple_action(a, verbose=False, success_label="Done")
-        assert "Done" in tc.output_preview
+        assert "Done" in tc.compact_result
 
     def test_compact_no_data(self):
         a = _make(input_data={"function_name": "test"})
@@ -1111,7 +1112,7 @@ class TestBuildDocSearchResult:
             output_data={"raw_output": '{"success": 1, "result": {"docs": [], "doc_count": 5}}'},
         )
         tc = _build_doc_search_result(a, verbose=False)
-        assert "5 docs found" in tc.output_preview
+        assert "5 docs found" in tc.compact_result
 
     def test_compact_fallback_list(self):
         a = _make(
@@ -1119,7 +1120,7 @@ class TestBuildDocSearchResult:
             output_data={"result": [1, 2]},
         )
         tc = _build_doc_search_result(a, verbose=False)
-        assert "2 docs found" in tc.output_preview
+        assert "2 docs found" in tc.compact_result
 
 
 # ── Database tools ────────────────────────────────────────────────
@@ -1133,7 +1134,7 @@ class TestBuildListDatabases:
             output_data={"raw_output": '{"success": 1, "result": ["db1", "db2"]}'},
         )
         tc = _build_list_databases(a, verbose=False)
-        assert "2 databases" in tc.output_preview
+        assert "2 databases" in tc.compact_result
 
 
 @pytest.mark.ci
@@ -1144,7 +1145,7 @@ class TestBuildListSchemas:
             output_data={"raw_output": '{"success": 1, "result": ["public", "dbo"]}'},
         )
         tc = _build_list_schemas(a, verbose=False)
-        assert "2 schemas" in tc.output_preview
+        assert "2 schemas" in tc.compact_result
 
 
 # ── Context search tools ──────────────────────────────────────────
@@ -1158,7 +1159,7 @@ class TestBuildListSubjectTree:
             output_data={"raw_output": '{"success": 1, "result": {"domain1": {}, "domain2": {}}}'},
         )
         tc = _build_list_subject_tree(a, verbose=False)
-        assert "2 domains" in tc.output_preview
+        assert "2 domains" in tc.compact_result
 
     def test_compact_no_result(self):
         a = _make(input_data={"function_name": "list_subject_tree"})
@@ -1203,7 +1204,7 @@ class TestBuildGetMetrics:
             output_data={"raw_output": '{"success": 1, "result": {"name": "revenue", "description": "total"}}'},
         )
         tc = _build_get_metrics(a, verbose=False)
-        assert "revenue" in tc.output_preview
+        assert "revenue" in tc.compact_result
 
 
 @pytest.mark.ci
@@ -1214,7 +1215,7 @@ class TestBuildGetReferenceSQL:
             output_data={"raw_output": '{"success": 1, "result": {"name": "top_sales", "sql": "SELECT 1"}}'},
         )
         tc = _build_get_reference_sql(a, verbose=False)
-        assert "top_sales" in tc.output_preview
+        assert "top_sales" in tc.compact_result
 
 
 @pytest.mark.ci
@@ -1225,7 +1226,7 @@ class TestBuildSearchSemanticObjects:
             output_data={"result": [{"kind": "table", "name": "t1"}, {"kind": "metric", "name": "m1"}]},
         )
         tc = _build_search_semantic_objects(a, verbose=False)
-        assert "2 semantic objects" in tc.output_preview
+        assert "2 semantic objects" in tc.compact_result
 
 
 @pytest.mark.ci
@@ -1236,7 +1237,7 @@ class TestBuildSearchKnowledge:
             output_data={"result": [{"search_text": "q1", "explanation": "e1"}]},
         )
         tc = _build_search_knowledge(a, verbose=False)
-        assert "1 knowledge entries" in tc.output_preview
+        assert "1 knowledge entries" in tc.compact_result
 
 
 @pytest.mark.ci
@@ -1244,10 +1245,10 @@ class TestBuildGetKnowledge:
     def test_compact(self):
         a = _make(
             input_data={"function_name": "get_knowledge"},
-            output_data={"result": [{"search_text": "q1"}, {"search_text": "q2"}]},
+            output_data={"result": {"name": "sla_policy"}},
         )
         tc = _build_get_knowledge(a, verbose=False)
-        assert "2 knowledge entries" in tc.output_preview
+        assert "sla_policy" in tc.compact_result
 
 
 # ── Semantic tools ────────────────────────────────────────────────
@@ -1261,7 +1262,7 @@ class TestBuildListMetricsSemantic:
             output_data={"result": [{"name": "m1"}, {"name": "m2"}, {"name": "m3"}]},
         )
         tc = _build_list_metrics_semantic(a, verbose=False)
-        assert "3 metrics" in tc.output_preview
+        assert "3 metrics" in tc.compact_result
 
 
 @pytest.mark.ci
@@ -1272,7 +1273,7 @@ class TestBuildGetDimensions:
             output_data={"raw_output": '{"success": 1, "result": ["dim1", "dim2"]}'},
         )
         tc = _build_get_dimensions(a, verbose=False)
-        assert "2 dimensions" in tc.output_preview
+        assert "2 dimensions" in tc.compact_result
 
 
 @pytest.mark.ci
@@ -1286,7 +1287,7 @@ class TestBuildQueryMetrics:
             },
         )
         tc = _build_query_metrics(a, verbose=False)
-        assert "2 rows" in tc.output_preview
+        assert "2 rows" in tc.compact_result
 
     def test_compact_fallback(self):
         a = _make(
@@ -1294,7 +1295,7 @@ class TestBuildQueryMetrics:
             output_data={"raw_output": '{"success": 1, "result": {"columns": ["a"], "data": "a\\n1"}}'},
         )
         tc = _build_query_metrics(a, verbose=False)
-        assert "Query completed" in tc.output_preview
+        assert "Query completed" in tc.compact_result
 
     def test_verbose_csv_preview(self):
         a = _make(
@@ -1316,7 +1317,7 @@ class TestBuildValidateSemantic:
             output_data={"raw_output": '{"success": 1, "result": {"valid": true, "issues": []}}'},
         )
         tc = _build_validate_semantic(a, verbose=False)
-        assert "Valid" in tc.output_preview
+        assert "Valid" in tc.compact_result
 
     def test_compact_invalid(self):
         a = _make(
@@ -1327,7 +1328,7 @@ class TestBuildValidateSemantic:
             },
         )
         tc = _build_validate_semantic(a, verbose=False)
-        assert "2 validation errors" in tc.output_preview
+        assert "2 validation errors" in tc.compact_result
 
 
 @pytest.mark.ci
@@ -1341,7 +1342,7 @@ class TestBuildAttributionAnalyze:
             },
         )
         tc = _build_attribution_analyze(a, verbose=False)
-        assert "1 dimensions analyzed" in tc.output_preview
+        assert "1 dimensions analyzed" in tc.compact_result
 
 
 # ── Filesystem tools ──────────────────────────────────────────────
@@ -1355,7 +1356,7 @@ class TestBuildReadFile:
             output_data={"raw_output": '{"success": 1, "result": "line1\\nline2\\nline3"}'},
         )
         tc = _build_read_file(a, verbose=False)
-        assert "3 lines" in tc.output_preview
+        assert "3 lines" in tc.compact_result
 
     def test_verbose_truncates(self):
         content = "\\n".join([f"line {i}" for i in range(30)])
@@ -1375,7 +1376,7 @@ class TestBuildGlob:
             output_data={"raw_output": '{"success": 1, "result": {"files": ["/a.py", "/b.py"], "truncated": false}}'},
         )
         tc = _build_glob(a, verbose=False)
-        assert "2 files found" in tc.output_preview
+        assert "2 files found" in tc.compact_result
 
 
 @pytest.mark.ci
@@ -1389,7 +1390,7 @@ class TestBuildGrep:
             },
         )
         tc = _build_grep(a, verbose=False)
-        assert "1 matches" in tc.output_preview
+        assert "1 matches" in tc.compact_result
 
     def test_verbose_shows_matches(self):
         a = _make(
@@ -1417,8 +1418,8 @@ class TestBuildListDocumentNav:
             },
         )
         tc = _build_list_document_nav(a, verbose=False)
-        assert "spark" in tc.output_preview
-        assert "42 docs" in tc.output_preview
+        assert "spark" in tc.compact_result
+        assert "42 docs" in tc.compact_result
 
 
 @pytest.mark.ci
@@ -1432,8 +1433,8 @@ class TestBuildGetDocument:
             },
         )
         tc = _build_get_document(a, verbose=False)
-        assert "Overview" in tc.output_preview
-        assert "3 chunks" in tc.output_preview
+        assert "Overview" in tc.compact_result
+        assert "3 chunks" in tc.compact_result
 
 
 # ── Plan tools ────────────────────────────────────────────────────
@@ -1447,7 +1448,7 @@ class TestBuildTodoRead:
             output_data={"raw_output": '{"success": 1, "result": {"message": "ok", "lists": [], "total_lists": 3}}'},
         )
         tc = _build_todo_read(a, verbose=False)
-        assert "3 todo lists" in tc.output_preview
+        assert "3 todo lists" in tc.compact_result
 
 
 @pytest.mark.ci
@@ -1458,7 +1459,7 @@ class TestBuildTodoWrite:
             output_data={"raw_output": '{"success": 1, "result": {"message": "saved"}}'},
         )
         tc = _build_todo_write(a, verbose=False)
-        assert "Todo list updated" in tc.output_preview
+        assert "Todo list updated" in tc.compact_result
 
 
 @pytest.mark.ci
@@ -1472,7 +1473,7 @@ class TestBuildTodoUpdate:
             },
         )
         tc = _build_todo_update(a, verbose=False)
-        assert "completed" in tc.output_preview
+        assert "completed" in tc.compact_result
 
     def test_compact_no_status(self):
         a = _make(
@@ -1480,7 +1481,7 @@ class TestBuildTodoUpdate:
             output_data={"raw_output": '{"success": 1, "result": {"message": "ok", "updated_item": {}}}'},
         )
         tc = _build_todo_update(a, verbose=False)
-        assert "Updated" in tc.output_preview
+        assert "Updated" in tc.compact_result
 
 
 # ── Generation tools ──────────────────────────────────────────────
@@ -1494,7 +1495,7 @@ class TestBuildCheckExists:
             output_data={"raw_output": '{"success": 1, "result": {"exists": true, "name": "t1"}}'},
         )
         tc = _build_check_exists(a, verbose=False)
-        assert "Exists" in tc.output_preview
+        assert "Exists" in tc.compact_result
 
     def test_compact_not_found(self):
         a = _make(
@@ -1502,7 +1503,7 @@ class TestBuildCheckExists:
             output_data={"raw_output": '{"success": 1, "result": {"exists": false, "name": "t1"}}'},
         )
         tc = _build_check_exists(a, verbose=False)
-        assert "Not found" in tc.output_preview
+        assert "Not found" in tc.compact_result
 
 
 @pytest.mark.ci
@@ -1516,7 +1517,7 @@ class TestBuildEndGeneration:
             },
         )
         tc = _build_end_generation(a, verbose=False)
-        assert "2 semantic models generated" in tc.output_preview
+        assert "2 semantic models generated" in tc.compact_result
 
 
 @pytest.mark.ci
@@ -1527,7 +1528,7 @@ class TestBuildEndMetricGeneration:
             output_data={"raw_output": '{"success": 1, "result": {"message": "done"}}'},
         )
         tc = _build_end_metric_generation(a, verbose=False)
-        assert "Metric generated" in tc.output_preview
+        assert "Metric generated" in tc.compact_result
 
 
 @pytest.mark.ci
@@ -1538,7 +1539,7 @@ class TestBuildGenerateSqlSummaryId:
             output_data={"raw_output": '{"success": 1, "result": "abc123"}'},
         )
         tc = _build_generate_sql_summary_id(a, verbose=False)
-        assert "ID generated" in tc.output_preview
+        assert "ID generated" in tc.compact_result
 
 
 # ── Date parsing tools ────────────────────────────────────────────
@@ -1546,7 +1547,8 @@ class TestBuildGenerateSqlSummaryId:
 
 @pytest.mark.ci
 class TestBuildParseDates:
-    def test_compact(self):
+    def test_compact_single_date(self):
+        """Single extracted date with only a start → show the date itself."""
         a = _make(
             input_data={"function_name": "parse_temporal_expressions"},
             output_data={
@@ -1555,7 +1557,31 @@ class TestBuildParseDates:
             },
         )
         tc = _build_parse_dates(a, verbose=False)
-        assert "1 date expressions" in tc.output_preview
+        assert tc.compact_result == "2024-01-01"
+
+    def test_compact_date_range(self):
+        """Single extracted date with start + end → show ``start → end``."""
+        a = _make(
+            input_data={"function_name": "parse_temporal_expressions"},
+            output_data={
+                "raw_output": '{"success": 1, "result": {"extracted_dates": '
+                '[{"start_date": "2024-01-01", "end_date": "2024-12-31"}]}}'
+            },
+        )
+        tc = _build_parse_dates(a, verbose=False)
+        assert tc.compact_result == "2024-01-01 \u2192 2024-12-31"
+
+    def test_compact_multiple(self):
+        """Multiple extracted dates → fall back to the count summary."""
+        a = _make(
+            input_data={"function_name": "parse_temporal_expressions"},
+            output_data={
+                "raw_output": '{"success": 1, "result": {"extracted_dates": '
+                '[{"start_date": "2024-01-01"}, {"start_date": "2024-02-01"}]}}'
+            },
+        )
+        tc = _build_parse_dates(a, verbose=False)
+        assert tc.compact_result == "2 date expressions"
 
 
 # ── Semantic model generation tools ───────────────────────────────
@@ -1572,7 +1598,7 @@ class TestBuildAnalyzeRelationships:
             },
         )
         tc = _build_analyze_relationships(a, verbose=False)
-        assert "1 relationships found" in tc.output_preview
+        assert "1 relationships found" in tc.compact_result
 
 
 @pytest.mark.ci
@@ -1587,7 +1613,7 @@ class TestBuildGetMultipleDdl:
             },
         )
         tc = _build_get_multiple_ddl(a, verbose=False)
-        assert "2 DDLs retrieved" in tc.output_preview
+        assert "2 DDLs retrieved" in tc.compact_result
 
     def test_verbose_shows_ddl(self):
         a = _make(
@@ -1621,7 +1647,7 @@ class TestBuildAnalyzeColumns:
             },
         )
         tc = _build_analyze_columns(a, verbose=False)
-        assert "2 columns analyzed" in tc.output_preview
+        assert "2 columns analyzed" in tc.compact_result
 
 
 # ── Skill tools ───────────────────────────────────────────────────
@@ -1635,7 +1661,7 @@ class TestBuildExecuteCommand:
             output_data={"raw_output": '{"success": 1, "result": "output text"}'},
         )
         tc = _build_execute_command(a, verbose=False)
-        assert "Command executed" in tc.output_preview
+        assert "Command executed" in tc.compact_result
 
 
 @pytest.mark.ci
@@ -1646,7 +1672,7 @@ class TestBuildLoadSkill:
             output_data={"raw_output": '{"success": 1, "result": "skill content"}'},
         )
         tc = _build_load_skill(a, verbose=False)
-        assert "Skill loaded" in tc.output_preview
+        assert "Skill loaded" in tc.compact_result
 
 
 class TestBuildAskUser:
@@ -1660,7 +1686,7 @@ class TestBuildAskUser:
             output_data={"raw_output": json.dumps({"success": 1, "result": result_json})},
         )
         tc = _build_ask_user(a, verbose=False)
-        assert "1 answer" in tc.output_preview
+        assert "1 answer" in tc.compact_result
 
     def test_compact_error(self):
         a = _make(
@@ -1668,7 +1694,7 @@ class TestBuildAskUser:
             output_data={"raw_output": json.dumps({"success": 0, "error": "questions must be a non-empty list"})},
         )
         tc = _build_ask_user(a, verbose=False)
-        assert "non-empty" in tc.output_preview
+        assert "non-empty" in tc.compact_result
 
     def test_verbose_shows_formatted_questions(self):
         result_json = json.dumps(
@@ -1788,3 +1814,268 @@ class TestAllToolsRegistered:
     def test_registry_count(self):
         builder = ToolCallContentBuilder()
         assert len(builder._registry) >= len(self.EXPECTED_TOOLS)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Compact-layout helpers and per-tool formatters
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.ci
+class TestCompactHelpers:
+    """Coverage for the helpers that back the header + └─ compact layout."""
+
+    def test_collapse_whitespace_flattens_newlines_and_tabs(self):
+        from datus.cli.action_display.tool_content import _collapse_whitespace
+
+        assert _collapse_whitespace("a\n b\tc\r\nd") == "a b c d"
+        assert _collapse_whitespace("   ") == ""
+
+    def test_truncate_middle_short_stays_unchanged(self):
+        from datus.cli.action_display.tool_content import _truncate_middle
+
+        assert _truncate_middle("short", max_len=60) == "short"
+
+    def test_truncate_middle_long_gets_ellipsis(self):
+        from datus.cli.action_display.tool_content import _truncate_middle
+
+        result = _truncate_middle("x" * 100, max_len=20)
+        assert "..." in result
+        assert len(result) <= 20
+
+    def test_truncate_middle_flattens_embedded_newlines(self):
+        from datus.cli.action_display.tool_content import _truncate_middle
+
+        result = _truncate_middle("SELECT\n a,\n b\n FROM t", max_len=60)
+        assert "\n" not in result
+
+    def test_format_positional_picks_first_nonempty_key(self):
+        from datus.cli.action_display.tool_content import _format_positional
+
+        assert _format_positional({"x": "", "y": "val"}, "x", "y") == '"val"'
+        assert _format_positional({}, "x") == ""
+        # None / empty list / empty dict are all treated as missing.
+        assert _format_positional({"x": None, "y": [], "z": "v"}, "x", "y", "z") == '"v"'
+
+    def test_format_kw_joins_nonempty_pairs(self):
+        from datus.cli.action_display.tool_content import _format_kw
+
+        assert _format_kw({"pattern": "*.py", "path": "src"}, "pattern", "path") == ('pattern: "*.py", path: "src"')
+        assert _format_kw({"pattern": "*.py"}, "pattern", "path") == 'pattern: "*.py"'
+
+    def test_fallback_args_summary_limits_pairs(self):
+        from datus.cli.action_display.tool_content import _fallback_args_summary
+
+        args = {"a": "1", "b": "2", "c": "3"}
+        result = _fallback_args_summary(args, max_kv=2)
+        # Order follows dict iteration; only two pairs shown.
+        assert result.count(":") == 2
+
+    def test_extract_error_message_reads_error_field(self):
+        from datus.cli.action_display.tool_content import _extract_error_message
+
+        assert _extract_error_message({"raw_output": '{"error": "boom"}'}) == "boom"
+        assert _extract_error_message({"raw_output": "{}"}) == ""
+        assert _extract_error_message(None) == ""
+
+    def test_set_default_args_summary_uses_fallback(self):
+        from datus.cli.action_display.tool_content import (
+            ToolCallContent,
+            set_default_args_summary,
+        )
+
+        tc = ToolCallContent(label="x", status_mark="\u2713", duration_str="")
+        action = _make(input_data={"function_name": "custom", "arguments": {"pattern": "*.py"}})
+        set_default_args_summary(tc, action)
+        assert tc.args_summary == 'pattern: "*.py"'
+
+    def test_set_default_args_summary_noop_when_prefilled(self):
+        from datus.cli.action_display.tool_content import (
+            ToolCallContent,
+            set_default_args_summary,
+        )
+
+        tc = ToolCallContent(label="x", status_mark="\u2713", duration_str="", args_summary='"preset"')
+        action = _make(input_data={"function_name": "custom", "arguments": {"q": "v"}})
+        set_default_args_summary(tc, action)
+        assert tc.args_summary == '"preset"'
+
+    def test_set_error_as_result_populates_on_failure(self):
+        from datus.cli.action_display.tool_content import (
+            ToolCallContent,
+            set_error_as_result,
+        )
+
+        tc = ToolCallContent(label="x", status_mark="\u2717", duration_str="")
+        action = _make(output_data={"raw_output": '{"error": "file not found"}'})
+        action.status = ActionStatus.FAILED
+        set_error_as_result(tc, action)
+        assert "file not found" in tc.compact_result
+
+    def test_set_error_as_result_noop_on_success(self):
+        from datus.cli.action_display.tool_content import (
+            ToolCallContent,
+            set_error_as_result,
+        )
+
+        tc = ToolCallContent(label="x", status_mark="\u2713", duration_str="")
+        action = _make(output_data={"raw_output": '{"error": null}'})
+        set_error_as_result(tc, action)
+        assert tc.compact_result == ""
+
+    def test_strip_legacy_preview_removes_known_prefixes(self):
+        from datus.cli.action_display.tool_content import _strip_legacy_preview
+
+        assert _strip_legacy_preview("\u2713 3 tables") == "3 tables"
+        assert _strip_legacy_preview("\u2717 failed") == "failed"
+        assert _strip_legacy_preview("") == ""
+        assert _strip_legacy_preview("plain text") == "plain text"
+
+    def test_item_name_extracts_from_dict_or_str(self):
+        from datus.cli.action_display.tool_content import _item_name
+
+        assert _item_name("orders") == "orders"
+        assert _item_name({"name": "n1"}) == "n1"
+        assert _item_name({"table_name": "t1"}) == "t1"
+        assert _item_name({"other": "x"}) == ""
+
+    def test_fmt_count_with_preview_lists_first_items(self):
+        from datus.cli.action_display.tool_content import _fmt_count_with_preview
+
+        result = _fmt_count_with_preview(3, "table", "tables", ["orders", "customers", "products"])
+        assert result == "3 tables: orders, customers, products"
+
+    def test_fmt_count_with_preview_adds_ellipsis_when_truncated(self):
+        from datus.cli.action_display.tool_content import _fmt_count_with_preview
+
+        result = _fmt_count_with_preview(5, "table", "tables", ["a", "b", "c", "d", "e"], max_show=3)
+        assert result == "5 tables: a, b, c, ..."
+
+    def test_fmt_count_with_preview_singular_noun(self):
+        from datus.cli.action_display.tool_content import _fmt_count_with_preview
+
+        assert _fmt_count_with_preview(1, "table", "tables", ["solo"]) == "1 table: solo"
+
+    def test_fmt_count_with_preview_without_items(self):
+        from datus.cli.action_display.tool_content import _fmt_count_with_preview
+
+        assert _fmt_count_with_preview(7, "file", "files") == "7 files"
+
+
+@pytest.mark.ci
+class TestExtractFileContent:
+    """Coverage for the robust file-body extraction used by _build_read_file."""
+
+    def test_none_returns_none(self):
+        from datus.cli.action_display.tool_content import _extract_file_content
+
+        assert _extract_file_content(None) is None
+
+    def test_plain_string_is_body(self):
+        from datus.cli.action_display.tool_content import _extract_file_content
+
+        assert _extract_file_content("hello\nworld") == "hello\nworld"
+
+    def test_raw_output_dict_result_key(self):
+        from datus.cli.action_display.tool_content import _extract_file_content
+
+        out = {"raw_output": {"success": 1, "result": "abc\n"}}
+        assert _extract_file_content(out) == "abc\n"
+
+    def test_raw_output_json_string(self):
+        from datus.cli.action_display.tool_content import _extract_file_content
+
+        out = {"raw_output": '{"success": 1, "result": "line1\\nline2"}'}
+        assert _extract_file_content(out) == "line1\nline2"
+
+    def test_raw_output_plain_string(self):
+        from datus.cli.action_display.tool_content import _extract_file_content
+
+        out = {"raw_output": "not json, just content"}
+        assert _extract_file_content(out) == "not json, just content"
+
+    def test_top_level_content_key(self):
+        from datus.cli.action_display.tool_content import _extract_file_content
+
+        out = {"content": "body"}
+        assert _extract_file_content(out) == "body"
+
+    def test_non_dict_non_string_returns_none(self):
+        from datus.cli.action_display.tool_content import _extract_file_content
+
+        assert _extract_file_content(42) is None
+
+
+@pytest.mark.ci
+class TestToolArgsFormatters:
+    """Spot-check per-tool arg summary formatters registered in the table."""
+
+    def _args(self, **kwargs) -> dict:
+        return kwargs
+
+    def test_list_tables_kw_args(self):
+        from datus.cli.action_display.tool_content import _TOOL_ARGS_FORMATTERS
+
+        fmt = _TOOL_ARGS_FORMATTERS["list_tables"]
+        assert fmt(self._args(catalog="sales")) == 'catalog: "sales"'
+        assert fmt(self._args()) == ""
+
+    def test_describe_table_positional(self):
+        from datus.cli.action_display.tool_content import _TOOL_ARGS_FORMATTERS
+
+        fmt = _TOOL_ARGS_FORMATTERS["describe_table"]
+        assert fmt(self._args(table_name="orders")) == '"orders"'
+
+    def test_grep_kw_args(self):
+        from datus.cli.action_display.tool_content import _TOOL_ARGS_FORMATTERS
+
+        fmt = _TOOL_ARGS_FORMATTERS["grep"]
+        assert fmt(self._args(pattern="TODO", path="src")) == 'pattern: "TODO", path: "src"'
+
+    def test_list_databases_is_empty(self):
+        from datus.cli.action_display.tool_content import _TOOL_ARGS_FORMATTERS
+
+        fmt = _TOOL_ARGS_FORMATTERS["list_databases"]
+        assert fmt({}) == ""
+
+    def test_skill_execute_command_kw(self):
+        from datus.cli.action_display.tool_content import _TOOL_ARGS_FORMATTERS
+
+        fmt = _TOOL_ARGS_FORMATTERS["skill_execute_command"]
+        assert fmt(self._args(skill_name="s", command="c")) == 'skill_name: "s", command: "c"'
+
+
+@pytest.mark.ci
+class TestBuilderPostProcessing:
+    """End-to-end check that the registry populates args_summary / compact_result."""
+
+    def test_registered_tool_gets_custom_args_summary(self):
+        builder = ToolCallContentBuilder()
+        action = _make(
+            input_data={"function_name": "describe_table", "arguments": {"table_name": "orders"}},
+            output_data={"result": ["c1", "c2"]},
+        )
+        tc = builder.build(action, verbose=False)
+        assert tc.args_summary == '"orders"'
+        assert "2 columns" in tc.compact_result
+
+    def test_unknown_tool_falls_back_to_kv_pairs(self):
+        builder = ToolCallContentBuilder()
+        action = _make(
+            input_data={"function_name": "custom_tool", "arguments": {"x": "1", "y": "2"}},
+            output_data={"success": True},
+        )
+        tc = builder.build(action, verbose=False)
+        # Fallback: first two k:v pairs joined by ", "
+        assert 'x: "1"' in tc.args_summary
+        assert 'y: "2"' in tc.args_summary
+
+    def test_failed_action_sets_error_as_compact_result(self):
+        builder = ToolCallContentBuilder()
+        action = _make(
+            input_data={"function_name": "unknown_tool", "arguments": {}},
+            output_data={"raw_output": '{"error": "bad thing"}'},
+            status=ActionStatus.FAILED,
+        )
+        tc = builder.build(action, verbose=False)
+        assert "bad thing" in tc.compact_result

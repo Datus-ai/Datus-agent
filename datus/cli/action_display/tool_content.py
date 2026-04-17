@@ -28,9 +28,12 @@ class ToolCallContent:
     label: str  # tool identifier, e.g. "search_table"
     status_mark: str  # "✓" or "✗"
     duration_str: str  # " (1.2s)" or ""
-    output_preview: str = ""  # compact mode output summary
+    output_preview: str = ""  # legacy compact-mode summary; kept for back-compat
     args_lines: List[str] = field(default_factory=list)  # verbose: Rich markup formatted
     output_lines: List[str] = field(default_factory=list)  # verbose: Rich markup formatted
+    # Compact-mode fields used by the new header + └─ line layout:
+    args_summary: str = ""  # concise args for header, e.g. '"orders"' or 'pattern: "*.py"'
+    compact_result: str = ""  # concise result for └─ line, e.g. '3 tables: a, b, c'
 
 
 # Type alias for custom content builder functions
@@ -41,11 +44,229 @@ ToolCallContentFn = Callable[[ActionHistory, bool], ToolCallContent]
 
 
 def calc_duration(action: ActionHistory) -> str:
-    """Calculate duration string from action timestamps."""
+    """Calculate duration string from action timestamps.
+
+    Sub-tenth-of-a-second durations are rendered as ``(<0.1s)`` so they stay
+    visible without misleading rounding.
+    """
     if action.end_time and action.start_time:
         duration_sec = (action.end_time - action.start_time).total_seconds()
+        if duration_sec < 0.1:
+            return " (<0.1s)"
         return f" ({duration_sec:.1f}s)"
     return ""
+
+
+# ── Compact-layout helpers (header args + └─ result line) ──────────
+
+
+def _parse_args_dict(action: ActionHistory) -> dict:
+    """Return the tool's arguments as a dict, or an empty dict."""
+    if not action.input:
+        return {}
+    args = action.input.get("arguments")
+    if args is None:
+        return {}
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except Exception:
+            return {}
+    return args if isinstance(args, dict) else {}
+
+
+def _collapse_whitespace(text: str) -> str:
+    """Collapse any whitespace run (newlines, tabs, repeated spaces) into one space."""
+    return " ".join(str(text).split())
+
+
+def _truncate_middle(text: str, max_len: int = 60) -> str:
+    """Flatten whitespace, then truncate the middle if the result exceeds max_len."""
+    flat = _collapse_whitespace(text)
+    if len(flat) <= max_len:
+        return flat
+    keep = max(1, (max_len - 5) // 2)
+    return flat[:keep] + " ... " + flat[-keep:]
+
+
+def _format_positional(args: dict, *keys: str, max_len: int = 60) -> str:
+    """Pick the first non-empty key and format as a quoted positional arg."""
+    for key in keys:
+        val = args.get(key)
+        if val not in (None, "", [], {}):
+            return f'"{_truncate_middle(val, max_len)}"'
+    return ""
+
+
+def _format_kw(args: dict, *keys: str, max_len: int = 60) -> str:
+    """Format selected args as ``key: "value"`` pairs (only non-empty keys)."""
+    parts: List[str] = []
+    for key in keys:
+        val = args.get(key)
+        if val in (None, "", [], {}):
+            continue
+        parts.append(f'{key}: "{_truncate_middle(val, max_len)}"')
+    return ", ".join(parts)
+
+
+def _fallback_args_summary(args: dict, max_kv: int = 2, max_len: int = 40) -> str:
+    """Generic fallback: show the first few non-empty args as ``k: "v"``."""
+    parts: List[str] = []
+    for key, val in args.items():
+        if val in (None, "", [], {}):
+            continue
+        parts.append(f'{key}: "{_truncate_middle(val, max_len)}"')
+        if len(parts) >= max_kv:
+            break
+    return ", ".join(parts)
+
+
+def _extract_error_message(output_data) -> str:
+    """Return a concise error message from the tool output, or an empty string."""
+    data = parse_output_data(output_data)
+    if not data:
+        return ""
+    err = data.get("error")
+    if err and str(err) not in ("None", "null", ""):
+        return _truncate_middle(str(err), 80)
+    return ""
+
+
+def set_default_args_summary(tc: ToolCallContent, action: ActionHistory) -> None:
+    """Populate ``tc.args_summary`` from ``action.input`` using the fallback."""
+    if tc.args_summary:
+        return
+    args = _parse_args_dict(action)
+    if args:
+        tc.args_summary = _fallback_args_summary(args)
+
+
+def set_error_as_result(tc: ToolCallContent, action: ActionHistory) -> None:
+    """If the action failed, set ``compact_result`` to the error message."""
+    if action.status == ActionStatus.FAILED or (
+        isinstance(action.output, dict) and action.output.get("success") is False
+    ):
+        err = _extract_error_message(action.output)
+        if err:
+            tc.compact_result = err
+
+
+def _item_name(item) -> str:
+    """Best-effort extraction of a short name from a list item (str or dict)."""
+    if isinstance(item, str):
+        return item
+    if isinstance(item, dict):
+        for key in ("name", "table_name", "database", "schema", "identifier", "title", "id"):
+            val = item.get(key)
+            if val:
+                return str(val)
+    return ""
+
+
+def _fmt_count_with_preview(
+    count: int,
+    noun_singular: str,
+    noun_plural: str,
+    items: Optional[list] = None,
+    max_show: int = 3,
+) -> str:
+    """Format ``N nouns: item1, item2, item3`` when item names are available."""
+    noun = noun_singular if count == 1 else noun_plural
+    header = f"{count} {noun}"
+    if not items:
+        return header
+    names: List[str] = []
+    for item in items[:max_show]:
+        name = _item_name(item)
+        if name:
+            names.append(name)
+        if len(names) >= max_show:
+            break
+    if not names:
+        return header
+    preview = ", ".join(names)
+    if count > len(names):
+        preview += ", ..."
+    return f"{header}: {preview}"
+
+
+def _strip_legacy_preview(preview: str) -> str:
+    """Convert the legacy ``\u2713 xxx`` / ``\u2717 yyy`` preview into a bare result.
+
+    The renderer now draws the status mark on the ``\u2514\u2500`` line itself,
+    so per-builder previews must not prefix their own mark. When an older
+    builder still emits one, strip it to keep the output clean.
+    """
+    if not preview:
+        return ""
+    text = preview.strip()
+    for prefix in ("\u2713 ", "\u2717 ", "\u00d7 "):
+        if text.startswith(prefix):
+            return text[len(prefix) :].strip()
+    return text
+
+
+# ── Per-tool argument summary formatters ───────────────────────────
+#
+# Maps a function_name to a callable(args_dict) -> str that produces the
+# concise arg string rendered inside the ``tool(...)`` header. Only tools
+# listed here get a hand-tuned summary; others fall back to the generic
+# key:"value" pairs via ``set_default_args_summary``.
+_TOOL_ARGS_FORMATTERS: Dict[str, Callable[[dict], str]] = {
+    # DB tools
+    "list_tables": lambda a: _format_kw(a, "catalog", "schema_name"),
+    "describe_table": lambda a: _format_positional(a, "table_name", "name"),
+    "search_table": lambda a: _format_positional(a, "query_text", "query"),
+    "read_query": lambda a: _format_positional(a, "query", "sql"),
+    "query": lambda a: _format_positional(a, "query", "sql"),
+    "get_table_ddl": lambda a: _format_positional(a, "table_name", "name"),
+    "list_databases": lambda _a: "",
+    "list_schemas": lambda a: _format_positional(a, "database", "catalog"),
+    # Filesystem tools
+    "read_file": lambda a: _format_positional(a, "file_path", "path"),
+    "write_file": lambda a: _format_positional(a, "file_path", "path"),
+    "edit_file": lambda a: _format_positional(a, "file_path", "path"),
+    "glob": lambda a: _format_kw(a, "pattern", "path"),
+    "grep": lambda a: _format_kw(a, "pattern", "path"),
+    # Context search tools
+    "list_subject_tree": lambda _a: "",
+    "search_metrics": lambda a: _format_positional(a, "query", "query_text"),
+    "get_metrics": lambda a: _format_positional(a, "metric_name", "metric_id", "name"),
+    "search_reference_sql": lambda a: _format_positional(a, "query", "query_text"),
+    "get_reference_sql": lambda a: _format_positional(a, "ref_id", "sql_id", "name"),
+    "search_semantic_objects": lambda a: _format_positional(a, "query", "query_text"),
+    "search_knowledge": lambda a: _format_positional(a, "query", "query_text"),
+    "get_knowledge": lambda a: _format_positional(a, "doc_id", "id", "name"),
+    # Date parsing tools
+    "parse_temporal_expressions": lambda a: _format_positional(a, "expression", "text", "query"),
+    # Reference template tools
+    "search_reference_template": lambda a: _format_positional(a, "query", "query_text"),
+    "get_reference_template": lambda a: _format_positional(a, "template_id", "name"),
+    "render_reference_template": lambda a: _format_positional(a, "template_id", "name"),
+    "execute_reference_template": lambda a: _format_positional(a, "template_id", "name"),
+    # Platform document tools
+    "list_document_nav": lambda _a: "",
+    "get_document": lambda a: _format_positional(a, "doc_id", "doc_name", "name"),
+    "search_document": lambda a: _format_positional(a, "query", "query_text"),
+    "web_search_document": lambda a: _format_positional(a, "query", "query_text"),
+    # Skill tools
+    "load_skill": lambda a: _format_positional(a, "skill_name", "name"),
+    "skill_execute_command": lambda a: _format_kw(a, "skill_name", "command"),
+    "execute_command": lambda a: _format_kw(a, "skill_name", "command"),
+}
+
+
+def set_tool_specific_args_summary(tc: ToolCallContent, action: ActionHistory) -> None:
+    """Populate ``tc.args_summary`` using a per-tool formatter when available."""
+    if tc.args_summary:
+        return
+    function_name = action.input.get("function_name", "") if action.input else ""
+    formatter = _TOOL_ARGS_FORMATTERS.get(function_name)
+    if formatter is None:
+        return
+    summary = formatter(_parse_args_dict(action))
+    if summary:
+        tc.args_summary = summary
 
 
 def extract_args(action: ActionHistory) -> List[str]:
@@ -700,7 +921,7 @@ def _format_get_table_ddl_output_verbose(output_data) -> List[str]:
 
 
 def _build_list_tables(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """list_tables / table_overview: show table count."""
+    """list_tables / table_overview: show table count and first few names."""
     tc = make_base_content(action)
     if verbose:
         tc.args_lines = extract_args_markup(action)
@@ -709,7 +930,7 @@ def _build_list_tables(action: ActionHistory, verbose: bool) -> ToolCallContent:
     else:
         items = _get_items_from_output(action.output)
         if isinstance(items, list):
-            tc.output_preview = f"\u2713 {len(items)} tables"
+            tc.compact_result = _fmt_count_with_preview(len(items), "table", "tables", items)
     return tc
 
 
@@ -721,14 +942,25 @@ def _build_describe_table(action: ActionHistory, verbose: bool) -> ToolCallConte
         if action.output:
             tc.output_lines = _format_describe_table_output_markup(action.output)
     else:
-        items = _get_items_from_output(action.output)
-        if isinstance(items, list):
-            tc.output_preview = f"\u2713 {len(items)} columns"
+        data = parse_output_data(action.output)
+        columns = None
+        if isinstance(data, dict):
+            result = data.get("result")
+            if isinstance(result, dict) and isinstance(result.get("columns"), list):
+                columns = result["columns"]
+            elif isinstance(result, list):
+                columns = result
+        if columns is None:
+            items = _get_items_from_output(action.output)
+            if isinstance(items, list):
+                columns = items
+        if isinstance(columns, list):
+            tc.compact_result = f"{len(columns)} columns"
     return tc
 
 
 def _build_read_query(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """read_query / query: show row count."""
+    """read_query / query: show row × column count."""
     tc = make_base_content(action)
     if verbose:
         tc.args_lines = extract_args_markup(action)
@@ -737,18 +969,29 @@ def _build_read_query(action: ActionHistory, verbose: bool) -> ToolCallContent:
     else:
         data = parse_output_data(action.output)
         if data:
-            # Check top-level and nested result for original_rows
+            # Check top-level and nested result for rows / columns
             rows = data.get("original_rows")
+            cols = None
             if rows is None:
                 result = data.get("result")
                 if isinstance(result, dict):
                     rows = result.get("original_rows")
+                    cols = result.get("column_count")
+                    if cols is None:
+                        compressed = result.get("compressed_data")
+                        if isinstance(compressed, str) and compressed:
+                            first_line = compressed.split("\n", 1)[0]
+                            if first_line:
+                                cols = len(first_line.split(","))
             if rows is not None:
-                tc.output_preview = f"\u2713 {rows} rows"
+                if cols:
+                    tc.compact_result = f"{rows} \u00d7 {cols} result"
+                else:
+                    tc.compact_result = f"{rows} rows"
             else:
                 items = _get_items_from_output(action.output)
                 if isinstance(items, list):
-                    tc.output_preview = f"\u2713 {len(items)} items"
+                    tc.compact_result = f"{len(items)} items"
     return tc
 
 
@@ -770,7 +1013,7 @@ def _build_search_table(action: ActionHistory, verbose: bool) -> ToolCallContent
                 sample_count = len(sample_data)
             else:
                 sample_count = 0
-            tc.output_preview = f"\u2713 {metadata_count} tables and {sample_count} sample rows"
+            tc.compact_result = f"{metadata_count} tables and {sample_count} sample rows"
     return tc
 
 
@@ -804,12 +1047,12 @@ def _build_search_generic(action: ActionHistory, verbose: bool, unit: str) -> To
     else:
         items = _get_items_from_output(action.output)
         count = len(items) if isinstance(items, list) else 0
-        tc.output_preview = f"\u2713 {count} {unit}"
+        tc.compact_result = f"{count} {unit} matched"
     return tc
 
 
 def _build_get_table_ddl(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """get_table_ddl: show DDL definition."""
+    """get_table_ddl: show the table identifier and DDL size."""
     tc = make_base_content(action)
     if verbose:
         tc.args_lines = extract_args_markup(action)
@@ -821,7 +1064,16 @@ def _build_get_table_ddl(action: ActionHistory, verbose: bool) -> ToolCallConten
             result = data.get("result")
             if isinstance(result, dict):
                 identifier = result.get("identifier", "")
-                tc.output_preview = f"\u2713 {identifier}" if identifier else "\u2713 DDL retrieved"
+                definition = result.get("definition") or ""
+                chars = len(definition) if isinstance(definition, str) else 0
+                if identifier and chars:
+                    tc.compact_result = f"{identifier} \u00b7 {chars:,} chars"
+                elif chars:
+                    tc.compact_result = f"{chars:,} chars"
+                elif identifier:
+                    tc.compact_result = str(identifier)
+                else:
+                    tc.compact_result = "DDL retrieved"
     return tc
 
 
@@ -866,12 +1118,17 @@ def _build_edit_file(action: ActionHistory, verbose: bool) -> ToolCallContent:
             tc.output_lines = _format_result_only_markup(action.output)
     else:
         data = parse_output_data(action.output)
+        args = _parse_args_dict(action)
+        edits_count = len(args.get("edits", [])) if isinstance(args.get("edits"), list) else 0
         if data:
             result = data.get("result")
-            if isinstance(result, str) and "edit" in result.lower():
-                tc.output_preview = f"\u2713 {result.split('(')[-1].rstrip(')')}" if "(" in result else "\u2713 Edited"
+            if edits_count:
+                noun = "occurrence" if edits_count == 1 else "occurrences"
+                tc.compact_result = f"{edits_count} {noun} replaced"
+            elif isinstance(result, str) and "edit" in result.lower():
+                tc.compact_result = result.split("(")[-1].rstrip(")") if "(" in result else "Edited"
             elif data.get("success"):
-                tc.output_preview = "\u2713 Edited"
+                tc.compact_result = "Edited"
     return tc
 
 
@@ -903,12 +1160,17 @@ def _build_write_file(action: ActionHistory, verbose: bool) -> ToolCallContent:
             tc.output_lines = _format_result_only_markup(action.output)
     else:
         data = parse_output_data(action.output)
-        if data:
+        args = _parse_args_dict(action)
+        content = args.get("content")
+        if isinstance(content, str) and content:
+            line_count = len(content.splitlines()) or 1
+            tc.compact_result = f"wrote {line_count} lines"
+        elif data:
             result = data.get("result")
             if isinstance(result, str) and "success" in result.lower():
-                tc.output_preview = "\u2713 File written"
+                tc.compact_result = "File written"
             elif data.get("success"):
-                tc.output_preview = "\u2713 File written"
+                tc.compact_result = "File written"
     return tc
 
 
@@ -924,14 +1186,16 @@ def _build_simple_list(action: ActionHistory, verbose: bool, unit: str) -> ToolC
             tc.output_lines = _format_result_only_markup(action.output)
     else:
         data = parse_output_data(action.output)
+        items = None
         if data:
             result = data.get("result")
             if isinstance(result, list):
-                tc.output_preview = f"\u2713 {len(result)} {unit}"
-            else:
-                items = _get_items_from_output(action.output)
-                if isinstance(items, list):
-                    tc.output_preview = f"\u2713 {len(items)} {unit}"
+                items = result
+        if items is None:
+            items = _get_items_from_output(action.output)
+        if isinstance(items, list):
+            singular = unit[:-1] if unit.endswith("s") else unit
+            tc.compact_result = _fmt_count_with_preview(len(items), singular, unit, items)
     return tc
 
 
@@ -948,9 +1212,9 @@ def _build_get_detail(action: ActionHistory, verbose: bool) -> ToolCallContent:
             result = data.get("result")
             if isinstance(result, dict):
                 name = result.get("name", "")
-                tc.output_preview = f"\u2713 {name}" if name else "\u2713 Retrieved"
+                tc.compact_result = f"{name}" if name else "Retrieved"
             elif isinstance(result, str):
-                tc.output_preview = f"\u2713 {result[:50]}" if result else "\u2713 Retrieved"
+                tc.compact_result = f"{result[:50]}" if result else "Retrieved"
     return tc
 
 
@@ -965,9 +1229,9 @@ def _build_simple_action(action: ActionHistory, verbose: bool, success_label: st
         data = parse_output_data(action.output)
         if data:
             if action.status == ActionStatus.FAILED:
-                tc.output_preview = f"\u2717 {action.output if isinstance(action.output, str) else 'Failed'}"
+                tc.compact_result = f"{action.output if isinstance(action.output, str) else 'Failed'}"
             else:
-                tc.output_preview = f"\u2713 {success_label}"
+                tc.compact_result = f"{success_label}"
     return tc
 
 
@@ -984,11 +1248,11 @@ def _build_doc_search_result(action: ActionHistory, verbose: bool) -> ToolCallCo
             result = data.get("result")
             if isinstance(result, dict):
                 doc_count = result.get("doc_count", 0)
-                tc.output_preview = f"\u2713 {doc_count} docs found"
+                tc.compact_result = f"{doc_count} docs found"
             else:
                 items = _get_items_from_output(action.output)
                 count = len(items) if isinstance(items, list) else 0
-                tc.output_preview = f"\u2713 {count} docs found"
+                tc.compact_result = f"{count} docs found"
     return tc
 
 
@@ -1022,7 +1286,7 @@ def _build_list_subject_tree(action: ActionHistory, verbose: bool) -> ToolCallCo
         if data:
             result = data.get("result")
             if isinstance(result, dict):
-                tc.output_preview = f"\u2713 {len(result)} domains"
+                tc.compact_result = f"{len(result)} domains"
     return tc
 
 
@@ -1086,7 +1350,7 @@ def _build_render_reference_template(action: ActionHistory, verbose: bool) -> To
             result = data.get("result")
             if isinstance(result, dict):
                 name = result.get("template_name", "")
-                tc.output_preview = f"\u2713 {name}" if name else "\u2713 Rendered"
+                tc.compact_result = f"{name}" if name else "Rendered"
     return tc
 
 
@@ -1106,11 +1370,11 @@ def _build_execute_reference_template(action: ActionHistory, verbose: bool) -> T
                 if isinstance(query_result, dict):
                     rows = query_result.get("original_rows")
                     if rows is not None:
-                        tc.output_preview = f"\u2713 {rows} rows"
+                        tc.compact_result = f"{rows} rows"
                     else:
-                        tc.output_preview = "\u2713 Executed"
+                        tc.compact_result = "Executed"
                 else:
-                    tc.output_preview = "\u2713 Executed"
+                    tc.compact_result = "Executed"
     return tc
 
 
@@ -1125,8 +1389,8 @@ def _build_search_knowledge(action: ActionHistory, verbose: bool) -> ToolCallCon
 
 
 def _build_get_knowledge(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """get_knowledge: show knowledge entry count."""
-    return _build_search_generic(action, verbose, "knowledge entries")
+    """get_knowledge: show the fetched knowledge entry name."""
+    return _build_get_detail(action, verbose)
 
 
 def _build_list_metrics_semantic(action: ActionHistory, verbose: bool) -> ToolCallContent:
@@ -1166,11 +1430,11 @@ def _build_query_metrics(action: ActionHistory, verbose: bool) -> ToolCallConten
                 metadata = result.get("metadata", {})
                 row_count = metadata.get("row_count") if isinstance(metadata, dict) else None
                 if row_count is not None:
-                    tc.output_preview = f"\u2713 {row_count} rows"
+                    tc.compact_result = f"{row_count} rows"
                 else:
-                    tc.output_preview = "\u2713 Query completed"
+                    tc.compact_result = "Query completed"
             else:
-                tc.output_preview = "\u2713 Query completed"
+                tc.compact_result = "Query completed"
     return tc
 
 
@@ -1187,11 +1451,11 @@ def _build_validate_semantic(action: ActionHistory, verbose: bool) -> ToolCallCo
             result = data.get("result")
             if isinstance(result, dict):
                 if result.get("valid"):
-                    tc.output_preview = "\u2713 Valid"
+                    tc.compact_result = "Valid"
                 else:
                     issues = result.get("issues", [])
                     count = len(issues) if isinstance(issues, list) else 0
-                    tc.output_preview = f"\u2717 {count} validation errors"
+                    tc.compact_result = f"{count} validation errors"
     return tc
 
 
@@ -1209,7 +1473,7 @@ def _build_attribution_analyze(action: ActionHistory, verbose: bool) -> ToolCall
             if isinstance(result, dict):
                 dims = result.get("selected_dimensions") or result.get("dimension_ranking", [])
                 count = len(dims) if isinstance(dims, list) else 0
-                tc.output_preview = f"\u2713 {count} dimensions analyzed"
+                tc.compact_result = f"{count} dimensions analyzed"
     return tc
 
 
@@ -1237,13 +1501,63 @@ def _build_read_file(action: ActionHistory, verbose: bool) -> ToolCallContent:
             else:
                 tc.output_lines = _format_result_only_markup(action.output)
     else:
-        data = parse_output_data(action.output)
-        if data:
-            result = data.get("result")
-            if isinstance(result, str):
-                line_count = len(result.split("\n"))
-                tc.output_preview = f"\u2713 {line_count} lines"
+        content = _extract_file_content(action.output)
+        if content is not None:
+            tc.compact_result = f"{len(content.splitlines()) or 1} lines"
+        else:
+            # Content pulled from another channel (e.g. summary) — just mark
+            # success so the user does not see an empty result line.
+            tc.compact_result = "read"
     return tc
+
+
+_FILE_BODY_KEYS = ("result", "content", "text", "body", "data", "output")
+
+
+def _extract_file_content(output_data) -> Optional[str]:
+    """Pull the raw file body out of a read_file action output.
+
+    Tries several known shapes because different SDKs / serializers wrap the
+    FuncToolResult differently:
+      - ``{"raw_output": {"result": "...body..."}}`` (FuncToolResult dict)
+      - ``{"raw_output": "{...json...}"}`` (pre-serialized FuncToolResult)
+      - ``{"raw_output": "body"}`` (raw file body already surfaced)
+      - ``{"result" | "content" | "text" | "body" | "data" | "output": "..."}``
+      - ``"body"`` (output_data itself is the body)
+    """
+    if output_data is None:
+        return None
+    if isinstance(output_data, str):
+        return output_data
+    if not isinstance(output_data, dict):
+        return None
+
+    # Direct string fields on the action output itself.
+    for key in _FILE_BODY_KEYS:
+        val = output_data.get(key)
+        if isinstance(val, str) and val:
+            return val
+
+    raw = output_data.get("raw_output")
+    if isinstance(raw, dict):
+        for key in _FILE_BODY_KEYS:
+            val = raw.get(key)
+            if isinstance(val, str):
+                return val
+        return None
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                for key in _FILE_BODY_KEYS:
+                    val = parsed.get(key)
+                    if isinstance(val, str):
+                        return val
+        except Exception:
+            pass
+        # Raw string that is not JSON — assume it is the file body itself.
+        return raw
+    return None
 
 
 def _build_glob(action: ActionHistory, verbose: bool) -> ToolCallContent:
@@ -1259,9 +1573,9 @@ def _build_glob(action: ActionHistory, verbose: bool) -> ToolCallContent:
             result = data.get("result")
             if isinstance(result, dict):
                 files = result.get("files", [])
-                tc.output_preview = f"\u2713 {len(files)} files found"
+                tc.compact_result = f"{len(files)} files found"
             elif isinstance(result, list):
-                tc.output_preview = f"\u2713 {len(result)} files found"
+                tc.compact_result = f"{len(result)} files found"
     return tc
 
 
@@ -1295,7 +1609,11 @@ def _build_grep(action: ActionHistory, verbose: bool) -> ToolCallContent:
             result = data.get("result")
             if isinstance(result, dict):
                 matches = result.get("matches", [])
-                tc.output_preview = f"\u2713 {len(matches)} matches"
+                file_count = len({m.get("file") for m in matches if isinstance(m, dict) and m.get("file")})
+                if file_count:
+                    tc.compact_result = f"{len(matches)} matches in {file_count} files"
+                else:
+                    tc.compact_result = f"{len(matches)} matches"
     return tc
 
 
@@ -1313,7 +1631,7 @@ def _build_list_document_nav(action: ActionHistory, verbose: bool) -> ToolCallCo
             if isinstance(result, dict):
                 platform = result.get("platform", "")
                 total_docs = result.get("total_docs", 0)
-                tc.output_preview = f"\u2713 {platform} \u2014 {total_docs} docs"
+                tc.compact_result = f"{platform} \u2014 {total_docs} docs"
     return tc
 
 
@@ -1331,7 +1649,7 @@ def _build_get_document(action: ActionHistory, verbose: bool) -> ToolCallContent
             if isinstance(result, dict):
                 title = result.get("title", "")
                 chunk_count = result.get("chunk_count", 0)
-                tc.output_preview = f"\u2713 {title} ({chunk_count} chunks)"
+                tc.compact_result = f"{title} ({chunk_count} chunks)"
     return tc
 
 
@@ -1348,7 +1666,7 @@ def _build_todo_read(action: ActionHistory, verbose: bool) -> ToolCallContent:
             result = data.get("result")
             if isinstance(result, dict):
                 total = result.get("total_lists", 0)
-                tc.output_preview = f"\u2713 {total} todo lists"
+                tc.compact_result = f"{total} todo lists"
     return tc
 
 
@@ -1371,7 +1689,7 @@ def _build_todo_update(action: ActionHistory, verbose: bool) -> ToolCallContent:
             if isinstance(result, dict):
                 item = result.get("updated_item", {})
                 status = item.get("status", "") if isinstance(item, dict) else ""
-                tc.output_preview = f"\u2713 {status}" if status else "\u2713 Updated"
+                tc.compact_result = f"{status}" if status else "Updated"
     return tc
 
 
@@ -1387,7 +1705,7 @@ def _build_check_exists(action: ActionHistory, verbose: bool) -> ToolCallContent
         if data:
             result = data.get("result")
             if isinstance(result, dict):
-                tc.output_preview = "\u2713 Exists" if result.get("exists") else "\u2713 Not found"
+                tc.compact_result = "Exists" if result.get("exists") else "Not found"
     return tc
 
 
@@ -1405,7 +1723,7 @@ def _build_end_generation(action: ActionHistory, verbose: bool) -> ToolCallConte
             if isinstance(result, dict):
                 files = result.get("semantic_model_files", [])
                 count = len(files) if isinstance(files, list) else 0
-                tc.output_preview = f"\u2713 {count} semantic models generated"
+                tc.compact_result = f"{count} semantic models generated"
     return tc
 
 
@@ -1420,7 +1738,7 @@ def _build_generate_sql_summary_id(action: ActionHistory, verbose: bool) -> Tool
 
 
 def _build_parse_dates(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """parse_temporal_expressions: show date expression count."""
+    """parse_temporal_expressions: show parsed date range when single, count otherwise."""
     tc = make_base_content(action)
     if verbose:
         tc.args_lines = extract_args_markup(action)
@@ -1432,8 +1750,19 @@ def _build_parse_dates(action: ActionHistory, verbose: bool) -> ToolCallContent:
             result = data.get("result")
             if isinstance(result, dict):
                 dates = result.get("extracted_dates", [])
-                count = len(dates) if isinstance(dates, list) else 0
-                tc.output_preview = f"\u2713 {count} date expressions"
+                if isinstance(dates, list) and len(dates) == 1 and isinstance(dates[0], dict):
+                    first = dates[0]
+                    start = first.get("start_date") or first.get("start") or first.get("date")
+                    end = first.get("end_date") or first.get("end")
+                    if start and end and start != end:
+                        tc.compact_result = f"{start} \u2192 {end}"
+                    elif start:
+                        tc.compact_result = str(start)
+                    else:
+                        tc.compact_result = "1 date expression"
+                else:
+                    count = len(dates) if isinstance(dates, list) else 0
+                    tc.compact_result = f"{count} date expressions"
     return tc
 
 
@@ -1451,7 +1780,7 @@ def _build_analyze_relationships(action: ActionHistory, verbose: bool) -> ToolCa
             if isinstance(result, dict):
                 rels = result.get("relationships", [])
                 count = len(rels) if isinstance(rels, list) else 0
-                tc.output_preview = f"\u2713 {count} relationships found"
+                tc.compact_result = f"{count} relationships found"
     return tc
 
 
@@ -1493,7 +1822,7 @@ def _build_get_multiple_ddl(action: ActionHistory, verbose: bool) -> ToolCallCon
         if data:
             result = data.get("result")
             if isinstance(result, list):
-                tc.output_preview = f"\u2713 {len(result)} DDLs retrieved"
+                tc.compact_result = f"{len(result)} DDLs retrieved"
     return tc
 
 
@@ -1511,7 +1840,7 @@ def _build_analyze_columns(action: ActionHistory, verbose: bool) -> ToolCallCont
             if isinstance(result, dict):
                 patterns = result.get("column_patterns", {})
                 count = len(patterns) if isinstance(patterns, dict) else 0
-                tc.output_preview = f"\u2713 {count} columns analyzed"
+                tc.compact_result = f"{count} columns analyzed"
     return tc
 
 
@@ -1585,13 +1914,13 @@ def _build_ask_user(action: ActionHistory, verbose: bool) -> ToolCallContent:
                     except Exception:
                         pass
                 if isinstance(result, list):
-                    tc.output_preview = f"\u2713 {len(result)} answer(s)"
+                    tc.compact_result = f"{len(result)} answer(s)"
                 else:
-                    tc.output_preview = "\u2713 Answered"
+                    tc.compact_result = "Answered"
             elif not data.get("success") and data.get("error"):
                 error = str(data["error"])
                 error = error[:50] + "..." if len(error) > 50 else error
-                tc.output_preview = f"\u2717 {error}"
+                tc.compact_result = f"{error}"
     return tc
 
 
@@ -1719,9 +2048,19 @@ class ToolCallContentBuilder:
         function_name = action.input.get("function_name", "") if action.input else ""
 
         if function_name in self._registry:
-            return self._registry[function_name](action, verbose)
+            tc = self._registry[function_name](action, verbose)
+        else:
+            tc = self._build_default(action, verbose)
 
-        return self._build_default(action, verbose)
+        if not verbose:
+            # Populate compact-layout fields if the per-tool builder skipped them.
+            set_tool_specific_args_summary(tc, action)
+            set_default_args_summary(tc, action)
+            if not tc.compact_result:
+                tc.compact_result = _strip_legacy_preview(tc.output_preview)
+            set_error_as_result(tc, action)
+
+        return tc
 
     def _build_default(self, action: ActionHistory, verbose: bool) -> ToolCallContent:
         """Default content building logic — no tool-specific knowledge."""

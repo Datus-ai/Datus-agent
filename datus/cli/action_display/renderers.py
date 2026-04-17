@@ -132,9 +132,8 @@ class ActionContentGenerator(BaseActionContentGenerator):
                 pass
             else:
                 tc = self.tool_content_builder.build(action, verbose=False)
-                output_preview = ""
-                if tc.output_preview:
-                    output_preview = f"\n    {tc.output_preview}"
+                preview = tc.compact_result or tc.output_preview
+                output_preview = f"\n    {preview}" if preview else ""
                 text += f" - {tc.status_mark}{output_preview}{tc.duration_str}"
 
         return text
@@ -707,10 +706,19 @@ class ActionRenderer:
             return result
         else:
             status_dot = "[green]\u23fa[/green]" if action.status == ActionStatus.SUCCESS else "[red]\u23fa[/red]"
-            header = f"\U0001f527 {rich_escape(tc.label)} - {tc.status_mark}{tc.duration_str}"
-            if tc.output_preview:
-                header += f"\n    {rich_escape(tc.output_preview)}"
-            return [Text.from_markup(f"{status_dot} {header}")]
+            header = f"\U0001f527 {rich_escape(tc.label)}({rich_escape(tc.args_summary)})"
+            if action.status == ActionStatus.SUCCESS:
+                mark = "[green]\u2713[/green]"
+            else:
+                mark = "[red]\u00d7[/red]"
+            result_text = tc.compact_result or tc.output_preview
+            dur = tc.duration_str.strip()  # "(<0.1s)" or "(12.4s)"
+            dur_suffix = f" \u00b7 [dim]{dur.strip('()')}[/dim]" if dur else ""
+            if result_text:
+                body = f"  \u2514\u2500 {mark} {rich_escape(result_text)}{dur_suffix}"
+            else:
+                body = f"  \u2514\u2500 {mark}{dur_suffix}"
+            return [Text.from_markup(f"{status_dot} {header}\n{body}")]
 
     @staticmethod
     def _parse_task_tool_input(input_data: dict) -> tuple:

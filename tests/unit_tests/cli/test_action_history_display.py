@@ -2567,7 +2567,7 @@ class TestGetToolOutputPreview:
             output_data={"raw_output": '{"result": [{"name": "t1"}, {"name": "t2"}]}'},
         )
         tc = _build_list_tables(action, verbose=False)
-        assert "2 tables" in tc.output_preview
+        assert "2 tables" in tc.compact_result
 
     def test_describe_table_function(self):
         """describe_table function shows column count via registered builder."""
@@ -2580,7 +2580,7 @@ class TestGetToolOutputPreview:
             output_data={"raw_output": '{"result": [{"col": "a"}, {"col": "b"}, {"col": "c"}]}'},
         )
         tc = _build_describe_table(action, verbose=False)
-        assert "3 columns" in tc.output_preview
+        assert "3 columns" in tc.compact_result
 
     def test_error_output(self):
         """Failed output with error message shows failure."""
@@ -2641,7 +2641,7 @@ class TestGetToolOutputPreview:
             output_data={"raw_output": '{"original_rows": 42}'},
         )
         tc = _build_read_query(action, verbose=False)
-        assert "42 rows" in tc.output_preview
+        assert "42 rows" in tc.compact_result
 
     def test_search_table_function(self):
         """search_table function shows metadata and sample counts via registered builder."""
@@ -2654,8 +2654,8 @@ class TestGetToolOutputPreview:
             output_data={"raw_output": '{"metadata": [{"t": 1}, {"t": 2}], "sample_data": [{"r": 1}]}'},
         )
         tc = _build_search_table(action, verbose=False)
-        assert "2 tables" in tc.output_preview
-        assert "1 sample rows" in tc.output_preview
+        assert "2 tables" in tc.compact_result
+        assert "1 sample rows" in tc.compact_result
 
     def test_search_metrics_function(self):
         """search_metrics function shows metrics count via registered builder."""
@@ -2668,7 +2668,7 @@ class TestGetToolOutputPreview:
             output_data={"result": [1, 2]},
         )
         tc = _build_search_metrics(action, verbose=False)
-        assert "metrics" in tc.output_preview
+        assert "metrics" in tc.compact_result
 
     def test_search_reference_sql_function(self):
         """search_reference_sql function shows SQL count via registered builder."""
@@ -2681,7 +2681,7 @@ class TestGetToolOutputPreview:
             output_data={"result": [1]},
         )
         tc = _build_search_reference_sql(action, verbose=False)
-        assert "reference SQLs" in tc.output_preview
+        assert "reference SQLs" in tc.compact_result
 
     def test_search_external_knowledge_function(self):
         """search_external_knowledge function shows knowledge count via registered builder."""
@@ -2694,7 +2694,7 @@ class TestGetToolOutputPreview:
             output_data={"result": [1]},
         )
         tc = _build_search_external_knowledge(action, verbose=False)
-        assert "knowledge entries" in tc.output_preview
+        assert "knowledge entries" in tc.compact_result
 
     def test_search_documents_function(self):
         """search_documents function shows document count via registered builder."""
@@ -2707,7 +2707,7 @@ class TestGetToolOutputPreview:
             output_data={"result": [1]},
         )
         tc = _build_search_documents(action, verbose=False)
-        assert "documents" in tc.output_preview
+        assert "documents" in tc.compact_result
 
     def test_generic_success_fallback(self):
         """Generic success output without items shows 'Success'."""
