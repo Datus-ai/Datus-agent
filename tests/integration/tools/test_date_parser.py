@@ -21,23 +21,17 @@ def agent_config():
 @pytest.fixture
 def date_parser_cn(agent_config):
     """Create Chinese date parser instance"""
-    try:
-        model = LLMBaseModel.create_model(agent_config)
-        parser = DateParserTool(language="zh")
-        return parser, model
-    except Exception as e:
-        pytest.skip(f"Date parser initialization failed: {e}")
+    model = LLMBaseModel.create_model(agent_config)
+    parser = DateParserTool(language="zh")
+    return parser, model
 
 
 @pytest.fixture
 def date_parser_en(agent_config):
     """Create English date parser instance"""
-    try:
-        model = LLMBaseModel.create_model(agent_config)
-        parser = DateParserTool(language="en")
-        return parser, model
-    except Exception as e:
-        pytest.skip(f"Date parser initialization failed: {e}")
+    model = LLMBaseModel.create_model(agent_config)
+    parser = DateParserTool(language="en")
+    return parser, model
 
 
 def _assert_date_results(results, test_case):
@@ -152,6 +146,7 @@ class TestChineseDateParser:
     def test_chinese_expressions(self, chinese_expressions_test_cases, date_parser_cn):
         """Test Chinese temporal expressions parsing"""
         parser, model = date_parser_cn
+        assert chinese_expressions_test_cases, "test fixture produced no cases"
         for test_case in chinese_expressions_test_cases:
             results = parser.extract_and_parse_dates(test_case["text"], test_case["reference"], model)
             _assert_date_results(results, test_case)
@@ -160,6 +155,7 @@ class TestChineseDateParser:
     def test_mixed_expressions(self, mixed_expressions_test_cases_cn, date_parser_cn):
         """Test mixed Chinese temporal expressions parsing"""
         parser, model = date_parser_cn
+        assert mixed_expressions_test_cases_cn, "test fixture produced no cases"
         for test_case in mixed_expressions_test_cases_cn:
             results = parser.extract_and_parse_dates(test_case["text"], test_case["reference"], model)
             _assert_date_results(results, test_case)
@@ -254,6 +250,7 @@ class TestEnglishDateParser:
     def test_english_expressions(self, english_expressions_test_cases, date_parser_en):
         """Test English temporal expressions parsing"""
         parser, model = date_parser_en
+        assert english_expressions_test_cases, "test fixture produced no cases"
         for test_case in english_expressions_test_cases:
             results = parser.extract_and_parse_dates(test_case["text"], test_case["reference"], model)
             _assert_date_results(results, test_case)
@@ -262,6 +259,7 @@ class TestEnglishDateParser:
     def test_mixed_expressions(self, mixed_expressions_test_cases_en, date_parser_en):
         """Test mixed English temporal expressions parsing"""
         parser, model = date_parser_en
+        assert mixed_expressions_test_cases_en, "test fixture produced no cases"
         for test_case in mixed_expressions_test_cases_en:
             results = parser.extract_and_parse_dates(test_case["text"], test_case["reference"], model)
             _assert_date_results(results, test_case)
