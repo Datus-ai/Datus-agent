@@ -140,9 +140,8 @@ def create_rdb_for_store(store_db_name: str, project: str) -> RdbDatabase:
 
         logger.warning(
             "create_rdb_for_store called with empty project (store_db_name=%s); "
-            "falling back to the legacy un-sharded layout. Caller stack:\n%s",
+            "falling back to the legacy un-sharded layout.",
             store_db_name,
-            "".join(traceback.format_stack()),
         )
     backend = _get_rdb_backend()
     return backend.connect(project, store_db_name)

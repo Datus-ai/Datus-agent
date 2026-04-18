@@ -5,9 +5,6 @@ agent:
   target: deepseek
   project_root: .datus_test_data/workspace
 
-  # Note: knowledge_base_home is deprecated. Knowledge-base content is now
-  # anchored to {cwd}/subject/ automatically; this field is accepted but ignored
-  # (a DeprecationWarning is emitted when set).
   models:
     deepseek:
       type: deepseek

@@ -62,13 +62,10 @@ class TestDatusPathManagerInit:
         pm = DatusPathManager(datus_home=str(tmp_path / "home"))
         assert pm.project_root == tmp_path.resolve()
 
-    def test_knowledge_base_home_defaults_to_datus_home(self, tmp_path):
-        pm = DatusPathManager(datus_home=str(tmp_path / "datus"))
-        assert pm.knowledge_base_home == pm.datus_home
-
-    def test_knowledge_base_home_empty_string_falls_back_to_datus_home(self, tmp_path):
-        pm = DatusPathManager(datus_home=str(tmp_path / "datus"), knowledge_base_home="")
-        assert pm.knowledge_base_home == pm.datus_home
+    def test_knowledge_base_home_kwarg_no_longer_accepted(self, tmp_path):
+        """The legacy kwarg was removed; passing it should fail loudly."""
+        with pytest.raises(TypeError):
+            DatusPathManager(datus_home=str(tmp_path / "datus"), knowledge_base_home="")
 
 
 class TestDatusPathManagerProperties:

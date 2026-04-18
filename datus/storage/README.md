@@ -43,7 +43,7 @@ Key features:
 class BaseEmbeddingStore(StorageBase):
     def __init__(
         self,
-        scope: str,
+        project: str,
         table_name: str,
         embedding_model: EmbeddingModel,
         on_duplicate_columns: str = "vector",
@@ -64,9 +64,9 @@ from datus.storage.base import BaseEmbeddingStore
 from datus.storage.embedding_models import EmbeddingModel
 
 class MyStorage(BaseEmbeddingStore):
-    def __init__(self, scope: str, embedding_model: EmbeddingModel):
+    def __init__(self, project: str, embedding_model: EmbeddingModel):
         super().__init__(
-            scope=scope,
+            project=project,
             table_name="my_table",
             embedding_model=embedding_model,
             schema=pa.schema([
@@ -197,9 +197,9 @@ The [SchemaStorage](schema_metadata/store.py) class in [schema_metadata/store.py
 
 ```python
 class SchemaStorage(BaseMetadataStorage):
-    def __init__(self, scope: str, embedding_model: EmbeddingModel):
+    def __init__(self, project: str, embedding_model: EmbeddingModel):
         super().__init__(
-            scope=scope,
+            project=project,
             table_name="schema_metadata",
             embedding_model=embedding_model,
             vector_source_name="definition",

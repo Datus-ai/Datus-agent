@@ -16,9 +16,6 @@ agent:
   # symlinks, monorepo subdirs, or CI sandboxes that should share the same
   # sessions/data shards.  Must match ``^[a-zA-Z0-9_-]+$`` and be ≤ 200 chars.
   # project_name: my_project
-  #
-  # ``knowledge_base_home`` is deprecated and ignored — KB content is anchored
-  # to ``{cwd}/subject/`` automatically.
   target: anthropic
   models:
     openai:

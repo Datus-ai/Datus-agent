@@ -63,7 +63,6 @@ def agent_config(tmp_path):
     cfg.path_manager.ext_knowledge_path.return_value = subject_dir / "ext_knowledge"
     # Real value so _resolve_path's realpath/commonpath containment check works.
     cfg.path_manager.subject_dir = subject_dir
-    cfg.path_manager.knowledge_base_home = subject_dir
     return cfg
 
 

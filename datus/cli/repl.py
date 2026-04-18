@@ -1108,29 +1108,6 @@ class DatusCLI:
         self.selected_catalog_path = selected_path
         self.selected_catalog_data = selected_data
 
-    def _confirm_trust_directory(self):
-        """Ask user to trust the current working directory for filesystem operations.
-
-        Similar to Claude Code's directory trust prompt. The agent can read/write
-        files in the trusted directory (used by skills like /init).
-        """
-        import os
-
-        cwd = os.getcwd()
-        self.console.print(f"\n[bold]Working directory:[/bold] {cwd}")
-
-        from rich.prompt import Confirm
-
-        trust = Confirm.ask("Do you trust files in this directory?", default=True)
-        if not trust:
-            # Fall back to ~/.datus/workspace (safe default)
-            fallback = os.path.expanduser("~/.datus/workspace")
-            os.makedirs(fallback, exist_ok=True)
-            self.console.print(f"[dim]Using {fallback} as workspace instead.[/dim]")
-            # Redirect project_root so filesystem tools / _resolve_workspace_root use fallback.
-            if hasattr(self.agent_config, "project_root"):
-                self.agent_config.project_root = fallback
-
     def _print_welcome(self):
         """Print the welcome message."""
         welcome_text = """

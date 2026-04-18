@@ -423,10 +423,15 @@ class LanceVectorBackend(BaseVectorBackend):
         self._isolation = IsolationType(config.get("isolation", IsolationType.PHYSICAL.value))
 
     def connect(self, project: str = "") -> LanceVectorDatabase:
+        if self._isolation == IsolationType.LOGICAL and not project:
+            raise DatusException(
+                ErrorCode.STORAGE_FAILED,
+                message="project is required when logical isolation is enabled.",
+            )
         safe_project = _safe_path_segment(project, "project") if project else ""
         if self._isolation == IsolationType.LOGICAL:
             raw_db = lancedb.connect(os.path.join(self._data_dir, "datus_db"))
-            return LanceVectorDatabase(raw_db, isolation=self._isolation, datasource_id=safe_project or None)
+            return LanceVectorDatabase(raw_db, isolation=self._isolation, datasource_id=safe_project)
         parts = [self._data_dir]
         if safe_project:
             parts.append(safe_project)

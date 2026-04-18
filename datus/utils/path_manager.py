@@ -24,11 +24,19 @@ Storage layout (refactored):
   — global, shared across projects.
 """
 
+import re
 from contextvars import ContextVar, Token
 from pathlib import Path
 from typing import Any, Optional, Union
 
 PathLike = Union[str, Path]
+
+# Defense-in-depth guard for the project_name path segment.  AgentConfig already
+# validates or normalizes project_name before it reaches the path manager, but
+# this class is a public API and takes project_name directly in tests/SaaS
+# callers, so we re-check to keep ``~/.datus/data/{project_name}`` and
+# ``~/.datus/sessions/{project_name}`` safely sandboxed.
+_PROJECT_NAME_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
 
 
 class DatusPathManager:
@@ -48,7 +56,6 @@ class DatusPathManager:
     def __init__(
         self,
         datus_home: Optional[PathLike] = None,
-        knowledge_base_home: Optional[PathLike] = None,
         project_name: Optional[str] = None,
         project_root: Optional[PathLike] = None,
     ):
@@ -57,9 +64,6 @@ class DatusPathManager:
 
         Args:
             datus_home: Custom .datus root directory. If None, defaults to ~/.datus
-            knowledge_base_home: Deprecated. Retained for backward compatibility only.
-                Knowledge-base directories are now anchored to ``project_root/subject/``
-                and this parameter no longer influences their location.
             project_name: Logical project identifier used to shard ``sessions/`` and
                 ``data/`` under ``datus_home``. Callers should pass a sanitized name
                 (e.g. via ``datus.configuration.agent_config._normalize_project_name``).
@@ -69,22 +73,22 @@ class DatusPathManager:
                 ``subject/`` tree and ``.datus/skills``). Defaults to ``Path.cwd()``.
         """
         self._datus_home = self.resolve_home(datus_home)
-        # Legacy field: kept only so external reads of ``knowledge_base_home`` do
-        # not break. Knowledge-base dirs no longer derive from this value.
-        if knowledge_base_home:
-            import warnings
-
-            warnings.warn(
-                "DatusPathManager(knowledge_base_home=...) is deprecated and no longer "
-                "influences KB paths; KB content is anchored under {project_root}/subject/.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            self._knowledge_base_home = Path(knowledge_base_home).expanduser().resolve()
-        else:
-            self._knowledge_base_home = self._datus_home
-        self._project_name = project_name or ""
+        self._project_name = self._validate_project_name_segment(project_name)
         self._project_root = Path(project_root).expanduser().resolve() if project_root else Path.cwd().resolve()
+
+    @staticmethod
+    def _validate_project_name_segment(project_name: Optional[str]) -> str:
+        """Reject project names that would escape or reshape the shard directory."""
+        if not project_name:
+            return ""
+        if not _PROJECT_NAME_SEGMENT_RE.match(project_name):
+            raise ValueError(
+                f"Invalid project_name {project_name!r}: must match "
+                f"{_PROJECT_NAME_SEGMENT_RE.pattern} (no path separators or traversal "
+                f"components). Sanitize via datus.configuration.agent_config."
+                f"_normalize_project_name before constructing DatusPathManager."
+            )
+        return project_name
 
     @staticmethod
     def resolve_home(datus_home: Optional[PathLike] = None) -> Path:
@@ -109,21 +113,11 @@ class DatusPathManager:
             stacklevel=2,
         )
         self._datus_home = self.resolve_home(new_home)
-        # Reset knowledge_base_home to match so stale KB paths from a prior tenant don't leak.
-        self._knowledge_base_home = self._datus_home
 
     @property
     def datus_home(self) -> Path:
         """Root .datus directory path"""
         return self._datus_home
-
-    @property
-    def knowledge_base_home(self) -> Path:
-        """Deprecated. Returns ``datus_home``; knowledge-base dirs are anchored to
-        ``project_root/subject/`` and no longer follow this value. Retained so
-        downstream callers that read the property keep working.
-        """
-        return self._knowledge_base_home
 
     @property
     def project_name(self) -> str:
@@ -448,7 +442,8 @@ class DatusPathManager:
 # Context-local path manager for legacy helpers that do not receive ``AgentConfig`` directly.
 # Unlike the previous process-wide fallback, this does not leak across threads/tasks.
 # We store the full ``DatusPathManager`` instance (not just the home path string) so that
-# ``knowledge_base_home`` and any other instance-level state survives the ContextVar round-trip.
+# ``project_name`` / ``project_root`` and any other instance-level state survives the
+# ContextVar round-trip.
 _current_path_manager: ContextVar[Optional["DatusPathManager"]] = ContextVar("datus_current_path_manager", default=None)
 
 
@@ -459,8 +454,8 @@ def set_current_path_manager(
 ) -> Token:
     """Set the current context-local path manager used by ``get_path_manager()``.
 
-    The full ``DatusPathManager`` instance is stored, so ``knowledge_base_home`` and
-    any instance-level state is preserved for implicit callers.
+    The full ``DatusPathManager`` instance is stored, so ``project_name`` /
+    ``project_root`` and any instance-level state is preserved for implicit callers.
     """
     if path_manager is None and agent_config is not None:
         path_manager = getattr(agent_config, "path_manager", None)

@@ -417,17 +417,6 @@ class AgentConfig:
         """
         # Resolve home early so dependent helpers can use a stable path manager.
         self.home = kwargs.get("home", "~/.datus")
-        self.knowledge_base_home = kwargs.get("knowledge_base_home")
-        if self.knowledge_base_home:
-            import warnings
-
-            warnings.warn(
-                "agent.knowledge_base_home is deprecated; knowledge-base content "
-                "(semantic_models, sql_summaries, ext_knowledge) is now anchored to "
-                "{cwd}/subject/. The setting is ignored.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
         # project_name must be computed before _set_path_manager so shard-aware
         # directories (sessions/, data/) bind to the right project.  When the
         # user explicitly sets ``agent.project_name`` in YAML we must validate
@@ -444,7 +433,7 @@ class AgentConfig:
         else:
             self._project_name = _normalize_project_name(str(resolved_project_root))
         self._project_root = resolved_project_root
-        self._set_path_manager(self.home, self.knowledge_base_home)
+        self._set_path_manager(self.home)
         models_raw = kwargs["models"]
         self.target = kwargs["target"]
         self.models = {name: load_model_config(cfg) for name, cfg in models_raw.items()}
@@ -598,15 +587,15 @@ class AgentConfig:
 
     @property
     def project_root(self) -> str:
-        """Absolute project root directory (defaults to the CWD at launch)."""
-        return str(self._project_root)
+        """Immutable project root directory (defaults to the CWD at launch).
 
-    @project_root.setter
-    def project_root(self, value: str) -> None:
-        resolved = Path(value).expanduser().resolve()
-        self._project_root = resolved
-        if getattr(self, "path_manager", None) is not None:
-            self.path_manager._project_root = resolved
+        Pinned at construction time for the same reason as ``project_name``:
+        the CLI runs a single project per process, and SaaS callers spin up a
+        fresh ``AgentConfig`` per tenant.  Callers that want to redirect KB
+        content should construct a new ``AgentConfig`` with the desired
+        ``project_root=`` kwarg instead of mutating it at runtime.
+        """
+        return str(self._project_root)
 
     @property
     def current_namespace(self) -> str:
@@ -874,14 +863,9 @@ class AgentConfig:
 
     def override_by_args(self, **kwargs):
         home_override = kwargs.get("home")
-        knowledge_base_home_override = kwargs.get("knowledge_base_home")
-        # Use truthy checks for both so empty strings are consistently ignored.
-        if home_override or knowledge_base_home_override:
-            if home_override:
-                self.home = home_override
-            if knowledge_base_home_override:
-                self.knowledge_base_home = knowledge_base_home_override
-            self._set_path_manager(self.home, self.knowledge_base_home)
+        if home_override:
+            self.home = home_override
+            self._set_path_manager(self.home)
             self._init_dirs()
         # storage_path parameter has been deprecated - data path is now fixed at {home}/data
         if "storage_path" in kwargs and kwargs["storage_path"] is not None:
@@ -953,12 +937,11 @@ class AgentConfig:
 
         return str(self.path_manager.benchmark_dir / config.benchmark_path)
 
-    def _set_path_manager(self, home: str, knowledge_base_home: Optional[str] = None) -> None:
+    def _set_path_manager(self, home: str) -> None:
         from datus.utils.path_manager import DatusPathManager, set_current_path_manager
 
         self.path_manager = DatusPathManager(
             home,
-            knowledge_base_home=knowledge_base_home,
             project_name=self._project_name,
             project_root=self._project_root,
         )

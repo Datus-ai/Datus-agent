@@ -122,8 +122,8 @@ class FilesystemFuncTool(BaseTool):
 
         Uses ``Path.relative_to`` instead of string ``startswith`` so that
         sibling directories whose names share the root's prefix (e.g. a
-        ``knowledge_base_home_backup`` sitting next to ``knowledge_base_home``)
-        can't be mistaken for an in-sandbox path via ``../`` traversal.
+        ``subject_backup`` sitting next to ``subject``) can't be mistaken
+        for an in-sandbox path via ``../`` traversal.
         """
         try:
             root = Path(self.config.root_path).resolve()

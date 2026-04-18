@@ -51,9 +51,8 @@ bash build_scripts/build_test_data.sh       # Build test knowledge base
 - **`project_name` derivation**: `os.getcwd().replace("/", "-").lstrip("-")`
   (falls back to `_root` for empty / root `/`; truncates long paths with a
   7-char md5 suffix). See `datus.configuration.agent_config._normalize_project_name`.
-- **`agent.knowledge_base_home`**: deprecated. KB content is now anchored to
-  `{cwd}/subject/`; the YAML field is accepted but emits a `DeprecationWarning`
-  and has no effect.
+- **`agent.knowledge_base_home`**: removed. KB content is anchored to
+  `{project_root}/subject/`; the YAML field is silently ignored if left in.
 
 ### Adding a New Node
 

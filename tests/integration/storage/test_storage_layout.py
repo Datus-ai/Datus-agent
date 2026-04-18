@@ -62,9 +62,13 @@ class TestStorageLayoutIntegration:
         assert cfg_b.path_manager.subject_dir == proj_b_root.resolve() / "subject"
         assert cfg_a.path_manager.subject_dir != cfg_b.path_manager.subject_dir
 
-        # data/ and sessions/ diverge by project_name under the shared home.
-        assert cfg_a.path_manager.data_dir == datus_home.resolve() / "data" / "proj_a"
-        assert cfg_b.path_manager.data_dir == datus_home.resolve() / "data" / "proj_b"
+        # data/ is the shared backend root; per-project sharding is exposed via
+        # project_data_dir (backend.connect(project) appends the shard later).
+        assert cfg_a.path_manager.data_dir == datus_home.resolve() / "data"
+        assert cfg_b.path_manager.data_dir == datus_home.resolve() / "data"
+        assert cfg_a.path_manager.project_data_dir == datus_home.resolve() / "data" / "proj_a"
+        assert cfg_b.path_manager.project_data_dir == datus_home.resolve() / "data" / "proj_b"
+        # sessions/ is directly sharded by project_name (no backend indirection).
         assert cfg_a.path_manager.sessions_dir == datus_home.resolve() / "sessions" / "proj_a"
         assert cfg_b.path_manager.sessions_dir == datus_home.resolve() / "sessions" / "proj_b"
 
@@ -114,7 +118,8 @@ class TestStorageLayoutIntegration:
 
         expected = _normalize_project_name(str(tmp_path))
         assert cfg.project_name == expected
-        assert cfg.path_manager.data_dir == datus_home.resolve() / "data" / expected
+        assert cfg.path_manager.data_dir == datus_home.resolve() / "data"
+        assert cfg.path_manager.project_data_dir == datus_home.resolve() / "data" / expected
         assert cfg.path_manager.sessions_dir == datus_home.resolve() / "sessions" / expected
 
 

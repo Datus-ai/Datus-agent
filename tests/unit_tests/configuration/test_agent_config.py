@@ -459,7 +459,7 @@ class TestNormalizeProjectName:
 class TestAgentConfigProjectLayout:
     """Verify AgentConfig derives project-aware storage paths correctly."""
 
-    def _make(self, tmp_path, *, project_name=None, project_root=None, knowledge_base_home=None):
+    def _make(self, tmp_path, *, project_name=None, project_root=None, **extra_kwargs):
         from datus.configuration.agent_config import AgentConfig, NodeConfig
 
         kwargs = dict(
@@ -480,8 +480,7 @@ class TestAgentConfigProjectLayout:
             kwargs["project_name"] = project_name
         if project_root is not None:
             kwargs["project_root"] = str(project_root)
-        if knowledge_base_home is not None:
-            kwargs["knowledge_base_home"] = knowledge_base_home
+        kwargs.update(extra_kwargs)
         return AgentConfig(**kwargs)
 
     def test_sessions_and_data_sharded_by_project_name(self, tmp_path):
@@ -513,14 +512,17 @@ class TestAgentConfigProjectLayout:
         assert cfg.project_name
         assert "/" not in cfg.project_name
 
-    def test_knowledge_base_home_deprecation_warning(self, tmp_path):
-        import warnings
-
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            self._make(tmp_path, knowledge_base_home=str(tmp_path / "ignored_kb"))
-
-        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
+    def test_knowledge_base_home_kwarg_silently_ignored(self, tmp_path):
+        """Removed setting: passing it via YAML/kwargs is silently dropped (no raise, no effect)."""
+        cfg = self._make(
+            tmp_path,
+            project_name="demo_project",
+            project_root=tmp_path / "my_project",
+            knowledge_base_home=str(tmp_path / "ignored_kb"),
+        )
+        # KB still anchors to project_root/subject — kwarg is dropped.
+        assert cfg.path_manager.subject_dir == (tmp_path / "my_project").resolve() / "subject"
+        assert not hasattr(cfg, "knowledge_base_home")
 
     def test_project_name_is_read_only(self, tmp_path):
         """project_name is immutable post-construction; no runtime switching."""
