@@ -47,8 +47,6 @@ def _safe_ident(name: str) -> str:
 
 def _safe_path_segment(value: str, field_name: str) -> str:
     """Validate a filesystem path segment to prevent directory traversal."""
-    if not value:
-        return value
     if not _SEGMENT_RE.fullmatch(value):
         raise DatusException(
             ErrorCode.STORAGE_FAILED,
@@ -142,8 +140,7 @@ class SqliteRdbDatabase(RdbDatabase):
     """SQLite implementation of database-level handle.
 
     SQLite only supports PHYSICAL project isolation (per-project ``.db``
-    file under ``{data_dir}/{project}/datus_db/``); there is no LOGICAL
-    row-level partitioning in this backend.
+    file under ``{data_dir}/{project}/datus_db/``).
     """
 
     def __init__(self, db_file: str) -> None:
@@ -366,13 +363,10 @@ class SqliteRdbBackend(BaseRdbBackend):
     """SQLite backend — stateless producer of ``SqliteRdbDatabase`` instances.
 
     Project isolation is PHYSICAL only: each project gets its own on-disk
-    ``.db`` file at ``{data_dir}/{project}/datus_db/{store_db_name}.db``
-    (falls back to ``{data_dir}/datus_db/{store_db_name}.db`` when
-    ``project`` is empty). The backend itself does not remember a project;
-    the caller passes one on every ``connect()`` so a single instance can
-    serve many projects. SQLite does not support LOGICAL row-level
-    partitioning — pick the ``postgresql`` backend (or another pg-like
-    backend) if you need row-level tenant isolation.
+    ``.db`` file at ``{data_dir}/{project}/datus_db/{store_db_name}.db``.
+    ``project`` must be non-empty; the backend itself does not remember a
+    project, so the caller passes one on every ``connect()`` and a single
+    instance can serve many projects.
     """
 
     def __init__(self):
@@ -382,13 +376,14 @@ class SqliteRdbBackend(BaseRdbBackend):
         self._data_dir = config.get("data_dir", "")
 
     def connect(self, project: str, store_db_name: str) -> SqliteRdbDatabase:
+        if not project:
+            raise DatusException(
+                ErrorCode.STORAGE_FAILED,
+                message="SqliteRdbBackend.connect() requires a non-empty project.",
+            )
+        safe_project = _safe_path_segment(project, "project")
         safe_store = _safe_path_segment(store_db_name, "store_db_name")
-        safe_project = _safe_path_segment(project, "project") if project else ""
-        parts = [self._data_dir]
-        if safe_project:
-            parts.append(safe_project)
-        parts.extend(["datus_db", f"{safe_store}.db"])
-        return SqliteRdbDatabase(os.path.join(*parts))
+        return SqliteRdbDatabase(os.path.join(self._data_dir, safe_project, "datus_db", f"{safe_store}.db"))
 
     def close(self) -> None:
         pass  # SQLite connections are opened/closed per operation

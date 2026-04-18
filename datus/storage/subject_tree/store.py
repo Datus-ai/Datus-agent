@@ -77,16 +77,13 @@ class SubjectTreeStore:
     Implements adjacency list model for tree structure.
     """
 
-    def __init__(self, project: str = ""):
+    def __init__(self, project: str):
         """Initialize SubjectTreeStore.
 
         Args:
             project: Project identifier used by the underlying RDB backend for
-                isolation.  Leave empty to use the global project configured
-                via :func:`datus.storage.backend_holder.init_backends`.  The
-                backend owns the isolation strategy (sqlite uses a
-                ``{project}/`` subdirectory; other backends may use a schema
-                name or ignore it).
+                isolation. Must be non-empty; the backend rejects empty
+                identifiers.
 
         Reads ``table_prefix``, ``extra_fields``, and ``scope_indices`` from
         the storage registry defaults (set via ``configure_storage_defaults()``).

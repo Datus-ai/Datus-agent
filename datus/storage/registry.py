@@ -6,9 +6,8 @@
 Storage registry with per-project LRU cache.
 
 Each (factory, project) pair gets its own storage instance with an isolated
-VectorDatabase connection. Multi-project isolation is handled at the
-backend level: PHYSICAL mode uses per-project directories, LOGICAL mode
-uses row-level ``datasource_id = <project>`` filtering on a shared db.
+VectorDatabase connection. Project isolation is PHYSICAL: each project gets
+its own directory under ``{data_dir}/{project}/``.
 """
 
 from __future__ import annotations
@@ -67,13 +66,12 @@ def get_storage_defaults() -> Dict[str, Any]:
 @lru_cache(maxsize=128)
 def _get_storage_cached(factory_name: str, embedding_model_conf_name: str, project: str) -> BaseEmbeddingStore:
     """LRU-cached storage creation, keyed by (factory, embedding model, project)."""
+    from datus.storage.backend_holder import create_vector_connection
+
     with _registry_lock:
         factory = _factory_registry[factory_name]
     kwargs = dict(_storage_defaults)
-    if project:
-        from datus.storage.backend_holder import create_vector_connection
-
-        kwargs["db"] = create_vector_connection(project)
+    kwargs["db"] = create_vector_connection(project)
 
     store = factory(get_embedding_model(embedding_model_conf_name), **kwargs)
     from datus.storage.subject_tree.store import BaseSubjectEmbeddingStore
@@ -86,13 +84,13 @@ def _get_storage_cached(factory_name: str, embedding_model_conf_name: str, proje
 def get_storage(
     factory: Callable[..., BaseEmbeddingStore],
     embedding_model_conf_name: str,
-    project: str = "",
+    project: str,
 ) -> BaseEmbeddingStore:
     """Return a storage instance scoped to *project*.
 
-    Project isolation semantics are owned by the active storage backend:
-      * PHYSICAL — per-project directory under ``{data_dir}/{project}/``
-      * LOGICAL — shared db with ``datasource_id = project`` row filter
+    Project isolation is PHYSICAL: each project gets a per-project directory
+    under ``{data_dir}/{project}/``. ``project`` must be non-empty and is
+    forwarded to the backend ``connect()`` call.
 
     Uses an LRU cache (maxsize=128) so that inactive projects are evicted.
     Global defaults set via ``configure_storage_defaults()`` are
@@ -111,15 +109,15 @@ def _get_subject_tree_cached(project: str) -> "SubjectTreeStore":
     return SubjectTreeStore(project=project)
 
 
-def get_subject_tree_store(project: str = "") -> "SubjectTreeStore":
+def get_subject_tree_store(project: str) -> "SubjectTreeStore":
     """Return a SubjectTreeStore instance (LRU-cached per project)."""
     return _get_subject_tree_cached(project)
 
 
 def preload_all_storages(
+    project: str,
     data_dir: str = "",
     config: Optional[StorageBackendConfig] = None,
-    project: str = "",
     **defaults: Any,
 ) -> None:
     """One-stop initialization: backends + defaults + all storage singletons.
@@ -128,14 +126,13 @@ def preload_all_storages(
     eager loading of every storage singleton into a single call.
 
     Args:
+        project: Project identifier for per-project isolation, forwarded
+            to every storage factory.  Must be non-empty.
         data_dir: Root data directory for file-based backends (e.g.
             ``~/.datus/data``).  Passed to ``init_backends()``.
         config: Storage backend configuration. Controls which RDB
             (sqlite/postgresql) and vector (lance) backends are used.
             Defaults to sqlite + lance if omitted.
-        project: Project identifier for per-project isolation, forwarded
-            to every storage factory.  Leave empty in SaaS deployments
-            that pre-shard ``data_dir`` at a higher layer.
         **defaults: Deployment-level defaults forwarded to
             ``configure_storage_defaults()`` and then to every
             storage constructor (e.g. ``table_prefix="tb_"``).

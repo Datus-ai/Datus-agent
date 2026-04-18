@@ -17,6 +17,7 @@ from datus_storage_base.backend_config import StorageBackendConfig
 from datus_storage_base.rdb.base import BaseRdbBackend, RdbDatabase
 from datus_storage_base.vector.base import VectorDatabase
 
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -124,24 +125,20 @@ def create_rdb_for_store(store_db_name: str, project: str) -> RdbDatabase:
     """Create an RDB database handle for *store_db_name* scoped to *project*.
 
     The backend singleton is reused; ``connect()`` produces a per-store,
-    per-project database handle. ``project`` participates in path isolation
-    (PHYSICAL) or row-level partitioning (LOGICAL) per the backend's
-    ``isolation`` setting.
+    per-project database handle. ``project`` is a path component (PHYSICAL
+    isolation) and must be non-empty.
 
     Args:
         store_db_name: Logical store name (e.g. ``"subject_tree"``).
-        project: Project identifier; should be non-empty to avoid
-            cross-tenant bleed (empty values fall back to the legacy
-            un-sharded layout, which is only safe when the process only
-            ever handles a single tenant).
+        project: Project identifier; must be non-empty.
+
+    Raises:
+        DatusException: when ``project`` is empty.
     """
     if not project:
-        import traceback
-
-        logger.warning(
-            "create_rdb_for_store called with empty project (store_db_name=%s); "
-            "falling back to the legacy un-sharded layout.",
-            store_db_name,
+        raise DatusException(
+            ErrorCode.STORAGE_FAILED,
+            message=f"create_rdb_for_store requires a non-empty project (store_db_name={store_db_name!r}).",
         )
     backend = _get_rdb_backend()
     return backend.connect(project, store_db_name)
@@ -152,19 +149,16 @@ def create_vector_connection(project: str) -> VectorDatabase:
 
     Args:
         project: Project identifier passed to the backend's ``connect()``
-            first argument. LOGICAL-mode backends translate this into a
-            ``datasource_id``-style row filter; PHYSICAL-mode backends
-            treat it as a path component. Should be non-empty; empty
-            strings fall back to the legacy un-sharded layout and are
-            only safe in single-tenant processes.
+            first argument; the backend uses it as a path component for
+            per-project isolation. Must be non-empty.
+
+    Raises:
+        DatusException: when ``project`` is empty.
     """
     if not project:
-        import traceback
-
-        logger.warning(
-            "create_vector_connection called with empty project; falling back "
-            "to the legacy un-sharded layout. Caller stack:\n%s",
-            "".join(traceback.format_stack()),
+        raise DatusException(
+            ErrorCode.STORAGE_FAILED,
+            message="create_vector_connection requires a non-empty project.",
         )
     backend = get_vector_backend()
     return backend.connect(project)

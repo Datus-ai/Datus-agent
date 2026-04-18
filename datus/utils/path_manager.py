@@ -29,6 +29,8 @@ from contextvars import ContextVar, Token
 from pathlib import Path
 from typing import Any, Optional, Union
 
+from datus.utils.exceptions import DatusException, ErrorCode
+
 PathLike = Union[str, Path]
 
 # Defense-in-depth guard for the project_name path segment.  AgentConfig already
@@ -67,8 +69,9 @@ class DatusPathManager:
             project_name: Logical project identifier used to shard ``sessions/`` and
                 ``data/`` under ``datus_home``. Callers should pass a sanitized name
                 (e.g. via ``datus.configuration.agent_config._normalize_project_name``).
-                If None or empty, paths fall back to un-sharded defaults for backward
-                compatibility.
+                Non-project callers that only need global paths (``conf``/``logs``/...)
+                may leave this empty; accessing ``project_data_dir`` or
+                ``sessions_dir`` without a project_name raises ``DatusException``.
             project_root: Root directory for project-scoped KB content (the
                 ``subject/`` tree and ``.datus/skills``). Defaults to ``Path.cwd()``.
         """
@@ -150,14 +153,17 @@ class DatusPathManager:
     def project_data_dir(self) -> Path:
         """Project-scoped local data directory: ``~/.datus/data/{project_name}``.
 
-        Falls back to ``~/.datus/data`` when no ``project_name`` is configured.
-        Intended for non-backend callers (e.g. ``document/`` storage) that
-        want a project-sharded on-disk location.  Storage backends should use
-        :pyattr:`data_dir` and apply their own isolation.
+        Requires ``project_name`` to be set; raises ``DatusException`` when it
+        is empty. Intended for non-backend callers (e.g. ``document/`` storage)
+        that want a project-sharded on-disk location. Storage backends should
+        use :pyattr:`data_dir` and apply their own isolation.
         """
-        if self._project_name:
-            return self._datus_home / "data" / self._project_name
-        return self._datus_home / "data"
+        if not self._project_name:
+            raise DatusException(
+                ErrorCode.STORAGE_FAILED,
+                message="project_data_dir requires a non-empty project_name.",
+            )
+        return self._datus_home / "data" / self._project_name
 
     @property
     def logs_dir(self) -> Path:
@@ -166,11 +172,17 @@ class DatusPathManager:
 
     @property
     def sessions_dir(self) -> Path:
-        """Sessions directory: ``~/.datus/sessions/{project_name}`` (falls back to
-        ``~/.datus/sessions`` when no project_name is configured)."""
-        if self._project_name:
-            return self._datus_home / "sessions" / self._project_name
-        return self._datus_home / "sessions"
+        """Sessions directory: ``~/.datus/sessions/{project_name}``.
+
+        Requires ``project_name`` to be set; raises ``DatusException`` when it
+        is empty.
+        """
+        if not self._project_name:
+            raise DatusException(
+                ErrorCode.STORAGE_FAILED,
+                message="sessions_dir requires a non-empty project_name.",
+            )
+        return self._datus_home / "sessions" / self._project_name
 
     @property
     def template_dir(self) -> Path:

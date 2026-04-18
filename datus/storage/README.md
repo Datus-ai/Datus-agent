@@ -24,9 +24,17 @@ Key features:
 
 ```python
 class StorageBase:
-    def __init__(self, project: str):
-        """Initialize the storage base scoped to *project*."""
-        self.db = create_vector_connection(project)
+    def __init__(self, db: Optional[VectorDatabase] = None):
+        """Initialize the storage base.
+
+        If ``db`` is not supplied, a connection is opened for the current
+        project (``get_path_manager().project_name``). ``project_name`` must
+        be non-empty — the backend rejects empty identifiers.
+        """
+        if db is not None:
+            self.db = db
+        else:
+            self.db = create_vector_connection(get_path_manager().project_name)
 ```
 
 ### BaseEmbeddingStore
@@ -43,13 +51,13 @@ Key features:
 class BaseEmbeddingStore(StorageBase):
     def __init__(
         self,
-        project: str,
         table_name: str,
         embedding_model: EmbeddingModel,
         on_duplicate_columns: str = "vector",
         schema: Optional[pa.Schema] = None,
         vector_source_name: str = "definition",
         vector_column_name: str = "vector",
+        db: Optional[VectorDatabase] = None,
     ):
 ```
 
@@ -64,9 +72,8 @@ from datus.storage.base import BaseEmbeddingStore
 from datus.storage.embedding_models import EmbeddingModel
 
 class MyStorage(BaseEmbeddingStore):
-    def __init__(self, project: str, embedding_model: EmbeddingModel):
+    def __init__(self, embedding_model: EmbeddingModel):
         super().__init__(
-            project=project,
             table_name="my_table",
             embedding_model=embedding_model,
             schema=pa.schema([
@@ -74,7 +81,7 @@ class MyStorage(BaseEmbeddingStore):
                 pa.field("content", pa.string()),
                 pa.field("vector", pa.list_(pa.float32(), list_size=embedding_model.dim_size)),
             ]),
-            vector_source_name="content"
+            vector_source_name="content",
         )
 ```
 
@@ -197,9 +204,8 @@ The [SchemaStorage](schema_metadata/store.py) class in [schema_metadata/store.py
 
 ```python
 class SchemaStorage(BaseMetadataStorage):
-    def __init__(self, project: str, embedding_model: EmbeddingModel):
+    def __init__(self, embedding_model: EmbeddingModel):
         super().__init__(
-            project=project,
             table_name="schema_metadata",
             embedding_model=embedding_model,
             vector_source_name="definition",

@@ -191,19 +191,12 @@ class BaseEmbeddingStore(StorageBase):
     def truncate_scoped(self) -> None:
         """Delete all rows visible to the current connection.
 
-        In ``IsolationType.LOGICAL`` mode the backend automatically scopes
-        the delete to the current ``datasource_id``.  In ``PHYSICAL`` mode
-        this drops the entire table (equivalent to ``truncate()``).
+        With PHYSICAL-only isolation this is equivalent to ``truncate()``
+        (drops the whole table); the method is retained as a stable alias
+        for call sites that previously relied on row-scoped deletion under
+        LOGICAL isolation.
         """
-        from datus.storage.backend_holder import get_isolation_type
-
-        self._ensure_table_ready()
-        if get_isolation_type() == "logical":
-            # LOGICAL mode — delete scoped rows via backend's _ds_where()
-            self.table.delete(None)
-        else:
-            # PHYSICAL mode — drop the whole table
-            self.truncate()
+        self.truncate()
 
     def _ensure_table(self, schema: Optional[pa.Schema] = None):
         if self.db.table_exists(self.table_name):
