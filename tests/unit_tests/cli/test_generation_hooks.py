@@ -24,15 +24,12 @@ import pytest
 
 from datus.cli.execution_state import InteractionCancelled
 from datus.cli.generation_hooks import (
-    NODE_WRITE_SCOPES,
     GenerationCancelledException,
     GenerationHooks,
     normalize_kb_relative_path,
-    path_matches_any_scope,
     resolve_kb_sandbox_path,
 )
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool  # noqa: F401
-from datus.tools.permission.permission_hooks import PermissionDeniedException
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -1514,140 +1511,6 @@ class TestNormalizeKbRelativePath:
 
     def test_unknown_kind_unchanged(self):
         assert normalize_kb_relative_path("orders.yaml", "unknown") == "orders.yaml"
-
-
-# ---------------------------------------------------------------------------
-# Tests: NODE_WRITE_SCOPES hard gate on on_tool_start
-# ---------------------------------------------------------------------------
-
-
-class _FakeTool:
-    def __init__(self, name):
-        self.name = name
-
-
-class _FakeContext:
-    def __init__(self, path):
-        self.tool_arguments = json.dumps({"path": path, "content": "x"})
-
-
-class _FakeAgent:
-    def __init__(self, name):
-        self.name = name
-
-
-class TestNodeWriteScopes:
-    def test_scope_map_covers_expected_nodes(self):
-        expected = {
-            "gen_semantic_model",
-            "gen_metrics",
-            "sql_summary",
-            "gen_ext_knowledge",
-            "gen_skill",
-            "migration",
-            "gen_job",
-            "gen_table",
-        }
-        assert set(NODE_WRITE_SCOPES) == expected
-
-    def test_path_matches_any_scope_accepts_relative_subject(self):
-        assert path_matches_any_scope("subject/semantic_models/x.yaml", ["subject/semantic_models/**"])
-
-    def test_path_matches_any_scope_rejects_wrong_subdir(self):
-        assert not path_matches_any_scope("subject/sql_summaries/x.yaml", ["subject/semantic_models/**"])
-
-    @pytest.mark.asyncio
-    async def test_gate_allows_write_in_scope(self, real_agent_config):
-        hooks = GenerationHooks(broker=None, agent_config=real_agent_config, node_name="gen_semantic_model")
-        tool = _FakeTool("write_file")
-        ctx = _FakeContext("subject/semantic_models/x.yaml")
-        # Should not raise
-        await hooks.on_tool_start(ctx, _FakeAgent("gen_semantic_model"), tool)
-
-    @pytest.mark.asyncio
-    async def test_gate_rejects_write_outside_scope(self, real_agent_config):
-        hooks = GenerationHooks(broker=None, agent_config=real_agent_config, node_name="gen_semantic_model")
-        tool = _FakeTool("write_file")
-        ctx = _FakeContext("subject/sql_summaries/x.yaml")
-        with pytest.raises(PermissionDeniedException):
-            await hooks.on_tool_start(ctx, _FakeAgent("gen_semantic_model"), tool)
-
-    @pytest.mark.asyncio
-    async def test_gate_skips_unknown_node(self, real_agent_config):
-        hooks = GenerationHooks(broker=None, agent_config=real_agent_config, node_name="chat")
-        tool = _FakeTool("write_file")
-        ctx = _FakeContext("subject/sql_summaries/x.yaml")
-        # ``chat`` is not in NODE_WRITE_SCOPES so the gate is a no-op.
-        await hooks.on_tool_start(ctx, _FakeAgent("chat"), tool)
-
-    @pytest.mark.asyncio
-    async def test_gate_ignores_non_write_tools(self, real_agent_config):
-        hooks = GenerationHooks(broker=None, agent_config=real_agent_config, node_name="gen_semantic_model")
-        tool = _FakeTool("read_file")
-        ctx = _FakeContext("subject/sql_summaries/x.yaml")
-        # Read-side calls are never gated — the gate is write/edit only.
-        await hooks.on_tool_start(ctx, _FakeAgent("gen_semantic_model"), tool)
-
-    @pytest.mark.asyncio
-    async def test_gate_rejects_external_absolute(self, real_agent_config):
-        hooks = GenerationHooks(broker=None, agent_config=real_agent_config, node_name="gen_semantic_model")
-        tool = _FakeTool("write_file")
-        ctx = _FakeContext("/tmp/escape.yaml")
-        with pytest.raises(PermissionDeniedException):
-            await hooks.on_tool_start(ctx, _FakeAgent("gen_semantic_model"), tool)
-
-    @pytest.mark.asyncio
-    async def test_gate_falls_back_to_agent_name(self, real_agent_config):
-        """When node_name is not passed to the constructor, the gate reads
-        ``agent.name`` at call time so the scope is still resolvable."""
-        hooks = GenerationHooks(broker=None, agent_config=real_agent_config)
-        tool = _FakeTool("write_file")
-        ctx = _FakeContext("subject/sql_summaries/x.yaml")
-        with pytest.raises(PermissionDeniedException):
-            await hooks.on_tool_start(ctx, _FakeAgent("gen_semantic_model"), tool)
-
-    @pytest.mark.asyncio
-    async def test_gate_missing_path_arg_is_noop(self, real_agent_config):
-        """No ``path`` kwarg → gate cannot classify → skip rather than raise."""
-        hooks = GenerationHooks(broker=None, agent_config=real_agent_config, node_name="gen_semantic_model")
-        tool = _FakeTool("write_file")
-        ctx = MagicMock()
-        ctx.tool_arguments = json.dumps({"content": "no path here"})
-        await hooks.on_tool_start(ctx, _FakeAgent("gen_semantic_model"), tool)
-
-    @pytest.mark.asyncio
-    async def test_gate_malformed_tool_arguments(self, real_agent_config):
-        """Malformed JSON in tool_arguments → ``_extract_path_arg`` swallows
-        the decode error and the gate skips. Regression guard against crashing
-        on LLM-malformed payloads.
-        """
-        hooks = GenerationHooks(broker=None, agent_config=real_agent_config, node_name="gen_semantic_model")
-        tool = _FakeTool("write_file")
-        ctx = MagicMock()
-        ctx.tool_arguments = "{not valid json"
-        await hooks.on_tool_start(ctx, _FakeAgent("gen_semantic_model"), tool)
-
-    @pytest.mark.asyncio
-    async def test_gate_noop_without_agent_config(self):
-        """No agent_config → ``_project_root`` returns None → the gate
-        short-circuits rather than attempting to classify the path."""
-        hooks = GenerationHooks(broker=None, agent_config=None, node_name="gen_semantic_model")
-        tool = _FakeTool("write_file")
-        ctx = _FakeContext("subject/semantic_models/x.yaml")
-        await hooks.on_tool_start(ctx, _FakeAgent("gen_semantic_model"), tool)
-
-    def test_resolve_node_name_prefers_constructor(self):
-        hooks = GenerationHooks(broker=None, agent_config=None, node_name="chat")
-        assert hooks._resolve_node_name(_FakeAgent("something_else")) == "chat"
-
-    def test_resolve_node_name_falls_back_to_agent(self):
-        hooks = GenerationHooks(broker=None, agent_config=None)
-        assert hooks._resolve_node_name(_FakeAgent("chat")) == "chat"
-
-    def test_resolve_node_name_returns_none_when_missing(self):
-        hooks = GenerationHooks(broker=None, agent_config=None)
-        agent = MagicMock(spec=[])  # no ``name`` attribute
-        assert hooks._resolve_node_name(agent) is None
 
 
 # ---------------------------------------------------------------------------

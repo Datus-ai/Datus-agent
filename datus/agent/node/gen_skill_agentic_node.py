@@ -116,19 +116,18 @@ class SkillCreatorAgenticNode(AgenticNode):
     def _setup_full_filesystem_tools(self):
         """Setup a single filesystem tool rooted at the project.
 
-        Reads see the whole workspace; writes land under ``.datus/skills/`` or
-        ``~/.datus/skills/`` via the WHITELIST zone in ``classify_path``. The
-        hard write-scope gate in ``GenerationHooks`` (``gen_skill`` entry in
-        ``NODE_WRITE_SCOPES``) enforces that writes outside those two roots
-        are rejected, so we no longer need a second sandboxed instance.
+        Visibility follows the zone classifier in ``classify_path``:
+        ``.datus/skills/`` and ``~/.datus/skills/`` are WHITELIST (writable),
+        the rest of the project tree is INTERNAL (also writable by this node),
+        ``.datus/`` internals other than skills are HIDDEN (invisible), and
+        anything outside the project root is EXTERNAL (the permission hook
+        prompts; strict mode rejects). There is no per-kind write gate — the
+        prompt is responsible for steering skill writes into the whitelist.
         """
         try:
             self.filesystem_func_tool = self._make_filesystem_tool()
             self.tools.extend(self.filesystem_func_tool.available_tools())
-            logger.info(
-                f"Setup filesystem tools rooted at: {self.filesystem_func_tool.root_path} "
-                "(writes restricted by GenerationHooks scope gate to .datus/skills/**)"
-            )
+            logger.info(f"Setup filesystem tools rooted at: {self.filesystem_func_tool.root_path}")
         except Exception as e:
             logger.warning(f"Failed to setup filesystem tools, continuing without: {e}")
 

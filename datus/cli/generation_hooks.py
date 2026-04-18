@@ -9,13 +9,11 @@ import asyncio
 import json
 import os
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
 import yaml
 from agents.lifecycle import AgentHooks
 from datus_storage_base.conditions import And, eq
-from wcmatch import glob as wc_glob
 
 from datus.cli.execution_state import InteractionBroker, InteractionCancelled
 from datus.configuration.agent_config import AgentConfig
@@ -23,8 +21,6 @@ from datus.storage.metric.store import MetricRAG
 from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.db_tools import connector_registry
-from datus.tools.func_tool.fs_path_policy import PathZone, classify_path
-from datus.tools.permission.permission_hooks import PermissionDeniedException
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
@@ -42,28 +38,6 @@ _KIND_TO_SUBDIR = {
     "metric": "semantic_models",
     "sql_summary": "sql_summaries",
     "ext_knowledge": "ext_knowledge",
-}
-
-
-# Per-node filesystem write scopes (glob patterns rooted at ``project_root`` or
-# ``~``). Enforced by :meth:`GenerationHooks.on_tool_start` — any ``write_file``
-# or ``edit_file`` whose resolved display form does not match one of the
-# patterns is rejected with ``PermissionDeniedException``.  Nodes whose
-# ``node_name`` is absent from the map are unconstrained (e.g. ``chat``,
-# ``explore``, ``gen_report``).
-#
-# Design note: we intentionally keep this hard-coded rather than in
-# ``agent.yml`` until more call sites start requesting overrides. Prompts do
-# the *guidance*; this map does the *guardrail*.
-NODE_WRITE_SCOPES: dict[str, list[str]] = {
-    "gen_semantic_model": ["subject/semantic_models/**"],
-    "gen_metrics": ["subject/semantic_models/**"],
-    "sql_summary": ["subject/sql_summaries/**"],
-    "gen_ext_knowledge": ["subject/ext_knowledge/**"],
-    "gen_skill": [".datus/skills/**", "~/.datus/skills/**"],
-    "migration": ["subject/**"],
-    "gen_job": ["subject/**"],
-    "gen_table": ["subject/**"],
 }
 
 
@@ -148,29 +122,6 @@ def resolve_kb_sandbox_path(
     return candidate
 
 
-def _path_matches_scope(display: str, scope: str) -> bool:
-    """Match a display-form path against a scope glob.
-
-    ``display`` comes from :class:`~datus.tools.func_tool.fs_path_policy.ResolvedPath`:
-    project-relative for ``INTERNAL``/``WHITELIST`` and absolute for everything
-    else. ``scope`` patterns mirror that: relative patterns (``subject/**``)
-    match project-relative displays, while ``~/.datus/skills/**`` matches the
-    home-whitelist ``~/...`` display. The matching itself uses wcmatch's
-    gitignore-style semantics via ``DOTGLOB | GLOBSTAR``.
-    """
-    if not scope:
-        return False
-    try:
-        return wc_glob.globmatch(display, scope, flags=wc_glob.DOTGLOB | wc_glob.GLOBSTAR)
-    except Exception:
-        return False
-
-
-def path_matches_any_scope(display: str, scopes: list[str]) -> bool:
-    """Return ``True`` if ``display`` matches any of ``scopes``."""
-    return any(_path_matches_scope(display, pattern) for pattern in scopes)
-
-
 class GenerationHooks(AgentHooks):
     """Hooks for handling generation tool results and user interaction."""
 
@@ -182,13 +133,7 @@ class GenerationHooks(AgentHooks):
         "ext_knowledge": "ext_knowledge_path",
     }
 
-    def __init__(
-        self,
-        broker: InteractionBroker,
-        agent_config: AgentConfig = None,
-        *,
-        node_name: Optional[str] = None,
-    ):
+    def __init__(self, broker: InteractionBroker, agent_config: AgentConfig = None):
         """
         Initialize generation hooks.
 
@@ -198,15 +143,9 @@ class GenerationHooks(AgentHooks):
                 for relative path resolution are looked up on this config at call
                 time so sub-agent namespace switches take effect without rebuilding
                 the hook.
-            node_name: Name of the owning node (e.g. ``gen_semantic_model``).
-                Used to look up :data:`NODE_WRITE_SCOPES` for the hard
-                write-scope gate. When ``None`` the gate falls back to
-                ``agent.name`` at call time; if that is also missing no gating
-                applies.
         """
         self.broker = broker
         self.agent_config = agent_config
-        self.node_name = node_name
         self.processed_files = set()  # Track files that have been processed to avoid duplicates
         logger.debug(f"GenerationHooks initialized with config: {agent_config is not None}")
 
@@ -307,110 +246,7 @@ class GenerationHooks(AgentHooks):
                 await self._handle_ext_knowledge_result(result)
 
     async def on_tool_start(self, context, agent, tool) -> None:
-        """Hard write-scope gate for ``write_file`` / ``edit_file``.
-
-        The gate ensures a ``gen_*`` node can only write under its designated
-        subdirectory. This is belt-and-braces with the prompts — prompts tell
-        the LLM *where* to write; this check enforces it so a prompt drift
-        does not corrupt the KB.
-
-        Paths outside the scope raise ``PermissionDeniedException`` (same type
-        the OpenAI Agents SDK framework already understands from
-        ``PermissionHooks``), which the framework surfaces to the LLM as a
-        tool failure so the next turn can correct the path.
-        """
-        tool_name = getattr(tool, "name", getattr(tool, "__name__", ""))
-        if tool_name not in ("write_file", "edit_file"):
-            return
-
-        node_name = self._resolve_node_name(agent)
-        scopes = NODE_WRITE_SCOPES.get(node_name or "")
-        if not scopes:
-            return
-
-        path_arg = self._extract_path_arg(context)
-        if not path_arg:
-            return
-
-        root_path = self._project_root()
-        if root_path is None:
-            return
-
-        datus_home = self._datus_home()
-        resolved = classify_path(
-            path_arg,
-            root_path=root_path,
-            current_node=node_name,
-            datus_home=datus_home,
-        )
-
-        # EXTERNAL / HIDDEN immediately fail the scope gate — neither home
-        # whitelist nor project-internal, so no gen_* scope could ever match.
-        if resolved.zone == PathZone.EXTERNAL:
-            logger.info("Scope gate: %s rejected external write to %s", node_name, resolved.display)
-            raise PermissionDeniedException(
-                f"Node '{node_name}' may not write outside its scope {scopes}; got external path {resolved.display}",
-                tool_category="filesystem_tools",
-                tool_name=tool_name,
-            )
-
-        if not path_matches_any_scope(resolved.display, scopes):
-            logger.info(
-                "Scope gate: %s rejected write to %s (allowed scopes: %s)",
-                node_name,
-                resolved.display,
-                scopes,
-            )
-            raise PermissionDeniedException(
-                f"Node '{node_name}' may only write under {scopes}; got {resolved.display}",
-                tool_category="filesystem_tools",
-                tool_name=tool_name,
-            )
-
-    def _resolve_node_name(self, agent) -> Optional[str]:
-        """Resolve the owning node name, preferring the explicit constructor arg."""
-        if self.node_name:
-            return self.node_name
-        agent_name = getattr(agent, "name", None)
-        if isinstance(agent_name, str) and agent_name:
-            return agent_name
-        return None
-
-    def _extract_path_arg(self, context) -> str:
-        try:
-            raw = getattr(context, "tool_arguments", "{}")
-            data = json.loads(raw) if isinstance(raw, str) else raw
-            if isinstance(data, dict):
-                value = data.get("path", "")
-                if isinstance(value, str):
-                    return value
-        except (json.JSONDecodeError, TypeError) as e:
-            logger.debug(f"Failed to parse tool_arguments for scope gate: {e}")
-        return ""
-
-    def _project_root(self) -> Optional[Path]:
-        if not self.agent_config:
-            return None
-        path_manager = getattr(self.agent_config, "path_manager", None)
-        if path_manager is None:
-            return None
-        try:
-            return Path(path_manager.project_root)
-        except Exception as e:
-            logger.debug(f"Failed to read project_root from path_manager: {e}")
-            return None
-
-    def _datus_home(self) -> Optional[Path]:
-        if not self.agent_config:
-            return None
-        path_manager = getattr(self.agent_config, "path_manager", None)
-        if path_manager is None:
-            return None
-        try:
-            return Path(path_manager.datus_home)
-        except Exception as e:
-            logger.debug(f"Failed to read datus_home from path_manager: {e}")
-            return None
+        pass
 
     async def on_handoff(self, context, agent, source) -> None:
         pass

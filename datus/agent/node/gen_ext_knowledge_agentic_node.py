@@ -469,7 +469,7 @@ Do NOT give up. Continue iterating until verify_sql returns success=1.
         """Setup hooks (hardcoded to generation_hooks)."""
         try:
             broker = self._get_or_create_broker()
-            self.hooks = GenerationHooks(broker=broker, agent_config=self.agent_config, node_name=self.get_node_name())
+            self.hooks = GenerationHooks(broker=broker, agent_config=self.agent_config)
             logger.info("Setup hooks: generation_hooks")
         except Exception as e:
             logger.error(f"Failed to setup generation_hooks: {e}")
