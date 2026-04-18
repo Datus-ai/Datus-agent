@@ -8,9 +8,11 @@ import unittest.mock
 from unittest.mock import MagicMock
 
 import pyarrow as pa
+import pytest
 from datus_storage_base.conditions import and_, eq, in_
 
 from datus.storage.vector.lance_backend import LanceVectorBackend, LanceVectorDatabase, LanceVectorTable
+from datus.utils.exceptions import DatusException
 
 # ---------------------------------------------------------------------------
 # LanceVectorTable tests
@@ -300,258 +302,46 @@ class TestLanceVectorBackend:
 
 
 # ---------------------------------------------------------------------------
-# _wrap_embedding tests
+# LanceVectorBackend connect() tests
 # ---------------------------------------------------------------------------
 
 
-# ---------------------------------------------------------------------------
-# Logical isolation tests
-# ---------------------------------------------------------------------------
+class TestLanceVectorBackendConnect:
+    """Connect-path tests: project is required, directory layout is per-project."""
 
-
-class TestLanceVectorTableLogicalIsolation:
-    """Tests for IsolationType.LOGICAL in LanceVectorTable."""
-
-    def _logical_table(self, raw_table=None, datasource_id="tenant_1"):
-        from datus.storage.vector.lance_backend import IsolationType
-
-        return LanceVectorTable(raw_table or MagicMock(), isolation=IsolationType.LOGICAL, datasource_id=datasource_id)
-
-    def test_inject_datasource_df_adds_column(self):
-        """_inject_datasource_df adds datasource_id column in LOGICAL mode."""
-        import pandas as pd
-
-        table = self._logical_table()
-        df = pd.DataFrame({"id": ["a", "b"], "text": ["hello", "world"]})
-        result = table._inject_datasource_df(df)
-        assert "datasource_id" in result.columns
-        assert list(result["datasource_id"]) == ["tenant_1", "tenant_1"]
-
-    def test_inject_datasource_df_overwrites_existing(self):
-        """_inject_datasource_df overwrites existing datasource_id value."""
-        import pandas as pd
-
-        table = self._logical_table()
-        df = pd.DataFrame({"id": ["a"], "datasource_id": ["old"]})
-        result = table._inject_datasource_df(df)
-        assert result["datasource_id"].iloc[0] == "tenant_1"
-
-    def test_inject_datasource_df_noop_in_physical(self):
-        """_inject_datasource_df is a no-op when isolation is PHYSICAL."""
-        import pandas as pd
-
-        raw_table = MagicMock()
-        table = LanceVectorTable(raw_table)  # default = PHYSICAL
-        df = pd.DataFrame({"id": ["a"]})
-        result = table._inject_datasource_df(df)
-        assert "datasource_id" not in result.columns
-
-    def test_ds_where_no_existing(self):
-        """_ds_where returns datasource_id condition when no existing WHERE."""
-        table = self._logical_table()
-        result = table._ds_where(None)
-        assert result == "datasource_id = 'tenant_1'"
-
-    def test_ds_where_with_existing(self):
-        """_ds_where prepends datasource_id to existing WHERE."""
-        table = self._logical_table()
-        result = table._ds_where("status = 'active'")
-        assert result == "datasource_id = 'tenant_1' AND (status = 'active')"
-
-    def test_ds_where_noop_in_physical(self):
-        """_ds_where is a no-op when isolation is PHYSICAL."""
-        raw_table = MagicMock()
-        table = LanceVectorTable(raw_table)
-        result = table._ds_where("status = 'active'")
-        assert result == "status = 'active'"
-
-    def test_ds_where_escapes_quotes(self):
-        """_ds_where escapes single quotes in datasource_id to prevent SQL injection."""
-        table = self._logical_table(datasource_id="tenant's_test")
-        result = table._ds_where(None)
-        assert result == "datasource_id = 'tenant''s_test'"
-
-    def test_add_injects_datasource_in_logical(self):
-        """add() injects datasource_id column in LOGICAL mode."""
-        import pandas as pd
-
-        raw_table = MagicMock()
-        table = self._logical_table(raw_table)
-        df = pd.DataFrame({"id": ["a"]})
-        table.add(df)
-        call_df = raw_table.add.call_args[0][0]
-        assert "datasource_id" in call_df.columns
-
-    def test_merge_insert_uses_composite_key_in_logical(self):
-        """merge_insert() uses [datasource_id, on_column] key in LOGICAL mode."""
-        import pandas as pd
-
-        raw_table = MagicMock()
-        table = self._logical_table(raw_table)
-        df = pd.DataFrame({"id": ["a"], "text": ["hello"]})
-        table.merge_insert(df, "id")
-        raw_table.merge_insert.assert_called_once_with(["datasource_id", "id"])
-
-    def test_merge_insert_uses_single_key_in_physical(self):
-        """merge_insert() uses single on_column key in PHYSICAL mode."""
-        import pandas as pd
-
-        raw_table = MagicMock()
-        table = LanceVectorTable(raw_table)  # PHYSICAL
-        df = pd.DataFrame({"id": ["a"]})
-        table.merge_insert(df, "id")
-        raw_table.merge_insert.assert_called_once_with("id")
-
-    def test_delete_prepends_datasource_filter(self):
-        """delete() prepends datasource_id condition in LOGICAL mode."""
-        raw_table = MagicMock()
-        table = self._logical_table(raw_table)
-        table.delete(eq("status", "old"))
-        raw_table.delete.assert_called_once_with("datasource_id = 'tenant_1' AND (status = 'old')")
-
-    def test_delete_none_with_logical_uses_ds_filter(self):
-        """delete(None) in LOGICAL mode uses datasource_id filter only."""
-        raw_table = MagicMock()
-        table = self._logical_table(raw_table)
-        table.delete(None)
-        raw_table.delete.assert_called_once_with("datasource_id = 'tenant_1'")
-
-    def test_count_rows_prepends_datasource_filter(self):
-        """count_rows() prepends datasource_id condition in LOGICAL mode."""
-        raw_table = MagicMock()
-        raw_table.count_rows.return_value = 10
-        table = self._logical_table(raw_table)
-        result = table.count_rows()
-        raw_table.count_rows.assert_called_once_with("datasource_id = 'tenant_1'")
-        assert result == 10
-
-    def test_count_rows_with_where_in_logical(self):
-        """count_rows(where) prepends datasource_id in LOGICAL mode."""
-        raw_table = MagicMock()
-        raw_table.count_rows.return_value = 3
-        table = self._logical_table(raw_table)
-        result = table.count_rows(where=eq("kind", "table"))
-        raw_table.count_rows.assert_called_once_with("datasource_id = 'tenant_1' AND (kind = 'table')")
-        assert result == 3
-
-
-class TestLanceVectorDatabaseLogicalIsolation:
-    """Tests for IsolationType.LOGICAL in LanceVectorDatabase."""
-
-    def test_create_table_injects_datasource_field(self):
-        """create_table() adds datasource_id field to schema in LOGICAL mode."""
-        from datus.storage.vector.lance_backend import IsolationType
-
-        raw_db = MagicMock()
-        db = LanceVectorDatabase(raw_db, isolation=IsolationType.LOGICAL, datasource_id="ds_1")
-        schema = pa.schema([pa.field("id", pa.string())])
-        db.create_table("test_table", schema=schema)
-
-        call_kwargs = raw_db.create_table.call_args[1]
-        created_schema = call_kwargs["schema"]
-        field_names = [f.name for f in created_schema]
-        assert "datasource_id" in field_names
-
-    def test_create_table_no_duplicate_datasource_field(self):
-        """create_table() doesn't duplicate datasource_id if already in schema."""
-        from datus.storage.vector.lance_backend import IsolationType
-
-        raw_db = MagicMock()
-        db = LanceVectorDatabase(raw_db, isolation=IsolationType.LOGICAL, datasource_id="ds_1")
-        schema = pa.schema([pa.field("id", pa.string()), pa.field("datasource_id", pa.string())])
-        db.create_table("test_table", schema=schema)
-
-        call_kwargs = raw_db.create_table.call_args[1]
-        created_schema = call_kwargs["schema"]
-        ds_fields = [f for f in created_schema if f.name == "datasource_id"]
-        assert len(ds_fields) == 1
-
-    def test_open_table_propagates_isolation(self):
-        """open_table() propagates isolation and datasource_id to LanceVectorTable."""
-        from datus.storage.vector.lance_backend import IsolationType
-
-        raw_db = MagicMock()
-        db = LanceVectorDatabase(raw_db, isolation=IsolationType.LOGICAL, datasource_id="ds_1")
-        table = db.open_table("test_table")
-        assert isinstance(table, LanceVectorTable)
-        assert table._isolation == IsolationType.LOGICAL
-        assert table._datasource_id == "ds_1"
-
-    def test_refresh_table_propagates_isolation(self):
-        """refresh_table() propagates isolation and datasource_id."""
-        from datus.storage.vector.lance_backend import IsolationType
-
-        raw_db = MagicMock()
-        db = LanceVectorDatabase(raw_db, isolation=IsolationType.LOGICAL, datasource_id="ds_1")
-        table = db.refresh_table("test_table")
-        assert table._isolation == IsolationType.LOGICAL
-        assert table._datasource_id == "ds_1"
-
-
-class TestLanceVectorBackendLogicalIsolation:
-    """Tests for IsolationType.LOGICAL in LanceVectorBackend."""
-
-    def test_initialize_stores_isolation(self):
-        """initialize() stores isolation type from config."""
-        backend = LanceVectorBackend()
-        backend.initialize({"data_dir": "/tmp/test", "isolation": "logical"})
-        from datus.storage.vector.lance_backend import IsolationType
-
-        assert backend._isolation == IsolationType.LOGICAL
-
-    def test_initialize_defaults_to_physical(self):
-        """initialize() defaults to PHYSICAL when isolation not specified."""
+    def test_initialize_reads_data_dir(self):
+        """initialize() only records data_dir; no isolation knobs."""
         backend = LanceVectorBackend()
         backend.initialize({"data_dir": "/tmp/test"})
-        from datus.storage.vector.lance_backend import IsolationType
+        assert backend._data_dir == "/tmp/test"
 
-        assert backend._isolation == IsolationType.PHYSICAL
-
-    def test_connect_logical_shares_db_dir_and_uses_project_as_datasource_id(self):
-        """LOGICAL: all projects share ``{data_dir}/datus_db`` and row-level
-        ``datasource_id`` stores the project identifier."""
-        import unittest.mock
-
+    def test_connect_builds_project_scoped_dir(self):
+        """Each project gets ``{data_dir}/{project}/datus_db``."""
         backend = LanceVectorBackend()
-        backend.initialize({"data_dir": "/tmp/test", "isolation": "logical"})
+        backend.initialize({"data_dir": "/tmp/test"})
         with unittest.mock.patch("datus.storage.vector.lance_backend.lancedb") as mock_lancedb:
             mock_lancedb.connect.return_value = MagicMock()
-            db = backend.connect("proj_a")
-            mock_lancedb.connect.assert_called_once_with("/tmp/test/datus_db")
-            from datus.storage.vector.lance_backend import IsolationType
-
-            assert db._isolation == IsolationType.LOGICAL
-            assert db._datasource_id == "proj_a"
-
-    def test_connect_physical_builds_project_scoped_dir(self):
-        """PHYSICAL: each project gets ``{data_dir}/{project}/datus_db``."""
-        import unittest.mock
-
-        backend = LanceVectorBackend()
-        backend.initialize({"data_dir": "/tmp/test", "isolation": "physical"})
-        with unittest.mock.patch("datus.storage.vector.lance_backend.lancedb") as mock_lancedb:
-            mock_lancedb.connect.return_value = MagicMock()
-            db = backend.connect("proj_a")
+            backend.connect("proj_a")
             mock_lancedb.connect.assert_called_once_with("/tmp/test/proj_a/datus_db")
-            assert db._datasource_id is None
 
-    def test_connect_physical_without_project_falls_back(self):
-        """PHYSICAL mode with empty project degrades to ``{data_dir}/datus_db``."""
-        import unittest.mock
-
+    def test_connect_empty_project_raises(self):
+        """connect('') raises DatusException instead of silently un-sharding."""
         backend = LanceVectorBackend()
-        backend.initialize({"data_dir": "/tmp/test", "isolation": "physical"})
-        with unittest.mock.patch("datus.storage.vector.lance_backend.lancedb") as mock_lancedb:
-            mock_lancedb.connect.return_value = MagicMock()
-            backend.connect()
-            mock_lancedb.connect.assert_called_once_with("/tmp/test/datus_db")
+        backend.initialize({"data_dir": "/tmp/test"})
+        with pytest.raises(DatusException):
+            backend.connect("")
+
+    def test_connect_rejects_unsafe_project(self):
+        """connect() rejects project identifiers with path separators."""
+        backend = LanceVectorBackend()
+        backend.initialize({"data_dir": "/tmp/test"})
+        with pytest.raises(DatusException):
+            backend.connect("../escape")
 
     def test_single_instance_reused_across_projects(self):
         """A single LanceVectorBackend instance serves many projects via separate connect() calls."""
-        import unittest.mock
-
         backend = LanceVectorBackend()
-        backend.initialize({"data_dir": "/tmp/test", "isolation": "physical"})
+        backend.initialize({"data_dir": "/tmp/test"})
         with unittest.mock.patch("datus.storage.vector.lance_backend.lancedb") as mock_lancedb:
             mock_lancedb.connect.return_value = MagicMock()
             backend.connect("proj_a")

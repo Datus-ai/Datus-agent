@@ -9,9 +9,9 @@ class TestSubjectTreeStore:
     """Test cases for SubjectTreeStore."""
 
     @pytest.fixture
-    def store(self):
+    def store(self, storage_test_project):
         """Create a SubjectTreeStore instance for testing."""
-        return SubjectTreeStore()
+        return SubjectTreeStore(project=storage_test_project)
 
     # ========== CRUD Operations Tests ==========
 
@@ -863,9 +863,9 @@ class TestSubjectTreeStore:
 class TestSubjectTreeDatasourceFields:
     """Tests for datasource_id column on SubjectTreeStore."""
 
-    def test_datasource_id_column_exists(self):
+    def test_datasource_id_column_exists(self, storage_test_project):
         """datasource_id field is present on created nodes."""
-        store = SubjectTreeStore()
+        store = SubjectTreeStore(project=storage_test_project)
         node = store.create_node(None, "Finance")
         assert "datasource_id" in node
 

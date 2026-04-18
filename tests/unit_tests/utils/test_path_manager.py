@@ -109,17 +109,26 @@ class TestDatusPathManagerProperties:
         """project_data_dir is the project-scoped helper for non-backend callers."""
         assert pm.project_data_dir == pm.datus_home / "data" / "proj"
 
-    def test_sessions_dir_unsharded_when_no_project_name(self, tmp_path):
-        pm = DatusPathManager(datus_home=str(tmp_path / "home"))
-        assert pm.sessions_dir == pm.datus_home / "sessions"
-
-    def test_data_dir_unsharded_when_no_project_name(self, tmp_path):
+    def test_data_dir_is_project_agnostic_without_project(self, tmp_path):
+        """data_dir is global — it does not depend on project_name being set."""
         pm = DatusPathManager(datus_home=str(tmp_path / "home"))
         assert pm.data_dir == pm.datus_home / "data"
 
-    def test_project_data_dir_falls_back_to_data_dir_without_project(self, tmp_path):
+    def test_sessions_dir_requires_project_name(self, tmp_path):
+        """sessions_dir raises when project_name is not configured."""
+        from datus.utils.exceptions import DatusException
+
         pm = DatusPathManager(datus_home=str(tmp_path / "home"))
-        assert pm.project_data_dir == pm.datus_home / "data"
+        with pytest.raises(DatusException):
+            _ = pm.sessions_dir
+
+    def test_project_data_dir_requires_project_name(self, tmp_path):
+        """project_data_dir raises when project_name is not configured."""
+        from datus.utils.exceptions import DatusException
+
+        pm = DatusPathManager(datus_home=str(tmp_path / "home"))
+        with pytest.raises(DatusException):
+            _ = pm.project_data_dir
 
     def test_subject_dir_anchored_to_project_root(self, pm, tmp_path):
         assert pm.subject_dir == (tmp_path / "project").resolve() / "subject"

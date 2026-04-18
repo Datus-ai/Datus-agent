@@ -10,6 +10,7 @@ from datus_storage_base.backend_config import RdbBackendConfig, StorageBackendCo
 
 from datus.storage.backend_holder import init_backends, reset_backends
 from datus.storage.registry import clear_storage_registry
+from datus.utils.path_manager import DatusPathManager, reset_path_manager, set_current_path_manager
 from tests.unit_tests.storage._backend_discovery import discover_test_backends
 
 _BACKENDS = discover_test_backends()
@@ -20,10 +21,10 @@ def storage_test_project():
     """Override in subdirectory conftest to customize the test project identifier.
 
     Used for backend-test environment plumbing (``clear_data``) and passed to
-    ``get_storage`` / ``create_rdb_for_store`` via tests. Backends are
-    project-agnostic at ``init_backends`` time (the value is not forwarded).
+    ``get_storage`` / ``create_rdb_for_store`` via tests. Must be non-empty —
+    backends now reject empty project identifiers.
     """
-    return ""
+    return "test"
 
 
 @pytest.fixture(autouse=True, params=_BACKENDS, ids=lambda b: b.id)
@@ -35,21 +36,28 @@ def _init_storage_backends(request, tmp_path, storage_test_project):
         vector=VectorBackendConfig(type=backend.vector_type, params=backend.vector_params),
     )
     init_backends(config=config, data_dir=str(tmp_path))
-    yield backend
-    # 1. Clear cache and reset backends (close connection pools)
-    clear_storage_registry()
-    reset_backends()
-    # 2. Clear server-side data (after connection pools are closed)
-    if backend.rdb_test_env is not None:
-        try:
-            backend.rdb_test_env.clear_data(storage_test_project)
-        except Exception:
-            pass
-    if backend.vector_test_env is not None:
-        try:
-            backend.vector_test_env.clear_data(storage_test_project)
-        except Exception:
-            pass
+    # Install a path-manager context so implicit ``StorageBase(db=None)``
+    # callers see a non-empty project_name.
+    pm = DatusPathManager(datus_home=tmp_path, project_name=storage_test_project, project_root=tmp_path)
+    token = set_current_path_manager(pm)
+    try:
+        yield backend
+    finally:
+        reset_path_manager(token)
+        # 1. Clear cache and reset backends (close connection pools)
+        clear_storage_registry()
+        reset_backends()
+        # 2. Clear server-side data (after connection pools are closed)
+        if backend.rdb_test_env is not None:
+            try:
+                backend.rdb_test_env.clear_data(storage_test_project)
+            except Exception:
+                pass
+        if backend.vector_test_env is not None:
+            try:
+                backend.vector_test_env.clear_data(storage_test_project)
+            except Exception:
+                pass
 
 
 def pytest_sessionfinish(session, exitstatus):

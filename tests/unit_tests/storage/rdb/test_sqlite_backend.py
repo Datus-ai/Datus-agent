@@ -388,14 +388,14 @@ class TestSqliteRdbBackendConnect:
         assert isinstance(db, SqliteRdbDatabase)
         assert db.db_file == os.path.join(str(tmp_path), "proj_a", "datus_db", "test.db")
 
-    def test_connect_without_project_falls_back(self, tmp_path):
-        """connect("", store) collapses the layout to ``{data_dir}/datus_db/``."""
+    def test_connect_empty_project_raises(self, tmp_path):
+        """connect("", store) rejects empty project identifiers."""
         from datus.storage.rdb.sqlite_backend import SqliteRdbBackend
 
         b = SqliteRdbBackend()
         b.initialize({"data_dir": str(tmp_path)})
-        db = b.connect("", "test")
-        assert db.db_file == os.path.join(str(tmp_path), "datus_db", "test.db")
+        with pytest.raises(DatusException):
+            b.connect("", "test")
 
     def test_single_instance_reused_across_projects(self, tmp_path):
         """One initialized backend produces different per-project paths on each connect()."""

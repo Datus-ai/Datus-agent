@@ -75,23 +75,23 @@ class TestGetStorage:
     def test_same_factory_returns_same_instance(self):
         """Same factory must return the identical instance (true singleton)."""
         with patch("datus.storage.registry.get_embedding_model", side_effect=_fake_get_embedding_model):
-            a = get_storage(_DummyStore, "metric")
-            b = get_storage(_DummyStore, "metric")
+            a = get_storage(_DummyStore, "metric", project="test")
+            b = get_storage(_DummyStore, "metric", project="test")
         assert a is b
 
     def test_clear_registry_invalidates_cache(self):
         """After clear_storage_registry, get_storage returns a new instance."""
         with patch("datus.storage.registry.get_embedding_model", side_effect=_fake_get_embedding_model):
-            a = get_storage(_DummyStore, "metric")
+            a = get_storage(_DummyStore, "metric", project="test")
             clear_storage_registry()
-            b = get_storage(_DummyStore, "metric")
+            b = get_storage(_DummyStore, "metric", project="test")
         assert a is not b
 
     def test_different_namespaces_not_in_key(self):
         """get_storage ignores namespace — same factory always returns same instance."""
         with patch("datus.storage.registry.get_embedding_model", side_effect=_fake_get_embedding_model):
-            a = get_storage(_DummyStore, "metric")
-            b = get_storage(_DummyStore, "metric")
+            a = get_storage(_DummyStore, "metric", project="test")
+            b = get_storage(_DummyStore, "metric", project="test")
         assert a is b
 
 
@@ -102,27 +102,28 @@ class TestConfigureStorageDefaults:
         """Global defaults should arrive as kwargs in the factory call."""
         configure_storage_defaults(table_prefix="tb_")
         with patch("datus.storage.registry.get_embedding_model", side_effect=_fake_get_embedding_model):
-            store = get_storage(_DummyStore, "metric")
-        assert store.init_kwargs == {"table_prefix": "tb_"}
+            store = get_storage(_DummyStore, "metric", project="test")
+        assert store.init_kwargs.get("table_prefix") == "tb_"
+        assert "db" in store.init_kwargs  # backend connection is always injected now
 
     def test_no_defaults_gives_empty_kwargs(self):
-        """Without configure_storage_defaults, factory gets no extra kwargs."""
+        """Without configure_storage_defaults, factory gets only the injected backend db."""
         with patch("datus.storage.registry.get_embedding_model", side_effect=_fake_get_embedding_model):
-            store = get_storage(_DummyStore, "metric")
-        assert store.init_kwargs == {}
+            store = get_storage(_DummyStore, "metric", project="test")
+        assert set(store.init_kwargs) == {"db"}
 
     def test_reconfigure_overwrites_previous(self):
         """Calling configure_storage_defaults again replaces old values."""
         configure_storage_defaults(table_prefix="old_")
         configure_storage_defaults(table_prefix="new_")
         with patch("datus.storage.registry.get_embedding_model", side_effect=_fake_get_embedding_model):
-            store = get_storage(_DummyStore, "metric")
-        assert store.init_kwargs == {"table_prefix": "new_"}
+            store = get_storage(_DummyStore, "metric", project="test")
+        assert store.init_kwargs.get("table_prefix") == "new_"
 
     def test_clear_registry_preserves_defaults(self):
         """clear_storage_registry should NOT wipe defaults."""
         configure_storage_defaults(table_prefix="tb_")
         clear_storage_registry()
         with patch("datus.storage.registry.get_embedding_model", side_effect=_fake_get_embedding_model):
-            store = get_storage(_DummyStore, "metric")
-        assert store.init_kwargs == {"table_prefix": "tb_"}
+            store = get_storage(_DummyStore, "metric", project="test")
+        assert store.init_kwargs.get("table_prefix") == "tb_"

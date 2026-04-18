@@ -215,10 +215,10 @@ class TestDefaultValues:
 
 
 class TestTruncateScoped:
-    """Tests for truncate_scoped() behavior in PHYSICAL vs LOGICAL mode."""
+    """Tests for truncate_scoped() — aliased to truncate() under PHYSICAL-only isolation."""
 
-    def test_truncate_scoped_physical_drops_table(self):
-        """In PHYSICAL mode, truncate_scoped() drops the entire table."""
+    def test_truncate_scoped_drops_table(self):
+        """truncate_scoped() drops the entire table (alias for truncate())."""
         from unittest.mock import MagicMock
 
         store = BaseEmbeddingStore(
@@ -226,32 +226,13 @@ class TestTruncateScoped:
             embedding_model=_FakeEmbeddingModel(),
             schema=_base_schema(),
         )
-        # Simulate initialized table without LOGICAL isolation
         mock_table = MagicMock(spec=["delete", "count_rows"])
         store._shared.table = mock_table
         store._shared.initialized = True
         store.db = MagicMock()
 
         store.truncate_scoped()
-        # Should drop the table (truncate behavior)
         store.db.drop_table.assert_called_once()
-
-    def test_truncate_scoped_logical_deletes_scoped(self):
-        """In LOGICAL mode, truncate_scoped() calls table.delete(None) for scoped delete."""
-        from unittest.mock import MagicMock, patch
-
-        store = BaseEmbeddingStore(
-            table_name="test",
-            embedding_model=_FakeEmbeddingModel(),
-            schema=_base_schema(),
-        )
-        mock_table = MagicMock()
-        store._shared.table = mock_table
-        store._shared.initialized = True
-
-        with patch("datus.storage.backend_holder.get_isolation_type", return_value="logical"):
-            store.truncate_scoped()
-            mock_table.delete.assert_called_once_with(None)
 
 
 class TestCombinedFeatures:

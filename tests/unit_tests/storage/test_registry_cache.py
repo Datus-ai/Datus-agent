@@ -53,19 +53,19 @@ class TestGetStorageLRUCache:
             s2 = get_storage(_factory, "database", project="proj_b")
             assert s1 is not s2
 
-    def test_empty_project_does_not_pass_db_kwarg(self, reset_global_singletons):
-        """get_storage with empty project does not pass a 'db' kwarg to factory."""
-        from datus.storage.registry import get_storage
+    def test_empty_project_raises(self, reset_global_singletons):
+        """get_storage with empty project propagates the backend DatusException."""
+        import pytest
 
-        received_kwargs = {}
+        from datus.storage.registry import get_storage
+        from datus.utils.exceptions import DatusException
 
         def _factory(embedding_model, **kwargs):
-            received_kwargs.update(kwargs)
             return BaseEmbeddingStore(table_name="test", embedding_model=embedding_model, **kwargs)
 
         with patch("datus.storage.registry.get_embedding_model", return_value=_FakeEmbeddingModel()):
-            get_storage(_factory, "database", project="")
-            assert "db" not in received_kwargs
+            with pytest.raises(DatusException):
+                get_storage(_factory, "database", project="")
 
     def test_clear_registry_clears_cache(self, reset_global_singletons):
         """clear_storage_registry() clears the LRU cache."""
@@ -74,8 +74,12 @@ class TestGetStorageLRUCache:
         def _factory(embedding_model, **kwargs):
             return BaseEmbeddingStore(table_name="test", embedding_model=embedding_model, **kwargs)
 
-        with patch("datus.storage.registry.get_embedding_model", return_value=_FakeEmbeddingModel()):
-            get_storage(_factory, "database")
+        with (
+            patch("datus.storage.registry.get_embedding_model", return_value=_FakeEmbeddingModel()),
+            patch("datus.storage.backend_holder.get_vector_backend") as mock_backend,
+        ):
+            mock_backend.return_value = MagicMock()
+            get_storage(_factory, "database", project="my_project")
             assert _get_storage_cached.cache_info().currsize >= 1
 
             clear_storage_registry()
@@ -127,7 +131,7 @@ class TestPreloadAllStorages:
             patch("datus.storage.backend_holder.init_backends"),
             patch("datus.storage.registry.get_subject_tree_store"),
         ):
-            preload_all_storages(data_dir="/tmp/test", table_prefix="tb_")
+            preload_all_storages("my_project", data_dir="/tmp/test", table_prefix="tb_")
             defaults = get_storage_defaults()
             assert defaults["table_prefix"] == "tb_"
 
