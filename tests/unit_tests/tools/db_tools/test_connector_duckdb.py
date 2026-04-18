@@ -1,4 +1,5 @@
 import uuid
+from pathlib import Path
 
 import pytest
 
@@ -6,10 +7,16 @@ from datus.tools.db_tools.config import DuckDBConfig
 from datus.tools.db_tools.duckdb_connector import DuckdbConnector
 from datus.utils.exceptions import DatusException, ErrorCode
 
+# Resolve the sample duckdb path against the repo root rather than CWD. The
+# unit-test harness chdirs every test into a per-test tmp dir for project
+# override isolation, so relative paths would miss the real ``sample_data/``
+# directory shipped with the repo.
+_DUCKDB_SAMPLE_PATH = Path(__file__).resolve().parents[4] / "sample_data" / "duckdb-demo.duckdb"
+
 
 @pytest.fixture
 def duckdb_connector() -> DuckdbConnector:
-    config = DuckDBConfig(db_path="sample_data/duckdb-demo.duckdb")
+    config = DuckDBConfig(db_path=str(_DUCKDB_SAMPLE_PATH))
     return DuckdbConnector(config)
 
 
