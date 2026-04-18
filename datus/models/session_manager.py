@@ -29,6 +29,31 @@ if TYPE_CHECKING:
     from datus.utils.path_manager import DatusPathManager
 
 
+DEFAULT_CHAT_AGENT = "chat"
+
+
+def extract_agent_from_session_id(session_id: str) -> str:
+    """Return the agent name encoded in *session_id*.
+
+    Session IDs produced by the CLI and API follow the pattern
+    ``{agent_name}_session_{uuid}``. Legacy IDs that lack the ``_session_``
+    delimiter are treated as belonging to the default chat agent.
+    """
+    if "_session_" in session_id:
+        return session_id.rsplit("_session_", 1)[0]
+    return DEFAULT_CHAT_AGENT
+
+
+def session_matches_agent(session_id: str, agent_name: Optional[str]) -> bool:
+    """True when *session_id* belongs to *agent_name*.
+
+    ``None`` / empty / ``"chat"`` all resolve to the default chat agent, so
+    legacy (prefix-less) sessions are surfaced under chat.
+    """
+    target = agent_name or DEFAULT_CHAT_AGENT
+    return extract_agent_from_session_id(session_id) == target
+
+
 class SessionManager:
     """
     Manages sessions for multi-turn conversations across LLM models.

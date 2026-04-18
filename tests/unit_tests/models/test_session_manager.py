@@ -30,7 +30,11 @@ from types import SimpleNamespace
 import pytest
 from agents.extensions.memory import AdvancedSQLiteSession
 
-from datus.models.session_manager import SessionManager
+from datus.models.session_manager import (
+    SessionManager,
+    extract_agent_from_session_id,
+    session_matches_agent,
+)
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.utils.exceptions import DatusException
 from datus.utils.path_manager import DatusPathManager
@@ -1702,3 +1706,64 @@ class TestCopySession:
         read_items = asyncio.run(new_session.get_items())
         assert len(read_items) == 4
         assert [it.get("content") for it in read_items] == ["Q1", "A1", "Q2", "A2"]
+
+
+# ---------------------------------------------------------------------------
+# Module-level helpers: extract_agent_from_session_id, session_matches_agent
+# ---------------------------------------------------------------------------
+
+
+class TestExtractAgentFromSessionId:
+    """Tests for extract_agent_from_session_id."""
+
+    def test_chat_prefix(self):
+        """Default chat-prefixed ids resolve to 'chat'."""
+        assert extract_agent_from_session_id("chat_session_abc123") == "chat"
+
+    def test_subagent_prefix(self):
+        """Subagent-prefixed ids return the subagent name."""
+        assert extract_agent_from_session_id("gen_metrics_session_abc123") == "gen_metrics"
+
+    def test_multi_underscore_prefix(self):
+        """Splits on the last '_session_' so underscores in the agent name survive."""
+        assert extract_agent_from_session_id("my_custom_agent_session_x") == "my_custom_agent"
+
+    def test_legacy_no_prefix_defaults_to_chat(self):
+        """Session IDs without the _session_ delimiter fall back to chat."""
+        assert extract_agent_from_session_id("legacy-session-id") == "chat"
+        assert extract_agent_from_session_id("abc123") == "chat"
+
+
+class TestSessionMatchesAgent:
+    """Tests for session_matches_agent."""
+
+    def test_chat_session_matches_none(self):
+        """None agent selects the default chat agent."""
+        assert session_matches_agent("chat_session_1", None) is True
+
+    def test_chat_session_matches_chat_string(self):
+        """Explicit 'chat' matches chat-prefixed sessions."""
+        assert session_matches_agent("chat_session_1", "chat") is True
+
+    def test_chat_session_matches_empty_string(self):
+        """Empty-string agent_name is treated as the chat agent."""
+        assert session_matches_agent("chat_session_1", "") is True
+
+    def test_subagent_match(self):
+        """Subagent session matches its own name."""
+        assert session_matches_agent("gen_metrics_session_1", "gen_metrics") is True
+
+    def test_subagent_does_not_match_chat(self):
+        """Subagent session must not surface under the chat filter."""
+        assert session_matches_agent("gen_metrics_session_1", None) is False
+        assert session_matches_agent("gen_metrics_session_1", "chat") is False
+
+    def test_chat_does_not_match_subagent(self):
+        """Chat session must not surface under a subagent filter."""
+        assert session_matches_agent("chat_session_1", "gen_metrics") is False
+
+    def test_legacy_session_matches_chat(self):
+        """Legacy prefix-less sessions are visible to the chat agent."""
+        assert session_matches_agent("legacy-id", None) is True
+        assert session_matches_agent("legacy-id", "chat") is True
+        assert session_matches_agent("legacy-id", "gen_metrics") is False

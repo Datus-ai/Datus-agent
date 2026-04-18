@@ -79,6 +79,41 @@ class TestChatServiceListSessions:
         session_ids = [s.session_id for s in result.data.sessions]
         assert "test-list-session" in session_ids
 
+    def test_list_sessions_filters_by_subagent_id(self, chat_svc):
+        """subagent_id='gen_metrics' keeps only sessions whose prefix matches."""
+        sm = SessionManager(session_dir=chat_svc._session_dir)
+        sm.create_session("chat_session_a")
+        sm.create_session("gen_metrics_session_a")
+        sm.create_session("gen_metrics_session_b")
+
+        result = chat_svc.list_sessions(subagent_id="gen_metrics")
+        assert result.success is True
+        session_ids = {s.session_id for s in result.data.sessions}
+        assert session_ids == {"gen_metrics_session_a", "gen_metrics_session_b"}
+
+    def test_list_sessions_filter_chat_includes_legacy(self, chat_svc):
+        """subagent_id='chat' returns chat-prefixed and legacy (no-prefix) ids, but not subagents."""
+        sm = SessionManager(session_dir=chat_svc._session_dir)
+        sm.create_session("chat_session_a")
+        sm.create_session("legacy-id-1")
+        sm.create_session("gen_metrics_session_a")
+
+        result = chat_svc.list_sessions(subagent_id="chat")
+        assert result.success is True
+        session_ids = {s.session_id for s in result.data.sessions}
+        assert session_ids == {"chat_session_a", "legacy-id-1"}
+
+    def test_list_sessions_no_filter_returns_all(self, chat_svc):
+        """subagent_id=None returns sessions for every agent."""
+        sm = SessionManager(session_dir=chat_svc._session_dir)
+        sm.create_session("chat_session_a")
+        sm.create_session("gen_metrics_session_a")
+
+        result = chat_svc.list_sessions()
+        assert result.success is True
+        session_ids = {s.session_id for s in result.data.sessions}
+        assert {"chat_session_a", "gen_metrics_session_a"} <= session_ids
+
 
 class TestChatServiceDeleteSession:
     """Tests for delete_session."""

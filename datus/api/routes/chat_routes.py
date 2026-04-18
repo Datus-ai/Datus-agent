@@ -11,7 +11,7 @@ asyncio.Task so that client disconnects do not cancel the computation.
 """
 
 import json
-from typing import Annotated
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Path, Query
 from fastapi.responses import StreamingResponse
@@ -132,13 +132,21 @@ async def compact_chat_session(
     "/sessions",
     response_model=Result[ChatSessionData],
     summary="List Chat Sessions",
-    description="List all chat sessions",
+    description=(
+        "List chat sessions. Pass subagent_id to filter by agent "
+        "(use 'chat' for the default chat agent, or any builtin/custom subagent id). "
+        "Omit to return every session for the user."
+    ),
 )
 async def list_sessions(
     svc: ServiceDep,
     ctx: AppContextDep,
+    subagent_id: Optional[str] = Query(
+        default=None,
+        description="Filter by subagent id; 'chat' selects the default chat agent",
+    ),
 ) -> Result[ChatSessionData]:
-    return svc.chat.list_sessions(user_id=ctx.user_id)
+    return svc.chat.list_sessions(user_id=ctx.user_id, subagent_id=subagent_id)
 
 
 @router.delete(

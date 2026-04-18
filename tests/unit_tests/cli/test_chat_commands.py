@@ -3909,3 +3909,75 @@ class TestDropIfMatchesFinal:
         final = self._final("anything")
         _drop_if_matches_final(pending, final, incremental)
         assert incremental == []
+
+
+# ===========================================================================
+# TestSessionFilterByAgent — cmd_list_sessions/cmd_resume filter by active agent
+# ===========================================================================
+
+
+class TestSessionFilterByAgent:
+    """cmd_list_sessions and cmd_resume only surface sessions for the active agent."""
+
+    def _seed_mixed_sessions(self):
+        """Seed disk with sessions for chat, gensql, gen_metrics, plus a legacy id."""
+        _create_session_on_disk("chat_session_a", [("user", "hi")])
+        _create_session_on_disk("gensql_session_a", [("user", "gen sql")])
+        _create_session_on_disk("gen_metrics_session_a", [("user", "metrics")])
+        _create_session_on_disk("legacy-session-1", [("user", "legacy")])
+
+    def test_list_sessions_chat_hides_subagent_ids(self, real_agent_config, mock_llm_create):
+        """Chat agent sees chat-prefixed and legacy ids, not subagent sessions."""
+        console = Console(file=io.StringIO(), no_color=True)
+        cmds = _make_chat_commands(real_agent_config, console=console)
+        cmds.current_subagent_name = None
+
+        self._seed_mixed_sessions()
+        cmds.cmd_list_sessions("")
+
+        output = _get_console_output(console)
+        assert "chat_session_a" in output
+        assert "legacy-session-1" in output
+        assert "gensql_session_a" not in output
+        assert "gen_metrics_session_a" not in output
+
+    def test_list_sessions_subagent_scope(self, real_agent_config, mock_llm_create):
+        """gen_metrics agent only sees its own sessions."""
+        console = Console(file=io.StringIO(), no_color=True)
+        cmds = _make_chat_commands(real_agent_config, console=console)
+        cmds.current_subagent_name = "gen_metrics"
+
+        self._seed_mixed_sessions()
+        cmds.cmd_list_sessions("")
+
+        output = _get_console_output(console)
+        assert "gen_metrics_session_a" in output
+        assert "chat_session_a" not in output
+        assert "gensql_session_a" not in output
+        assert "legacy-session-1" not in output
+
+    def test_list_sessions_agent_with_no_sessions(self, real_agent_config, mock_llm_create):
+        """Empty message references the current agent label."""
+        console = Console(file=io.StringIO(), no_color=True)
+        cmds = _make_chat_commands(real_agent_config, console=console)
+        cmds.current_subagent_name = "gen_metrics"
+
+        _create_session_on_disk("chat_session_a", [("user", "hi")])
+        cmds.cmd_list_sessions("")
+
+        output = _get_console_output(console)
+        assert "gen_metrics" in output
+        assert "no chat sessions found" in output.lower()
+
+    def test_resume_interactive_empty_when_agent_has_no_sessions(self, real_agent_config, mock_llm_create):
+        """cmd_resume with no args filters by current agent; empty result message mentions agent."""
+        console = Console(file=io.StringIO(), no_color=True)
+        cmds = _make_chat_commands(real_agent_config, console=console)
+        cmds.current_subagent_name = "gen_metrics"
+
+        _create_session_on_disk("chat_session_a", [("user", "hi")])
+        cmds.cmd_resume("")
+
+        output = _get_console_output(console)
+        assert "gen_metrics" in output
+        assert cmds.current_node is None

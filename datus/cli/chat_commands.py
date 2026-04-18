@@ -1139,16 +1139,18 @@ class ChatCommands:
                 self.last_actions = last_assistant_actions
 
     def cmd_list_sessions(self, args: str):
-        """List all available chat sessions."""
+        """List chat sessions for the active agent."""
         try:
             # Create a session manager directly (don't rely on chat_node)
-            from datus.models.session_manager import SessionManager
+            from datus.models.session_manager import SessionManager, session_matches_agent
 
             session_manager = SessionManager(self.cli.agent_config.session_dir, scope=self.cli.scope)
             sessions = session_manager.list_sessions()
+            sessions = [s for s in sessions if session_matches_agent(s, self.current_subagent_name)]
 
+            agent_label = self.current_subagent_name or "chat"
             if not sessions:
-                self.console.print("[yellow]No chat sessions found.[/]")
+                self.console.print(f"[yellow]No chat sessions found for agent '{agent_label}'.[/]")
                 return
 
             # Get current session ID for highlighting (if current_node exists)
@@ -1158,17 +1160,20 @@ class ChatCommands:
 
             # Get session info for all sessions first to enable sorting
             sessions_with_info = []
-            for session_data in sessions:
-                session_id = session_data["session_id"]
+            for session_id in sessions:
+                session_data = {"session_id": session_id}
                 try:
-                    # Get detailed session info if available
+                    info = session_manager.get_session_info(session_id)
+                    if info.get("exists"):
+                        session_data["created_at"] = info.get("created_at") or ""
+                        session_data["last_updated"] = info.get("updated_at") or info.get("latest_message_at") or ""
+                        session_data["total_turns"] = info.get("message_count", 0)
                     if self.current_node and hasattr(self.current_node, "_get_session_details"):
                         detailed_info = self.current_node._get_session_details(session_id)
                         session_data.update(detailed_info)
-                    sessions_with_info.append(session_data)
                 except Exception as e:
                     logger.debug(f"Could not get detailed info for session {session_id}: {e}")
-                    sessions_with_info.append(session_data)
+                sessions_with_info.append(session_data)
 
             # Sort by last_updated (most recent first)
             sessions_with_info.sort(
@@ -1209,26 +1214,28 @@ class ChatCommands:
     @staticmethod
     def _extract_node_type_from_session_id(session_id: str) -> str:
         """Extract node type from session_id format {node_name}_session_{uuid}."""
-        if "_session_" in session_id:
-            return session_id.rsplit("_session_", 1)[0]
-        return "chat"
+        from datus.models.session_manager import extract_agent_from_session_id
+
+        return extract_agent_from_session_id(session_id)
 
     def cmd_resume(self, args: str):
-        """Resume a previous chat session."""
+        """Resume a previous chat session for the active agent."""
         from datus.cli._cli_utils import select_list
-        from datus.models.session_manager import SessionManager
+        from datus.models.session_manager import SessionManager, session_matches_agent
 
         try:
             session_manager = SessionManager(self.cli.agent_config.session_dir, scope=self.cli.scope)
 
             # If session_id provided directly, use it
             target_session_id = args.strip() if args else None
+            agent_label = self.current_subagent_name or "chat"
 
             if not target_session_id:
-                # List all sessions for user to choose
+                # List sessions for the current agent only
                 sessions = session_manager.list_sessions(sort_by_modified=True)
+                sessions = [sid for sid in sessions if session_matches_agent(sid, self.current_subagent_name)]
                 if not sessions:
-                    self.console.print("[yellow]No sessions found.[/]")
+                    self.console.print(f"[yellow]No sessions found for agent '{agent_label}'.[/]")
                     return
 
                 # Get session info and filter empty sessions
@@ -1239,7 +1246,7 @@ class ChatCommands:
                         session_infos.append(info)
 
                 if not session_infos:
-                    self.console.print("[yellow]No sessions with messages found.[/]")
+                    self.console.print(f"[yellow]No sessions with messages found for agent '{agent_label}'.[/]")
                     return
 
                 # Sort by updated_at descending (newest first)
