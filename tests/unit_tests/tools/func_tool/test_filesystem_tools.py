@@ -3,9 +3,7 @@
 
 """Unit tests for datus/tools/func_tool/filesystem_tools.py"""
 
-import os
 from pathlib import Path
-from unittest.mock import patch
 
 from datus.tools.func_tool.filesystem_tools import FilesystemConfig, FilesystemFuncTool
 from datus.tools.func_tool.fs_path_policy import PathZone
@@ -25,14 +23,14 @@ def _make_tool(root_path: str, *, current_node: str = "test_node") -> Filesystem
 
 
 class TestFilesystemConfig:
-    def test_default_root_path(self):
-        with patch.dict(os.environ, {}, clear=True):
-            # Remove env var if set
-            os.environ.pop("FILESYSTEM_MCP_PATH", None)
-            cfg = FilesystemConfig()
-        # os.path.expanduser("~") is the only portable way to get the home directory
-        # at test time — it matches the same call in FilesystemConfig's default_factory.
-        assert cfg.root_path == os.path.expanduser("~")
+    def test_default_root_path(self, tmp_path, monkeypatch):
+        # Production call sites always pass an explicit ``root_path`` via
+        # ``_make_filesystem_tool``; the ``os.getcwd()`` fallback only kicks
+        # in for direct construction (tests, scripts). We chdir so the
+        # assertion is deterministic regardless of where pytest was invoked.
+        monkeypatch.chdir(tmp_path)
+        cfg = FilesystemConfig()
+        assert cfg.root_path == str(tmp_path)
 
     def test_explicit_root_path(self, tmp_path):
         cfg = FilesystemConfig(root_path=str(tmp_path))
@@ -47,11 +45,6 @@ class TestFilesystemConfig:
     def test_custom_allowed_extensions(self):
         cfg = FilesystemConfig(allowed_extensions=[".py"])
         assert cfg.allowed_extensions == [".py"]
-
-    def test_env_var_sets_root_path(self, tmp_path):
-        with patch.dict(os.environ, {"FILESYSTEM_MCP_PATH": str(tmp_path)}):
-            cfg = FilesystemConfig()
-        assert cfg.root_path == str(tmp_path)
 
 
 # ---------------------------------------------------------------------------

@@ -1239,12 +1239,13 @@ class AgenticNode(Node):
         """Resolve the ``strict`` flag for this node's filesystem tool.
 
         Reads ``self.agent_config.filesystem_strict`` (process-wide default set
-        by API / claw bootstraps). CLI leaves it unset so EXTERNAL access falls
-        back to broker-prompt behavior.
+        by API / claw bootstraps, or by ``agent.filesystem.strict`` / the
+        ``--filesystem-strict`` CLI flag). CLI leaves it unset so EXTERNAL
+        access falls back to broker-prompt behavior.
         """
         if self.agent_config is None:
             return False
-        return bool(getattr(self.agent_config, "filesystem_strict", False))
+        return bool(self.agent_config.filesystem_strict)
 
     def _make_filesystem_tool(self, **kwargs):
         """Construct a ``FilesystemFuncTool`` with this node's identity baked in.

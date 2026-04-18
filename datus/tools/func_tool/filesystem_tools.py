@@ -32,7 +32,7 @@ class FilesystemConfig:
         allowed_extensions: List[str] = None,
         max_file_size: int = 1024 * 1024,
     ):
-        self.root_path = root_path or os.getenv("FILESYSTEM_MCP_PATH", os.path.expanduser("~"))
+        self.root_path = root_path or os.getcwd()
         self.allowed_extensions = allowed_extensions or [
             ".txt",
             ".md",
@@ -86,7 +86,7 @@ class FilesystemFuncTool(BaseTool):
                 the user.
         """
         super().__init__(**kwargs)
-        self.root_path = root_path or os.getenv("FILESYSTEM_MCP_PATH", os.path.expanduser("~"))
+        self.root_path = root_path or os.getcwd()
         self.config = FilesystemConfig(root_path=self.root_path)
         self._current_node = current_node
         self._datus_home = Path(datus_home).expanduser().resolve(strict=False) if datus_home else None

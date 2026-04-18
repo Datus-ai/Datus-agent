@@ -73,6 +73,26 @@ class ArgumentParser:
             help="Enable saving LLM input/output traces to YAML files",
         )
 
+        # Filesystem strict mode: fail-closed for paths outside the project
+        # root instead of prompting the broker. ``default=None`` preserves
+        # ``agent.filesystem.strict`` in YAML when neither flag is passed.
+        filesystem_strict_group = self.parser.add_mutually_exclusive_group()
+        filesystem_strict_group.add_argument(
+            "--filesystem-strict",
+            dest="filesystem_strict",
+            action="store_true",
+            default=None,
+            help="Reject filesystem reads/writes outside the project root at the "
+            "tool layer (fail-closed; no interactive prompt). Overrides "
+            "agent.filesystem.strict from YAML.",
+        )
+        filesystem_strict_group.add_argument(
+            "--no-filesystem-strict",
+            dest="filesystem_strict",
+            action="store_false",
+            help="Force-disable filesystem strict mode even if agent.filesystem.strict is true in YAML.",
+        )
+
         # Execution mode: --web and --print are mutually exclusive
         mode_group = self.parser.add_mutually_exclusive_group()
         mode_group.add_argument(

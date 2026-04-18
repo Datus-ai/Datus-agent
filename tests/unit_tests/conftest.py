@@ -27,6 +27,33 @@ from datus.configuration.agent_config import AgentConfig, NodeConfig
 from tests.unit_tests.mock_llm_model import MockLLMModel
 
 
+@pytest.fixture(autouse=True)
+def _isolate_project_cwd(monkeypatch, tmp_path):
+    """Run every unit test in a per-test isolated working directory.
+
+    Two effects:
+
+    1. ``load_project_override`` (see ``agent_config_loader._apply_project_override``)
+       reads ``{cwd}/.datus/config.yml`` unconditionally. On a developer workstation
+       that file typically pins ``target:`` to whatever model the human is using,
+       which will not be present in the stub ``agent.yml`` fixtures the tests load.
+       Without this isolation every test that reaches ``load_agent_config`` crashes
+       with ``Unexcepted value of target``.
+
+    2. ``AgentConfig.__init__`` derives ``project_root`` from ``os.getcwd()`` when
+       the caller doesn't pass one. Pinning CWD to a fresh tmp dir keeps
+       implicit ``{project_root}/subject`` paths, sharded session/data
+       directories, and similar from leaking the real repo into a test's
+       storage layout.
+
+    The fixture is function-scoped so each test gets its own clean dir and
+    monkeypatch restores the original CWD on teardown. ``tests/data`` and
+    ``tests/conf`` loaders in this suite already resolve via
+    ``Path(__file__).resolve().parents[...]``, so they're unaffected.
+    """
+    monkeypatch.chdir(tmp_path)
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _disable_langsmith_tracing():
     """Disable LangSmith/LangChain tracing for the unit test session only.

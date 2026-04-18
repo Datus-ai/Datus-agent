@@ -438,6 +438,13 @@ class AgentConfig:
         self.target = kwargs["target"]
         self.models = {name: load_model_config(cfg) for name, cfg in models_raw.items()}
         self._benchmark_config_dict = kwargs.get("benchmark", {})
+        # ``filesystem_strict`` is a process-wide safety switch that makes
+        # ``FilesystemFuncTool`` fail-closed for EXTERNAL paths (outside the
+        # project root) instead of prompting the broker. Set via
+        # ``agent.filesystem.strict`` in YAML, ``--filesystem-strict`` on the
+        # CLI, or direct assignment from API/claw bootstraps.
+        filesystem_raw = kwargs.get("filesystem") or {}
+        self._filesystem_strict = bool(filesystem_raw.get("strict", False))
         self._current_database = ""
         self.nodes = nodes
         self.export_config: Dict[str, Any] = kwargs.get("export", {})
@@ -553,6 +560,24 @@ class AgentConfig:
                     f"Only alphanumeric characters, underscores, and hyphens are allowed.",
                 )
             self.document_configs[name] = DocumentConfig.from_dict(cfg)
+
+    @property
+    def filesystem_strict(self) -> bool:
+        """Whether ``FilesystemFuncTool`` rejects EXTERNAL paths at the tool layer.
+
+        ``True``: fail-closed — the tool returns a "not allowed in strict mode"
+        error for any path outside the project root / whitelist. Used by the
+        API and claw surfaces, which have no interactive broker to confirm
+        out-of-workspace access.
+
+        ``False`` (default): ``PermissionHooks`` prompts the user via the
+        broker on EXTERNAL access. Used by the CLI.
+        """
+        return self._filesystem_strict
+
+    @filesystem_strict.setter
+    def filesystem_strict(self, value: bool) -> None:
+        self._filesystem_strict = bool(value)
 
     @property
     def current_database(self):
@@ -917,6 +942,11 @@ class AgentConfig:
             # Update all model configs to enable tracing if command line flag is set
             for model_config in self.models.values():
                 model_config.save_llm_trace = True
+        # --filesystem-strict / --no-filesystem-strict land here as a tri-state:
+        # ``None`` means "CLI didn't say, keep YAML value"; explicit True/False
+        # overrides whatever ``agent.filesystem.strict`` set at construction.
+        if kwargs.get("filesystem_strict") is not None:
+            self.filesystem_strict = kwargs["filesystem_strict"]
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

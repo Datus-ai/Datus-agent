@@ -540,3 +540,89 @@ class TestAgentConfigProjectLayout:
 
         with pytest.raises(DatusException):
             self._make(tmp_path, project_name="a" * (_PROJECT_NAME_MAX_LEN + 1), project_root=tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# AgentConfig.filesystem_strict
+# ---------------------------------------------------------------------------
+
+
+class TestAgentConfigFilesystemStrict:
+    """``filesystem_strict`` is the process-wide fail-closed switch for
+    FilesystemFuncTool EXTERNAL access. It has three input channels
+    (``agent.filesystem.strict`` in YAML, ``--filesystem-strict`` CLI flag
+    via ``override_by_args``, direct setter from API/claw bootstraps) and
+    all three must land on the same underlying property.
+    """
+
+    def _make(self, tmp_path, **extra_kwargs):
+        from datus.configuration.agent_config import AgentConfig, NodeConfig
+
+        kwargs = dict(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            target="mock",
+            models={
+                "mock": {
+                    "type": "openai",
+                    "api_key": "k",
+                    "model": "m",
+                    "base_url": "http://localhost:0",
+                }
+            },
+            skip_init_dirs=True,
+        )
+        kwargs.update(extra_kwargs)
+        return AgentConfig(**kwargs)
+
+    def test_default_false(self, tmp_path):
+        cfg = self._make(tmp_path)
+        assert cfg.filesystem_strict is False
+
+    def test_from_yaml_true(self, tmp_path):
+        cfg = self._make(tmp_path, filesystem={"strict": True})
+        assert cfg.filesystem_strict is True
+
+    def test_from_yaml_false_explicit(self, tmp_path):
+        cfg = self._make(tmp_path, filesystem={"strict": False})
+        assert cfg.filesystem_strict is False
+
+    def test_from_yaml_missing_key_defaults_false(self, tmp_path):
+        # ``agent.filesystem: {}`` (empty dict) must still default to False,
+        # not crash on a missing ``strict`` key.
+        cfg = self._make(tmp_path, filesystem={})
+        assert cfg.filesystem_strict is False
+
+    def test_setter_coerces_to_bool(self, tmp_path):
+        cfg = self._make(tmp_path)
+        cfg.filesystem_strict = 1
+        assert cfg.filesystem_strict is True
+        cfg.filesystem_strict = 0
+        assert cfg.filesystem_strict is False
+        cfg.filesystem_strict = True
+        assert cfg.filesystem_strict is True
+
+    def test_override_by_args_true_flips(self, tmp_path):
+        cfg = self._make(tmp_path, filesystem={"strict": False})
+        cfg.override_by_args(filesystem_strict=True)
+        assert cfg.filesystem_strict is True
+
+    def test_override_by_args_false_flips(self, tmp_path):
+        # --no-filesystem-strict must be able to override a YAML True.
+        cfg = self._make(tmp_path, filesystem={"strict": True})
+        cfg.override_by_args(filesystem_strict=False)
+        assert cfg.filesystem_strict is False
+
+    def test_override_by_args_none_preserves_yaml(self, tmp_path):
+        # When neither CLI flag is passed, argparse leaves filesystem_strict=None
+        # and the YAML-derived value must survive.
+        cfg = self._make(tmp_path, filesystem={"strict": True})
+        cfg.override_by_args(filesystem_strict=None)
+        assert cfg.filesystem_strict is True
+
+    def test_override_by_args_missing_preserves_yaml(self, tmp_path):
+        # override_by_args is also called without a filesystem_strict key
+        # (e.g. in non-CLI code paths). That must not reset the flag.
+        cfg = self._make(tmp_path, filesystem={"strict": True})
+        cfg.override_by_args()
+        assert cfg.filesystem_strict is True
