@@ -1,0 +1,83 @@
+name: "Test Audit"
+
+# SECURITY: pull_request_target runs in the BASE repo context with access to
+# secrets and the GITHUB_TOKEN. We explicitly checkout PR code into a SEPARATE
+# directory ('pr/') and NEVER execute anything from it. Only the base-repo
+# ('base/') copy of ci/audit_tests.py is run — it does purely static AST + regex
+# analysis of files under pr/ and never imports them. This defeats the classic
+# pwn-request vector where a fork PR overwrites ci scripts to gain runner access.
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+concurrency:
+  group: test-audit-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  test-audit:
+    if: ${{ !startsWith(github.event.pull_request.title, '[Doc]') && !startsWith(github.event.pull_request.title, '[doc]') }}
+    runs-on: self-hosted
+    steps:
+      - name: Checkout base repo (trusted code — runs the auditor)
+        uses: actions/checkout@v4
+        with:
+          # No `ref` → checks out the PR's base commit (the branch the PR targets).
+          # This guarantees ci/audit_tests.py and ci/post-audit-comment.js are the
+          # versions already on main, not whatever the PR author supplied.
+          path: base
+          fetch-depth: 0
+
+      - name: Checkout PR head (untrusted data — never executed)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: pr
+          fetch-depth: 0
+
+      - name: Fetch base ref inside pr/ (needed for git diff)
+        working-directory: pr
+        run: git fetch origin ${{ github.event.pull_request.base.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run test audit (trusted auditor against PR data)
+        id: audit
+        working-directory: pr
+        run: |
+          python3 ../base/ci/audit_tests.py \
+            --diff-only origin/${{ github.event.pull_request.base.ref }} \
+            --json ../base/ci/audit-report.json \
+            --github-output
+
+      - name: Post audit comment
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // post-audit-comment.js reads ci/audit-report.json relative to cwd.
+            // Use the base (trusted) copy.
+            process.chdir('base');
+            const script = require('./ci/post-audit-comment.js');
+            await script({ github, context, core });
+
+      - name: Fail job if audit did not complete or found blocking issues
+        if: always() && (steps.audit.outcome != 'success' || steps.audit.outputs.audit_outcome == 'failure')
+        run: |
+          if [ "${{ steps.audit.outcome }}" != "success" ]; then
+            echo "::error::Test audit step did not complete cleanly (outcome=${{ steps.audit.outcome }}). This likely indicates an auditor bug or repository misconfiguration. Investigate before merging."
+          else
+            echo "::error::Test audit found blocking issues (P0=${{ steps.audit.outputs.p0_count }}, P1=${{ steps.audit.outputs.p1_count }}). See PR comment for details."
+          fi
+          exit 1
