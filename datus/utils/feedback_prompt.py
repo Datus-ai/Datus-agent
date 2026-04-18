@@ -12,7 +12,9 @@ _ELLIPSIS = "..."
 def _truncate(text: str, max_len: int) -> str:
     if max_len <= 0 or len(text) <= max_len:
         return text
-    keep = max(0, max_len - len(_ELLIPSIS))
+    if max_len <= len(_ELLIPSIS):
+        return _ELLIPSIS[:max_len]
+    keep = max_len - len(_ELLIPSIS)
     return text[:keep] + _ELLIPSIS
 
 

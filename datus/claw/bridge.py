@@ -225,7 +225,11 @@ class ChannelBridge:
                                 continue
                             bot_msg_id = await adapter.send_message(outbound)
                             if bot_msg_id:
-                                await self._track_bot_message(bot_msg_id, session_id, msg, outbound.text)
+                                reference_text = outbound.text
+                                if outbound.sql:
+                                    sql_block = f"```sql\n{outbound.sql}\n```"
+                                    reference_text = f"{reference_text}\n\n{sql_block}" if reference_text else sql_block
+                                await self._track_bot_message(bot_msg_id, session_id, msg, reference_text)
                             any_sent = True
 
             if not any_sent:
@@ -338,9 +342,13 @@ class ChannelBridge:
                 sub_agent_id="feedback",
             )
         except ValueError as exc:
+            async with self._lock:
+                self._reacted_bot_messages.pop(event.target_message_id, None)
             logger.warning("Reaction feedback could not start: %s", exc)
             return
         except Exception:
+            async with self._lock:
+                self._reacted_bot_messages.pop(event.target_message_id, None)
             logger.exception("Reaction feedback failed to start")
             return
 

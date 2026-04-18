@@ -61,6 +61,35 @@ async def test_feedback_endpoint_renders_prompt_and_routes_to_feedback_subagent(
     assert stream_input.message == '[The user reacted to this message "Here is your SQL result" with [thumbsup]]'
 
 
+@pytest.mark.parametrize(
+    "field",
+    ["source_session_id", "reaction_emoji", "reference_msg"],
+)
+@pytest.mark.parametrize("blank_value", ["", "   ", "\t\n"])
+def test_feedback_input_rejects_blank_required_field(field, blank_value):
+    """Required feedback fields must reject empty / whitespace-only strings."""
+    kwargs = dict(
+        source_session_id="sess_1",
+        reaction_emoji="thumbsup",
+        reference_msg="hi",
+    )
+    kwargs[field] = blank_value
+    with pytest.raises(ValueError):
+        FeedbackChatInput(**kwargs)
+
+
+def test_feedback_input_strips_whitespace_on_required_fields():
+    """Surrounding whitespace on required fields should be stripped, not retained."""
+    inp = FeedbackChatInput(
+        source_session_id="  sess_1  ",
+        reaction_emoji="  thumbsup  ",
+        reference_msg="  hi  ",
+    )
+    assert inp.source_session_id == "sess_1"
+    assert inp.reaction_emoji == "thumbsup"
+    assert inp.reference_msg == "hi"
+
+
 @pytest.mark.asyncio
 async def test_feedback_endpoint_appends_optional_reaction_msg():
     svc = _build_svc()

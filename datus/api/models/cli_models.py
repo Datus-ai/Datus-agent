@@ -281,6 +281,14 @@ class FeedbackChatInput(ChatInput):
     reference_msg: str = Field(..., description="Text of the bot message the user reacted to")
     reaction_msg: Optional[str] = Field(default=None, description="Optional free-text comment attached to the reaction")
 
+    @field_validator("source_session_id", "reaction_emoji", "reference_msg")
+    @classmethod
+    def _reject_blank_required_field(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Feedback field must not be empty or whitespace-only")
+        return stripped
+
 
 class UserInteractionInput(BaseModel):
     """Input for user interaction submission."""

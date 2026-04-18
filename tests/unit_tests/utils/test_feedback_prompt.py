@@ -81,3 +81,18 @@ class TestBuildReactionFeedbackPrompt:
             reference_msg="",
         )
         assert prompt == '[The user reacted to this message "" with [thumbsup]]'
+
+    def test_truncate_respects_tiny_max_len(self):
+        """When max_len is smaller than the ellipsis, the quoted portion must still fit in max_len."""
+        long_ref = "a" * 100
+        for tiny in (1, 2, 3):
+            prompt = build_reaction_feedback_prompt(
+                reaction_emoji="x",
+                reference_msg=long_ref,
+                max_ref_len=tiny,
+            )
+            start = prompt.index('"') + 1
+            end = prompt.index('"', start)
+            quoted = prompt[start:end]
+            assert len(quoted) == tiny, f"max_len={tiny} produced {quoted!r}"
+            assert quoted == "..."[:tiny]
