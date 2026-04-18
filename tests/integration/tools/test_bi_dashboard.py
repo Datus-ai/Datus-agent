@@ -92,13 +92,20 @@ def agent_config(tmp_path_factory) -> AgentConfig:
 
     # Rewrite `home:` to point at an isolated tmp dir so every derived path
     # (rag_storage_path, semantic_model_path, dashboard_path, ...) is tmp-scoped.
+    # Use re.subn and assert a replacement happened — otherwise, if agent.yml
+    # changes shape, the fixture would silently load the original home and the
+    # E2E cleanup block could rmtree real RAG/dashboard/semantic-model storage.
     content = src.read_text()
-    content = re.sub(
+    content, replacements = re.subn(
         r"^home:\s*\S+",
         f"home: {tmp_home}",
         content,
         count=1,
         flags=re.MULTILINE,
+    )
+    assert replacements == 1, (
+        "agent.yml must contain a top-level `home:` entry for tmp isolation "
+        "(got 0 substitutions — the fixture cannot guarantee safe cleanup)"
     )
     tmp_cfg.write_text(content)
 
