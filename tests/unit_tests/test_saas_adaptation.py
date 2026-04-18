@@ -48,10 +48,16 @@ def _init_vector_backend(tmp_path):
     """Initialize storage backends with tmp_path so data goes to a temp directory, not project root."""
     from datus.storage.backend_holder import init_backends
     from datus.storage.registry import clear_storage_registry
+    from datus.utils.path_manager import DatusPathManager, reset_path_manager, set_current_path_manager
 
     init_backends(data_dir=str(tmp_path))
-    yield
-    clear_storage_registry()
+    pm = DatusPathManager(datus_home=tmp_path, project_name="saas_test", project_root=tmp_path)
+    token = set_current_path_manager(pm)
+    try:
+        yield
+    finally:
+        reset_path_manager(token)
+        clear_storage_registry()
 
 
 # ---------------------------------------------------------------------------

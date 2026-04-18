@@ -1113,7 +1113,7 @@ class TestSessionManagerCustomDir:
 
 class TestSessionManagerPathManagerInjection:
     def test_uses_explicit_path_manager_when_session_dir_missing(self, tmp_path):
-        path_manager = DatusPathManager(tmp_path / "tenant_home")
+        path_manager = DatusPathManager(tmp_path / "tenant_home", project_name="tenant")
         manager = SessionManager(path_manager=path_manager)
         try:
             assert manager.session_dir == str(path_manager.sessions_dir)
@@ -1122,7 +1122,7 @@ class TestSessionManagerPathManagerInjection:
             manager.close_all_sessions()
 
     def test_uses_agent_config_path_manager_when_session_dir_missing(self, tmp_path):
-        path_manager = DatusPathManager(tmp_path / "tenant_home")
+        path_manager = DatusPathManager(tmp_path / "tenant_home", project_name="tenant")
         agent_config = SimpleNamespace(path_manager=path_manager)
         manager = SessionManager(agent_config=agent_config)
         try:
@@ -1132,7 +1132,7 @@ class TestSessionManagerPathManagerInjection:
             manager.close_all_sessions()
 
     def test_blank_session_dir_falls_back_to_path_manager(self, tmp_path):
-        path_manager = DatusPathManager(tmp_path / "tenant_home")
+        path_manager = DatusPathManager(tmp_path / "tenant_home", project_name="tenant")
         manager = SessionManager(session_dir="   ", path_manager=path_manager)
         try:
             assert manager.session_dir == str(path_manager.sessions_dir)
