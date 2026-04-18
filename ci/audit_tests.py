@@ -185,6 +185,9 @@ class _AstChecker(ast.NodeVisitor):
         self._func_stack: list[ast.AST] = []
         # Track if we're inside a test function or pytest fixture body
         self._in_test_or_fixture: list[bool] = [False]
+        # If nodes already classified as part of an elif chain at the head —
+        # prevents double-reporting when generic_visit descends into them.
+        self._handled_elif_ifs: set[int] = set()
 
     # -- helpers
 
@@ -213,40 +216,42 @@ class _AstChecker(ast.NodeVisitor):
     # -- try_except_pass_in_test: try ... except: pass (integration only)
 
     def visit_If(self, node: ast.If) -> None:
-        # The smell (Meszaros: Conditional Test Logic) is "verification silently
-        # skipped when the condition takes one branch". A dispatch pattern where
-        # BOTH branches verify — e.g. `if X: assert A else: assert B` or
-        # `if X: with pytest.raises(...) else: mock.assert_called()` — is a
-        # valid parametrized check and NOT a smell. We flag asymmetry: exactly
-        # one branch verifies while the other is effectively empty (missing,
-        # Pass-only, or non-verifying code like a nested unused def).
-        if_verifies = _subtree_has_verification(node.body)
-        else_verifies = _subtree_has_verification(node.orelse) if node.orelse else False
+        # conditional_assert (top-level-branch heuristic, no recursion):
+        # flag iff the if/elif/else chain has at least one branch that
+        # directly verifies AND at least one branch that is empty (missing
+        # else, or Pass/...-only), AND no branches are "opaque" (complex
+        # structured code we deliberately don't evaluate). This keeps the
+        # rule short and predictable: it catches the classic smells and
+        # stays silent on anything needing real control-flow analysis.
+        if id(node) in self._handled_elif_ifs:
+            self.generic_visit(node)
+            return
 
-        if if_verifies and not else_verifies:
+        branches, has_else, chained = _flatten_if_chain(node)
+        self._handled_elif_ifs.update(id(n) for n in chained)
+
+        labels = [_classify_branch(body) for body in branches]
+        if not has_else:
+            # Implicit "no branch matched" fall-through path is unverified.
+            labels.append("empty")
+
+        has_verified = "verified" in labels
+        has_empty = "empty" in labels
+        has_opaque = "opaque" in labels
+
+        if has_verified and has_empty and not has_opaque:
             self._emit(
                 Issue(
                     file=self.path,
                     line=node.lineno,
                     severity="P0",
                     check="conditional_assert",
-                    message="if-branch verifies behavior but the else branch (or missing else) does not — verification is silently skipped when the condition is false (Meszaros: Conditional Test Logic)",
+                    message="Conditional branches verify behavior only on some execution paths (Meszaros: Conditional Test Logic)",
                     quote=self._quote(node.lineno),
-                    suggestion="Either mirror verification in the else branch, or restructure so the assertion is unconditional.",
+                    suggestion="Mirror verification across all branches, or restructure so the assertion runs unconditionally.",
                 )
             )
-        elif else_verifies and not if_verifies:
-            self._emit(
-                Issue(
-                    file=self.path,
-                    line=node.lineno,
-                    severity="P0",
-                    check="conditional_assert",
-                    message="else-branch verifies behavior but the if branch does not — verification is silently skipped when the condition is true (Meszaros: Conditional Test Logic)",
-                    quote=self._quote(node.lineno),
-                    suggestion="Either mirror verification in the if branch, or restructure so the assertion is unconditional.",
-                )
-            )
+
         self.generic_visit(node)
 
     def visit_Try(self, node: ast.Try) -> None:
@@ -649,138 +654,93 @@ def _function_has_assert(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     return False
 
 
-_PYTEST_CTX_VERIFIERS = frozenset({"raises", "warns", "deprecated_call"})
+def _is_direct_verifier_stmt(stmt: ast.stmt) -> bool:
+    """True iff this SINGLE top-level statement itself verifies behavior.
 
-
-def _loop_definitely_empty(node: ast.AST) -> bool:
-    """Return True if this for/while loop provably never runs its body.
-
-    Statically decidable cases only — runtime-dependent iterables still
-    count as "possibly-executing" and their bodies DO contribute to
-    verification. This narrow detector exists to close a cheap bypass
-    where an attacker writes `while False: assert True` or
-    `for _ in []: assert True` to make `_subtree_has_verification` return
-    True for an else branch that in fact runs no verification.
-    """
-    if isinstance(node, ast.While):
-        return _is_falsy_constant(node.test)
-    if isinstance(node, (ast.For, ast.AsyncFor)):
-        return _is_empty_iterable(node.iter)
-    return False
-
-
-def _is_falsy_constant(expr: ast.AST) -> bool:
-    if isinstance(expr, ast.Constant):
-        return bool(expr.value) is False  # False / None / 0 / "" / b"" / 0.0
-    return False
-
-
-def _is_empty_iterable(expr: ast.AST) -> bool:
-    if isinstance(expr, (ast.List, ast.Tuple, ast.Set)):
-        return not expr.elts
-    if isinstance(expr, ast.Dict):
-        return not expr.keys
-    if isinstance(expr, ast.Constant) and isinstance(expr.value, (str, bytes)):
-        return len(expr.value) == 0
-    # range(0) / range(N, M) with N >= M
-    if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name) and expr.func.id == "range":
-        args = expr.args
-        if len(args) == 1 and isinstance(args[0], ast.Constant) and args[0].value == 0:
-            return True
-        if len(args) >= 2 and all(isinstance(a, ast.Constant) for a in args[:2]):
-            try:
-                if args[0].value >= args[1].value:
-                    return True
-            except TypeError:
-                return False
-    return False
-
-
-def _is_verification_expression(node: ast.AST) -> bool:
-    """A single AST node that counts as runtime verification on its own.
-
-    Covers:
+    Deliberately shallow — no recursion into nested blocks. Recognized forms:
       - `assert ...`
-      - `mock.assert_called_once_with(...)` / `self.assertEqual(...)` / any
-        method call whose name starts with `assert` or `assert_`
+      - `with pytest.raises(...) / pytest.warns(...) / pytest.deprecated_call(...)`
+      - expression statement `mock.assert_called_*() / self.assertXxx(...)`
+
+    Everything else (for / while / try / match, nested if, def / class, bare
+    calls, assignments) returns False. Higher-level callers treat statements
+    in this "not a direct verifier" bucket as UNKNOWN rather than
+    "definitely does not verify", so complex branches are not flagged.
     """
-    if isinstance(node, ast.Assert):
+    if isinstance(stmt, ast.Assert):
         return True
-    # An expression statement wrapping a call (e.g. `mock.assert_called()`).
-    if isinstance(node, ast.Expr):
-        node = node.value
-    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-        name = node.func.attr
-        if name.startswith("assert") or name.startswith("assert_"):
-            return True
-    return False
-
-
-def _subtree_has_verification(body: list[ast.stmt]) -> bool:
-    """True if this stmt list contains verification that WILL execute at runtime.
-
-    Used by the conditional_assert rule to decide whether an else / elif
-    branch also verifies behavior. Symmetric `if/else` where both sides
-    verify is a legitimate parametrized-dispatch pattern, NOT a Lying Test.
-
-    Recognized forms:
-      - `assert ...`
-      - `with pytest.raises(...)` / `pytest.warns` / `pytest.deprecated_call`
-      - `mock.assert_called_*` / `self.assertXxx(...)` style method calls
-
-    Deliberately does NOT descend into:
-      - Nested `def` / `async def` / `lambda` / `class` bodies (those don't
-        execute merely by being defined — only `def _unused(): assert False`
-        declared in an else branch doesn't verify anything).
-      - `try/except` handler bodies (error-path only; skipping them errs on
-        the safe side — we'd rather a false-positive smell than let a bypass
-        slip through).
-
-    A nested `if` inside the walk counts as verification only when BOTH
-    branches have verification; a one-sided inner `if` does not make the
-    outer branch "verified".
-    """
-    stack: list[ast.AST] = list(body)
-    while stack:
-        node = stack.pop()
-        if _is_verification_expression(node):
-            return True
-        # pytest.raises / pytest.warns / pytest.deprecated_call context manager.
-        if isinstance(node, (ast.With, ast.AsyncWith)):
-            for item in node.items:
-                ce = item.context_expr
-                if isinstance(ce, ast.Call) and isinstance(ce.func, ast.Attribute):
-                    if ce.func.attr in _PYTEST_CTX_VERIFIERS:
-                        val = ce.func.value
-                        if isinstance(val, ast.Name) and val.id == "pytest":
-                            return True
-            stack.extend(node.body)
-            continue
-        # Nested if: only counts as verification when both arms verify.
-        if isinstance(node, ast.If):
-            if node.orelse and _subtree_has_verification(node.body) and _subtree_has_verification(node.orelse):
+    if isinstance(stmt, (ast.With, ast.AsyncWith)):
+        for item in stmt.items:
+            ce = item.context_expr
+            if isinstance(ce, ast.Call) and isinstance(ce.func, ast.Attribute):
+                if isinstance(ce.func.value, ast.Name) and ce.func.value.id == "pytest":
+                    if ce.func.attr in {"raises", "warns", "deprecated_call"}:
+                        return True
+        return False
+    if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
+        call = stmt.value
+        if isinstance(call.func, ast.Attribute):
+            name = call.func.attr
+            if name.startswith("assert") or name.startswith("assert_"):
                 return True
-            continue
-        # Loop bodies: descend only when the loop might run. Statically obvious
-        # empty loops (`for _ in []:` / `while False:` / `range(0)`) are a cheap
-        # bypass — `else: while False: assert False` is not verification.
-        if isinstance(node, (ast.For, ast.AsyncFor, ast.While)):
-            if _loop_definitely_empty(node):
-                continue
-            stack.extend(node.body)
-            continue
-        # Try: only the main body path is considered guaranteed.
-        if isinstance(node, ast.Try):
-            stack.extend(node.body)
-            stack.extend(node.finalbody)
-            continue
-        # Skip nested definitions — they don't run by being defined.
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
-            continue
-        # Other statement types: walk one level deep looking for verification calls.
-        for child in ast.iter_child_nodes(node):
-            stack.append(child)
     return False
+
+
+def _classify_branch(body: list[ast.stmt]) -> str:
+    """Classify an if-chain branch body as one of:
+
+    - 'verified': at least one top-level statement is a direct verifier
+    - 'empty':    empty, or only Pass / Ellipsis / a leading docstring
+    - 'opaque':   contains structured / non-verifier code (for, while, try,
+                  match, nested if, def, class, bare calls, assignments).
+                  Not evaluated; kept silent to avoid false positives.
+    """
+    # Strip a leading docstring if present.
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        body = body[1:]
+
+    if any(_is_direct_verifier_stmt(s) for s in body):
+        return "verified"
+
+    def _is_filler(s: ast.stmt) -> bool:
+        if isinstance(s, ast.Pass):
+            return True
+        if isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant) and s.value.value is Ellipsis:
+            return True
+        return False
+
+    if not body or all(_is_filler(s) for s in body):
+        return "empty"
+    return "opaque"
+
+
+def _flatten_if_chain(node: ast.If) -> tuple[list[list[ast.stmt]], bool, list[ast.If]]:
+    """Walk an `if / elif / .../ else` chain head.
+
+    Returns:
+      - branches: list of stmt-lists in source order, one per `if`/`elif` and
+                  (if present) the final `else`.
+      - has_else: True iff the chain ends with an explicit `else:` clause.
+      - chained:  inner elif-If nodes (excluding the head) so the caller can
+                  mark them as handled and avoid double-reporting when the
+                  AST walker later visits them individually.
+    """
+    branches: list[list[ast.stmt]] = [node.body]
+    chained: list[ast.If] = []
+    cur = node
+    while len(cur.orelse) == 1 and isinstance(cur.orelse[0], ast.If):
+        cur = cur.orelse[0]
+        branches.append(cur.body)
+        chained.append(cur)
+    has_else = bool(cur.orelse) and not (len(cur.orelse) == 1 and isinstance(cur.orelse[0], ast.If))
+    if has_else:
+        branches.append(cur.orelse)
+    return branches, has_else, chained
 
 
 # ---------------------------------------------------------------------------
