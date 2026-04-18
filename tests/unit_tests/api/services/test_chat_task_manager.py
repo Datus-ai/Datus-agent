@@ -747,6 +747,81 @@ class TestConsumeEventsCoalescing:
         assert task.consumer_offset == 3
 
 
+@pytest.mark.asyncio
+class TestRunLoopPathManagerContext:
+    """Regression: _run_loop must pin agent_config.path_manager into its own context.
+
+    The claw bridge dispatches messages from a Feishu SDK worker thread via
+    ``asyncio.run_coroutine_threadsafe``. That thread never inherited the
+    ContextVar set by ``AgentConfig.__init__``, so the spawned task starts
+    with an empty ``_current_path_manager`` and downstream stores
+    (``BaseSubjectEmbeddingStore`` -> ``get_subject_tree_store``) would fall
+    back to a path manager with empty ``project_name``, raising
+    ``create_rdb_for_store requires a non-empty project``.
+    """
+
+    async def test_run_loop_sets_path_manager_when_context_is_empty(self, real_agent_config, mock_llm_create):
+        """Even when the calling context has no path manager, _run_loop binds
+        agent_config.path_manager so downstream get_path_manager() callers see
+        the right project_name."""
+        from datus.api.models.cli_models import StreamChatInput
+        from datus.utils.path_manager import (
+            _current_path_manager,
+            get_path_manager,
+            reset_path_manager,
+        )
+
+        captured: dict[str, str] = {}
+
+        original_create_node = ChatTaskManager._create_node
+
+        def _capturing_create_node(self, agent_config, subagent_id, session_id, **kwargs):
+            # Simulate what BaseSubjectEmbeddingStore.__init__ does at line 692:
+            # rely on the ambient ContextVar to find the project name.
+            captured["project_name"] = get_path_manager().project_name
+            return original_create_node(self, agent_config, subagent_id, session_id, **kwargs)
+
+        manager = ChatTaskManager()
+        manager._create_node = _capturing_create_node.__get__(manager, ChatTaskManager)  # type: ignore[method-assign]
+
+        # Wipe the ContextVar to mimic the Feishu-thread dispatch case. The
+        # task created by start_chat will inherit this empty context.
+        token = _current_path_manager.set(None)
+        try:
+            assert _current_path_manager.get() is None
+            request = StreamChatInput(message="hello", session_id="path-mgr-test")
+            task = await manager.start_chat(real_agent_config, request)
+            # Wait for the background loop to finish (mock LLM returns immediately).
+            await asyncio.wait_for(task.asyncio_task, timeout=5.0)
+        finally:
+            reset_path_manager(token)
+            await manager.shutdown()
+
+        expected = real_agent_config.project_name
+        assert expected, "real_agent_config.project_name must be non-empty for this test"
+        assert captured.get("project_name") == expected, (
+            f"_run_loop did not pin path_manager: got {captured.get('project_name')!r}, expected {expected!r}"
+        )
+
+    async def test_run_loop_does_not_leak_path_manager_to_caller(self, real_agent_config, mock_llm_create):
+        """The ContextVar.set inside _run_loop must stay scoped to its own task
+        and not bleed back into the calling context."""
+        from datus.api.models.cli_models import StreamChatInput
+        from datus.utils.path_manager import _current_path_manager, reset_path_manager
+
+        manager = ChatTaskManager()
+        token = _current_path_manager.set(None)
+        try:
+            request = StreamChatInput(message="hello", session_id="leak-test")
+            task = await manager.start_chat(real_agent_config, request)
+            await asyncio.wait_for(task.asyncio_task, timeout=5.0)
+            # Caller's view stays untouched: the spawned task has its own context.
+            assert _current_path_manager.get() is None
+        finally:
+            reset_path_manager(token)
+            await manager.shutdown()
+
+
 class _StubGenSQLNode:
     def __init__(self, **kwargs):
         self.node_name = kwargs.get("node_name")

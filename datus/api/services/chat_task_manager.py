@@ -33,6 +33,7 @@ from datus.schemas.action_history import ActionHistoryManager
 from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
 from datus.tools.proxy.proxy_tool import apply_proxy_tools
 from datus.utils.loggings import get_logger
+from datus.utils.path_manager import set_current_path_manager
 
 logger = get_logger(__name__)
 
@@ -348,6 +349,13 @@ class ChatTaskManager:
         """Execute the full agentic loop, pushing SSE events to the task buffer."""
         session_id = task.session_id
         event_id = 0
+
+        # Pin the path manager into this task's context. Required when the caller
+        # dispatched us from a thread that never inherited AgentConfig's ContextVar
+        # (e.g. claw bridge dispatching from an IM SDK worker thread via
+        # ``asyncio.run_coroutine_threadsafe``); otherwise downstream stores fall
+        # back to ``get_path_manager()`` and get an empty project_name.
+        set_current_path_manager(agent_config.path_manager)
 
         try:
             start_time = datetime.now()
