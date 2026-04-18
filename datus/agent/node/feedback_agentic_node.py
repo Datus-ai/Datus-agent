@@ -135,7 +135,7 @@ class FeedbackAgenticNode(AgenticNode):
                 "native_tools": ", ".join([tool.name for tool in self.tools]) if self.tools else "None",
                 "has_task_tool": bool(self.sub_agent_task_tool),
                 "has_ask_user_tool": self.ask_user_tool is not None,
-                "knowledge_base_dir": str(self.agent_config.path_manager.knowledge_base_home),
+                "knowledge_base_dir": str(self.agent_config.path_manager.subject_dir),
                 "current_database": self.agent_config.current_database,
                 "workspace_root": self._resolve_workspace_root(),
             }
