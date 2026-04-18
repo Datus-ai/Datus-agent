@@ -13,6 +13,10 @@ import tempfile
 import duckdb
 import pytest
 
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
+
 TARGET_TABLE = "public.gen_job_test_users"
 
 
@@ -86,26 +90,23 @@ agent:
     with open(config_path, "w") as f:
         f.write(config_content)
 
-    try:
-        agent_config = load_agent_config(config=config_path, namespace="source_duckdb", reload=True, force=True)
-    except Exception as e:
-        pytest.skip(f"Failed to load config: {e}")
+    # Failures in config load / node construction are real bugs — don't mask them as skips.
+    # External-service availability is handled by per-test TEST_GP_ENABLED gating.
+    agent_config = load_agent_config(config=config_path, namespace="source_duckdb", reload=True, force=True)
 
     from datus.agent.node.migration_agentic_node import MigrationAgenticNode
 
     with patch("datus.models.base.LLMBaseModel.create_model"):
-        try:
-            node = MigrationAgenticNode(agent_config=agent_config, execution_mode="workflow")
-        except Exception as e:
-            pytest.skip(f"Failed to create MigrationAgenticNode: {e}")
+        node = MigrationAgenticNode(agent_config=agent_config, execution_mode="workflow")
 
     yield node
 
-    # Cleanup target table using node's own execute_ddl (same SQLAlchemy connection, avoids lock conflicts)
+    # Cleanup target table using node's own execute_ddl (same SQLAlchemy connection, avoids lock conflicts).
+    # Log rather than swallow — silent pass here would hide cleanup failures in subsequent runs.
     try:
         node.db_func_tool.execute_ddl(sql=f"DROP TABLE IF EXISTS {TARGET_TABLE}", database="greenplum")
-    except Exception:
-        pass
+    except Exception as cleanup_err:
+        logger.warning("Cleanup DROP TABLE %s failed: %s", TARGET_TABLE, cleanup_err)
 
 
 @pytest.mark.integration

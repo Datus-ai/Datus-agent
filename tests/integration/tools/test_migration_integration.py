@@ -77,56 +77,68 @@ def duckdb_source():
 
 @pytest.fixture(scope="session")
 def greenplum_connection():
-    """Connect to Greenplum Docker instance. Skip if unavailable.
+    """Connect to the Greenplum Docker test instance.
 
-    Uses Docker test defaults from datus-db-adapters/datus-greenplum/docker-compose.yml.
-    Does NOT read env vars to avoid pollution from agent.yml config.
+    Opt-in via `TEST_GP_ENABLED=1`. Host/port can be overridden via
+    `TEST_GP_HOST` / `TEST_GP_PORT` (defaults match
+    datus-db-adapters/datus-greenplum/docker-compose.yml).
+
+    Rationale: we skip declaratively when the user hasn't opted in. If the
+    user opted in but the DB is unreachable, that's a real test failure —
+    we deliberately don't wrap the connect in try/except:pytest.skip, which
+    would hide config / network errors as silent skips (Meszaros: Lying Test).
     """
-    try:
-        import psycopg2
+    if not os.getenv("TEST_GP_ENABLED"):
+        pytest.skip("Greenplum integration disabled; set TEST_GP_ENABLED=1 to enable")
 
-        conn = psycopg2.connect(
-            host="localhost",
-            port=15432,
-            user="gpadmin",
-            password="pivotal",
-            dbname="test",
-        )
-        # Test the connection
+    import psycopg2
+
+    conn = psycopg2.connect(
+        host=os.getenv("TEST_GP_HOST", "localhost"),
+        port=int(os.getenv("TEST_GP_PORT", "15432")),
+        user=os.getenv("TEST_GP_USER", "gpadmin"),
+        password=os.getenv("TEST_GP_PASSWORD", "pivotal"),
+        dbname=os.getenv("TEST_GP_DBNAME", "test"),
+    )
+    try:
         cur = conn.cursor()
         cur.execute("SELECT 1")
         cur.close()
         yield conn
+    finally:
         conn.close()
-    except Exception as e:
-        pytest.skip(f"Greenplum not available: {e}")
 
 
 @pytest.fixture(scope="session")
 def starrocks_connection():
-    """Connect to StarRocks Docker instance. Skip if unavailable.
+    """Connect to the StarRocks Docker test instance.
 
-    Uses Docker test defaults from datus-db-adapters/datus-starrocks/docker-compose.yml.
-    Does NOT read env vars to avoid pollution from agent.yml config.
+    Opt-in via `TEST_SR_ENABLED=1`. Host/port can be overridden via
+    `TEST_SR_HOST` / `TEST_SR_PORT` (defaults match
+    datus-db-adapters/datus-starrocks/docker-compose.yml).
+
+    See `greenplum_connection` for rationale on why we don't swallow
+    connection errors into skips.
     """
-    try:
-        import pymysql
+    if not os.getenv("TEST_SR_ENABLED"):
+        pytest.skip("StarRocks integration disabled; set TEST_SR_ENABLED=1 to enable")
 
-        conn = pymysql.connect(
-            host="localhost",
-            port=9030,
-            user="root",
-            password="",
-            database="test",
-        )
-        # Ensure test database exists
+    import pymysql
+
+    conn = pymysql.connect(
+        host=os.getenv("TEST_SR_HOST", "localhost"),
+        port=int(os.getenv("TEST_SR_PORT", "9030")),
+        user=os.getenv("TEST_SR_USER", "root"),
+        password=os.getenv("TEST_SR_PASSWORD", ""),
+        database=os.getenv("TEST_SR_DATABASE", "test"),
+    )
+    try:
         cur = conn.cursor()
         cur.execute("SELECT 1")
         cur.close()
         yield conn
+    finally:
         conn.close()
-    except Exception as e:
-        pytest.skip(f"StarRocks not available: {e}")
 
 
 # ---------------------------------------------------------------------------

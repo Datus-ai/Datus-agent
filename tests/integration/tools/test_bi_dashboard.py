@@ -9,9 +9,7 @@ Contains two test classes at different verification levels:
 - TestE2EIntegration: Full end-to-end with zero mocks (nightly only)
 """
 
-import os
 import re
-import shutil
 from typing import Any, Dict, List, Tuple
 
 import pytest
@@ -23,10 +21,11 @@ from datus.cli.bi_dashboard import BiDashboardCommands, DashboardCliOptions
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.tools.bi_tools.dashboard_assembler import ChartSelection, DashboardAssembler
-from datus.utils.loggings import configure_logging
+from datus.utils.loggings import configure_logging, get_logger
 from tests.conftest import TEST_CONF_DIR, TEST_DATA_DIR
 
 configure_logging(False, console_output=False)
+logger = get_logger(__name__)
 
 
 # ============================================================================
@@ -79,11 +78,30 @@ def validate_chart_sql(chart_id: str, actual_sql: str, expected_sql: str) -> tup
 
 @pytest.fixture(scope="module")
 def agent_config(tmp_path_factory) -> AgentConfig:
-    """Load agent config from a temp copy so the source file is never modified."""
+    """Load agent config from a temp copy, with `home:` redirected to tmp.
+
+    The redirect is critical: without it, `agent_config.rag_storage_path()` and
+    `agent_config.path_manager.semantic_model_path()` resolve to the developer's
+    real RAG storage (e.g. `.datus_test_data/...`), and the E2E test's cleanup
+    block would rmtree that real storage on every run.
+    """
     src = TEST_CONF_DIR / "agent.yml"
     tmp_dir = tmp_path_factory.mktemp("bi_conf")
     tmp_cfg = tmp_dir / "agent.yml"
-    shutil.copy2(src, tmp_cfg)
+    tmp_home = tmp_path_factory.mktemp("bi_home")
+
+    # Rewrite `home:` to point at an isolated tmp dir so every derived path
+    # (rag_storage_path, semantic_model_path, dashboard_path, ...) is tmp-scoped.
+    content = src.read_text()
+    content = re.sub(
+        r"^home:\s*\S+",
+        f"home: {tmp_home}",
+        content,
+        count=1,
+        flags=re.MULTILINE,
+    )
+    tmp_cfg.write_text(content)
+
     config = load_agent_config(config=str(tmp_cfg), namespace="superset", reload=True, force=True, yes=True)
     return config
 
@@ -181,8 +199,7 @@ def _extract_and_select_charts(
                     actual_sql = chart.query.sql[0] if chart.query.sql else ""
                     is_valid, error_msg = validate_chart_sql(chart.name, actual_sql, expected_sqls[chart.name])
                     if not is_valid:
-                        print(error_msg)
-                        pytest.fail(f"SQL validation failed for chart '{chart.name}'. See output above for details.")
+                        pytest.fail(f"SQL validation failed for chart '{chart.name}':\n{error_msg}")
 
                 chart_selections.append(ChartSelection(chart=chart, sql_indices=list(range(len(chart.query.sql)))))
     else:
@@ -228,8 +245,15 @@ class TestPartialIntegration:
         bi_commands: BiDashboardCommands,
         agent_config: AgentConfig,
         input_data: List[Dict[str, Any]],
+        tmp_path,
     ):
-        """Integration test: real Superset extraction + mocked LLM generation."""
+        """Integration test: real Superset extraction + mocked LLM generation.
+
+        Uses real tmp YAML files for the fake metrics so that `_gen_metrics`
+        can read them naturally with its own `open()` + `yaml.safe_load_all`
+        calls — no need to patch builtins.open (which would pollute every
+        open() call in the with-block, including pytest capture and logger).
+        """
         from unittest.mock import patch
 
         for dashboard_item in input_data:
@@ -243,14 +267,31 @@ class TestPartialIntegration:
                 )
                 result = _assemble(bi_adapter, dashboard, chart_selections, datasets, dialect)
 
-                # Mock ONLY the LLM calls and slow initialization
+                # Write REAL YAML files so the code under test can parse them
+                # with its own open()+yaml.safe_load_all — no global open() patching.
+                fake_metric_dir = tmp_path / f"fake_metrics_{platform}"
+                fake_metric_dir.mkdir(exist_ok=True)
+                fake_metric_files: List[str] = []
+                for i in range(len(result.metric_sqls)):
+                    fp = fake_metric_dir / f"fake_metric_{i}.yaml"
+                    fp.write_text(
+                        yaml.safe_dump(
+                            {
+                                "metric": {
+                                    "name": f"metric_{i}",
+                                    "locked_metadata": {"tags": [f"subject_tree:{platform}/test/layer{i}"]},
+                                }
+                            }
+                        )
+                    )
+                    fake_metric_files.append(str(fp))
+
+                # Mock ONLY the LLM calls and slow initialization.
                 with (
                     patch("datus.cli.bi_dashboard.init_reference_sql") as mock_ref_sql,
                     patch("datus.cli.bi_dashboard.init_semantic_model") as mock_semantic,
                     patch("datus.cli.bi_dashboard.init_metrics") as mock_metrics,
                     patch.object(bi_commands, "_validate_semantic_model", return_value=True) as _,
-                    patch("builtins.open") as mock_open,
-                    patch("yaml.safe_load_all") as mock_yaml_load,
                 ):
                     mock_ref_sql.return_value = {
                         "status": "success",
@@ -263,8 +304,6 @@ class TestPartialIntegration:
                         ],
                     }
                     mock_semantic.return_value = (True, {"semantic_model_count": len(result.metric_sqls)})
-
-                    fake_metric_files = [f"fake_metric_{i}.yaml" for i in range(len(result.metric_sqls))]
                     mock_metrics.return_value = (
                         True,
                         {
@@ -274,18 +313,6 @@ class TestPartialIntegration:
                             "tokens_used": 1000,
                         },
                     )
-
-                    def mock_yaml_side_effect(_, _result=result, _platform=platform):
-                        for i in range(len(_result.metric_sqls)):
-                            yield {
-                                "metric": {
-                                    "name": f"metric_{i}",
-                                    "locked_metadata": {"tags": [f"subject_tree:{_platform}/test/layer{i}"]},
-                                }
-                            }
-
-                    mock_yaml_load.side_effect = mock_yaml_side_effect
-                    mock_open.return_value.__exit__.return_value = None
 
                     ref_sqls = bi_commands._gen_reference_sqls(result.reference_sqls, platform, dashboard)
                     semantic_result = bi_commands._gen_semantic_model(result.metric_sqls, platform, dashboard)
@@ -298,10 +325,13 @@ class TestPartialIntegration:
                     assert mock_semantic.called
                     assert mock_metrics.called
 
-                print(f"\nPartial integration test passed for {platform}")
-                print(f"  - Real Superset extraction: {len(charts)} charts")
-                print(f"  - Real data assembly: {len(result.reference_sqls)} SQLs")
-                print("  - Mocked LLM calls: 3 calls avoided")
+                logger.info(
+                    "Partial integration test passed for %s — real Superset extraction: %d charts, "
+                    "real data assembly: %d SQLs, mocked LLM calls: 3",
+                    platform,
+                    len(charts),
+                    len(result.reference_sqls),
+                )
 
             finally:
                 if hasattr(bi_adapter, "close"):
@@ -330,24 +360,12 @@ class TestE2EIntegration:
         agent_config: AgentConfig,
         input_data: List[Dict[str, Any]],
     ):
-        """TRUE END-TO-END: dashboard extraction -> sub-agent bootstrap -> verification."""
-        # Clean storage for a clean slate
-        storage_dir = agent_config.rag_storage_path()
-        for component_dirpath in [
-            "schema_metadata.lance",
-            "schema_value.lance",
-            "metrics.lance",
-            "semantic_model.lance",
-            "reference_sql.lance",
-        ]:
-            dirpath = os.path.join(storage_dir, component_dirpath)
-            if os.path.isdir(dirpath):
-                shutil.rmtree(dirpath)
+        """TRUE END-TO-END: dashboard extraction -> sub-agent bootstrap -> verification.
 
-        semantic_model_dir = agent_config.path_manager.semantic_model_path()
-        if semantic_model_dir.exists():
-            shutil.rmtree(semantic_model_dir)
-
+        Storage is already isolated in a tmp dir via the `agent_config` fixture
+        (home: redirected to tmp_path_factory), so no cleanup is needed here —
+        the storage starts empty for every test module run.
+        """
         test_results = []
 
         for dashboard_item in input_data:
@@ -414,7 +432,13 @@ class TestE2EIntegration:
                     total_semantic_model_rows += sm_size
                     total_metrics_rows += m_size
                     total_reference_sql_rows += rs_size
-                    print(f"  Sub-agent '{name}': semantic_model={sm_size}, metrics={m_size}, reference_sql={rs_size}")
+                    logger.info(
+                        "Sub-agent '%s': semantic_model=%d, metrics=%d, reference_sql=%d",
+                        name,
+                        sm_size,
+                        m_size,
+                        rs_size,
+                    )
 
                 test_result["semantic_model_rows"] = total_semantic_model_rows
                 test_result["metrics_rows"] = total_metrics_rows
@@ -459,29 +483,28 @@ class TestE2EIntegration:
                 if hasattr(bi_adapter, "close"):
                     bi_adapter.close()
 
-        # Print summary
-        print("-" * 80)
-        print(" BI DASHBOARD INTEGRATION TEST SUMMARY")
-        print("-" * 80)
-
+        # Structured summary via logger (use pytest --log-cli-level=INFO to surface).
         passed_tests = [r for r in test_results if r["status"] == "passed"]
         failed_tests = [r for r in test_results if r["status"] == "failed"]
-        print(f"\nTotal: {len(test_results)}, Passed: {len(passed_tests)}, Failed: {len(failed_tests)}")
-
+        logger.info(
+            "BI dashboard integration summary — total=%d passed=%d failed=%d",
+            len(test_results),
+            len(passed_tests),
+            len(failed_tests),
+        )
         for result in passed_tests:
-            print(
-                f"\n  PASSED: {result['platform']} - {result['dashboard_name']}"
-                f" ({result['charts_processed']} charts, {result['tables']} tables)"
+            logger.info(
+                "PASSED: %s - %s (%d charts, %d tables); bootstrap semantic_model=%d metrics=%d reference_sql=%d",
+                result["platform"],
+                result["dashboard_name"],
+                result["charts_processed"],
+                result["tables"],
+                result["semantic_model_rows"],
+                result["metrics_rows"],
+                result["reference_sql_rows"],
             )
-            print(
-                f"    Bootstrap: semantic_model={result['semantic_model_rows']}, "
-                f"metrics={result['metrics_rows']}, reference_sql={result['reference_sql_rows']}"
-            )
-
         for result in failed_tests:
-            print(f"\n  FAILED: {result['platform']} - {result['error']}")
-
-        print("-" * 80)
+            logger.error("FAILED: %s - %s", result["platform"], result["error"])
 
         failed = [r for r in test_results if r["status"] == "failed"]
         assert not failed, f"Dashboard tests failed: {[r['error'] for r in failed]}"

@@ -171,23 +171,23 @@ class TestReferenceTemplateToolsNightly:
         params_json = first.get("parameters", "[]")
         params = json.loads(params_json)
 
-        if len(params) > 1:
-            # Only provide the first parameter, omit the rest
-            partial_params = {params[0]["name"]: "test_value"}
-            render_result = tpl_tools.render_reference_template(
-                subject_path=subject_path,
-                name=name,
-                params=json.dumps(partial_params),
-            )
-            assert render_result.success == 0, "Render with missing params should fail"
-            # Error should mention which params are missing
-            assert "requires parameters" in render_result.error or "Missing" in render_result.error
-            assert "retry" in render_result.error.lower()
-        else:
+        if not (params and len(params) > 1):
             pytest.skip(
                 "No template with >1 parameter found to test missing params scenario. "
                 "The test data must include at least one multi-parameter template to exercise this code path."
             )
+
+        # Only provide the first parameter, omit the rest — assertions now unconditional.
+        partial_params = {params[0]["name"]: "test_value"}
+        render_result = tpl_tools.render_reference_template(
+            subject_path=subject_path,
+            name=name,
+            params=json.dumps(partial_params),
+        )
+        assert render_result.success == 0, "Render with missing params should fail"
+        # Error should mention which params are missing
+        assert "requires parameters" in render_result.error or "Missing" in render_result.error
+        assert "retry" in render_result.error.lower()
 
 
 @pytest.mark.nightly
