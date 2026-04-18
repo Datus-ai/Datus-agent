@@ -56,7 +56,13 @@ jobs:
         id: audit
         working-directory: pr
         run: |
+          # --repo-root . tells the auditor (which lives under ../base/) to
+          # resolve REPO_ROOT, TIER_ROOTS, and the git-diff cwd to the PR
+          # checkout at `pr/`. Without this, git diff would run inside base/
+          # where origin/<base>...HEAD is empty and the auditor would exit
+          # with "no test files to scan" — silently passing the PR.
           python3 ../base/ci/audit_tests.py \
+            --repo-root . \
             --diff-only origin/${{ github.event.pull_request.base.ref }} \
             --json ../base/ci/audit-report.json \
             --github-output

@@ -61,6 +61,30 @@ INTEGRATION_ROOT = TIER_ROOTS["integration"]
 # These are unit-tier-specific checks.
 TESTS_ROOT = UNIT_ROOT
 
+
+def configure_repo_root(new_root: Path) -> None:
+    """Override the repo root used by all scans (--repo-root CLI flag).
+
+    The script itself lives under `base/ci/` in the workflow's trusted
+    checkout. When invoked with `--repo-root .` from the untrusted PR
+    checkout, REPO_ROOT / TIER_ROOTS / etc must point at the PR's tree so
+    git diff and file reads actually see the PR's code. This keeps the
+    trust boundary clean: the _code_ runs from `base/` (never imports from
+    `pr/`), while the _data_ scanned lives at the given root.
+    """
+    global REPO_ROOT, SOURCE_ROOT, PYPROJECT, TIER_ROOTS, UNIT_ROOT, INTEGRATION_ROOT, TESTS_ROOT
+    REPO_ROOT = new_root.resolve()
+    SOURCE_ROOT = REPO_ROOT / "datus"
+    PYPROJECT = REPO_ROOT / "pyproject.toml"
+    TIER_ROOTS = {
+        "unit": REPO_ROOT / "tests" / "unit_tests",
+        "integration": REPO_ROOT / "tests" / "integration",
+    }
+    UNIT_ROOT = TIER_ROOTS["unit"]
+    INTEGRATION_ROOT = TIER_ROOTS["integration"]
+    TESTS_ROOT = UNIT_ROOT
+
+
 FILE_SIZE_LIMIT = 1500
 AUDIT_NOQA = "audit-noqa"
 
@@ -890,54 +914,83 @@ def build_test_class_index(roots: list[Path]) -> dict[str, list[Path]]:
 
 
 def check_duplicate_test_files(target_files: set[Path], tiers_in_scope: set[str]) -> list[Issue]:
-    """Detect redundant test files, scoped to the tiers that are active."""
+    """Detect redundant test files within each tier separately.
+
+    Cross-tier duplication (same class covered by a unit test with mocks AND
+    an integration test with real services) is a legitimate pattern
+    (Khorikov / Google Test Pyramid). Therefore detection runs per-tier:
+    class `TestFoo` appearing once in `tests/unit_tests/` and once in
+    `tests/integration/` is NOT a duplicate.
+    """
     issues: list[Issue] = []
-    roots = [TIER_ROOTS[t] for t in tiers_in_scope]
-    test_classes = build_test_class_index(roots)
     source_classes = collect_source_classes()
     reported_pairs: set[tuple[str, ...]] = set()
-
-    # Signal 1: same source class has TestX class in multiple test files
-    for cls, test_files in test_classes.items():
-        if cls not in source_classes:
-            continue
-        if cls in {"Meta", "Config", "Error", "Base"}:
-            continue
-        if len(test_files) < 2:
-            continue
-        touched = [t for t in test_files if t in target_files]
-        if not touched:
-            continue
-        rel_tests = ", ".join(str(t.relative_to(REPO_ROOT)) for t in test_files)
-        key = tuple(sorted(str(t) for t in test_files))
-        reported_pairs.add(key)
-        for t in touched:
-            tier = detect_tier(t) or ""
-            issues.append(
-                Issue(
-                    file=str(t.relative_to(REPO_ROOT)),
-                    line=1,
-                    severity="P1",
-                    check="duplicate_test_files",
-                    message=f"Class `{cls}` has `class Test{cls}` in multiple test files: {rel_tests}",
-                    quote=f"defined in {source_classes[cls][0].relative_to(REPO_ROOT)}",
-                    suggestion="Merge into a single test file — each source class should have exactly ONE test file (Meszaros: Test Code Duplication).",
-                    tier=tier,
-                )
-            )
-
-    # Signal 2: near-duplicate filenames in same directory
     _NUISANCE_AFFIXES = ("_tools", "_module", "_unit", "_v2", "_ext", "_new", "_v1")
-    files_by_dir: dict[Path, list[Path]] = defaultdict(list)
-    for root in roots:
+
+    for tier in tiers_in_scope:
+        root = TIER_ROOTS[tier]
+        test_classes = build_test_class_index([root])
+
+        # Signal 1: same source class has TestX class in multiple test files (within this tier).
+        for cls, test_files in test_classes.items():
+            if cls not in source_classes:
+                continue
+            if cls in {"Meta", "Config", "Error", "Base"}:
+                continue
+            if len(test_files) < 2:
+                continue
+            touched = [t for t in test_files if t in target_files]
+            if not touched:
+                continue
+            rel_tests = ", ".join(str(t.relative_to(REPO_ROOT)) for t in test_files)
+            key = tuple(sorted(str(t) for t in test_files))
+            reported_pairs.add(key)
+            for t in touched:
+                issues.append(
+                    Issue(
+                        file=str(t.relative_to(REPO_ROOT)),
+                        line=1,
+                        severity="P1",
+                        check="duplicate_test_files",
+                        message=f"Class `{cls}` has `class Test{cls}` in multiple {tier}-tier test files: {rel_tests}",
+                        quote=f"defined in {source_classes[cls][0].relative_to(REPO_ROOT)}",
+                        suggestion="Merge into a single test file — each source class should have exactly ONE test file per tier (Meszaros: Test Code Duplication).",
+                        tier=tier,
+                    )
+                )
+
+        # Signal 2: near-duplicate filenames in same directory (within this tier).
+        files_by_dir: dict[Path, list[Path]] = defaultdict(list)
         for p in root.rglob("test_*.py"):
             files_by_dir[p.parent].append(p)
-    for _dir_path, files in files_by_dir.items():
-        stems = {p.stem: p for p in files}
-        for stem, p in stems.items():
-            for aff in _NUISANCE_AFFIXES:
-                if stem.endswith(aff) and stem[: -len(aff)] in stems:
-                    other = stems[stem[: -len(aff)]]
+        for _dir_path, files in files_by_dir.items():
+            stems = {p.stem: p for p in files}
+            for stem, p in stems.items():
+                for aff in _NUISANCE_AFFIXES:
+                    if stem.endswith(aff) and stem[: -len(aff)] in stems:
+                        other = stems[stem[: -len(aff)]]
+                        pair = tuple(sorted([str(p), str(other)]))
+                        if pair in reported_pairs:
+                            continue
+                        reported_pairs.add(pair)
+                        touched = [f for f in (p, other) if f in target_files]
+                        if not touched:
+                            continue
+                        for t in touched:
+                            issues.append(
+                                Issue(
+                                    file=str(t.relative_to(REPO_ROOT)),
+                                    line=1,
+                                    severity="P1",
+                                    check="duplicate_test_files",
+                                    message=f"Near-duplicate filenames in same {tier}-tier directory: `{p.name}` and `{other.name}` (differ only by `{aff}` suffix)",
+                                    suggestion=f"Merge into one file — same-directory test files differing only by `{aff}` almost always indicate forked duplicates.",
+                                    tier=tier,
+                                )
+                            )
+                        break
+                if stem + "s" in stems:
+                    other = stems[stem + "s"]
                     pair = tuple(sorted([str(p), str(other)]))
                     if pair in reported_pairs:
                         continue
@@ -952,33 +1005,11 @@ def check_duplicate_test_files(target_files: set[Path], tiers_in_scope: set[str]
                                 line=1,
                                 severity="P1",
                                 check="duplicate_test_files",
-                                message=f"Near-duplicate filenames in same directory: `{p.name}` and `{other.name}` (differ only by `{aff}` suffix)",
-                                suggestion=f"Merge into one file — same-directory test files differing only by `{aff}` almost always indicate forked duplicates.",
-                                tier=detect_tier(t) or "",
+                                message=f"Near-duplicate filenames in same {tier}-tier directory: `{p.name}` and `{other.name}` (singular/plural)",
+                                suggestion="Merge into one file — singular/plural pairs almost always indicate forked duplicates.",
+                                tier=tier,
                             )
                         )
-                    break
-            if stem + "s" in stems:
-                other = stems[stem + "s"]
-                pair = tuple(sorted([str(p), str(other)]))
-                if pair in reported_pairs:
-                    continue
-                reported_pairs.add(pair)
-                touched = [f for f in (p, other) if f in target_files]
-                if not touched:
-                    continue
-                for t in touched:
-                    issues.append(
-                        Issue(
-                            file=str(t.relative_to(REPO_ROOT)),
-                            line=1,
-                            severity="P1",
-                            check="duplicate_test_files",
-                            message=f"Near-duplicate filenames in same directory: `{p.name}` and `{other.name}` (singular/plural)",
-                            suggestion="Merge into one file — singular/plural pairs almost always indicate forked duplicates.",
-                            tier=detect_tier(t) or "",
-                        )
-                    )
     return issues
 
 
@@ -1121,7 +1152,10 @@ def _ensure_test_file(p: Path, allowed_tiers: set[str]) -> bool:
 
 
 def git_diff_files(base: str, allowed_tiers: set[str]) -> list[Path]:
-    cmd = ["git", "diff", "--name-only", "--diff-filter=AM", f"{base}...HEAD"]
+    # --diff-filter=AMR covers Added, Modified, and Renamed. `-M` forces rename
+    # detection even when the user has `diff.renames=false`; without it a
+    # renamed (or rename+modified) test file would bypass the audit entirely.
+    cmd = ["git", "diff", "-M", "--name-only", "--diff-filter=AMR", f"{base}...HEAD"]
     try:
         out = subprocess.check_output(cmd, text=True, cwd=REPO_ROOT, timeout=60)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
@@ -1269,11 +1303,24 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     p.add_argument("--json", metavar="PATH", help="Write JSON report to PATH")
     p.add_argument("--github-output", action="store_true", help="Append key=value pairs to $GITHUB_OUTPUT")
+    p.add_argument(
+        "--repo-root",
+        metavar="PATH",
+        help=(
+            "Override the repo root used for git diff and file reads. "
+            "Required when the auditor is executed from a different checkout than the "
+            "repo being audited (e.g. pull_request_target workflow running base/ci/audit_tests.py "
+            "against pr/ content)."
+        ),
+    )
     return p.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
+
+    if args.repo_root:
+        configure_repo_root(Path(args.repo_root))
 
     if args.tier == "all":
         allowed_tiers = {"unit", "integration"}
