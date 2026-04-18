@@ -208,24 +208,32 @@ class _AstChecker(ast.NodeVisitor):
             issue = Issue(**{**asdict(issue), "tier": self.tier})
         self.issues.append(issue)
 
-    # -- conditional_assert: if X: assert Y
+    # -- conditional_assert: if X: assert Y   (without a symmetric else-branch assertion)
     # -- try_except_skip: try ... except: pytest.skip()
     # -- try_except_pass_in_test: try ... except: pass (integration only)
 
     def visit_If(self, node: ast.If) -> None:
-        for child in node.body:
-            if isinstance(child, ast.Assert):
-                self._emit(
-                    Issue(
-                        file=self.path,
-                        line=child.lineno,
-                        severity="P0",
-                        check="conditional_assert",
-                        message="Assertion inside if-block silently skips when condition is false (Meszaros: Conditional Test Logic)",
-                        quote=self._quote(child.lineno),
-                        suggestion="Assert the condition first, then assert the value unconditionally.",
-                    )
+        # The smell (Meszaros: Conditional Test Logic) is "assertion silently
+        # skipped when condition is false". A dispatch pattern where BOTH
+        # branches assert — e.g. `if X: assert A else: assert B` — is a valid
+        # parametrized check and NOT a smell. Only flag when the if-branch
+        # asserts but the orelse branch has no verifying assertion anywhere
+        # (including down elif chains via recursive walk).
+        if_asserts = [c for c in node.body if isinstance(c, ast.Assert)]
+        if if_asserts and not _subtree_has_assert(node.orelse):
+            # Report once per if-block (first assert location).
+            first = if_asserts[0]
+            self._emit(
+                Issue(
+                    file=self.path,
+                    line=first.lineno,
+                    severity="P0",
+                    check="conditional_assert",
+                    message="Assertion inside if-block with no asserting else branch silently skips when condition is false (Meszaros: Conditional Test Logic)",
+                    quote=self._quote(first.lineno),
+                    suggestion="Either add an asserting else branch, or assert the condition first and the value unconditionally.",
                 )
+            )
         self.generic_visit(node)
 
     def visit_Try(self, node: ast.Try) -> None:
@@ -624,6 +632,21 @@ def _function_has_assert(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
         if isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute):
             name = child.func.attr
             if name.startswith("assert") or name.startswith("assert_"):
+                return True
+    return False
+
+
+def _subtree_has_assert(body: list[ast.stmt]) -> bool:
+    """Return True if any ast.Assert exists anywhere inside this list of statements.
+
+    Used by the conditional_assert rule to decide whether an else (or elif
+    chain) branch ALSO verifies behavior — a symmetric if/else where both
+    sides assert is a legitimate parametrized-dispatch pattern, not a
+    Lying Test smell.
+    """
+    for stmt in body:
+        for sub in ast.walk(stmt):
+            if isinstance(sub, ast.Assert):
                 return True
     return False
 
@@ -1151,6 +1174,16 @@ def _ensure_test_file(p: Path, allowed_tiers: set[str]) -> bool:
     return tier in allowed_tiers
 
 
+class AuditGitDiffError(RuntimeError):
+    """Raised when `git diff` cannot enumerate changed files.
+
+    Represents an INDETERMINATE audit state (ref lookup failure, missing
+    merge base, force-push breakage, subprocess timeout). The caller must
+    FAIL CLOSED — returning an empty list would let a PR merge with the
+    audit silently disabled.
+    """
+
+
 def git_diff_files(base: str, allowed_tiers: set[str]) -> list[Path]:
     # --diff-filter=AMR covers Added, Modified, and Renamed. `-M` forces rename
     # detection even when the user has `diff.renames=false`; without it a
@@ -1159,8 +1192,12 @@ def git_diff_files(base: str, allowed_tiers: set[str]) -> list[Path]:
     try:
         out = subprocess.check_output(cmd, text=True, cwd=REPO_ROOT, timeout=60)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-        log(f"git diff failed: {e}")
-        return []
+        # Fail closed: propagate so main() can mark the audit as failed rather
+        # than silently treating "can't enumerate" the same as "0 files changed".
+        raise AuditGitDiffError(
+            f"git diff failed (ref={base!r}, cwd={REPO_ROOT!r}): {e}. "
+            "Cannot determine changed files — failing audit closed."
+        ) from e
     paths: list[Path] = []
     for line in out.splitlines():
         p = REPO_ROOT / line.strip()
@@ -1329,7 +1366,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.diff_only:
         mode = "diff"
-        target_files = git_diff_files(args.diff_only, allowed_tiers)
+        try:
+            target_files = git_diff_files(args.diff_only, allowed_tiers)
+        except AuditGitDiffError as e:
+            # Fail closed: don't let a git breakage silently disable the audit.
+            log(f"ERROR: {e}")
+            if args.github_output:
+                write_github_output(mode, 0, 0, "failure")
+            return 1
     elif args.all:
         mode = "full"
         target_files = all_test_files(allowed_tiers)

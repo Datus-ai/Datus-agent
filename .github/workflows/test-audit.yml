@@ -13,6 +13,11 @@ on:
       - opened
       - synchronize
       - reopened
+      # `edited` re-triggers the workflow when PR title / body / base ref
+      # changes. Without it, an author could create the PR with a `[Doc]`
+      # title (skipping the audit via the doc guard), then rename it to a
+      # non-doc title and merge without the audit ever running.
+      - edited
 
 concurrency:
   group: test-audit-${{ github.event.pull_request.number }}
