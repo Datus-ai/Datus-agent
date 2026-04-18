@@ -92,9 +92,16 @@ class FeedbackAgenticNode(AgenticNode):
         self._rebuild_tools()
 
     def _setup_filesystem_tools(self):
-        """Setup filesystem tools for writing MEMORY.md and other files."""
+        """Setup filesystem tools for writing MEMORY.md and other files.
+
+        The tool is rooted with ``current_node=self._resolve_caller_node_name()``
+        so ``.datus/memory/{caller}/**`` lands in the WHITELIST zone — the
+        whole point of this node is to update the caller's memory, so the
+        policy must permit writes under the caller's memory subtree rather
+        than feedback's own.
+        """
         try:
-            self.filesystem_func_tool = self._make_filesystem_tool()
+            self.filesystem_func_tool = self._make_filesystem_tool(current_node=self._resolve_caller_node_name())
             logger.debug(f"Setup filesystem tools with root path: {self.filesystem_func_tool.root_path}")
         except Exception as e:
             logger.error(f"Failed to setup filesystem tools: {e}")
@@ -108,6 +115,29 @@ class FeedbackAgenticNode(AgenticNode):
             self.tools.extend(self.sub_agent_task_tool.available_tools())
         if self.ask_user_tool:
             self.tools.extend(self.ask_user_tool.available_tools())
+
+    @property
+    def caller_node_name(self) -> Optional[str]:
+        """The node whose memory this feedback run should update.
+
+        Exposed as a property so assignment by the CLI (``node.caller_node_name
+        = "gen_sql"``) rebuilds the filesystem tool with the new caller —
+        otherwise the whitelist baked in at construction time (defaulting to
+        ``"chat"``) would keep the caller's memory path classified as HIDDEN.
+        """
+        return getattr(self, "_caller_node_name", None)
+
+    @caller_node_name.setter
+    def caller_node_name(self, value: Optional[str]) -> None:
+        self._caller_node_name = value
+        # Guard for the base class's __init__-time assignment: at that point
+        # ``filesystem_func_tool`` is still ``None`` and we must not rebuild.
+        if getattr(self, "filesystem_func_tool", None) is not None:
+            try:
+                self.filesystem_func_tool = self._make_filesystem_tool(current_node=self._resolve_caller_node_name())
+                self._rebuild_tools()
+            except Exception as e:
+                logger.debug(f"Could not rebuild filesystem tool on caller change: {e}")
 
     def _resolve_caller_node_name(self) -> str:
         """Return the caller node whose memory this feedback run should update.

@@ -261,6 +261,17 @@ class PermissionHooks(AgentHooks):
         policy = self.fs_policy
         assert policy is not None  # guarded by caller
         args = self._parse_tool_args(context)
+        # ``_parse_tool_args`` deliberately returns whatever the JSON decoder
+        # produced, so malformed tool_arguments (list, string, number) would
+        # otherwise blow up on ``.get()``. Treat non-object payloads as
+        # "no path provided" and fall back to the category-level rule check.
+        if not isinstance(args, dict):
+            logger.debug(
+                "Filesystem permission check received non-object tool arguments for %s: %r",
+                tool_name,
+                args,
+            )
+            return False
         path_arg = args.get("path", "")
         try:
             resolved = classify_path(

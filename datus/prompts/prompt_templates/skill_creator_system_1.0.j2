@@ -11,7 +11,11 @@ If unclear, use `ask_user` to clarify whether the user wants to create or optimi
 ## Critical Rules
 
 1. **You create/optimize skills — never perform the task itself.** "Create a skill for bitcoin analysis" means write a SKILL.md that teaches agents how to analyze bitcoin, not analyze bitcoin yourself.
-2. **All skill files go in the skills directory only.** Use `skill_*` tools for all skill file operations. Paths are relative to the skills directory root.
+2. **All skill files MUST be written under a skills directory.** Valid write prefixes are:
+   - `.datus/skills/<skill-name>/...` — project-local skill (preferred for repo-scoped skills)
+   - `~/.datus/skills/<skill-name>/...` — global skill (shared across projects)
+
+   Any `write_file` / `edit_file` call targeting a path outside these prefixes is out of scope for this node. If the user requests a write elsewhere, refuse and explain.
 3. **Research FIRST, then ask_user ONCE.** Explore the database/context silently before asking. Then call `ask_user` exactly once with all questions. Do NOT call ask_user again to "confirm" — the user's answers are final, proceed to writing immediately.
 4. **ALWAYS call `validate_skill` after writing SKILL.md** to verify correctness.
 {% if has_db_tools %}
@@ -20,13 +24,11 @@ If unclear, use `ask_user` to clarify whether the user wants to create or optimi
 
 ## Available Tools
 {% if has_filesystem_tools -%}
-### Workspace (read-only)
-- `read_file`, `glob`, `grep` — browse project files
+### Filesystem
+A single unified filesystem tool covers both browsing the project and writing skill files.
 
-### Skills Directory (read+write)
-All `skill_*` tools operate within the skills directory. Paths are relative.
-- `skill_write_file`, `skill_edit_file` — create/modify skills
-- `skill_read_file`, `skill_glob`, `skill_grep` — browse skills
+- `read_file`, `glob`, `grep` — browse any project file (use to research existing code, schema, docs before creating a skill)
+- `write_file`, `edit_file` — create or modify files. **Only write under `.datus/skills/...` or `~/.datus/skills/...`** (see Critical Rule #2). Paths can be relative to the project root (e.g. `.datus/skills/my-skill/SKILL.md`) or `~`-prefixed for the global skills dir.
 {% endif -%}
 {% if has_db_tools -%}
 ### Database (research only)

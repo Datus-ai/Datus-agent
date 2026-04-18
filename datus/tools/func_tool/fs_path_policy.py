@@ -135,27 +135,32 @@ def classify_path(
 
     zone: PathZone
     display: str
+    # Relative displays use ``.as_posix()`` instead of ``str()`` so the forward-
+    # slash-shaped scope globs used downstream (e.g. ``subject/**`` matched
+    # with ``wcmatch.globmatch``) still work on Windows. ``str(Path)`` yields
+    # backslashes on Windows, which ``wcmatch`` does not normalize — it would
+    # silently reject valid writes.
     if any(_is_relative_to(resolved, anchor) for anchor in whitelist_anchors):
         zone = PathZone.WHITELIST
         if _is_relative_to(resolved, root_resolved):
-            display = str(resolved.relative_to(root_resolved))
+            display = resolved.relative_to(root_resolved).as_posix()
         elif _is_relative_to(resolved, home_resolved):
             # ``home_resolved`` already *is* the ``.datus`` directory, so we
             # rebuild the display with the canonical ``~/.datus/`` prefix the
             # LLM can feed back unambiguously. Without this we would show
             # ``~/skills/foo`` and lose which home we meant.
-            display = "~/.datus/" + str(resolved.relative_to(home_resolved))
+            display = "~/.datus/" + resolved.relative_to(home_resolved).as_posix()
         else:
             display = str(resolved)
     elif _is_relative_to(resolved, project_dot_datus):
         zone = PathZone.HIDDEN
         if _is_relative_to(resolved, root_resolved):
-            display = str(resolved.relative_to(root_resolved))
+            display = resolved.relative_to(root_resolved).as_posix()
         else:
             display = str(resolved)
     elif _is_relative_to(resolved, root_resolved):
         zone = PathZone.INTERNAL
-        display = str(resolved.relative_to(root_resolved)) or "."
+        display = resolved.relative_to(root_resolved).as_posix() or "."
     else:
         zone = PathZone.EXTERNAL
         display = str(resolved)

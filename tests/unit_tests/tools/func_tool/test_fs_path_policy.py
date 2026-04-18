@@ -9,6 +9,7 @@ import pytest
 
 from datus.tools.func_tool.fs_path_policy import (
     PathZone,
+    build_walk_patterns,
     classify_path,
     whitelist_anchors,
 )
@@ -136,3 +137,37 @@ class TestWhitelistAnchors:
         expected_suffixes = {(".datus", "skills")}
         seen = {(a.parent.name, a.name) for a in anchors}
         assert seen == expected_suffixes
+
+
+class TestBuildWalkPatterns:
+    """The walker relies on these patterns to prune ``HIDDEN`` subtrees cheaply
+    — ``wcmatch`` is fed ``excludes`` first and then applies ``re_includes`` so
+    the two allowed subtrees under ``.datus/`` (skills + per-node memory) stay
+    visible. The glob strings below are the contract that the filesystem tool
+    expects, so they are pinned here.
+    """
+
+    def test_excludes_prune_entire_dot_datus(self, project):
+        excludes, _ = build_walk_patterns(root_path=project, current_node="chat")
+        # Both the directory itself and its contents must be excluded,
+        # otherwise ``.datus`` survives the first-level match.
+        assert excludes == [".datus", ".datus/**"]
+
+    def test_re_includes_default_to_skills_only(self, project):
+        _, re_includes = build_walk_patterns(root_path=project, current_node=None)
+        # Without a current_node we cannot scope a memory subtree — only the
+        # project-local skills directory gets re-included.
+        assert re_includes == [".datus/skills/**"]
+
+    def test_re_includes_add_node_memory(self, project):
+        _, re_includes = build_walk_patterns(root_path=project, current_node="gen_sql")
+        # Skills stays first (longest-prefix-wins isn't used here, but the
+        # downstream walker iterates in list order for determinism).
+        assert re_includes == [".datus/skills/**", ".datus/memory/gen_sql/**"]
+
+    def test_patterns_are_posix_for_wcmatch(self, project):
+        """All generated patterns are POSIX slashes; wcmatch does not normalize
+        separators, so a Windows-style backslash would break globmatch."""
+        excludes, re_includes = build_walk_patterns(root_path=project, current_node="chat")
+        for pattern in excludes + re_includes:
+            assert "\\" not in pattern

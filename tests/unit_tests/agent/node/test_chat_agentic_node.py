@@ -180,6 +180,7 @@ class TestChatAgenticNodeToolSetup:
         force strict mode for every node they spawn."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
 
+        previous_strict = getattr(real_agent_config, "filesystem_strict", False)
         real_agent_config.filesystem_strict = True
         try:
             node = ChatAgenticNode(
@@ -189,10 +190,14 @@ class TestChatAgenticNodeToolSetup:
                 agent_config=real_agent_config,
             )
             assert node.filesystem_func_tool.strict is True
-            if node.permission_hooks and node.permission_hooks.fs_policy:
-                assert node.permission_hooks.fs_policy.strict is True
+            # Contract is mandatory: strict mode must reach the hook policy,
+            # otherwise EXTERNAL paths would still trigger broker prompts in
+            # non-interactive bootstraps (the whole point of strict mode).
+            assert node.permission_hooks is not None
+            assert node.permission_hooks.fs_policy is not None
+            assert node.permission_hooks.fs_policy.strict is True
         finally:
-            real_agent_config.filesystem_strict = False
+            real_agent_config.filesystem_strict = previous_strict
 
     def test_filesystem_root_from_node_config_workspace(self, real_agent_config, mock_llm_create, tmp_path):
         """``node_config.workspace_root`` replaces the fs tool root so a node

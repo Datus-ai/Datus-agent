@@ -1238,20 +1238,13 @@ class AgenticNode(Node):
     def _resolve_filesystem_strict(self) -> bool:
         """Resolve the ``strict`` flag for this node's filesystem tool.
 
-        Source order:
-          1. ``self.node_config["filesystem_strict"]`` — per-node YAML.
-          2. ``self.agent_config.filesystem_strict`` — process-wide default
-             (set e.g. by API / claw bootstraps).
-          3. ``False`` — CLI default, falls back to broker-prompt behavior.
+        Reads ``self.agent_config.filesystem_strict`` (process-wide default set
+        by API / claw bootstraps). CLI leaves it unset so EXTERNAL access falls
+        back to broker-prompt behavior.
         """
-        node_flag = self.node_config.get("filesystem_strict") if self.node_config else None
-        if node_flag is not None:
-            return bool(node_flag)
-        if self.agent_config is not None:
-            global_flag = getattr(self.agent_config, "filesystem_strict", None)
-            if global_flag is not None:
-                return bool(global_flag)
-        return False
+        if self.agent_config is None:
+            return False
+        return bool(getattr(self.agent_config, "filesystem_strict", False))
 
     def _make_filesystem_tool(self, **kwargs):
         """Construct a ``FilesystemFuncTool`` with this node's identity baked in.
@@ -1261,8 +1254,8 @@ class AgenticNode(Node):
         ``get_node_name()`` — the two inputs the path policy module expects to
         classify ``.datus/memory/{current_node}/**`` as a whitelist subtree
         for this node only. The ``strict`` flag is resolved from
-        ``node_config.filesystem_strict`` / ``agent_config.filesystem_strict``
-        so API / claw can opt out of interactive EXTERNAL prompts.
+        ``agent_config.filesystem_strict`` so API / claw can opt out of
+        interactive EXTERNAL prompts.
         """
         from datus.tools.func_tool import FilesystemFuncTool
 
