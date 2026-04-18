@@ -4,11 +4,13 @@
 
 """Tests for the permission hooks module."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from datus.cli.execution_state import InteractionBroker
+from datus.tools.permission import permission_hooks as permission_hooks_module
 from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel, PermissionRule
 from datus.tools.permission.permission_hooks import (
     CompositeHooks,
@@ -625,3 +627,79 @@ class TestFilesystemZoneBranch:
         tool.name = "read_file"
         with pytest.raises(PermissionDeniedException):
             await hooks.on_tool_start(ctx, MagicMock(), tool)
+
+
+class TestPermissionPromptLockPerLoop:
+    """Regression guard: the prompt lock must not bleed across event loops.
+
+    A module-level ``asyncio.Lock()`` used to bind to whichever loop first
+    awaited it, then raised ``Lock is bound to a different event loop`` on
+    every subsequent ``asyncio.run()`` call (the CLI creates a fresh loop per
+    chat turn). These tests exercise the per-loop lock helper to make sure
+    the bug cannot silently regress.
+    """
+
+    def test_separate_asyncio_run_calls_do_not_reuse_lock(self):
+        async def _acquire_once():
+            lock = permission_hooks_module._get_permission_prompt_lock()
+            async with lock:
+                return lock
+
+        lock_a = asyncio.run(_acquire_once())
+        lock_b = asyncio.run(_acquire_once())
+
+        # Each ``asyncio.run`` has its own loop, so it must receive its own
+        # lock — reusing the first one would raise "bound to a different event
+        # loop" on acquisition.
+        assert lock_a is not lock_b
+
+    def test_same_loop_returns_same_lock(self):
+        async def _collect():
+            first = permission_hooks_module._get_permission_prompt_lock()
+            second = permission_hooks_module._get_permission_prompt_lock()
+            return first, second
+
+        first, second = asyncio.run(_collect())
+        # Within a single loop, concurrent tool calls must share one lock so
+        # the "one prompt at a time" invariant still holds.
+        assert first is second
+
+    def test_external_prompt_succeeds_across_separate_asyncio_runs(self, mock_broker, tmp_path):
+        """End-to-end: two consecutive ``asyncio.run`` turns, each hitting the
+        EXTERNAL-path prompt code path, must both succeed. Before the fix the
+        second turn raised ``Lock is bound to a different event loop``."""
+        registry = ToolRegistry()
+        fs_tool = MagicMock()
+        fs_tool.name = "read_file"
+        registry.register_tools("filesystem_tools", [fs_tool])
+
+        project = tmp_path / "proj"
+        project.mkdir()
+        target = tmp_path / "outside.md"
+        target.write_text("x")
+
+        async def _one_turn():
+            # Fresh manager per turn to mirror the CLI re-initializing state.
+            manager = PermissionManager(
+                global_config=PermissionConfig(default_permission=PermissionLevel.ALLOW, rules=[])
+            )
+            hooks = PermissionHooks(
+                broker=mock_broker,
+                permission_manager=manager,
+                node_name="chat",
+                tool_registry=registry,
+                fs_policy=FilesystemPolicy(root_path=project, current_node="chat"),
+            )
+            # Rebind broker inside the coroutine so the AsyncMock is bound to
+            # the currently-running loop.
+            mock_broker.request = AsyncMock(return_value=("n", AsyncMock()))
+            ctx = MagicMock()
+            ctx.tool_arguments = f'{{"path": "{target}"}}'
+            tool = MagicMock()
+            tool.name = "read_file"
+            with pytest.raises(PermissionDeniedException):
+                await hooks.on_tool_start(ctx, MagicMock(), tool)
+
+        asyncio.run(_one_turn())
+        # Second turn: a brand-new loop. Must not raise the loop-binding error.
+        asyncio.run(_one_turn())

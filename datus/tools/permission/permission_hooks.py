@@ -18,6 +18,7 @@ when prompting users for permission confirmation.
 import asyncio
 import json
 import logging
+import weakref
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, List, Optional, Tuple
@@ -34,8 +35,24 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Global lock to prevent multiple permission prompts at once
-_permission_prompt_lock = asyncio.Lock()
+# Per-event-loop locks to serialize permission prompts within a single loop.
+# A module-level ``asyncio.Lock()`` binds to the loop running on first ``await``
+# and then raises ``Lock is bound to a different event loop`` on every
+# subsequent ``asyncio.run()`` (the CLI creates a fresh loop per turn via
+# ``chat_commands.py``). Key the lock by the running loop so each turn gets its
+# own, while still serializing prompts from parallel tool calls inside one loop.
+_permission_prompt_locks: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _get_permission_prompt_lock() -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    lock = _permission_prompt_locks.get(loop)
+    if lock is None:
+        lock = asyncio.Lock()
+        _permission_prompt_locks[loop] = lock
+    return lock
 
 
 class PermissionDeniedException(Exception):
@@ -228,7 +245,7 @@ class PermissionHooks(AgentHooks):
                     return
 
             # Use lock to prevent multiple prompts at once (for parallel tool calls)
-            async with _permission_prompt_lock:
+            async with _get_permission_prompt_lock():
                 # Re-check cache after acquiring lock (another prompt may have approved it)
                 for cache_key in cache_keys:
                     if self.permission_manager._session_approvals.get(cache_key):
@@ -320,7 +337,7 @@ class PermissionHooks(AgentHooks):
             logger.debug("External path %s already approved for session", resolved.resolved)
             return True
 
-        async with _permission_prompt_lock:
+        async with _get_permission_prompt_lock():
             if self.permission_manager._session_approvals.get(cache_key):
                 return True
 
