@@ -208,7 +208,12 @@ class TestChatAgenticNodeToolSetup:
         custom_workspace = tmp_path / "node_ws"
         custom_workspace.mkdir()
 
-        if not getattr(real_agent_config, "agentic_nodes", None):
+        # Snapshot the whole container, not just the "chat" key — if the
+        # fixture started with ``agentic_nodes = None`` we must restore that
+        # exact state, otherwise downstream tests that assert ``is None`` see
+        # a stray ``{}``.
+        prev_container = getattr(real_agent_config, "agentic_nodes", None)
+        if not prev_container:
             real_agent_config.agentic_nodes = {}
         prev = real_agent_config.agentic_nodes.get("chat")
         real_agent_config.agentic_nodes["chat"] = {"workspace_root": str(custom_workspace)}
@@ -225,6 +230,8 @@ class TestChatAgenticNodeToolSetup:
                 real_agent_config.agentic_nodes["chat"] = prev
             else:
                 real_agent_config.agentic_nodes.pop("chat", None)
+            if not prev_container:
+                real_agent_config.agentic_nodes = prev_container
 
     def test_has_date_parsing_tools(self, real_agent_config, mock_llm_create):
         """Chat node has date parsing tools."""
