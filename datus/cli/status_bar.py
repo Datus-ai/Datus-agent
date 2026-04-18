@@ -52,6 +52,7 @@ class StatusBarState:
 
     agent: str = "chat"
     model: str = "-"
+    connector: str = ""
     cumulative_tokens: int = 0
     cached_tokens: int = 0
     context_used: int = 0
@@ -75,9 +76,11 @@ class StatusBarState:
         segments = ["Datus"]
         if self.plan_mode:
             segments.append("PLAN")
+        segments.append(self.agent)
+        if self.connector:
+            segments.append(self.connector)
         segments.extend(
             [
-                self.agent,
                 self.model,
                 self.tokens_display(),
                 self.context_display(),
@@ -93,10 +96,11 @@ class StatusBarState:
         tokens: List[Tuple[str, str]] = [pad, ("class:status-bar.brand", "Datus")]
         if self.plan_mode:
             tokens.extend([sep, ("class:status-bar.plan", "PLAN")])
+        tokens.extend([sep, ("class:status-bar.agent", self.agent)])
+        if self.connector:
+            tokens.extend([sep, ("class:status-bar.connector", self.connector)])
         tokens.extend(
             [
-                sep,
-                ("class:status-bar.agent", self.agent),
                 sep,
                 ("class:status-bar.model", self.model),
                 sep,
@@ -120,6 +124,7 @@ class StatusBarProvider:
         return StatusBarState(
             agent=self._resolve_agent(),
             model=self._resolve_model(),
+            connector=self._resolve_connector(),
             cumulative_tokens=cumulative,
             cached_tokens=cached,
             context_used=self._resolve_context_used(),
@@ -156,6 +161,40 @@ class StatusBarProvider:
         except Exception as e:
             logger.debug(f"status_bar: failed to read active model from config: {e}")
         return "-"
+
+    def _resolve_connector(self) -> str:
+        """Return the current connector as ``"<db_type>: <db_name>"``.
+
+        Falls back to the bare db name when dialect is unavailable, or an
+        empty string when no database is connected.
+        """
+        db_name = ""
+        try:
+            ctx = getattr(self._cli, "cli_context", None)
+            if ctx is not None:
+                db_name = getattr(ctx, "current_logic_db_name", None) or getattr(ctx, "current_db_name", None) or ""
+        except Exception as e:
+            logger.debug(f"status_bar: failed to read db name: {e}")
+
+        db_type = ""
+        try:
+            connector = getattr(self._cli, "db_connector", None)
+            if connector is not None:
+                dialect = getattr(connector, "dialect", None)
+                if dialect:
+                    # For Enum values (e.g. DBType.SQLITE), str(...) yields
+                    # "DBType.SQLITE" on Python 3.11+; prefer .value so we get
+                    # the canonical lowercase name ("sqlite").
+                    raw = getattr(dialect, "value", dialect)
+                    db_type = str(raw).lower()
+        except Exception as e:
+            logger.debug(f"status_bar: failed to read db dialect: {e}")
+
+        if not db_name:
+            return ""
+        if db_type:
+            return f"{db_type}: {db_name}"
+        return str(db_name)
 
     def _resolve_session_totals(self) -> Tuple[int, int]:
         """Return ``(cumulative_total_tokens, cumulative_cached_tokens)``."""

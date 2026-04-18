@@ -169,14 +169,13 @@ def _apply_project_override(agent_raw: Dict[str, Any]) -> None:
     """Merge ``./.datus/config.yml`` overlay into the raw agent config dict.
 
     Only three keys are honored: ``target``, ``project_name``, and
-    ``default_database``. ``target`` and ``project_name`` are written
-    back into ``agent_raw`` so ``AgentConfig.__init__`` picks them up
-    naturally (including ``_validate_project_name`` + path manager
-    rebinding). ``default_database`` is NOT mutated here — it is a
-    computed property derived from ``databases[x].default`` flags, and
-    is instead consumed by ``_resolve_default_database`` at the CLI
-    layer. We still validate it here so invalid values fail fast before
-    any DB initialization.
+    ``default_database``. All three are written back into ``agent_raw``
+    so ``AgentConfig.__init__`` picks them up naturally. For
+    ``default_database`` this means flipping ``databases[*].default``
+    flags, since ``AgentConfig.service.default_database`` is derived
+    from those flags — this keeps the overlay effective for every
+    entry point that calls ``load_agent_config`` (REPL, print mode,
+    web, ``datus-api``, SDK), not just the CLI layer.
     """
     override = load_project_override()
     if override is None or override.is_empty():
@@ -204,6 +203,9 @@ def _apply_project_override(agent_raw: Dict[str, Any]) -> None:
                     "your_value": override.default_database,
                 },
             )
+        for db_name, db_cfg in databases.items():
+            if isinstance(db_cfg, dict):
+                db_cfg["default"] = db_name == override.default_database
     if override.project_name is not None:
         agent_raw["project_name"] = override.project_name
 

@@ -15,7 +15,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from datus.cli.main import Application, ArgumentParser
-from datus.configuration.project_config import ProjectOverride
 
 # ---------------------------------------------------------------------------
 # Tests: ArgumentParser
@@ -243,31 +242,24 @@ class TestResolveDefaultDatabase:
         cfg.service.default_database = default
         return cfg
 
-    def test_project_override_wins_over_base_default(self):
+    def test_returns_service_default_database(self):
+        """_resolve_default_database is now a thin wrapper over
+        config.service.default_database — the overlay is applied upstream by
+        _apply_project_override, so this function just reads the resolved
+        value. We verify the resolved value wins regardless of the base
+        agent.yml: the mock returns "b" directly."""
         app = Application()
         args = SimpleNamespace(config=None)
-        config = self._make_config({"a": MagicMock(type="sqlite"), "b": MagicMock(type="duckdb")}, default="a")
-        with (
-            patch("datus.configuration.agent_config_loader.load_agent_config", return_value=config),
-            patch(
-                "datus.configuration.project_config.load_project_override",
-                return_value=ProjectOverride(default_database="b"),
-            ),
-        ):
+        config = self._make_config({"a": MagicMock(type="sqlite"), "b": MagicMock(type="duckdb")}, default="b")
+        with patch("datus.configuration.agent_config_loader.load_agent_config", return_value=config):
             result = app._resolve_default_database(args)
         assert result == "b"
 
-    def test_falls_through_to_base_default_without_override(self):
+    def test_falls_through_to_base_default(self):
         app = Application()
         args = SimpleNamespace(config=None)
         config = self._make_config({"a": MagicMock(type="sqlite")}, default="a")
-        with (
-            patch("datus.configuration.agent_config_loader.load_agent_config", return_value=config),
-            patch(
-                "datus.configuration.project_config.load_project_override",
-                return_value=None,
-            ),
-        ):
+        with patch("datus.configuration.agent_config_loader.load_agent_config", return_value=config):
             result = app._resolve_default_database(args)
         assert result == "a"
 

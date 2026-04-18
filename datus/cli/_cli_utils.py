@@ -144,7 +144,9 @@ def select_choice(
             return lines
 
         app = Application(
-            layout=Layout(Window(FormattedTextControl(_get_formatted_text))),
+            layout=Layout(
+                Window(FormattedTextControl(_get_formatted_text, show_cursor=False), always_hide_cursor=True)
+            ),
             key_bindings=kb,
             full_screen=False,
         )
@@ -303,7 +305,9 @@ def select_multi_choice(
             return lines
 
         app = Application(
-            layout=Layout(Window(FormattedTextControl(_get_formatted_text))),
+            layout=Layout(
+                Window(FormattedTextControl(_get_formatted_text, show_cursor=False), always_hide_cursor=True)
+            ),
             key_bindings=kb,
             full_screen=False,
         )
@@ -461,7 +465,9 @@ def select_list(
             return lines
 
         app = Application(
-            layout=Layout(Window(FormattedTextControl(_get_formatted_text))),
+            layout=Layout(
+                Window(FormattedTextControl(_get_formatted_text, show_cursor=False), always_hide_cursor=True)
+            ),
             key_bindings=kb,
             full_screen=False,
         )

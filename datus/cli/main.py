@@ -210,17 +210,9 @@ class Application:
             console.print("[yellow]No databases configured. Run 'datus configure' first.[/yellow]")
             return ""
 
-        # Project-level override wins over the base service.default_database.
-        # The override was already validated by _apply_project_override() in
-        # load_agent_config (above), so at this point any non-None value is
-        # guaranteed to be a key in ``databases``.
-        from datus.configuration.project_config import load_project_override
-
-        project_override = load_project_override()
-        if project_override and project_override.default_database:
-            console.print(f"[dim]Using project-configured database: {project_override.default_database}[/dim]")
-            return project_override.default_database
-
+        # default_database reflects the project-level overlay when present — it
+        # is applied inside load_agent_config via _apply_project_override which
+        # flips databases[*].default before AgentConfig is built.
         default_db = config.service.default_database
         if default_db:
             console.print(f"[dim]Using default database: {default_db}[/dim]")

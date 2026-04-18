@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from datus.cli.status_bar import StatusBarProvider, StatusBarState, _humanize_tokens
+from datus.utils.constants import DBType
 
 
 class TestHumanizeTokens:
@@ -104,6 +105,35 @@ class TestStatusBarState:
         tokens = state.to_formatted_tokens()
         styles = [style for style, _ in tokens]
         assert "class:status-bar.plan" in styles
+
+    def test_format_plain_renders_connector_between_agent_and_model(self):
+        state = StatusBarState(
+            agent="chat",
+            connector="starrocks: benchmark",
+            model="claude-sonnet-4-6",
+        )
+        text = state.format_plain()
+        assert "starrocks: benchmark" in text
+        assert text.index("chat") < text.index("starrocks: benchmark") < text.index("claude-sonnet-4-6")
+
+    def test_format_plain_omits_connector_when_empty(self):
+        # Connector is conditional: when empty it must not produce an empty
+        # segment nor an extra separator.
+        without = StatusBarState(agent="chat", model="m").format_plain()
+        with_conn = StatusBarState(agent="chat", model="m", connector="sqlite: demo").format_plain()
+        # The connector variant has exactly one more " │ " than the empty one.
+        assert with_conn.count(" │ ") == without.count(" │ ") + 1
+        assert "sqlite: demo" not in without
+
+    def test_to_formatted_tokens_includes_connector_class_when_set(self):
+        state = StatusBarState(connector="mysql: prod")
+        styles = [style for style, _ in state.to_formatted_tokens()]
+        assert "class:status-bar.connector" in styles
+
+    def test_to_formatted_tokens_omits_connector_class_when_empty(self):
+        state = StatusBarState()
+        styles = [style for style, _ in state.to_formatted_tokens()]
+        assert "class:status-bar.connector" not in styles
 
 
 class TestStatusBarProviderAgent:
@@ -299,6 +329,100 @@ class TestStatusBarProviderNoNode:
         assert state.context_used == 0
         assert state.context_total == 0
         assert state.plan_mode is False
+        assert state.connector == ""
+
+
+class TestStatusBarProviderConnector:
+    @staticmethod
+    def _make_cli(cli_context=None, db_connector=None):
+        return SimpleNamespace(
+            chat_commands=SimpleNamespace(current_subagent_name=None, current_node=None),
+            default_agent="",
+            agent_config=None,
+            plan_mode_active=False,
+            cli_context=cli_context,
+            db_connector=db_connector,
+        )
+
+    def test_returns_type_and_name_when_both_present(self):
+        ctx = SimpleNamespace(current_logic_db_name="benchmark", current_db_name="benchmark_raw")
+        connector = SimpleNamespace(dialect="starrocks")
+        state = StatusBarProvider(self._make_cli(ctx, connector)).current_state()
+        assert state.connector == "starrocks: benchmark"
+
+    def test_logic_db_name_wins_over_current_db_name(self):
+        ctx = SimpleNamespace(current_logic_db_name="prod", current_db_name="raw")
+        connector = SimpleNamespace(dialect="mysql")
+        state = StatusBarProvider(self._make_cli(ctx, connector)).current_state()
+        assert state.connector == "mysql: prod"
+
+    def test_falls_back_to_current_db_name_when_logic_missing(self):
+        ctx = SimpleNamespace(current_logic_db_name=None, current_db_name="raw")
+        connector = SimpleNamespace(dialect="duckdb")
+        state = StatusBarProvider(self._make_cli(ctx, connector)).current_state()
+        assert state.connector == "duckdb: raw"
+
+    def test_dialect_is_lowercased(self):
+        ctx = SimpleNamespace(current_logic_db_name="benchmark", current_db_name=None)
+        connector = SimpleNamespace(dialect="StarRocks")
+        state = StatusBarProvider(self._make_cli(ctx, connector)).current_state()
+        assert state.connector == "starrocks: benchmark"
+
+    def test_dialect_enum_uses_value_not_repr(self):
+        # DBType is a (str, Enum) mixin; on Python 3.11+ str(DBType.SQLITE)
+        # returns "DBType.SQLITE". The resolver must pull .value so users see
+        # "sqlite: ..." rather than "dbtype.sqlite: ...".
+        ctx = SimpleNamespace(current_logic_db_name="california_schools", current_db_name=None)
+        connector = SimpleNamespace(dialect=DBType.SQLITE)
+        state = StatusBarProvider(self._make_cli(ctx, connector)).current_state()
+        assert state.connector == "sqlite: california_schools"
+
+    def test_returns_bare_name_when_db_connector_missing(self):
+        ctx = SimpleNamespace(current_logic_db_name="only_name", current_db_name=None)
+        state = StatusBarProvider(self._make_cli(ctx, None)).current_state()
+        assert state.connector == "only_name"
+
+    def test_returns_bare_name_when_dialect_missing(self):
+        ctx = SimpleNamespace(current_logic_db_name="demo", current_db_name=None)
+        connector = SimpleNamespace(dialect=None)
+        state = StatusBarProvider(self._make_cli(ctx, connector)).current_state()
+        assert state.connector == "demo"
+
+    def test_returns_empty_when_no_db_name(self):
+        ctx = SimpleNamespace(current_logic_db_name=None, current_db_name=None)
+        connector = SimpleNamespace(dialect="mysql")
+        state = StatusBarProvider(self._make_cli(ctx, connector)).current_state()
+        assert state.connector == ""
+
+    def test_returns_empty_when_cli_context_absent(self):
+        cli = SimpleNamespace(
+            chat_commands=SimpleNamespace(current_subagent_name=None, current_node=None),
+            default_agent="",
+            agent_config=None,
+            plan_mode_active=False,
+        )
+        state = StatusBarProvider(cli).current_state()
+        assert state.connector == ""
+
+    def test_resolver_swallows_attribute_exceptions(self):
+        class ExplodingCtx:
+            @property
+            def current_logic_db_name(self):
+                raise RuntimeError("ctx boom")
+
+            @property
+            def current_db_name(self):
+                raise RuntimeError("ctx boom")
+
+        class ExplodingConnector:
+            @property
+            def dialect(self):
+                raise RuntimeError("connector boom")
+
+        cli = self._make_cli(ExplodingCtx(), ExplodingConnector())
+        # Must not propagate; both sources fail → empty connector.
+        state = StatusBarProvider(cli).current_state()
+        assert state.connector == ""
 
 
 @pytest.mark.parametrize(

@@ -64,3 +64,4 @@ conf/agent.yml.bak
 /.datus_test_data
 /subject/
 build/
+.datus/

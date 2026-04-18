@@ -255,18 +255,32 @@ class TestApplyProjectOverride:
             _apply_project_override(agent_raw)
         assert agent_raw["project_name"] == "my_proj"
 
-    def test_valid_default_database_not_written_to_agent_raw(self):
-        """default_database is a computed property, never mutated in agent_raw."""
+    def test_valid_default_database_flips_default_flags(self):
+        """default_database overlay is applied by flipping databases[*].default
+        so AgentConfig.service.default_database resolves to the override target
+        uniformly across every entry point (REPL, datus-api, SDK)."""
         agent_raw = self._base_raw()
         with patch(
             "datus.configuration.agent_config_loader.load_project_override",
             return_value=ProjectOverride(default_database="db2"),
         ):
             _apply_project_override(agent_raw)
-        # No mutation: the service dict is untouched; default_database is only
-        # enforced at CLI-entry time via _resolve_default_database.
-        assert agent_raw["service"]["databases"]["db1"].get("default") is not True
-        assert agent_raw["service"]["databases"]["db2"].get("default") is not True
+        assert agent_raw["service"]["databases"]["db2"]["default"] is True
+        assert agent_raw["service"]["databases"]["db1"]["default"] is False
+
+    def test_default_database_overlay_clears_prior_default(self):
+        """A base config marking db1 as default must have that flag cleared
+        when the overlay points elsewhere, otherwise default_database would
+        return the first match (db1) and ignore the overlay."""
+        agent_raw = self._base_raw()
+        agent_raw["service"]["databases"]["db1"]["default"] = True
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(default_database="db2"),
+        ):
+            _apply_project_override(agent_raw)
+        assert agent_raw["service"]["databases"]["db1"]["default"] is False
+        assert agent_raw["service"]["databases"]["db2"]["default"] is True
 
     def test_invalid_default_database_raises(self):
         agent_raw = self._base_raw()
