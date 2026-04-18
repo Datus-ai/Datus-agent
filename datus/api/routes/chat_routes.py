@@ -30,9 +30,11 @@ from datus.api.models.cli_models import (
     ChatSessionData,
     CompactSessionData,
     CompactSessionInput,
+    FeedbackChatInput,
     StreamChatInput,
     UserInteractionInput,
 )
+from datus.utils.feedback_prompt import build_reaction_feedback_prompt
 
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 
@@ -55,6 +57,43 @@ async def stream_chat(
 
     async def generate_sse():
         async for event in svc.chat.stream_chat(request, sub_agent_id=sub_agent_id, user_id=ctx.user_id):
+            yield f"id: {event.id}\nevent: {event.event}\ndata: {event.data.model_dump_json()}\n\n"
+
+    return StreamingResponse(generate_sse(), media_type="text/event-stream", headers=_sse_headers())
+
+
+# ========== Reaction-triggered Feedback ==========
+
+
+@router.post(
+    "/feedback",
+    summary="Stream Feedback Agent (reaction-triggered)",
+    description=(
+        "Trigger the feedback agent from a reaction event (IM emoji, UI thumbs, etc.). "
+        "The server builds the canonical user prompt from reaction_emoji/reference_msg/reaction_msg "
+        "and routes the request to the feedback sub-agent, which copies the source session and archives reusable knowledge."
+    ),
+)
+async def stream_chat_feedback(
+    request: FeedbackChatInput,
+    svc: ServiceDep,
+    ctx: AppContextDep,
+):
+    rendered_message = build_reaction_feedback_prompt(
+        reaction_emoji=request.reaction_emoji,
+        reference_msg=request.reference_msg,
+        reaction_msg=request.reaction_msg,
+    )
+    stream_input = StreamChatInput(
+        **request.model_dump(
+            exclude={"message", "reaction_emoji", "reference_msg", "reaction_msg"},
+        ),
+        message=rendered_message,
+        subagent_id="feedback",
+    )
+
+    async def generate_sse():
+        async for event in svc.chat.stream_chat(stream_input, sub_agent_id="feedback", user_id=ctx.user_id):
             yield f"id: {event.id}\nevent: {event.event}\ndata: {event.data.model_dump_json()}\n\n"
 
     return StreamingResponse(generate_sse(), media_type="text/event-stream", headers=_sse_headers())

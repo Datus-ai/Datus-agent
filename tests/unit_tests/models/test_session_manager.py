@@ -1214,6 +1214,80 @@ class TestGetSessionMessages:
         assert assistant_messages[0].get("sql") == "SELECT COUNT(*) FROM customer"
         assert assistant_messages[0]["content"] == "There are 30000 customers."
 
+    def test_interleaved_function_call_outputs_pair_by_call_id(self, sm):
+        """Parallel tool calls must be paired with their outputs via call_id on resume.
+
+        Regression for a bug where two function_call messages emitted back-to-back
+        (before any output) were paired with outputs by list order, causing the
+        SUCCESS action for the first call to inherit the input of the second call.
+        """
+        session_id = f"test_pair_{uuid.uuid4().hex[:8]}"
+        sm.get_session(session_id)
+        db_path = os.path.join(sm.session_dir, f"{session_id}.db")
+
+        call_id_a = "toolu_call_a"
+        call_id_b = "toolu_call_b"
+        args_a = json.dumps({"type": "gen_sql_summary", "description": "archive sql"})
+        args_b = json.dumps({"type": "gen_ext_knowledge", "description": "archive knowledge"})
+
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("INSERT OR IGNORE INTO agent_sessions (session_id) VALUES (?)", (session_id,))
+            rows = [
+                (
+                    json.dumps({"role": "user", "content": "go"}),
+                    "2025-01-01T00:00:00",
+                ),
+                (
+                    json.dumps({"type": "function_call", "call_id": call_id_a, "name": "task", "arguments": args_a}),
+                    "2025-01-01T00:00:01",
+                ),
+                (
+                    json.dumps({"type": "function_call", "call_id": call_id_b, "name": "task", "arguments": args_b}),
+                    "2025-01-01T00:00:02",
+                ),
+                (
+                    json.dumps(
+                        {
+                            "type": "function_call_output",
+                            "call_id": call_id_a,
+                            "output": "{'success': 1, 'result': 'ok'}",
+                        }
+                    ),
+                    "2025-01-01T00:00:03",
+                ),
+                (
+                    json.dumps(
+                        {
+                            "type": "function_call_output",
+                            "call_id": call_id_b,
+                            "output": "{'success': 0, 'error': 'Max turns (70) exceeded'}",
+                        }
+                    ),
+                    "2025-01-01T00:00:04",
+                ),
+            ]
+            conn.executemany(
+                "INSERT INTO agent_messages (session_id, message_data, created_at) VALUES (?, ?, ?)",
+                [(session_id, data, ts) for data, ts in rows],
+            )
+            conn.commit()
+
+        messages = sm.get_session_messages(session_id)
+        assistant_groups = [m for m in messages if m["role"] == "assistant"]
+        assert assistant_groups, "expected at least one assistant group"
+        actions = assistant_groups[0].get("actions", [])
+
+        success_by_call_id = {
+            a.action_id.removeprefix("complete_"): a for a in actions if a.action_id.startswith("complete_")
+        }
+        assert call_id_a in success_by_call_id, "SUCCESS action for call A missing"
+        assert call_id_b in success_by_call_id, "SUCCESS action for call B missing"
+
+        # Each SUCCESS action must inherit the input of its own call_id, not the
+        # most-recent PROCESSING action in insertion order.
+        assert success_by_call_id[call_id_a].input["arguments"] == args_a
+        assert success_by_call_id[call_id_b].input["arguments"] == args_b
+
 
 # ===========================================================================
 # TestParseOutputFromAction (migrated from test_session_loader.py)

@@ -26,6 +26,7 @@ from datus.claw.models import (
 from datus.claw.richtext.parser import markdown_to_ir
 from datus.configuration.agent_config import AgentConfig
 from datus.models.session_manager import SessionManager
+from datus.utils.feedback_prompt import build_reaction_feedback_prompt
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -35,6 +36,9 @@ _STREAMABLE_TYPES = {"markdown", "code", "thinking", "error", "call-tool", "call
 
 # Maximum number of bot message IDs to track
 _MAX_BOT_MSG_MAP = 10000
+
+# Maximum number of bot messages to remember as already-reacted (dedup for reactions)
+_MAX_REACTED_MSG = 10000
 
 
 class ChannelBridge:
@@ -55,6 +59,9 @@ class ChannelBridge:
         self._verbose_overrides: Dict[str, Verbose] = {}
         # Track bot message IDs for reaction feedback: {bot_msg_id -> context}
         self._bot_message_map: OrderedDict[str, dict] = OrderedDict()
+        # Dedup reactions: a bot message only triggers feedback once, no matter
+        # how many emojis the user piles on afterwards.
+        self._reacted_bot_messages: OrderedDict[str, None] = OrderedDict()
         # Deduplication: recently seen message IDs
         self._seen_message_ids: OrderedDict[str, None] = OrderedDict()
         self._max_seen_ids: int = 1000
@@ -218,7 +225,7 @@ class ChannelBridge:
                                 continue
                             bot_msg_id = await adapter.send_message(outbound)
                             if bot_msg_id:
-                                await self._track_bot_message(bot_msg_id, session_id, msg)
+                                await self._track_bot_message(bot_msg_id, session_id, msg, outbound.text)
                             any_sent = True
 
             if not any_sent:
@@ -230,7 +237,7 @@ class ChannelBridge:
                 )
                 bot_msg_id = await adapter.send_message(fallback)
                 if bot_msg_id:
-                    await self._track_bot_message(bot_msg_id, session_id, msg)
+                    await self._track_bot_message(bot_msg_id, session_id, msg, fallback.text)
         except Exception:
             has_error = True
             raise
@@ -250,31 +257,98 @@ class ChannelBridge:
             except Exception as e:
                 logger.debug("Failed to add done reaction: %s", e)
 
-    async def _track_bot_message(self, bot_msg_id: str, session_id: str, msg: InboundMessage) -> None:
-        """Record a bot message ID for future reaction feedback tracking."""
+    async def _track_bot_message(
+        self,
+        bot_msg_id: str,
+        session_id: str,
+        msg: InboundMessage,
+        text: str = "",
+    ) -> None:
+        """Record a bot message ID for future reaction feedback tracking.
+
+        ``text`` is the bot's rendered reply — stored so that reaction handling
+        can quote it back to the feedback agent as the ``reference_msg``.
+        """
         async with self._lock:
+            existing = self._bot_message_map.get(bot_msg_id)
+            # Later fragments of a streamed reply share the same bot_msg_id; keep
+            # appending their text so the final reference captures the full reply.
+            accumulated_text = text or ""
+            if existing and existing.get("text"):
+                accumulated_text = f"{existing['text']}{accumulated_text}" if accumulated_text else existing["text"]
             self._bot_message_map[bot_msg_id] = {
                 "session_id": session_id,
                 "channel_id": msg.channel_id,
                 "conversation_id": msg.conversation_id,
                 "sender_id": msg.sender_id,
+                "text": accumulated_text,
             }
             # Evict oldest entries if over limit
             while len(self._bot_message_map) > _MAX_BOT_MSG_MAP:
                 self._bot_message_map.popitem(last=False)
 
     async def handle_reaction(self, event: ReactionEvent, adapter: ChannelAdapter) -> None:
-        """Process a reaction event on a bot message (feedback tracking)."""
+        """Trigger the feedback agent for the first reaction on a bot message.
+
+        Subsequent reactions on the same message (additional emojis, removed/re-added)
+        are ignored — we only care about the first signal.
+        Result is archived silently (no reply is posted back to the IM thread).
+        """
         context = self._bot_message_map.get(event.target_message_id)
         if not context:
             return
+
+        async with self._lock:
+            if event.target_message_id in self._reacted_bot_messages:
+                logger.debug(
+                    "Reaction on already-processed bot msg %s ignored (emoji=%s)",
+                    event.target_message_id,
+                    event.emoji,
+                )
+                return
+            self._reacted_bot_messages[event.target_message_id] = None
+            while len(self._reacted_bot_messages) > _MAX_REACTED_MSG:
+                self._reacted_bot_messages.popitem(last=False)
+
+        source_session_id = context.get("session_id")
+        reference_msg = context.get("text", "") or ""
         logger.info(
-            "Feedback: emoji=%s sender=%s session=%s msg=%s",
+            "Reaction feedback trigger: emoji=%s sender=%s session=%s msg=%s",
             event.emoji,
             event.sender_id,
-            context.get("session_id"),
+            source_session_id,
             event.target_message_id,
         )
+
+        prompt = build_reaction_feedback_prompt(
+            reaction_emoji=event.emoji,
+            reference_msg=reference_msg,
+        )
+        request = StreamChatInput(
+            message=prompt,
+            session_id=None,
+            source_session_id=source_session_id,
+            stream_response=False,
+        )
+
+        try:
+            task = await self._task_manager.start_chat(
+                self._agent_config,
+                request,
+                sub_agent_id="feedback",
+            )
+        except ValueError as exc:
+            logger.warning("Reaction feedback could not start: %s", exc)
+            return
+        except Exception:
+            logger.exception("Reaction feedback failed to start")
+            return
+
+        try:
+            async for _ in self._task_manager.consume_events(task):
+                pass
+        except Exception:
+            logger.exception("Reaction feedback stream errored")
 
     def _event_to_outbound(
         self,

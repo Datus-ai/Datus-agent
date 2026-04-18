@@ -261,6 +261,25 @@ class StreamChatInput(ChatInput):
     subagent_id: Optional[str] = Field(default=None, description="Subagent ID (builtin name or DB SubAgent id)")
     prompt_version: Optional[str] = Field(default=None, description="Prompt version")
     prompt_language: str = Field(default="en", description="Prompt language")
+    source_session_id: Optional[str] = Field(
+        default=None,
+        description="Source session to seed the agent with (currently used by feedback agent to copy history).",
+    )
+
+
+class FeedbackChatInput(ChatInput):
+    """Input for /chat/feedback — reaction-triggered feedback agent.
+
+    ``message`` is server-rendered from the reaction fields via
+    :func:`datus.utils.feedback_prompt.build_reaction_feedback_prompt`, so callers
+    can leave it empty.
+    """
+
+    message: str = Field(default="", description="Leave empty; server derives it from reaction fields")
+    source_session_id: str = Field(..., description="Session that produced the message being reacted to")
+    reaction_emoji: str = Field(..., description="Normalized emoji name (e.g. 'thumbsup')")
+    reference_msg: str = Field(..., description="Text of the bot message the user reacted to")
+    reaction_msg: Optional[str] = Field(default=None, description="Optional free-text comment attached to the reaction")
 
 
 class UserInteractionInput(BaseModel):

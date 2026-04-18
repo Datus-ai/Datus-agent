@@ -273,3 +273,24 @@ class TestCreateNodeInput:
             assert getattr(result, attr) == expected_value, (
                 f"{node_class_name}: expected {attr}={expected_value!r}, got {getattr(result, attr)!r}"
             )
+
+    def test_feedback_source_session_id_wired(self):
+        """Feedback branch must forward source_session_id to FeedbackNodeInput."""
+        node_class = _load_node_class("datus.agent.node.feedback_agentic_node", "FeedbackAgenticNode")
+        node = MagicMock(spec=node_class)
+        result = create_node_input(
+            "analyze and archive",
+            node,
+            database="db",
+            source_session_id="chat_session_abc",
+        )
+        assert result.source_session_id == "chat_session_abc"
+        assert result.database == "db"
+        assert result.user_message == "analyze and archive"
+
+    def test_feedback_source_session_id_defaults_to_none(self):
+        """CLI callers leave source_session_id unset → FeedbackNodeInput carries None."""
+        node_class = _load_node_class("datus.agent.node.feedback_agentic_node", "FeedbackAgenticNode")
+        node = MagicMock(spec=node_class)
+        result = create_node_input("/feedback", node)
+        assert result.source_session_id is None

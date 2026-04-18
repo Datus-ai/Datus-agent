@@ -938,7 +938,21 @@ class SessionManager:
                         if msg_type == "function_call_output":
                             # Create a new SUCCESS action for the tool output
                             if current_actions:
-                                last_action = current_actions[-1]
+                                # Pair with the matching PROCESSING call by call_id so that
+                                # interleaved tool calls (multiple function_call messages
+                                # before any output) are matched correctly on resume.
+                                output_call_id = message_json.get("call_id")
+                                last_action = None
+                                if output_call_id:
+                                    for candidate in reversed(current_actions):
+                                        if (
+                                            candidate.action_id == output_call_id
+                                            and candidate.status == ActionStatus.PROCESSING
+                                        ):
+                                            last_action = candidate
+                                            break
+                                if last_action is None:
+                                    last_action = current_actions[-1]
 
                                 # Extract output directly from message_json
                                 output_text = message_json.get("output", "")

@@ -517,6 +517,28 @@ class TestCreateNodeInput:
         assert result.database == "db"
         assert result.db_schema == "schema"
 
+    def test_feedback_node_input_with_source_session(self, real_agent_config, mock_llm_create):
+        """_create_node_input for FeedbackAgenticNode carries source_session_id through."""
+        from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
+        from datus.schemas.feedback_agentic_node_models import FeedbackNodeInput
+
+        manager = ChatTaskManager()
+        node = manager._create_node(real_agent_config, "feedback", "test")
+        assert isinstance(node, FeedbackAgenticNode)
+
+        result = manager._create_node_input(
+            '[The user reacted to this message "reply" with [thumbsup]]',
+            node,
+            [],
+            [],
+            [],
+            database="db",
+            source_session_id="chat_session_xyz",
+        )
+        assert isinstance(result, FeedbackNodeInput)
+        assert result.source_session_id == "chat_session_xyz"
+        assert result.database == "db"
+
 
 # ---------------------------------------------------------------------------
 # Helpers for thinking-delta tests

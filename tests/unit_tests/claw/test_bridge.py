@@ -838,16 +838,27 @@ class TestReactionLifecycle:
         assert bot_msg_id.startswith("bot_msg_")
 
     @pytest.mark.asyncio
-    async def test_handle_reaction_known_message(self, setup):
-        """handle_reaction should log for known bot messages."""
-        bridge, adapter, _ = setup
+    async def test_handle_reaction_known_message_triggers_feedback(self, setup):
+        """A reaction on a tracked bot message should start a feedback subagent task."""
+        bridge, adapter, task_manager = setup
 
         bridge._bot_message_map["bot_123"] = {
             "session_id": "sess_1",
             "channel_id": "ch1",
             "conversation_id": "conv1",
             "sender_id": "user1",
+            "text": "Here is your result",
         }
+
+        mock_task = MagicMock()
+        task_manager.start_chat = AsyncMock(return_value=mock_task)
+
+        async def _fake_consume(task, start_from=None):
+            if False:
+                yield
+            return
+
+        task_manager.consume_events = _fake_consume
 
         event = ReactionEvent(
             channel_id="ch1",
@@ -857,13 +868,58 @@ class TestReactionLifecycle:
             emoji="thumbsup",
         )
 
-        # Should not raise
         await bridge.handle_reaction(event, adapter)
+
+        task_manager.start_chat.assert_awaited_once()
+        kwargs = task_manager.start_chat.await_args.kwargs
+        assert kwargs.get("sub_agent_id") == "feedback"
+        # Request is the second positional arg
+        request = task_manager.start_chat.await_args.args[1]
+        assert request.source_session_id == "sess_1"
+        assert request.session_id is None
+        assert request.subagent_id is None  # subagent_id passes via sub_agent_id kwarg
+        assert "thumbsup" in request.message
+        assert "Here is your result" in request.message
+
+    @pytest.mark.asyncio
+    async def test_handle_reaction_dedupes_same_message(self, setup):
+        """Only the first reaction on a bot message should trigger feedback."""
+        bridge, adapter, task_manager = setup
+
+        bridge._bot_message_map["bot_dup"] = {
+            "session_id": "sess_1",
+            "channel_id": "ch1",
+            "conversation_id": "conv1",
+            "sender_id": "user1",
+            "text": "Reply body",
+        }
+
+        task_manager.start_chat = AsyncMock(return_value=MagicMock())
+
+        async def _fake_consume(task, start_from=None):
+            if False:
+                yield
+            return
+
+        task_manager.consume_events = _fake_consume
+
+        base = dict(
+            channel_id="ch1",
+            sender_id="user2",
+            conversation_id="conv1",
+            target_message_id="bot_dup",
+        )
+        await bridge.handle_reaction(ReactionEvent(**base, emoji="thumbsup"), adapter)
+        await bridge.handle_reaction(ReactionEvent(**base, emoji="thumbsdown"), adapter)
+        await bridge.handle_reaction(ReactionEvent(**base, emoji="heart"), adapter)
+
+        assert task_manager.start_chat.await_count == 1
 
     @pytest.mark.asyncio
     async def test_handle_reaction_unknown_message(self, setup):
-        """handle_reaction should silently return for unknown messages."""
-        bridge, adapter, _ = setup
+        """Unknown bot messages should silently return without starting a task."""
+        bridge, adapter, task_manager = setup
+        task_manager.start_chat = AsyncMock()
 
         event = ReactionEvent(
             channel_id="ch1",
@@ -873,8 +929,31 @@ class TestReactionLifecycle:
             emoji="thumbsup",
         )
 
-        # Should not raise
         await bridge.handle_reaction(event, adapter)
+
+        task_manager.start_chat.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_track_bot_message_stores_text(self, setup):
+        """_track_bot_message should persist the bot reply text for later reference."""
+        bridge, _, _ = setup
+        msg = _make_inbound()
+
+        await bridge._track_bot_message("bot_1", "sess_1", msg, text="Hello world")
+
+        assert bridge._bot_message_map["bot_1"]["text"] == "Hello world"
+        assert bridge._bot_message_map["bot_1"]["session_id"] == "sess_1"
+
+    @pytest.mark.asyncio
+    async def test_track_bot_message_accumulates_streamed_text(self, setup):
+        """Repeated tracking for the same bot_msg_id should concat streamed fragments."""
+        bridge, _, _ = setup
+        msg = _make_inbound()
+
+        await bridge._track_bot_message("bot_1", "sess_1", msg, text="Hello ")
+        await bridge._track_bot_message("bot_1", "sess_1", msg, text="world")
+
+        assert bridge._bot_message_map["bot_1"]["text"] == "Hello world"
 
     @pytest.mark.asyncio
     async def test_bot_message_map_eviction(self, setup):

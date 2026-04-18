@@ -374,7 +374,13 @@ class ChatTaskManager:
                     user_id=user_id,
                     interactive=interactive_enabled,
                 )
-                n.session_id = session_id
+                # Feedback runs triggered with a source_session_id must start with
+                # no session_id so FeedbackAgenticNode.execute_stream copies the
+                # source session into a fresh feedback_session_ id.
+                if sub_agent_id == "feedback" and request.source_session_id:
+                    n.session_id = None
+                else:
+                    n.session_id = session_id
                 return n
 
             node = await asyncio.to_thread(_init_node)
@@ -410,6 +416,7 @@ class ChatTaskManager:
                 database=request.database,
                 db_schema=request.db_schema,
                 plan_mode=request.plan_mode or False,
+                source_session_id=request.source_session_id,
             )
             node.input = node_input
 
@@ -601,6 +608,14 @@ class ChatTaskManager:
                     execution_mode=execution_mode,
                     scope=user_id,
                 )
+            elif subagent_id == "feedback":
+                from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
+
+                return FeedbackAgenticNode(
+                    agent_config=agent_config,
+                    execution_mode=execution_mode,
+                    scope=user_id,
+                )
             else:
                 # Custom sub_agent: agentic_nodes is keyed by sanitized node_name
                 # (not the UUID subagent_id). Each entry carries its original
@@ -650,13 +665,24 @@ class ChatTaskManager:
         database: Optional[str] = None,
         db_schema: Optional[str] = None,
         plan_mode: bool = False,
+        source_session_id: Optional[str] = None,
     ):
         """Create node input based on node type."""
+        from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
         from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
         from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
         from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
+
+        if isinstance(current_node, FeedbackAgenticNode):
+            from datus.schemas.feedback_agentic_node_models import FeedbackNodeInput
+
+            return FeedbackNodeInput(
+                user_message=user_message,
+                database=database,
+                source_session_id=source_session_id,
+            )
 
         if isinstance(current_node, (GenSemanticModelAgenticNode, GenMetricsAgenticNode)):
             from datus.schemas.semantic_agentic_node_models import SemanticNodeInput

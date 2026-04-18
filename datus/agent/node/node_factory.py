@@ -191,6 +191,7 @@ def create_node_input(
     at_sqls=None,
     prompt_language: str = "en",
     plan_mode: bool = False,
+    source_session_id: Optional[str] = None,
 ):
     """Create node input based on node type.
 
@@ -205,6 +206,8 @@ def create_node_input(
         at_sqls: @-referenced SQL queries.
         prompt_language: Language for prompts (default "en").
         plan_mode: Whether to enable plan mode.
+        source_session_id: Source session the feedback node should copy from.
+            Only consumed by :class:`FeedbackAgenticNode`.
     """
     from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
     from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
@@ -311,10 +314,14 @@ def create_node_input(
     if isinstance(node, FeedbackAgenticNode):
         from datus.schemas.feedback_agentic_node_models import FeedbackNodeInput
 
-        # source_session_id is not needed here: the CLI's _copy_session_for_switch
-        # already seeds the feedback node's session, and caller_node_name carries
-        # the memory-routing semantics.
-        return FeedbackNodeInput(user_message=user_message, database=database)
+        # CLI path leaves source_session_id=None because _copy_session_for_switch
+        # seeds the feedback node's session directly. API/Claw paths pass a
+        # real source_session_id so the node copies the source session itself.
+        return FeedbackNodeInput(
+            user_message=user_message,
+            database=database,
+            source_session_id=source_session_id,
+        )
 
     else:
         from datus.schemas.chat_agentic_node_models import ChatNodeInput
