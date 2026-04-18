@@ -531,7 +531,9 @@ def _is_long_sleep(node: ast.Call) -> float | None:
     if not node.args:
         return None
     first = node.args[0]
-    if not (isinstance(first, ast.Constant) and isinstance(first.value, (int, float))):
+    if not (
+        isinstance(first, ast.Constant) and isinstance(first.value, (int, float)) and not isinstance(first.value, bool)
+    ):
         return None
     if first.value >= 1:
         return float(first.value)

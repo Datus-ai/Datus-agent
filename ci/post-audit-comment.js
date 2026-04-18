@@ -152,7 +152,10 @@ function truncate(s, n) {
 }
 
 async function postOrUpdate(github, context, prNumber, body, marker) {
-  const { data: comments } = await github.rest.issues.listComments({
+  // Use paginate so the sticky-comment lookup keeps working on PRs with >100
+  // comments (bot chatter, large review threads). A single page would miss the
+  // marker and cause duplicate comments on every run.
+  const comments = await github.paginate(github.rest.issues.listComments, {
     owner: context.repo.owner,
     repo: context.repo.repo,
     issue_number: prNumber,
