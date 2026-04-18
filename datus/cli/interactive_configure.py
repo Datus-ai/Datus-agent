@@ -129,10 +129,18 @@ class InteractiveConfigure:
     def _load_provider_catalog(self) -> dict:
         try:
             text = read_data_file_text(resource_path="conf/providers.yml", encoding="utf-8")
-            return yaml.safe_load(text)
+            local_catalog = yaml.safe_load(text) or {}
         except Exception as e:
             logger.error(f"Failed to load providers.yml: {e}")
             return {"providers": {}, "model_overrides": {}}
+
+        from datus.cli.provider_model_catalog import resolve_provider_models
+
+        try:
+            return resolve_provider_models(local_catalog)
+        except Exception as e:
+            logger.debug(f"resolve_provider_models failed, using local catalog: {e}")
+            return local_catalog
 
     # ── Display ────────────────────────────────────────────────────
 

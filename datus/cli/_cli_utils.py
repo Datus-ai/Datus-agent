@@ -23,6 +23,8 @@ def select_choice(
 
     Uses prompt_toolkit Application for proper terminal handling.
     Up/Down arrows to navigate, Enter to confirm, or press shortcut key directly.
+    When the list exceeds the terminal height, the view scrolls with the cursor
+    and PageUp/PageDown jumps a screenful at a time.
     When ``allow_free_text`` is True, a "Type custom answer..." entry is appended.
     Choosing it, or pressing ``/``, opens the standard multiline input prompt so
     paste works reliably.
@@ -49,17 +51,49 @@ def select_choice(
             display_choices[_FREE_TEXT_SENTINEL] = "Type custom answer..."
 
         keys = list(display_choices.keys())
+        total = len(keys)
         selected = [keys.index(default) if default in keys else 0]
+
+        # Scroll window: reserve 3 lines for scroll header + hint + safety margin.
+        term_height = shutil.get_terminal_size((120, 40)).lines
+        max_visible = max(3, term_height - 3)
+        offset = [0]
+        if selected[0] >= max_visible:
+            offset[0] = min(max(0, selected[0] - max_visible // 2), max(0, total - max_visible))
+
+        def _ensure_visible() -> None:
+            if selected[0] < offset[0]:
+                offset[0] = selected[0]
+            elif selected[0] >= offset[0] + max_visible:
+                offset[0] = selected[0] - max_visible + 1
 
         kb = KeyBindings()
 
         @kb.add("up")
         def _move_up(event):
-            selected[0] = (selected[0] - 1) % len(keys)
+            selected[0] = (selected[0] - 1) % total
+            if selected[0] == total - 1:
+                offset[0] = max(0, total - max_visible)
+            else:
+                _ensure_visible()
 
         @kb.add("down")
         def _move_down(event):
-            selected[0] = (selected[0] + 1) % len(keys)
+            selected[0] = (selected[0] + 1) % total
+            if selected[0] == 0:
+                offset[0] = 0
+            else:
+                _ensure_visible()
+
+        @kb.add("pageup")
+        def _page_up(event):
+            selected[0] = max(0, selected[0] - max_visible)
+            _ensure_visible()
+
+        @kb.add("pagedown")
+        def _page_down(event):
+            selected[0] = min(total - 1, selected[0] + max_visible)
+            _ensure_visible()
 
         @kb.add("enter")
         def _confirm(event):
@@ -87,9 +121,15 @@ def select_choice(
             def _free_text_shortcut(event):
                 event.app.exit(result=_FREE_TEXT_SENTINEL)
 
+        items = list(display_choices.items())
+
         def _get_formatted_text():
             lines = []
-            for i, (key, display) in enumerate(display_choices.items()):
+            visible_end = min(offset[0] + max_visible, total)
+            if total > max_visible:
+                lines.append(("ansiyellow", f"  ({offset[0] + 1}-{visible_end} of {total})\n"))
+            for i in range(offset[0], visible_end):
+                key, display = items[i]
                 is_sel = i == selected[0]
                 if key == _FREE_TEXT_SENTINEL:
                     label = f"  [/] {display}"
@@ -161,18 +201,48 @@ def select_multi_choice(
             display_choices[_FREE_TEXT_SENTINEL] = "Type custom answer..."
 
         keys = list(display_choices.keys())
+        total = len(keys)
         cursor = [0]
         checked = {k for k in (default_selected or []) if k in keys and k != _FREE_TEXT_SENTINEL}
+
+        # Scroll window: reserve 4 lines for scroll header + footer hint + safety.
+        term_height = shutil.get_terminal_size((120, 40)).lines
+        max_visible = max(3, term_height - 4)
+        offset = [0]
+
+        def _ensure_visible() -> None:
+            if cursor[0] < offset[0]:
+                offset[0] = cursor[0]
+            elif cursor[0] >= offset[0] + max_visible:
+                offset[0] = cursor[0] - max_visible + 1
 
         kb = KeyBindings()
 
         @kb.add("up")
         def _move_up(event):
-            cursor[0] = (cursor[0] - 1) % len(keys)
+            cursor[0] = (cursor[0] - 1) % total
+            if cursor[0] == total - 1:
+                offset[0] = max(0, total - max_visible)
+            else:
+                _ensure_visible()
 
         @kb.add("down")
         def _move_down(event):
-            cursor[0] = (cursor[0] + 1) % len(keys)
+            cursor[0] = (cursor[0] + 1) % total
+            if cursor[0] == 0:
+                offset[0] = 0
+            else:
+                _ensure_visible()
+
+        @kb.add("pageup")
+        def _page_up(event):
+            cursor[0] = max(0, cursor[0] - max_visible)
+            _ensure_visible()
+
+        @kb.add("pagedown")
+        def _page_down(event):
+            cursor[0] = min(total - 1, cursor[0] + max_visible)
+            _ensure_visible()
 
         @kb.add("space")
         def _toggle(event):
@@ -206,9 +276,15 @@ def select_multi_choice(
             def _free_text_shortcut(event):
                 event.app.exit(result=[_FREE_TEXT_SENTINEL])
 
+        items = list(display_choices.items())
+
         def _get_formatted_text():
             lines = []
-            for i, (key, display) in enumerate(display_choices.items()):
+            visible_end = min(offset[0] + max_visible, total)
+            if total > max_visible:
+                lines.append(("ansiyellow", f"  ({offset[0] + 1}-{visible_end} of {total})\n"))
+            for i in range(offset[0], visible_end):
+                key, display = items[i]
                 is_cur = i == cursor[0]
                 if key == _FREE_TEXT_SENTINEL:
                     label = f"  [/] {display}"

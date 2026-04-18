@@ -84,7 +84,7 @@ def run_project_init(base_config: AgentConfig, cwd: Optional[str] = None) -> Pro
 
     console.print()
     console.print("[bold]- Select default database (from agent.yml):[/]")
-    db_choices = {name: f"{name}  [dim]({cfg.type})[/]" for name, cfg in base_config.service.databases.items()}
+    db_choices = {name: f"{name}  ({cfg.type})" for name, cfg in base_config.service.databases.items()}
     db_default = base_config.service.default_database or next(iter(db_choices))
     default_database = select_choice(console, db_choices, default=db_default)
     if not default_database:
