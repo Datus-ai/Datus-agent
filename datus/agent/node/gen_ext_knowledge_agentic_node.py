@@ -18,7 +18,7 @@ import pandas as pd
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.compare_agentic_node import CompareAgenticNode
 from datus.cli.execution_state import ExecutionInterrupted
-from datus.cli.generation_hooks import GenerationHooks, make_kb_path_normalizer
+from datus.cli.generation_hooks import GenerationHooks
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.compare_node_models import CompareInput
@@ -458,10 +458,7 @@ Do NOT give up. Continue iterating until verify_sql returns success=1.
         try:
             from datus.tools.func_tool import trans_to_function_tool
 
-            self.filesystem_func_tool = FilesystemFuncTool(
-                root_path=self.knowledge_base_dir,
-                path_normalizer=make_kb_path_normalizer(default_kind="ext_knowledge"),
-            )
+            self.filesystem_func_tool = self._make_filesystem_tool()
             self.tools.append(trans_to_function_tool(self.filesystem_func_tool.read_file))
             self.tools.append(trans_to_function_tool(self.filesystem_func_tool.edit_file))
             self.tools.append(trans_to_function_tool(self.filesystem_func_tool.write_file))
@@ -472,7 +469,7 @@ Do NOT give up. Continue iterating until verify_sql returns success=1.
         """Setup hooks (hardcoded to generation_hooks)."""
         try:
             broker = self._get_or_create_broker()
-            self.hooks = GenerationHooks(broker=broker, agent_config=self.agent_config)
+            self.hooks = GenerationHooks(broker=broker, agent_config=self.agent_config, node_name=self.get_node_name())
             logger.info("Setup hooks: generation_hooks")
         except Exception as e:
             logger.error(f"Failed to setup generation_hooks: {e}")
@@ -508,7 +505,8 @@ Do NOT give up. Continue iterating until verify_sql returns success=1.
         context["native_tools"] = ", ".join([tool.name for tool in self.tools]) if self.tools else "None"
         context["ext_knowledge_dir"] = self.ext_knowledge_dir
         context["knowledge_base_dir"] = self.knowledge_base_dir
-        context["kind_subdir"] = "ext_knowledge"
+        # Filesystem tool is rooted at project_root; full path required.
+        context["kind_subdir"] = "subject/ext_knowledge"
         context["current_database"] = self.agent_config.current_database
         context["has_filesystem_tools"] = bool(self.filesystem_func_tool)
         context["has_ask_user_tool"] = self.ask_user_tool is not None

@@ -11,6 +11,7 @@ via the conftest mock_llm_create fixture.
 """
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -453,14 +454,11 @@ class TestGenExtKnowledgeSaveToDbSandbox:
 
 
 class TestGenExtKnowledgeFilesystemRootPath:
-    """FilesystemFuncTool is sandboxed to subject_dir (not the type-specific subdir)."""
+    """FilesystemFuncTool now uses project_root; scope enforcement moved to GenerationHooks."""
 
-    def test_filesystem_root_is_subject_dir(self, real_agent_config, mock_llm_create):
+    def test_filesystem_root_is_project_root(self, real_agent_config, mock_llm_create):
         node = _create_node(real_agent_config)
-        expected = str(real_agent_config.path_manager.subject_dir)
+        expected = str(Path(real_agent_config.project_root).expanduser())
 
         assert node.filesystem_func_tool is not None
-        assert node.filesystem_func_tool.config.root_path == expected
-        assert node.filesystem_func_tool._path_normalizer is not None
-
-        assert node.filesystem_func_tool._path_normalizer("notes.yaml", None) == "ext_knowledge/notes.yaml"
+        assert node.filesystem_func_tool.root_path == expected

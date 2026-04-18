@@ -14,7 +14,7 @@ from typing import AsyncGenerator, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.cli.execution_state import ExecutionInterrupted
-from datus.cli.generation_hooks import GenerationHooks, make_kb_path_normalizer
+from datus.cli.generation_hooks import GenerationHooks
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput, SqlSummaryNodeResult
@@ -153,10 +153,7 @@ class SqlSummaryAgenticNode(AgenticNode):
     def _setup_specific_filesystem_tool(self):
         """Setup specific filesystem tools"""
         try:
-            self.filesystem_func_tool = FilesystemFuncTool(
-                root_path=self.knowledge_base_dir,
-                path_normalizer=make_kb_path_normalizer(default_kind="sql_summary"),
-            )
+            self.filesystem_func_tool = self._make_filesystem_tool()
 
             self.tools.extend(self.filesystem_func_tool.available_tools())
         except Exception as e:
@@ -166,7 +163,7 @@ class SqlSummaryAgenticNode(AgenticNode):
         """Setup hooks (hardcoded to generation_hooks)."""
         try:
             broker = self._get_or_create_broker()
-            self.hooks = GenerationHooks(broker=broker, agent_config=self.agent_config)
+            self.hooks = GenerationHooks(broker=broker, agent_config=self.agent_config, node_name=self.get_node_name())
             logger.info("Setup hooks: generation_hooks")
         except Exception as e:
             logger.error(f"Failed to setup generation_hooks: {e}")
@@ -245,7 +242,8 @@ class SqlSummaryAgenticNode(AgenticNode):
         context["native_tools"] = ", ".join([tool.name for tool in self.tools]) if self.tools else "None"
         context["sql_summary_dir"] = self.sql_summary_dir
         context["knowledge_base_dir"] = self.knowledge_base_dir
-        context["kind_subdir"] = "sql_summaries"
+        # Filesystem tool is rooted at project_root; full path required.
+        context["kind_subdir"] = "subject/sql_summaries"
         context["current_database"] = self.agent_config.current_database
         context["has_ask_user_tool"] = self.ask_user_tool is not None
 

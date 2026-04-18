@@ -1234,3 +1234,81 @@ class AgenticNode(Node):
         if expanded_path != workspace_root:
             logger.debug(f"Expanded workspace_root from '{workspace_root}' to '{expanded_path}'")
         return expanded_path
+
+    def _resolve_filesystem_strict(self) -> bool:
+        """Resolve the ``strict`` flag for this node's filesystem tool.
+
+        Source order:
+          1. ``self.node_config["filesystem_strict"]`` — per-node YAML.
+          2. ``self.agent_config.filesystem_strict`` — process-wide default
+             (set e.g. by API / claw bootstraps).
+          3. ``False`` — CLI default, falls back to broker-prompt behavior.
+        """
+        node_flag = self.node_config.get("filesystem_strict") if self.node_config else None
+        if node_flag is not None:
+            return bool(node_flag)
+        if self.agent_config is not None:
+            global_flag = getattr(self.agent_config, "filesystem_strict", None)
+            if global_flag is not None:
+                return bool(global_flag)
+        return False
+
+    def _make_filesystem_tool(self, **kwargs):
+        """Construct a ``FilesystemFuncTool`` with this node's identity baked in.
+
+        All production call sites go through this helper so ``root_path`` is
+        uniformly ``_resolve_workspace_root()`` and ``current_node`` matches
+        ``get_node_name()`` — the two inputs the path policy module expects to
+        classify ``.datus/memory/{current_node}/**`` as a whitelist subtree
+        for this node only. The ``strict`` flag is resolved from
+        ``node_config.filesystem_strict`` / ``agent_config.filesystem_strict``
+        so API / claw can opt out of interactive EXTERNAL prompts.
+        """
+        from datus.tools.func_tool import FilesystemFuncTool
+
+        root_path = kwargs.pop("root_path", None) or self._resolve_workspace_root()
+        datus_home = kwargs.pop("datus_home", None)
+        if datus_home is None and self.agent_config is not None:
+            path_manager = getattr(self.agent_config, "path_manager", None)
+            if path_manager is not None:
+                try:
+                    datus_home = str(path_manager.datus_home)
+                except Exception:
+                    datus_home = None
+        strict = kwargs.pop("strict", None)
+        if strict is None:
+            strict = self._resolve_filesystem_strict()
+        return FilesystemFuncTool(
+            root_path=root_path,
+            current_node=kwargs.pop("current_node", None) or self.get_node_name(),
+            datus_home=datus_home,
+            strict=strict,
+            **kwargs,
+        )
+
+    def _make_filesystem_policy(self):
+        """Build a :class:`FilesystemPolicy` for ``PermissionHooks`` construction.
+
+        Returns ``None`` when this node has no ``agent_config`` or the path
+        manager cannot be resolved, so callers can treat the policy as opt-in
+        and fall back to the pre-refactor category-level behavior.
+        """
+        if not self.agent_config:
+            return None
+        path_manager = getattr(self.agent_config, "path_manager", None)
+        if path_manager is None:
+            return None
+        try:
+            from pathlib import Path as _Path
+
+            from datus.tools.permission.permission_hooks import FilesystemPolicy
+
+            return FilesystemPolicy(
+                root_path=_Path(self._resolve_workspace_root()).resolve(strict=False),
+                current_node=self.get_node_name(),
+                datus_home=_Path(path_manager.datus_home),
+                strict=self._resolve_filesystem_strict(),
+            )
+        except Exception as e:
+            logger.debug(f"Failed to build FilesystemPolicy: {e}")
+            return None

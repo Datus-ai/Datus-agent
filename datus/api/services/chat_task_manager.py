@@ -222,6 +222,10 @@ class ChatTaskManager:
         """
         # Clone config to avoid cross-request mutation of shared AgentConfig
         agent_config = copy.deepcopy(agent_config)
+        # API surface has no interactive broker to confirm EXTERNAL file
+        # access, so force filesystem strict mode — every node constructed
+        # below reads this flag via AgenticNode._resolve_filesystem_strict().
+        agent_config.filesystem_strict = True
         _fill_database_context(
             agent_config,
             catalog=request.catalog,

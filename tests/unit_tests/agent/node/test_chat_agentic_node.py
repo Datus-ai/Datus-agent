@@ -174,6 +174,53 @@ class TestChatAgenticNodeToolSetup:
 
         assert node.filesystem_func_tool is not None
 
+    def test_filesystem_strict_from_agent_config(self, real_agent_config, mock_llm_create):
+        """agent_config.filesystem_strict = True propagates into the tool
+        and the permission-hook policy. This is how API / claw bootstraps
+        force strict mode for every node they spawn."""
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        real_agent_config.filesystem_strict = True
+        try:
+            node = ChatAgenticNode(
+                node_id="test_fs_strict",
+                description="Test fs strict",
+                node_type=NodeType.TYPE_CHAT,
+                agent_config=real_agent_config,
+            )
+            assert node.filesystem_func_tool.strict is True
+            if node.permission_hooks and node.permission_hooks.fs_policy:
+                assert node.permission_hooks.fs_policy.strict is True
+        finally:
+            real_agent_config.filesystem_strict = False
+
+    def test_filesystem_root_from_node_config_workspace(self, real_agent_config, mock_llm_create, tmp_path):
+        """``node_config.workspace_root`` replaces the fs tool root so a node
+        can be scoped to a directory outside the project root. Verified via
+        ``_resolve_workspace_root`` -> ``_make_filesystem_tool``."""
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        custom_workspace = tmp_path / "node_ws"
+        custom_workspace.mkdir()
+
+        if not getattr(real_agent_config, "agentic_nodes", None):
+            real_agent_config.agentic_nodes = {}
+        prev = real_agent_config.agentic_nodes.get("chat")
+        real_agent_config.agentic_nodes["chat"] = {"workspace_root": str(custom_workspace)}
+        try:
+            node = ChatAgenticNode(
+                node_id="test_node_ws",
+                description="Test node workspace",
+                node_type=NodeType.TYPE_CHAT,
+                agent_config=real_agent_config,
+            )
+            assert node.filesystem_func_tool.root_path == str(custom_workspace)
+        finally:
+            if prev is not None:
+                real_agent_config.agentic_nodes["chat"] = prev
+            else:
+                real_agent_config.agentic_nodes.pop("chat", None)
+
     def test_has_date_parsing_tools(self, real_agent_config, mock_llm_create):
         """Chat node has date parsing tools."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode

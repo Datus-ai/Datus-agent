@@ -171,10 +171,9 @@ class ChatAgenticNode(AgenticNode):
     def _setup_filesystem_tools(self):
         """Setup filesystem tools."""
         try:
-            root_path = self._resolve_workspace_root()
-            self.filesystem_func_tool = FilesystemFuncTool(root_path=root_path)
+            self.filesystem_func_tool = self._make_filesystem_tool()
             self.tools.extend(self.filesystem_func_tool.available_tools())
-            logger.debug(f"Setup filesystem tools with root path: {root_path}")
+            logger.debug(f"Setup filesystem tools with root path: {self.filesystem_func_tool.root_path}")
         except Exception as e:
             logger.error(f"Failed to setup filesystem tools: {e}")
 
@@ -263,6 +262,7 @@ class ChatAgenticNode(AgenticNode):
                 permission_manager=self.permission_manager,
                 node_name=self.get_node_name(),
                 tool_registry=self.tool_registry,
+                fs_policy=self._make_filesystem_policy(),
             )
 
             logger.debug(f"Permission hooks setup with {len(self.tool_registry)} registered tools")

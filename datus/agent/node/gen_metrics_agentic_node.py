@@ -14,7 +14,6 @@ from typing import AsyncGenerator, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.cli.execution_state import ExecutionInterrupted
-from datus.cli.generation_hooks import make_kb_path_normalizer
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SemanticNodeResult
@@ -131,10 +130,7 @@ class GenMetricsAgenticNode(AgenticNode):
     def _setup_filesystem_tools(self):
         """Setup filesystem tools."""
         try:
-            self.filesystem_func_tool = FilesystemFuncTool(
-                root_path=self.knowledge_base_dir,
-                path_normalizer=make_kb_path_normalizer(default_kind="metric"),
-            )
+            self.filesystem_func_tool = self._make_filesystem_tool()
 
             self.tools.extend(self.filesystem_func_tool.available_tools())
             logger.debug("Added filesystem tools: read_file, write_file, edit_file, glob, grep")
@@ -253,7 +249,8 @@ class GenMetricsAgenticNode(AgenticNode):
         context["mcp_tools"] = ", ".join(list(self.mcp_servers.keys())) if self.mcp_servers else "None"
         context["semantic_model_dir"] = self.metrics_dir
         context["knowledge_base_dir"] = self.knowledge_base_dir
-        context["kind_subdir"] = "semantic_models"
+        # Filesystem tool is rooted at project_root; full path required.
+        context["kind_subdir"] = "subject/semantic_models"
         context["current_database"] = self.agent_config.current_database
         context["has_ask_user_tool"] = self.ask_user_tool is not None
 

@@ -145,13 +145,12 @@ class ExploreAgenticNode(AgenticNode):
     def _setup_readonly_filesystem_tools(self):
         """Setup only read-only filesystem tools (no write/edit/create/move)."""
         try:
-            root_path = self._resolve_workspace_root()
-            self.filesystem_func_tool = FilesystemFuncTool(root_path=root_path)
+            self.filesystem_func_tool = self._make_filesystem_tool()
             for method_name in READONLY_FILESYSTEM_METHODS:
                 if hasattr(self.filesystem_func_tool, method_name):
                     method = getattr(self.filesystem_func_tool, method_name)
                     self.tools.append(trans_to_function_tool(method))
-            logger.debug(f"Setup readonly filesystem tools with root path: {root_path}")
+            logger.debug(f"Setup readonly filesystem tools with root path: {self.filesystem_func_tool.root_path}")
         except Exception as e:
             logger.warning(f"Failed to setup filesystem tools, continuing without: {e}")
 

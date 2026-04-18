@@ -7,16 +7,16 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
-from datus.cli.generation_hooks import make_kb_path_normalizer
 from datus.tools.func_tool.filesystem_tools import FilesystemConfig, FilesystemFuncTool
+from datus.tools.func_tool.fs_path_policy import PathZone
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _make_tool(root_path: str) -> FilesystemFuncTool:
-    return FilesystemFuncTool(root_path=root_path)
+def _make_tool(root_path: str, *, current_node: str = "test_node") -> FilesystemFuncTool:
+    return FilesystemFuncTool(root_path=root_path, current_node=current_node)
 
 
 # ---------------------------------------------------------------------------
@@ -60,17 +60,24 @@ class TestFilesystemConfig:
 
 
 class TestGetSafePath:
+    """``_get_safe_path`` is the deprecated shim over ``classify_path``. It
+    returns ``None`` for EXTERNAL/HIDDEN zones so legacy callers continue to
+    see the original "out-of-sandbox" reject behavior.
+    """
+
     def test_valid_relative_path(self, tmp_path):
         tool = _make_tool(str(tmp_path))
         result = tool._get_safe_path("subdir/file.txt")
         assert result is not None
         assert str(result).startswith(str(tmp_path.resolve()))
 
-    def test_path_traversal_blocked(self, tmp_path):
+    def test_path_traversal_returns_none(self, tmp_path):
+        # Escape via `..` lands in EXTERNAL → shim returns None for parity
+        # with the pre-refactor contract. The tool itself would allow the
+        # read (hook is responsible for the user prompt), but this shim
+        # exists only for the handful of external callers.
         tool = _make_tool(str(tmp_path))
-        # Try to escape root via ..
-        result = tool._get_safe_path("../../etc/passwd")
-        assert result is None
+        assert tool._get_safe_path("../../etc/passwd") is None
 
     def test_dot_path_returns_root(self, tmp_path):
         tool = _make_tool(str(tmp_path))
@@ -151,10 +158,14 @@ class TestReadFile:
         result = tool.read_file("data.txt")
         assert result.success == 0
 
-    def test_read_file_path_traversal_blocked(self, tmp_path):
+    def test_read_file_path_traversal_classified_external(self, tmp_path):
+        """``../`` escape lands in EXTERNAL. The tool does not hard-reject
+        (the permission hook is responsible for asking the user), but the
+        zone classifier must flag it so the hook can see it.
+        """
         tool = _make_tool(str(tmp_path))
-        result = tool.read_file("../../etc/passwd")
-        assert result.success == 0
+        resolved = tool._classify("../../etc/passwd")
+        assert resolved.zone == PathZone.EXTERNAL
 
     def test_read_file_with_offset_and_limit(self, tmp_path):
         f = tmp_path / "lines.txt"
@@ -220,10 +231,12 @@ class TestWriteFile:
         assert result.success == 0
         assert "not allowed" in result.error.lower()
 
-    def test_write_path_traversal_blocked(self, tmp_path):
+    def test_write_path_traversal_classified_external(self, tmp_path):
+        """Write with ``../`` escape also classifies EXTERNAL — gating lives
+        in the permission hook, not in the tool."""
         tool = _make_tool(str(tmp_path))
-        result = tool.write_file("../../evil.txt", "evil")
-        assert result.success == 0
+        resolved = tool._classify("../../evil.txt")
+        assert resolved.zone == PathZone.EXTERNAL
 
     def test_write_overwrites_existing(self, tmp_path):
         f = tmp_path / "existing.txt"
@@ -490,101 +503,154 @@ class TestAvailableTools:
 
 
 # ---------------------------------------------------------------------------
-# KB path_normalizer round-trip: write/read/edit with the silent prefix
-# normalizer (covers the project-scoped ``subject/`` layout contract).
+# Zone-based visibility contract: .datus/ invisible except skills/memory
+# whitelist; absolute-path reads allowed at the tool layer (permission hook
+# is responsible for prompting the user outside the project).
 # ---------------------------------------------------------------------------
 
 
-class TestFilesystemFuncToolKbNormalizerRoundTrip:
-    """Contract tests for FilesystemFuncTool + KB path_normalizer."""
+class TestPathZones:
+    """Covers the four classification zones on read/write/edit/glob."""
 
-    def _make(self, tmp_path: Path, kind: str):
-        kb_root = tmp_path / "kb"
-        kb_root.mkdir()
-        tool = FilesystemFuncTool(
-            root_path=str(kb_root),
-            path_normalizer=make_kb_path_normalizer(default_kind=kind),
-        )
-        return tool, kb_root
+    def test_internal_relative_path_allowed(self, tmp_path):
+        (tmp_path / "hello.md").write_text("hi")
+        tool = _make_tool(str(tmp_path))
+        resolved = tool._classify("hello.md")
+        assert resolved.zone == PathZone.INTERNAL
+        assert tool.read_file("hello.md").result == "hi"
 
-    def test_naked_filename_lands_in_typed_subdir(self, tmp_path):
-        tool, kb_root = self._make(tmp_path, "semantic")
-        result = tool.write_file("orders.yml", "id: orders\n", file_type="semantic_model")
-        assert result.success == 1
-        on_disk = kb_root / "semantic_models" / "orders.yml"
-        assert on_disk.is_file()
-        assert on_disk.read_text() == "id: orders\n"
-
-    def test_read_naked_filename_after_naked_write(self, tmp_path):
-        """LLM forgets prefix on both write and subsequent read — both must succeed."""
-        tool, _ = self._make(tmp_path, "semantic")
-        tool.write_file("orders.yml", "payload\n", file_type="semantic_model")
-        assert tool.read_file("orders.yml").result == "payload\n"
-
-    def test_read_with_full_prefix_after_naked_write(self, tmp_path):
-        tool, _ = self._make(tmp_path, "semantic")
-        tool.write_file("orders.yml", "payload\n", file_type="semantic_model")
-        assert tool.read_file("semantic_models/orders.yml").result == "payload\n"
-
-    def test_edit_file_after_naked_write(self, tmp_path):
-        tool, _ = self._make(tmp_path, "sql_summary")
-        tool.write_file("q_001.yaml", "name: original\n", file_type="sql_summary")
-        edit_result = tool.edit_file("q_001.yaml", "original", "edited")
-        assert edit_result.success == 1, edit_result.error
-        assert tool.read_file("q_001.yaml").result == "name: edited\n"
-
-    def test_write_with_full_prefix_does_not_double_prefix(self, tmp_path):
-        tool, kb_root = self._make(tmp_path, "semantic")
-        tool.write_file(
-            "semantic_models/customers.yml",
-            "id: customers\n",
-            file_type="semantic_model",
-        )
-        assert (kb_root / "semantic_models" / "customers.yml").is_file()
-        assert not (kb_root / "semantic_models" / "semantic_models").exists()
-
-    def test_cross_kind_read_works(self, tmp_path):
-        """A semantic-mode tool must still read peer sql_summaries by full path."""
-        tool, kb_root = self._make(tmp_path, "semantic")
-        peer = kb_root / "sql_summaries" / "q_001.yaml"
-        peer.parent.mkdir(parents=True)
-        peer.write_text("peer content\n")
-        assert tool.read_file("sql_summaries/q_001.yaml").result == "peer content\n"
-
-    def test_cross_kind_write_is_rejected_under_strict(self, tmp_path):
-        """Writing to a peer kind's subdir must fail closed (sandbox enforcement)."""
-        tool, _ = self._make(tmp_path, "semantic")
-        result = tool.write_file(
-            "sql_summaries/q_001.yaml",
-            "bad\n",
-            file_type="semantic_model",
-        )
+    def test_hidden_dot_datus_invisible_on_read(self, tmp_path):
+        secret = tmp_path / ".datus" / "sessions" / "x.db"
+        secret.parent.mkdir(parents=True)
+        secret.write_text("secret")
+        tool = _make_tool(str(tmp_path))
+        resolved = tool._classify(".datus/sessions/x.db")
+        assert resolved.zone == PathZone.HIDDEN
+        result = tool.read_file(".datus/sessions/x.db")
+        # Same "File not found" whether the file exists or not.
         assert result.success == 0
-        assert "not allowed" in (result.error or "").lower()
+        assert "file not found" in (result.error or "").lower()
 
-    def test_normalizer_exception_fails_write(self, tmp_path):
-        """If the path_normalizer raises, write_file must fail instead of
-        silently landing the mutation at an unnormalized path."""
-
-        def _boom(path, file_type, *, strict_kind=False):
-            raise RuntimeError("normalizer error")
-
-        tool = FilesystemFuncTool(root_path=str(tmp_path), path_normalizer=_boom)
-        result = tool.write_file("orders.yml", "data\n")
+    def test_hidden_dot_datus_invisible_on_write(self, tmp_path):
+        tool = _make_tool(str(tmp_path))
+        result = tool.write_file(".datus/sessions/new.md", "payload")
         assert result.success == 0
-        assert "normalization failed" in (result.error or "").lower()
-        # And no file should have been created.
-        assert not any(tmp_path.rglob("orders.yml"))
+        assert "file not found" in (result.error or "").lower()
+        assert not (tmp_path / ".datus" / "sessions" / "new.md").exists()
 
-    def test_normalizer_exception_does_not_fail_read(self, tmp_path):
-        """Reads stay lax: on normalizer error, fall back to the original path
-        and let the sandbox check fail naturally."""
+    def test_whitelist_project_skills_readable_and_writable(self, tmp_path):
+        tool = _make_tool(str(tmp_path))
+        resolved = tool._classify(".datus/skills/my_skill/SKILL.md")
+        assert resolved.zone == PathZone.WHITELIST
+        assert tool.write_file(".datus/skills/my_skill/SKILL.md", "# skill\n").success == 1
+        assert tool.read_file(".datus/skills/my_skill/SKILL.md").result == "# skill\n"
 
-        def _boom(path, file_type, *, strict_kind=False):
-            raise RuntimeError("normalizer error")
+    def test_whitelist_per_node_memory_isolated(self, tmp_path):
+        tool = _make_tool(str(tmp_path), current_node="gen_sql")
+        own_zone = tool._classify(".datus/memory/gen_sql/MEMORY.md").zone
+        other_zone = tool._classify(".datus/memory/chat/MEMORY.md").zone
+        assert own_zone == PathZone.WHITELIST
+        assert other_zone == PathZone.HIDDEN
 
-        (tmp_path / "orders.yml").write_text("data\n")
-        tool = FilesystemFuncTool(root_path=str(tmp_path), path_normalizer=_boom)
-        result = tool.read_file("orders.yml")
+    def test_current_node_none_degrades_memory_to_hidden(self, tmp_path):
+        tool = FilesystemFuncTool(root_path=str(tmp_path), current_node=None)
+        zone = tool._classify(".datus/memory/anything/MEMORY.md").zone
+        assert zone == PathZone.HIDDEN
+
+    def test_external_absolute_allowed_at_tool_layer(self, tmp_path):
+        """Without a hook, the tool allows EXTERNAL reads. This documents the
+        contract: the hook owns user confirmation, the tool owns visibility.
+        """
+        outside = tmp_path.parent / "outside.md"
+        try:
+            outside.write_text("out-of-project")
+            # Fresh project root is an empty subdir so absolute access is external.
+            project = tmp_path / "proj"
+            project.mkdir()
+            tool = _make_tool(str(project))
+            zone = tool._classify(str(outside)).zone
+            assert zone == PathZone.EXTERNAL
+            assert tool.read_file(str(outside)).result == "out-of-project"
+        finally:
+            if outside.exists():
+                outside.unlink()
+
+    def test_glob_prunes_hidden_subtree(self, tmp_path):
+        (tmp_path / "keep.md").write_text("visible")
+        skill_dir = tmp_path / ".datus" / "skills" / "foo"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text("skill")
+        hidden = tmp_path / ".datus" / "sessions"
+        hidden.mkdir(parents=True)
+        (hidden / "a.md").write_text("hidden")
+        tool = _make_tool(str(tmp_path))
+        names = {Path(p).name for p in tool.glob("**/*.md").result["files"]}
+        assert "keep.md" in names
+        assert "SKILL.md" in names
+        assert "a.md" not in names
+
+    def test_strict_rejects_external_read(self, tmp_path):
+        """Strict mode fails closed on EXTERNAL: reads never touch the host fs.
+
+        Used by API / claw where there's no broker to ask the user. We do
+        not fall through to an ``exists()`` probe either, so a missing
+        external path and an existing one produce the same rejection.
+        """
+        outside = tmp_path.parent / "strict_outside.md"
+        outside.write_text("secret")
+        project = tmp_path / "proj"
+        project.mkdir()
+        tool = FilesystemFuncTool(root_path=str(project), current_node="chat", strict=True)
+        try:
+            result = tool.read_file(str(outside))
+            assert result.success == 0
+            assert "not allowed in strict mode" in (result.error or "").lower()
+            assert str(outside) in (result.error or "")
+        finally:
+            if outside.exists():
+                outside.unlink()
+
+    def test_strict_rejects_external_write(self, tmp_path):
+        project = tmp_path / "proj"
+        project.mkdir()
+        target = tmp_path / "elsewhere.md"
+        tool = FilesystemFuncTool(root_path=str(project), current_node="chat", strict=True)
+        result = tool.write_file(str(target), "payload")
+        assert result.success == 0
+        assert "not allowed in strict mode" in (result.error or "").lower()
+        assert not target.exists()
+
+    def test_strict_rejects_external_glob(self, tmp_path):
+        other = tmp_path / "other"
+        other.mkdir()
+        (other / "x.md").write_text("x")
+        project = tmp_path / "proj"
+        project.mkdir()
+        tool = FilesystemFuncTool(root_path=str(project), current_node="chat", strict=True)
+        result = tool.glob("*.md", str(other))
+        assert result.success == 0
+        assert "not allowed in strict mode" in (result.error or "").lower()
+
+    def test_strict_allows_internal_and_whitelist(self, tmp_path):
+        """Strict mode must NOT break project-internal / whitelist access —
+        otherwise the API surface could not read its own files."""
+        project = tmp_path / "proj"
+        project.mkdir()
+        (project / "hello.md").write_text("hi")
+        tool = FilesystemFuncTool(root_path=str(project), current_node="chat", strict=True)
+        assert tool.read_file("hello.md").result == "hi"
+        assert tool.write_file(".datus/skills/x/SKILL.md", "# skill\n").success == 1
+
+    def test_glob_external_seed_returns_absolute_paths(self, tmp_path):
+        other = tmp_path / "other"
+        other.mkdir()
+        (other / "x.md").write_text("body")
+        project = tmp_path / "proj"
+        project.mkdir()
+        tool = _make_tool(str(project))
+        result = tool.glob("*.md", str(other))
         assert result.success == 1
-        assert result.result == "data\n"
+        assert result.result.get("external") is True
+        files = result.result["files"]
+        assert files
+        assert all(Path(p).is_absolute() for p in files)

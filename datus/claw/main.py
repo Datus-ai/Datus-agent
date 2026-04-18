@@ -100,6 +100,10 @@ def _run_gateway(args: argparse.Namespace) -> None:
         config=args.config or "",
         namespace=args.namespace,
     )
+    # Claw runs non-interactively — no broker to confirm out-of-workspace
+    # file access. Force filesystem strict mode so nodes reject EXTERNAL
+    # paths instead of hanging on a prompt.
+    agent_config.filesystem_strict = True
 
     channels_config = getattr(agent_config, "channels_config", {})
     if not channels_config:

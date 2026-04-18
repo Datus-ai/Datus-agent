@@ -94,8 +94,11 @@ class TestSkillCreatorAgenticNodeInit:
 class TestSkillCreatorAgenticNodeTools:
     """Tests for SkillCreatorAgenticNode tool setup."""
 
-    def test_has_skills_write_tools(self, real_agent_config, mock_llm_create):
-        """Node should have skill_* prefixed write tools for skills directory."""
+    def test_has_unified_filesystem_tools(self, real_agent_config, mock_llm_create):
+        """Node exposes a single unified filesystem tool — write scope is
+        enforced by GenerationHooks (``.datus/skills/**``), not by a separate
+        prefixed instance.
+        """
         from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
         node = SkillCreatorAgenticNode(
@@ -106,13 +109,12 @@ class TestSkillCreatorAgenticNodeTools:
             node_name="gen_skill",
         )
         tool_names = [t.name for t in node.tools]
-        assert "skill_write_file" in tool_names
-        assert "skill_edit_file" in tool_names
-        assert "skill_glob" in tool_names
-        assert "skill_grep" in tool_names
+        assert {"read_file", "write_file", "edit_file", "glob", "grep"}.issubset(tool_names)
+        # No skill_* prefixed duplicates anymore.
+        assert not any(name.startswith("skill_") and name.endswith(("_file", "glob", "grep")) for name in tool_names)
 
     def test_has_workspace_read_tools(self, real_agent_config, mock_llm_create):
-        """Node should have workspace read-only tools (unprefixed)."""
+        """Node has the unified read tools rooted at project workspace."""
         from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
         node = SkillCreatorAgenticNode(
@@ -126,22 +128,6 @@ class TestSkillCreatorAgenticNodeTools:
         assert "read_file" in tool_names
         assert "glob" in tool_names
         assert "grep" in tool_names
-
-    def test_has_skills_read_tools(self, real_agent_config, mock_llm_create):
-        """Node should have skill_* prefixed read tools for skills directory."""
-        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
-
-        node = SkillCreatorAgenticNode(
-            node_id="test_skill_creator_tools_2b",
-            description="Test gen_skill node",
-            node_type=NodeType.TYPE_GEN_SKILL,
-            agent_config=real_agent_config,
-            node_name="gen_skill",
-        )
-        tool_names = [t.name for t in node.tools]
-        assert "skill_read_file" in tool_names
-        assert "skill_glob" in tool_names
-        assert "skill_grep" in tool_names
 
     def test_has_db_tools(self, real_agent_config, mock_llm_create):
         """Node should have database tools."""

@@ -94,9 +94,8 @@ class FeedbackAgenticNode(AgenticNode):
     def _setup_filesystem_tools(self):
         """Setup filesystem tools for writing MEMORY.md and other files."""
         try:
-            root_path = self._resolve_workspace_root()
-            self.filesystem_func_tool = FilesystemFuncTool(root_path=root_path)
-            logger.debug(f"Setup filesystem tools with root path: {root_path}")
+            self.filesystem_func_tool = self._make_filesystem_tool()
+            logger.debug(f"Setup filesystem tools with root path: {self.filesystem_func_tool.root_path}")
         except Exception as e:
             logger.error(f"Failed to setup filesystem tools: {e}")
 

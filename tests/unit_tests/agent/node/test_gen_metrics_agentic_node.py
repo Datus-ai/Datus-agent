@@ -672,20 +672,15 @@ class TestExecuteStreamGenMetricsError:
 
 
 class TestGenMetricsFilesystemRootPath:
-    """FilesystemFuncTool is sandboxed to subject_dir (not the type-specific subdir)."""
+    """FilesystemFuncTool now uses project_root; write-scope enforcement moved to GenerationHooks."""
 
-    def test_filesystem_root_is_subject_dir(self, real_agent_config, mock_llm_create):
+    def test_filesystem_root_is_project_root(self, real_agent_config, mock_llm_create):
+        from pathlib import Path
+
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
 
         node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        expected = str(real_agent_config.path_manager.subject_dir)
+        expected = str(Path(real_agent_config.project_root).expanduser())
 
         assert node.filesystem_func_tool is not None
-        assert node.filesystem_func_tool.config.root_path == expected
-        assert node.filesystem_func_tool._path_normalizer is not None
-
-        # metric kind co-locates under semantic_models/
-        assert (
-            node.filesystem_func_tool._path_normalizer("metrics/orders.yaml", None)
-            == "semantic_models/metrics/orders.yaml"
-        )
+        assert node.filesystem_func_tool.root_path == expected

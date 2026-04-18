@@ -381,10 +381,9 @@ class GenSQLAgenticNode(AgenticNode):
     def _setup_filesystem_tools(self):
         """Setup filesystem tools (all available tools)."""
         try:
-            root_path = self._resolve_workspace_root()
-            self.filesystem_func_tool = FilesystemFuncTool(root_path=root_path)
+            self.filesystem_func_tool = self._make_filesystem_tool()
             self.tools.extend(self.filesystem_func_tool.available_tools())
-            logger.debug(f"Setup filesystem tools with root path: {root_path}")
+            logger.debug(f"Setup filesystem tools with root path: {self.filesystem_func_tool.root_path}")
         except Exception as e:
             logger.error(f"Failed to setup filesystem tools: {e}")
 
@@ -469,8 +468,7 @@ class GenSQLAgenticNode(AgenticNode):
                 tool_instance = self.date_parsing_tools
             elif tool_type == "filesystem_tools":
                 if not self.filesystem_func_tool:
-                    root_path = self._resolve_workspace_root()
-                    self.filesystem_func_tool = FilesystemFuncTool(root_path=root_path)
+                    self.filesystem_func_tool = self._make_filesystem_tool()
                 tool_instance = self.filesystem_func_tool
             elif tool_type == "platform_doc_tools":
                 if not self._platform_doc_tool:

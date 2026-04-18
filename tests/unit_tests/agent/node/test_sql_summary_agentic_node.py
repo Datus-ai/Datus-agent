@@ -350,14 +350,13 @@ class TestSqlSummarySaveToDbSandbox:
 
 
 class TestSqlSummaryFilesystemRootPath:
-    """FilesystemFuncTool is sandboxed to subject_dir (not the type-specific subdir)."""
+    """FilesystemFuncTool now uses project_root; write-scope enforcement moved to GenerationHooks."""
 
-    def test_filesystem_root_is_subject_dir(self, real_agent_config, mock_llm_create):
+    def test_filesystem_root_is_project_root(self, real_agent_config, mock_llm_create):
+        from pathlib import Path
+
         node = _create_node(real_agent_config)
-        expected = str(real_agent_config.path_manager.subject_dir)
+        expected = str(Path(real_agent_config.project_root).expanduser())
 
         assert node.filesystem_func_tool is not None
-        assert node.filesystem_func_tool.config.root_path == expected
-        assert node.filesystem_func_tool._path_normalizer is not None
-
-        assert node.filesystem_func_tool._path_normalizer("q_001.yaml", None) == "sql_summaries/q_001.yaml"
+        assert node.filesystem_func_tool.root_path == expected

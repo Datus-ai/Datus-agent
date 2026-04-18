@@ -2,17 +2,22 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-import inspect
 import os
 import re
 from pathlib import Path
-from typing import Callable, Iterator, List, Optional
+from typing import Iterator, List, Optional
 
 from agents import Tool
 from wcmatch import glob as wc_glob
 
 from datus.tools import BaseTool
 from datus.tools.func_tool import FuncToolResult
+from datus.tools.func_tool.fs_path_policy import (
+    PathZone,
+    ResolvedPath,
+    classify_path,
+    whitelist_anchors,
+)
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -46,59 +51,51 @@ class FilesystemConfig:
         self.max_file_size = max_file_size
 
 
-PathNormalizer = Callable[[str, Optional[str]], str]
-
-
 class FilesystemFuncTool(BaseTool):
-    """Function tool wrapper for filesystem operations"""
+    """Function tool wrapper for filesystem operations.
+
+    Path resolution is centralized in :func:`classify_path`. Every operation
+    runs the same classifier and then branches on the resulting zone:
+
+    * ``INTERNAL`` / ``WHITELIST`` — proceed.
+    * ``HIDDEN`` — return a ``File not found`` style error for reads/writes
+      and prune the subtree in walks, so ``.datus/sessions`` etc. stay
+      invisible to the LLM.
+    * ``EXTERNAL`` — proceed at the tool level; the ``PermissionHooks`` layer
+      is responsible for asking the user first.
+    """
 
     def __init__(
         self,
         root_path: str = None,
         *,
-        path_normalizer: Optional[PathNormalizer] = None,
+        current_node: Optional[str] = None,
+        datus_home: Optional[str] = None,
+        strict: bool = False,
         **kwargs,
     ):
+        """
+        Args:
+            strict: When ``True``, ``EXTERNAL`` paths (anything outside the
+                project root and its whitelist) are rejected at the tool layer
+                with the same "not found" semantics as ``HIDDEN``. This is the
+                mode the API / claw surfaces run in — the agent has no
+                interactive broker to confirm external access, so we fail
+                closed instead of ever touching the host filesystem.
+                ``False`` (the CLI default) lets ``PermissionHooks`` prompt
+                the user.
+        """
         super().__init__(**kwargs)
         self.root_path = root_path or os.getenv("FILESYSTEM_MCP_PATH", os.path.expanduser("~"))
-        self.config = FilesystemConfig(root_path=root_path)
-        self._path_normalizer = path_normalizer
-        # Detect strict_kind support via signature inspection up front so a
-        # TypeError raised *inside* the normalizer can't be mistaken for a
-        # legacy 2-arg signature and silently drop the strict flag.
-        self._normalizer_accepts_strict_kind = False
-        if path_normalizer is not None:
-            try:
-                params = inspect.signature(path_normalizer).parameters
-                self._normalizer_accepts_strict_kind = "strict_kind" in params or any(
-                    p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
-                )
-            except (TypeError, ValueError):
-                pass
+        self.config = FilesystemConfig(root_path=self.root_path)
+        self._current_node = current_node
+        self._datus_home = Path(datus_home).expanduser().resolve(strict=False) if datus_home else None
+        self._root_resolved = Path(self.root_path).expanduser().resolve(strict=False)
+        self._strict = strict
 
-    def _normalize(self, path: str, file_type: Optional[str] = None, *, strict: bool = False) -> str:
-        """
-        Apply the configured path normalizer (if any) before sandbox resolution.
-
-        With ``strict=False`` (default, read-side), normalizer errors are logged
-        and the original path is returned so the downstream sandbox check can
-        fail naturally. With ``strict=True`` (write-side), the exception is
-        re-raised so callers don't silently land a mutation at a mis-normalized
-        location. ``strict=True`` is also forwarded to the normalizer as the
-        ``strict_kind`` kwarg so KB normalizers can enforce cross-kind write
-        restrictions on mutating ops while keeping reads lax.
-        """
-        if self._path_normalizer is None or not path:
-            return path
-        try:
-            if self._normalizer_accepts_strict_kind:
-                return self._path_normalizer(path, file_type, strict_kind=strict)
-            return self._path_normalizer(path, file_type)
-        except Exception as e:
-            logger.warning(f"path_normalizer raised on path={path!r} file_type={file_type!r}: {e}")
-            if strict:
-                raise
-            return path
+    @property
+    def strict(self) -> bool:
+        return self._strict
 
     def available_tools(self) -> List[Tool]:
         """Get all available filesystem tools"""
@@ -117,24 +114,50 @@ class FilesystemFuncTool(BaseTool):
             bound_tools.append(trans_to_function_tool(bound_method))
         return bound_tools
 
-    def _get_safe_path(self, path: str) -> Optional[Path]:
-        """Get a safe path within the root directory.
+    # ------------------------------------------------------------------ zones
 
-        Uses ``Path.relative_to`` instead of string ``startswith`` so that
-        sibling directories whose names share the root's prefix (e.g. a
-        ``subject_backup`` sitting next to ``subject``) can't be mistaken
-        for an in-sandbox path via ``../`` traversal.
+    def _classify(self, path: str) -> ResolvedPath:
+        return classify_path(
+            path,
+            root_path=self._root_resolved,
+            current_node=self._current_node,
+            datus_home=self._datus_home,
+        )
+
+    def _not_found(self, resolved: ResolvedPath) -> FuncToolResult:
+        """Uniform ``File not found`` response for hidden zones.
+
+        We deliberately do not distinguish between "really missing" and
+        "hidden by policy" — leaking that ``.datus/sessions`` exists would
+        defeat the invisibility guarantee.
         """
-        try:
-            root = Path(self.config.root_path).resolve()
-            target = (root / path).resolve()
-            try:
-                target.relative_to(root)
-            except ValueError:
-                return None
-            return target
-        except Exception:
+        return FuncToolResult(success=0, error=f"File not found: {resolved.display}")
+
+    def _strict_reject(self, resolved: ResolvedPath) -> FuncToolResult:
+        """Error response for ``EXTERNAL`` paths in strict mode.
+
+        Unlike ``_not_found``, this is explicit: the caller **asked** for a
+        path outside the workspace, so hiding the rejection would be
+        confusing. The error message names the path so the LLM can fix it
+        on the next turn. Used by the API / claw surfaces that have no
+        interactive broker to prompt the user.
+        """
+        return FuncToolResult(
+            success=0,
+            error=f"Path outside workspace is not allowed in strict mode: {resolved.display}",
+        )
+
+    def _get_safe_path(self, path: str) -> Optional[Path]:
+        """Deprecated sandbox helper kept for backward compat.
+
+        Delegates to :meth:`_classify`; returns ``None`` for ``HIDDEN`` or
+        ``EXTERNAL`` to preserve the historical "reject out-of-sandbox"
+        semantics used by a handful of callers outside this class.
+        """
+        resolved = self._classify(path)
+        if resolved.zone in (PathZone.HIDDEN, PathZone.EXTERNAL):
             return None
+        return resolved.resolved
 
     def _is_allowed_file(self, file_path: Path) -> bool:
         """Check if file extension is allowed"""
@@ -142,12 +165,16 @@ class FilesystemFuncTool(BaseTool):
             return True
         return file_path.suffix.lower() in self.config.allowed_extensions
 
+    # ------------------------------------------------------------- read/write
+
     def read_file(self, path: str, offset: int = 0, limit: int = 0) -> FuncToolResult:
         """
         Read the contents of a file.
 
         Args:
-            path: Path to the file. Absolute paths are permitted for read-only operations.
+            path: Path to the file. Relative paths are resolved under the
+                project root; absolute paths are permitted but the permission
+                layer will prompt the user when they fall outside the project.
             offset: Line number to start reading from (1-based). 0 means start from beginning.
             limit: Maximum number of lines to read. 0 means read all lines.
 
@@ -159,20 +186,24 @@ class FilesystemFuncTool(BaseTool):
                     returns numbered lines in "N: line content" format.
         """
         try:
-            path = self._normalize(path)
-            target_path = self._get_safe_path(path)
+            resolved = self._classify(path)
+            if resolved.zone == PathZone.HIDDEN:
+                return self._not_found(resolved)
+            if self._strict and resolved.zone == PathZone.EXTERNAL:
+                return self._strict_reject(resolved)
 
-            if not target_path or not target_path.exists():
-                return FuncToolResult(success=0, error=f"File not found: {path}")
+            target_path = resolved.resolved
+            if not target_path.exists():
+                return FuncToolResult(success=0, error=f"File not found: {resolved.display}")
 
             if not target_path.is_file():
-                return FuncToolResult(success=0, error=f"Path is not a file: {path}")
+                return FuncToolResult(success=0, error=f"Path is not a file: {resolved.display}")
 
             if not self._is_allowed_file(target_path):
-                return FuncToolResult(success=0, error=f"File type not allowed: {path}")
+                return FuncToolResult(success=0, error=f"File type not allowed: {resolved.display}")
 
             if target_path.stat().st_size > self.config.max_file_size:
-                return FuncToolResult(success=0, error=f"File too large: {path}")
+                return FuncToolResult(success=0, error=f"File too large: {resolved.display}")
 
             try:
                 content = target_path.read_text(encoding="utf-8")
@@ -187,9 +218,9 @@ class FilesystemFuncTool(BaseTool):
 
                 return FuncToolResult(result=content)
             except UnicodeDecodeError:
-                return FuncToolResult(success=0, error=f"Cannot read binary file: {path}")
+                return FuncToolResult(success=0, error=f"Cannot read binary file: {resolved.display}")
             except PermissionError:
-                return FuncToolResult(success=0, error=f"Permission denied: {path}")
+                return FuncToolResult(success=0, error=f"Permission denied: {resolved.display}")
 
         except Exception as e:
             logger.error(f"Error reading file {path}: {str(e)}")
@@ -200,10 +231,14 @@ class FilesystemFuncTool(BaseTool):
         Create a new file or overwrite an existing file.
 
         Args:
-            path: Relative path within the workspace directory. Do NOT use absolute paths.
-            content: The content to write to the file
-            file_type: Type of file being written (e.g., "reference_sql", "semantic_model").
-                       Used by hooks for special handling.
+            path: Target path. Relative paths are resolved under the project
+                root. Absolute paths require user confirmation via the
+                permission hook.
+            content: The content to write to the file.
+            file_type: Optional tag consumed by ``GenerationHooks`` for
+                post-write sync-to-DB routing; has no effect on where the
+                file lands. The prompt is responsible for supplying the
+                correct directory in ``path``.
 
         Returns:
             dict: A dictionary with the execution result, containing these keys:
@@ -211,25 +246,24 @@ class FilesystemFuncTool(BaseTool):
                   - 'error' (Optional[str]): Error message on failure.
                   - 'result' (Optional[str]): Success message on success.
         """
+        del file_type
         try:
-            try:
-                path = self._normalize(path, file_type, strict=True)
-            except Exception as e:
-                return FuncToolResult(success=0, error=f"Path normalization failed: {e}")
-            target_path = self._get_safe_path(path)
+            resolved = self._classify(path)
+            if resolved.zone == PathZone.HIDDEN:
+                return self._not_found(resolved)
+            if self._strict and resolved.zone == PathZone.EXTERNAL:
+                return self._strict_reject(resolved)
 
-            if not target_path:
-                return FuncToolResult(success=0, error=f"Invalid path: {path}")
-
+            target_path = resolved.resolved
             if not self._is_allowed_file(target_path):
-                return FuncToolResult(success=0, error=f"File type not allowed: {path}")
+                return FuncToolResult(success=0, error=f"File type not allowed: {resolved.display}")
 
             try:
                 target_path.parent.mkdir(parents=True, exist_ok=True)
                 target_path.write_text(content, encoding="utf-8")
-                return FuncToolResult(result=f"File written successfully: {str(path)}")
+                return FuncToolResult(result=f"File written successfully: {resolved.display}")
             except PermissionError:
-                return FuncToolResult(success=0, error=f"Permission denied: {path}")
+                return FuncToolResult(success=0, error=f"Permission denied: {resolved.display}")
 
         except Exception as e:
             logger.error(f"Error writing file {path}: {str(e)}")
@@ -240,7 +274,7 @@ class FilesystemFuncTool(BaseTool):
         Make a single edit to a file by replacing old_string with new_string.
 
         Args:
-            path: Relative path within the workspace directory. Do NOT use absolute paths.
+            path: Target path, resolved the same way as ``write_file``.
             old_string: The text to find and replace. Must match exactly once in the file.
             new_string: The text to replace old_string with.
 
@@ -254,20 +288,21 @@ class FilesystemFuncTool(BaseTool):
             if not old_string:
                 return FuncToolResult(success=0, error="old_string must not be empty")
 
-            try:
-                path = self._normalize(path, strict=True)
-            except Exception as e:
-                return FuncToolResult(success=0, error=f"Path normalization failed: {e}")
-            target_path = self._get_safe_path(path)
+            resolved = self._classify(path)
+            if resolved.zone == PathZone.HIDDEN:
+                return self._not_found(resolved)
+            if self._strict and resolved.zone == PathZone.EXTERNAL:
+                return self._strict_reject(resolved)
 
-            if not target_path or not target_path.exists():
-                return FuncToolResult(success=0, error=f"File not found: {path}")
+            target_path = resolved.resolved
+            if not target_path.exists():
+                return FuncToolResult(success=0, error=f"File not found: {resolved.display}")
 
             if not target_path.is_file():
-                return FuncToolResult(success=0, error=f"Path is not a file: {path}")
+                return FuncToolResult(success=0, error=f"Path is not a file: {resolved.display}")
 
             if not self._is_allowed_file(target_path):
-                return FuncToolResult(success=0, error=f"File type not allowed: {path}")
+                return FuncToolResult(success=0, error=f"File type not allowed: {resolved.display}")
 
             try:
                 content = target_path.read_text(encoding="utf-8")
@@ -289,15 +324,17 @@ class FilesystemFuncTool(BaseTool):
 
                 content = content.replace(old_string, new_string, 1)
                 target_path.write_text(content, encoding="utf-8")
-                return FuncToolResult(result=f"File edited successfully: {str(path)}")
+                return FuncToolResult(result=f"File edited successfully: {resolved.display}")
             except UnicodeDecodeError:
-                return FuncToolResult(success=0, error=f"Cannot edit binary file: {path}")
+                return FuncToolResult(success=0, error=f"Cannot edit binary file: {resolved.display}")
             except PermissionError:
-                return FuncToolResult(success=0, error=f"Permission denied: {path}")
+                return FuncToolResult(success=0, error=f"Permission denied: {resolved.display}")
 
         except Exception as e:
             logger.error(f"Error editing file {path}: {str(e)}")
             return FuncToolResult(success=0, error=str(e))
+
+    # ------------------------------------------------------------------ walks
 
     # Minimal fallback excludes when no .gitignore is found
     _FALLBACK_EXCLUDE_DIRS = {".git", "__pycache__", "node_modules"}
@@ -311,7 +348,6 @@ class FilesystemFuncTool(BaseTool):
         """
         patterns = [".git", ".git/**", "**/.git/**"]
 
-        # Search for .gitignore from search_root up to root_path
         root_resolved = Path(self.config.root_path).resolve(strict=False)
         current = search_root.resolve(strict=False)
         gitignore_path = None
@@ -325,7 +361,6 @@ class FilesystemFuncTool(BaseTool):
             current = current.parent
 
         if not gitignore_path:
-            # No .gitignore found, use fallback
             for d in self._FALLBACK_EXCLUDE_DIRS:
                 patterns.extend([d, f"{d}/**", f"**/{d}/**"])
             return patterns
@@ -336,21 +371,16 @@ class FilesystemFuncTool(BaseTool):
                     line = line.strip()
                     if not line or line.startswith("#"):
                         continue
-                    # Skip negation patterns (not supported in this simplified parser)
                     if line.startswith("!"):
                         continue
-                    # Strip leading / (gitignore root-relative marker)
                     entry = line.lstrip("/")
-                    # Handle trailing-slash directory entries: also match the dir name itself
                     if entry.endswith("/"):
                         dir_name = entry.rstrip("/")
                         patterns.append(dir_name)
                         patterns.append(f"**/{dir_name}")
                     patterns.append(entry)
-                    # Ensure directory entries also match contents
                     if not entry.endswith("/**"):
                         patterns.append(f"{entry}/**")
-                    # Ensure patterns match at any depth unless already prefixed
                     if not entry.startswith("**/"):
                         patterns.append(f"**/{entry}")
         except Exception as e:
@@ -358,33 +388,58 @@ class FilesystemFuncTool(BaseTool):
 
         return patterns
 
-    def _walk_files(self, path: str, include_pattern: str = "") -> Iterator[Path]:
-        """Walk directory tree yielding files, respecting gitignore, symlink safety, and sandbox.
+    def _walk_files(self, seed: ResolvedPath, include_pattern: str = "") -> Iterator[Path]:
+        """Walk a directory tree yielding files.
 
-        Args:
-            path: Starting directory path (relative to root).
-            include_pattern: Optional glob pattern to filter filenames (e.g., "*.py").
+        Traversal honors:
 
-        Yields:
-            Path objects for each matching file.
+        * Gitignore entries under the seed.
+        * Symlink safety: a symlink target outside the project root is only
+          followed when the seed itself was ``EXTERNAL`` (the hook confirmed
+          it). For ``INTERNAL``/``WHITELIST`` seeds we re-classify each
+          resolved item so a symlink pointing at ``~/secrets`` is skipped.
+        * ``HIDDEN`` prune: every entry is classified; ``HIDDEN`` subtrees
+          are skipped entirely, which keeps ``.datus/sessions`` etc. invisible
+          even if the LLM happens to search from project root.
         """
-        target_path = self._get_safe_path(path)
-        if not target_path or not target_path.exists() or not target_path.is_dir():
+        target_path = seed.resolved
+        if seed.zone == PathZone.HIDDEN or not target_path.exists() or not target_path.is_dir():
             return
 
-        root_path_resolved = Path(self.config.root_path).resolve(strict=False)
-        target_path_resolved = target_path.resolve(strict=False)
-
-        try:
-            target_path_resolved.relative_to(root_path_resolved)
-        except ValueError:
-            return
-
+        seed_is_project_relative = seed.zone in (PathZone.INTERNAL, PathZone.WHITELIST)
         exclude_patterns = self._load_gitignore_patterns(target_path)
         visited_inodes = set()
+        anchors = whitelist_anchors(
+            root_path=self._root_resolved,
+            current_node=self._current_node,
+            datus_home=self._datus_home,
+        )
 
-        def should_exclude(file_path: Path) -> bool:
-            relative_path = str(file_path.relative_to(target_path_resolved))
+        def has_whitelisted_descendant(directory: Path) -> bool:
+            """Is any whitelist anchor strictly underneath ``directory``?
+
+            Needed because ``.datus/`` itself classifies HIDDEN even though
+            ``.datus/skills/`` inside it is WHITELIST — we still have to
+            descend into the HIDDEN parent to reach the visible subtree.
+            """
+            try:
+                for anchor in anchors:
+                    if anchor == directory:
+                        return True
+                    try:
+                        anchor.relative_to(directory)
+                        return True
+                    except ValueError:
+                        continue
+            except Exception:
+                return False
+            return False
+
+        def should_gitignore_exclude(file_path: Path) -> bool:
+            try:
+                relative_path = str(file_path.relative_to(target_path))
+            except ValueError:
+                return False
             for exclude_pattern in exclude_patterns:
                 try:
                     if wc_glob.globmatch(relative_path, exclude_pattern, flags=wc_glob.DOTGLOB | wc_glob.GLOBSTAR):
@@ -406,35 +461,48 @@ class FilesystemFuncTool(BaseTool):
 
                 for item in current_path.iterdir():
                     try:
-                        if item.is_dir() and item.name == ".git":
-                            continue
-
-                        if should_exclude(item):
+                        if should_gitignore_exclude(item):
                             continue
 
                         item_resolved = item.resolve(strict=False)
 
-                        # Security: ensure resolved path stays within sandbox
-                        try:
-                            item_resolved.relative_to(root_path_resolved)
-                        except ValueError:
-                            continue
+                        # Classify every resolved item; HIDDEN subtrees are
+                        # pruned regardless of where the walk started, unless
+                        # they contain a whitelist anchor further inside (in
+                        # which case we descend but never yield at the HIDDEN
+                        # level itself).
+                        item_is_hidden = False
+                        if seed_is_project_relative:
+                            item_zone = classify_path(
+                                str(item_resolved),
+                                root_path=self._root_resolved,
+                                current_node=self._current_node,
+                                datus_home=self._datus_home,
+                            ).zone
+                            if item_zone == PathZone.EXTERNAL:
+                                # Symlink escape from project tree; skip.
+                                continue
+                            if item_zone == PathZone.HIDDEN:
+                                if item_resolved.is_dir() and has_whitelisted_descendant(item_resolved):
+                                    item_is_hidden = True  # descend but don't yield files here
+                                else:
+                                    continue
 
-                        if item.is_dir():
+                        if item_resolved.is_dir():
                             yield from walk_recursive(item_resolved)
-                        elif item.is_file():
+                        elif item_resolved.is_file() and not item_is_hidden:
                             if include_pattern:
                                 if not wc_glob.globmatch(
                                     item.name, include_pattern, flags=wc_glob.DOTGLOB | wc_glob.GLOBSTAR
                                 ):
                                     continue
-                            yield item
+                            yield item_resolved
                     except OSError:
                         continue
             except OSError:
                 return
 
-        yield from walk_recursive(target_path_resolved)
+        yield from walk_recursive(target_path)
 
     def glob(self, pattern: str, path: str = ".") -> FuncToolResult:
         """
@@ -448,48 +516,61 @@ class FilesystemFuncTool(BaseTool):
             dict: A dictionary with the execution result, containing these keys:
                   - 'success' (int): 1 for success, 0 for failure.
                   - 'error' (Optional[str]): Error message on failure.
-                  - 'result' (Optional[dict]): Dict with 'files' (list of paths relative to
-                    ``root_path`` so callers can feed them back to ``read_file`` /
-                    ``write_file`` without leaking absolute paths) and 'truncated' (bool).
+                  - 'result' (Optional[dict]): Dict with 'files' (list of paths), 'truncated' (bool),
+                    and — when the search seed fell outside the project root — ``'external': True``
+                    so the caller knows reported paths are absolute.
         """
         max_results = 200
         try:
-            target_path = self._get_safe_path(path)
+            seed = self._classify(path)
+            if seed.zone == PathZone.HIDDEN:
+                return FuncToolResult(result={"files": [], "truncated": False})
+            if self._strict and seed.zone == PathZone.EXTERNAL:
+                return self._strict_reject(seed)
 
-            if not target_path or not target_path.exists():
-                return FuncToolResult(success=0, error=f"Directory not found: {path}")
-
+            target_path = seed.resolved
+            if not target_path.exists():
+                return FuncToolResult(success=0, error=f"Directory not found: {seed.display}")
             if not target_path.is_dir():
-                return FuncToolResult(success=0, error=f"Path is not a directory: {path}")
+                return FuncToolResult(success=0, error=f"Path is not a directory: {seed.display}")
 
-            target_path_resolved = target_path.resolve(strict=False)
-            root_path_resolved = Path(self.config.root_path).resolve(strict=False)
-            matches = []
+            report_relative_to: Optional[Path] = None
+            if seed.zone in (PathZone.INTERNAL, PathZone.WHITELIST):
+                report_relative_to = self._root_resolved
 
-            for file_path in self._walk_files(path):
-                relative_path = str(file_path.relative_to(target_path_resolved))
-                # Report paths relative to root_path so the LLM can feed them
-                # back to read_file/write_file without leaking absolute paths.
+            matches: List[str] = []
+            for file_path in self._walk_files(seed):
                 try:
-                    reported_path = str(file_path.relative_to(root_path_resolved))
+                    match_rel = str(file_path.relative_to(target_path))
                 except ValueError:
-                    reported_path = str(file_path)
+                    match_rel = str(file_path)
+
                 try:
-                    if wc_glob.globmatch(relative_path, pattern, flags=wc_glob.DOTGLOB | wc_glob.GLOBSTAR):
-                        matches.append(reported_path)
-                        if len(matches) >= max_results:
-                            break
+                    matched = wc_glob.globmatch(match_rel, pattern, flags=wc_glob.DOTGLOB | wc_glob.GLOBSTAR)
                 except Exception:
-                    if file_path.name == pattern:
-                        matches.append(reported_path)
-                        if len(matches) >= max_results:
-                            break
+                    matched = file_path.name == pattern
+
+                if not matched:
+                    continue
+
+                if report_relative_to is not None:
+                    try:
+                        reported = str(file_path.relative_to(report_relative_to))
+                    except ValueError:
+                        reported = str(file_path)
+                else:
+                    reported = str(file_path)
+                matches.append(reported)
+                if len(matches) >= max_results:
+                    break
 
             truncated = len(matches) >= max_results
-            result_data = {
+            result_data: dict = {
                 "files": matches,
                 "truncated": truncated,
             }
+            if seed.zone == PathZone.EXTERNAL:
+                result_data["external"] = True
             if truncated:
                 result_data["message"] = (
                     f"Results truncated to {max_results}. Use a more specific pattern to narrow results."
@@ -518,13 +599,17 @@ class FilesystemFuncTool(BaseTool):
         """
         max_matches = 100
         try:
-            target_path = self._get_safe_path(path)
+            seed = self._classify(path)
+            if seed.zone == PathZone.HIDDEN:
+                return FuncToolResult(result={"matches": [], "truncated": False})
+            if self._strict and seed.zone == PathZone.EXTERNAL:
+                return self._strict_reject(seed)
 
-            if not target_path or not target_path.exists():
-                return FuncToolResult(success=0, error=f"Directory not found: {path}")
-
+            target_path = seed.resolved
+            if not target_path.exists():
+                return FuncToolResult(success=0, error=f"Directory not found: {seed.display}")
             if not target_path.is_dir():
-                return FuncToolResult(success=0, error=f"Path is not a directory: {path}")
+                return FuncToolResult(success=0, error=f"Path is not a directory: {seed.display}")
 
             flags = 0 if case_sensitive else re.IGNORECASE
             try:
@@ -532,9 +617,12 @@ class FilesystemFuncTool(BaseTool):
             except re.error as e:
                 return FuncToolResult(success=0, error=f"Invalid regex pattern: {str(e)}")
 
-            matches = []
+            report_relative_to: Optional[Path] = None
+            if seed.zone in (PathZone.INTERNAL, PathZone.WHITELIST):
+                report_relative_to = self._root_resolved
 
-            for file_path in self._walk_files(path, include_pattern=include):
+            matches: List[dict] = []
+            for file_path in self._walk_files(seed, include_pattern=include):
                 if not self._is_allowed_file(file_path):
                     continue
 
@@ -549,11 +637,19 @@ class FilesystemFuncTool(BaseTool):
                 except (UnicodeDecodeError, PermissionError, OSError):
                     continue
 
+                if report_relative_to is not None:
+                    try:
+                        reported_file = str(file_path.relative_to(report_relative_to))
+                    except ValueError:
+                        reported_file = str(file_path)
+                else:
+                    reported_file = str(file_path)
+
                 for line_num, line in enumerate(content.split("\n"), start=1):
                     if compiled.search(line):
                         matches.append(
                             {
-                                "file": str(file_path),
+                                "file": reported_file,
                                 "line": line_num,
                                 "content": line.rstrip(),
                             }
@@ -565,18 +661,24 @@ class FilesystemFuncTool(BaseTool):
                     break
 
             truncated = len(matches) >= max_matches
-            return FuncToolResult(
-                result={
-                    "matches": matches,
-                    "truncated": truncated,
-                }
-            )
+            result_data: dict = {
+                "matches": matches,
+                "truncated": truncated,
+            }
+            if seed.zone == PathZone.EXTERNAL:
+                result_data["external"] = True
+            return FuncToolResult(result=result_data)
 
         except Exception as e:
             logger.exception(f"Error in grep search for {pattern} in {path}")
             return FuncToolResult(success=0, error=str(e))
 
 
-def filesystem_function_tools(root_path: str = None) -> List[Tool]:
+def filesystem_function_tools(
+    root_path: str = None,
+    *,
+    current_node: Optional[str] = None,
+    strict: bool = False,
+) -> List[Tool]:
     """Get filesystem function tools"""
-    return FilesystemFuncTool(root_path=root_path).available_tools()
+    return FilesystemFuncTool(root_path=root_path, current_node=current_node, strict=strict).available_tools()

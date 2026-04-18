@@ -18,11 +18,14 @@ when prompting users for permission confirmation.
 import asyncio
 import json
 import logging
+from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, List, Optional, Tuple
 
 from agents.lifecycle import AgentHooks
 
 from datus.cli.execution_state import InteractionBroker, InteractionCancelled
+from datus.tools.func_tool.fs_path_policy import PathZone, classify_path
 from datus.tools.permission.permission_config import PermissionLevel
 from datus.tools.registry.tool_registry import ToolRegistry
 
@@ -42,6 +45,30 @@ class PermissionDeniedException(Exception):
         super().__init__(message)
         self.tool_category = tool_category
         self.tool_name = tool_name
+
+
+@dataclass(frozen=True)
+class FilesystemPolicy:
+    """Per-node filesystem policy passed to :class:`PermissionHooks`.
+
+    Carries the information the hook needs to run
+    :func:`datus.tools.func_tool.fs_path_policy.classify_path` on every
+    filesystem tool call. Leaving this ``None`` on construction keeps the
+    old category/tool-level permission behavior (no zone-based overrides).
+
+    ``strict`` mirrors :attr:`FilesystemFuncTool.strict` so the hook and the
+    tool agree on what to do with ``EXTERNAL`` paths. When ``True``, the
+    hook denies them up front (no broker prompt) because the API / claw
+    surfaces have no interactive broker attached — prompting would hang the
+    request. The tool-level ``strict`` is still the source of truth, but
+    having the same flag in the policy lets the hook fail fast before the
+    tool even gets invoked.
+    """
+
+    root_path: Path
+    current_node: Optional[str]
+    datus_home: Optional[Path] = None
+    strict: bool = False
 
 
 class CompositeHooks(AgentHooks):
@@ -118,6 +145,8 @@ class PermissionHooks(AgentHooks):
         permission_manager: "PermissionManager",
         node_name: str,
         tool_registry: ToolRegistry,
+        *,
+        fs_policy: Optional[FilesystemPolicy] = None,
     ):
         """Initialize the permission hooks.
 
@@ -126,11 +155,19 @@ class PermissionHooks(AgentHooks):
             permission_manager: PermissionManager for checking permissions
             node_name: Name of the current agentic node (e.g., "chat")
             tool_registry: Shared ToolRegistry instance (from AgenticNode)
+            fs_policy: Optional per-node filesystem policy. When provided,
+                ``filesystem_tools`` calls are routed through
+                :func:`classify_path` first so ``EXTERNAL`` paths force a user
+                prompt regardless of category rules, and ``HIDDEN`` paths fall
+                through silently (the tool itself returns ``File not found``).
+                Leaving this ``None`` preserves the old tool/category-level
+                behavior for tests and legacy callers.
         """
         self.broker = broker
         self.permission_manager = permission_manager
         self.node_name = node_name
         self.tool_registry = tool_registry
+        self.fs_policy = fs_policy
 
     async def on_tool_start(self, context, agent, tool) -> None:
         """Intercept ALL tool calls for permission checking.
@@ -156,6 +193,15 @@ class PermissionHooks(AgentHooks):
         category, pattern_name = self._get_category_and_pattern(tool_name, context)
 
         logger.debug(f"Permission check for tool '{tool_name}': category='{category}', pattern='{pattern_name}'")
+
+        # Filesystem tools: zone-based policy overrides rules.
+        #   INTERNAL/WHITELIST → bypass, HIDDEN → bypass (tool returns not-found),
+        #   EXTERNAL → force ASK with a path-keyed session cache so approving
+        #   /Users/foo/secret does not cascade to /Users/foo/other.
+        if self.fs_policy is not None and category == "filesystem_tools":
+            handled = await self._handle_filesystem_zone(context, tool_name, pattern_name)
+            if handled:
+                return
 
         # Check permission
         permission = self.permission_manager.check_permission(category, pattern_name, self.node_name)
@@ -201,6 +247,127 @@ class PermissionHooks(AgentHooks):
                     )
 
                 logger.info(f"User approved tool '{tool_name}'")
+
+    async def _handle_filesystem_zone(self, context: Any, tool_name: str, pattern_name: str) -> bool:
+        """Zone-based gating for ``filesystem_tools.*`` calls.
+
+        Returns ``True`` when the call has been fully handled (either allowed
+        through or rejected) and ``False`` to let the normal category-level
+        permission check run. ``EXTERNAL`` zones always land in the ``ASK``
+        branch here regardless of what the category rule says — that is the
+        whole point of zones, otherwise a session-level ``allow`` on
+        ``filesystem_tools`` would silently grant ``/etc/passwd`` access.
+        """
+        policy = self.fs_policy
+        assert policy is not None  # guarded by caller
+        args = self._parse_tool_args(context)
+        path_arg = args.get("path", "")
+        try:
+            resolved = classify_path(
+                path_arg,
+                root_path=policy.root_path,
+                current_node=policy.current_node,
+                datus_home=policy.datus_home,
+            )
+        except Exception as e:
+            logger.debug(f"classify_path failed for {tool_name} path={path_arg!r}: {e}")
+            return False
+
+        if resolved.zone in (PathZone.INTERNAL, PathZone.WHITELIST):
+            logger.debug(
+                "Filesystem zone %s: allowing %s on %s without prompt",
+                resolved.zone.value,
+                tool_name,
+                resolved.display,
+            )
+            return True
+
+        if resolved.zone == PathZone.HIDDEN:
+            # Let the tool itself return the uniform ``File not found`` so the
+            # LLM cannot distinguish "hidden by policy" from "does not exist".
+            logger.debug("Filesystem zone HIDDEN: letting tool return not-found for %s", resolved.display)
+            return True
+
+        # EXTERNAL in strict mode → deny up front, no broker prompt. Mirrors
+        # FilesystemFuncTool.strict so callers without an interactive broker
+        # (API / claw) fail fast instead of hanging waiting for user input.
+        if policy.strict:
+            logger.info(
+                "Filesystem strict mode: rejecting EXTERNAL access to %s (tool=%s)",
+                resolved.resolved,
+                tool_name,
+            )
+            raise PermissionDeniedException(
+                f"Filesystem strict mode: path outside workspace is not allowed: {resolved.resolved}",
+                tool_category="filesystem_tools",
+                tool_name=pattern_name,
+            )
+
+        # EXTERNAL: force ASK, keyed by absolute path to prevent broad auto-approval.
+        cache_key = f"filesystem_tools.external::{resolved.resolved}"
+        if self.permission_manager._session_approvals.get(cache_key):
+            logger.debug("External path %s already approved for session", resolved.resolved)
+            return True
+
+        async with _permission_prompt_lock:
+            if self.permission_manager._session_approvals.get(cache_key):
+                return True
+
+            approved = await self._request_external_confirmation(tool_name, pattern_name, resolved.resolved)
+            if not approved:
+                logger.info("User rejected external filesystem access to %s", resolved.resolved)
+                raise PermissionDeniedException(
+                    f"User rejected external filesystem access to {resolved.resolved}",
+                    tool_category="filesystem_tools",
+                    tool_name=pattern_name,
+                )
+            logger.info("User approved external filesystem access to %s", resolved.resolved)
+            return True
+
+    async def _request_external_confirmation(
+        self,
+        tool_name: str,
+        pattern_name: str,
+        abs_path: Path,
+    ) -> bool:
+        """Prompt the user for an EXTERNAL filesystem access.
+
+        Approval is narrow: the ``a`` (always-allow) choice caches this exact
+        absolute path, not the whole tool or category.
+        """
+        content = (
+            "### External Filesystem Access\n\n"
+            f"**Tool:** `filesystem_tools.{pattern_name}`\n"
+            f"**Path:** `{abs_path}`  _(outside project root)_\n"
+        )
+        try:
+            choice, callback = await self.broker.request(
+                contents=[content],
+                choices=[
+                    {
+                        "y": "Allow (once)",
+                        "a": "Always allow (this path, session)",
+                        "n": "Deny",
+                    }
+                ],
+                default_choices=["n"],
+            )
+
+            if choice == "a":
+                cache_key = f"external::{abs_path}"
+                self.permission_manager.approve_for_session("filesystem_tools", cache_key)
+                await callback(f"**{abs_path}** approved for session")
+                return True
+            if choice == "y":
+                await callback("**Approved**")
+                return True
+            await callback("**Denied**")
+            return False
+        except InteractionCancelled:
+            return False
+        except Exception as e:
+            logger.error(f"Error in external filesystem confirmation for {tool_name}: {e}")
+            return False
 
     def _get_category_and_pattern(self, tool_name: str, context: Any) -> Tuple[str, str]:
         """Get tool category and pattern name for permission checking.
