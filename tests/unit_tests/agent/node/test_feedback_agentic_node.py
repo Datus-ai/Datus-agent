@@ -625,6 +625,8 @@ class TestFeedbackSystemPrompt:
         assert ".datus/memory/chat" in prompt
         # The truncated memory content itself is embedded in <memory>…</memory>.
         assert "user prefers DuckDB over SQLite for local analytics" in prompt
+        # When real memory content is present, the empty placeholder must NOT appear.
+        assert "empty — no memories saved yet" not in prompt
 
     def test_feedback_system_prompt_injects_memory_for_caller_without_default_memory(
         self, real_agent_config, mock_llm_create
@@ -648,9 +650,13 @@ class TestFeedbackSystemPrompt:
         assert "## Auto Memory" in prompt
         assert ".datus/memory/gen_sql" in prompt
 
-    def test_feedback_system_prompt_skips_memory_when_caller_file_missing(self, real_agent_config, mock_llm_create):
-        """No MEMORY.md for the caller → Auto Memory section renders without <memory> content,
-        and the prompt still builds without error (graceful degradation)."""
+    def test_feedback_system_prompt_renders_empty_placeholder_when_caller_file_missing(
+        self, real_agent_config, mock_llm_create
+    ):
+        """No MEMORY.md for the caller → Auto Memory section still renders a
+        <memory> block with an explicit empty placeholder, so the model knows
+        memory was checked and is currently empty (rather than silently
+        omitting the block and leaving the model to guess)."""
         from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
 
         node = FeedbackAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
@@ -659,12 +665,38 @@ class TestFeedbackSystemPrompt:
 
         prompt = node._get_system_prompt()
 
-        # Auto Memory header is still present (chat has has_memory=True) and the
-        # caller's memory_dir is referenced, even though no content is loaded.
         assert "## Auto Memory" in prompt
         assert ".datus/memory/chat" in prompt
-        # With no MEMORY.md, the <memory> block is omitted by memory_context template.
-        assert "<memory>" not in prompt
+        # The <memory> block is always rendered, with an explicit empty marker
+        # when no MEMORY.md has been created yet.
+        assert "<memory>" in prompt
+        assert "</memory>" in prompt
+        assert "empty — no memories saved yet" in prompt
+
+    def test_feedback_system_prompt_renders_empty_placeholder_when_caller_file_is_empty(
+        self, real_agent_config, mock_llm_create
+    ):
+        """Caller MEMORY.md exists but is empty → same empty placeholder as missing.
+        From the model's perspective there is no actionable difference between
+        'file absent' and 'file present but empty', so both share one branch."""
+        from pathlib import Path
+
+        from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
+
+        node = FeedbackAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.caller_node_name = "chat"
+        node.input = FeedbackNodeInput(user_message="Analyze and archive")
+
+        workspace_root = Path(node._resolve_workspace_root())
+        caller_memory_dir = workspace_root / ".datus" / "memory" / "chat"
+        caller_memory_dir.mkdir(parents=True, exist_ok=True)
+        (caller_memory_dir / "MEMORY.md").write_text("", encoding="utf-8")
+
+        prompt = node._get_system_prompt()
+
+        assert "## Auto Memory" in prompt
+        assert "<memory>" in prompt
+        assert "empty — no memories saved yet" in prompt
 
 
 # ---------------------------------------------------------------------------

@@ -9,14 +9,16 @@ This directory may not exist yet -- create it with your first write_file. Its co
 
 As you work, consult your memory files to build on previous experience.
 
-{% if memory_content %}
 ### Current Memory (MEMORY.md)
 
 <memory>
+{% if memory_content %}
 {{ memory_content }}
+{% else %}
+(empty — no memories saved yet. Create or fill MEMORY.md with your first write_file when you have something worth saving.)
+{% endif %}
 </memory>
 
-{% endif %}
 ### When to consult memory:
 - At the start of a new conversation, review your MEMORY.md to recall user preferences and prior context
 - Before answering questions about the project, check if memory contains relevant decisions or conventions
