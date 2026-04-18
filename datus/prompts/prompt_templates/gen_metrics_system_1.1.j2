@@ -141,13 +141,13 @@ Skip any metric that already exists - do NOT update or overwrite.
 
 All `write_file` / `edit_file` / `read_file` paths are relative to the
 knowledge base root (`{{ knowledge_base_dir }}`). Always include the
-`{{ kind_subdir }}/{{ current_database }}/` prefix so the file lands in
+`{{ kind_subdir }}/` prefix so the file lands in
 the right namespace and is discoverable by downstream readers.
 
-1. **Semantic Model File**: `{{ kind_subdir }}/{{ current_database }}/{table_name}.yml`
+1. **Semantic Model File**: `{{ kind_subdir }}/{table_name}.yml`
    - Use `write_file` to save if new, or skip if exists and matches
 
-2. **Metrics File**: `{{ kind_subdir }}/{{ current_database }}/metrics/{table_name}_metrics.yml`
+2. **Metrics File**: `{{ kind_subdir }}/metrics/{table_name}_metrics.yml`
    - Create a NEW file for all core metrics
    - Use YAML document separator `---` between metrics
 
@@ -175,18 +175,18 @@ If `query_metrics` fails for a metric, use an empty string for that metric's SQL
 
 ### Step 10: Complete Generation
 
-After validation succeeds and SQLs are collected, MUST call `end_metric_generation` tool with the metric SQLs as a JSON string. `metric_file` and `semantic_model_file` are paths under the knowledge base root — use the same `{{ kind_subdir }}/{{ current_database }}/` prefix you wrote to:
+After validation succeeds and SQLs are collected, MUST call `end_metric_generation` tool with the metric SQLs as a JSON string. `metric_file` and `semantic_model_file` are paths under the knowledge base root — use the same `{{ kind_subdir }}/` prefix you wrote to:
 ```
 end_metric_generation(
-    metric_file="{{ kind_subdir }}/{{ current_database }}/metrics/users_metrics.yml",
-    semantic_model_file="{{ kind_subdir }}/{{ current_database }}/users.yml",
+    metric_file="{{ kind_subdir }}/metrics/users_metrics.yml",
+    semantic_model_file="{{ kind_subdir }}/users.yml",
     metric_sqls_json='{"metric1": "SELECT ...", "metric2": "SELECT ..."}'
 )
 ```
 
 ## Workspace
 - Knowledge base root (`read_file` / `write_file` / `edit_file` operate inside this sandbox): {{ knowledge_base_dir }}
-- Semantic model directory for this database: `{{ kind_subdir }}/{{ current_database }}/`
+- Semantic model directory: `{{ kind_subdir }}/`
 
 ## Output Format
 
@@ -194,14 +194,14 @@ end_metric_generation(
 
 ```json
 {
-  "semantic_model_file": "{{ kind_subdir }}/{{ current_database }}/users.yml",
-  "metric_file": "{{ kind_subdir }}/{{ current_database }}/metrics/users_metrics.yml",
+  "semantic_model_file": "{{ kind_subdir }}/users.yml",
+  "metric_file": "{{ kind_subdir }}/metrics/users_metrics.yml",
   "output": "markdown summary of extracted measures and generated metrics"
 }
 ```
 
-- `semantic_model_file`: Path under the knowledge base root, e.g. `"{{ kind_subdir }}/{{ current_database }}/users.yml"`
-- `metric_file`: Path under the knowledge base root, e.g. `"{{ kind_subdir }}/{{ current_database }}/metrics/users_metrics.yml"`
+- `semantic_model_file`: Path under the knowledge base root, e.g. `"{{ kind_subdir }}/users.yml"`
+- `metric_file`: Path under the knowledge base root, e.g. `"{{ kind_subdir }}/metrics/users_metrics.yml"`
 - `output`: Brief summary message
 
 **DO NOT** return markdown, plain text, or any other format. Return **ONLY** the JSON object.
