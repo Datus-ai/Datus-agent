@@ -249,10 +249,18 @@ class TestRedirectStdio:
 
 
 class TestDefaultPaths:
-    def test_returns_pid_and_log_paths(self):
-        pid_file, log_file = _default_paths()
+    def test_returns_pid_and_log_paths(self, tmp_path):
+        with patch(
+            "datus.configuration.agent_config_loader.get_agent_home",
+            return_value=str(tmp_path),
+        ), patch("datus.utils.path_manager.DatusPathManager") as mock_pm_cls:
+            mock_pm = mock_pm_cls.return_value
+            mock_pm.pid_file_path.return_value = tmp_path / "datus-agent-api.pid"
+            mock_pm.logs_dir = tmp_path / "logs"
+            pid_file, log_file = _default_paths()
         assert isinstance(pid_file, Path)
         assert isinstance(log_file, Path)
+        assert log_file.name == "datus-agent-api.log"
 
 
 # ---------------------------------------------------------------------------

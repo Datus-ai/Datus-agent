@@ -87,6 +87,8 @@ def _bucket_by_vendor(raw_models: List[Dict[str, Any]]) -> Dict[str, List[str]]:
         provider_key = OPENROUTER_VENDOR_MAP.get(vendor.strip().lower())
         if provider_key is None:
             continue
+        if provider_key == "claude":
+            slug = slug.replace(".", "-")
         buckets.setdefault(provider_key, {})[slug] = None
     return {k: list(v.keys()) for k, v in buckets.items()}
 
