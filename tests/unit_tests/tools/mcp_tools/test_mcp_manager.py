@@ -312,15 +312,15 @@ class TestCreateServerInstance:
                 instance, details = manager._create_http_server({"url": "http://example.com"})
         assert instance is not None
 
-    def test_create_server_instance_unsupported_type(self, tmp_path):
+    def test_create_server_instance_unsupported_type(self, tmp_path, monkeypatch):
         manager = _make_manager(tmp_path)
         cfg = STDIOServerConfig(name="s", command="echo")
-        # Patch cfg.type to return an unexpected string via object attribute
-        try:
-            object.__setattr__(cfg, "type", "unsupported_type")
-        except Exception:
-            pytest.skip("Cannot override pydantic field for this test")
-        instance, details = manager._create_server_instance(cfg)
+        # Force cfg.type to an unexpected value to exercise the unsupported-type
+        # dispatch branch. monkeypatch restores automatically on test teardown.
+        # If pydantic locks the field, this assertion fails loudly rather than
+        # being silently turned into a skip (Meszaros: Lying Test).
+        monkeypatch.setattr(cfg, "type", "unsupported_type")
+        instance, _details = manager._create_server_instance(cfg)
         assert instance is None
 
 
@@ -593,8 +593,10 @@ class TestCleanupServerInstance:
         manager = _make_manager(tmp_path)
         mock_srv = AsyncMock()
         mock_srv.cleanup.side_effect = Exception("cleanup failed")
-        # Should not raise
+        # Should not raise even when the underlying cleanup throws.
         await manager._cleanup_server_instance(mock_srv)
+        # Verify cleanup was actually attempted (behavior, not just "no crash").
+        mock_srv.cleanup.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

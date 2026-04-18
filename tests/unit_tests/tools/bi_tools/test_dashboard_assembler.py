@@ -8,13 +8,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-datus_bi_core = pytest.importorskip("datus_bi_core")
-ChartInfo = datus_bi_core.ChartInfo
-DashboardInfo = datus_bi_core.DashboardInfo
-DatasetInfo = datus_bi_core.DatasetInfo
-QuerySpec = datus_bi_core.QuerySpec
+# datus-bi-core is a hard dependency (see pyproject.toml [project.dependencies]).
+from datus_bi_core import ChartInfo, DashboardInfo, DatasetInfo, QuerySpec
 
-from datus.tools.bi_tools.dashboard_assembler import (  # noqa: E402
+from datus.tools.bi_tools.dashboard_assembler import (
     ChartSelection,
     DashboardAssembler,
     DashboardAssemblyResult,

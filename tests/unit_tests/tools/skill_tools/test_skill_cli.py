@@ -141,8 +141,9 @@ class TestCmdLogin:
 
         mock_save.assert_called_once_with("jwt-token-123", "http://localhost:9000", "test@test.com")
 
+    @patch("datus.cli.skill_cli.console")
     @patch("datus.cli.skill_cli.httpx.Client")
-    def test_login_failure_http_error(self, mock_client_cls):
+    def test_login_failure_http_error(self, mock_client_cls, mock_console):
         from datus.cli.skill_cli import _cmd_login
 
         mock_resp = MagicMock()
@@ -158,11 +159,15 @@ class TestCmdLogin:
         args = MagicMock()
         args.email = "test@test.com"
         args.password = "wrong"
-        # Should not raise
         _cmd_login("http://localhost:9000", args)
 
+        # Must print an error message containing the status code
+        printed_args = [str(c) for c in mock_console.print.call_args_list]
+        assert any("401" in s for s in printed_args), "Expected error message containing HTTP 401 status code"
+
+    @patch("datus.cli.skill_cli.console")
     @patch("datus.cli.skill_cli.httpx.Client")
-    def test_login_no_token_returned(self, mock_client_cls):
+    def test_login_no_token_returned(self, mock_client_cls, mock_console):
         from datus.cli.skill_cli import _cmd_login
 
         mock_resp = MagicMock()
@@ -179,18 +184,29 @@ class TestCmdLogin:
         args = MagicMock()
         args.email = "test@test.com"
         args.password = "pass"
-        # Should not raise
         _cmd_login("http://localhost:9000", args)
 
+        # No token in response — must print a warning about missing token
+        printed_args = [str(c) for c in mock_console.print.call_args_list]
+        assert any("no token" in s.lower() or "token" in s.lower() for s in printed_args), (
+            "Expected console output warning about missing token"
+        )
+
+    @patch("datus.cli.skill_cli.console")
     @patch("datus.cli.skill_cli.httpx.Client", side_effect=Exception("connect error"))
-    def test_login_connection_error(self, mock_client_cls):
+    def test_login_connection_error(self, mock_client_cls, mock_console):
         from datus.cli.skill_cli import _cmd_login
 
         args = MagicMock()
         args.email = "test@test.com"
         args.password = "pass"
-        # Should not raise
         _cmd_login("http://localhost:9000", args)
+
+        # Exception path must print an error message containing the error detail
+        printed_args = [str(c) for c in mock_console.print.call_args_list]
+        assert any("connect error" in s.lower() or "error" in s.lower() for s in printed_args), (
+            "Expected console output describing the connection error"
+        )
 
 
 class TestCmdLogout:
@@ -214,14 +230,22 @@ class TestCmdLogout:
 class TestCmdList:
     """Tests for _cmd_list."""
 
-    def test_list_no_skills(self):
+    @patch("datus.cli.skill_cli.console")
+    def test_list_no_skills(self, mock_console):
         from datus.cli.skill_cli import _cmd_list
 
         manager = MagicMock()
         manager.list_all_skills.return_value = []
         _cmd_list(manager)
 
-    def test_list_with_skills(self):
+        manager.list_all_skills.assert_called_once()
+        printed_args = [str(c) for c in mock_console.print.call_args_list]
+        assert any("no skills" in s.lower() for s in printed_args), (
+            "Expected console message indicating no installed skills"
+        )
+
+    @patch("datus.cli.skill_cli.console")
+    def test_list_with_skills(self, mock_console):
         from pathlib import Path
 
         from datus.cli.skill_cli import _cmd_list
@@ -232,71 +256,126 @@ class TestCmdList:
         manager.list_all_skills.return_value = [skill]
         _cmd_list(manager)
 
+        manager.list_all_skills.assert_called_once()
+        # A Rich Table with one row must be printed
+        mock_console.print.assert_called_once()
+        from rich.table import Table
+
+        printed_obj = mock_console.print.call_args[0][0]
+        assert isinstance(printed_obj, Table), "Expected a Rich Table to be printed when skills exist"
+        assert printed_obj.row_count == 1, "Expected table to contain exactly one row for the installed skill"
+
 
 class TestCmdSearch:
     """Tests for _cmd_search."""
 
-    def test_search_no_query(self):
+    @patch("datus.cli.skill_cli.console")
+    def test_search_no_query(self, mock_console):
         from datus.cli.skill_cli import _cmd_search
 
         manager = MagicMock()
         _cmd_search(manager, "")
 
-    def test_search_with_results(self):
+        # With empty query, search_marketplace must NOT be called
+        manager.search_marketplace.assert_not_called()
+        printed_args = [str(c) for c in mock_console.print.call_args_list]
+        assert any("usage" in s.lower() for s in printed_args), "Expected usage hint when query is empty"
+
+    @patch("datus.cli.skill_cli.console")
+    def test_search_with_results(self, mock_console):
         from datus.cli.skill_cli import _cmd_search
 
         manager = MagicMock()
         manager.search_marketplace.return_value = [{"name": "sql-opt", "latest_version": "1.0", "description": "SQL"}]
         _cmd_search(manager, "sql")
 
-    def test_search_no_results(self):
+        manager.search_marketplace.assert_called_once_with(query="sql")
+        # Result skill name must appear in console output
+        printed_args = [str(c) for c in mock_console.print.call_args_list]
+        assert any("sql-opt" in s for s in printed_args), (
+            "Expected console output to contain the result skill name 'sql-opt'"
+        )
+
+    @patch("datus.cli.skill_cli.console")
+    def test_search_no_results(self, mock_console):
         from datus.cli.skill_cli import _cmd_search
 
         manager = MagicMock()
         manager.search_marketplace.return_value = []
         _cmd_search(manager, "nonexistent")
 
+        manager.search_marketplace.assert_called_once_with(query="nonexistent")
+        printed_args = [str(c) for c in mock_console.print.call_args_list]
+        assert any("no results" in s.lower() for s in printed_args), (
+            "Expected 'no results' message when search returns empty list"
+        )
+
 
 class TestCmdInstall:
     """Tests for _cmd_install."""
 
-    def test_install_success(self):
+    @patch("datus.cli.skill_cli.console")
+    def test_install_success(self, mock_console):
         from datus.cli.skill_cli import _cmd_install
 
         manager = MagicMock()
         manager.install_from_marketplace.return_value = (True, "Installed ok")
         _cmd_install(manager, "test-skill", "latest")
 
-    def test_install_failure(self):
+        manager.install_from_marketplace.assert_called_once_with("test-skill", "latest")
+        printed_args = [str(c) for c in mock_console.print.call_args_list]
+        assert any("Installed ok" in s for s in printed_args), (
+            "Expected success message 'Installed ok' in console output"
+        )
+
+    @patch("datus.cli.skill_cli.console")
+    def test_install_failure(self, mock_console):
         from datus.cli.skill_cli import _cmd_install
 
         manager = MagicMock()
         manager.install_from_marketplace.return_value = (False, "Not found")
         _cmd_install(manager, "nonexistent", "latest")
 
+        manager.install_from_marketplace.assert_called_once_with("nonexistent", "latest")
+        printed_args = [str(c) for c in mock_console.print.call_args_list]
+        assert any("Not found" in s for s in printed_args), "Expected failure message 'Not found' in console output"
+
 
 class TestCmdPublish:
     """Tests for _cmd_publish."""
 
-    def test_publish_success(self):
+    @patch("datus.cli.skill_cli.console")
+    def test_publish_success(self, mock_console):
         from datus.cli.skill_cli import _cmd_publish
 
         manager = MagicMock()
         manager.publish_to_marketplace.return_value = (True, "Published ok")
         _cmd_publish(manager, "/some/path", "")
 
-    def test_publish_failure(self):
+        manager.publish_to_marketplace.assert_called_once_with("/some/path", owner="")
+        printed_args = [str(c) for c in mock_console.print.call_args_list]
+        assert any("Published ok" in s for s in printed_args), (
+            "Expected success message 'Published ok' in console output"
+        )
+
+    @patch("datus.cli.skill_cli.console")
+    def test_publish_failure(self, mock_console):
         from datus.cli.skill_cli import _cmd_publish
 
         manager = MagicMock()
         manager.publish_to_marketplace.return_value = (False, "Error")
         _cmd_publish(manager, "/bad/path", "")
 
+        manager.publish_to_marketplace.assert_called_once_with("/bad/path", owner="")
+        printed_args = [str(c) for c in mock_console.print.call_args_list]
+        assert any("Error" in s for s in printed_args), "Expected failure message 'Error' in console output"
+
 
 class TestCmdInfo:
     """Tests for _cmd_info."""
 
-    def test_info_local_only(self):
+    @patch("datus.cli.skill_cli.console")
+    def test_info_local_only(self, mock_console):
         from pathlib import Path
 
         from datus.cli.skill_cli import _cmd_info
@@ -310,7 +389,13 @@ class TestCmdInfo:
         manager._get_marketplace_client.return_value = client
         _cmd_info(manager, "test")
 
-    def test_info_not_found(self):
+        manager.get_skill.assert_called_once_with("test")
+        # Local skill info (name) must appear in console output
+        printed_args = [str(c) for c in mock_console.print.call_args_list]
+        assert any("test" in s for s in printed_args), "Expected local skill name 'test' to appear in console output"
+
+    @patch("datus.cli.skill_cli.console")
+    def test_info_not_found(self, mock_console):
         from datus.cli.skill_cli import _cmd_info
 
         manager = MagicMock()
@@ -320,11 +405,19 @@ class TestCmdInfo:
         manager._get_marketplace_client.return_value = client
         _cmd_info(manager, "unknown")
 
+        manager.get_skill.assert_called_once_with("unknown")
+        # Neither local nor marketplace found — must print a "not found" message
+        printed_args = [str(c) for c in mock_console.print.call_args_list]
+        assert any("not found" in s.lower() for s in printed_args), (
+            "Expected 'not found' message when skill does not exist locally or in marketplace"
+        )
+
 
 class TestCmdUpdate:
     """Tests for _cmd_update."""
 
-    def test_update_no_marketplace_skills(self):
+    @patch("datus.cli.skill_cli.console")
+    def test_update_no_marketplace_skills(self, mock_console):
         from pathlib import Path
 
         from datus.cli.skill_cli import _cmd_update
@@ -335,7 +428,16 @@ class TestCmdUpdate:
         manager.list_all_skills.return_value = [skill]
         _cmd_update(manager)
 
-    def test_update_with_marketplace_skills(self):
+        manager.list_all_skills.assert_called_once()
+        # No marketplace skills — install must never be called
+        manager.install_from_marketplace.assert_not_called()
+        printed_args = [str(c) for c in mock_console.print.call_args_list]
+        assert any("no marketplace" in s.lower() for s in printed_args), (
+            "Expected message indicating no marketplace skills to update"
+        )
+
+    @patch("datus.cli.skill_cli.console")
+    def test_update_with_marketplace_skills(self, mock_console):
         from pathlib import Path
 
         from datus.cli.skill_cli import _cmd_update
@@ -347,23 +449,44 @@ class TestCmdUpdate:
         manager.install_from_marketplace.return_value = (True, "Updated")
         _cmd_update(manager)
 
+        manager.install_from_marketplace.assert_called_once_with("mp-skill")
+        # "Updated" success message must appear in console output
+        printed_args = [str(c) for c in mock_console.print.call_args_list]
+        assert any("updated" in s.lower() for s in printed_args), (
+            "Expected 'Updated' confirmation in console output after successful update"
+        )
+
 
 class TestCmdRemove:
     """Tests for _cmd_remove."""
 
-    def test_remove_success(self):
+    @patch("datus.cli.skill_cli.console")
+    def test_remove_success(self, mock_console):
         from datus.cli.skill_cli import _cmd_remove
 
         manager = MagicMock()
         manager.registry.remove_skill.return_value = True
         _cmd_remove(manager, "test")
 
-    def test_remove_not_found(self):
+        manager.registry.remove_skill.assert_called_once_with("test")
+        printed_args = [str(c) for c in mock_console.print.call_args_list]
+        assert any("test" in s and ("removed" in s.lower() or "Removed" in s) for s in printed_args), (
+            "Expected 'Removed test' confirmation in console output"
+        )
+
+    @patch("datus.cli.skill_cli.console")
+    def test_remove_not_found(self, mock_console):
         from datus.cli.skill_cli import _cmd_remove
 
         manager = MagicMock()
         manager.registry.remove_skill.return_value = False
         _cmd_remove(manager, "unknown")
+
+        manager.registry.remove_skill.assert_called_once_with("unknown")
+        printed_args = [str(c) for c in mock_console.print.call_args_list]
+        assert any("unknown" in s and "not found" in s.lower() for s in printed_args), (
+            "Expected 'not found' message for unknown skill in console output"
+        )
 
 
 class TestGetManager:

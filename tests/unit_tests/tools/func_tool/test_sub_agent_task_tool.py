@@ -879,9 +879,10 @@ class TestGetAvailableTypesBuiltIn:
         """All SYS_SUB_AGENTS appear in available types, except 'feedback'
         which is a top-level node and not task()-delegatable."""
         types = task_tool._get_available_types()
+        # feedback is a top-level node and must NEVER be exposed as delegatable.
+        assert "feedback" not in types, "feedback must not be exposed as a delegatable subagent"
         for name in SYS_SUB_AGENTS:
             if name == "feedback":
-                assert name not in types, "feedback must not be exposed as a delegatable subagent"
                 continue
             assert name in types, f"{name} not found in available types"
 
@@ -1209,10 +1210,10 @@ class TestBuildNodeInputBuiltIn:
 class TestBuildTaskDescriptionBuiltIn:
     def test_contains_all_builtin_types(self, task_tool):
         desc = task_tool._build_task_description()
+        # feedback is a top-level node; must NEVER be advertised to the LLM.
+        assert "feedback" not in desc, "feedback must not appear in task description"
         for name in SYS_SUB_AGENTS:
             if name == "feedback":
-                # feedback is a top-level node; must not be advertised to the LLM
-                assert name not in desc, "feedback must not appear in task description"
                 continue
             assert name in desc, f"{name} not found in task description"
 

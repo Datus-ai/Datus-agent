@@ -147,6 +147,7 @@ class TestSkillCommandsList:
         with patch.object(cmds, "_get_skill_manager") as mock_mgr:
             mock_mgr.return_value.list_all_skills.return_value = [skill]
             cmds.cmd_skill_list()
+            cli.console.print.assert_called()
 
 
 class TestSkillCommandsSearch:
@@ -156,6 +157,10 @@ class TestSkillCommandsSearch:
         cli = _make_cli_mock()
         cmds = SkillCommands(cli)
         cmds.cmd_skill_search("")
+        # Empty query should print usage hint without calling manager
+        cli.console.print.assert_called_once()
+        printed_text = str(cli.console.print.call_args)
+        assert "Usage" in printed_text, "Empty query should print usage hint"
 
     def test_search_with_results(self):
         from datus.cli.skill_commands import SkillCommands
@@ -167,6 +172,8 @@ class TestSkillCommandsSearch:
                 {"name": "sql-opt", "latest_version": "1.0", "owner": "test", "tags": ["sql"], "description": "SQL"}
             ]
             cmds.cmd_skill_search("sql")
+            mock_mgr.return_value.search_marketplace.assert_called_once_with(query="sql")
+            assert cli.console.print.call_count >= 2, "Should print searching message and results table"
 
     def test_search_no_results(self):
         from datus.cli.skill_commands import SkillCommands
@@ -176,6 +183,9 @@ class TestSkillCommandsSearch:
         with patch.object(cmds, "_get_skill_manager") as mock_mgr:
             mock_mgr.return_value.search_marketplace.return_value = []
             cmds.cmd_skill_search("nonexistent")
+            mock_mgr.return_value.search_marketplace.assert_called_once_with(query="nonexistent")
+            printed_text = str(cli.console.print.call_args_list)
+            assert "No skills found" in printed_text, "Should notify user when no results"
 
 
 class TestSkillCommandsInstall:
@@ -185,6 +195,9 @@ class TestSkillCommandsInstall:
         cli = _make_cli_mock()
         cmds = SkillCommands(cli)
         cmds.cmd_skill_install("")
+        cli.console.print.assert_called_once()
+        printed_text = str(cli.console.print.call_args)
+        assert "Usage" in printed_text, "Empty args should print usage hint"
 
     def test_install_success(self):
         from datus.cli.skill_commands import SkillCommands
@@ -194,6 +207,9 @@ class TestSkillCommandsInstall:
         with patch.object(cmds, "_get_skill_manager") as mock_mgr:
             mock_mgr.return_value.install_from_marketplace.return_value = (True, "Installed ok")
             cmds.cmd_skill_install("test-skill")
+            mock_mgr.return_value.install_from_marketplace.assert_called_once_with("test-skill", "latest")
+            printed_text = str(cli.console.print.call_args_list)
+            assert "Success" in printed_text, "Successful install should print success message"
 
     def test_install_failure(self):
         from datus.cli.skill_commands import SkillCommands
@@ -203,6 +219,9 @@ class TestSkillCommandsInstall:
         with patch.object(cmds, "_get_skill_manager") as mock_mgr:
             mock_mgr.return_value.install_from_marketplace.return_value = (False, "Error")
             cmds.cmd_skill_install("test-skill")
+            mock_mgr.return_value.install_from_marketplace.assert_called_once_with("test-skill", "latest")
+            printed_text = str(cli.console.print.call_args_list)
+            assert "Error" in printed_text, "Failed install should print error message"
 
     def test_install_with_version(self):
         from datus.cli.skill_commands import SkillCommands
@@ -212,6 +231,7 @@ class TestSkillCommandsInstall:
         with patch.object(cmds, "_get_skill_manager") as mock_mgr:
             mock_mgr.return_value.install_from_marketplace.return_value = (True, "ok")
             cmds.cmd_skill_install("test-skill 2.0")
+            mock_mgr.return_value.install_from_marketplace.assert_called_once_with("test-skill", "2.0")
 
 
 class TestSkillCommandsPublish:
@@ -221,6 +241,9 @@ class TestSkillCommandsPublish:
         cli = _make_cli_mock()
         cmds = SkillCommands(cli)
         cmds.cmd_skill_publish("")
+        cli.console.print.assert_called_once()
+        printed_text = str(cli.console.print.call_args)
+        assert "Usage" in printed_text, "Empty args should print usage hint"
 
     def test_publish_success(self):
         from datus.cli.skill_commands import SkillCommands
@@ -230,6 +253,9 @@ class TestSkillCommandsPublish:
         with patch.object(cmds, "_get_skill_manager") as mock_mgr:
             mock_mgr.return_value.publish_to_marketplace.return_value = (True, "Published")
             cmds.cmd_skill_publish("/some/path")
+            mock_mgr.return_value.publish_to_marketplace.assert_called_once_with("/some/path", owner="")
+            printed_text = str(cli.console.print.call_args_list)
+            assert "Success" in printed_text, "Successful publish should print success message"
 
     def test_publish_with_owner(self):
         from datus.cli.skill_commands import SkillCommands
@@ -239,6 +265,7 @@ class TestSkillCommandsPublish:
         with patch.object(cmds, "_get_skill_manager") as mock_mgr:
             mock_mgr.return_value.publish_to_marketplace.return_value = (True, "Published")
             cmds.cmd_skill_publish("/path --owner myname")
+            mock_mgr.return_value.publish_to_marketplace.assert_called_once_with("/path", owner="myname")
 
 
 class TestSkillCommandsInfo:
@@ -248,6 +275,9 @@ class TestSkillCommandsInfo:
         cli = _make_cli_mock()
         cmds = SkillCommands(cli)
         cmds.cmd_skill_info("")
+        cli.console.print.assert_called_once()
+        printed_text = str(cli.console.print.call_args)
+        assert "Usage" in printed_text, "Empty name should print usage hint"
 
     def test_info_local_skill(self):
         from datus.cli.skill_commands import SkillCommands
@@ -268,6 +298,9 @@ class TestSkillCommandsInfo:
             }
             mock_mgr.return_value._get_marketplace_client.return_value = mock_client
             cmds.cmd_skill_info("test-skill")
+            mock_mgr.return_value.get_skill.assert_called_once_with("test-skill")
+            printed_text = str(cli.console.print.call_args_list)
+            assert "test-skill" in printed_text, "Should print local skill name"
 
     def test_info_not_found(self):
         from datus.cli.skill_commands import SkillCommands
@@ -280,6 +313,11 @@ class TestSkillCommandsInfo:
             mock_client.get_skill_info.side_effect = Exception("not found")
             mock_mgr.return_value._get_marketplace_client.return_value = mock_client
             cmds.cmd_skill_info("unknown")
+            mock_mgr.return_value.get_skill.assert_called_once_with("unknown")
+            printed_text = str(cli.console.print.call_args_list)
+            assert "not found" in printed_text.lower() or "unknown" in printed_text, (
+                "Should notify user when skill not found locally or in marketplace"
+            )
 
     def test_info_marketplace_error(self):
         from datus.cli.skill_commands import SkillCommands
@@ -293,6 +331,11 @@ class TestSkillCommandsInfo:
             mock_client.get_skill_info.side_effect = Exception("timeout")
             mock_mgr.return_value._get_marketplace_client.return_value = mock_client
             cmds.cmd_skill_info("test-skill")
+            mock_mgr.return_value.get_skill.assert_called_once_with("test-skill")
+            printed_text = str(cli.console.print.call_args_list)
+            assert "timeout" in printed_text or "Marketplace lookup failed" in printed_text, (
+                "Should print marketplace error message when remote lookup fails"
+            )
 
 
 class TestSkillCommandsUpdate:
@@ -304,6 +347,9 @@ class TestSkillCommandsUpdate:
         with patch.object(cmds, "_get_skill_manager") as mock_mgr:
             mock_mgr.return_value.list_all_skills.return_value = [_make_skill(source="local")]
             cmds.cmd_skill_update()
+            mock_mgr.return_value.install_from_marketplace.assert_not_called()
+            printed_text = str(cli.console.print.call_args_list)
+            assert "No marketplace" in printed_text, "Should notify when no marketplace skills to update"
 
     def test_update_with_version_change(self):
         from datus.cli.skill_commands import SkillCommands
@@ -318,6 +364,9 @@ class TestSkillCommandsUpdate:
             mock_mgr.return_value._get_marketplace_client.return_value = mock_client
             mock_mgr.return_value.install_from_marketplace.return_value = (True, "Updated")
             cmds.cmd_skill_update()
+            mock_mgr.return_value.install_from_marketplace.assert_called_once_with("test-skill", "2.0")
+            printed_text = str(cli.console.print.call_args_list)
+            assert "Updated" in printed_text or "2.0" in printed_text, "Should report updated version"
 
     def test_update_already_latest(self):
         from datus.cli.skill_commands import SkillCommands
@@ -331,6 +380,9 @@ class TestSkillCommandsUpdate:
             mock_client.get_skill_info.return_value = {"latest_version": "1.0"}
             mock_mgr.return_value._get_marketplace_client.return_value = mock_client
             cmds.cmd_skill_update()
+            mock_mgr.return_value.install_from_marketplace.assert_not_called()
+            printed_text = str(cli.console.print.call_args_list)
+            assert "up to date" in printed_text, "Should report already up to date"
 
     def test_update_error(self):
         from datus.cli.skill_commands import SkillCommands
@@ -344,6 +396,9 @@ class TestSkillCommandsUpdate:
             mock_client.get_skill_info.side_effect = Exception("offline")
             mock_mgr.return_value._get_marketplace_client.return_value = mock_client
             cmds.cmd_skill_update()
+            mock_mgr.return_value.install_from_marketplace.assert_not_called()
+            printed_text = str(cli.console.print.call_args_list)
+            assert "offline" in printed_text or "Error" in printed_text, "Should report error when update check fails"
 
 
 class TestSkillCommandsRemove:
@@ -353,6 +408,9 @@ class TestSkillCommandsRemove:
         cli = _make_cli_mock()
         cmds = SkillCommands(cli)
         cmds.cmd_skill_remove("")
+        cli.console.print.assert_called_once()
+        printed_text = str(cli.console.print.call_args)
+        assert "Usage" in printed_text, "Empty name should print usage hint"
 
     def test_remove_not_found(self):
         from datus.cli.skill_commands import SkillCommands
@@ -362,6 +420,10 @@ class TestSkillCommandsRemove:
         with patch.object(cmds, "_get_skill_manager") as mock_mgr:
             mock_mgr.return_value.get_skill.return_value = None
             cmds.cmd_skill_remove("unknown")
+            mock_mgr.return_value.get_skill.assert_called_once_with("unknown")
+            mock_mgr.return_value.registry.remove_skill.assert_not_called()
+            printed_text = str(cli.console.print.call_args_list)
+            assert "not found" in printed_text, "Should notify when skill is not found locally"
 
     def test_remove_local_skill(self):
         from datus.cli.skill_commands import SkillCommands
@@ -373,6 +435,9 @@ class TestSkillCommandsRemove:
             mock_mgr.return_value.get_skill.return_value = skill
             mock_mgr.return_value.registry.remove_skill.return_value = True
             cmds.cmd_skill_remove("test-skill")
+            mock_mgr.return_value.registry.remove_skill.assert_called_once_with("test-skill")
+            printed_text = str(cli.console.print.call_args_list)
+            assert "Removed" in printed_text, "Should confirm successful skill removal"
 
     @patch("builtins.input", return_value="y")
     def test_remove_marketplace_skill_deletes_files(self, mock_input, tmp_path):
@@ -436,6 +501,10 @@ class TestSkillCommandsLogin:
         with patch.object(cmds, "_get_skill_manager") as mock_mgr:
             mock_mgr.return_value.config.marketplace_url = "http://localhost:9000"
             cmds.cmd_skill_login()
+            printed_text = str(cli.console.print.call_args_list)
+            assert "Login failed" in printed_text or "401" in printed_text, (
+                "Failed login should print error message with status code or failure reason"
+            )
 
     @patch("builtins.input", return_value="test@test.com")
     @patch("getpass.getpass", return_value="pass")
@@ -448,6 +517,10 @@ class TestSkillCommandsLogin:
         with patch.object(cmds, "_get_skill_manager") as mock_mgr:
             mock_mgr.return_value.config.marketplace_url = "http://localhost:9000"
             cmds.cmd_skill_login()
+            printed_text = str(cli.console.print.call_args_list)
+            assert "conn error" in printed_text or "Login error" in printed_text, (
+                "Connection error should print error message"
+            )
 
 
 class TestSkillCommandsLogout:
@@ -471,6 +544,9 @@ class TestSkillCommandsLogout:
         with patch.object(cmds, "_get_skill_manager") as mock_mgr:
             mock_mgr.return_value.config.marketplace_url = "http://localhost:9000"
             cmds.cmd_skill_logout()
+            mock_clear.assert_called_once()
+            printed_text = str(cli.console.print.call_args_list)
+            assert "No saved credentials" in printed_text, "Logout with no stored credentials should warn user"
 
 
 class TestGetSkillManager:

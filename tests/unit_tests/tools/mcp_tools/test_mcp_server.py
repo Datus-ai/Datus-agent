@@ -56,13 +56,11 @@ class TestMCPServerCreation:
 
     def test_db_tools_initialized(self, server):
         """Test database tools are available."""
-        if server.db_tool:
-            assert server.db_tool is not None
+        assert server.db_tool is not None
 
     def test_context_tools_initialized(self, server):
         """Test context tools are available."""
-        if server.context_tool:
-            assert server.context_tool is not None
+        assert server.context_tool is not None
 
 
 class TestMCPServerASGIApp:

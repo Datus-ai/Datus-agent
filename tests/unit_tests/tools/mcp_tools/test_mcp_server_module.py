@@ -104,31 +104,23 @@ class TestFindMcpDirectory:
         assert "my-server" in result
 
     def test_finds_via_sys_path_site_packages(self, tmp_path, monkeypatch):
+        # Build a real directory structure under a path that contains "site-packages"
         site_pkg = tmp_path / "site-packages"
         mcp_dir = site_pkg / "mcp" / "test-server"
         mcp_dir.mkdir(parents=True)
-        monkeypatch.syspath_prepend(str(site_pkg))
-        # Ensure local relative path doesn't exist
-        monkeypatch.chdir(tmp_path / "other" if (tmp_path / "other").exists() else tmp_path)
-        # Patch Path.exists to return False for relative path
-        with patch("datus.tools.mcp_tools.mcp_server.Path") as mock_path_cls:
-            relative_mock = MagicMock()
-            relative_mock.exists.return_value = False
-            site_mock = MagicMock()
-            site_mock.exists.return_value = True
-            site_mock.__str__ = lambda self: str(mcp_dir)
 
-            def path_side_effect(arg):
-                if arg == "mcp/test-server":
-                    return relative_mock
-                p = MagicMock()
-                p.__truediv__ = lambda self, other: site_mock
-                return p
+        # Change to a directory without a local mcp/test-server so the relative path check fails
+        other = tmp_path / "other"
+        other.mkdir()
+        monkeypatch.chdir(other)
 
-            mock_path_cls.side_effect = path_side_effect
-            with patch("sys.path", [str(site_pkg)]):
-                # This will fail finding relative, but the logic is tested
-                pass
+        # Inject our fake site-packages into sys.path so find_mcp_directory picks it up
+        with patch("sys.path", [str(site_pkg)]):
+            result = find_mcp_directory("test-server")
+
+        # Must return the real path string found via sys.path site-packages lookup
+        assert "test-server" in result, f"Expected 'test-server' in result path, got: {result!r}"
+        assert "site-packages" in result, f"Expected result to come from site-packages, got: {result!r}"
 
     def test_raises_file_not_found_when_missing(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

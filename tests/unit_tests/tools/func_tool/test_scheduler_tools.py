@@ -15,7 +15,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# Mock datus_scheduler_core if not installed (CI has no external scheduler deps)
+# Mock datus_scheduler_core if not installed. This MUST run at module scope —
+# the `from datus.tools.func_tool.scheduler_tools import ...` below transitively
+# imports datus_scheduler_core, so a fixture-scoped patch would happen too late.
+# The mock is idempotent (guarded by `not in sys.modules`) and the modules are
+# namespaced under `datus_scheduler_core.*`, so there's no bleed into other tests.
 if "datus_scheduler_core" not in sys.modules:
 
     class _MockPayload:
@@ -25,10 +29,10 @@ if "datus_scheduler_core" not in sys.modules:
 
     _mock_core = MagicMock()
     _mock_core.models.SchedulerJobPayload = _MockPayload
-    sys.modules["datus_scheduler_core"] = _mock_core
-    sys.modules["datus_scheduler_core.models"] = _mock_core.models
-    sys.modules["datus_scheduler_core.registry"] = _mock_core.registry
-    sys.modules["datus_scheduler_core.config"] = _mock_core.config
+    sys.modules["datus_scheduler_core"] = _mock_core  # audit-noqa: module_level_sys_modules
+    sys.modules["datus_scheduler_core.models"] = _mock_core.models  # audit-noqa: module_level_sys_modules
+    sys.modules["datus_scheduler_core.registry"] = _mock_core.registry  # audit-noqa: module_level_sys_modules
+    sys.modules["datus_scheduler_core.config"] = _mock_core.config  # audit-noqa: module_level_sys_modules
 
 from datus.tools.func_tool.scheduler_tools import SchedulerTools
 
@@ -256,7 +260,10 @@ class TestAdapterCreationErrors:
 
 
 try:
+    from datus_scheduler_airflow.adapter import AirflowSchedulerAdapter
     from datus_scheduler_airflow.dag_template import render_spark_dag_source
+    from datus_scheduler_core.config import AirflowConfig
+    from datus_scheduler_core.models import SchedulerJobPayload
 
     _HAS_SCHEDULER_AIRFLOW = True
 except ImportError:
@@ -266,13 +273,17 @@ except ImportError:
 @pytest.mark.skipif(not _HAS_SCHEDULER_AIRFLOW, reason="datus-scheduler-airflow not installed")
 class TestRenderSparkDagSource:
     def test_renders_valid_python(self):
-        """Generated DAG source must compile without errors."""
+        """Generated DAG source must be valid Python and carry the given dag_id."""
         source = render_spark_dag_source(
             dag_id="test_spark_pi",
             job_name="test_spark_pi",
             spark_script='print("hello")',
         )
+        # compile() raises SyntaxError on invalid Python — that's the primary contract.
         compile(source, "<test_dag>", "exec")
+        # Verify the rendered source actually incorporates the caller's arguments.
+        assert "test_spark_pi" in source, "dag_id should appear in rendered source"
+        assert isinstance(source, str) and len(source) > 0
 
     def test_embeds_spark_script(self):
         """The spark_script content must appear in the rendered source."""
@@ -400,16 +411,10 @@ class TestListSchedulerJobs:
 # ── adapter.py: submit_job with job_type=spark ───────────────────────────
 
 
+@pytest.mark.skipif(not _HAS_SCHEDULER_AIRFLOW, reason="datus-scheduler-airflow not installed")
 class TestAdapterSparkBranch:
     def test_submit_job_spark_calls_render_spark(self):
         """adapter.submit_job with job_type='spark' uses render_spark_dag_source."""
-        try:
-            from datus_scheduler_airflow.adapter import AirflowSchedulerAdapter
-            from datus_scheduler_core.config import AirflowConfig
-            from datus_scheduler_core.models import SchedulerJobPayload
-        except ImportError:
-            pytest.skip("datus-airflow not installed")
-
         config = AirflowConfig(
             name="test",
             type="airflow",

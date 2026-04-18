@@ -8,8 +8,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-datus_bi_core = pytest.importorskip("datus_bi_core")
-AuthParam = datus_bi_core.AuthParam
+# datus-bi-core is a hard dependency (see pyproject.toml [project.dependencies]);
+# import directly rather than importorskip so a missing install fails loudly.
+from datus_bi_core import AuthParam
 
 
 class TestNoAdapterInstalled:

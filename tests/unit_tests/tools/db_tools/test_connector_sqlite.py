@@ -65,7 +65,6 @@ def test_execute_select(sqlite_connector: SQLiteConnector):
 
     # Test SELECT query
     result = sqlite_connector.execute({"sql_query": "SELECT * FROM test"}, result_format="list")
-    print("result", result)
     assert result["success"] is True
     assert result["row_count"] == 2
     assert len(result.sql_return) == 2

@@ -430,3 +430,5 @@ class TestMCPToolCleanup:
         tool.manager = None
         # Should not raise
         tool.cleanup()
+        # manager must remain None — cleanup must not reconstruct or modify it
+        assert tool.manager is None, "cleanup() must not modify manager when it is already None"

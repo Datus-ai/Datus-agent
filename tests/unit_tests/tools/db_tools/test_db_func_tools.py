@@ -108,10 +108,11 @@ class TestDBFuncTool:
         expected_base_tools = {"list_tables", "describe_table", "read_query", "get_table_ddl"}
 
         assert expected_base_tools.issubset(tool_names)
-        if connector_registry.support_database(mock_connector.dialect):
-            assert "list_databases" in tool_names
-        if connector_registry.support_schema(mock_connector.dialect):
-            assert "list_schemas" in tool_names
+        # Tool presence must exactly match dialect dispatch — no silent branch skipping.
+        supports_databases = connector_registry.support_database(mock_connector.dialect)
+        supports_schemas = connector_registry.support_schema(mock_connector.dialect)
+        assert ("list_databases" in tool_names) is supports_databases
+        assert ("list_schemas" in tool_names) is supports_schemas
         assert "search_table" not in tool_names
 
     def test_list_databases_success(self, db_func_tool, mock_connector):
@@ -1240,12 +1241,11 @@ class TestDBFuncToolIntegration:
         assert hasattr(tool, "description")
         assert hasattr(tool, "params_json_schema")
 
-        # Verify the schema doesn't contain 'self'
+        # Verify the schema is a dict and doesn't contain 'self'.
         schema = tool.params_json_schema
-        if isinstance(schema, dict):
-            assert "self" not in schema.get("properties", {})
-            if "required" in schema:
-                assert "self" not in schema["required"]
+        assert isinstance(schema, dict), f"Expected dict schema, got {type(schema).__name__}"
+        assert "self" not in schema.get("properties", {})
+        assert "self" not in schema.get("required", [])
 
     def test_compression_integration(self, db_func_tool, mock_connector):
         """Test that read_query properly uses compression."""

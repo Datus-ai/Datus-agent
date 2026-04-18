@@ -1,3 +1,14 @@
+"""Integration tests for DuckdbConnector against a pre-built sample DuckDB file.
+
+These tests exercise `get_tables_with_ddl`, `get_schemas`, and query execution
+against the shipped `sample_data/duckdb-demo.duckdb` fixture. The in-memory
+round-trip tests (insert/update/delete) below do NOT need the sample file and
+run hermetically.
+
+`sample_data/duckdb-demo.duckdb` is produced by `build_scripts/build_test_data.sh`;
+tests that depend on it auto-skip when the file is absent.
+"""
+
 import uuid
 from pathlib import Path
 
@@ -7,16 +18,23 @@ from datus.tools.db_tools.config import DuckDBConfig
 from datus.tools.db_tools.duckdb_connector import DuckdbConnector
 from datus.utils.exceptions import DatusException, ErrorCode
 
-# Resolve the sample duckdb path against the repo root rather than CWD. The
-# unit-test harness chdirs every test into a per-test tmp dir for project
-# override isolation, so relative paths would miss the real ``sample_data/``
-# directory shipped with the repo.
-_DUCKDB_SAMPLE_PATH = Path(__file__).resolve().parents[4] / "sample_data" / "duckdb-demo.duckdb"
+# Resolve the sample duckdb path against the repo root rather than CWD, so
+# the fixture skip reflects genuine absence of the file (IDE runners and the
+# unit-test harness chdir tests into per-test tmp dirs, which breaks CWD-
+# relative paths).
+_SAMPLE_DB = Path(__file__).resolve().parents[4] / "sample_data" / "duckdb-demo.duckdb"
 
 
 @pytest.fixture
 def duckdb_connector() -> DuckdbConnector:
-    config = DuckDBConfig(db_path=str(_DUCKDB_SAMPLE_PATH))
+    """DuckdbConnector bound to the pre-built sample DB.
+
+    Skips (does not fail) when the sample file is absent — tests that rely on
+    it are genuinely integration tests requiring `build_scripts/build_test_data.sh`.
+    """
+    if not _SAMPLE_DB.is_file():
+        pytest.skip(f"{_SAMPLE_DB} not built; run build_scripts/build_test_data.sh to generate it")
+    config = DuckDBConfig(db_path=str(_SAMPLE_DB))
     return DuckdbConnector(config)
 
 
@@ -44,7 +62,13 @@ def test_get_table_with_ddl(duckdb_connector: DuckdbConnector):
 
 def test_get_views_with_ddl(duckdb_connector: DuckdbConnector):
     views = duckdb_connector.get_views_with_ddl()
-    print(views)
+    assert isinstance(views, list)
+    # Sample DuckDB may have 0 views; verify the API contract (list, each item
+    # has the standard shape) rather than requiring a specific count.
+    for v in views:
+        assert "table_name" in v
+        assert "database_name" in v
+        assert "schema_name" in v
 
 
 def test_get_table_schema(duckdb_connector: DuckdbConnector):

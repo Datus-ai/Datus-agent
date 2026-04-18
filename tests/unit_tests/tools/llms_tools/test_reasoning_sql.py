@@ -104,6 +104,9 @@ class TestReasoningSqlWithMcpStream:
         with (
             patch("datus.tools.llms_tools.reasoning_sql.get_reasoning_prompt", return_value="p"),
             patch("datus.tools.llms_tools.reasoning_sql.base_mcp_stream", return_value=fake_base_stream()),
+            patch(
+                "datus.tools.llms_tools.reasoning_sql.ActionHistoryManager", wraps=ActionHistoryManager
+            ) as mock_ahm_cls,
         ):
             asyncio.run(
                 _collect_stream(
@@ -115,7 +118,8 @@ class TestReasoningSqlWithMcpStream:
                     )
                 )
             )
-        # Should not raise - manager was created internally
+        # ActionHistoryManager must be instantiated exactly once when no manager is passed in
+        mock_ahm_cls.assert_called_once_with()
 
     def test_sql_contexts_attribute_initialized_on_manager(self):
         """After streaming completes, action_history_manager gets sql_contexts attribute."""
@@ -370,3 +374,9 @@ class TestReasoningSqlWithMcp:
                 tools=[],
                 tool_config={"max_turns": 20},
             )
+
+        # generate_with_tools must receive max_turns=20 from tool_config
+        _, call_kwargs = mock_model.generate_with_tools.call_args
+        assert call_kwargs.get("max_turns") == 20, (
+            f"Expected max_turns=20 from tool_config, got {call_kwargs.get('max_turns')}"
+        )

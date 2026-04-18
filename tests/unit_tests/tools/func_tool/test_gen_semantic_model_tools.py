@@ -365,8 +365,8 @@ class TestAnalyzeColumnUsagePatterns:
             tools = _make_tools(db_tool)
             result = tools.analyze_column_usage_patterns("orders", columns=["status"])
         assert result.success == 1
-        if "status" in result.result["column_patterns"]:
-            assert "=" in result.result["column_patterns"]["status"]["operators"]
+        assert "status" in result.result["column_patterns"]
+        assert "=" in result.result["column_patterns"]["status"]["operators"]
 
     def test_finds_function_pattern(self):
         db_tool = _make_db_tool()
@@ -378,8 +378,8 @@ class TestAnalyzeColumnUsagePatterns:
             tools = _make_tools(db_tool)
             result = tools.analyze_column_usage_patterns("orders", columns=["tags"])
         assert result.success == 1
-        if "tags" in result.result["column_patterns"]:
-            assert "FIND_IN_SET" in result.result["column_patterns"]["tags"]["functions"]
+        assert "tags" in result.result["column_patterns"]
+        assert "FIND_IN_SET" in result.result["column_patterns"]["tags"]["functions"]
 
     def test_filters_sql_not_containing_table(self):
         db_tool = _make_db_tool()
