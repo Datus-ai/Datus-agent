@@ -161,9 +161,9 @@ class TestCmdLogin:
         args.password = "wrong"
         _cmd_login("http://localhost:9000", args)
 
-        # Must print an error message containing the status code
-        printed_args = [str(c) for c in mock_console.print.call_args_list]
-        assert any("401" in s for s in printed_args), "Expected error message containing HTTP 401 status code"
+        # Deterministic path: must print exactly the 401 failure message with
+        # the detail from the JSON body.
+        mock_console.print.assert_called_once_with("[red]Login failed (401): Bad credentials[/]")
 
     @patch("datus.cli.skill_cli.console")
     @patch("datus.cli.skill_cli.httpx.Client")
@@ -186,11 +186,8 @@ class TestCmdLogin:
         args.password = "pass"
         _cmd_login("http://localhost:9000", args)
 
-        # No token in response — must print a warning about missing token
-        printed_args = [str(c) for c in mock_console.print.call_args_list]
-        assert any("no token" in s.lower() or "token" in s.lower() for s in printed_args), (
-            "Expected console output warning about missing token"
-        )
+        # No token in response — must print exactly the "no token" warning.
+        mock_console.print.assert_called_once_with("[red]Login succeeded but no token was returned.[/]")
 
     @patch("datus.cli.skill_cli.console")
     @patch("datus.cli.skill_cli.httpx.Client", side_effect=Exception("connect error"))
@@ -202,11 +199,8 @@ class TestCmdLogin:
         args.password = "pass"
         _cmd_login("http://localhost:9000", args)
 
-        # Exception path must print an error message containing the error detail
-        printed_args = [str(c) for c in mock_console.print.call_args_list]
-        assert any("connect error" in s.lower() or "error" in s.lower() for s in printed_args), (
-            "Expected console output describing the connection error"
-        )
+        # Generic-exception path must propagate the exception detail verbatim.
+        mock_console.print.assert_called_once_with("[red]Login error: connect error[/]")
 
 
 class TestCmdLogout:

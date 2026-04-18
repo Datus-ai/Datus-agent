@@ -173,7 +173,15 @@ class TestSkillCommandsSearch:
             ]
             cmds.cmd_skill_search("sql")
             mock_mgr.return_value.search_marketplace.assert_called_once_with(query="sql")
-            assert cli.console.print.call_count >= 2, "Should print searching message and results table"
+            # The rendered Rich Table must contain exactly one row (the single
+            # returned skill). `call_count >= 2` would pass for an empty table.
+            from rich.table import Table
+
+            printed_tables = [
+                c.args[0] for c in cli.console.print.call_args_list if c.args and isinstance(c.args[0], Table)
+            ]
+            assert len(printed_tables) == 1, f"Expected exactly one Rich Table, got {len(printed_tables)}"
+            assert printed_tables[0].row_count == 1, f"Expected 1 result row, got {printed_tables[0].row_count}"
 
     def test_search_no_results(self):
         from datus.cli.skill_commands import SkillCommands
@@ -518,9 +526,10 @@ class TestSkillCommandsLogin:
             mock_mgr.return_value.config.marketplace_url = "http://localhost:9000"
             cmds.cmd_skill_login()
             printed_text = str(cli.console.print.call_args_list)
-            assert "conn error" in printed_text or "Login error" in printed_text, (
-                "Connection error should print error message"
-            )
+            # The exception detail must reach the user verbatim. Dropping the
+            # "Login error" fallback: a generic message would pass even if the
+            # exception text was silently swallowed.
+            assert "conn error" in printed_text, "Connection error must surface the exception detail"
 
 
 class TestSkillCommandsLogout:
