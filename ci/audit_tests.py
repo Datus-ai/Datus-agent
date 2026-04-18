@@ -220,7 +220,7 @@ class _AstChecker(ast.NodeVisitor):
         # asserts but the orelse branch has no verifying assertion anywhere
         # (including down elif chains via recursive walk).
         if_asserts = [c for c in node.body if isinstance(c, ast.Assert)]
-        if if_asserts and not _subtree_has_assert(node.orelse):
+        if if_asserts and not _subtree_has_verification(node.orelse):
             # Report once per if-block (first assert location).
             first = if_asserts[0]
             self._emit(
@@ -636,18 +636,90 @@ def _function_has_assert(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     return False
 
 
-def _subtree_has_assert(body: list[ast.stmt]) -> bool:
-    """Return True if any ast.Assert exists anywhere inside this list of statements.
+_PYTEST_CTX_VERIFIERS = frozenset({"raises", "warns", "deprecated_call"})
 
-    Used by the conditional_assert rule to decide whether an else (or elif
-    chain) branch ALSO verifies behavior — a symmetric if/else where both
-    sides assert is a legitimate parametrized-dispatch pattern, not a
-    Lying Test smell.
+
+def _is_verification_expression(node: ast.AST) -> bool:
+    """A single AST node that counts as runtime verification on its own.
+
+    Covers:
+      - `assert ...`
+      - `mock.assert_called_once_with(...)` / `self.assertEqual(...)` / any
+        method call whose name starts with `assert` or `assert_`
     """
-    for stmt in body:
-        for sub in ast.walk(stmt):
-            if isinstance(sub, ast.Assert):
+    if isinstance(node, ast.Assert):
+        return True
+    # An expression statement wrapping a call (e.g. `mock.assert_called()`).
+    if isinstance(node, ast.Expr):
+        node = node.value
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        name = node.func.attr
+        if name.startswith("assert") or name.startswith("assert_"):
+            return True
+    return False
+
+
+def _subtree_has_verification(body: list[ast.stmt]) -> bool:
+    """True if this stmt list contains verification that WILL execute at runtime.
+
+    Used by the conditional_assert rule to decide whether an else / elif
+    branch also verifies behavior. Symmetric `if/else` where both sides
+    verify is a legitimate parametrized-dispatch pattern, NOT a Lying Test.
+
+    Recognized forms:
+      - `assert ...`
+      - `with pytest.raises(...)` / `pytest.warns` / `pytest.deprecated_call`
+      - `mock.assert_called_*` / `self.assertXxx(...)` style method calls
+
+    Deliberately does NOT descend into:
+      - Nested `def` / `async def` / `lambda` / `class` bodies (those don't
+        execute merely by being defined — only `def _unused(): assert False`
+        declared in an else branch doesn't verify anything).
+      - `try/except` handler bodies (error-path only; skipping them errs on
+        the safe side — we'd rather a false-positive smell than let a bypass
+        slip through).
+
+    A nested `if` inside the walk counts as verification only when BOTH
+    branches have verification; a one-sided inner `if` does not make the
+    outer branch "verified".
+    """
+    stack: list[ast.AST] = list(body)
+    while stack:
+        node = stack.pop()
+        if _is_verification_expression(node):
+            return True
+        # pytest.raises / pytest.warns / pytest.deprecated_call context manager.
+        if isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                ce = item.context_expr
+                if isinstance(ce, ast.Call) and isinstance(ce.func, ast.Attribute):
+                    if ce.func.attr in _PYTEST_CTX_VERIFIERS:
+                        val = ce.func.value
+                        if isinstance(val, ast.Name) and val.id == "pytest":
+                            return True
+            stack.extend(node.body)
+            continue
+        # Nested if: only counts as verification when both arms verify.
+        if isinstance(node, ast.If):
+            if node.orelse and _subtree_has_verification(node.body) and _subtree_has_verification(node.orelse):
                 return True
+            continue
+        # Loop bodies: descend (verification inside a loop is still verification
+        # if the loop runs at least once; we accept possible false positives).
+        if isinstance(node, (ast.For, ast.AsyncFor, ast.While)):
+            stack.extend(node.body)
+            continue
+        # Try: only the main body path is considered guaranteed.
+        if isinstance(node, ast.Try):
+            stack.extend(node.body)
+            stack.extend(node.finalbody)
+            continue
+        # Skip nested definitions — they don't run by being defined.
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            continue
+        # Other statement types: walk one level deep looking for verification calls.
+        for child in ast.iter_child_nodes(node):
+            stack.append(child)
     return False
 
 
