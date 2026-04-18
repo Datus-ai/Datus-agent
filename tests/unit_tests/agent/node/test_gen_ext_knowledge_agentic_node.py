@@ -67,12 +67,14 @@ class TestGenExtKnowledgeNodeInit:
         assert "list_tables" in tool_names
         assert "read_query" in tool_names
 
-    def test_ext_knowledge_has_verify_sql_tool(self, real_agent_config, mock_llm_create):
-        """Node has the verify_sql tool for SQL result verification."""
+    def test_ext_knowledge_verify_sql_absent_at_init(self, real_agent_config, mock_llm_create):
+        """verify_sql is NOT registered at __init__: it is bound lazily inside
+        execute_stream only when a non-empty, runnable gold_sql is supplied.
+        """
         node = _create_node(real_agent_config)
 
         tool_names = [t.name for t in node.tools]
-        assert "verify_sql" in tool_names
+        assert "verify_sql" not in tool_names
 
     def test_ext_knowledge_has_filesystem_tools(self, real_agent_config, mock_llm_create):
         """Node has filesystem tools: read_file, edit_file, write_file."""
@@ -182,45 +184,132 @@ class TestGenExtKnowledgeNodeExecution:
         assert actions[-1].status == ActionStatus.SUCCESS
 
     @pytest.mark.asyncio
-    async def test_ext_knowledge_verify_sql_no_gold(self, real_agent_config, mock_llm_create):
-        """verify_sql without gold_sql returns success (no reference available)."""
+    async def test_ext_knowledge_no_gold_sql_leaves_verify_sql_unregistered(self, real_agent_config, mock_llm_create):
+        """Without gold_sql, execute_stream must NOT register verify_sql — the
+        Prompt instructs the model to skip PHASE 2 entirely."""
         node = _create_node(real_agent_config, execution_mode="workflow")
 
-        # verify_sql tool call without gold_sql set on the node
         mock_llm_create.reset(
             responses=[
-                build_tool_then_response(
-                    tool_calls=[
-                        MockToolCall(
-                            name="verify_sql",
-                            arguments=json.dumps({"sql": "SELECT COUNT(*) FROM satscores"}),
-                        ),
-                    ],
-                    content="SQL verified successfully, no reference available",
-                ),
+                build_simple_response("Extracted knowledge without reference SQL"),
             ]
         )
         node.model = mock_llm_create
 
         node.input = ExtKnowledgeNodeInput(
-            user_message="Verify order count query",
-            question="Verify order count query",
-            # No gold_sql provided
+            user_message="Define order amount",
+            question="Define order amount",
+            # No gold_sql
         )
 
         actions = []
         async for action in node.execute_stream():
             actions.append(action)
 
-        # verify_sql should succeed since no gold_sql is set
-        tool_success_actions = [a for a in actions if a.role == ActionRole.TOOL and a.status == ActionStatus.SUCCESS]
-        assert len(tool_success_actions) >= 1
+        assert actions[-1].status == ActionStatus.SUCCESS
+        tool_names = [t.name for t in node.tools]
+        assert "verify_sql" not in tool_names
 
-        # Check the tool result indicates success
-        verify_output = tool_success_actions[0].output
-        raw = verify_output.get("raw_output", "")
-        # Should contain indication of success
-        assert "success" in str(raw).lower() or "accepted" in str(raw).lower() or verify_output.get("success") is True
+    @pytest.mark.asyncio
+    async def test_ext_knowledge_valid_gold_sql_registers_verify_sql(self, real_agent_config, mock_llm_create):
+        """A runnable gold_sql passes pre-validation and makes verify_sql available
+        to the agent during execute_stream."""
+        node = _create_node(real_agent_config, execution_mode="workflow")
+
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response("Knowledge generated with valid gold SQL"),
+            ]
+        )
+        node.model = mock_llm_create
+
+        node.input = ExtKnowledgeNodeInput(
+            user_message="Count SAT score rows",
+            question="How many SAT score rows?",
+            gold_sql="SELECT COUNT(*) FROM satscores",
+        )
+
+        actions = []
+        async for action in node.execute_stream():
+            actions.append(action)
+
+        assert actions[-1].status == ActionStatus.SUCCESS
+        tool_names = [t.name for t in node.tools]
+        assert "verify_sql" in tool_names
+
+    @pytest.mark.asyncio
+    async def test_ext_knowledge_invalid_gold_sql_fails_before_agent_loop(self, real_agent_config, mock_llm_create):
+        """Unrunnable gold_sql raises DatusException caught by execute_stream's
+        top-level handler and surfaces as a FAILED action without consuming any
+        LLM turn. Covers both 'direct' and 'subagent' invocation shapes — the
+        subagent wrapper reads the same FAILED action."""
+        node = _create_node(real_agent_config, execution_mode="workflow")
+
+        # No LLM response should ever be consumed; seed with a guard response
+        # that would make the test obvious if the agent loop did start.
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response("SHOULD NOT BE CALLED"),
+            ]
+        )
+        node.model = mock_llm_create
+
+        node.input = ExtKnowledgeNodeInput(
+            user_message="Impossible",
+            question="Impossible",
+            gold_sql="SELECT * FROM __no_such_table__",
+        )
+
+        actions = []
+        async for action in node.execute_stream():
+            actions.append(action)
+
+        # Final action must be FAILED with the gold SQL error message bubbled up.
+        assert actions[-1].status == ActionStatus.FAILED
+        last_output = actions[-1].output
+        assert isinstance(last_output, dict)
+        error_text = (last_output.get("error") or "").lower()
+        # Error is wrapped by DatusException template which includes the
+        # "Gold SQL failed to execute" preamble plus the underlying error.
+        assert "gold sql" in error_text or "no such table" in error_text
+
+        # verify_sql must not have been added since validation failed before
+        # the enable hook ran.
+        tool_names = [t.name for t in node.tools]
+        assert "verify_sql" not in tool_names
+
+    @pytest.mark.asyncio
+    async def test_ext_knowledge_tool_state_is_idempotent_across_runs(self, real_agent_config, mock_llm_create):
+        """Running execute_stream twice with different gold_sql states must not
+        leak verify_sql between runs."""
+        node = _create_node(real_agent_config, execution_mode="workflow")
+
+        # First run: with gold_sql → verify_sql registered
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response("First run"),
+                build_simple_response("Second run"),
+            ]
+        )
+        node.model = mock_llm_create
+
+        node.input = ExtKnowledgeNodeInput(
+            user_message="Count SAT",
+            question="Count SAT",
+            gold_sql="SELECT COUNT(*) FROM satscores",
+        )
+        async for _ in node.execute_stream():
+            pass
+        assert "verify_sql" in [t.name for t in node.tools]
+
+        # Second run: no gold_sql → verify_sql must be removed
+        node.input = ExtKnowledgeNodeInput(
+            user_message="No reference",
+            question="No reference",
+        )
+        async for _ in node.execute_stream():
+            pass
+        assert "verify_sql" not in [t.name for t in node.tools]
 
     @pytest.mark.asyncio
     async def test_ext_knowledge_verify_sql_with_gold(self, real_agent_config, mock_llm_create):
@@ -462,3 +551,48 @@ class TestGenExtKnowledgeFilesystemRootPath:
 
         assert node.filesystem_func_tool is not None
         assert node.filesystem_func_tool.root_path == expected
+
+
+# ===========================================================================
+# Template context wiring
+# ===========================================================================
+
+
+class TestGenExtKnowledgeTemplateContext:
+    """has_gold_sql must flow into the rendered prompt to gate PHASE 2."""
+
+    def test_prepare_template_context_has_gold_sql_true(self, real_agent_config, mock_llm_create):
+        node = _create_node(real_agent_config)
+        user_input = ExtKnowledgeNodeInput(user_message="x", question="x")
+        ctx = node._prepare_template_context(user_input, gold_sql="SELECT 1")
+        assert ctx["has_gold_sql"] is True
+
+    def test_prepare_template_context_has_gold_sql_false(self, real_agent_config, mock_llm_create):
+        node = _create_node(real_agent_config)
+        user_input = ExtKnowledgeNodeInput(user_message="x", question="x")
+        ctx = node._prepare_template_context(user_input, gold_sql=None)
+        assert ctx["has_gold_sql"] is False
+        ctx_empty = node._prepare_template_context(user_input, gold_sql="")
+        assert ctx_empty["has_gold_sql"] is False
+
+
+# ===========================================================================
+# Gold SQL pre-validation
+# ===========================================================================
+
+
+class TestGenExtKnowledgeValidateGoldSql:
+    """``_validate_gold_sql`` rejects any gold SQL the connector can't execute."""
+
+    def test_validate_gold_sql_runnable_passes(self, real_agent_config, mock_llm_create):
+        node = _create_node(real_agent_config)
+        # Should not raise on a SQL that executes cleanly.
+        node._validate_gold_sql("SELECT COUNT(*) FROM satscores")
+
+    def test_validate_gold_sql_unrunnable_raises(self, real_agent_config, mock_llm_create):
+        from datus.utils.exceptions import DatusException, ErrorCode
+
+        node = _create_node(real_agent_config)
+        with pytest.raises(DatusException) as exc_info:
+            node._validate_gold_sql("SELECT * FROM __no_such_table__")
+        assert exc_info.value.code == ErrorCode.NODE_EXT_KNOWLEDGE_GOLD_SQL_INVALID

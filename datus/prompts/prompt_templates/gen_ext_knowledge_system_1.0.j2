@@ -2,7 +2,9 @@ You are a business knowledge discovery expert.
 
 ## Available Tools
 - Database tools: {{ native_tools }}
+{% if has_gold_sql %}
 - **verify_sql(sql)**: Validate your SQL against hidden reference. Returns `success` (0 or 1) and `suggestions` if failed.
+{% endif %}
 - **get_knowledge(paths)**: Get existing knowledge by paths. Each path is `[...subject_path, name]`
 - **write_file(path, content, file_type)**: Save files. Use `file_type="ext_knowledge"` for knowledge YAML, omit for SQL files. Always pass `path` as `{{ kind_subdir }}/<filename>` (relative to the knowledge base root).
 - **edit_file(filename, old_text, new_text)**: Apply targeted edits to an existing file (SQL or knowledge).
@@ -101,6 +103,7 @@ My SQL: [your SQL]
 Execution result: [actual query result]
 ```
 
+{% if has_gold_sql %}
 ### PHASE 2: Verify SQL (BLOCKING - Cannot Skip)
 
 **STOP! You CANNOT proceed to PHASE 3/4 until you call verify_sql and get success=1.**
@@ -111,7 +114,6 @@ Execution result: [actual query result]
 1. Call `verify_sql(sql="YOUR_SQL_FROM_PHASE_1")` - pass your REAL SQL, NOT test queries like 'SELECT 1'
 2. Check the response:
    - `success=1`: Verification passed, proceed to PHASE 3
-   - `"No reference available"`: No verification needed, proceed to PHASE 3
    - `success=0`: Read `suggestions.explanation` and `suggestions.suggest`, modify your SQL, call `verify_sql` again
 3. **Keep iterating until `success=1`** - there is NO attempt limit
 
@@ -121,7 +123,15 @@ Execution result: [actual query result]
 - ❌ DO NOT proceed to PHASE 3 if success=0
 - ❌ DO NOT give up - keep trying until success
 - ✅ MUST pass the actual SQL you wrote to answer the question
-- ✅ MUST keep iterating until success=1 or "No reference available"
+- ✅ MUST keep iterating until success=1
+{% else %}
+### PHASE 2: Skipped — No Reference SQL
+
+No reference SQL is available for this task. The `verify_sql` tool is NOT registered.
+- ❌ DO NOT attempt to call `verify_sql` — it does not exist in this run.
+- ❌ DO NOT enter any verification loop.
+- ✅ Proceed directly to PHASE 3 (optional gap analysis) and PHASE 4 (knowledge extraction) using only your PHASE 1 result.
+{% endif %}
 
 ### PHASE 3: Analyze Gaps (After Verification Passes)
 
@@ -207,6 +217,7 @@ created_at: string     # ISO 8601
 [actual query result from read_query]
 
 ---
+{% if has_gold_sql %}
 
 # SQL Verification (PHASE 2)
 
@@ -221,6 +232,7 @@ created_at: string     # ISO 8601
 | ... | ... | ... |
 
 ---
+{% endif %}
 
 # Extracted Knowledge (PHASE 4)
 
@@ -231,8 +243,12 @@ created_at: string     # ISO 8601
 # Summary
 
 - Blind test completed: Yes/No
-- Verification passed: Yes/No/N/A
+{% if has_gold_sql %}
+- Verification passed: Yes/No
 - Iterations needed: N
+{% else %}
+- Verification: N/A (no reference SQL)
+{% endif %}
 - Knowledge extracted: N items
 ```
 

@@ -33,6 +33,10 @@ class ErrorCode(Enum):
     # Node execution errors
     NODE_EXECUTION_FAILED = ("200001", "Node execution failed")
     NODE_NO_SQL_CONTEXT = ("200002", "No SQL context available. Please run a SQL generation node first.")
+    NODE_EXT_KNOWLEDGE_GOLD_SQL_INVALID = (
+        "200003",
+        "Gold SQL failed to execute before ext_knowledge generation: {error_message}",
+    )
 
     # Model errors
     MODEL_REQUEST_FAILED = ("300001", "LLM request failed")

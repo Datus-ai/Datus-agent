@@ -182,19 +182,52 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
             self._setup_hooks()
 
     def _setup_specific_generation_tools(self):
-        """Setup specific generation tools: verify_sql, end_knowledge_generation."""
+        """Setup specific generation tools.
+
+        Note: ``verify_sql`` is intentionally NOT registered here. It is bound
+        lazily in :meth:`execute_stream` only when a non-empty gold_sql is
+        supplied and passes pre-validation. See
+        :meth:`_enable_verify_sql_tool` / :meth:`_disable_verify_sql_tool`.
+        """
         try:
-            from datus.tools.func_tool import trans_to_function_tool
-
             self.generation_tools = GenerationTools(self.agent_config)
-
-            # Add verify_sql tool for SQL result verification (replaces get_gold_sql)
-            self.tools.append(trans_to_function_tool(self.verify_sql))
-
-            # Add end_knowledge_generation tool to finalize and verify completion
-            # self.tools.append(trans_to_function_tool(self.end_knowledge_generation))
         except Exception as e:
             logger.error(f"Failed to setup specific generation tools: {e}")
+
+    def _enable_verify_sql_tool(self) -> None:
+        """Register ``verify_sql`` on self.tools if not already present (idempotent)."""
+        from datus.tools.func_tool import trans_to_function_tool
+
+        if not any(getattr(t, "name", None) == "verify_sql" for t in self.tools):
+            self.tools.append(trans_to_function_tool(self.verify_sql))
+
+    def _disable_verify_sql_tool(self) -> None:
+        """Remove ``verify_sql`` from self.tools if present (idempotent)."""
+        self.tools = [t for t in self.tools if getattr(t, "name", None) != "verify_sql"]
+
+    def _validate_gold_sql(self, gold_sql: str) -> None:
+        """Execute gold SQL once to ensure it is runnable before entering the agent loop.
+
+        Raises:
+            DatusException: with code NODE_EXT_KNOWLEDGE_GOLD_SQL_INVALID when
+                the gold SQL fails to execute. Callers let the exception
+                propagate to :meth:`execute_stream`'s top-level handler, which
+                turns it into a FAILED action.
+        """
+        from datus.utils.exceptions import DatusException, ErrorCode
+
+        try:
+            result = self.conn.execute_query(gold_sql, result_format="pandas")
+        except Exception as e:
+            raise DatusException(
+                code=ErrorCode.NODE_EXT_KNOWLEDGE_GOLD_SQL_INVALID,
+                message_args={"error_message": str(e)},
+            ) from e
+        if not result.success:
+            raise DatusException(
+                code=ErrorCode.NODE_EXT_KNOWLEDGE_GOLD_SQL_INVALID,
+                message_args={"error_message": result.error or "unknown error"},
+            )
 
     def _reset_verification_state(self):
         """Reset verification state for a new agentic loop attempt."""
@@ -490,12 +523,15 @@ Do NOT give up. Continue iterating until verify_sql returns success=1.
             logger.error(f"Error getting existing subject_paths: {e}")
             return []
 
-    def _prepare_template_context(self, user_input: ExtKnowledgeNodeInput) -> dict:
+    def _prepare_template_context(self, user_input: ExtKnowledgeNodeInput, gold_sql: Optional[str] = None) -> dict:
         """
         Prepare template context variables for the external knowledge generation template.
 
         Args:
             user_input: User input
+            gold_sql: Reference SQL resolved for this run. When non-empty the
+                template renders the verify_sql tool and the BLOCKING
+                PHASE 2; when empty/None the template skips PHASE 2 entirely.
 
         Returns:
             Dictionary of template variables
@@ -510,6 +546,7 @@ Do NOT give up. Continue iterating until verify_sql returns success=1.
         context["current_database"] = self.agent_config.current_database
         context["has_filesystem_tools"] = bool(self.filesystem_func_tool)
         context["has_ask_user_tool"] = self.ask_user_tool is not None
+        context["has_gold_sql"] = bool(gold_sql)
 
         # Priority 1: User-specified subject_path (highest priority)
         if user_input.subject_path:
@@ -744,13 +781,10 @@ Rules:
                 # Get or create session and any available summary
                 session, conversation_summary = self._get_or_create_session()
 
-            # Prepare enhanced template context
-            template_context = self._prepare_template_context(user_input)
-
-            # Get system instruction from template with enhanced context
-            system_instruction = self._get_system_prompt(conversation_summary, prompt_version, template_context)
-
-            # Determine question and gold_sql based on mode
+            # Determine question and gold_sql based on mode BEFORE building
+            # the template context / tools — the gold_sql presence decides
+            # whether verify_sql is registered and which PHASE 2 branch the
+            # Prompt renders.
             # workflow mode: use fields directly; agentic mode: parse user_message
             if user_input.question is not None:
                 # workflow mode: use provided question and gold_sql directly
@@ -762,10 +796,28 @@ Rules:
                 question, gold_sql = await self._parse_user_message(user_input.user_message)
                 logger.info(f"Parsed from user_message (agentic mode): has_gold_sql={gold_sql is not None}")
 
-            # Store gold_sql for get_gold_sql tool access (not exposed in prompt)
             self._current_question = question
+
+            # Pre-validate gold_sql and wire verify_sql accordingly.
+            # - Empty gold_sql: drop verify_sql tool; Prompt will tell the
+            #   model to skip PHASE 2 and go straight to knowledge extraction.
+            # - Non-empty but unrunnable gold_sql: raise DatusException here
+            #   so the outer handler emits a FAILED action WITHOUT spending
+            #   any LLM turns on a futile retry loop.
             if gold_sql:
+                self._validate_gold_sql(gold_sql)
                 self._gold_sql = gold_sql
+                self._enable_verify_sql_tool()
+            else:
+                self._disable_verify_sql_tool()
+                if hasattr(self, "_gold_sql"):
+                    delattr(self, "_gold_sql")
+
+            # Prepare enhanced template context (depends on gold_sql presence)
+            template_context = self._prepare_template_context(user_input, gold_sql=gold_sql)
+
+            # Get system instruction from template with enhanced context
+            system_instruction = self._get_system_prompt(conversation_summary, prompt_version, template_context)
 
             # Build enhanced message using question only (gold_sql accessed via tool)
             enhanced_message = question
