@@ -213,25 +213,38 @@ class _AstChecker(ast.NodeVisitor):
     # -- try_except_pass_in_test: try ... except: pass (integration only)
 
     def visit_If(self, node: ast.If) -> None:
-        # The smell (Meszaros: Conditional Test Logic) is "assertion silently
-        # skipped when condition is false". A dispatch pattern where BOTH
-        # branches assert — e.g. `if X: assert A else: assert B` — is a valid
-        # parametrized check and NOT a smell. Only flag when the if-branch
-        # asserts but the orelse branch has no verifying assertion anywhere
-        # (including down elif chains via recursive walk).
-        if_asserts = [c for c in node.body if isinstance(c, ast.Assert)]
-        if if_asserts and not _subtree_has_verification(node.orelse):
-            # Report once per if-block (first assert location).
-            first = if_asserts[0]
+        # The smell (Meszaros: Conditional Test Logic) is "verification silently
+        # skipped when the condition takes one branch". A dispatch pattern where
+        # BOTH branches verify — e.g. `if X: assert A else: assert B` or
+        # `if X: with pytest.raises(...) else: mock.assert_called()` — is a
+        # valid parametrized check and NOT a smell. We flag asymmetry: exactly
+        # one branch verifies while the other is effectively empty (missing,
+        # Pass-only, or non-verifying code like a nested unused def).
+        if_verifies = _subtree_has_verification(node.body)
+        else_verifies = _subtree_has_verification(node.orelse) if node.orelse else False
+
+        if if_verifies and not else_verifies:
             self._emit(
                 Issue(
                     file=self.path,
-                    line=first.lineno,
+                    line=node.lineno,
                     severity="P0",
                     check="conditional_assert",
-                    message="Assertion inside if-block with no asserting else branch silently skips when condition is false (Meszaros: Conditional Test Logic)",
-                    quote=self._quote(first.lineno),
-                    suggestion="Either add an asserting else branch, or assert the condition first and the value unconditionally.",
+                    message="if-branch verifies behavior but the else branch (or missing else) does not — verification is silently skipped when the condition is false (Meszaros: Conditional Test Logic)",
+                    quote=self._quote(node.lineno),
+                    suggestion="Either mirror verification in the else branch, or restructure so the assertion is unconditional.",
+                )
+            )
+        elif else_verifies and not if_verifies:
+            self._emit(
+                Issue(
+                    file=self.path,
+                    line=node.lineno,
+                    severity="P0",
+                    check="conditional_assert",
+                    message="else-branch verifies behavior but the if branch does not — verification is silently skipped when the condition is true (Meszaros: Conditional Test Logic)",
+                    quote=self._quote(node.lineno),
+                    suggestion="Either mirror verification in the if branch, or restructure so the assertion is unconditional.",
                 )
             )
         self.generic_visit(node)
@@ -639,6 +652,50 @@ def _function_has_assert(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
 _PYTEST_CTX_VERIFIERS = frozenset({"raises", "warns", "deprecated_call"})
 
 
+def _loop_definitely_empty(node: ast.AST) -> bool:
+    """Return True if this for/while loop provably never runs its body.
+
+    Statically decidable cases only — runtime-dependent iterables still
+    count as "possibly-executing" and their bodies DO contribute to
+    verification. This narrow detector exists to close a cheap bypass
+    where an attacker writes `while False: assert True` or
+    `for _ in []: assert True` to make `_subtree_has_verification` return
+    True for an else branch that in fact runs no verification.
+    """
+    if isinstance(node, ast.While):
+        return _is_falsy_constant(node.test)
+    if isinstance(node, (ast.For, ast.AsyncFor)):
+        return _is_empty_iterable(node.iter)
+    return False
+
+
+def _is_falsy_constant(expr: ast.AST) -> bool:
+    if isinstance(expr, ast.Constant):
+        return bool(expr.value) is False  # False / None / 0 / "" / b"" / 0.0
+    return False
+
+
+def _is_empty_iterable(expr: ast.AST) -> bool:
+    if isinstance(expr, (ast.List, ast.Tuple, ast.Set)):
+        return not expr.elts
+    if isinstance(expr, ast.Dict):
+        return not expr.keys
+    if isinstance(expr, ast.Constant) and isinstance(expr.value, (str, bytes)):
+        return len(expr.value) == 0
+    # range(0) / range(N, M) with N >= M
+    if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name) and expr.func.id == "range":
+        args = expr.args
+        if len(args) == 1 and isinstance(args[0], ast.Constant) and args[0].value == 0:
+            return True
+        if len(args) >= 2 and all(isinstance(a, ast.Constant) for a in args[:2]):
+            try:
+                if args[0].value >= args[1].value:
+                    return True
+            except TypeError:
+                return False
+    return False
+
+
 def _is_verification_expression(node: ast.AST) -> bool:
     """A single AST node that counts as runtime verification on its own.
 
@@ -704,9 +761,12 @@ def _subtree_has_verification(body: list[ast.stmt]) -> bool:
             if node.orelse and _subtree_has_verification(node.body) and _subtree_has_verification(node.orelse):
                 return True
             continue
-        # Loop bodies: descend (verification inside a loop is still verification
-        # if the loop runs at least once; we accept possible false positives).
+        # Loop bodies: descend only when the loop might run. Statically obvious
+        # empty loops (`for _ in []:` / `while False:` / `range(0)`) are a cheap
+        # bypass — `else: while False: assert False` is not verification.
         if isinstance(node, (ast.For, ast.AsyncFor, ast.While)):
+            if _loop_definitely_empty(node):
+                continue
             stack.extend(node.body)
             continue
         # Try: only the main body path is considered guaranteed.
