@@ -9,6 +9,7 @@ import yaml
 
 from datus.configuration.agent_config import AgentConfig, NodeConfig
 from datus.configuration.node_type import NodeType
+from datus.configuration.project_config import load_project_override
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -164,6 +165,49 @@ def parse_config_path(config_file: str = "") -> Path:
     )
 
 
+def _apply_project_override(agent_raw: Dict[str, Any]) -> None:
+    """Merge ``./.datus/config.yml`` overlay into the raw agent config dict.
+
+    Only three keys are honored: ``target``, ``project_name``, and
+    ``default_database``. ``target`` and ``project_name`` are written
+    back into ``agent_raw`` so ``AgentConfig.__init__`` picks them up
+    naturally (including ``_validate_project_name`` + path manager
+    rebinding). ``default_database`` is NOT mutated here — it is a
+    computed property derived from ``databases[x].default`` flags, and
+    is instead consumed by ``_resolve_default_database`` at the CLI
+    layer. We still validate it here so invalid values fail fast before
+    any DB initialization.
+    """
+    override = load_project_override()
+    if override is None or override.is_empty():
+        return
+    if override.target is not None:
+        models = agent_raw.get("models", {}) or {}
+        if override.target not in models:
+            raise DatusException(
+                code=ErrorCode.COMMON_FIELD_INVALID,
+                message_args={
+                    "field_name": "target (from .datus/config.yml)",
+                    "except_values": sorted(models.keys()),
+                    "your_value": override.target,
+                },
+            )
+        agent_raw["target"] = override.target
+    if override.default_database is not None:
+        databases = (agent_raw.get("service", {}) or {}).get("databases", {}) or {}
+        if override.default_database not in databases:
+            raise DatusException(
+                code=ErrorCode.COMMON_FIELD_INVALID,
+                message_args={
+                    "field_name": "default_database (from .datus/config.yml)",
+                    "except_values": sorted(databases.keys()),
+                    "your_value": override.default_database,
+                },
+            )
+    if override.project_name is not None:
+        agent_raw["project_name"] = override.project_name
+
+
 def load_agent_config(reload: bool = False, **kwargs) -> AgentConfig:
     # Check config file in order: kwargs["config"] > conf/agent.yml > ~/.datus/conf/agent.yml
     # Load .env file if it exists
@@ -175,6 +219,7 @@ def load_agent_config(reload: bool = False, **kwargs) -> AgentConfig:
         pass
 
     agent_raw = dict(configuration_manager(config_path=kwargs.get("config", ""), reload=reload).data)
+    _apply_project_override(agent_raw)
     nodes = {}
     if "nodes" in agent_raw:
         nodes_raw = agent_raw["nodes"]

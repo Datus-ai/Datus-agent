@@ -163,6 +163,12 @@ class Application:
 
         configure_logging(args.debug, console_output=False)
 
+        # REPL-only: ensure ./.datus/config.yml exists before anything touches
+        # agent config. Must run before _resolve_default_database so the
+        # project-level default_database can win over the base agent.yml's.
+        if args.print_mode is None and not args.web:
+            self._ensure_project_config(args)
+
         if not args.database:
             # Try to auto-select: default database or single database
             args.database = self._resolve_default_database(args)
@@ -204,6 +210,17 @@ class Application:
             console.print("[yellow]No databases configured. Run 'datus configure' first.[/yellow]")
             return ""
 
+        # Project-level override wins over the base service.default_database.
+        # The override was already validated by _apply_project_override() in
+        # load_agent_config (above), so at this point any non-None value is
+        # guaranteed to be a key in ``databases``.
+        from datus.configuration.project_config import load_project_override
+
+        project_override = load_project_override()
+        if project_override and project_override.default_database:
+            console.print(f"[dim]Using project-configured database: {project_override.default_database}[/dim]")
+            return project_override.default_database
+
         default_db = config.service.default_database
         if default_db:
             console.print(f"[dim]Using default database: {default_db}[/dim]")
@@ -218,6 +235,28 @@ class Application:
             table.add_row(name, cfg.type)
         console.print(table)
         return ""
+
+    def _ensure_project_config(self, args) -> None:
+        """Trigger the first-run wizard if ``./.datus/config.yml`` is absent.
+
+        Idempotent: does nothing when the overlay file already exists.
+        Loads the base ``agent.yml`` first so the wizard can constrain
+        choices to models/databases that actually exist; when the base
+        config itself cannot be loaded, surface that error directly
+        (the wizard has nothing to offer in that case).
+        """
+        from datus.cli.project_init import run_project_init
+        from datus.configuration.agent_config_loader import load_agent_config
+        from datus.configuration.project_config import project_config_path
+
+        if project_config_path().exists():
+            return
+        try:
+            base_config = load_agent_config(config=args.config or "", reload=True)
+        except Exception as e:
+            logger.error(f"Cannot run project setup wizard: base agent.yml failed to load: {e}")
+            raise
+        run_project_init(base_config)
 
     def _run_web_interface(self, args):
         """Launch web chatbot interface"""

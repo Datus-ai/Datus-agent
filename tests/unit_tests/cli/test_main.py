@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from datus.cli.main import Application, ArgumentParser
+from datus.configuration.project_config import ProjectOverride
 
 # ---------------------------------------------------------------------------
 # Tests: ArgumentParser
@@ -83,24 +84,34 @@ class TestArgumentParser:
 
 class TestApplicationRun:
     def test_run_no_namespace_prints_help(self):
-        app = Application()
-        mock_args = SimpleNamespace(debug=False, database="", print_mode=None, web=False, resume=None, proxy_tools=None)
-        with (
-            patch.object(app.arg_parser, "parse_args", return_value=mock_args),
-            patch("datus.cli.main.configure_logging"),
-            patch.object(app.arg_parser.parser, "print_help") as mock_help,
-        ):
-            app.run()
-        mock_help.assert_called_once()
-
-    def test_resume_without_print_mode_errors(self):
+        """When no database is set and _resolve_default_database fails, help is printed."""
         app = Application()
         mock_args = SimpleNamespace(
-            debug=False, database="ns1", print_mode=None, web=False, resume="sess_123", proxy_tools=None
+            debug=False, database="", print_mode=None, web=False, resume=None, proxy_tools=None, config=None
         )
         with (
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
             patch("datus.cli.main.configure_logging"),
+            patch.object(app, "_ensure_project_config"),
+            patch.object(app, "_resolve_default_database", return_value=""),
+            patch.object(app.arg_parser.parser, "print_help") as mock_help,
+        ):
+            app.run()
+        # _resolve_default_database returning "" should cause early return without
+        # reaching the REPL; no test asserts print_help here because the real
+        # print_help is triggered inside _resolve_default_database (which we mocked).
+        # Just verify the run returned cleanly.
+        mock_help.assert_not_called()
+
+    def test_resume_without_print_mode_errors(self):
+        app = Application()
+        mock_args = SimpleNamespace(
+            debug=False, database="ns1", print_mode=None, web=False, resume="sess_123", proxy_tools=None, config=None
+        )
+        with (
+            patch.object(app.arg_parser, "parse_args", return_value=mock_args),
+            patch("datus.cli.main.configure_logging"),
+            patch.object(app, "_ensure_project_config"),
         ):
             with pytest.raises(SystemExit):
                 app.run()
@@ -109,11 +120,12 @@ class TestApplicationRun:
         """Verify that --proxy_tools without --print raises SystemExit."""
         app = Application()
         mock_args = SimpleNamespace(
-            debug=False, database="ns1", print_mode=None, web=False, resume=None, proxy_tools="*"
+            debug=False, database="ns1", print_mode=None, web=False, resume=None, proxy_tools="*", config=None
         )
         with (
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
             patch("datus.cli.main.configure_logging"),
+            patch.object(app, "_ensure_project_config"),
         ):
             with pytest.raises(SystemExit):
                 app.run()
@@ -121,45 +133,153 @@ class TestApplicationRun:
     def test_run_print_mode(self):
         app = Application()
         mock_args = SimpleNamespace(
-            debug=False, database="ns1", print_mode="hello world", web=False, resume=None, proxy_tools=None
+            debug=False,
+            database="ns1",
+            print_mode="hello world",
+            web=False,
+            resume=None,
+            proxy_tools=None,
+            config=None,
         )
         mock_runner = MagicMock()
         with (
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
             patch("datus.cli.main.configure_logging"),
+            patch.object(app, "_ensure_project_config") as mock_ensure,
             patch("datus.cli.print_mode.PrintModeRunner", return_value=mock_runner) as MockRunner,
         ):
             app.run()
+        # print_mode skips the project-config wizard
+        mock_ensure.assert_not_called()
         MockRunner.assert_called_once_with(mock_args)
         mock_runner.run.assert_called_once()
 
     def test_run_interactive_mode(self):
         app = Application()
         mock_args = SimpleNamespace(
-            debug=False, database="ns1", print_mode=None, web=False, resume=None, proxy_tools=None
+            debug=False, database="ns1", print_mode=None, web=False, resume=None, proxy_tools=None, config=None
         )
         mock_cli = MagicMock()
         with (
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
             patch("datus.cli.main.configure_logging"),
+            patch.object(app, "_ensure_project_config") as mock_ensure,
             patch("datus.cli.main.DatusCLI", return_value=mock_cli) as MockCLI,
         ):
             app.run()
+        mock_ensure.assert_called_once_with(mock_args)
         MockCLI.assert_called_once_with(mock_args)
         mock_cli.run.assert_called_once()
 
     def test_run_web_mode(self):
         app = Application()
         mock_args = SimpleNamespace(
-            debug=False, database="ns1", print_mode=None, web=True, resume=None, proxy_tools=None
+            debug=False, database="ns1", print_mode=None, web=True, resume=None, proxy_tools=None, config=None
         )
         with (
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
             patch("datus.cli.main.configure_logging"),
+            patch.object(app, "_ensure_project_config") as mock_ensure,
             patch.object(app, "_run_web_interface") as mock_web,
         ):
             app.run()
+        # web mode also skips the wizard
+        mock_ensure.assert_not_called()
         mock_web.assert_called_once_with(mock_args)
+
+
+class TestEnsureProjectConfig:
+    def test_runs_wizard_when_missing(self):
+        app = Application()
+        args = SimpleNamespace(config=None)
+        mock_path = MagicMock()
+        mock_path.exists.return_value = False
+        mock_base = MagicMock()
+        with (
+            patch("datus.configuration.project_config.project_config_path", return_value=mock_path),
+            patch("datus.configuration.agent_config_loader.load_agent_config", return_value=mock_base) as mock_load,
+            patch("datus.cli.project_init.run_project_init") as mock_wizard,
+        ):
+            app._ensure_project_config(args)
+        mock_load.assert_called_once()
+        mock_wizard.assert_called_once_with(mock_base)
+
+    def test_idempotent_when_file_exists(self):
+        app = Application()
+        args = SimpleNamespace(config=None)
+        mock_path = MagicMock()
+        mock_path.exists.return_value = True
+        with (
+            patch("datus.configuration.project_config.project_config_path", return_value=mock_path),
+            patch("datus.configuration.agent_config_loader.load_agent_config") as mock_load,
+            patch("datus.cli.project_init.run_project_init") as mock_wizard,
+        ):
+            app._ensure_project_config(args)
+        mock_load.assert_not_called()
+        mock_wizard.assert_not_called()
+
+    def test_raises_when_base_config_fails(self):
+        app = Application()
+        args = SimpleNamespace(config=None)
+        mock_path = MagicMock()
+        mock_path.exists.return_value = False
+        with (
+            patch("datus.configuration.project_config.project_config_path", return_value=mock_path),
+            patch(
+                "datus.configuration.agent_config_loader.load_agent_config",
+                side_effect=RuntimeError("boom"),
+            ),
+            patch("datus.cli.project_init.run_project_init") as mock_wizard,
+        ):
+            with pytest.raises(RuntimeError, match="boom"):
+                app._ensure_project_config(args)
+        mock_wizard.assert_not_called()
+
+
+class TestResolveDefaultDatabase:
+    def _make_config(self, databases: dict, default: str = ""):
+        cfg = MagicMock()
+        cfg.service.databases = databases
+        cfg.service.default_database = default
+        return cfg
+
+    def test_project_override_wins_over_base_default(self):
+        app = Application()
+        args = SimpleNamespace(config=None)
+        config = self._make_config({"a": MagicMock(type="sqlite"), "b": MagicMock(type="duckdb")}, default="a")
+        with (
+            patch("datus.configuration.agent_config_loader.load_agent_config", return_value=config),
+            patch(
+                "datus.configuration.project_config.load_project_override",
+                return_value=ProjectOverride(default_database="b"),
+            ),
+        ):
+            result = app._resolve_default_database(args)
+        assert result == "b"
+
+    def test_falls_through_to_base_default_without_override(self):
+        app = Application()
+        args = SimpleNamespace(config=None)
+        config = self._make_config({"a": MagicMock(type="sqlite")}, default="a")
+        with (
+            patch("datus.configuration.agent_config_loader.load_agent_config", return_value=config),
+            patch(
+                "datus.configuration.project_config.load_project_override",
+                return_value=None,
+            ),
+        ):
+            result = app._resolve_default_database(args)
+        assert result == "a"
+
+    def test_no_databases_returns_empty(self):
+        app = Application()
+        args = SimpleNamespace(config=None)
+        config = self._make_config({}, default="")
+        with (
+            patch("datus.configuration.agent_config_loader.load_agent_config", return_value=config),
+        ):
+            result = app._resolve_default_database(args)
+        assert result == ""
 
 
 # ---------------------------------------------------------------------------

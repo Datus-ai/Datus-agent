@@ -200,6 +200,19 @@ class TestInitDirsAndCopyFiles:
         assert "conf" in args
         assert "data" in args
 
+    def test_init_dirs_omits_project_scoped_sessions(self, tmp_path):
+        """Bootstrap must not request 'sessions' — it is project-scoped and
+        raises DatusException(410000) when project_name is empty (which it
+        always is during initial configure)."""
+        cfg = _make_configure(tmp_path)
+
+        mock_pm = MagicMock()
+        with patch("datus.cli.interactive_configure.get_path_manager", return_value=mock_pm):
+            cfg._init_dirs()
+
+        args = mock_pm.ensure_dirs.call_args[0]
+        assert "sessions" not in args
+
     def test_copy_files_handles_errors_gracefully(self, tmp_path):
         """_copy_files() swallows exceptions from copy_data_file without raising."""
         cfg = _make_configure(tmp_path)

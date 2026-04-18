@@ -69,8 +69,10 @@ class InteractiveInit:
         from datus.utils.path_manager import get_path_manager
 
         # Entry-point exemption: see __init__ above — no AgentConfig exists yet during init.
+        # Skip project-scoped ``sessions/{project_name}/`` — it is created lazily
+        # at session runtime; bootstrapping here has no project_name to use.
         path_manager = get_path_manager()
-        path_manager.ensure_dirs("conf", "data", "logs", "sessions", "template", "sample")
+        path_manager.ensure_dirs("conf", "data", "logs", "template", "sample")
 
     def run(self) -> int:
         """Main entry point for the interactive initialization."""

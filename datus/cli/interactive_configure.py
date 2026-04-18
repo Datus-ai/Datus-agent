@@ -80,7 +80,9 @@ class InteractiveConfigure:
     # ── Setup helpers ──────────────────────────────────────────────
 
     def _init_dirs(self):
-        get_path_manager().ensure_dirs("conf", "data", "logs", "sessions", "template", "sample")
+        # Bootstrap: no project_name yet, so skip project-scoped dirs
+        # (``sessions/{project_name}/`` is created lazily at session runtime).
+        get_path_manager().ensure_dirs("conf", "data", "logs", "template", "sample")
 
     def _copy_files(self):
         try:

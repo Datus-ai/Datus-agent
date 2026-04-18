@@ -16,10 +16,12 @@ import yaml
 
 from datus.configuration.agent_config_loader import (
     ConfigurationManager,
+    _apply_project_override,
     configuration_manager,
     load_node_config,
     parse_config_path,
 )
+from datus.configuration.project_config import ProjectOverride
 from datus.utils.exceptions import DatusException
 
 # ---------------------------------------------------------------------------
@@ -194,6 +196,116 @@ class TestConfigurationManagerSingleton:
 # ---------------------------------------------------------------------------
 # load_node_config
 # ---------------------------------------------------------------------------
+
+
+class TestApplyProjectOverride:
+    """_apply_project_override validates & merges ./.datus/config.yml into agent_raw."""
+
+    def _base_raw(self):
+        return {
+            "target": "openai",
+            "models": {"openai": {"type": "openai"}, "deepseek": {"type": "deepseek"}},
+            "service": {"databases": {"db1": {"type": "sqlite"}, "db2": {"type": "duckdb"}}},
+        }
+
+    def test_no_override_is_noop(self):
+        agent_raw = self._base_raw()
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=None,
+        ):
+            _apply_project_override(agent_raw)
+        assert agent_raw["target"] == "openai"
+        assert "project_name" not in agent_raw
+
+    def test_empty_override_is_noop(self):
+        agent_raw = self._base_raw()
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(),
+        ):
+            _apply_project_override(agent_raw)
+        assert agent_raw["target"] == "openai"
+
+    def test_target_merged_when_valid(self):
+        agent_raw = self._base_raw()
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(target="deepseek"),
+        ):
+            _apply_project_override(agent_raw)
+        assert agent_raw["target"] == "deepseek"
+
+    def test_invalid_target_raises(self):
+        agent_raw = self._base_raw()
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(target="nonexistent"),
+        ):
+            with pytest.raises(DatusException) as exc:
+                _apply_project_override(agent_raw)
+        assert "target" in str(exc.value)
+
+    def test_project_name_merged(self):
+        agent_raw = self._base_raw()
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(project_name="my_proj"),
+        ):
+            _apply_project_override(agent_raw)
+        assert agent_raw["project_name"] == "my_proj"
+
+    def test_valid_default_database_not_written_to_agent_raw(self):
+        """default_database is a computed property, never mutated in agent_raw."""
+        agent_raw = self._base_raw()
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(default_database="db2"),
+        ):
+            _apply_project_override(agent_raw)
+        # No mutation: the service dict is untouched; default_database is only
+        # enforced at CLI-entry time via _resolve_default_database.
+        assert agent_raw["service"]["databases"]["db1"].get("default") is not True
+        assert agent_raw["service"]["databases"]["db2"].get("default") is not True
+
+    def test_invalid_default_database_raises(self):
+        agent_raw = self._base_raw()
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(default_database="ghost_db"),
+        ):
+            with pytest.raises(DatusException) as exc:
+                _apply_project_override(agent_raw)
+        assert "default_database" in str(exc.value)
+
+    def test_all_three_fields_merged(self):
+        agent_raw = self._base_raw()
+        override = ProjectOverride(target="deepseek", default_database="db1", project_name="p")
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=override,
+        ):
+            _apply_project_override(agent_raw)
+        assert agent_raw["target"] == "deepseek"
+        assert agent_raw["project_name"] == "p"
+
+    def test_missing_models_section_invalid_target_raises(self):
+        agent_raw = {"service": {"databases": {"db1": {}}}}
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(target="deepseek"),
+        ):
+            with pytest.raises(DatusException):
+                _apply_project_override(agent_raw)
+
+    def test_missing_service_section_invalid_db_raises(self):
+        agent_raw = {"models": {"openai": {}}}
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(default_database="db1"),
+        ):
+            with pytest.raises(DatusException):
+                _apply_project_override(agent_raw)
 
 
 class TestLoadNodeConfig:
