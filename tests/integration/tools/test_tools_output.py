@@ -12,8 +12,11 @@ from datus.tools.db_tools.config import SQLiteConfig
 from datus.tools.db_tools.sqlite_connector import SQLiteConnector
 from datus.tools.output_tools.output import OutputTool
 from datus.utils.constants import DBType
+from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import extract_table_names
 from tests.conftest import TEST_CONF_DIR, TEST_DATA_DIR
+
+logger = get_logger(__name__)
 
 
 class TestBirdDevOutput:
@@ -40,8 +43,9 @@ class TestBirdDevOutput:
         return LLMBaseModel.create_model(agent_config=global_config)
 
     def test_output(self, test_data: dict, llm_model: LLMBaseModel, global_config: AgentConfig):
+        assert test_data, "test fixture produced no benchmarks"
         for benchmark, data in test_data.items():
-            print(f"switch benchmark to {benchmark}")
+            logger.info("switch benchmark to %s", benchmark)
             global_config.current_database = data["namespace"]
             self._do_execute(benchmark, data, global_config, llm_model)
 
@@ -97,4 +101,4 @@ class TestBirdDevOutput:
                 )
                 with open(f"{output_dir}/bird_dev_{task['question_id']}_gold.csv", "w") as f:
                     f.write(sql_connector.execute(ExecuteSQLInput(sql_query=task["gold_sql"])).sql_return)
-                print(output_result)
+                logger.info("output for %s: %s", task["question_id"], output_result)

@@ -55,7 +55,6 @@ class TestLLMsTools:
 
         # Using test data from YAML
         input_data = ReasoningInput(**test_data[0]["input"])
-        print(input_data)
         from datus.tools.llms_tools.reasoning_sql import reasoning_sql_with_mcp
 
         # Use mock_llm_create directly (it's already a MockLLMModel instance)
