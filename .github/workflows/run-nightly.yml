@@ -31,7 +31,7 @@ jobs:
       - name: Install dependencies
         run: |
           uv sync
-          uv pip install --upgrade --no-cache-dir datus-semantic-metricflow>=0.1.3 datus-postgresql datus-bi-superset
+          uv pip install --upgrade --no-cache-dir "datus-semantic-metricflow>=0.1.3" datus-postgresql datus-bi-superset
 
       - name: Setup config file
         run: |
