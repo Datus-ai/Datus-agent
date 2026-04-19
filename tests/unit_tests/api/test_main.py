@@ -36,7 +36,7 @@ pytestmark = pytest.mark.ci
 # ---------------------------------------------------------------------------
 
 
-class TestArgumentParser:
+class TestAPIArgumentParser:
     def test_defaults(self):
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("DATUS_NAMESPACE", None)
