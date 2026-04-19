@@ -24,6 +24,12 @@ from typing import Generator
 
 import pytest
 
+if os.getenv("ADAPTERS_GP") != "1":
+    pytest.skip(
+        "ADAPTERS_GP=1 not set; see tests/integration/adapters/README.md",
+        allow_module_level=True,
+    )
+
 pytest.importorskip(
     "datus_greenplum",
     reason="datus-greenplum not installed; run `uv pip install datus-greenplum`",
@@ -33,13 +39,7 @@ from datus_greenplum import GreenplumConfig, GreenplumConnector  # noqa: E402
 
 from datus.tools.func_tool.database import DBFuncTool  # noqa: E402
 
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.skipif(
-        not os.getenv("ADAPTERS_GP"),
-        reason="ADAPTERS_GP=1 not set; see tests/integration/adapters/README.md",
-    ),
-]
+pytestmark = [pytest.mark.integration]
 
 
 SCHEMA = os.getenv("GREENPLUM_SCHEMA", "public")
@@ -97,12 +97,12 @@ def gp_config() -> GreenplumConfig:
 @pytest.fixture(scope="module")
 def gp_connector(gp_config: GreenplumConfig) -> Generator[GreenplumConnector, None, None]:
     conn = GreenplumConnector(gp_config)
-    if not conn.test_connection():
-        pytest.fail(
-            "Greenplum container unreachable despite ADAPTERS_GP=1. "
-            "Did you run `docker compose up -d` in datus-db-adapters/datus-greenplum?"
-        )
     try:
+        if not conn.test_connection():
+            pytest.fail(
+                "Greenplum container unreachable despite ADAPTERS_GP=1. "
+                "Did you run `docker compose up -d` in datus-db-adapters/datus-greenplum?"
+            )
         yield conn
     finally:
         conn.close()

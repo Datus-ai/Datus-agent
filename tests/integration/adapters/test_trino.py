@@ -22,6 +22,12 @@ from typing import Generator
 
 import pytest
 
+if os.getenv("ADAPTERS_TRINO") != "1":
+    pytest.skip(
+        "ADAPTERS_TRINO=1 not set; see tests/integration/adapters/README.md",
+        allow_module_level=True,
+    )
+
 pytest.importorskip(
     "datus_trino",
     reason="datus-trino not installed; run `uv pip install datus-trino`",
@@ -31,13 +37,7 @@ from datus_trino import TrinoConfig, TrinoConnector  # noqa: E402
 
 from datus.tools.func_tool.database import DBFuncTool  # noqa: E402
 
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.skipif(
-        not os.getenv("ADAPTERS_TRINO"),
-        reason="ADAPTERS_TRINO=1 not set; see tests/integration/adapters/README.md",
-    ),
-]
+pytestmark = [pytest.mark.integration]
 
 
 TPCH_TABLE = "region"  # Trino tpch.tiny: columns are unprefixed (regionkey, name, comment)
@@ -59,13 +59,13 @@ def trino_config() -> TrinoConfig:
 @pytest.fixture(scope="module")
 def trino_connector(trino_config: TrinoConfig) -> Generator[TrinoConnector, None, None]:
     conn = TrinoConnector(trino_config)
-    if not conn.test_connection():
-        pytest.fail(
-            "Trino container unreachable despite ADAPTERS_TRINO=1. "
-            "Did you run `docker compose up -d` in datus-db-adapters/datus-trino? "
-            "If port 8080 is taken, start with TRINO_HOST_PORT=8085 and set TRINO_PORT=8085."
-        )
     try:
+        if not conn.test_connection():
+            pytest.fail(
+                "Trino container unreachable despite ADAPTERS_TRINO=1. "
+                "Did you run `docker compose up -d` in datus-db-adapters/datus-trino? "
+                "If port 8080 is taken, start with TRINO_HOST_PORT=8085 and set TRINO_PORT=8085."
+            )
         yield conn
     finally:
         conn.close()

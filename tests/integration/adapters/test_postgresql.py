@@ -19,6 +19,15 @@ from typing import Generator
 
 import pytest
 
+# Opt-in gate MUST run before the optional-package import. Otherwise, when the
+# user hasn't set ADAPTERS_PG=1 and hasn't installed the adapter, the tests
+# skip with a misleading "not installed" reason instead of "opt-in not set".
+if os.getenv("ADAPTERS_PG") != "1":
+    pytest.skip(
+        "ADAPTERS_PG=1 not set; see tests/integration/adapters/README.md",
+        allow_module_level=True,
+    )
+
 # datus-postgresql is NOT a hard dep of Datus-agent; audit allows importorskip here
 # because the package is not in [project.dependencies].
 pytest.importorskip(
@@ -30,13 +39,7 @@ from datus_postgresql import PostgreSQLConfig, PostgreSQLConnector  # noqa: E402
 
 from datus.tools.func_tool.database import DBFuncTool  # noqa: E402
 
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.skipif(
-        not os.getenv("ADAPTERS_PG"),
-        reason="ADAPTERS_PG=1 not set; see tests/integration/adapters/README.md",
-    ),
-]
+pytestmark = [pytest.mark.integration]
 
 
 SCHEMA = os.getenv("POSTGRESQL_SCHEMA", "public")
@@ -100,12 +103,12 @@ def pg_connector(pg_config: PostgreSQLConfig) -> Generator[PostgreSQLConnector, 
     than silently skip.
     """
     conn = PostgreSQLConnector(pg_config)
-    if not conn.test_connection():
-        pytest.fail(
-            "PostgreSQL container unreachable despite ADAPTERS_PG=1. "
-            "Did you run `docker compose up -d` in datus-db-adapters/datus-postgresql?"
-        )
     try:
+        if not conn.test_connection():
+            pytest.fail(
+                "PostgreSQL container unreachable despite ADAPTERS_PG=1. "
+                "Did you run `docker compose up -d` in datus-db-adapters/datus-postgresql?"
+            )
         yield conn
     finally:
         conn.close()

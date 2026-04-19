@@ -19,6 +19,12 @@ from typing import Generator
 
 import pytest
 
+if os.getenv("ADAPTERS_CH") != "1":
+    pytest.skip(
+        "ADAPTERS_CH=1 not set; see tests/integration/adapters/README.md",
+        allow_module_level=True,
+    )
+
 pytest.importorskip(
     "datus_clickhouse",
     reason="datus-clickhouse not installed; run `uv pip install datus-clickhouse`",
@@ -28,13 +34,7 @@ from datus_clickhouse import ClickHouseConfig, ClickHouseConnector  # noqa: E402
 
 from datus.tools.func_tool.database import DBFuncTool  # noqa: E402
 
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.skipif(
-        not os.getenv("ADAPTERS_CH"),
-        reason="ADAPTERS_CH=1 not set; see tests/integration/adapters/README.md",
-    ),
-]
+pytestmark = [pytest.mark.integration]
 
 
 REGION_TABLE = "datus_adapter_region"
@@ -98,14 +98,16 @@ def ch_connector(ch_config: ClickHouseConfig) -> Generator[ClickHouseConnector, 
         database=None,
     )
     init_conn = ClickHouseConnector(init_config)
-    if not init_conn.test_connection():
-        pytest.fail(
-            "ClickHouse container unreachable despite ADAPTERS_CH=1. "
-            "Did you run `docker compose up -d` in datus-db-adapters/datus-clickhouse?"
-        )
-    if ch_config.database:
-        init_conn.execute_ddl(f"CREATE DATABASE IF NOT EXISTS `{ch_config.database}`")
-    init_conn.close()
+    try:
+        if not init_conn.test_connection():
+            pytest.fail(
+                "ClickHouse container unreachable despite ADAPTERS_CH=1. "
+                "Did you run `docker compose up -d` in datus-db-adapters/datus-clickhouse?"
+            )
+        if ch_config.database:
+            init_conn.execute_ddl(f"CREATE DATABASE IF NOT EXISTS `{ch_config.database}`")
+    finally:
+        init_conn.close()
 
     conn = ClickHouseConnector(ch_config)
     try:
@@ -120,8 +122,8 @@ def seeded_connector(ch_connector: ClickHouseConnector) -> Generator[ClickHouseC
         result = ch_connector.execute({"sql_query": sql})
         assert result.success == 1, f"seed SQL failed: {sql[:120]} -> {result.error}"
 
-    ch_connector.execute({"sql_query": f"DROP TABLE IF EXISTS `{NATION_TABLE}`"})
-    ch_connector.execute({"sql_query": f"DROP TABLE IF EXISTS `{REGION_TABLE}`"})
+    _exec(f"DROP TABLE IF EXISTS `{NATION_TABLE}`")
+    _exec(f"DROP TABLE IF EXISTS `{REGION_TABLE}`")
     _exec(REGION_DDL)
     _exec(NATION_DDL)
     for row in REGION_ROWS:

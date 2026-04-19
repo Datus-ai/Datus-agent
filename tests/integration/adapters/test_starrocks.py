@@ -19,6 +19,12 @@ from typing import Generator
 
 import pytest
 
+if os.getenv("ADAPTERS_SR") != "1":
+    pytest.skip(
+        "ADAPTERS_SR=1 not set; see tests/integration/adapters/README.md",
+        allow_module_level=True,
+    )
+
 pytest.importorskip(
     "datus_starrocks",
     reason="datus-starrocks not installed; run `uv pip install datus-starrocks`",
@@ -28,13 +34,7 @@ from datus_starrocks import StarRocksConfig, StarRocksConnector  # noqa: E402
 
 from datus.tools.func_tool.database import DBFuncTool  # noqa: E402
 
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.skipif(
-        not os.getenv("ADAPTERS_SR"),
-        reason="ADAPTERS_SR=1 not set; see tests/integration/adapters/README.md",
-    ),
-]
+pytestmark = [pytest.mark.integration]
 
 
 REGION_TABLE = "datus_adapter_region"
@@ -106,14 +106,16 @@ def sr_connector(sr_config: StarRocksConfig) -> Generator[StarRocksConnector, No
         database=None,
     )
     init_conn = StarRocksConnector(init_config)
-    if not init_conn.test_connection():
-        pytest.fail(
-            "StarRocks container unreachable despite ADAPTERS_SR=1. "
-            "Did you run `docker compose up -d` in datus-db-adapters/datus-starrocks?"
-        )
-    if sr_config.database:
-        init_conn.execute_ddl(f"CREATE DATABASE IF NOT EXISTS `{sr_config.database}`")
-    init_conn.close()
+    try:
+        if not init_conn.test_connection():
+            pytest.fail(
+                "StarRocks container unreachable despite ADAPTERS_SR=1. "
+                "Did you run `docker compose up -d` in datus-db-adapters/datus-starrocks?"
+            )
+        if sr_config.database:
+            init_conn.execute_ddl(f"CREATE DATABASE IF NOT EXISTS `{sr_config.database}`")
+    finally:
+        init_conn.close()
 
     conn = StarRocksConnector(sr_config)
     try:
@@ -128,8 +130,8 @@ def seeded_connector(sr_connector: StarRocksConnector) -> Generator[StarRocksCon
         result = sr_connector.execute({"sql_query": sql})
         assert result.success == 1, f"seed SQL failed: {sql[:120]} -> {result.error}"
 
-    sr_connector.execute({"sql_query": f"DROP TABLE IF EXISTS `{NATION_TABLE}`"})
-    sr_connector.execute({"sql_query": f"DROP TABLE IF EXISTS `{REGION_TABLE}`"})
+    _exec(f"DROP TABLE IF EXISTS `{NATION_TABLE}`")
+    _exec(f"DROP TABLE IF EXISTS `{REGION_TABLE}`")
     _exec(REGION_DDL)
     _exec(NATION_DDL)
     for row in REGION_ROWS:

@@ -19,6 +19,12 @@ from typing import Generator
 
 import pytest
 
+if os.getenv("ADAPTERS_MYSQL") != "1":
+    pytest.skip(
+        "ADAPTERS_MYSQL=1 not set; see tests/integration/adapters/README.md",
+        allow_module_level=True,
+    )
+
 pytest.importorskip(
     "datus_mysql",
     reason="datus-mysql not installed; run `uv pip install datus-mysql`",
@@ -28,13 +34,7 @@ from datus_mysql import MySQLConfig, MySQLConnector  # noqa: E402
 
 from datus.tools.func_tool.database import DBFuncTool  # noqa: E402
 
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.skipif(
-        not os.getenv("ADAPTERS_MYSQL"),
-        reason="ADAPTERS_MYSQL=1 not set; see tests/integration/adapters/README.md",
-    ),
-]
+pytestmark = [pytest.mark.integration]
 
 
 REGION_TABLE = "datus_adapter_region"
@@ -91,12 +91,12 @@ def mysql_config() -> MySQLConfig:
 @pytest.fixture(scope="module")
 def mysql_connector(mysql_config: MySQLConfig) -> Generator[MySQLConnector, None, None]:
     conn = MySQLConnector(mysql_config)
-    if not conn.test_connection():
-        pytest.fail(
-            "MySQL container unreachable despite ADAPTERS_MYSQL=1. "
-            "Did you run `docker compose up -d` in datus-db-adapters/datus-mysql?"
-        )
     try:
+        if not conn.test_connection():
+            pytest.fail(
+                "MySQL container unreachable despite ADAPTERS_MYSQL=1. "
+                "Did you run `docker compose up -d` in datus-db-adapters/datus-mysql?"
+            )
         yield conn
     finally:
         conn.close()

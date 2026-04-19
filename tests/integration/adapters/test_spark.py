@@ -22,6 +22,12 @@ from typing import Generator
 
 import pytest
 
+if os.getenv("ADAPTERS_SPARK") != "1":
+    pytest.skip(
+        "ADAPTERS_SPARK=1 not set; see tests/integration/adapters/README.md",
+        allow_module_level=True,
+    )
+
 pytest.importorskip(
     "datus_spark",
     reason="datus-spark not installed; run `uv pip install datus-spark`",
@@ -31,13 +37,7 @@ from datus_spark import SparkConfig, SparkConnector  # noqa: E402
 
 from datus.tools.func_tool.database import DBFuncTool  # noqa: E402
 
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.skipif(
-        not os.getenv("ADAPTERS_SPARK"),
-        reason="ADAPTERS_SPARK=1 not set; see tests/integration/adapters/README.md",
-    ),
-]
+pytestmark = [pytest.mark.integration]
 
 
 REGION_TABLE = "datus_adapter_region"
@@ -94,13 +94,13 @@ def spark_config() -> SparkConfig:
 @pytest.fixture(scope="module")
 def spark_connector(spark_config: SparkConfig) -> Generator[SparkConnector, None, None]:
     conn = SparkConnector(spark_config)
-    if not conn.test_connection():
-        pytest.fail(
-            "Spark container unreachable despite ADAPTERS_SPARK=1. "
-            "Did you run `docker compose up -d` in datus-db-adapters/datus-spark? "
-            "Wait ~60s for the Thrift server to become healthy."
-        )
     try:
+        if not conn.test_connection():
+            pytest.fail(
+                "Spark container unreachable despite ADAPTERS_SPARK=1. "
+                "Did you run `docker compose up -d` in datus-db-adapters/datus-spark? "
+                "Wait ~60s for the Thrift server to become healthy."
+            )
         yield conn
     finally:
         conn.close()
@@ -112,8 +112,8 @@ def seeded_connector(spark_connector: SparkConnector) -> Generator[SparkConnecto
         result = spark_connector.execute({"sql_query": sql})
         assert result.success == 1, f"seed SQL failed: {sql[:120]} -> {result.error}"
 
-    spark_connector.execute({"sql_query": f"DROP TABLE IF EXISTS {NATION_TABLE}"})
-    spark_connector.execute({"sql_query": f"DROP TABLE IF EXISTS {REGION_TABLE}"})
+    _exec(f"DROP TABLE IF EXISTS {NATION_TABLE}")
+    _exec(f"DROP TABLE IF EXISTS {REGION_TABLE}")
     _exec(REGION_DDL)
     _exec(NATION_DDL)
     values_sql = ", ".join("(" + ", ".join(_escape(v) for v in row) + ")" for row in REGION_ROWS)
