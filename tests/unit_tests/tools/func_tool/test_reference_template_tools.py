@@ -79,7 +79,7 @@ class TestSearchReferenceTemplate:
             query_text="query",
             subject_path=["Sales", "Revenue"],
             top_n=5,
-            selected_fields=["name", "parameters", "summary", "tags"],
+            selected_fields=["name", "template", "parameters", "summary", "tags"],
         )
 
     def test_search_handles_exception(self, tools, mock_rag):

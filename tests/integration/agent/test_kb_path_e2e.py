@@ -71,9 +71,12 @@ class TestKnowledgeBaseHomeE2E:
             execution_mode="workflow",
         )
 
-        # Sanity: the FilesystemFuncTool must be sandboxed at the new kb_home.
+        # Sanity: the FilesystemFuncTool is rooted at ``project_root`` (not
+        # ``subject/``) so the LLM can navigate all three KB subfolders via
+        # ``subject/<kind>/…`` relative paths. ``kb_home_tmp`` equals
+        # ``{project_root}/subject`` — the parent is the filesystem sandbox.
         assert node.filesystem_func_tool is not None
-        assert node.filesystem_func_tool.config.root_path == str(kb_home_tmp)
+        assert node.filesystem_func_tool.config.root_path == str(kb_home_tmp.parent)
 
         node.input = SemanticNodeInput(
             user_message=(

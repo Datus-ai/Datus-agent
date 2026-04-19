@@ -13,9 +13,10 @@ asyncio.Task so that client disconnects do not cancel the computation.
 import json
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Path, Query
+from fastapi import APIRouter, HTTPException, Path, Query
 from fastapi.responses import StreamingResponse
 
+from datus.api.constants import BUILTIN_SUBAGENTS
 from datus.api.deps import AppContextDep, ServiceDep
 from datus.api.models.base_models import Result
 from datus.api.models.chat_models import (
@@ -39,6 +40,29 @@ from datus.utils.feedback_prompt import build_reaction_feedback_prompt
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 
 
+# Additional builtin subagents accepted by ``stream_chat`` beyond the canonical
+# ``BUILTIN_SUBAGENTS`` set — these are wired directly in
+# ``ChatTaskManager._create_node`` but are not listed as user-creatable agents
+# in ``datus.api.constants``. Keep this list in sync with the dispatch branches
+# in :meth:`ChatTaskManager._create_node`.
+_EXTRA_BUILTIN_SUBAGENTS = {"feedback"}
+
+
+def _is_valid_subagent_id(svc, subagent_id: str) -> bool:
+    """Return True if *subagent_id* resolves to a builtin or custom sub-agent."""
+    if subagent_id in BUILTIN_SUBAGENTS or subagent_id in _EXTRA_BUILTIN_SUBAGENTS:
+        return True
+    agentic_nodes = getattr(svc.agent_config, "agentic_nodes", None) or {}
+    if subagent_id in agentic_nodes:
+        return True
+    # Custom sub-agents may be keyed by sanitized node_name with the original
+    # UUID id stored under "id" — match either form.
+    for entry in agentic_nodes.values():
+        if isinstance(entry, dict) and entry.get("id") == subagent_id:
+            return True
+    return False
+
+
 # ========== Stream Chat ==========
 
 
@@ -54,6 +78,11 @@ async def stream_chat(
     ctx: AppContextDep,
 ):
     sub_agent_id = request.subagent_id
+    if sub_agent_id and not _is_valid_subagent_id(svc, sub_agent_id):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Subagent '{sub_agent_id}' not found",
+        )
 
     async def generate_sse():
         async for event in svc.chat.stream_chat(request, sub_agent_id=sub_agent_id, user_id=ctx.user_id):

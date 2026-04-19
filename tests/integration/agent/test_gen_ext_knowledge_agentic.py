@@ -47,8 +47,12 @@ class TestGenExtKnowledgeAgentic:
         # Should have context search tools
         assert node.context_search_tools is not None, "Context search tools should be initialized"
 
-        # verify_sql tool
-        assert "verify_sql" in tool_names, f"Missing verify_sql tool, got: {tool_names}"
+        # verify_sql is NOT registered at __init__: it is bound lazily inside
+        # execute_stream() only when a non-empty gold_sql is supplied and passes
+        # pre-validation (see GenExtKnowledgeAgenticNode._enable_verify_sql_tool).
+        assert "verify_sql" not in tool_names, (
+            f"verify_sql should be bound lazily when gold_sql is present, not at init. Got: {tool_names}"
+        )
 
         logger.info(f"Node initialized with {len(node.tools)} tools: {tool_names}")
 

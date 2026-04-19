@@ -8,9 +8,14 @@ import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fastapi import HTTPException
 
-from datus.api.models.cli_models import UserInteractionInput
-from datus.api.routes.chat_routes import submit_user_interaction
+from datus.api.models.cli_models import StreamChatInput, UserInteractionInput
+from datus.api.routes.chat_routes import (
+    _is_valid_subagent_id,
+    stream_chat,
+    submit_user_interaction,
+)
 
 
 def _mock_svc(task=None):
@@ -115,3 +120,84 @@ class TestSubmitUserInteractionConversion:
         result = await submit_user_interaction(request, svc)
 
         assert result.success is False
+
+
+def _mock_svc_with_nodes(agentic_nodes=None):
+    svc = MagicMock()
+    svc.agent_config.agentic_nodes = agentic_nodes or {}
+    return svc
+
+
+class TestIsValidSubagentId:
+    """Tests for the _is_valid_subagent_id helper used by stream_chat's 404 gate."""
+
+    def test_builtin_subagent(self):
+        svc = _mock_svc_with_nodes()
+        assert _is_valid_subagent_id(svc, "gen_sql") is True
+
+    def test_extra_builtin_feedback(self):
+        """feedback is dispatched by _create_node but not in BUILTIN_SUBAGENTS."""
+        svc = _mock_svc_with_nodes()
+        assert _is_valid_subagent_id(svc, "feedback") is True
+
+    def test_custom_node_by_name(self):
+        svc = _mock_svc_with_nodes({"my_custom_agent": {"id": "uuid-1", "model": "deepseek"}})
+        assert _is_valid_subagent_id(svc, "my_custom_agent") is True
+
+    def test_custom_node_by_uuid(self):
+        """Custom sub-agents may be looked up by the original UUID stored under 'id'."""
+        svc = _mock_svc_with_nodes({"my_custom_agent": {"id": "uuid-abc", "model": "deepseek"}})
+        assert _is_valid_subagent_id(svc, "uuid-abc") is True
+
+    def test_unknown_id_returns_false(self):
+        svc = _mock_svc_with_nodes({"existing_agent": {"id": "uuid-1"}})
+        assert _is_valid_subagent_id(svc, "nonexistent_xyz") is False
+
+    def test_agentic_nodes_missing_attribute(self):
+        """Missing ``agent_config.agentic_nodes`` falls through gracefully."""
+        svc = MagicMock()
+        svc.agent_config = MagicMock(spec=[])  # no agentic_nodes attribute
+        assert _is_valid_subagent_id(svc, "nonexistent") is False
+
+    def test_non_dict_node_entry_is_skipped(self):
+        """Non-dict entries in ``agentic_nodes`` are ignored during UUID lookup."""
+        svc = _mock_svc_with_nodes({"some_agent": "not_a_dict_value"})
+        assert _is_valid_subagent_id(svc, "not_a_dict_value") is False
+
+
+class TestStreamChat404Gate:
+    """Tests for the stream_chat 404 gate on invalid subagent_id."""
+
+    @pytest.mark.asyncio
+    async def test_invalid_subagent_raises_404(self):
+        svc = _mock_svc_with_nodes()
+        ctx = MagicMock()
+        request = StreamChatInput(message="hi", subagent_id="nonexistent_xyz")
+
+        with pytest.raises(HTTPException) as exc_info:
+            await stream_chat(request, svc, ctx)
+
+        assert exc_info.value.status_code == 404
+        assert "nonexistent_xyz" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    async def test_none_subagent_bypasses_gate(self):
+        """Without a subagent_id the 404 gate is skipped — default routing handles it."""
+        svc = _mock_svc_with_nodes()
+        svc.chat.stream_chat = MagicMock(return_value=AsyncMock().__aiter__())
+        ctx = MagicMock(user_id="u1")
+        request = StreamChatInput(message="hi", subagent_id=None)
+
+        # Should not raise — returns a StreamingResponse.
+        response = await stream_chat(request, svc, ctx)
+        assert response is not None
+
+    @pytest.mark.asyncio
+    async def test_valid_builtin_passes_gate(self):
+        svc = _mock_svc_with_nodes()
+        svc.chat.stream_chat = MagicMock(return_value=AsyncMock().__aiter__())
+        ctx = MagicMock(user_id="u1")
+        request = StreamChatInput(message="hi", subagent_id="gen_sql")
+
+        response = await stream_chat(request, svc, ctx)
+        assert response is not None

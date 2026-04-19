@@ -94,6 +94,7 @@ class ReferenceTemplateTools:
         Returns:
             FuncToolResult with list of matching templates, each containing:
                 - 'name': Template name
+                - 'template': The raw Jinja2 SQL template
                 - 'parameters': JSON string of parameter definitions with type metadata
                 - 'summary': Brief description of what the template does
                 - 'tags': Associated tags
@@ -104,7 +105,7 @@ class ReferenceTemplateTools:
                 query_text=query_text,
                 subject_path=subject_path,
                 top_n=top_n,
-                selected_fields=["name", "parameters", "summary", "tags"],
+                selected_fields=["name", "template", "parameters", "summary", "tags"],
             )
             return FuncToolResult(success=1, error=None, result=result)
         except Exception as e:
