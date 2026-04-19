@@ -323,7 +323,10 @@ class TestSkillCommandsInfo:
             cmds.cmd_skill_info("unknown")
             mock_mgr.return_value.get_skill.assert_called_once_with("unknown")
             printed_text = str(cli.console.print.call_args_list)
-            assert "not found" in printed_text.lower() or "unknown" in printed_text, (
+            # Pin to the deterministic branch — the string "unknown" is the
+            # skill name we passed in and would appear in any echoed output,
+            # making that fallback near-tautological.
+            assert "not found" in printed_text.lower(), (
                 "Should notify user when skill not found locally or in marketplace"
             )
 
@@ -341,9 +344,10 @@ class TestSkillCommandsInfo:
             cmds.cmd_skill_info("test-skill")
             mock_mgr.return_value.get_skill.assert_called_once_with("test-skill")
             printed_text = str(cli.console.print.call_args_list)
-            assert "timeout" in printed_text or "Marketplace lookup failed" in printed_text, (
-                "Should print marketplace error message when remote lookup fails"
-            )
+            # Pin to the exception detail — the generic "Marketplace lookup
+            # failed" fallback would pass even if the exception message was
+            # silently swallowed.
+            assert "timeout" in printed_text, "Marketplace error path must surface the exception detail"
 
 
 class TestSkillCommandsUpdate:
@@ -374,7 +378,10 @@ class TestSkillCommandsUpdate:
             cmds.cmd_skill_update()
             mock_mgr.return_value.install_from_marketplace.assert_called_once_with("test-skill", "2.0")
             printed_text = str(cli.console.print.call_args_list)
-            assert "Updated" in printed_text or "2.0" in printed_text, "Should report updated version"
+            # "2.0" is the version number that's likely to show up in any
+            # status output, so the OR fallback made the assertion near-
+            # tautological. Pin to the install-result status string.
+            assert "Updated" in printed_text, "Should report updated version via install-result status"
 
     def test_update_already_latest(self):
         from datus.cli.skill_commands import SkillCommands
@@ -406,7 +413,9 @@ class TestSkillCommandsUpdate:
             cmds.cmd_skill_update()
             mock_mgr.return_value.install_from_marketplace.assert_not_called()
             printed_text = str(cli.console.print.call_args_list)
-            assert "offline" in printed_text or "Error" in printed_text, "Should report error when update check fails"
+            # Pin to the exception detail — generic "Error" fallback would
+            # pass even if the actual exception text was swallowed.
+            assert "offline" in printed_text, "Update error path must surface the exception detail"
 
 
 class TestSkillCommandsRemove:

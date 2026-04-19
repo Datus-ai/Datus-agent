@@ -64,11 +64,11 @@ def test_get_views_with_ddl(duckdb_connector: DuckdbConnector):
     views = duckdb_connector.get_views_with_ddl()
     assert isinstance(views, list)
     # Sample DuckDB may have 0 views; verify the API contract (list, each item
-    # has the standard shape) rather than requiring a specific count.
+    # is a dict with the standard keys). `"table_name" in v` also passes for
+    # strings / tuples, so assert isinstance(v, dict) first.
     for v in views:
-        assert "table_name" in v
-        assert "database_name" in v
-        assert "schema_name" in v
+        assert isinstance(v, dict), f"view entry must be dict, got {type(v).__name__}: {v!r}"
+        assert {"table_name", "database_name", "schema_name"}.issubset(v)
 
 
 def test_get_table_schema(duckdb_connector: DuckdbConnector):
