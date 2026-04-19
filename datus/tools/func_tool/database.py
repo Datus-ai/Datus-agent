@@ -854,23 +854,25 @@ class DBFuncTool:
                 result.append({"type": "table", "name": tb})
 
             if include_views:
-                # Add views
+                # Add views. We deliberately swallow any exception — some connectors
+                # don't support views (NotImplementedError/AttributeError), and others
+                # raise real SQL errors when the system view the adapter targets is
+                # missing on that DB version. Failing list_tables entirely for a
+                # subordinate listing would hide the tables we already fetched.
                 try:
                     views = connector.get_views(catalog, database, schema_name)
                     for view in views:
                         result.append({"type": "view", "name": view})
-                except (NotImplementedError, AttributeError):
-                    # Some connectors may not support get_views
-                    pass
+                except Exception as e:
+                    logger.debug(f"get_views unavailable on {connector.dialect}: {e}")
 
-                # Add materialized views
+                # Add materialized views (same reasoning as views above).
                 try:
                     materialized_views = connector.get_materialized_views(catalog, database, schema_name)
                     for mv in materialized_views:
                         result.append({"type": "materialized_view", "name": mv})
-                except (NotImplementedError, AttributeError):
-                    # Some connectors may not support get_materialized_views
-                    pass
+                except Exception as e:
+                    logger.debug(f"get_materialized_views unavailable on {connector.dialect}: {e}")
 
             filtered_result = self._filter_table_entries(result, catalog, database, schema_name)
             return FuncToolResult(result=filtered_result)
