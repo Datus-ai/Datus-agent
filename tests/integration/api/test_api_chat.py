@@ -124,22 +124,23 @@ async def chat_client(chat_agent_config, chat_datus_service):
         deps_mod._default_interactive,
         deps_mod._stream_thinking,
     )
-    mod.service = DatusAPIService(agent_args)
-
     cache = DatusServiceCache(max_size=4)
-    init_deps(NoAuthProvider(), cache, namespace="bird_school")
 
     async def _factory():
         return chat_datus_service
 
-    await cache.get_or_create("default", _factory)
-
+    # Enter try/finally BEFORE mutating globals so failures during setup
+    # (DatusAPIService, init_deps, cache.get_or_create) still unwind the
+    # patched module state and shut the cache down cleanly.
     try:
+        mod.service = DatusAPIService(agent_args)
+        init_deps(NoAuthProvider(), cache, namespace="bird_school")
+        await cache.get_or_create("default", _factory)
+
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", timeout=120.0) as c:
             yield c
     finally:
         mod.service = saved
-        await cache.shutdown()
         (
             deps_mod._auth_provider,
             deps_mod._service_cache,
@@ -148,6 +149,8 @@ async def chat_client(chat_agent_config, chat_datus_service):
             deps_mod._default_interactive,
             deps_mod._stream_thinking,
         ) = saved_deps
+        # Shut the cache down last so if it raises the globals are already restored.
+        await cache.shutdown()
 
 
 # ---------------------------------------------------------------------------
