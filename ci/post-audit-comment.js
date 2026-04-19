@@ -29,10 +29,10 @@ module.exports = async ({ github, context, core }) => {
   const MAX_ROWS = 80;
 
   const modeLabel = mode === 'diff'
-    ? 'diff-only (blocks both P0 and P1)'
+    ? 'diff-only (P0 blocks, P1 warns)'
     : mode === 'full'
       ? 'full scan (P0 blocks, P1 warns)'
-      : 'paths (blocks both P0 and P1)';
+      : 'paths (P0 blocks, P1 warns)';
 
   // --- Build body ---
   if (summary.total === 0) {
@@ -56,9 +56,7 @@ module.exports = async ({ github, context, core }) => {
   const p1Issues = issues.filter(i => i.severity === 'P1');
 
   const p0Icon = summary.p0 > 0 ? ':no_entry:' : ':white_check_mark:';
-  const p1Icon = summary.p1 > 0
-    ? (mode === 'full' ? ':warning:' : ':no_entry:')
-    : ':white_check_mark:';
+  const p1Icon = summary.p1 > 0 ? ':warning:' : ':white_check_mark:';
 
   const lines = [
     MARKER,
@@ -70,7 +68,7 @@ module.exports = async ({ github, context, core }) => {
     '| Severity | Count | Status |',
     '|---|---|---|',
     `| **P0** (always blocks) | ${summary.p0} | ${p0Icon} |`,
-    `| **P1** (blocks in diff mode, warns in full mode) | ${summary.p1} | ${p1Icon} |`,
+    `| **P1** (warn-only) | ${summary.p1} | ${p1Icon} |`,
     '',
   ];
 
@@ -92,7 +90,7 @@ module.exports = async ({ github, context, core }) => {
 
   // --- P1 table ---
   if (p1Issues.length > 0) {
-    lines.push(`### P1 Issues (${mode === 'full' ? 'warn-only' : 'blocking'})`);
+    lines.push('### P1 Issues (warn-only)');
     lines.push('');
     lines.push('| File | Line | Check | Message |');
     lines.push('|---|---|---|---|');
