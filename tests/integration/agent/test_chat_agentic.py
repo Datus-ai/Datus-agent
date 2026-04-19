@@ -123,9 +123,17 @@ class TestChatAgentic:
         response = chat_responses[0]
         assert response.output.get("success") is True, "Chat response should be successful"
 
-        # Chat node returns SQL in the response text (markdown), not as a top-level key.
-        # Verify the response contains SQL-like content (SELECT statement).
-        response_text = response.output.get("response", "")
-        assert "select" in response_text.lower(), (
-            f"Response should contain generated SQL, got response: {response_text[:500]}"
+        # Verify by behavior, not response formatting: the agent must have actually
+        # executed a SQL query (tools_used contains read_query/run_query) AND the
+        # response must mention the subject ("fresno"). The chat node is free to
+        # present results as a markdown summary without quoting the SELECT verbatim,
+        # so asserting on the literal string "select" makes the test LLM-brittle.
+        execution_stats = response.output.get("execution_stats", {}) or {}
+        tools_used = execution_stats.get("tools_used", []) or []
+        assert any(t and ("query" in t.lower()) for t in tools_used), (
+            f"Agent should execute a SQL/query tool to answer the data question, tools_used: {tools_used}"
+        )
+        response_text = (response.output.get("response") or "").lower()
+        assert "fresno" in response_text, (
+            f"Response should reference 'Fresno' (the filter from the question), got response: {response_text[:500]}"
         )
