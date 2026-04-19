@@ -470,6 +470,14 @@ class DBFuncTool:
         if explicit:
             return self._normalize_identifier_part(explicit)
 
+        # In multi-connector mode, the logical routing database is the configured
+        # service database key, not the engine-internal database name exposed by
+        # the connector (e.g. "SSB"). Using the physical name here breaks
+        # follow-up routing for describe_table/list_tables when no explicit
+        # database argument is provided.
+        if field == "database" and self._is_multi_connector:
+            return self._normalize_identifier_part(self._default_database)
+
         fallback_attr_map = {
             "catalog": "catalog_name",
             "database": "database_name",

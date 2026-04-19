@@ -69,7 +69,6 @@ class TestGenMetricsAgentic:
                 "Read frpm.yml first to understand the existing data source, then create the metric. "
                 "Use the end_metric_generation tool when done."
             ),
-            max_turns=5,
         )
 
         action_manager = ActionHistoryManager()
@@ -103,7 +102,6 @@ class TestGenMetricsAgentic:
                 "The frpm data source has a measure called total_frpm_count_k12 with SUM aggregation. "
                 "Use the end_metric_generation tool when done."
             ),
-            max_turns=5,
         )
 
         action_manager = ActionHistoryManager()

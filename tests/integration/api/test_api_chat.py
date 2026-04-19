@@ -98,6 +98,7 @@ def chat_datus_service(chat_agent_config):
 @pytest_asyncio.fixture(scope="module")
 async def chat_client(chat_agent_config, chat_datus_service):
     """AsyncClient wired to the full FastAPI app with real DatusService."""
+    import datus.api.deps as deps_mod
     from datus.api.auth import NoAuthProvider
     from datus.api.deps import init_deps
     from datus.api.service import DatusAPIService, create_app
@@ -115,16 +116,23 @@ async def chat_client(chat_agent_config, chat_datus_service):
 
     mod = _svc_mod()
     saved = mod.service
+    saved_deps = (
+        deps_mod._auth_provider,
+        deps_mod._service_cache,
+        deps_mod._namespace,
+        deps_mod._default_source,
+        deps_mod._default_interactive,
+        deps_mod._stream_thinking,
+    )
     mod.service = DatusAPIService(agent_args)
 
-    ns = "bird_school"
     cache = DatusServiceCache(max_size=4)
-    init_deps(NoAuthProvider(namespace=ns), cache, namespace=ns)
+    init_deps(NoAuthProvider(), cache, namespace="bird_school")
 
     async def _factory():
         return chat_datus_service
 
-    await cache.get_or_create(ns, _factory)
+    await cache.get_or_create("default", _factory)
 
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", timeout=120.0) as c:
@@ -132,6 +140,14 @@ async def chat_client(chat_agent_config, chat_datus_service):
     finally:
         mod.service = saved
         await cache.shutdown()
+        (
+            deps_mod._auth_provider,
+            deps_mod._service_cache,
+            deps_mod._namespace,
+            deps_mod._default_source,
+            deps_mod._default_interactive,
+            deps_mod._stream_thinking,
+        ) = saved_deps
 
 
 # ---------------------------------------------------------------------------

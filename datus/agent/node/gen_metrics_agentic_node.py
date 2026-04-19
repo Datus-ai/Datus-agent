@@ -99,6 +99,7 @@ class GenMetricsAgenticNode(AgenticNode):
         self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
         self.generation_tools: Optional[GenerationTools] = None
         self.ask_user_tool = None
+        self.hooks = None
         self.setup_tools()
 
     def get_node_name(self) -> str:
@@ -423,7 +424,7 @@ class GenMetricsAgenticNode(AgenticNode):
                 tools=self.tools,
                 mcp_servers=self.mcp_servers,
                 instruction=system_instruction,
-                max_turns=self.max_turns,
+                max_turns=user_input.max_turns if user_input.max_turns else self.max_turns,
                 session=session,
                 action_history_manager=action_history_manager,
                 hooks=None,

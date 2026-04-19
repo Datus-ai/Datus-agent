@@ -598,7 +598,7 @@ class TestMCPToolRegistration:
     @pytest.fixture
     def server(self):
         """Create a test server instance."""
-        server = create_server(namespace="bird_sqlite", config_path=CONFIG_PATH)
+        server = create_server(namespace="ssb_sqlite", config_path=CONFIG_PATH)
         yield server
         server.close()
 
@@ -628,7 +628,7 @@ class TestMCPToolExecution:
     @pytest.fixture
     def server(self):
         """Create a test server instance."""
-        server = create_server(namespace="bird_sqlite", config_path=CONFIG_PATH)
+        server = create_server(namespace="ssb_sqlite", config_path=CONFIG_PATH)
         yield server
         server.close()
 

@@ -114,6 +114,7 @@ agent:
     gen_metrics:
       max_turns: 30
       system_prompt: gen_metrics
+      prompt_version: "1.1"
     gen_ext_knowledge:
       max_turns: 30
       system_prompt: gen_ext_knowledge

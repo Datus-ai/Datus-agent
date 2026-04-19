@@ -116,10 +116,10 @@ class TestDBFuncToolIntegrationReal:
 class TestSqliteMultiConnector:
     @pytest.fixture
     def agent_config(self):
-        """Load SSB SQLite namespace configuration."""
+        """Load acceptance config using a valid current database."""
         from tests.conftest import load_acceptance_config
 
-        return load_acceptance_config(namespace="bird_sqlite", home="tests")
+        return load_acceptance_config(namespace="california_schools", home="tests")
 
     @pytest.fixture
     def db_tool(self, agent_config):
@@ -134,13 +134,15 @@ class TestSqliteMultiConnector:
         """Test that multi-connector mode initializes correctly."""
 
         assert db_tool._db_manager is not None
-        assert db_tool._namespace == "bird_sqlite"
+        assert db_tool._namespace == "california_schools"
+        assert db_tool._default_database == "california_schools"
         assert db_tool._connector_cache_size > 1
 
     def test_database(self, db_tool):
         result = db_tool.list_databases()
         assert result.success == 1
-        assert len(result.result) > 1
+        available_names = {item["name"] for item in result.result if item.get("available")}
+        assert {"california_schools", "card_games"}.issubset(available_names)
 
     def test_tables(self, db_tool):
         result = db_tool.list_tables(database="california_schools")

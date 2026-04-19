@@ -24,7 +24,7 @@ Design principle: NO mock except LLM.
 """
 
 import json
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -52,7 +52,7 @@ class TestGenMetricsAgenticNodeInit:
         assert node.get_node_name() == "gen_metrics"
         assert node.id == "gen_metrics_node"
         assert node.execution_mode == "workflow"
-        assert not hasattr(node, "hooks")  # hooks removed from gen_metrics
+        assert node.hooks is None
 
     def test_metrics_has_tools(self, real_agent_config, mock_llm_create):
         """Test that the node has filesystem and generation tools."""
@@ -220,7 +220,7 @@ class TestGenMetricsAgenticNodeExecution:
             execution_mode="workflow",
         )
 
-        assert not hasattr(node, "hooks")  # hooks removed from gen_metrics
+        assert node.hooks is None
         assert node.execution_mode == "workflow"
 
         node.input = SemanticNodeInput(user_message="Generate metrics")
@@ -590,6 +590,34 @@ class TestPrepareTemplateContext:
 
         assert "native_tools" in context
         assert "mcp_tools" in context
+
+
+class TestGetSystemPrompt:
+    def test_workflow_uses_prompt_version_from_config(self, real_agent_config, mock_llm_create):
+        node = _make_node(real_agent_config, mock_llm_create, execution_mode="workflow")
+        node.input = SemanticNodeInput(user_message="Generate metrics")
+
+        with patch("datus.prompts.prompt_manager.get_prompt_manager") as mock_pm:
+            mock_pm.return_value.render_template.return_value = "test prompt"
+
+            node._get_system_prompt(template_context={})
+
+            call_kwargs = mock_pm.return_value.render_template.call_args
+            version = call_kwargs.kwargs.get("version")
+            assert version == "1.1", f"Expected configured version '1.1', got '{version}'"
+
+    def test_input_prompt_version_overrides_config(self, real_agent_config, mock_llm_create):
+        node = _make_node(real_agent_config, mock_llm_create, execution_mode="workflow")
+        node.input = SemanticNodeInput(user_message="Generate metrics", prompt_version="1.2")
+
+        with patch("datus.prompts.prompt_manager.get_prompt_manager") as mock_pm:
+            mock_pm.return_value.render_template.return_value = "test prompt"
+
+            node._get_system_prompt(template_context={})
+
+            call_kwargs = mock_pm.return_value.render_template.call_args
+            version = call_kwargs.kwargs.get("version")
+            assert version == "1.2", f"Expected explicit version '1.2', got '{version}'"
 
 
 # ---------------------------------------------------------------------------
