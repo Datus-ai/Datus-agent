@@ -89,26 +89,43 @@ def agent_config(tmp_path_factory) -> AgentConfig:
     tmp_dir = tmp_path_factory.mktemp("bi_conf")
     tmp_cfg = tmp_dir / "agent.yml"
     tmp_home = tmp_path_factory.mktemp("bi_home")
+    tmp_project = tmp_path_factory.mktemp("bi_project")
 
-    # Rewrite `home:` to point at an isolated tmp dir so every derived path
-    # (rag_storage_path, semantic_model_path, dashboard_path, ...) is tmp-scoped.
-    # Use re.subn and assert a replacement happened — otherwise, if agent.yml
-    # changes shape, the fixture would silently load the original home and the
-    # E2E cleanup block could rmtree real RAG/dashboard/semantic-model storage.
+    # Rewrite `home:` AND `project_root:` to point at isolated tmp dirs so
+    # every derived path (rag_storage_path resolves from home;
+    # semantic_model_path / dashboard_path resolve from project_root) is
+    # tmp-scoped. Patching only `home:` leaves project_root pointing at the
+    # developer's real `.datus_test_data/workspace/` — E2E cleanup could then
+    # rmtree real semantic-model / dashboard storage.
+    # Use re.subn and assert a replacement happened — if agent.yml changes
+    # shape and the regex misses, the fixture fails loudly instead of silently
+    # writing to the real filesystem.
     content = src.read_text()
-    # Match `home:` with any leading indent — agent.yml nests `home:` under
-    # `agent:` (two-space indent), so an `^home:` anchor would never match.
-    # Preserve the captured indent in the replacement so the YAML stays valid.
-    content, replacements = re.subn(
+    # Match with any leading indent — agent.yml nests both keys under `agent:`
+    # (two-space indent), so an `^home:` anchor would never match.
+    # Preserve the captured indent in each replacement so YAML stays valid.
+    content, home_repl = re.subn(
         r"^(\s*)home:\s*\S+",
         lambda m: f"{m.group(1)}home: {tmp_home}",
         content,
         count=1,
         flags=re.MULTILINE,
     )
-    assert replacements == 1, (
+    assert home_repl == 1, (
         "agent.yml must contain an `agent.home` entry for tmp isolation "
         "(got 0 substitutions — the fixture cannot guarantee safe cleanup)"
+    )
+    content, project_repl = re.subn(
+        r"^(\s*)project_root:\s*\S+",
+        lambda m: f"{m.group(1)}project_root: {tmp_project}",
+        content,
+        count=1,
+        flags=re.MULTILINE,
+    )
+    assert project_repl == 1, (
+        "agent.yml must contain an `agent.project_root` entry for tmp "
+        "isolation (got 0 substitutions — semantic_model / dashboard paths "
+        "would resolve to the real workspace)"
     )
     tmp_cfg.write_text(content)
 
