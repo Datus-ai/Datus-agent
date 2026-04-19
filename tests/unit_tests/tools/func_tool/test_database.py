@@ -638,6 +638,41 @@ class TestGetConnectorRouting:
         assert conn_target is mock_target
         assert conn_source is not conn_target
 
+    def test_multi_connector_defaults_coordinate_database_to_logical_name(self):
+        """When database is omitted, table coordinates should use the logical default database key."""
+        from datus.tools.db_tools.db_manager import DBManager
+
+        mock_source = Mock()
+        mock_source.dialect = "duckdb"
+        mock_source.database_name = "PHYSICAL_DB"
+        mock_source.get_databases.return_value = []
+
+        mock_db_manager = Mock(spec=DBManager)
+        mock_db_manager.get_conn.return_value = mock_source
+        mock_db_manager.first_conn.return_value = mock_source
+
+        mock_config = Mock()
+        mock_config.active_model.return_value.model = "gpt-5.4"
+        mock_config.current_database = "duckdb"
+        mock_config.current_db_configs.return_value = {"duckdb": Mock(), "greenplum": Mock()}
+
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            tool = DBFuncTool(
+                mock_db_manager,
+                agent_config=mock_config,
+                default_database="duckdb",
+            )
+
+        coordinate = tool._build_table_coordinate("orders")
+
+        assert tool._is_multi_connector is True
+        assert coordinate.database == "duckdb"
+
     def test_explicit_database_raises_when_not_configured(self):
         """When caller explicitly passes a database that doesn't exist, raise DatusException (no silent fallback)."""
         from datus.tools.db_tools.db_manager import DBManager
