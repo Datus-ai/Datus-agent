@@ -96,15 +96,18 @@ def agent_config(tmp_path_factory) -> AgentConfig:
     # changes shape, the fixture would silently load the original home and the
     # E2E cleanup block could rmtree real RAG/dashboard/semantic-model storage.
     content = src.read_text()
+    # Match `home:` with any leading indent — agent.yml nests `home:` under
+    # `agent:` (two-space indent), so an `^home:` anchor would never match.
+    # Preserve the captured indent in the replacement so the YAML stays valid.
     content, replacements = re.subn(
-        r"^home:\s*\S+",
-        f"home: {tmp_home}",
+        r"^(\s*)home:\s*\S+",
+        lambda m: f"{m.group(1)}home: {tmp_home}",
         content,
         count=1,
         flags=re.MULTILINE,
     )
     assert replacements == 1, (
-        "agent.yml must contain a top-level `home:` entry for tmp isolation "
+        "agent.yml must contain an `agent.home` entry for tmp isolation "
         "(got 0 substitutions — the fixture cannot guarantee safe cleanup)"
     )
     tmp_cfg.write_text(content)
