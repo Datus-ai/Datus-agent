@@ -241,8 +241,10 @@ class TestAPIChatN9:
                 events = parse_sse_body(resp.text)
                 assert len(events) >= 1
                 ids = [e["id"] for e in events if e.get("id", -1) >= 0]
-                if len(ids) >= 2:
-                    assert ids[0] == 0
+                # Resume must replay numbered events as a contiguous sequence
+                # starting at id=0. Empty list matches list(range(0)) == [],
+                # so the check is unconditional — no hidden skip branch.
+                assert ids == list(range(len(ids))), f"resume events must be a contiguous 0..N sequence, got {ids}"
             else:
                 assert resp.json().get("errorCode") == "TASK_NOT_FOUND"
         finally:
@@ -298,14 +300,25 @@ class TestAPIChatN9:
             "stop_sess",
         )
         try:
+            # If the task is still running when we arrive, send /stop and wait
+            # for it to terminate. If it already finished on its own (fast
+            # LLM / small workload), we skip the stop call — the terminal-
+            # state assert below still fires, so the test never silently passes.
+            stop_success: bool | None = None
             if task.status == "running":
                 body = (await chat_client.post("/api/v1/chat/stop", json={"session_id": "stop_sess"})).json()
-                assert body["success"] is True
+                stop_success = body["success"]
                 for _ in range(20):
                     await asyncio.sleep(0.5)
                     if task.status != "running":
                         break
-                assert task.status in ("cancelled", "completed", "error")
+            # Unconditional terminal-state check — applies whether we stopped
+            # the task or it finished on its own.
+            assert task.status in ("cancelled", "completed", "error"), (
+                f"task should reach a terminal state, got {task.status}"
+            )
+            # Only assert stop-endpoint success if we actually called it.
+            assert stop_success in (None, True), f"chat/stop must report success when invoked, got {stop_success}"
         finally:
             await _cleanup_task(chat_datus_service, task)
 
