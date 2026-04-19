@@ -113,6 +113,7 @@ class TestEnsureParentDir:
         target = tmp_path / "file.txt"
         _ensure_parent_dir(target)
         _ensure_parent_dir(target)
+        assert target.parent.is_dir(), "parent dir must still exist after second call"
 
 
 class TestReadPid:
@@ -149,7 +150,9 @@ class TestWriteRemovePidFile:
         assert not pid_file.exists()
 
     def test_remove_does_not_raise_when_missing(self, tmp_path):
-        _remove_pid_file(tmp_path / "nonexistent.pid")
+        missing = tmp_path / "nonexistent.pid"
+        _remove_pid_file(missing)
+        assert not missing.exists(), "pid file should still be absent — nothing was created"
 
 
 class TestIsProcessRunning:
@@ -417,6 +420,9 @@ class TestRemovePidFileErrorPath:
         pid_file.write_text("1")
         with patch.object(Path, "unlink", side_effect=OSError("denied")):
             _remove_pid_file(pid_file)  # must not raise
+        # unlink was mocked to raise, so the file should still be on disk —
+        # proves the OSError was swallowed, not that unlink was never called.
+        assert pid_file.exists(), "pid file should remain since unlink was blocked"
 
 
 # ---------------------------------------------------------------------------
