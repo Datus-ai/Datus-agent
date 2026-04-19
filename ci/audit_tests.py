@@ -14,7 +14,7 @@ safety rules (no real `rmtree`, no `patch('builtins.open')`, no hardcoded
 localhost ports, no sleep-based readiness, etc).
 
 Usage:
-    python ci/audit_tests.py --diff-only origin/main    # incremental: P0+P1 hard fail
+    python ci/audit_tests.py --diff-only origin/main    # incremental: P0 hard fail, P1 warn
     python ci/audit_tests.py --all                      # full scan: P0 hard fail, P1 warn
     python ci/audit_tests.py --paths tests/unit_tests/tools/skill_tools/
     python ci/audit_tests.py --json ci/audit-report.json
@@ -22,7 +22,7 @@ Usage:
 
 Exit codes:
     0 - no blocking issues
-    1 - blocking issues found (P0 always blocks; P1 blocks only in --diff-only / --paths mode)
+    1 - blocking issues found (P0 always blocks; P1 is warn-only in every mode)
 
 Outputs (when --github-output and $GITHUB_OUTPUT is set):
     audit_outcome  - "success" or "failure"
@@ -1422,10 +1422,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Static test-quality audit (unit + integration tiers)")
     mode = p.add_mutually_exclusive_group(required=True)
     mode.add_argument(
-        "--diff-only", metavar="BASE", help="Scan only files changed vs BASE (e.g. origin/main). P1 issues hard-fail."
+        "--diff-only", metavar="BASE", help="Scan only files changed vs BASE (e.g. origin/main). P0 hard-fail, P1 warn."
     )
-    mode.add_argument("--all", action="store_true", help="Scan all tests under selected tiers. P1 issues warn-only.")
-    mode.add_argument("--paths", nargs="+", help="Scan explicit paths (files or dirs). P1 issues hard-fail.")
+    mode.add_argument("--all", action="store_true", help="Scan all tests under selected tiers. P0 hard-fail, P1 warn.")
+    mode.add_argument("--paths", nargs="+", help="Scan explicit paths (files or dirs). P0 hard-fail, P1 warn.")
     p.add_argument(
         "--tier",
         choices=["all", "unit", "integration"],
@@ -1500,10 +1500,12 @@ def main(argv: list[str] | None = None) -> int:
 
     p0, p1 = emit_report(issues, mode, target_files, args.json)
 
-    if mode == "full":
-        failed = p0 > 0
-    else:
-        failed = (p0 + p1) > 0
+    # P0 hard-fails in every mode. P1 is warn-only across the board: in
+    # practice a PR that touches a legacy file inherits that file's full
+    # P1 backlog, which made diff-only CI impossibly strict (PRs unrelated
+    # to the legacy rot still got blocked). Keeping P1 visible in the PR
+    # comment is enough to drive incremental cleanup.
+    failed = p0 > 0
     outcome = "failure" if failed else "success"
 
     if args.github_output:
