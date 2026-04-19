@@ -220,6 +220,7 @@ class SemanticTools:
         """
         # Normalize null values from LLM
         path = normalize_null(path)
+        logger.info(f"list_metrics called: path={path}, limit={limit}, offset={offset}")
         try:
             # Try storage first
             all_metrics = self.metric_rag.search_all_metrics()
@@ -305,6 +306,7 @@ class SemanticTools:
         """
         # Normalize null values from LLM
         path = normalize_null(path)
+        logger.info(f"get_dimensions called: metric={metric_name}, path={path}")
         try:
             # Get dimensions from adapter (MetricFlow) to ensure consistency with query execution
             if self.adapter:
@@ -390,6 +392,11 @@ class SemanticTools:
         # Sanitize time parameters: LLM may pass string "null"/"None" instead of omitting
         time_start = normalize_null(time_start)
         time_end = normalize_null(time_end)
+        logger.info(
+            f"query_metrics called: metrics={metrics}, dimensions={dimensions}, path={path}, "
+            f"time=[{time_start},{time_end}], granularity={time_granularity}, where={where}, "
+            f"limit={limit}, dry_run={dry_run}"
+        )
 
         try:
             # Execute query via adapter
@@ -448,6 +455,7 @@ class SemanticTools:
         Returns:
             FuncToolResult with validation status and issues
         """
+        logger.info("validate_semantic called")
         if not self.adapter:
             return FuncToolResult(
                 success=0,
