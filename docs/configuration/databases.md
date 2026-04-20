@@ -4,7 +4,7 @@ Configure database connections under `agent.services.databases`.
 
 ## Overview
 
-The runtime services in Datus Agent live under `agent.services` in `agent.yml`. This page focuses on database connections in `services.databases`. Semantic adapters, BI tools, and schedulers are documented on their sibling pages.
+The runtime services in Datus Agent live under `agent.services` in `agent.yml`. This page focuses on database connections in `services.databases`. Semantic adapters, BI platforms, and schedulers are documented on their sibling pages.
 
 Key features:
 

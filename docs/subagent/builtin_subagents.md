@@ -68,7 +68,7 @@ agent:
     gen_dashboard:
       model: claude     # Optional: defaults to configured model
       max_turns: 30     # Optional: defaults to 30
-      bi_platform: superset  # Optional: explicit platform (auto-detected when only one BI tool is configured)
+      bi_platform: superset  # Optional: explicit platform (auto-detected when only one BI platform is configured)
 
     scheduler:
       model: claude     # Optional: defaults to configured model
@@ -1016,7 +1016,7 @@ agent:
     gen_dashboard:
       model: claude           # Optional: defaults to configured model
       max_turns: 30           # Optional: defaults to 30
-      bi_platform: superset   # Optional: auto-detected when only one BI tool is configured
+      bi_platform: superset   # Optional: auto-detected when only one BI platform is configured
 ```
 
 **Requirements:**

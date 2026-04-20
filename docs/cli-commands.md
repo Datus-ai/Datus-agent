@@ -78,7 +78,7 @@ datus init
 
 ### `datus service list`
 
-Show all configured databases, semantic adapters, BI tools, and schedulers.
+Show all configured databases, semantic adapters, BI platforms, and schedulers.
 
 ```bash
 datus service list

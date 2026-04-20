@@ -113,7 +113,7 @@ agent:
     gen_dashboard:
       model: claude           # Optional: defaults to configured model
       max_turns: 30           # Optional: defaults to 30
-      bi_platform: superset   # Optional: auto-detected when only one BI tool is configured
+      bi_platform: superset   # Optional: auto-detected when only one BI platform is configured
 ```
 
 ### Configuration Parameters
@@ -122,7 +122,7 @@ agent:
 |-----------|----------|-------------|---------|
 | `model` | No | LLM model to use | Uses default configured model |
 | `max_turns` | No | Maximum conversation turns | 30 |
-| `bi_platform` | No | Explicit platform key from `services.bi_platforms` (`superset`, `grafana`) | Auto-detected when only one BI tool is configured |
+| `bi_platform` | No | Explicit platform key from `services.bi_platforms` (`superset`, `grafana`) | Auto-detected when only one BI platform is configured |
 | `services.bi_platforms.<platform>.type` | No | BI platform type. If set, it must match the config key | Uses the config key |
 | `services.bi_platforms.<platform>.api_url` | Yes | BI platform API endpoint | — |
 | `services.bi_platforms.<platform>.username` | Superset | Login username | — |

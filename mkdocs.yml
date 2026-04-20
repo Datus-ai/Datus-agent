@@ -153,7 +153,7 @@ plugins:
             Services: 服务
             Databases: 数据库
             Semantic Layer: 语义层
-            BI Tools: BI 工具
+            BI Platforms: BI 平台
             Schedulers: 调度器
             Adapters: 适配器
             Database Adapters: 数据库适配器

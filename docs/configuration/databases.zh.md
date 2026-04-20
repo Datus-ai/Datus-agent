@@ -4,7 +4,7 @@
 
 ## 概览
 
-Datus Agent 在 `agent.yml` 中通过 `agent.services` 统一管理运行时集成。本页聚焦 `services.databases` 下的数据库连接；语义层、BI 工具和调度器分别在同级页面单独说明。
+Datus Agent 在 `agent.yml` 中通过 `agent.services` 统一管理运行时集成。本页聚焦 `services.databases` 下的数据库连接；语义层、BI 平台和调度器分别在同级页面单独说明。
 
 主要特性：
 

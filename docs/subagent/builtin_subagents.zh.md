@@ -68,7 +68,7 @@ agent:
     gen_dashboard:
       model: claude     # 可选：默认使用已配置的模型
       max_turns: 30     # 可选：默认为 30
-      bi_platform: superset  # 可选：显式指定平台（仅配置一个 BI 工具时可自动检测）
+      bi_platform: superset  # 可选：显式指定平台（仅配置一个 BI 平台时可自动检测）
 
     scheduler:
       model: claude     # 可选：默认使用已配置的模型
@@ -1014,7 +1014,7 @@ agent:
     gen_dashboard:
       model: claude           # 可选：默认使用已配置的模型
       max_turns: 30           # 可选：默认为 30
-      bi_platform: superset   # 可选：只配置一个 BI 工具时可自动检测
+      bi_platform: superset   # 可选：只配置一个 BI 平台时可自动检测
 ```
 
 **前置条件**：

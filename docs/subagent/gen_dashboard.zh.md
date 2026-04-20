@@ -113,7 +113,7 @@ agent:
     gen_dashboard:
       model: claude           # 可选：默认使用已配置的模型
       max_turns: 30           # 可选：默认为 30
-      bi_platform: superset   # 可选：当只配置一个 BI 工具时可自动检测
+      bi_platform: superset   # 可选：当只配置一个 BI 平台时可自动检测
 ```
 
 ### 配置参数
@@ -122,7 +122,7 @@ agent:
 |------|------|------|--------|
 | `model` | 否 | 使用的 LLM 模型 | 使用已配置的默认模型 |
 | `max_turns` | 否 | 最大对话轮数 | 30 |
-| `bi_platform` | 否 | `services.bi_platforms` 中的平台键（如 `superset`、`grafana`） | 仅配置一个 BI 工具时自动检测 |
+| `bi_platform` | 否 | `services.bi_platforms` 中的平台键（如 `superset`、`grafana`） | 仅配置一个 BI 平台时自动检测 |
 | `services.bi_platforms.<platform>.type` | 否 | BI 平台类型；如果填写，必须与配置键一致 | 使用配置键 |
 | `services.bi_platforms.<platform>.api_url` | 是 | BI 平台 API 地址 | — |
 | `services.bi_platforms.<platform>.username` | Superset | 登录用户名 | — |
