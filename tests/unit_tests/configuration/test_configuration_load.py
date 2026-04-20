@@ -10,11 +10,15 @@ from tests.conftest import TEST_CONF_DIR
 
 
 @pytest.fixture
-def agent_config() -> AgentConfig:
-    return load_agent_config(config=str(TEST_CONF_DIR / "agent.yml"), reload=True)
+def agent_config(tmp_path) -> AgentConfig:
+    # ``home=tmp_path`` pins every derived path inside the pytest-managed tmp
+    # dir. The unit-tests autouse ``_isolate_project_cwd`` fixture already
+    # chdir-s into tmp_path, so the yml's relative paths never resolve under
+    # the repo root.
+    return load_agent_config(config=str(TEST_CONF_DIR / "agent.yml"), home=str(tmp_path), reload=True)
 
 
-def test_config_exception():
+def test_config_exception(tmp_path):
     with pytest.raises(DatusException, match="Agent configuration file not found: not_found.yml"):
         load_agent_config(config="not_found.yml", reload=True)
 
@@ -22,9 +26,9 @@ def test_config_exception():
         DatusException,
         match="Unexcepted value of Node Type, excepted value:",
     ):
-        load_agent_config(config=str(TEST_CONF_DIR / "wrong_nodes_agent.yml"), reload=True)
+        load_agent_config(config=str(TEST_CONF_DIR / "wrong_nodes_agent.yml"), home=str(tmp_path), reload=True)
 
-    agent_config = load_agent_config(config=str(TEST_CONF_DIR / "agent.yml"), reload=True)
+    agent_config = load_agent_config(config=str(TEST_CONF_DIR / "agent.yml"), home=str(tmp_path), reload=True)
 
     with pytest.raises(DatusException, match="Unsupported value `abc` for field `benchmark`"):
         agent_config.override_by_args(database="snowflake", benchmark="abc")

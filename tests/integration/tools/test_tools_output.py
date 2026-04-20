@@ -21,8 +21,12 @@ logger = get_logger(__name__)
 
 class TestBirdDevOutput:
     @pytest.fixture
-    def global_config(self) -> AgentConfig:
-        return load_agent_config(config=str(TEST_CONF_DIR / "agent.yml"))
+    def global_config(self, tmp_path, monkeypatch) -> AgentConfig:
+        # chdir to tmp_path so the yml's ``home: .datus_test_data`` relative
+        # path resolves inside tmp_path instead of repo cwd, keeping the
+        # fixture safe under xdist.
+        monkeypatch.chdir(tmp_path)
+        return load_agent_config(config=str(TEST_CONF_DIR / "agent.yml"), home=str(tmp_path))
 
     @pytest.fixture
     def test_data(self, tmp_path) -> dict:

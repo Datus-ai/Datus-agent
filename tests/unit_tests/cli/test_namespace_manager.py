@@ -9,8 +9,12 @@ from tests.conftest import TEST_CONF_DIR
 
 
 @pytest.fixture
-def agent_config() -> AgentConfig:
-    return load_agent_config(config=str(TEST_CONF_DIR / "agent.yml"), reload=True)
+def agent_config(tmp_path) -> AgentConfig:
+    # ``home=tmp_path`` pins every derived path inside the pytest-managed
+    # tmp dir. The session-level ``_isolate_project_cwd`` autouse fixture
+    # already chdir-s into tmp_path, so the yml's relative paths never
+    # resolve under the repo root.
+    return load_agent_config(config=str(TEST_CONF_DIR / "agent.yml"), home=str(tmp_path), reload=True)
 
 
 @pytest.fixture

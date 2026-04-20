@@ -242,15 +242,10 @@ def real_agent_config(tmp_path, reset_global_singletons):
     # Set current database (was: current_namespace = "test_ns")
     agent_config.current_database = "california_schools"
 
-    # Capture cwd before yielding, in case a test changes it
-    project_root = os.getcwd()
-
     yield agent_config
-
-    # Cleanup: storage backends with empty data_dir create datus_db* in cwd
-    for name in os.listdir(project_root):
-        if name.startswith("datus_db"):
-            shutil.rmtree(os.path.join(project_root, name), ignore_errors=True)
+    # tmp_path is pytest-managed; storage backends here use
+    # ``agent_config.path_manager.data_dir`` which is rooted at tmp_path, so no
+    # cwd cleanup is needed.
 
 
 # ---------------------------------------------------------------------------

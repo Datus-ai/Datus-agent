@@ -68,10 +68,20 @@ class TestLineageTools:
     """Test suite for lineage graph functionality"""
 
     @pytest.fixture
-    def agent_config(self) -> AgentConfig:
-        # Use test config file which has bird_sqlite namespace defined
+    def agent_config(self, tmp_path, monkeypatch) -> AgentConfig:
+        # Use test config file which has bird_sqlite namespace defined.
+        # The yml points ``home`` at the relative path ``.datus_test_data``,
+        # which ``Path.resolve()`` anchors to the current cwd. Switch cwd to
+        # ``tmp_path`` so every derived path (path_manager, storage data_dir,
+        # etc.) lands inside the pytest-managed tmp dir — safe under xdist and
+        # free of repo-root pollution.
+        monkeypatch.chdir(tmp_path)
         test_conf_path = Path(__file__).parent.parent.parent / "conf" / "agent.yml"
-        return load_agent_config(config=str(test_conf_path), namespace="bird_sqlite")
+        return load_agent_config(
+            config=str(test_conf_path),
+            namespace="bird_sqlite",
+            home=str(tmp_path),
+        )
 
     @pytest.fixture
     def setup_lineage_tool(self, agent_config: AgentConfig):
