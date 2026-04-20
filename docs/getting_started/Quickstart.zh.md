@@ -3,7 +3,7 @@
 几分钟内即可上手 Datus Agent。本指南将带你完成安装、配置和首次体验。
 
 !!! tip "想直接走完整数仓链路？"
-    如果你要体验分层建模、ETL 生成、Airflow 调度、语义资产生成和 Superset 仪表盘发布，请继续阅读 [数据工程快速开始](./data_engineering_quickstart.md)。
+    如果你要体验分层建模、ETL 生成、Airflow 调度、语义资产生成和 Superset 仪表盘发布，请继续阅读 [数据工程快速开始](./data_engineering_quickstart.zh.md)。
 
 ## 步骤 1：安装与配置
 
@@ -603,7 +603,7 @@ Datus 会自动分析该表，并将元数据加入上下文。
 
 在完成基础体验后，可以继续探索以下功能：
 
-- **[数据工程快速开始](./data_engineering_quickstart.md)** —— 使用 DAComp 构建分层数仓，并串起 Airflow 与 Superset
+- **[数据工程快速开始](./data_engineering_quickstart.zh.md)** —— 使用 DAComp 构建分层数仓，并串起 Airflow 与 Superset
 - **[上下文数据工程](./contextual_data_engineering.md)** —— 学习如何将数据资产用作上下文
 - **[配置指南](../configuration/introduction.md)** —— 连接自有数据库并自定义设置
 - **[CLI 参考手册](../cli/introduction.md)** —— 掌握全部命令与选项

@@ -57,7 +57,7 @@ agent:
   services:
     semantic_layer:
       metricflow:
-        timeout: 30  # optional, default is 30 seconds
+        timeout: 300  # optional, default is 300 seconds
         config_path: /path/to/agent.yml  # optional advanced override
 
   agentic_nodes:

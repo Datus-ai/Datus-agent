@@ -86,7 +86,7 @@ agent:
         type: snowflake
         warehouse: ${SNOWFLAKE_WAREHOUSE}
         account: ${SNOWFLAKE_ACCOUNT}
-        username: ${SNWOFLAKE_USER}
+        username: ${SNOWFLAKE_USER}
         password: ${SNOWFLAKE_PASSWORD}
       bird_sqlite:
         type: sqlite
@@ -197,7 +197,7 @@ benchmark:
 agent:
   services:
     databases:
-      spidersnow:
+      spider-snow:
         type: snowflake
         username: ${SNOWFLAKE_USER}
         account: ${SNOWFLAKE_ACCOUNT}
@@ -208,7 +208,7 @@ agent:
 ### Bootstrap Knowledge Base
 
 ```bash
-python -m datus.main bootstrap-kb --database spidersnow --benchmark spider2 --kb_update_strategy overwrite
+python -m datus.main bootstrap-kb --database spider-snow --benchmark spider2 --kb_update_strategy overwrite
 ```
 
 > ⚠️ May take hours (approx. 14,000 tables).
@@ -216,11 +216,11 @@ python -m datus.main bootstrap-kb --database spidersnow --benchmark spider2 --kb
 ### Run Test by IDs
 
 ```bash
-python -m datus.main benchmark --database spidersnow --benchmark spider2 --benchmark_task_ids sf_bq104
+python -m datus.main benchmark --database spider-snow --benchmark spider2 --benchmark_task_ids sf_bq104
 ```
 
 ```bash
-python -m datus.cli.main --database spidersnow  --config conf/agent.yml
+python -m datus.cli.main --database spider-snow  --config conf/agent.yml
 
 Datus> !darun_screen
 Creating a new SQL task

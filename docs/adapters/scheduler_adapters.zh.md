@@ -85,5 +85,5 @@ agent:
 ## 相关文档
 
 - [调度器配置](../configuration/schedulers.md)
-- [Scheduler Subagent 指南](../subagent/scheduler.md)
-- [数据工程快速开始](../getting_started/data_engineering_quickstart.md)
+- [Scheduler Subagent 指南](../subagent/scheduler.zh.md)
+- [数据工程快速开始](../getting_started/data_engineering_quickstart.zh.md)
