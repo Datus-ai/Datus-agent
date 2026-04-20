@@ -116,12 +116,11 @@ class SuccessStoryService:
     @staticmethod
     def _append_row(csv_path: Path, row: dict) -> None:
         """Append *row* to *csv_path*, writing the header if the file is new."""
-        file_exists = csv_path.exists()
         with open(csv_path, "a", newline="", encoding="utf-8") as f:
             try:
                 _lock_file(f)
                 writer = csv.DictWriter(f, fieldnames=list(_CSV_FIELDS))
-                if not file_exists or os.fstat(f.fileno()).st_size == 0:
+                if os.fstat(f.fileno()).st_size == 0:
                     writer.writeheader()
                 writer.writerow(row)
             finally:
