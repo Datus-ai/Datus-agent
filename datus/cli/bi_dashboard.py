@@ -861,11 +861,18 @@ class BiDashboardCommands:
 
         metrics = set()
         if files := metrics_result.get("semantic_models", []):
-            # Get base directory for semantic models
-            base_dir = self.agent_config.path_manager.semantic_model_path()
+            # Resolve via the KB sandbox helper so paths like
+            # "subject/semantic_models/metrics/foo.yml" normalize correctly
+            # (stripping the leading "subject/" to avoid double-prefix drift).
+            from datus.cli.generation_hooks import resolve_kb_sandbox_path
+
+            knowledge_base_dir = str(self.agent_config.path_manager.subject_dir)
             for file in files:
-                # Convert relative path to absolute path if needed
-                file_path = file if Path(file).is_absolute() else base_dir / file
+                resolved = resolve_kb_sandbox_path(file, "metric", knowledge_base_dir)
+                if not resolved:
+                    self.console.log(f"[yellow]Skipping metric file outside sandbox: {file!r}[/]")
+                    continue
+                file_path = resolved
                 with open(file_path, "r", encoding="utf-8") as f:
                     # multi documents
                     for metrics_meta in yaml.safe_load_all(f):
