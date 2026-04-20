@@ -18,6 +18,7 @@ from datus.configuration.agent_config_loader import (
     ConfigurationManager,
     _apply_project_override,
     configuration_manager,
+    load_agent_config,
     load_node_config,
     parse_config_path,
 )
@@ -342,3 +343,141 @@ class TestLoadNodeConfig:
         with patch("datus.configuration.agent_config_loader.NodeType.type_input", return_value={}):
             node_cfg = load_node_config("gen_sql", None)
         assert node_cfg.model == ""
+
+
+# ---------------------------------------------------------------------------
+# load_agent_config — default database resolution tail
+# ---------------------------------------------------------------------------
+
+
+class TestLoadAgentConfigResolution:
+    """Cover the post-override resolution that guarantees ``current_database``
+    is populated for every entry point (REPL, datus-api, datus-claw, SDK),
+    regardless of whether ``override_by_args`` ran for the CLI ``action``.
+    """
+
+    def _write_base_yaml(self, tmp_path, databases: dict) -> Path:
+        """Write a minimal agent.yml with the given databases map."""
+        cfg = tmp_path / "agent.yml"
+        cfg.write_text(
+            yaml.safe_dump(
+                {
+                    "agent": {
+                        "home": str(tmp_path),
+                        "target": "mock",
+                        "models": {
+                            "mock": {
+                                "type": "openai",
+                                "api_key": "mock-api-key",
+                                "model": "mock-model",
+                                "base_url": "http://localhost:0",
+                            }
+                        },
+                        "service": {"databases": databases},
+                        "project_root": str(tmp_path / "workspace"),
+                    }
+                }
+            )
+        )
+        (tmp_path / "workspace").mkdir(exist_ok=True)
+        return cfg
+
+    def test_resolves_from_default_flag(self, tmp_path, reset_global_singletons):
+        """base has two DBs, one marked ``default: true`` → selected at bootstrap."""
+        cfg = self._write_base_yaml(
+            tmp_path,
+            {
+                "db_a": {"type": "sqlite", "uri": str(tmp_path / "a.sqlite"), "default": False},
+                "db_b": {"type": "sqlite", "uri": str(tmp_path / "b.sqlite"), "default": True},
+            },
+        )
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=None,
+        ):
+            agent_config = load_agent_config(config=str(cfg), home=str(tmp_path), reload=True)
+        assert agent_config.current_database == "db_b"
+
+    def test_resolves_single_db_auto(self, tmp_path, reset_global_singletons):
+        """base has a single DB and no explicit default → auto-selected."""
+        cfg = self._write_base_yaml(
+            tmp_path,
+            {"only_db": {"type": "sqlite", "uri": str(tmp_path / "only.sqlite")}},
+        )
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=None,
+        ):
+            agent_config = load_agent_config(config=str(cfg), home=str(tmp_path), reload=True)
+        assert agent_config.current_database == "only_db"
+
+    def test_project_overlay_wins_over_base_default(self, tmp_path, reset_global_singletons):
+        """``.datus/config.yml::default_database`` overrides the base default flag."""
+        cfg = self._write_base_yaml(
+            tmp_path,
+            {
+                "db_a": {"type": "sqlite", "uri": str(tmp_path / "a.sqlite"), "default": True},
+                "db_b": {"type": "sqlite", "uri": str(tmp_path / "b.sqlite")},
+            },
+        )
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(default_database="db_b", target="mock"),
+        ):
+            agent_config = load_agent_config(config=str(cfg), home=str(tmp_path), reload=True)
+        assert agent_config.current_database == "db_b"
+        assert agent_config.target == "mock"
+
+    def test_raises_when_ambiguous_default(self, tmp_path, reset_global_singletons):
+        """Multi-DB + no ``default`` flag + no overlay → startup-time error that
+        tells the user how to fix it (run ``datus`` init wizard)."""
+        cfg = self._write_base_yaml(
+            tmp_path,
+            {
+                "db_a": {"type": "sqlite", "uri": str(tmp_path / "a.sqlite")},
+                "db_b": {"type": "sqlite", "uri": str(tmp_path / "b.sqlite")},
+            },
+        )
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=None,
+        ):
+            with pytest.raises(DatusException) as exc:
+                load_agent_config(config=str(cfg), home=str(tmp_path), reload=True, action="start")
+        msg = str(exc.value)
+        assert "./.datus/config.yml" in msg
+        # The guidance must name the CLI command so users know how to recover.
+        assert "datus" in msg
+
+    def test_service_action_still_resolves(self, tmp_path, reset_global_singletons):
+        """``action='service'`` previously skipped the namespace fallback in
+        ``override_by_args``; the loader tail must still populate the default."""
+        cfg = self._write_base_yaml(
+            tmp_path,
+            {
+                "db_a": {"type": "sqlite", "uri": str(tmp_path / "a.sqlite"), "default": True},
+                "db_b": {"type": "sqlite", "uri": str(tmp_path / "b.sqlite")},
+            },
+        )
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=None,
+        ):
+            agent_config = load_agent_config(
+                config=str(cfg),
+                home=str(tmp_path),
+                reload=True,
+                action="service",
+            )
+        assert agent_config.current_database == "db_a"
+
+    def test_no_databases_is_tolerated(self, tmp_path, reset_global_singletons):
+        """Deployments without any configured DB (pure KB / tool-only) must not
+        crash at bootstrap; ``current_database`` simply stays empty."""
+        cfg = self._write_base_yaml(tmp_path, {})
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=None,
+        ):
+            agent_config = load_agent_config(config=str(cfg), home=str(tmp_path), reload=True)
+        assert agent_config.current_database == ""

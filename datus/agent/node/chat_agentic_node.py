@@ -130,9 +130,7 @@ class ChatAgenticNode(AgenticNode):
         # Setup tools
         self.setup_tools()
         logger.debug(f"ChatAgenticNode tools: {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
-        logger.debug(
-            f"ChatAgenticNode initialized: {self.agent_config.current_database} {self.agent_config.current_database}"
-        )
+        logger.debug(f"ChatAgenticNode initialized: {self.agent_config.current_database}")
 
     def get_node_name(self) -> str:
         """Get the configured node name."""

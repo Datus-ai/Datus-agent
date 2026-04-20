@@ -262,6 +262,32 @@ def load_agent_config(reload: bool = False, **kwargs) -> AgentConfig:
 
         if override_kwargs:
             agent_config.override_by_args(**override_kwargs)
+    # Resolve current_database regardless of CLI ``action`` so API / claw /
+    # SDK entry points that bypass ``override_by_args``'s action whitelist
+    # still get a usable default. Priority already applied upstream:
+    #   1. ``./.datus/config.yml::default_database`` (via _apply_project_override)
+    #   2. ``service.databases[*].default: true`` flag in base agent.yml
+    #   3. single-DB auto-select (ServiceConfig.default_database)
+    if not agent_config.current_database and agent_config.service.databases:
+        default_db = agent_config.service.default_database
+        if default_db:
+            agent_config.current_namespace = default_db
+        else:
+            raise DatusException(
+                code=ErrorCode.COMMON_CONFIG_ERROR,
+                message_args={
+                    "config_error": (
+                        "No default database could be resolved. Project-level "
+                        "./.datus/config.yml is missing and agent.yml has multiple "
+                        "databases without any marked as `default: true`. Run "
+                        "`datus` in this project directory first to launch the "
+                        "init wizard (which writes ./.datus/config.yml with your "
+                        "preferred default_database and target), or set "
+                        "`default: true` on one database under "
+                        "`service.databases` in agent.yml."
+                    )
+                },
+            )
     # Auto-select default database for file-based DBs if not already set
     if agent_config.db_type in {DBType.SQLITE, DBType.DUCKDB} and not agent_config.current_database:
         databases = agent_config.service.databases
