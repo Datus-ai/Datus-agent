@@ -9,11 +9,21 @@ Get started with Datus Agent in just a few minutes. This guide will walk you thr
 
 ### Option A — One-liner (Linux / macOS, recommended)
 
+Stable install from PyPI:
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh | sh
 ```
 
-The script bootstraps `uv`, creates a dedicated venv at `~/.datus/venv` (Python 3.12 is downloaded automatically if missing), installs `datus-agent` from PyPI, and writes `datus`, `datus-cli`, `datus-api`, `datus-mcp`, `datus-agent`, `datus-claw`, and `datus-pip` shims into `~/.local/bin`. Open a new shell (or `source ~/.zshrc`) so the new PATH takes effect.
+Dev install from GitHub source (unreleased changes on `main`, or any branch/tag/commit):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install-dev.sh | sh
+# or pin to a specific ref
+curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install-dev.sh | DATUS_REF=feature/foo sh
+```
+
+Both scripts bootstrap `uv`, create a dedicated venv at `~/.datus/venv` (Python 3.12 is downloaded automatically if missing), and write `datus`, `datus-cli`, `datus-api`, `datus-mcp`, `datus-agent`, `datus-claw`, and `datus-pip` shims into `~/.local/bin`. Open a new shell (or `source ~/.zshrc`) so the new PATH takes effect.
 
 To install additional Python packages into the global venv later, use:
 
@@ -22,15 +32,13 @@ datus-pip install <package>
 # equivalent to ~/.datus/venv/bin/pip install <package>
 ```
 
-Common overrides — note these must be passed to the receiving shell, not to `curl`:
+Pin a released version with the stable installer — note the variable is passed to the receiving shell, not to `curl`:
 
 ```bash
-# Pin a released version
 curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh | DATUS_VERSION=0.2.6 sh
-
-# Install from GitHub source at a specific branch, tag, or commit
-curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh | DATUS_FROM_GIT=1 DATUS_REF=main sh
 ```
+
+Other variables supported by both scripts: `DATUS_HOME`, `DATUS_BIN_DIR`, `DATUS_FORCE=1`, `DATUS_NO_MODIFY_PATH=1`.
 
 Once the script finishes, skip the rest of this step and go straight to **Configure LLM & Database** below.
 

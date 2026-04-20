@@ -54,6 +54,8 @@ Built-in evaluation framework supporting **BIRD** and **Spider 2.0-Snow** datase
 
 #### One-liner (Linux / macOS)
 
+Stable install from PyPI:
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh | sh
 ```
@@ -62,17 +64,21 @@ This creates a dedicated venv at `~/.datus/venv`, installs `datus-agent` from Py
 
 To install additional Python packages into the global venv later, use `datus-pip install <package>` (it is a shim for `~/.datus/venv/bin/pip`).
 
-Common overrides (set on the receiving shell, not on `curl`):
+Dev install from GitHub source (picks up unreleased changes):
 
 ```bash
-# Pin a released version
-curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh | DATUS_VERSION=0.2.6 sh
-
-# Install from GitHub source (branch/tag/commit)
-curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh | DATUS_FROM_GIT=1 DATUS_REF=main sh
+curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install-dev.sh | sh
+# or pin to a branch / tag / commit
+curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install-dev.sh | DATUS_REF=feature/foo sh
 ```
 
-Other variables: `DATUS_HOME` (default `~/.datus`), `DATUS_BIN_DIR` (default `~/.local/bin`), `DATUS_FORCE=1` to recreate the venv, `DATUS_NO_MODIFY_PATH=1` to skip shell rc edits.
+Pin a PyPI version (stable installer only):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh | DATUS_VERSION=0.2.6 sh
+```
+
+Other variables supported by both installers: `DATUS_HOME` (default `~/.datus`), `DATUS_BIN_DIR` (default `~/.local/bin`), `DATUS_FORCE=1` to recreate the venv, `DATUS_NO_MODIFY_PATH=1` to skip shell rc edits.
 
 #### Manual install
 
