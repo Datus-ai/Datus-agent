@@ -71,6 +71,7 @@ class SchedulerAgenticNode(AgenticNode):
 
         self.scheduler_tools = None
         self.ask_user_tool = None
+        self.scheduler_service = self.node_config.get("scheduler_service")
         self.setup_tools()
 
     def get_node_name(self) -> str:
@@ -105,7 +106,7 @@ class SchedulerAgenticNode(AgenticNode):
         if not self.scheduler_tools:
             return
 
-        scheduler_config = getattr(self.agent_config, "scheduler_config", {}) or {}
+        scheduler_config = self.agent_config.get_scheduler_config(self.scheduler_service)
         platform = scheduler_config.get("type", "airflow")
 
         skills_to_inject = [f"{platform}-workflow", "scheduler-validation"]
@@ -134,13 +135,17 @@ class SchedulerAgenticNode(AgenticNode):
         return ", ".join(merged_patterns)
 
     def _setup_scheduler_tools(self):
-        """Setup scheduler tools if scheduler_config is present."""
-        if not getattr(self.agent_config, "scheduler_config", None):
+        """Setup scheduler tools if `agent.service.schedulers` is configured."""
+        if not getattr(self.agent_config, "scheduler_services", None):
             return
         try:
             from datus.tools.func_tool.scheduler_tools import SchedulerTools
 
-            self.scheduler_tools = SchedulerTools(self.agent_config)
+            self.agent_config.get_scheduler_config(self.scheduler_service)
+            self.scheduler_tools = SchedulerTools(
+                self.agent_config,
+                scheduler_service=self.scheduler_service,
+            )
             self.tools.extend(self.scheduler_tools.available_tools())
             logger.info("Scheduler tools initialized")
         except ImportError as e:

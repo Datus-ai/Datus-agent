@@ -591,9 +591,11 @@ class AgenticNode(Node):
             "scoped_context",
             "scoped_kb_path",
             "adapter_type",
+            "semantic_adapter",
             "sql_file_threshold",
             "sql_preview_lines",
             "bi_platform",
+            "scheduler_service",
             "subagents",
         ]
         for attr in direct_attributes:

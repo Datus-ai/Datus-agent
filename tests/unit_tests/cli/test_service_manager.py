@@ -15,6 +15,7 @@ def _make_agent_config(databases=None):
     service = MagicMock()
     service.databases = db_map
     service.default_database = next(iter(db_map), None)
+    service.semantic_layer = {}
     service.bi_tools = {}
     service.schedulers = {}
     agent_config = MagicMock()

@@ -47,6 +47,7 @@ def migrate_namespace_to_service(config: dict) -> dict:
               another_ns:
                 type: snowflake
                 ...
+            semantic_layer: {}
             bi_tools: {}
             schedulers: {}
     """
@@ -97,6 +98,7 @@ def migrate_namespace_to_service(config: dict) -> dict:
 
     agent["service"] = {
         "databases": databases,
+        "semantic_layer": {},
         "bi_tools": {},
         "schedulers": {},
     }

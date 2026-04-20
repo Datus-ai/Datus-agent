@@ -43,20 +43,25 @@ async def init_from_adapter(
     try:
         # Normalize adapter_type to lowercase for registry lookup
         adapter_type = adapter_type.lower().strip()
+        resolver = getattr(agent_config, "resolve_semantic_adapter", None)
+        if callable(resolver):
+            adapter_type = resolver(adapter_type) or adapter_type
 
-        # Get namespace from agent_config
         namespace = getattr(agent_config, "namespace", None) or agent_config.current_database
 
         # Get the registered config class for this adapter type
         metadata = semantic_adapter_registry.get_metadata(adapter_type)
+        builder = getattr(agent_config, "build_semantic_adapter_config", None)
+        base_config = builder(adapter_type) if callable(builder) else None
 
         # Build adapter config
         if adapter_config is None:
-            # Try to get config from agent_config if available
-            adapter_config = getattr(agent_config, f"{adapter_type}_config", None)
+            adapter_config = base_config
+        elif isinstance(adapter_config, dict):
+            # Convert dict to adapter-specific config class
+            adapter_config = {**(base_config or {}), **adapter_config}
 
         if adapter_config is None:
-            # Extract db_config from namespaces to pass to adapter (avoids re-reading agent.yml)
             ns_configs = agent_config.namespaces.get(namespace)
             db_config = None
             if ns_configs:
@@ -79,12 +84,8 @@ async def init_from_adapter(
                 from datus.tools.semantic_tools.config import SemanticAdapterConfig
 
                 adapter_config = SemanticAdapterConfig(namespace=namespace)
-        elif isinstance(adapter_config, dict):
-            # Convert dict to adapter-specific config class
-            # Ensure namespace is set
-            if "namespace" not in adapter_config:
-                adapter_config["namespace"] = namespace
 
+        if isinstance(adapter_config, dict):
             if metadata and metadata.config_class:
                 adapter_config = metadata.config_class(**adapter_config)
             else:

@@ -35,6 +35,7 @@ if "datus_scheduler_core" not in sys.modules:
     sys.modules["datus_scheduler_core.config"] = _mock_core.config  # audit-noqa: module_level_sys_modules
 
 from datus.tools.func_tool.scheduler_tools import SchedulerTools
+from datus.utils.exceptions import DatusException, ErrorCode
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -52,6 +53,24 @@ def _make_agent_config(scheduler_config=None):
         }
     else:
         cfg.scheduler_config = scheduler_config
+    cfg.scheduler_services = {"airflow_local": cfg.scheduler_config} if cfg.scheduler_config else {}
+
+    def _get_scheduler_config(service_name=None):
+        if service_name:
+            if service_name not in cfg.scheduler_services:
+                raise DatusException(
+                    ErrorCode.COMMON_CONFIG_ERROR,
+                    message=f"No scheduler service named `{service_name}` found.",
+                )
+            return cfg.scheduler_services[service_name]
+        if cfg.scheduler_services:
+            return next(iter(cfg.scheduler_services.values()))
+        raise DatusException(
+            ErrorCode.COMMON_CONFIG_ERROR,
+            message="No scheduler configured in `agent.service.schedulers`.",
+        )
+
+    cfg.get_scheduler_config.side_effect = _get_scheduler_config
     return cfg
 
 
@@ -848,8 +867,8 @@ class TestListSchedulerConnections:
         tools = SchedulerTools(cfg)
         result = tools.list_scheduler_connections()
 
-        assert result.success == 1
-        assert result.result["total"] == 0
+        assert result.success == 0
+        assert "scheduler" in (result.error or "").lower()
 
 
 # ── available_tools: conn_id injection into description ──────────────────

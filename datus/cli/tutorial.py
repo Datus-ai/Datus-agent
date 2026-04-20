@@ -51,8 +51,14 @@ class BenchmarkTutorial:
         ):
             # Add california_schools database to service.databases
             config_manager = configuration_manager(config_path=self.config_path, reload=True)
-            service_config = config_manager.data.get("service", {"databases": {}, "bi_tools": {}, "schedulers": {}})
+            service_config = config_manager.data.get(
+                "service",
+                {"databases": {}, "semantic_layer": {}, "bi_tools": {}, "schedulers": {}},
+            )
             service_config.setdefault("databases", {})
+            service_config.setdefault("semantic_layer", {})
+            service_config.setdefault("bi_tools", {})
+            service_config.setdefault("schedulers", {})
             service_config["databases"]["california_schools"] = {
                 "type": "sqlite",
                 "name": "california_schools",

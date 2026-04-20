@@ -157,12 +157,12 @@ class GenMetricsAgenticNode(AgenticNode):
         try:
             from datus.tools.func_tool.semantic_tools import SemanticTools
 
-            # Default to "metricflow", override from config if specified
-            adapter_type = "metricflow"
+            adapter_type = None
             if hasattr(self.agent_config, "agentic_nodes") and self.NODE_NAME in self.agent_config.agentic_nodes:
                 node_config = self.agent_config.agentic_nodes[self.NODE_NAME]
                 if isinstance(node_config, dict) and node_config.get("semantic_adapter"):
                     adapter_type = node_config.get("semantic_adapter")
+            adapter_type = self.agent_config.resolve_semantic_adapter(adapter_type)
 
             # Initialize semantic func tool
             self.semantic_tools = SemanticTools(

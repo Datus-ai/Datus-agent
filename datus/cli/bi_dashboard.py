@@ -981,12 +981,12 @@ class BiDashboardCommands:
             True if validation passed, False otherwise
         """
         try:
-            # Get adapter_type from agentic_nodes config, default to metricflow
-            adapter_type = "metricflow"
+            adapter_type = None
             agentic_nodes = getattr(self.agent_config, "agentic_nodes", None) or {}
             node_config = agentic_nodes.get("gen_semantic_model", {})
             if isinstance(node_config, dict) and node_config.get("semantic_adapter"):
                 adapter_type = node_config.get("semantic_adapter")
+            adapter_type = self.agent_config.resolve_semantic_adapter(adapter_type)
 
             semantic_tools = SemanticTools(
                 agent_config=self.agent_config,

@@ -91,16 +91,16 @@ class SemanticTools:
         self._attribution_tool: Optional[DimensionAttributionUtil] = None
 
     def _extract_db_config(self, namespace: str) -> Optional[dict]:
-        """Extract db_config dict from AgentConfig.namespaces for the given namespace."""
-        ns_configs = self.agent_config.namespaces.get(namespace)
-        if not ns_configs:
+        """Extract db_config dict from the selected database config."""
+        try:
+            db_config_obj = self.agent_config.current_db_config(namespace)
+        except Exception:
             return None
-        db_config_obj = list(ns_configs.values())[0]
         raw = db_config_obj.to_dict()
         return {
             k: str(v)
             for k, v in raw.items()
-            if v is not None and v != "" and k not in ("extra", "logic_name", "path_pattern", "catalog")
+            if v is not None and v != "" and k not in ("extra", "logic_name", "path_pattern", "catalog", "default")
         }
 
     @property
@@ -108,18 +108,21 @@ class SemanticTools:
         """Lazy load semantic adapter if configured."""
         if self._adapter is None and self.adapter_type:
             try:
-                # Try to get adapter-specific config from agent_config
-                adapter_config = getattr(self.agent_config, f"{self.adapter_type}_config", None)
-                if adapter_config is None:
-                    # Get namespace from agent_config
-                    namespace = getattr(self.agent_config, "namespace", None) or self.agent_config.current_database
+                resolved_adapter = self.adapter_type
+                resolver = getattr(self.agent_config, "resolve_semantic_adapter", None)
+                if callable(resolver):
+                    resolved_adapter = resolver(self.adapter_type)
+                if not resolved_adapter:
+                    return None
 
-                    # Extract db_config to pass to adapter (avoids re-reading agent.yml)
+                metadata = semantic_adapter_registry.get_metadata(resolved_adapter)
+                builder = getattr(self.agent_config, "build_semantic_adapter_config", None)
+                adapter_config = builder(resolved_adapter) if callable(builder) else None
+                if adapter_config is None:
+                    namespace = getattr(self.agent_config, "namespace", None) or self.agent_config.current_database
                     db_config = self._extract_db_config(namespace)
                     agent_home = getattr(self.agent_config, "home", None)
 
-                    # Get the registered config class for this adapter type
-                    metadata = semantic_adapter_registry.get_metadata(self.adapter_type)
                     if metadata and metadata.config_class:
                         adapter_config = metadata.config_class(
                             namespace=namespace,
@@ -127,13 +130,20 @@ class SemanticTools:
                             agent_home=agent_home,
                         )
                     else:
-                        # Fallback to base config
                         from datus.tools.semantic_tools.config import SemanticAdapterConfig
 
                         adapter_config = SemanticAdapterConfig(namespace=namespace)
+                elif isinstance(adapter_config, dict):
+                    if metadata and metadata.config_class:
+                        adapter_config = metadata.config_class(**adapter_config)
+                    else:
+                        from datus.tools.semantic_tools.config import SemanticAdapterConfig
 
-                self._adapter = semantic_adapter_registry.create_adapter(self.adapter_type, adapter_config)
-                logger.info(f"Loaded semantic adapter: {self.adapter_type}")
+                        adapter_config = SemanticAdapterConfig(**adapter_config)
+
+                self.adapter_type = resolved_adapter
+                self._adapter = semantic_adapter_registry.create_adapter(resolved_adapter, adapter_config)
+                logger.info(f"Loaded semantic adapter: {resolved_adapter}")
             except Exception as e:
                 logger.warning(f"Failed to load semantic adapter '{self.adapter_type}': {e}")
                 self._adapter = None

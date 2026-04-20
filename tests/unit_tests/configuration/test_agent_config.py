@@ -17,10 +17,12 @@ import argparse
 import pytest
 
 from datus.configuration.agent_config import (
+    AgentConfig,
     BenchmarkConfig,
     DbConfig,
     DocumentConfig,
     ModelConfig,
+    NodeConfig,
     file_stem_from_uri,
     load_model_config,
     resolve_env,
@@ -351,6 +353,129 @@ class TestLoadModelConfig:
         d = cfg.to_dict()
         assert d["type"] == "openai"
         assert d["model"] == "gpt-4"
+
+
+class TestAgentConfigServiceSelectors:
+    def _make(self, tmp_path, *, service=None, agentic_nodes=None):
+        return AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            target="mock",
+            models={
+                "mock": {
+                    "type": "openai",
+                    "api_key": "k",
+                    "model": "m",
+                    "base_url": "http://localhost:0",
+                }
+            },
+            service=service or {"databases": {}},
+            agentic_nodes=agentic_nodes or {},
+            skip_init_dirs=True,
+        )
+
+    def test_resolve_semantic_adapter_returns_explicit_configured_adapter(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            service={
+                "databases": {},
+                "semantic_layer": {
+                    "metricflow": {"timeout": 300},
+                },
+            },
+        )
+        assert cfg.resolve_semantic_adapter("metricflow") == "metricflow"
+
+    def test_resolve_semantic_adapter_auto_selects_single_configured_entry(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            service={
+                "databases": {},
+                "semantic_layer": {
+                    "metricflow": {"timeout": 300},
+                },
+            },
+        )
+        assert cfg.resolve_semantic_adapter() == "metricflow"
+
+    def test_resolve_semantic_adapter_requires_explicit_choice_for_multiple_entries(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            service={
+                "databases": {},
+                "semantic_layer": {
+                    "metricflow": {"timeout": 300},
+                    "cube": {"timeout": 60},
+                },
+            },
+        )
+        with pytest.raises(DatusException, match="Multiple semantic layers are configured"):
+            cfg.resolve_semantic_adapter()
+
+    def test_default_scheduler_service_prefers_single_default(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            service={
+                "databases": {},
+                "schedulers": {
+                    "airflow_prod": {"type": "airflow", "default": True},
+                    "airflow_dev": {"type": "airflow"},
+                },
+            },
+        )
+        assert cfg.default_scheduler_service() == "airflow_prod"
+
+    def test_default_scheduler_service_rejects_multiple_defaults(self, tmp_path):
+        with pytest.raises(DatusException, match="Multiple scheduler services are marked"):
+            self._make(
+                tmp_path,
+                service={
+                    "databases": {},
+                    "schedulers": {
+                        "airflow_prod": {"type": "airflow", "default": True},
+                        "airflow_dev": {"type": "airflow", "default": True},
+                    },
+                },
+            )
+
+    def test_get_scheduler_config_requires_explicit_choice_when_multiple_instances_exist(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            service={
+                "databases": {},
+                "schedulers": {
+                    "airflow_prod": {"type": "airflow"},
+                    "airflow_dev": {"type": "airflow"},
+                },
+            },
+        )
+        with pytest.raises(DatusException, match="set `scheduler_service` on the scheduler node"):
+            cfg.get_scheduler_config()
+
+    def test_get_scheduler_config_returns_requested_instance(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            service={
+                "databases": {},
+                "schedulers": {
+                    "airflow_prod": {"type": "airflow", "api_base_url": "http://prod"},
+                    "airflow_dev": {"type": "airflow", "api_base_url": "http://dev"},
+                },
+            },
+        )
+        assert cfg.get_scheduler_config("airflow_dev")["api_base_url"] == "http://dev"
+
+    def test_init_scheduler_services_requires_declared_type(self, tmp_path):
+        with pytest.raises(DatusException, match="must declare a scheduler `type`"):
+            self._make(
+                tmp_path,
+                service={
+                    "databases": {},
+                    "schedulers": {
+                        "airflow_prod": {"api_base_url": "http://prod"},
+                    },
+                },
+            )
 
 
 # ---------------------------------------------------------------------------

@@ -251,6 +251,7 @@ class TestLoadExistingConfig:
                     "databases": {
                         "my_db": {"type": "sqlite", "uri": "data/test.sqlite"},
                     },
+                    "semantic_layer": {},
                     "bi_tools": {},
                     "schedulers": {},
                 },
@@ -1876,6 +1877,7 @@ class TestSave:
         agent = saved["agent"]
         assert agent["target"] == "openai"
         assert "my_db" in agent["service"]["databases"]
+        assert "semantic_layer" in agent["service"]
         assert "bi_tools" in agent["service"]
         assert "schedulers" in agent["service"]
 

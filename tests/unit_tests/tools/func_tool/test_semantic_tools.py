@@ -45,6 +45,8 @@ def semantic_tools():
 
         mock_config = Mock()
         mock_config.active_model.return_value.model = "gpt-4o"
+        mock_config.resolve_semantic_adapter.side_effect = lambda adapter_type=None: adapter_type
+        mock_config.build_semantic_adapter_config.side_effect = lambda adapter_type=None: {"namespace": "ns1"}
         tool = SemanticTools(agent_config=mock_config, adapter_type="mock_adapter")
         return tool
 
@@ -287,6 +289,8 @@ def semantic_tools_ext():
 
         config = Mock()
         config.active_model.return_value.model = "gpt-4o"
+        config.resolve_semantic_adapter.side_effect = lambda adapter_type=None: adapter_type
+        config.build_semantic_adapter_config.side_effect = lambda adapter_type=None: {"namespace": "ns1"}
         tool = SemanticTools(agent_config=config)
         return tool
 
@@ -301,6 +305,8 @@ def semantic_tools_with_adapter():
 
         config = Mock()
         config.active_model.return_value.model = "gpt-4o"
+        config.resolve_semantic_adapter.side_effect = lambda adapter_type=None: adapter_type
+        config.build_semantic_adapter_config.side_effect = lambda adapter_type=None: {"namespace": "ns1"}
         tool = SemanticTools(agent_config=config, adapter_type="metricflow")
         mock_adapter = Mock()
         tool._adapter = mock_adapter
@@ -646,8 +652,8 @@ class TestExtractDbConfig:
     """Tests for _extract_db_config helper method."""
 
     def test_returns_none_when_namespace_not_in_namespaces(self, semantic_tools):
-        """Should return None when namespace is not found in agent_config.namespaces."""
-        semantic_tools.agent_config.namespaces = {}
+        """Should return None when the database config cannot be resolved."""
+        semantic_tools.agent_config.current_db_config.side_effect = Exception("missing")
         result = semantic_tools._extract_db_config("missing_ns")
         assert result is None
 
@@ -664,7 +670,7 @@ class TestExtractDbConfig:
             "path_pattern": "skip",
             "catalog": "skip",
         }
-        semantic_tools.agent_config.namespaces = {"ns1": {"default": mock_db_config}}
+        semantic_tools.agent_config.current_db_config.return_value = mock_db_config
 
         result = semantic_tools._extract_db_config("ns1")
 

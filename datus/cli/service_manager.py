@@ -4,7 +4,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 """
-Manage command for Services (databases, BI tools, schedulers).
+Manage command for Services (databases, semantic layer, BI tools, schedulers).
 
 Replaces the legacy NamespaceManager. Works with the new service.databases
 config structure where each database is an independent entry.
@@ -51,7 +51,7 @@ def _validate_port(port_str: str) -> tuple[bool, str]:
 
 
 class ServiceManager:
-    """Manage services (databases, BI tools, schedulers) in agent.yml."""
+    """Manage services (databases, semantic layer, BI tools, schedulers) in agent.yml."""
 
     def __init__(self, config_path: str):
         try:
@@ -109,7 +109,12 @@ class ServiceManager:
 
         console.print(table)
 
-        # Show BI tools and schedulers if configured
+        semantic_layer = self.agent_config.service.semantic_layer
+        if semantic_layer:
+            console.print("\n[bold yellow]Semantic Layer:[/bold yellow]")
+            for name, cfg in semantic_layer.items():
+                console.print(f"  {name}: {cfg}")
+
         bi_tools = self.agent_config.service.bi_tools
         if bi_tools:
             console.print("\n[bold yellow]BI Tools:[/bold yellow]")
@@ -295,6 +300,7 @@ class ServiceManager:
 
             service_section = {
                 "databases": databases_section,
+                "semantic_layer": dict(self.agent_config.service.semantic_layer),
                 "bi_tools": dict(self.agent_config.service.bi_tools),
                 "schedulers": dict(self.agent_config.service.schedulers),
             }

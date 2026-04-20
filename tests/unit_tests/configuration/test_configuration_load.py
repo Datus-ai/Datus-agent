@@ -38,13 +38,15 @@ def test_config_exception(tmp_path):
 
 
 def test_service_config_structure(agent_config: AgentConfig):
-    """Verify legacy namespace config is migrated to service.databases."""
+    """Verify service config sections load into AgentConfig."""
     assert agent_config.service is not None
     assert len(agent_config.service.databases) > 0
-    # bird_school should be migrated as a database entry
     assert "bird_school" in agent_config.service.databases
     assert "snowflake" in agent_config.service.databases
     assert "local_duckdb" in agent_config.service.databases
+    assert "metricflow" in agent_config.service.semantic_layer
+    assert "superset" in agent_config.service.bi_tools
+    assert "airflow_local" in agent_config.service.schedulers
 
 
 @pytest.mark.parametrize("database", ["bird_school", "snowflake", "local_duckdb"])

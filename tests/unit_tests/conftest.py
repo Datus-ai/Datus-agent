@@ -180,6 +180,7 @@ def real_agent_config(tmp_path, reset_global_singletons):
                     "default": True,
                 },
             },
+            "semantic_layer": {},
             "bi_tools": {},
             "schedulers": {},
         },

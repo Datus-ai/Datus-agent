@@ -21,6 +21,10 @@ def _make_agent_config(namespace="test_ns"):
     config = MagicMock()
     config.namespace = namespace
     config.current_database = namespace
+    config.resolve_semantic_adapter.side_effect = lambda adapter_type=None: (
+        adapter_type.lower().strip() if adapter_type else None
+    )
+    config.build_semantic_adapter_config.side_effect = lambda adapter_type=None: {"namespace": namespace}
     return config
 
 
@@ -249,8 +253,8 @@ class TestInitFromAdapter:
     @pytest.mark.asyncio
     @patch("datus.storage.semantic_model.adapter_init.SemanticStorageManager")
     @patch("datus.storage.semantic_model.adapter_init.semantic_adapter_registry")
-    async def test_none_config_falls_back_to_agent_config_attr(self, mock_registry, MockStorageManager):
-        """When adapter_config is None, should try agent_config.{adapter_type}_config."""
+    async def test_none_config_uses_build_semantic_adapter_config(self, mock_registry, MockStorageManager):
+        """When adapter_config is None, should use agent_config.build_semantic_adapter_config()."""
         from datus.storage.semantic_model.adapter_init import init_from_adapter
 
         mock_metadata = MagicMock()
@@ -262,14 +266,13 @@ class TestInitFromAdapter:
         mock_manager.sync_from_adapter = AsyncMock(return_value={"semantic_models_synced": 1})
         MockStorageManager.return_value = mock_manager
 
-        # agent_config has dbt_config attribute set to a config object
         existing_config = MagicMock()
         config = _make_agent_config()
-        config.dbt_config = existing_config
+        config.build_semantic_adapter_config.side_effect = None
+        config.build_semantic_adapter_config.return_value = existing_config
 
         await init_from_adapter(config, "dbt")
 
-        # The existing config object should be passed directly to create_adapter
         mock_registry.create_adapter.assert_called_once_with("dbt", existing_config)
 
     @pytest.mark.asyncio

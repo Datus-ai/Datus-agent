@@ -21,6 +21,10 @@ def _make_agent_config(namespace="test_ns", adapter_type_config=None):
     config = MagicMock()
     config.namespace = namespace
     config.current_database = namespace
+    config.resolve_semantic_adapter.side_effect = lambda adapter_type=None: (
+        adapter_type.lower().strip() if adapter_type else None
+    )
+    config.build_semantic_adapter_config.side_effect = lambda adapter_type=None: {"namespace": namespace}
     # By default, no adapter-specific config on agent_config
     if adapter_type_config is not None:
         for key, val in adapter_type_config.items():

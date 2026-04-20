@@ -595,6 +595,8 @@ class InteractiveConfigure:
         # Ensure service structure
         service = agent.get("service", {})
         service["databases"] = self.databases
+        if "semantic_layer" not in service:
+            service["semantic_layer"] = {}
         if "bi_tools" not in service:
             service["bi_tools"] = {}
         if "schedulers" not in service:

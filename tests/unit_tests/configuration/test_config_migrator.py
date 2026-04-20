@@ -33,6 +33,7 @@ class TestMigrateNamespaceToService:
         assert db["uri"] == "path/to/my.sqlite"
         # Single-entry default mark
         assert db.get("default") is True
+        assert service["semantic_layer"] == {}
         assert service["bi_tools"] == {}
         assert service["schedulers"] == {}
 
@@ -87,6 +88,7 @@ class TestMigrateNamespaceToService:
             "agent": {
                 "service": {
                     "databases": {"existing_db": {"type": "duckdb"}},
+                    "semantic_layer": {},
                     "bi_tools": {},
                     "schedulers": {},
                 }
@@ -205,6 +207,7 @@ class TestMigrateFile:
             "agent": {
                 "service": {
                     "databases": {},
+                    "semantic_layer": {},
                     "bi_tools": {},
                     "schedulers": {},
                 }

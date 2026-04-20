@@ -19,17 +19,18 @@ logger = get_logger(__name__)
 
 
 class SchedulerTools(BaseTool):
-    """Function tools for interacting with the configured scheduler platform (e.g. Airflow).
-
-    Requires a ``scheduler:`` section in ``agent.yml`` with the adapter config.
-    """
+    """Function tools for interacting with the configured scheduler platform (e.g. Airflow)."""
 
     tool_name = "scheduler_tools"
     tool_description = "Tools for submitting and managing scheduled jobs via Airflow"
 
-    def __init__(self, agent_config: AgentConfig, **kwargs):
+    def __init__(self, agent_config: AgentConfig, scheduler_service: Optional[str] = None, **kwargs):
         super().__init__(**kwargs)
         self.agent_config = agent_config
+        self.scheduler_service = scheduler_service
+
+    def _selected_scheduler_config(self) -> dict:
+        return dict(self.agent_config.get_scheduler_config(self.scheduler_service))
 
     # ── Adapter factory ────────────────────────────────────────────────────
 
@@ -45,14 +46,7 @@ class SchedulerTools(BaseTool):
                 "Install it with: pip install datus-scheduler-core",
             ) from exc
 
-        scheduler_config = getattr(self.agent_config, "scheduler_config", {}) or {}
-        if not scheduler_config:
-            raise DatusException(
-                ErrorCode.COMMON_CONFIG_ERROR,
-                message_args={"config_error": "No scheduler configured in agent.yml. Add a 'scheduler:' section."},
-            )
-
-        config = dict(scheduler_config)
+        config = self._selected_scheduler_config()
         platform = config.get("type", "airflow")
         return SchedulerAdapterRegistry.create_adapter(platform=platform, config=config)
 
@@ -614,7 +608,10 @@ class SchedulerTools(BaseTool):
         Returns:
             FuncToolResult with result containing a list of {conn_id, description}.
         """
-        scheduler_config = getattr(self.agent_config, "scheduler_config", {}) or {}
+        try:
+            scheduler_config = self._selected_scheduler_config()
+        except DatusException as exc:
+            return FuncToolResult(success=0, error=str(exc))
         connections = scheduler_config.get("connections", {})
         if not connections:
             return FuncToolResult(
@@ -639,7 +636,10 @@ class SchedulerTools(BaseTool):
 
     def _connections_description(self) -> str:
         """Build a suffix describing available conn_ids from scheduler config."""
-        scheduler_config = getattr(self.agent_config, "scheduler_config", {}) or {}
+        try:
+            scheduler_config = self._selected_scheduler_config()
+        except DatusException:
+            return ""
         connections = scheduler_config.get("connections", {})
         if not connections:
             return ""

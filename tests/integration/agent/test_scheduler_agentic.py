@@ -59,19 +59,23 @@ def scheduler_agent_config():
     config.agentic_nodes["scheduler"] = {
         "system_prompt": "scheduler",
         "max_turns": 30,
+        "scheduler_service": "airflow_local",
     }
 
-    # Ensure scheduler config points to the running Airflow
-    config.scheduler_config = {
-        "name": "airflow_local",
-        "type": "airflow",
-        "api_base_url": AIRFLOW_URL,
-        "username": AIRFLOW_USER,
-        "password": AIRFLOW_PASS,
-        "dags_folder": "/tmp/dags",
-        "dag_discovery_timeout": 60,
-        "dag_discovery_poll_interval": 5,
+    # Ensure scheduler service config points to the running Airflow
+    config.service.schedulers = {
+        "airflow_local": {
+            "name": "airflow_local",
+            "type": "airflow",
+            "api_base_url": AIRFLOW_URL,
+            "username": AIRFLOW_USER,
+            "password": AIRFLOW_PASS,
+            "dags_folder": "/tmp/dags",
+            "dag_discovery_timeout": 60,
+            "dag_discovery_poll_interval": 5,
+        }
     }
+    config.init_scheduler_services(config.service.schedulers)
 
     return config
 

@@ -6,7 +6,7 @@
 Unit tests for SchedulerAgenticNode.
 
 Tests cover:
-- Node creation with/without scheduler_config
+- Node creation with/without scheduler service config
 - Tools setup (scheduler tools only, no DB/BI/filesystem tools exposed)
 - Max turns configuration
 - Node name
@@ -60,9 +60,8 @@ def _make_mock_scheduler_tools():
     return mock_tools
 
 
-def _add_scheduler_config(agent_config, max_turns=25):
-    """Add scheduler config and scheduler agentic node config to an AgentConfig."""
-    agent_config.scheduler_config = {
+def _scheduler_service_config():
+    return {
         "name": "airflow_local",
         "type": "airflow",
         "api_base_url": "http://localhost:8080/api/v1",
@@ -70,9 +69,16 @@ def _add_scheduler_config(agent_config, max_turns=25):
         "password": "admin123",
         "dags_folder": "/tmp/dags",
     }
-    agent_config.agentic_nodes["scheduler"] = {
+
+
+def _add_scheduler_config(agent_config, max_turns=25, node_name="scheduler", scheduler_service="airflow_local"):
+    """Add scheduler service config and scheduler agentic node config to an AgentConfig."""
+    agent_config.service.schedulers = {scheduler_service: _scheduler_service_config()}
+    agent_config.init_scheduler_services(agent_config.service.schedulers)
+    agent_config.agentic_nodes[node_name] = {
         "system_prompt": "scheduler",
         "max_turns": max_turns,
+        "scheduler_service": scheduler_service,
     }
 
 
@@ -128,12 +134,9 @@ class TestSchedulerAgenticNodeInit:
 
     def test_max_turns_default(self, real_agent_config, mock_llm_create):
         """Default max_turns is 30 when scheduler not in agentic_nodes."""
-        # Add scheduler_config but no scheduler agentic node config
-        real_agent_config.scheduler_config = {
-            "name": "airflow_local",
-            "type": "airflow",
-            "api_base_url": "http://localhost:8080/api/v1",
-        }
+        # Add scheduler service config but no scheduler agentic node config
+        real_agent_config.service.schedulers = {"airflow_local": _scheduler_service_config()}
+        real_agent_config.init_scheduler_services(real_agent_config.service.schedulers)
         with patch(_SCHEDULER_TOOLS_PATCH, return_value=_make_mock_scheduler_tools()):
             from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
 
@@ -150,7 +153,7 @@ class TestSchedulerToolSetup:
     """Tests for tool setup — scheduler tools only, no DB/BI/filesystem tools exposed."""
 
     def test_has_scheduler_tools_with_config(self, real_agent_config, mock_llm_create):
-        """With scheduler_config, node should have scheduler tools."""
+        """With scheduler service config, node should have scheduler tools."""
         _add_scheduler_config(real_agent_config)
         with patch(_SCHEDULER_TOOLS_PATCH, return_value=_make_mock_scheduler_tools()):
             from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
@@ -203,9 +206,9 @@ class TestSchedulerToolSetup:
             assert "write_file" not in tool_names
 
     def test_no_scheduler_config_no_tools(self, real_agent_config, mock_llm_create):
-        """Without scheduler_config, node should have 0 scheduler tools (graceful no-op)."""
-        # Ensure no scheduler_config
-        real_agent_config.scheduler_config = None
+        """Without scheduler service config, node should have 0 scheduler tools (graceful no-op)."""
+        real_agent_config.service.schedulers = {}
+        real_agent_config.init_scheduler_services({})
         from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
 
         node = SchedulerAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
@@ -491,7 +494,8 @@ class TestSchedulerTemplateContext:
 
     def test_context_without_tools(self, real_agent_config, mock_llm_create):
         """Without scheduler config, native_tools should be 'None'."""
-        real_agent_config.scheduler_config = None
+        real_agent_config.service.schedulers = {}
+        real_agent_config.init_scheduler_services({})
         from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
 
         node = SchedulerAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
@@ -534,6 +538,7 @@ class TestSchedulerCustomNodeName:
         real_agent_config.agentic_nodes["my_scheduler"] = {
             "system_prompt": "scheduler",
             "max_turns": 15,
+            "scheduler_service": "airflow_local",
         }
         with patch(_SCHEDULER_TOOLS_PATCH, return_value=_make_mock_scheduler_tools()):
             from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
@@ -550,6 +555,7 @@ class TestSchedulerCustomNodeName:
         real_agent_config.agentic_nodes["etl_scheduler"] = {
             "system_prompt": "scheduler",
             "max_turns": 50,
+            "scheduler_service": "airflow_local",
         }
         with patch(_SCHEDULER_TOOLS_PATCH, return_value=_make_mock_scheduler_tools()):
             from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
@@ -565,6 +571,7 @@ class TestSchedulerCustomNodeName:
         real_agent_config.agentic_nodes["my_jobs"] = {
             "system_prompt": "scheduler",
             "max_turns": 10,
+            "scheduler_service": "airflow_local",
         }
         with patch(_SCHEDULER_TOOLS_PATCH, return_value=_make_mock_scheduler_tools()):
             from datus.agent.node.node import Node
@@ -586,6 +593,7 @@ class TestSchedulerCustomNodeName:
         real_agent_config.agentic_nodes["etl_scheduler"] = {
             "system_prompt": "etl_scheduler",
             "max_turns": 15,
+            "scheduler_service": "airflow_local",
         }
         with patch(_SCHEDULER_TOOLS_PATCH, return_value=_make_mock_scheduler_tools()):
             from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
