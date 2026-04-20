@@ -274,7 +274,14 @@ class InlineStreamingContext:
                         sys.stdout.write("\033[3J")
                         sys.stdout.flush()
                         if self._clear_header_callback is not None:
-                            self._clear_header_callback()
+                            try:
+                                self._clear_header_callback()
+                            except Exception as exc:
+                                logger.debug(
+                                    "clear_header_callback raised in verbose toggle: %s",
+                                    exc,
+                                    exc_info=True,
+                                )
                         self.display.console.print(
                             "[bold bright_black]  \u23af switched to verbose mode (frozen) \u23af[/]"
                         )
@@ -290,7 +297,14 @@ class InlineStreamingContext:
                         sys.stdout.write("\033[3J")
                         sys.stdout.flush()
                         if self._clear_header_callback is not None:
-                            self._clear_header_callback()
+                            try:
+                                self._clear_header_callback()
+                            except Exception as exc:
+                                logger.debug(
+                                    "clear_header_callback raised in compact toggle: %s",
+                                    exc,
+                                    exc_info=True,
+                                )
                         self.display.console.print("[bold bright_black]  \u23af switched to compact mode \u23af[/]")
                     self._reprint_history(verbose=self._verbose)
                     # Restart Live for any remaining active subagent groups

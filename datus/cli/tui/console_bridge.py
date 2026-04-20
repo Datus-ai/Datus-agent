@@ -22,6 +22,7 @@ Two concerns remain:
 
 from __future__ import annotations
 
+import asyncio
 from typing import Callable
 
 from prompt_toolkit.application import get_app_or_none
@@ -40,6 +41,21 @@ def run_in_terminal_sync(func: Callable[[], None]) -> None:
         return
 
     future = run_in_terminal(func)
+
+    # Callers invoked from a prompt_toolkit key handler run on the same
+    # asyncio loop that schedules the ``run_in_terminal`` callback. Blocking
+    # that thread on ``future.result()`` deadlocks the loop. Detect the
+    # in-loop case and let the scheduled callback finish asynchronously.
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        on_event_loop = False
+    else:
+        on_event_loop = True
+
+    if on_event_loop:
+        return
+
     # ``run_in_terminal`` returns an asyncio.Future; ``result()`` blocks until
     # the callback completes on the Application event loop.
     try:

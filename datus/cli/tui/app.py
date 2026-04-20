@@ -183,9 +183,24 @@ class DatusApp:
         return self._agent_running
 
     def set_input_text(self, text: str) -> None:
-        """Prefill the input buffer (e.g. for ``.rewind``)."""
-        self._input_area.buffer.document = self._input_area.buffer.document.__class__(text)
-        self.invalidate()
+        """Prefill the input buffer (e.g. for ``.rewind``). Thread-safe."""
+        buffer = self._input_area.buffer
+        document_cls = buffer.document.__class__
+
+        def _apply() -> None:
+            buffer.document = document_cls(text)
+            self._app.invalidate()
+
+        if self._loop is None:
+            # Application has not started yet — direct mutation is safe because
+            # no event loop owns the buffer.
+            _apply()
+            return
+        try:
+            self._loop.call_soon_threadsafe(_apply)
+        except RuntimeError:
+            # Loop already closed; the buffer won't be observed anyway.
+            pass
 
     def invalidate(self) -> None:
         """Trigger a redraw from any thread."""
@@ -321,6 +336,11 @@ class DatusApp:
 
         @kb.add("c-d")
         def _ctrl_d(event) -> None:  # noqa: ANN001
+            if self._agent_running.is_set():
+                # A worker task still owns the executor; tearing down the
+                # Application here would drop the pinned TUI while the agent
+                # keeps running. Ignore Ctrl+D until the worker finishes.
+                return
             if event.app.current_buffer.text:
                 # Standard readline semantics: Ctrl+D with content does nothing.
                 return

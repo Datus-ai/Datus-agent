@@ -617,6 +617,14 @@ class DatusCLI:
                 self._execute_chat_command(args, subagent_name=cmd)
             elif cmd_type == CommandType.INTERNAL:
                 self._execute_internal_command(cmd, args)
+                # ``.rewind`` sets ``_prefill_input`` from inside the internal
+                # command. In TUI mode the buffer was already drained before
+                # dispatch, so push the rewound message back into the live
+                # input area here. ``set_input_text`` schedules the mutation
+                # onto the prompt_toolkit loop, so it is safe from the worker.
+                if self._use_tui and self.tui_app is not None and self._prefill_input:
+                    self.tui_app.set_input_text(self._prefill_input)
+                    self._prefill_input = None
         except KeyboardInterrupt:
             # Interrupt during a single command dispatch is non-fatal: the
             # outer loop (or TUI event loop) stays alive.
