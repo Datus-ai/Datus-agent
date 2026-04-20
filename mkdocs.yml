@@ -11,7 +11,7 @@ nav:
       - Contextual Data Engineering: getting_started/contextual_data_engineering.md
       - Tutorial: getting_started/Datus_tutorial.md
       - Dashboard Copilot: getting_started/dashboard_copilot.md
-    - CLI:
+    - Datus-cli:
       - Introduction: cli/introduction.md
       - Chat Command: cli/chat_command.md
       - Context Command: cli/context_command.md
@@ -33,11 +33,11 @@ nav:
       - Table Generation: subagent/gen_table.md
       - ETL Job: subagent/gen_job.md
       - Migration: subagent/migration.md
-    - Chatbot: web_chatbot/introduction.md
-    - IM Gateway (Claw):
-      - Introduction: claw/introduction.md
-      - Slack: claw/slack.md
-      - Feishu: claw/feishu.md
+    - Datus-chat:
+      - Chatbot: datus_chat/chatbot.md
+      - Gateway: datus_chat/gateway.md
+      - Slack: datus_chat/slack.md
+      - Feishu: datus_chat/feishu.md
     - Knowledge Base:
       - Introduction: knowledge_base/introduction.md
       - External Knowledge: knowledge_base/ext_knowledge.md
@@ -124,7 +124,7 @@ plugins:
             Contextual Data Engineering: 上下文数据工程
             Tutorial: 教程
             Dashboard Copilot: Dashboard Copilot
-            CLI: 命令行
+            Datus-cli: Datus-cli
             Introduction: 介绍
             Chat Command: 聊天命令
             Context Command: 上下文命令
@@ -141,8 +141,9 @@ plugins:
             Generate Metrics: 生成指标
             Generate Semantic Model: 生成语义模型
             Scheduler: 调度器
-            Chatbot: chatbot
-            IM Gateway (Claw): IM 网关 (Claw)
+            Datus-chat: Datus-chat
+            Chatbot: Web Chatbot
+            Gateway: 网关
             Slack: Slack
             Feishu: 飞书
 

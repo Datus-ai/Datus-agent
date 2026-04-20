@@ -211,7 +211,7 @@ You can now:
 /datus_schools_context <your question>
 ```
 
-Or use the chatbot in [Datus-Chat](../web_chatbot/introduction.md). 
+Or use the chatbot in [Datus-Chat](../datus_chat/chatbot.md). 
 
 
 ## 3. Benchmark and evaluation

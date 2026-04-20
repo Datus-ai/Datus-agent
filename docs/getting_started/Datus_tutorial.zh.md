@@ -208,7 +208,7 @@ Datus-cli --database california_schools
 /datus_schools_context <你的问题>
 ```
 
-或使用 [Datus-Chat](../web_chatbot/introduction.zh.md) 中的聊天机器人。
+或使用 [Datus-Chat](../datus_chat/chatbot.zh.md) 中的聊天机器人。
 
 
 ## 3. 比较 Subagent 性能
