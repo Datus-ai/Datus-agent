@@ -1,13 +1,13 @@
-# IM 网关 (Claw)
+# 网关
 
-Claw 是 Datus Agent 的 IM（即时通讯）网关模块。它将 Datus 连接到 Slack 和飞书（Lark）等聊天平台，使用户可以直接在团队沟通工具中与数据分析 Agent 进行交互。
+网关是 Datus Agent 的 IM（即时通讯）模块。它将 Datus 连接到 Slack 和飞书（Lark）等聊天平台，使用户可以直接在团队沟通工具中与数据分析 Agent 进行交互。
 
 ## 核心设计理念
 
-- **仅使用出站长连接** — Claw 通过 WebSocket、Socket Mode 或 Stream SDK 主动连接到各 IM 平台，无需 Webhook 端点或公网 URL。
+- **仅使用出站长连接** — 网关通过 WebSocket、Socket Mode 或 Stream SDK 主动连接到各 IM 平台，无需 Webhook 端点或公网 URL。
 - **实时流式响应** — Agent 的响应（思考过程、工具调用、SQL、Markdown）在生成时即刻流式推送到聊天中。
 - **会话管理** — 每个对话（群聊/私聊/话题）自动获得持久化会话。用户可通过 `/new` 或 `/reset` 重置会话。
-- **命名空间与子代理路由** — 每个频道可覆盖默认命名空间或将消息路由到特定的子代理。
+- **子代理路由** — 每个频道可将消息路由到特定的子代理。
 
 ## 支持的平台
 
@@ -61,7 +61,7 @@ pip install "slack-sdk[socket_mode]"
 pip install lark-oapi
 ```
 
-只需安装你使用的平台的 SDK。如果缺少必需的 SDK，Claw 会给出明确的错误提示。
+只需安装你使用的平台的 SDK。如果缺少必需的 SDK，网关会给出明确的错误提示。
 
 ## 配置
 
@@ -74,7 +74,6 @@ channels:
   my-channel:
     adapter: slack          # 必填: feishu | slack
     enabled: true           # 可选: 默认 true
-    namespace: my_namespace # 可选: 覆盖默认命名空间
     subagent_id: agent_01   # 可选: 路由到特定子代理
     extra:                  # 必填: 适配器专用凭证
       # ... 平台专用配置项
@@ -84,7 +83,6 @@ channels:
 |------|------|------|------|
 | `adapter` | string | 是 | 适配器类型：`feishu` 或 `slack` |
 | `enabled` | bool | 否 | 是否启用此频道（默认：`true`） |
-| `namespace` | string | 否 | 覆盖网关的默认命名空间 |
 | `subagent_id` | string | 否 | 将消息路由到特定子代理 |
 | `extra` | dict | 是 | 适配器专用配置（令牌、密钥等） |
 
@@ -128,10 +126,10 @@ channels:
 ### 前台启动（默认）
 
 ```bash
-datus-claw --config conf/agent.yml
+datus-gateway --config conf/agent.yml
 
 # 或通过 uv 运行
-uv run datus-claw --config conf/agent.yml
+uv run datus-gateway --config conf/agent.yml
 ```
 
 ### 后台守护进程模式
@@ -140,24 +138,24 @@ uv run datus-claw --config conf/agent.yml
 
 ```bash
 # 后台启动
-datus-claw --daemon
+datus-gateway --daemon
 
 # 查看状态
-datus-claw --action status
+datus-gateway --action status
 
 # 停止
-datus-claw --action stop
+datus-gateway --action stop
 
 # 重启
-datus-claw --action restart
+datus-gateway --action restart
 ```
 
-所有守护进程命令也支持 `uv run`，例如 `uv run datus-claw --daemon`。
+所有守护进程命令也支持 `uv run`，例如 `uv run datus-gateway --daemon`。
 
-默认情况下，PID 文件存储在 `~/.datus/run/datus-claw.pid`，守护进程日志写入 `logs/datus-claw.log`。可通过参数覆盖：
+默认情况下，PID 文件存储在 `~/.datus/run/datus-gateway.pid`，守护进程日志写入 `logs/datus-gateway.log`。可通过参数覆盖：
 
 ```bash
-datus-claw --daemon --pid-file /var/run/datus-claw.pid --daemon-log-file /var/log/datus-claw.log
+datus-gateway --daemon --pid-file /var/run/datus-gateway.pid --daemon-log-file /var/log/datus-gateway.log
 ```
 
 ### CLI 参数
@@ -165,21 +163,20 @@ datus-claw --daemon --pid-file /var/run/datus-claw.pid --daemon-log-file /var/lo
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `--config` | `./conf/agent.yml` | Agent 配置文件路径 |
-| `--namespace` | `default`（或 `DATUS_NAMESPACE` 环境变量） | 所有频道的默认命名空间 |
 | `--host` | `0.0.0.0` | 健康检查服务绑定地址 |
 | `--port` | `9000` | 健康检查服务绑定端口 |
 | `--debug` | `false` | 启用调试日志 |
 | `--log-level` | `INFO`（或 `DATUS_LOG_LEVEL` 环境变量） | 日志级别：DEBUG、INFO、WARNING、ERROR、CRITICAL |
 | `--daemon` | `false` | 以守护进程方式后台运行 |
 | `--action` | `start` | 守护进程操作：`start`、`stop`、`restart`、`status` |
-| `--pid-file` | `~/.datus/run/datus-claw.pid` | PID 文件路径 |
-| `--daemon-log-file` | `logs/datus-claw.log` | 守护进程日志文件路径 |
+| `--pid-file` | `~/.datus/run/datus-gateway.pid` | PID 文件路径 |
+| `--daemon-log-file` | `logs/datus-gateway.log` | 守护进程日志文件路径 |
 
 ## 功能特性
 
 ### 实时流式响应
 
-Claw 将 Agent 处理的每个阶段实时推送到聊天中：
+网关将 Agent 处理的每个阶段实时推送到聊天中：
 
 - **思考过程** — Agent 的推理过程
 - **工具调用** — 正在调用哪些工具及其返回结果
@@ -189,7 +186,7 @@ Claw 将 Agent 处理的每个阶段实时推送到聊天中：
 
 ### 聊天命令
 
-Claw 提供了内置的斜杠命令，这些命令在消息进入 Agent 循环之前被拦截处理。输入时可以带或不带 `/` 前缀。
+网关提供了内置的斜杠命令，这些命令在消息进入 Agent 循环之前被拦截处理。输入时可以带或不带 `/` 前缀。
 
 | 命令 | 别名 | 说明 |
 |------|------|------|
@@ -230,10 +227,6 @@ Claw 提供了内置的斜杠命令，这些命令在消息进入 Agent 循环�
 
 机器人会确认重置并返回新的会话 ID。
 
-### 命名空间覆盖
-
-每个频道可在配置中指定 `namespace` 以覆盖网关的默认命名空间。这允许不同频道查询不同的数据库。
-
 ### 子代理路由
 
 使用 `subagent_id` 字段将特定频道的消息路由到专用子代理，实现按频道定制行为。
@@ -265,7 +258,7 @@ ImportError: slack_sdk is required for the Slack adapter. Install it with: pip i
 启用详细日志以诊断连接问题：
 
 ```bash
-datus-claw --config conf/agent.yml --debug
+datus-gateway --config conf/agent.yml --debug
 ```
 
 或设置环境变量：

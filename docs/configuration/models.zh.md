@@ -91,7 +91,7 @@ agent:
 
     如果默认模型需要更偏向规划、代码生成和结构化拆解，或者你会频繁使用 [计划模式](../cli/plan_mode.zh.md)，可以追加一个 `*_coding` provider 并按节点切换。
 
-## 配置示例
+## 配置示例 {#configuration-examples}
 
 === "OpenAI"
 

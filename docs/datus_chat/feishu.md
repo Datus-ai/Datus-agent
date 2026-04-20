@@ -148,7 +148,7 @@ export FEISHU_APP_SECRET="xxxxxxxxxxxxxxxxxxxxxxxx"
 Start the Claw gateway and check the logs:
 
 ```bash
-python -m datus.claw.main --config conf/agent.yml --debug
+datus-gateway
 ```
 
 You should see:

@@ -20,7 +20,7 @@ nodes:
 ```
 
 !!! tip
-    The `model` parameter in node configurations references provider keys defined in [`models`](agent.md#models-configuration).
+    The `model` parameter in node configurations references provider keys defined in [`models`](models.md).
 
 ## Core Nodes
 

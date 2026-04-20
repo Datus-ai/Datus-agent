@@ -1,6 +1,6 @@
 # Slack 适配器
 
-本指南将引导你完成 Slack 机器人的配置，通过 Claw IM 网关连接到 Datus Agent。Slack 使用 **Socket Mode**，从服务器建立出站 WebSocket 连接 —— 无需公网 URL 或 Webhook 端点。
+本指南将引导你完成 Slack 机器人的配置，通过 Datus 的 IM 网关连接到 Datus Agent。Slack 使用 **Socket Mode** ，从服务器建立出站 WebSocket 连接 —— 无需公网 URL 或 Webhook 端点。
 
 ## 前置条件
 
@@ -140,10 +140,10 @@ export SLACK_BOT_TOKEN="xoxb-..."
 
 ## 验证连接
 
-启动 Claw 网关并查看日志：
+启动网关并查看日志：
 
 ```bash
-python -m datus.claw.main --config conf/agent.yml --debug
+datus-gateway
 ```
 
 你应该看到：
@@ -190,11 +190,11 @@ Slack adapter 'slack-main' started.
 ??? info "手动配置（不使用 Manifest）"
     如果你更倾向于手动配置应用：
 
-    1. 前往 [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From scratch**。
-    2. **启用 Socket Mode**：**Settings → Socket Mode** → 开启 → 生成 App-Level Token（添加 `connections:write` 权限范围）。
-    3. **添加 Bot 权限**：**OAuth & Permissions → Bot Token Scopes** → 逐一添加上表中的权限范围。
-    4. **启用事件订阅**：**Event Subscriptions** → 开启 → 在 **Subscribe to bot events** 中添加上表中的事件 → **Save Changes**。
-    5. **安装应用**：**OAuth & Permissions** → **Install to Workspace** → 复制 Bot User OAuth Token。
+    1. 前往 [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From scratch** 。
+    2. **启用 Socket Mode** ：**Settings → Socket Mode** → 开启 → 生成 App-Level Token（添加 `connections:write` 权限范围）。
+    3. **添加 Bot 权限** ：**OAuth & Permissions → Bot Token Scopes** → 逐一添加上表中的权限范围。
+    4. **启用事件订阅** ：**Event Subscriptions** → 开启 → 在 **Subscribe to bot events** 中添加上表中的事件 → **Save Changes** 。
+    5. **安装应用** ：**OAuth & Permissions** → **Install to Workspace** → 复制 Bot User OAuth Token。
 
 ## 故障排查
 

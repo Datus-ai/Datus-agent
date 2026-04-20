@@ -17,7 +17,7 @@ nodes:
 ```
 
 !!! tip
-    `model` 引用在顶层 [`models`](agent.md#models-configuration) 中定义的提供方键名。
+    `model` 引用在顶层 [`models`](models.md) 中定义的提供方键名。
 
 ## 核心节点
 

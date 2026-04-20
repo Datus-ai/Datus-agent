@@ -143,7 +143,7 @@ export SLACK_BOT_TOKEN="xoxb-..."
 Start the Claw gateway and check the logs:
 
 ```bash
-python -m datus.claw.main --config conf/agent.yml --debug
+datus-gateway
 ```
 
 You should see:

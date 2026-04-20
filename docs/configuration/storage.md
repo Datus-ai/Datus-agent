@@ -76,7 +76,7 @@ database:
 - **`model_name`**: Specific embedding model to use
 - **`dim_size`**: Output embedding dimension size
 - **`batch_size`**: Number of texts to process in each batch
-- **`target_model`**: LLM model key from [`models`](agent.md#models-configuration) (for OpenAI embeddings)
+- **`target_model`**: LLM model key from [`models`](models.md) (for OpenAI embeddings)
 
 ### Document Embeddings
 

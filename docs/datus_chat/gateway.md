@@ -1,13 +1,13 @@
-# IM Gateway (Claw)
+# Gateway
 
-Claw is the IM (Instant Messaging) gateway module for Datus Agent. It connects Datus to chat platforms such as Slack and Feishu (Lark), enabling users to interact with the data analysis agent directly from their team communication tools.
+The Gateway is the IM (Instant Messaging) module for Datus Agent. It connects Datus to chat platforms such as Slack and Feishu (Lark), enabling users to interact with the data analysis agent directly from their team communication tools.
 
 ## Key Design Principles
 
-- **Outbound long connections only** — Claw actively connects to each IM platform using WebSocket, Socket Mode, or Stream SDK. No webhook endpoint or public URL is needed.
+- **Outbound long connections only** — the Gateway actively connects to each IM platform using WebSocket, Socket Mode, or Stream SDK. No webhook endpoint or public URL is needed.
 - **Real-time streaming** — Agent responses (thinking, tool calls, SQL, markdown) are streamed back to the chat as they are generated.
 - **Session management** — Each conversation (group/DM/thread) automatically gets a persistent session. Users can reset it with `/new` or `/reset`.
-- **Namespace & subagent routing** — Each channel can override the default namespace or route messages to a specific sub-agent.
+- **Subagent routing** — Each channel can route messages to a specific sub-agent.
 
 ## Supported Platforms
 
@@ -59,7 +59,7 @@ pip install "slack-sdk[socket_mode]"
 pip install lark-oapi
 ```
 
-You only need to install the SDK(s) for the platform(s) you use. Claw will raise a clear error if a required SDK is missing.
+You only need to install the SDK(s) for the platform(s) you use. The Gateway will raise a clear error if a required SDK is missing.
 
 ## Configuration
 
@@ -72,7 +72,6 @@ channels:
   my-channel:
     adapter: slack          # Required: feishu | slack
     enabled: true           # Optional: default true
-    namespace: my_namespace # Optional: override default namespace
     subagent_id: agent_01   # Optional: route to a specific sub-agent
     extra:                  # Required: adapter-specific credentials
       # ... platform-specific keys
@@ -82,7 +81,6 @@ channels:
 |-------|------|----------|-------------|
 | `adapter` | string | Yes | Adapter type: `feishu` or `slack` |
 | `enabled` | bool | No | Whether this channel is active (default: `true`) |
-| `namespace` | string | No | Override the gateway's default namespace |
 | `subagent_id` | string | No | Route messages to a specific sub-agent |
 | `extra` | dict | Yes | Adapter-specific configuration (tokens, keys, etc.) |
 
@@ -125,13 +123,13 @@ For detailed step-by-step instructions on configuring each IM platform, see the 
 
 ### Foreground (default)
 
-Start the Claw gateway in the foreground:
+Start the gateway in the foreground:
 
 ```bash
-datus-claw --config conf/agent.yml
+datus-gateway --config conf/agent.yml
 
 # Or via uv
-uv run datus-claw --config conf/agent.yml
+uv run datus-gateway --config conf/agent.yml
 ```
 
 ### Daemon (background) Mode
@@ -140,24 +138,24 @@ Run the gateway as a background daemon:
 
 ```bash
 # Start in background
-datus-claw --daemon
+datus-gateway --daemon
 
 # Check status
-datus-claw --action status
+datus-gateway --action status
 
 # Stop
-datus-claw --action stop
+datus-gateway --action stop
 
 # Restart
-datus-claw --action restart
+datus-gateway --action restart
 ```
 
-All daemon commands also work with `uv run`, e.g. `uv run datus-claw --daemon`.
+All daemon commands also work with `uv run`, e.g. `uv run datus-gateway --daemon`.
 
-By default, the PID file is stored at `~/.datus/run/datus-claw.pid` and daemon logs are written to `logs/datus-claw.log`. You can override these paths:
+By default, the PID file is stored at `~/.datus/run/datus-gateway.pid` and daemon logs are written to `logs/datus-gateway.log`. You can override these paths:
 
 ```bash
-datus-claw --daemon --pid-file /var/run/datus-claw.pid --daemon-log-file /var/log/datus-claw.log
+datus-gateway --daemon --pid-file /var/run/datus-gateway.pid --daemon-log-file /var/log/datus-gateway.log
 ```
 
 ### CLI Flags
@@ -165,21 +163,20 @@ datus-claw --daemon --pid-file /var/run/datus-claw.pid --daemon-log-file /var/lo
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--config` | `./conf/agent.yml` | Path to agent configuration file |
-| `--namespace` | `default` (or `DATUS_NAMESPACE` env) | Default namespace for all channels |
 | `--host` | `0.0.0.0` | Health-check server bind host |
 | `--port` | `9000` | Health-check server bind port |
 | `--debug` | `false` | Enable debug logging |
 | `--log-level` | `INFO` (or `DATUS_LOG_LEVEL` env) | Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL |
 | `--daemon` | `false` | Run in background as a daemon |
 | `--action` | `start` | Daemon action: `start`, `stop`, `restart`, `status` |
-| `--pid-file` | `~/.datus/run/datus-claw.pid` | PID file path |
-| `--daemon-log-file` | `logs/datus-claw.log` | Daemon log file path |
+| `--pid-file` | `~/.datus/run/datus-gateway.pid` | PID file path |
+| `--daemon-log-file` | `logs/datus-gateway.log` | Daemon log file path |
 
 ## Features
 
 ### Real-Time Streaming
 
-Claw streams every stage of the agent's processing back to the chat:
+The Gateway streams every stage of the agent's processing back to the chat:
 
 - **Thinking** — The agent's reasoning process
 - **Tool calls** — Which tools are being invoked and their results
@@ -189,7 +186,7 @@ Claw streams every stage of the agent's processing back to the chat:
 
 ### Chat Commands
 
-Claw provides built-in slash commands that are intercepted before messages reach the agentic loop. You can type them with or without the `/` prefix.
+The Gateway provides built-in slash commands that are intercepted before messages reach the agentic loop. You can type them with or without the `/` prefix.
 
 | Command | Aliases | Description |
 |---------|---------|-------------|
@@ -230,10 +227,6 @@ Each conversation (group chat, DM, or thread) automatically maps to a persistent
 
 The bot will confirm the reset with the new session ID.
 
-### Namespace Override
-
-Each channel can specify a `namespace` in its configuration to override the gateway's default namespace. This allows different channels to query different databases.
-
 ### Subagent Routing
 
 Use the `subagent_id` field to route messages from a specific channel to a dedicated sub-agent, enabling specialized behavior per channel.
@@ -265,7 +258,7 @@ If the bot connects but immediately disconnects or logs authentication errors, v
 Enable verbose logging to diagnose connection issues:
 
 ```bash
-datus-claw --config conf/agent.yml --debug
+datus-gateway --config conf/agent.yml --debug
 ```
 
 Or set the environment variable:
