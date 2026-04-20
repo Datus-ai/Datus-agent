@@ -116,7 +116,7 @@ class SemanticTools:
     @property
     def adapter(self) -> Optional[BaseSemanticAdapter]:
         """Lazy load semantic adapter if configured."""
-        if self._adapter is None and self.adapter_type:
+        if self._adapter is None:
             try:
                 resolved_adapter = self.adapter_type
                 resolver = getattr(self.agent_config, "resolve_semantic_adapter", None)
