@@ -325,11 +325,11 @@ datus-agent eval --database california_schools --benchmark california_schools --
 
 ```yaml
 agent:
-  namespace:
-    california_schools:
-      type: sqlite
-      name: california_schools
-      uri: sqlite:///benchmark/bird/dev_20240627/dev_databases/california_schools/california_schools.sqlite # Database file path. Use sqlite:/// for relative paths; sqlite://// for absolute paths.
+  services:
+    databases:
+      california_schools:
+        type: sqlite
+        uri: sqlite:///benchmark/bird/dev_20240627/dev_databases/california_schools/california_schools.sqlite # Database file path. Use sqlite:/// for relative paths; sqlite://// for absolute paths.
   benchmark:
     california_schools:              # Benchmark name
       question_file: california_schools.csv       # File containing benchmark questions

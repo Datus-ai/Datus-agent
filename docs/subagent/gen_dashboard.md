@@ -18,7 +18,9 @@ The gen_dashboard subagent is a specialized node (`GenDashboardAgenticNode`) tha
 Ensure you have configured `agent.services.bi_tools` in `agent.yml` and installed the appropriate adapter package:
 
 ```bash
-pip install datus-agent[bi]   # installs datus-bi-superset and datus-bi-grafana
+pip install datus-bi-superset   # For Superset
+# or
+pip install datus-bi-grafana    # For Grafana
 ```
 
 Then invoke the subagent from the chat interface:

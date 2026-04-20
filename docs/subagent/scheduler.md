@@ -18,7 +18,7 @@ The scheduler subagent is a specialized node (`SchedulerAgenticNode`) that:
 Ensure you have configured `agent.services.schedulers` in `agent.yml` and installed the required packages:
 
 ```bash
-pip install datus-scheduler-core datus-scheduler-airflow
+pip install datus-scheduler-airflow
 ```
 
 Invoke the subagent from the chat interface:
@@ -122,7 +122,7 @@ agent:
 All sensitive values support `${ENV_VAR}` substitution.
 
 **Requirements:**
-- `datus-scheduler-core` and `datus-scheduler-airflow` packages installed
+- `datus-scheduler-airflow` package installed (it pulls in `datus-scheduler-core`)
 - Airflow instance accessible from the agent host
 - `dags_folder` writable by the agent process and accessible by the Airflow scheduler
 

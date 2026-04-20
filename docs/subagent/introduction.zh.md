@@ -122,7 +122,7 @@ graph LR
     A[用户问题] --> B[聊天 Agent]
     B --> C{是否需要委派}
     C -->|否| D[直接回复]
-    C -->|是| E[task(type=...)]
+    C -->|是| E["task(type=...)"]
     E --> F[专用 subagent]
     F --> G[返回结果]
     G --> D

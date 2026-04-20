@@ -22,7 +22,7 @@
 | `sql_dir`            | string?  | `null`         | 项目根目录的相对路径，指向 `.sql` 文件目录 |
 | `ext_knowledge`      | string?  | `null`         | 项目根目录的相对路径，指向外部知识 CSV |
 
-**响应**：`text/event-stream`，参见下方 [SSE 事件格式](#sse-事件格式)。
+**响应**：`text/event-stream`，参见下方 [SSE 事件格式](#sse-events)。
 
 ### `POST /api/v1/kb/bootstrap/{stream_id}/cancel`
 
@@ -31,6 +31,8 @@
 **响应**：`Result[dict]`，`data = { stream_id, cancelled: true|false }`。
 
 ---
+
+<a id="platform-documentation-bootstrap"></a>
 
 ## 平台文档构建
 
@@ -57,9 +59,9 @@
 | `exclude_patterns`| string[]?| `null`      | 排除规则（正则） |
 
 仅 `platform` 为必填。其余字段未提供时从 `agent.yml` 中的 `agent.document.<platform>` 配置读取。
-参见 [平台文档 — 在 agent.yml 中配置](../knowledge_base/platform_doc.zh.md#在-agentyml-中配置可选)。
+参见 [平台文档 — 在 agent.yml 中配置](../knowledge_base/platform_doc.zh.md#agent-yml-configuration)。
 
-**响应**：`text/event-stream`，参见下方 [SSE 事件格式](#sse-事件格式)。
+**响应**：`text/event-stream`，参见下方 [SSE 事件格式](#sse-events)。
 
 **示例**：
 
@@ -89,6 +91,8 @@ curl -N -X POST http://localhost:8000/api/v1/kb/bootstrap-docs \
 **响应**：`Result[dict]`，`data = { stream_id, cancelled: true|false }`。
 
 ---
+
+<a id="sse-events"></a>
 
 ## SSE 事件格式
 

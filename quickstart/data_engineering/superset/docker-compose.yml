@@ -1,0 +1,56 @@
+# Local Superset environment for the Datus data-engineering quickstart.
+# Usage:
+#   docker compose up -d
+#   docker compose logs -f superset   # wait for "Running on http://0.0.0.0:8088"
+#   docker compose down -v
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: datus-quickstart-superset-postgres
+    environment:
+      POSTGRES_DB: superset_examples
+      POSTGRES_USER: superset
+      POSTGRES_PASSWORD: superset
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U superset"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  superset:
+    image: apache/superset:${SUPERSET_IMAGE_TAG:-4.1.2}
+    container_name: datus-quickstart-superset
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SUPERSET_SECRET_KEY: "datus-test-secret-key-not-for-prod"
+      WTF_CSRF_ENABLED: "false"
+      SUPERSET_CONFIG_PATH: /app/pythonpath/superset_config.py
+      SQLALCHEMY_EXAMPLES_URI: "postgresql+psycopg2://superset:superset@postgres:5432/superset_examples"
+    user: root
+    volumes:
+      - ./superset_config.py:/app/pythonpath/superset_config.py:ro
+    ports:
+      - "8088:8088"
+    command: >
+      bash -lc '
+      uv pip install psycopg2-binary -q &&
+      superset db upgrade &&
+      if ! superset fab list-users | grep -q "username:admin |"; then
+        superset fab create-admin --username admin --firstname Admin --lastname User --email admin@example.com --password admin;
+      fi &&
+      superset init &&
+      superset load-examples &&
+      exec superset run -p 8088 -h 0.0.0.0 --with-threads
+      '
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8088/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 30
+      start_period: 300s

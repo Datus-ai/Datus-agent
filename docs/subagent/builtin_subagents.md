@@ -68,7 +68,7 @@ agent:
     gen_dashboard:
       model: claude     # Optional: defaults to configured model
       max_turns: 30     # Optional: defaults to 30
-      bi_platform: superset  # Optional: explicit platform (auto-detected from dashboard config if omitted)
+      bi_platform: superset  # Optional: explicit platform (auto-detected when only one BI tool is configured)
 
     scheduler:
       model: claude     # Optional: defaults to configured model
@@ -1021,7 +1021,7 @@ agent:
 
 **Requirements:**
 - `agent.services.bi_tools` section in `agent.yml` with platform credentials
-- `datus-bi-superset` or `datus-bi-grafana` package installed (`pip install datus-agent[bi]`)
+- `datus-bi-superset` or `datus-bi-grafana` package installed
 
 ### How It Works
 
@@ -1129,7 +1129,7 @@ agent:
 
 **Requirements:**
 - `agent.services.schedulers` section in `agent.yml` with Airflow credentials
-- `datus-scheduler-core` and `datus-scheduler-airflow` packages installed
+- `datus-scheduler-airflow` package installed (`datus-scheduler-core` is pulled in transitively)
 
 ### How It Works
 

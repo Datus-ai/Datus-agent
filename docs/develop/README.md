@@ -77,19 +77,20 @@ agent:
     spider2:
       benchmark_path: benchmark/spider2/spider2-snow
 
-  namespace: # namespace is a set of database connections
-    local_duckdb:
-      type: duckdb
-      uri: ./tests/duckdb-demo.duckdb
-    spider-snow:
-      type: snowflake
-      warehouse: ${SNOWFLAKE_WAREHOUSE}
-      account: ${SNOWFLAKE_ACCOUNT}
-      username: ${SNWOFLAKE_USER}
-      password: ${SNOWFLAKE_PASSWORD}
-    bird_sqlite:
-      type: sqlite
-      path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite
+  services:
+    databases:
+      local_duckdb:
+        type: duckdb
+        uri: ./tests/duckdb-demo.duckdb
+      spider-snow:
+        type: snowflake
+        warehouse: ${SNOWFLAKE_WAREHOUSE}
+        account: ${SNOWFLAKE_ACCOUNT}
+        username: ${SNWOFLAKE_USER}
+        password: ${SNOWFLAKE_PASSWORD}
+      bird_sqlite:
+        type: sqlite
+        path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite
 
   storage:
     base_path: data
@@ -193,13 +194,15 @@ benchmark:
   spider2:
     benchmark_path: benchmark/spider2/spider2-snow
 
-namespace:
-  spidersnow:
-    type: snowflake
-    username: ${SNOWFLAKE_USER}
-    account: ${SNOWFLAKE_ACCOUNT}
-    warehouse: ${SNOWFLAKE_WAREHOUSE}
-    password: ${SNOWFLAKE_PASSWORD}
+agent:
+  services:
+    databases:
+      spidersnow:
+        type: snowflake
+        username: ${SNOWFLAKE_USER}
+        account: ${SNOWFLAKE_ACCOUNT}
+        warehouse: ${SNOWFLAKE_WAREHOUSE}
+        password: ${SNOWFLAKE_PASSWORD}
 ```
 
 ### Bootstrap Knowledge Base
@@ -243,10 +246,12 @@ benchmark:
   bird_dev:
     benchmark_path: benchmark/bird/dev_20240627
 
-namespace:
-  bird_sqlite:
-    type: sqlite
-    path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite
+agent:
+  services:
+    databases:
+      bird_sqlite:
+        type: sqlite
+        path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite
 ```
 
 ### Download and Extract Bird Dev
@@ -317,15 +322,16 @@ dwh_database: <home dir>/.metricflow/duck.db
 Update Configuration conf/agent.yml:
 
 ```yaml
-namespace:
-  duckdb:
-    type: duckdb
-    name: duck
-    uri: ~/.metricflow/duck.db
+agent:
+  services:
+    databases:
+      duckdb:
+        type: duckdb
+        uri: ~/.metricflow/duck.db
 
-benchmark:
-  semantic_layer:
-    benchmark_path: benchmark/semantic_layer
+  benchmark:
+    semantic_layer:
+      benchmark_path: benchmark/semantic_layer
 ```
 
 Export Environment Variables:

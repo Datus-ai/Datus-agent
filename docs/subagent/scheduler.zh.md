@@ -18,7 +18,7 @@ scheduler subagent 是一个专用节点（`SchedulerAgenticNode`），它：
 确保已在 `agent.yml` 中配置 `agent.services.schedulers` 并安装了所需包：
 
 ```bash
-pip install datus-scheduler-core datus-scheduler-airflow
+pip install datus-scheduler-airflow
 ```
 
 从对话界面调用 subagent：
@@ -122,7 +122,7 @@ agent:
 所有敏感值支持 `${ENV_VAR}` 环境变量替换。
 
 **前置条件**：
-- 已安装 `datus-scheduler-core` 和 `datus-scheduler-airflow` 包
+- 已安装 `datus-scheduler-airflow` 包（会自动拉取 `datus-scheduler-core`）
 - Agent 主机可访问 Airflow 实例
 - `dags_folder` 目录对 agent 进程可写，且 Airflow scheduler 可访问
 

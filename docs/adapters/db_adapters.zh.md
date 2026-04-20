@@ -66,157 +66,174 @@ pip install datus-trino
 
 ## 配置
 
-在 `config.yaml` 文件中配置数据库连接：
+在 `agent.yml` 的 `agent.services.databases` 下配置数据库连接：
+
+```yaml
+agent:
+  services:
+    databases:
+      mydata:
+        type: sqlite
+        uri: sqlite:///path/to/database.db
+```
+
+`services.databases` 下的每个条目都表示一个逻辑数据库连接。
 
 ### SQLite
 
 ```yaml
-namespace:
-  mydata:
-    type: sqlite
-    uri: sqlite:///path/to/database.db
+mydata:
+  type: sqlite
+  uri: sqlite:///path/to/database.db
 ```
 
 ### DuckDB
 
 ```yaml
-namespace:
-  analytics:
-    type: duckdb
-    database: /path/to/database.duckdb
+analytics:
+  type: duckdb
+  uri: duckdb:///path/to/database.duckdb
 ```
 
 ### MySQL
 
 ```yaml
-namespace:
-  production:
-    type: mysql
-    host: localhost
-    port: 3306
-    username: your_username
-    password: your_password
-    database: your_database
+production:
+  type: mysql
+  host: localhost
+  port: 3306
+  username: your_username
+  password: your_password
+  database: your_database
+```
+
+### PostgreSQL
+
+```yaml
+production_pg:
+  type: postgresql
+  host: localhost
+  port: 5432
+  username: your_username
+  password: your_password
+  database: your_database
+  schema: public  # 可选，默认为 public
+  sslmode: prefer  # 可选，默认为 prefer
 ```
 
 ### Snowflake
 
 ```yaml
-namespace:
-  warehouse:
-    type: snowflake
-    account: your_account
-    username: your_username
-    password: your_password
-    warehouse: your_warehouse
-    database: your_database
-    schema: your_schema
-    role: your_role  # 可选
+warehouse:
+  type: snowflake
+  account: your_account
+  username: your_username
+  password: your_password
+  warehouse: your_warehouse
+  database: your_database
+  schema: your_schema
+  role: your_role  # 可选
 ```
 
 ### StarRocks
 
 ```yaml
-namespace:
-  analytics:
-    type: starrocks
-    host: localhost
-    port: 9030
-    username: root
-    password: your_password
-    database: your_database
+analytics:
+  type: starrocks
+  host: localhost
+  port: 9030
+  username: root
+  password: your_password
+  database: your_database
 ```
 
 ### ClickZetta
 
 ```yaml
-namespace:
-  lakehouse:
-    type: clickzetta
-    service: CLICKZETTA_SERVICE
-    username: CLICKZETTA_USERNAME
-    password: CLICKZETTA_PASSWORD
-    instance: CLICKZETTA_INSTANCE
-    workspace: CLICKZETTA_WORKSPACE
-    schema: CLICKZETTA_SCHEMA
-    vcluster: CLICKZETTA_VCLUSTER
+lakehouse:
+  type: clickzetta
+  service: CLICKZETTA_SERVICE
+  username: CLICKZETTA_USERNAME
+  password: CLICKZETTA_PASSWORD
+  instance: CLICKZETTA_INSTANCE
+  workspace: CLICKZETTA_WORKSPACE
+  schema: CLICKZETTA_SCHEMA
+  vcluster: CLICKZETTA_VCLUSTER
 ```
 
 ### Hive
 
 ```yaml
-namespace:
-  hive_data:
-    type: hive
-    host: 127.0.0.1
-    port: 10000
-    username: hive
-    database: default
-    auth: NONE  # 可选：NONE、LDAP、CUSTOM、KERBEROS
-    configuration:  # 可选 Hive session 配置
-      hive.execution.engine: spark
+hive_data:
+  type: hive
+  host: 127.0.0.1
+  port: 10000
+  username: hive
+  database: default
+  auth: NONE  # 可选：NONE、LDAP、CUSTOM、KERBEROS
+  configuration:  # 可选 Hive session 配置
+    hive.execution.engine: spark
 ```
 
 ### Spark
 
 ```yaml
-namespace:
-  spark_data:
-    type: spark
-    host: localhost
-    port: 10000
-    username: spark
-    database: default
-    auth_mechanism: NONE  # 可选：NONE、PLAIN、KERBEROS
+spark_data:
+  type: spark
+  host: localhost
+  port: 10000
+  username: spark
+  database: default
+  auth_mechanism: NONE  # 可选：NONE、PLAIN、KERBEROS
 ```
 
 ### ClickHouse
 
 ```yaml
-namespace:
-  analytics:
-    type: clickhouse
-    host: localhost
-    port: 8123
-    username: default
-    password: your_password
-    database: your_database
+analytics:
+  type: clickhouse
+  host: localhost
+  port: 8123
+  username: default
+  password: your_password
+  database: your_database
 ```
 
 ### Trino
 
 ```yaml
-namespace:
-  trino_data:
-    type: trino
-    host: localhost
-    port: 8080
-    username: trino
-    catalog: hive
-    schema: default
-    http_scheme: http  # 可选：http 或 https
+trino_data:
+  type: trino
+  host: localhost
+  port: 8080
+  username: trino
+  catalog: hive
+  schema: default
+  http_scheme: http  # 可选：http 或 https
 ```
 
 ## 多数据库连接
 
-可以在同一命名空间下配置多个数据库：
+可以在 `agent.services.databases` 下配置多个独立数据库连接：
 
 ```yaml
-namespace:
-  project:
-    source_db:
-      type: mysql
-      host: source-server
-      username: reader
-      password: password
-      database: source
-    target_db:
-      type: snowflake
-      account: your_account
-      username: writer
-      password: password
-      warehouse: compute_wh
-      database: target
+agent:
+  services:
+    databases:
+      source_db:
+        type: mysql
+        host: source-server
+        username: reader
+        password: password
+        database: source
+
+      target_db:
+        type: snowflake
+        account: your_account
+        username: writer
+        password: password
+        warehouse: compute_wh
+        database: target
 ```
 
 ## 适配器功能

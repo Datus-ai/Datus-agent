@@ -26,7 +26,7 @@ Datus Agent 配置决定系统“如何工作”——选用哪些模型、组�
 | **[Nodes](nodes.md)** | 任务级处理单元 | 每个“节点”负责一环（结构关联、SQL 生成、推理、反思、输出、聊天、实用工具） |
 | **[Workflow](workflow.md)** | 节点编排 | 定义顺序/并行/子工作流/反思路径，描述回答用户问题的执行链 |
 | **[Storage](storage.md)** | 向量与嵌入配置 | 管理嵌入模型、设备、存储路径，以及元数据/文档/指标的嵌入与检索 |
-| **[Services](namespace.md)** | 运行时服务配置 | 在 `agent.services.*` 下统一定义数据库、语义层、BI 工具与调度器 |
+| **[Databases](databases.md)** | 数据库配置 | 配置 `agent.services.databases` 下的数据库连接；语义层、BI 工具和调度器见同级页面 |
 | **[Benchmark](benchmark.md)** | 评测与测试 | 配置基准数据集（如 BIRD-DEV、Spider2、Semantic Layer）评估 SQL 生成效果 |
 
 ## 配置结构
@@ -117,7 +117,7 @@ conf/
 
 ## 下一步
 - **[Agent 设置](agent.md)**：配置模型、提供方与全局设置
-- **[服务配置](namespace.md)**：统一配置数据库与运行时服务
+- **[数据库配置](databases.md)**：配置 `agent.services.databases` 下的数据库连接
 - **[语义层配置](semantic_layer.md)**：配置 MetricFlow 等 semantic adapter
 - **[BI 工具配置](bi_tools.md)**：配置 Superset / Grafana
 - **[调度器配置](schedulers.md)**：配置 Airflow 等 scheduler 服务

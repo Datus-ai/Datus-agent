@@ -2,6 +2,9 @@
 
 Get started with Datus Agent in just a few minutes. This guide will walk you through installation, setup, and your first interactions with Datus.
 
+!!! tip "Need the full warehouse workflow?"
+    For an end-to-end example that covers layered warehouse design, ETL generation, Airflow scheduling, semantic assets, and Superset dashboards, see [Data Engineering Quickstart](./data_engineering_quickstart.md).
+
 ## Step 1: Installation & Setup
 
 ### Install Python 3.12
@@ -602,6 +605,7 @@ Datus will automatically analyze the table and add metadata to the context.
 
 Now that you're up and running with Datus, explore more advanced features:
 
+- **[Data Engineering Quickstart](./data_engineering_quickstart.md)** - Build a layered warehouse from DAComp, schedule it in Airflow, and publish it to Superset
 - **[Contextual Data Engineering](./contextual_data_engineering.md)** - Learn how to use data assets as context
 - **[Configuration Guide](../configuration/introduction.md)** - Connect to your own databases and customize settings
 - **[CLI Reference](../cli/introduction.md)** - Discover all available commands and options

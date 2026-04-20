@@ -7,6 +7,7 @@ nav:
     - Overview: index.md
     - Getting Started:
       - Quickstart: getting_started/Quickstart.md
+      - Data Engineering Quickstart: getting_started/data_engineering_quickstart.md
       - Contextual Data Engineering: getting_started/contextual_data_engineering.md
       - Tutorial: getting_started/Datus_tutorial.md
       - Dashboard Copilot: getting_started/dashboard_copilot.md
@@ -24,8 +25,10 @@ nav:
       - Introduction: subagent/introduction.md
       - Built-in subagents: subagent/builtin_subagents.md
       - Customized subagents: subagent/customized_subagent.md
+      - Generate Dashboard: subagent/gen_dashboard.md
       - Generate Metrics: subagent/gen_metrics.md
       - Generate Semantic Model: subagent/gen_semantic_model.md
+      - Scheduler: subagent/scheduler.md
       - Generate SQL Summary: subagent/gen_sql_summary.md
       - Table Generation: subagent/gen_table.md
       - ETL Job: subagent/gen_job.md
@@ -53,20 +56,24 @@ nav:
       - Introduction: API/introduction.md
       - Deployment: API/deployment.md
       - Chat: API/chat.md
+      - Knowledge Base API: API/knowledge_base.md
     - Configuration:
       - Introduction: configuration/introduction.md
       - Agent: configuration/agent.md
       - Workflow: configuration/workflow.md
       - Benchmark: configuration/benchmark.md
-      - Services: configuration/namespace.md
-      - Semantic Layer: configuration/semantic_layer.md
-      - BI Tools: configuration/bi_tools.md
-      - Schedulers: configuration/schedulers.md
+      - Services:
+        - Databases: configuration/databases.md
+        - Semantic Layer: configuration/semantic_layer.md
+        - BI Tools: configuration/bi_tools.md
+        - Schedulers: configuration/schedulers.md
       - Storage: configuration/storage.md
       - Nodes: configuration/nodes.md
     - Adapters:
       - Database Adapters: adapters/db_adapters.md
       - Semantic Adapters: adapters/semantic_adapters.md
+      - BI Adapters: adapters/bi_adapters.md
+      - Scheduler Adapters: adapters/scheduler_adapters.md
     - Benchmark:
       - Introduction: benchmark/benchmark_manual.md
     - Metricflow:
@@ -100,6 +107,7 @@ plugins:
             Overview: 概览
             Getting Started: 入门指南
             Quickstart: 快速开始
+            Data Engineering Quickstart: 数据工程快速开始
             Contextual Data Engineering: 上下文数据工程
             Tutorial: 教程
             Dashboard Copilot: Dashboard Copilot
@@ -116,6 +124,10 @@ plugins:
             Subagent: Subagent
             Built-in subagents: 内置 subagent
             Customized subagents: 自定义 subagent
+            Generate Dashboard: 生成 Dashboard
+            Generate Metrics: 生成指标
+            Generate Semantic Model: 生成语义模型
+            Scheduler: 调度器
             Chatbot: chatbot
             IM Gateway (Claw): IM 网关 (Claw)
             Slack: Slack
@@ -136,10 +148,18 @@ plugins:
             REST API: REST API
             Deployment: 部署
             Chat: Chat
+            Knowledge Base API: 知识库 API
             Configuration: 配置
+            Services: 服务
+            Databases: 数据库
+            Semantic Layer: 语义层
+            BI Tools: BI 工具
+            Schedulers: 调度器
             Adapters: 适配器
             Database Adapters: 数据库适配器
             Semantic Adapters: 语义层适配器
+            BI Adapters: BI 适配器
+            Scheduler Adapters: Scheduler 适配器
             Benchmark: 基准测试
             Metricflow: MetricFlow
             Integration: 集成

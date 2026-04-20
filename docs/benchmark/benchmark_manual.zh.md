@@ -309,12 +309,12 @@ datus-agent tutorial
 
 ### 进行基准测试和评估
 ```bash
-datus-agent benchmark --namespace california_schools --benchmark california_schools --benchmark_task_ids 0 1 2 --workflow <your workflow>
+datus-agent benchmark --database california_schools --benchmark california_schools --benchmark_task_ids 0 1 2 --workflow <your workflow>
 ```
 👉 详见 [第四步：运行基准测试](#第四步运行基准测试)
 
 ```bash
-datus-agent eval --namespace california_schools --benchmark california_schools --task_ids 0 1 2
+datus-agent eval --database california_schools --benchmark california_schools --task_ids 0 1 2
 ```
 👉 详见 [第五步：结果评估](#第五步结果评估)
 
@@ -324,11 +324,11 @@ datus-agent eval --namespace california_schools --benchmark california_schools -
 ### 添加 Benchmark 配置
 ```yaml
 agent:
-  namespace:
-    california_schools:
-      type: sqlite
-      name: california_schools
-      uri: sqlite:///benchmark/bird/dev_20240627/dev_databases/california_schools/california_schools.sqlite # 数据库文件路径，sqlite:///为相对路径； sqlite:////为绝对路径
+  services:
+    databases:
+      california_schools:
+        type: sqlite
+        uri: sqlite:///benchmark/bird/dev_20240627/dev_databases/california_schools/california_schools.sqlite # 数据库文件路径，sqlite:///为相对路径； sqlite:////为绝对路径
   benchmark:
     california_schools:              # benchmark 名称
       question_file: california_schools.csv       # 存放测试问题的文件

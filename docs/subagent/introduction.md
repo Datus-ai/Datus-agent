@@ -122,7 +122,7 @@ graph LR
     A[User Question] --> B[Chat Agent]
     B --> C{Needs delegation?}
     C -->|No| D[Direct response]
-    C -->|Yes| E[task(type=...)]
+    C -->|Yes| E["task(type=...)"]
     E --> F[Specialized subagent]
     F --> G[Result returned]
     G --> D

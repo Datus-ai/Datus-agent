@@ -30,7 +30,7 @@ The heart of Datus is its **[Context Engine](knowledge_base/introduction.md)**, 
 Datus integrates seamlessly with your existing stack:
 
 - **LLMs**: OpenAI, Claude, DeepSeek, Qwen, Kimi, and more ([Configuration](configuration/agent.md))
-- **Data Warehouses**: StarRocks, Snowflake, DuckDB, SQLite, PostgreSQL, and others ([Database Setup](configuration/namespace.md), [Database Adapters](adapters/db_adapters.md))
+- **Data Warehouses**: StarRocks, Snowflake, DuckDB, SQLite, PostgreSQL, and others ([Database Configuration](configuration/databases.md), [Database Adapters](adapters/db_adapters.md))
 - **Semantic Layers**: [MetricFlow](metricflow/introduction.md) support for metric definitions and queries
 - **Extensibility**: Add custom integrations via [MCP](cli/mcp_extensions.md) (Model Context Protocol)
 

@@ -52,7 +52,7 @@ datus-api --daemon --pid-file /var/run/datus-api.pid --daemon-log-file /var/log/
 | 参数              | 默认值                  | 说明 |
 |-------------------|-------------------------|------|
 | `--config`        | (自动解析)              | `agent.yml` 路径 |
-| `--namespace`     | `default`               | `agent.yml` 中的 namespace |
+| `--namespace`     | `default`               | `agent.services.databases` 中的数据库键名 |
 | `--output-dir`    | `./output`              | 生成产物目录 |
 | `--log-level`     | `INFO`                  | `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL` |
 | `--host`          | `127.0.0.1`             | 监听地址 |

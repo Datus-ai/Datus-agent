@@ -68,7 +68,7 @@ agent:
     gen_dashboard:
       model: claude     # 可选：默认使用已配置的模型
       max_turns: 30     # 可选：默认为 30
-      bi_platform: superset  # 可选：显式指定平台（省略时从 dashboard 配置自动检测）
+      bi_platform: superset  # 可选：显式指定平台（仅配置一个 BI 工具时可自动检测）
 
     scheduler:
       model: claude     # 可选：默认使用已配置的模型
@@ -1019,7 +1019,7 @@ agent:
 
 **前置条件**：
 - `agent.yml` 中包含 `agent.services.bi_tools` 配置段及平台凭据
-- 已安装 `datus-bi-superset` 或 `datus-bi-grafana` 包（`pip install datus-agent[bi]`）
+- 已安装 `datus-bi-superset` 或 `datus-bi-grafana` 包
 
 ### 工作原理
 
@@ -1127,7 +1127,7 @@ agent:
 
 **前置条件**：
 - `agent.yml` 中包含 `agent.services.schedulers` 配置段及 Airflow 凭据
-- 已安装 `datus-scheduler-core` 和 `datus-scheduler-airflow` 包
+- 已安装 `datus-scheduler-airflow` 包（会自动拉取 `datus-scheduler-core`）
 
 ### 工作原理
 

@@ -70,161 +70,172 @@ Once installed, Datus Agent will automatically detect and load the adapter.
 
 ## Configuration
 
-Configure your database connection in the `agent.yml` file:
+Configure database connections under `agent.services.databases` in `agent.yml`:
+
+```yaml
+agent:
+  services:
+    databases:
+      mydata:
+        type: sqlite
+        uri: sqlite:///path/to/database.db
+```
+
+Each entry under `services.databases` is one logical database connection.
 
 ### SQLite
 
 ```yaml
-agent:
-  namespace:
-    mydata:
-      type: sqlite
-      uri: sqlite:///path/to/database.db
+mydata:
+  type: sqlite
+  uri: sqlite:///path/to/database.db
 ```
 
 ### DuckDB
 
 ```yaml
-agent:
-  namespace:
-    analytics:
-      type: duckdb
-      uri: duckdb:///path/to/database.duckdb
+analytics:
+  type: duckdb
+  uri: duckdb:///path/to/database.duckdb
 ```
 
 ### MySQL
 
 ```yaml
-agent:
-  namespace:
-    production:
-      type: mysql
-      host: localhost
-      port: 3306
-      username: your_username
-      password: your_password
-      database: your_database
+production:
+  type: mysql
+  host: localhost
+  port: 3306
+  username: your_username
+  password: your_password
+  database: your_database
 ```
 
 ### PostgreSQL
 
 ```yaml
-agent:
-  namespace:
-    production:
-      type: postgresql
-      host: localhost
-      port: 5432
-      username: your_username
-      password: your_password
-      database: your_database
-      schema: public  # optional, default is public
-      sslmode: prefer  # optional, default is prefer
+production_pg:
+  type: postgresql
+  host: localhost
+  port: 5432
+  username: your_username
+  password: your_password
+  database: your_database
+  schema: public  # optional, default is public
+  sslmode: prefer  # optional, default is prefer
 ```
 
 ### Snowflake
 
 ```yaml
-agent:
-  namespace:
-    warehouse:
-      type: snowflake
-      account: your_account
-      username: your_username
-      password: your_password
-      warehouse: your_warehouse
-      database: your_database
-      schema: your_schema
-      role: your_role  # optional
+warehouse:
+  type: snowflake
+  account: your_account
+  username: your_username
+  password: your_password
+  warehouse: your_warehouse
+  database: your_database
+  schema: your_schema
+  role: your_role  # optional
 ```
 
 ### StarRocks
 
 ```yaml
-agent:
-  namespace:
-    analytics:
-      type: starrocks
-      host: localhost
-      port: 9030
-      username: root
-      password: your_password
-      database: your_database
+analytics:
+  type: starrocks
+  host: localhost
+  port: 9030
+  username: root
+  password: your_password
+  database: your_database
 ```
 
 ### ClickZetta
 
 ```yaml
-agent:
-  namespace:
-    lakehouse:
-      type: clickzetta
-      service: CLICKZETTA_SERVICE
-      username: CLICKZETTA_USERNAME
-      password: CLICKZETTA_PASSWORD
-      instance: CLICKZETTA_INSTANCE
-      workspace: CLICKZETTA_WORKSPACE
-      schema: CLICKZETTA_SCHEMA
-      vcluster: CLICKZETTA_VCLUSTER
+lakehouse:
+  type: clickzetta
+  service: CLICKZETTA_SERVICE
+  username: CLICKZETTA_USERNAME
+  password: CLICKZETTA_PASSWORD
+  instance: CLICKZETTA_INSTANCE
+  workspace: CLICKZETTA_WORKSPACE
+  schema: CLICKZETTA_SCHEMA
+  vcluster: CLICKZETTA_VCLUSTER
 ```
 
 ### Hive
 
 ```yaml
-agent:
-  namespace:
-    hive_data:
-      type: hive
-      host: 127.0.0.1
-      port: 10000
-      username: hive
-      database: default
-      auth: NONE  # optional: NONE, LDAP, CUSTOM, KERBEROS
-      configuration:  # optional Hive session config
-        hive.execution.engine: spark
+hive_data:
+  type: hive
+  host: 127.0.0.1
+  port: 10000
+  username: hive
+  database: default
+  auth: NONE  # optional: NONE, LDAP, CUSTOM, KERBEROS
+  configuration:  # optional Hive session config
+    hive.execution.engine: spark
 ```
 
 ### Spark
 
 ```yaml
-agent:
-  namespace:
-    spark_data:
-      type: spark
-      host: localhost
-      port: 10000
-      username: spark
-      database: default
-      auth_mechanism: NONE  # optional: NONE, PLAIN, KERBEROS
+spark_data:
+  type: spark
+  host: localhost
+  port: 10000
+  username: spark
+  database: default
+  auth_mechanism: NONE  # optional: NONE, PLAIN, KERBEROS
 ```
 
 ### ClickHouse
 
 ```yaml
-agent:
-  namespace:
-    analytics:
-      type: clickhouse
-      host: localhost
-      port: 8123
-      username: default
-      password: your_password
-      database: your_database
+analytics:
+  type: clickhouse
+  host: localhost
+  port: 8123
+  username: default
+  password: your_password
+  database: your_database
 ```
 
 ### Trino
 
 ```yaml
+trino_data:
+  type: trino
+  host: localhost
+  port: 8080
+  username: trino
+  catalog: hive
+  schema: default
+  http_scheme: http  # optional: http or https
+```
+
+### Multiple Database Entries
+
+```yaml
 agent:
-  namespace:
-    trino_data:
-      type: trino
-      host: localhost
-      port: 8080
-      username: trino
-      catalog: hive
-      schema: default
-      http_scheme: http  # optional: http or https
+  services:
+    databases:
+      source_db:
+        type: mysql
+        host: source-server
+        username: reader
+        password: password
+        database: source
+
+      target_db:
+        type: snowflake
+        account: your_account
+        username: writer
+        password: password
+        warehouse: compute_wh
+        database: target
 ```
 
 ## Features by Adapter

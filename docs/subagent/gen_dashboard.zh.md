@@ -18,7 +18,9 @@ gen_dashboard subagent 是一个专用节点（`GenDashboardAgenticNode`），�
 确保已在 `agent.yml` 中配置 `agent.services.bi_tools` 并安装了对应的 adapter 包：
 
 ```bash
-pip install datus-agent[bi]   # 安装 datus-bi-superset 和 datus-bi-grafana
+pip install datus-bi-superset   # Superset
+# 或
+pip install datus-bi-grafana    # Grafana
 ```
 
 然后从对话界面调用 subagent：

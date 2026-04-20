@@ -1,10 +1,10 @@
-# Service Configuration
+# Database Configuration
 
-Configure shared runtime services for your data sources.
+Configure database connections under `agent.services.databases`.
 
 ## Overview
 
-The service configuration in Datus Agent organizes runtime integrations under `agent.services` in `agent.yml`. Databases live under `services.databases`, while semantic adapters, BI tools, and schedulers each have their own sibling section.
+The runtime services in Datus Agent live under `agent.services` in `agent.yml`. This page focuses on database connections in `services.databases`. Semantic adapters, BI tools, and schedulers are documented on their sibling pages.
 
 Key features:
 
