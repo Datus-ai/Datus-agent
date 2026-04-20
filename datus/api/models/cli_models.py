@@ -18,6 +18,7 @@ class ExecuteSQLInput(BaseModel):
                 "sql_query": "SELECT * FROM users WHERE status = 'active'",
                 "result_format": "csv",
                 "system": False,
+                "execute_task_id": "caller-generated-task-id",
             }
         }
     )
@@ -26,6 +27,14 @@ class ExecuteSQLInput(BaseModel):
     sql_query: str = Field(..., description="SQL query to execute")
     result_format: str = Field("arrow", description="Result format (arrow, csv, json)")
     system: bool = Field(False, description="Whether this is a system command")
+    execute_task_id: Optional[str] = Field(
+        None,
+        description=(
+            "Caller-supplied task ID used to identify this execution so it can later be "
+            "cancelled via /sql/stop_execute. Returned unchanged in ExecuteSQLData. "
+            "If omitted, the server generates one."
+        ),
+    )
 
 
 class ExecuteSQLData(BaseModel):

@@ -236,10 +236,11 @@ class CLIService:
     async def execute_sql(self, request: ExecuteSQLInput) -> Result[ExecuteSQLData]:
         """Execute SQL query asynchronously with cancellation support.
 
-        Returns a Result containing an execute_task_id that can be used
-        to stop the execution via stop_execute_sql().
+        If ``request.execute_task_id`` is provided, it is used as-is and returned
+        unchanged in ``ExecuteSQLData`` so the caller can cancel the execution
+        via ``stop_execute_sql()``. Otherwise a server-generated UUID is used.
         """
-        task_id = str(uuid.uuid4())
+        task_id = request.execute_task_id or str(uuid.uuid4())
 
         async def _run() -> Result[ExecuteSQLData]:
             try:
@@ -254,8 +255,14 @@ class CLIService:
             finally:
                 self._cleanup_sql_task(task_id)
 
-        task = asyncio.create_task(_run())
         with self._sql_tasks_lock:
+            if task_id in self._sql_tasks:
+                return Result(
+                    success=False,
+                    errorCode=ErrorCode.SQL_EXECUTION_ERROR,
+                    errorMessage=f"execute_task_id '{task_id}' is already in use",
+                )
+            task = asyncio.create_task(_run())
             self._sql_tasks[task_id] = task
 
         return await task

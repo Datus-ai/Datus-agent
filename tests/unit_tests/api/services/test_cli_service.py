@@ -185,6 +185,51 @@ class TestCLIServiceStopExecuteSQL:
         await asyncio.sleep(0)
         assert task.cancelled()
 
+    @pytest.mark.asyncio
+    async def test_execute_sql_honors_caller_supplied_task_id(self, cli_svc):
+        """Caller-supplied execute_task_id is returned unchanged."""
+        caller_task_id = "caller-supplied-abc-123"
+        request = ExecuteSQLInput(sql_query="SELECT 1 as val", execute_task_id=caller_task_id)
+        result = await cli_svc.execute_sql(request)
+        assert result.success is True
+        assert result.data.execute_task_id == caller_task_id
+
+    @pytest.mark.asyncio
+    async def test_stop_execute_sql_uses_caller_supplied_task_id(self):
+        """stop_execute_sql can cancel a task registered with a caller-supplied ID."""
+        svc = CLIService(agent_config=None, chat_service=None)
+
+        async def _slow_task():
+            await asyncio.sleep(60)
+
+        caller_task_id = "caller-cancel-id"
+        svc._sql_tasks[caller_task_id] = asyncio.create_task(_slow_task())
+
+        stop_result = await svc.stop_execute_sql(caller_task_id)
+        assert stop_result.success is True
+        assert stop_result.data.execute_task_id == caller_task_id
+        assert stop_result.data.stopped is True
+
+    @pytest.mark.asyncio
+    async def test_execute_sql_rejects_duplicate_task_id(self):
+        """execute_sql rejects a caller-supplied task_id that is already in use."""
+        svc = CLIService(agent_config=None, chat_service=None)
+
+        async def _slow_task():
+            await asyncio.sleep(60)
+
+        in_use_id = "in-use-task-id"
+        existing = asyncio.create_task(_slow_task())
+        svc._sql_tasks[in_use_id] = existing
+
+        try:
+            result = await svc.execute_sql(ExecuteSQLInput(sql_query="SELECT 1", execute_task_id=in_use_id))
+            assert result.success is False
+            assert "already in use" in (result.errorMessage or "")
+        finally:
+            existing.cancel()
+            await asyncio.sleep(0)
+
 
 class TestCLIServiceExecuteContext:
     """Tests for execute_context — context commands with real DB."""
