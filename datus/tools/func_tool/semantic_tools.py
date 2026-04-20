@@ -96,6 +96,8 @@ class SemanticTools:
             db_config_obj = self.agent_config.current_db_config(namespace)
         except Exception:
             return None
+        if db_config_obj is None:
+            return None
         raw = db_config_obj.to_dict()
         extra = raw.get("extra")
         db_config = {

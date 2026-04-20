@@ -11,6 +11,7 @@ without requiring users to manually write conf/agent.yml files.
 """
 
 from getpass import getpass
+from urllib.parse import urlsplit, urlunsplit
 
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
@@ -25,6 +26,21 @@ from datus.utils.path_manager import get_path_manager
 
 logger = get_logger(__name__)
 console = Console()
+
+
+def _redact_uri(uri: str) -> str:
+    """Redact any password in a database URI, keeping scheme/host/path visible."""
+    try:
+        parts = urlsplit(uri)
+    except ValueError:
+        return uri
+    if parts.password is None:
+        return uri
+    username = parts.username or ""
+    host = parts.hostname or ""
+    port = f":{parts.port}" if parts.port else ""
+    netloc = f"{username}:***@{host}{port}" if username else f"***@{host}{port}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
 
 def _validate_namespace_name(name: str) -> tuple[bool, str]:
@@ -99,7 +115,7 @@ class NamespaceManager:
             if db_config.host:
                 console.print(f"    Host: {db_config.host}:{db_config.port}")
             if db_config.uri:
-                console.print(f"    URI: {db_config.uri}")
+                console.print(f"    URI: {_redact_uri(db_config.uri)}")
             if db_config.database:
                 console.print(f"    Database: {db_config.database}")
             if db_config.schema:
@@ -301,9 +317,17 @@ class NamespaceManager:
                     if db_config.logic_name and db_config.logic_name != db_name:
                         entry["name"] = db_config.logic_name
                 else:
-                    entry = {k: v for k, v in db_config.to_dict().items() if v}
-                    for key in ("logic_name", "path_pattern", "extra", "default"):
-                        entry.pop(key, None)
+                    entry = {
+                        k: v
+                        for k, v in db_config.to_dict().items()
+                        if v and k not in ("logic_name", "path_pattern", "extra", "default")
+                    }
+                    # Preserve adapter-specific fields stored in DbConfig.extra
+                    if isinstance(db_config.extra, dict):
+                        for extra_key, extra_value in db_config.extra.items():
+                            if extra_value in (None, ""):
+                                continue
+                            entry.setdefault(extra_key, extra_value)
 
                 if db_config.default:
                     entry["default"] = True
