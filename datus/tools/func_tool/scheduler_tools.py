@@ -54,6 +54,15 @@ class SchedulerTools(BaseTool):
 
         config = dict(scheduler_config)
         platform = config.get("type", "airflow")
+
+        # Multi-tenant Airflow: auto-inject agent.project_name so users don't
+        # have to restate it in the scheduler section of agent.yml. Each Datus
+        # instance gets its own DAG subdirectory and dag_id prefix, preventing
+        # collisions when many instances share one Airflow cluster. Users can
+        # still override explicitly in agent.yml (setdefault preserves it).
+        if platform == "airflow":
+            config.setdefault("project_name", self.agent_config.project_name)
+
         return SchedulerAdapterRegistry.create_adapter(platform=platform, config=config)
 
     # ── Tool methods ───────────────────────────────────────────────────────

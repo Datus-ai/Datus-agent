@@ -102,6 +102,91 @@ class TestGetAdapter:
                 adapter = tools._get_adapter()
         assert adapter is mock_adapter
 
+    def test_airflow_injects_project_name_from_agent_config(self):
+        """For Airflow, _get_adapter must auto-inject agent.project_name into the
+        scheduler config so each Datus instance lands in its own DAG subdirectory
+        and gets its own dag_id prefix — without users having to repeat the value
+        in agent.yml's scheduler section."""
+        agent_cfg = _make_agent_config(
+            scheduler_config={
+                "name": "airflow_local",
+                "type": "airflow",
+                "api_base_url": "http://localhost:8080/api/v1",
+                "username": "admin",
+                "password": "admin",
+                "dags_folder_root": "/opt/airflow/dags",
+                # Note: no project_name here — adapter expects the tool to inject it
+            }
+        )
+        agent_cfg.project_name = "reports-team"
+        tools = SchedulerTools(agent_cfg)
+
+        mock_registry = MagicMock()
+        mock_registry.create_adapter.return_value = MagicMock()
+        with patch.dict(
+            "sys.modules",
+            {"datus_scheduler_core.registry": MagicMock(SchedulerAdapterRegistry=mock_registry)},
+        ):
+            tools._get_adapter()
+
+        # Verify the injected project_name reached create_adapter
+        call_kwargs = mock_registry.create_adapter.call_args.kwargs
+        assert call_kwargs["platform"] == "airflow"
+        assert call_kwargs["config"]["project_name"] == "reports-team"
+
+    def test_airflow_explicit_project_name_takes_precedence(self):
+        """setdefault semantics: if user writes project_name in agent.yml, Datus
+        must NOT overwrite it with agent.project_name."""
+        agent_cfg = _make_agent_config(
+            scheduler_config={
+                "name": "airflow_local",
+                "type": "airflow",
+                "api_base_url": "http://localhost:8080/api/v1",
+                "username": "admin",
+                "password": "admin",
+                "dags_folder_root": "/opt/airflow/dags",
+                "project_name": "explicit-override",
+            }
+        )
+        agent_cfg.project_name = "reports-team"
+        tools = SchedulerTools(agent_cfg)
+
+        mock_registry = MagicMock()
+        mock_registry.create_adapter.return_value = MagicMock()
+        with patch.dict(
+            "sys.modules",
+            {"datus_scheduler_core.registry": MagicMock(SchedulerAdapterRegistry=mock_registry)},
+        ):
+            tools._get_adapter()
+
+        call_kwargs = mock_registry.create_adapter.call_args.kwargs
+        assert call_kwargs["config"]["project_name"] == "explicit-override"
+
+    def test_non_airflow_platform_not_injected(self):
+        """Only Airflow config schema has a project_name field; don't inject for
+        DS/Azkaban (their 'project' semantics are platform-side, not Datus)."""
+        agent_cfg = _make_agent_config(
+            scheduler_config={
+                "name": "ds_prod",
+                "type": "dolphinscheduler",
+                "api_base_url": "http://localhost:12345/dolphinscheduler",
+                "token": "fake-token",
+            }
+        )
+        agent_cfg.project_name = "reports-team"
+        tools = SchedulerTools(agent_cfg)
+
+        mock_registry = MagicMock()
+        mock_registry.create_adapter.return_value = MagicMock()
+        with patch.dict(
+            "sys.modules",
+            {"datus_scheduler_core.registry": MagicMock(SchedulerAdapterRegistry=mock_registry)},
+        ):
+            tools._get_adapter()
+
+        call_kwargs = mock_registry.create_adapter.call_args.kwargs
+        assert "project_name" not in call_kwargs["config"]
+
 
 # ── SchedulerTools.available_tools ─────────────────────────────────────────
 
