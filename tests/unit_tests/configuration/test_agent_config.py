@@ -23,6 +23,7 @@ from datus.configuration.agent_config import (
     DocumentConfig,
     ModelConfig,
     NodeConfig,
+    ServicesConfig,
     file_stem_from_uri,
     load_model_config,
     resolve_env,
@@ -754,3 +755,23 @@ class TestAgentConfigFilesystemStrict:
         cfg = self._make(tmp_path, filesystem={"strict": True})
         cfg.override_by_args()
         assert cfg.filesystem_strict is True
+
+
+class TestServicesConfigFromDict:
+    def test_bi_platforms_key_is_parsed(self):
+        cfg = ServicesConfig.from_dict({"bi_platforms": {"superset": {"type": "superset"}}})
+        assert cfg.bi_platforms == {"superset": {"type": "superset"}}
+
+    def test_legacy_bi_tools_key_is_accepted_with_deprecation_warning(self):
+        with pytest.warns(DeprecationWarning, match="services.bi_tools is deprecated"):
+            cfg = ServicesConfig.from_dict({"bi_tools": {"superset": {"type": "superset"}}})
+        assert cfg.bi_platforms == {"superset": {"type": "superset"}}
+
+    def test_bi_platforms_takes_precedence_over_legacy_key(self):
+        cfg = ServicesConfig.from_dict(
+            {
+                "bi_platforms": {"superset": {"type": "superset"}},
+                "bi_tools": {"grafana": {"type": "grafana"}},
+            }
+        )
+        assert cfg.bi_platforms == {"superset": {"type": "superset"}}

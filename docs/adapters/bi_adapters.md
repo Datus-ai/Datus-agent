@@ -11,7 +11,7 @@ BI adapters let Datus connect to external dashboard platforms and expose a commo
 - materializing SQL results into a BI-facing database
 - registering datasets when the platform supports them
 
-BI runtime configuration lives under `agent.services.bi_tools` in `agent.yml`.
+BI runtime configuration lives under `agent.services.bi_platforms` in `agent.yml`.
 
 ## Supported BI Platforms
 
@@ -36,12 +36,12 @@ Once installed, Datus discovers the adapter automatically through Python entry p
 
 ## Configuration
 
-Configure BI platforms under `agent.services.bi_tools`:
+Configure BI platforms under `agent.services.bi_platforms`:
 
 ```yaml
 agent:
   services:
-    bi_tools:
+    bi_platforms:
       superset:
         type: superset
         api_url: http://localhost:8088
@@ -66,7 +66,7 @@ agent:
 
 ## Selection Rules
 
-- `bi_platform` selects one entry from `services.bi_tools`.
+- `bi_platform` selects one entry from `services.bi_platforms`.
 - The config key should match the platform name, such as `superset` or `grafana`.
 - If `bi_platform` is omitted and only one BI platform is configured, Datus selects it automatically.
 - If multiple BI platforms are configured, set `bi_platform` explicitly.
@@ -98,11 +98,11 @@ agent:
 
 ## Runtime Notes
 
-- `services.bi_tools` is the only runtime source for BI credentials.
+- `services.bi_platforms` is the only runtime source for BI credentials.
 - Sensitive values support `${ENV_VAR}` substitution.
 
 ## Related Docs
 
-- [BI Tools Configuration](../configuration/bi_tools.md)
+- [BI Platforms Configuration](../configuration/bi_platforms.md)
 - [Generate Dashboard](../subagent/gen_dashboard.md)
 - [Data Engineering Quickstart](../getting_started/data_engineering_quickstart.md)

@@ -48,7 +48,7 @@ def migrate_namespace_to_services(config: dict) -> dict:
                 type: snowflake
                 ...
             semantic_layer: {}
-            bi_tools: {}
+            bi_platforms: {}
             schedulers: {}
     """
     config = copy.deepcopy(config)
@@ -99,7 +99,7 @@ def migrate_namespace_to_services(config: dict) -> dict:
     agent["services"] = {
         "databases": databases,
         "semantic_layer": {},
-        "bi_tools": {},
+        "bi_platforms": {},
         "schedulers": {},
     }
 

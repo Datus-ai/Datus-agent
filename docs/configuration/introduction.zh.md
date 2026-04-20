@@ -46,7 +46,7 @@ agent:
     semantic_layer:
       metricflow: {}
 
-    bi_tools:
+    bi_platforms:
       superset:
         type: superset
         api_url: "http://localhost:8088"
@@ -119,7 +119,7 @@ conf/
 - **[Agent 设置](agent.md)**：配置模型、提供方与全局设置
 - **[数据库配置](databases.md)**：配置 `agent.services.databases` 下的数据库连接
 - **[语义层配置](semantic_layer.md)**：配置 MetricFlow 等 semantic adapter
-- **[BI 工具配置](bi_tools.md)**：配置 Superset / Grafana
+- **[BI 平台配置](bi_platforms.md)**：配置 Superset / Grafana
 - **[调度器配置](schedulers.md)**：配置 Airflow 等 scheduler 服务
 - **[数据库适配器](../adapters/db_adapters.md)**：安装额外的数据库连接器
 - **[工作流定义](workflow.md)**：自定义执行路径

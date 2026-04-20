@@ -142,7 +142,7 @@ agent:
         database: examples
     semantic_layer:
       metricflow: {}
-    bi_tools:
+    bi_platforms:
       superset:
         type: superset
         api_url: http://localhost:8088
@@ -155,7 +155,7 @@ agent:
 !!! note "Configuration Sections"
     - **services.databases**: Defines database connections for SQL execution
     - **services.semantic_layer**: Registers the semantic adapter used by metric and semantic-model workflows
-    - **services.bi_tools**: Defines the BI platform credentials for dashboard access
+    - **services.bi_platforms**: Defines the BI platform credentials for dashboard access
 
 !!! tip
     You can also add the database interactively with `datus-agent configure` instead of editing YAML manually.

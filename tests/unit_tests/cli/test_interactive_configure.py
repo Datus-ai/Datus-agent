@@ -256,7 +256,7 @@ class TestLoadExistingConfig:
                         "my_db": {"type": "sqlite", "uri": "data/test.sqlite"},
                     },
                     "semantic_layer": {},
-                    "bi_tools": {},
+                    "bi_platforms": {},
                     "schedulers": {},
                 },
             }
@@ -1904,7 +1904,7 @@ class TestSave:
         assert agent["target"] == "openai"
         assert "my_db" in agent["services"]["databases"]
         assert "semantic_layer" in agent["services"]
-        assert "bi_tools" in agent["services"]
+        assert "bi_platforms" in agent["services"]
         assert "schedulers" in agent["services"]
 
     def test_save_merges_with_existing_config_preserves_other_sections(self, tmp_path):

@@ -337,7 +337,7 @@ class NamespaceManager:
             services_section = {
                 "databases": databases_section,
                 "semantic_layer": dict(self.agent_config.services.semantic_layer),
-                "bi_tools": dict(self.agent_config.services.bi_tools),
+                "bi_platforms": dict(self.agent_config.services.bi_platforms),
                 "schedulers": dict(self.agent_config.services.schedulers),
             }
 

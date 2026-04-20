@@ -34,7 +34,7 @@ class TestMigrateNamespaceToServices:
         # Single-entry default mark
         assert db.get("default") is True
         assert services["semantic_layer"] == {}
-        assert services["bi_tools"] == {}
+        assert services["bi_platforms"] == {}
         assert services["schedulers"] == {}
 
     def test_dbs_list_is_flattened_to_individual_entries(self):
@@ -89,7 +89,7 @@ class TestMigrateNamespaceToServices:
                 "services": {
                     "databases": {"existing_db": {"type": "duckdb"}},
                     "semantic_layer": {},
-                    "bi_tools": {},
+                    "bi_platforms": {},
                     "schedulers": {},
                 }
             }
@@ -208,7 +208,7 @@ class TestMigrateFile:
                 "services": {
                     "databases": {},
                     "semantic_layer": {},
-                    "bi_tools": {},
+                    "bi_platforms": {},
                     "schedulers": {},
                 }
             }

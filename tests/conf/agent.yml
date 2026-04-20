@@ -218,7 +218,7 @@ agent:
         database: examples
     semantic_layer:
       metricflow: {}
-    bi_tools:
+    bi_platforms:
       superset:
         type: superset
         api_url: http://localhost:8088

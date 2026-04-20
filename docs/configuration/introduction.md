@@ -50,7 +50,7 @@ agent:
     semantic_layer:
       metricflow: {}
 
-    bi_tools:
+    bi_platforms:
       superset:
         type: superset
         api_url: "http://localhost:8088"
@@ -133,7 +133,7 @@ Explore the detailed configuration for each component:
 - **[Agent Settings](agent.md)**: Configure models, providers, and global settings
 - **[Databases](databases.md)**: Set up database connections under `agent.services.databases`
 - **[Semantic Layer](semantic_layer.md)**: Configure semantic adapters such as MetricFlow
-- **[BI Tools](bi_tools.md)**: Configure Superset or Grafana access
+- **[BI Platforms](bi_platforms.md)**: Configure Superset or Grafana access
 - **[Schedulers](schedulers.md)**: Configure Airflow scheduler services
 - **[Database Adapters](../adapters/db_adapters.md)**: Install additional database connectors
 - **[Workflow Definitions](workflow.md)**: Define custom execution patterns

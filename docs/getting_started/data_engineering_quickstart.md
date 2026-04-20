@@ -112,7 +112,7 @@ agent:
     semantic_layer:
       metricflow: {}
 
-    bi_tools:
+    bi_platforms:
       superset:
         type: superset
         api_url: http://127.0.0.1:8088
@@ -253,7 +253,7 @@ Under the hood, the Superset workflow is:
 write_query -> create_dataset -> create_chart -> create_dashboard -> add_chart_to_dashboard
 ```
 
-Because `bi_tools.superset.dataset_db` points to the local Superset PostgreSQL service, Datus can materialize the query result and register it as a Superset dataset automatically.
+Because `bi_platforms.superset.dataset_db` points to the local Superset PostgreSQL service, Datus can materialize the query result and register it as a Superset dataset automatically.
 
 ## Step 10: Verify the End-to-End Result
 

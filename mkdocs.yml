@@ -65,7 +65,7 @@ nav:
       - Services:
         - Databases: configuration/databases.md
         - Semantic Layer: configuration/semantic_layer.md
-        - BI Tools: configuration/bi_tools.md
+        - BI Platforms: configuration/bi_platforms.md
         - Schedulers: configuration/schedulers.md
       - Storage: configuration/storage.md
       - Nodes: configuration/nodes.md

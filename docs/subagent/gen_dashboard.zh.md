@@ -15,7 +15,7 @@ gen_dashboard subagent 是一个专用节点（`GenDashboardAgenticNode`），�
 
 ## 快速开始
 
-确保已在 `agent.yml` 中配置 `agent.services.bi_tools` 并安装了对应的 adapter 包：
+确保已在 `agent.yml` 中配置 `agent.services.bi_platforms` 并安装了对应的 adapter 包：
 
 ```bash
 pip install datus-bi-superset   # Superset
@@ -92,7 +92,7 @@ graph LR
 ```yaml
 agent:
   services:
-    bi_tools:
+    bi_platforms:
       superset:
         type: superset
         api_url: "http://localhost:8088"
@@ -122,19 +122,19 @@ agent:
 |------|------|------|--------|
 | `model` | 否 | 使用的 LLM 模型 | 使用已配置的默认模型 |
 | `max_turns` | 否 | 最大对话轮数 | 30 |
-| `bi_platform` | 否 | `services.bi_tools` 中的平台键（如 `superset`、`grafana`） | 仅配置一个 BI 工具时自动检测 |
-| `services.bi_tools.<platform>.type` | 否 | BI 平台类型；如果填写，必须与配置键一致 | 使用配置键 |
-| `services.bi_tools.<platform>.api_url` | 是 | BI 平台 API 地址 | — |
-| `services.bi_tools.<platform>.username` | Superset | 登录用户名 | — |
-| `services.bi_tools.<platform>.password` | Superset | 登录密码 | — |
-| `services.bi_tools.<platform>.api_key` | Grafana | Grafana API Key | — |
-| `services.bi_tools.<platform>.dataset_db.uri` | 是 | 物化目标数据库的 SQLAlchemy URI | — |
-| `services.bi_tools.<platform>.dataset_db.schema` | 否 | 物化表的 schema | — |
-| `services.bi_tools.<platform>.dataset_db.datasource_name` | Grafana | Grafana datasource 名称 | — |
+| `bi_platform` | 否 | `services.bi_platforms` 中的平台键（如 `superset`、`grafana`） | 仅配置一个 BI 工具时自动检测 |
+| `services.bi_platforms.<platform>.type` | 否 | BI 平台类型；如果填写，必须与配置键一致 | 使用配置键 |
+| `services.bi_platforms.<platform>.api_url` | 是 | BI 平台 API 地址 | — |
+| `services.bi_platforms.<platform>.username` | Superset | 登录用户名 | — |
+| `services.bi_platforms.<platform>.password` | Superset | 登录密码 | — |
+| `services.bi_platforms.<platform>.api_key` | Grafana | Grafana API Key | — |
+| `services.bi_platforms.<platform>.dataset_db.uri` | 是 | 物化目标数据库的 SQLAlchemy URI | — |
+| `services.bi_platforms.<platform>.dataset_db.schema` | 否 | 物化表的 schema | — |
+| `services.bi_platforms.<platform>.dataset_db.datasource_name` | Grafana | Grafana datasource 名称 | — |
 
 所有敏感值支持 `${ENV_VAR}` 环境变量替换。
 
-`services.bi_tools` 是 BI 凭据的唯一运行时来源。顶层 `dashboard:` 已不再读取。
+`services.bi_platforms` 是 BI 凭据的唯一运行时来源。顶层 `dashboard:` 已不再读取。
 
 ## 平台差异对比
 

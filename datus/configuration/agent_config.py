@@ -158,7 +158,7 @@ class ServicesConfig:
 
     databases: Dict[str, DbConfig] = field(default_factory=dict)
     semantic_layer: Dict[str, Dict[str, Any]] = field(default_factory=dict)
-    bi_tools: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    bi_platforms: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     schedulers: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     @property
@@ -174,10 +174,20 @@ class ServicesConfig:
     @classmethod
     def from_dict(cls, raw: Dict[str, Any]) -> "ServicesConfig":
         """Parse services config from agent.yml 'services' section."""
+        bi_platforms_raw = raw.get("bi_platforms")
+        if bi_platforms_raw is None and "bi_tools" in raw:
+            import warnings
+
+            warnings.warn(
+                "services.bi_tools is deprecated; rename to services.bi_platforms in agent.yml.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            bi_platforms_raw = raw["bi_tools"]
         return cls(
             databases={},  # populated by AgentConfig._init_services_config()
             semantic_layer=raw.get("semantic_layer", {}),
-            bi_tools=raw.get("bi_tools", {}),
+            bi_platforms=bi_platforms_raw or {},
             schedulers=raw.get("schedulers", {}),
         )
 
@@ -220,7 +230,7 @@ class ServicesConfig:
                 databases[ns_name] = ns_cfg
             else:
                 databases[ns_name] = ns_cfg
-        return {"databases": databases, "semantic_layer": {}, "bi_tools": {}, "schedulers": {}}
+        return {"databases": databases, "semantic_layer": {}, "bi_platforms": {}, "schedulers": {}}
 
 
 @dataclass
@@ -503,7 +513,7 @@ class AgentConfig:
         self.services = ServicesConfig.from_dict(services_raw)
         self._init_services_config(services_raw.get("databases", {}))
         self.init_semantic_layer(self.services.semantic_layer)
-        self.init_dashboard(self.services.bi_tools)
+        self.init_dashboard(self.services.bi_platforms)
         self.init_scheduler_services(self.services.schedulers)
 
         # SaaS mode: skip _init_dirs() because callers want only derived paths here,
@@ -1199,7 +1209,7 @@ class AgentConfig:
                 raise DatusException(
                     ErrorCode.COMMON_CONFIG_ERROR,
                     message=(
-                        f"BI tool `{service_name}` must use the same key and type in `agent.services.bi_tools`. "
+                        f"BI platform `{service_name}` must use the same key and type in `agent.services.bi_platforms`. "
                         f"Got key `{service_name}` with type `{declared_type}`."
                     ),
                 )

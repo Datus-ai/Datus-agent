@@ -36,7 +36,7 @@ agent:
         uri: ./data.duckdb
         default: true
     semantic_layer: {}
-    bi_tools: {}
+    bi_platforms: {}
     schedulers: {}
   project_root: ~/.datus/workspace
 ```

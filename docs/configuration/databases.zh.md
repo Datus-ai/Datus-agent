@@ -38,7 +38,7 @@ agent:
     semantic_layer:
       metricflow: {}
 
-    bi_tools:
+    bi_platforms:
       superset:
         type: superset
         api_url: http://localhost:8088
@@ -60,7 +60,7 @@ agent:
 |--------|------|----------|
 | `services.databases` | SQL 与知识库操作使用的数据库连接 | `--database` / 当前数据库 / 默认数据库 |
 | `services.semantic_layer` | 语义适配器配置，例如 MetricFlow | `semantic_adapter` |
-| `services.bi_tools` | BI 平台凭据与数据集物化配置 | `bi_platform` |
+| `services.bi_platforms` | BI 平台凭据与数据集物化配置 | `bi_platform` |
 | `services.schedulers` | 调度器服务实例，例如 Airflow | `scheduler_service` |
 
 ## 支持的数据库类型
@@ -248,6 +248,6 @@ password: "actual_password"
 
 - [数据库适配器](../adapters/db_adapters.md) - 安装 MySQL、Snowflake、StarRocks 等插件适配器
 - [语义层配置](semantic_layer.md) - 配置语义适配器
-- [BI 工具配置](bi_tools.md) - 配置 Superset 或 Grafana
+- [BI 平台配置](bi_platforms.md) - 配置 Superset 或 Grafana
 - [调度器配置](schedulers.md) - 配置 Airflow 等调度器
 - [CLI 命令](../cli-commands.md) - 查看 `configure`、`init`、`service` 等完整命令说明
