@@ -7,7 +7,7 @@
 Runs only in REPL mode when the project-level overlay does not yet
 exist.  The wizard is intentionally minimal: it asks the user to pick
 one of the LLM models already defined in the shared ``agent.yml`` and
-one of the databases under ``agent.service.databases``, plus an
+one of the databases under ``agent.services.databases``, plus an
 optional ``project_name``.  Everything else (provider configuration,
 API keys, database URIs, etc.) still lives in the base file — this
 overlay is just "which one do I want for this project".
@@ -55,12 +55,12 @@ def run_project_init(base_config: AgentConfig, cwd: Optional[str] = None) -> Pro
                 )
             },
         )
-    if not base_config.service.databases:
+    if not base_config.services.databases:
         raise DatusException(
             code=ErrorCode.COMMON_CONFIG_ERROR,
             message_args={
                 "config_error": (
-                    "Base agent.yml has no 'agent.service.databases' defined. "
+                    "Base agent.yml has no 'agent.services.databases' defined. "
                     "Run 'datus configure' to add at least one database first."
                 )
             },
@@ -84,8 +84,8 @@ def run_project_init(base_config: AgentConfig, cwd: Optional[str] = None) -> Pro
 
     console.print()
     console.print("[bold]- Select default database (from agent.yml):[/]")
-    db_choices = {name: f"{name}  ({cfg.type})" for name, cfg in base_config.service.databases.items()}
-    db_default = base_config.service.default_database or next(iter(db_choices))
+    db_choices = {name: f"{name}  ({cfg.type})" for name, cfg in base_config.services.databases.items()}
+    db_default = base_config.services.default_database or next(iter(db_choices))
     default_database = select_choice(console, db_choices, default=db_default)
     if not default_database:
         default_database = db_default

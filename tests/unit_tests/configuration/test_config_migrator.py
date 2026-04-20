@@ -6,14 +6,14 @@
 
 import yaml
 
-from datus.configuration.config_migrator import migrate_file, migrate_namespace_to_service
+from datus.configuration.config_migrator import migrate_file, migrate_namespace_to_services
 
 
-class TestMigrateNamespaceToService:
-    """Tests for migrate_namespace_to_service()."""
+class TestMigrateNamespaceToServices:
+    """Tests for migrate_namespace_to_services()."""
 
-    def test_single_db_namespace_produces_service_databases(self):
-        """Old namespace with single DB entry becomes service.databases entry."""
+    def test_single_db_namespace_produces_services_databases(self):
+        """Old namespace with single DB entry becomes services.databases entry."""
         config = {
             "agent": {
                 "namespace": {
@@ -24,18 +24,18 @@ class TestMigrateNamespaceToService:
                 }
             }
         }
-        result = migrate_namespace_to_service(config)
-        service = result["agent"]["service"]
-        assert "databases" in service
-        assert "my_db" in service["databases"]
-        db = service["databases"]["my_db"]
+        result = migrate_namespace_to_services(config)
+        services = result["agent"]["services"]
+        assert "databases" in services
+        assert "my_db" in services["databases"]
+        db = services["databases"]["my_db"]
         assert db["type"] == "sqlite"
         assert db["uri"] == "path/to/my.sqlite"
         # Single-entry default mark
         assert db.get("default") is True
-        assert service["semantic_layer"] == {}
-        assert service["bi_tools"] == {}
-        assert service["schedulers"] == {}
+        assert services["semantic_layer"] == {}
+        assert services["bi_tools"] == {}
+        assert services["schedulers"] == {}
 
     def test_dbs_list_is_flattened_to_individual_entries(self):
         """Namespace with 'dbs' list produces one entry per db, type inherited from namespace."""
@@ -52,8 +52,8 @@ class TestMigrateNamespaceToService:
                 }
             }
         }
-        result = migrate_namespace_to_service(config)
-        databases = result["agent"]["service"]["databases"]
+        result = migrate_namespace_to_services(config)
+        databases = result["agent"]["services"]["databases"]
         assert "db1" in databases
         assert "db2" in databases
         assert databases["db1"]["type"] == "sqlite"
@@ -76,17 +76,17 @@ class TestMigrateNamespaceToService:
                 }
             }
         }
-        result = migrate_namespace_to_service(config)
-        databases = result["agent"]["service"]["databases"]
+        result = migrate_namespace_to_services(config)
+        databases = result["agent"]["services"]["databases"]
         assert "glob_ns" in databases
         assert databases["glob_ns"]["path_pattern"] == "data/*.sqlite"
         assert databases["glob_ns"]["type"] == "sqlite"
 
     def test_already_migrated_config_is_no_op(self):
-        """Config with existing 'service' key is returned unchanged."""
+        """Config with existing 'services' key is returned unchanged."""
         config = {
             "agent": {
-                "service": {
+                "services": {
                     "databases": {"existing_db": {"type": "duckdb"}},
                     "semantic_layer": {},
                     "bi_tools": {},
@@ -94,26 +94,26 @@ class TestMigrateNamespaceToService:
                 }
             }
         }
-        result = migrate_namespace_to_service(config)
-        # Namespace section should not have been touched; service intact
+        result = migrate_namespace_to_services(config)
+        # Namespace section should not have been touched; services intact
         assert "namespace" not in result["agent"]
-        assert result["agent"]["service"]["databases"]["existing_db"]["type"] == "duckdb"
+        assert result["agent"]["services"]["databases"]["existing_db"]["type"] == "duckdb"
 
     def test_no_namespace_section_is_no_op(self):
-        """Config with no 'namespace' section is returned unchanged (no 'service' added)."""
+        """Config with no 'namespace' section is returned unchanged (no 'services' added)."""
         config = {
             "agent": {
                 "target": "openai",
                 "models": {"openai": {"type": "openai", "model": "gpt-4o"}},
             }
         }
-        result = migrate_namespace_to_service(config)
-        # No service key added when there was no namespace to migrate
-        assert "service" not in result["agent"]
+        result = migrate_namespace_to_services(config)
+        # No services key added when there was no namespace to migrate
+        assert "services" not in result["agent"]
         assert result["agent"]["target"] == "openai"
 
     def test_original_config_not_mutated(self):
-        """migrate_namespace_to_service returns a deep copy; original dict unchanged."""
+        """migrate_namespace_to_services returns a deep copy; original dict unchanged."""
         config = {
             "agent": {
                 "namespace": {
@@ -128,7 +128,7 @@ class TestMigrateNamespaceToService:
                 }
             }
         }
-        migrate_namespace_to_service(config)
+        migrate_namespace_to_services(config)
         assert config == original_copy
 
     def test_multiple_namespaces_produce_multiple_databases(self):
@@ -141,8 +141,8 @@ class TestMigrateNamespaceToService:
                 }
             }
         }
-        result = migrate_namespace_to_service(config)
-        databases = result["agent"]["service"]["databases"]
+        result = migrate_namespace_to_services(config)
+        databases = result["agent"]["services"]["databases"]
         assert "snowflake_ns" in databases
         assert "duckdb_ns" in databases
         # Multiple entries: no automatic default marking
@@ -173,7 +173,7 @@ class TestMigrateFile:
         assert not backup.exists()
 
     def test_migrate_file_writes_new_format(self, tmp_path):
-        """migrate_file writes new service format and creates backup."""
+        """migrate_file writes the new services format and creates a backup."""
         config_data = {
             "agent": {
                 "namespace": {
@@ -190,11 +190,11 @@ class TestMigrateFile:
         # Backup created
         backup = tmp_path / "agent.yml.bak"
         assert backup.exists()
-        # New file has service format
+        # New file has services format
         with open(config_file, encoding="utf-8") as f:
             new_config = yaml.safe_load(f)
-        assert "service" in new_config["agent"]
-        assert "db1" in new_config["agent"]["service"]["databases"]
+        assert "services" in new_config["agent"]
+        assert "db1" in new_config["agent"]["services"]["databases"]
 
     def test_migrate_file_nonexistent_path_returns_false(self, tmp_path):
         """migrate_file returns False when config file does not exist."""
@@ -202,10 +202,10 @@ class TestMigrateFile:
         assert result is False
 
     def test_migrate_file_already_migrated_returns_false(self, tmp_path):
-        """migrate_file returns False when config already uses service format."""
+        """migrate_file returns False when config already uses services format."""
         config_data = {
             "agent": {
-                "service": {
+                "services": {
                     "databases": {},
                     "semantic_layer": {},
                     "bi_tools": {},

@@ -47,26 +47,26 @@ class BenchmarkTutorial:
         self.benchmark_path = agent_config.path_manager.benchmark_dir
         if (
             self.namespace_name not in agent_config.benchmark_configs
-            or self.namespace_name not in agent_config.service.databases
+            or self.namespace_name not in agent_config.services.databases
         ):
-            # Add california_schools database to service.databases
+            # Add california_schools database to services.databases
             config_manager = configuration_manager(config_path=self.config_path, reload=True)
-            service_config = config_manager.data.get(
-                "service",
+            services_config = config_manager.data.get(
+                "services",
                 {"databases": {}, "semantic_layer": {}, "bi_tools": {}, "schedulers": {}},
             )
-            service_config.setdefault("databases", {})
-            service_config.setdefault("semantic_layer", {})
-            service_config.setdefault("bi_tools", {})
-            service_config.setdefault("schedulers", {})
-            service_config["databases"]["california_schools"] = {
+            services_config.setdefault("databases", {})
+            services_config.setdefault("semantic_layer", {})
+            services_config.setdefault("bi_tools", {})
+            services_config.setdefault("schedulers", {})
+            services_config["databases"]["california_schools"] = {
                 "type": "sqlite",
                 "name": "california_schools",
                 "uri": "~/.datus/benchmark/california_schools/california_schools.sqlite",
             }
             config_manager.update_item(
-                "service",
-                service_config,
+                "services",
+                services_config,
                 delete_old_key=False,
                 save=False,
             )
@@ -74,7 +74,7 @@ class BenchmarkTutorial:
 
             from rich.syntax import Syntax
 
-            self.console.print(Syntax(dict_to_yaml_str(service_config["databases"]), lexer="yaml"))
+            self.console.print(Syntax(dict_to_yaml_str(services_config["databases"]), lexer="yaml"))
 
             benchmark_config = {
                 self.namespace_name: {

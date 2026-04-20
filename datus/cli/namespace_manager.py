@@ -52,8 +52,9 @@ def _validate_port(port_str: str) -> tuple[bool, str]:
 
 class NamespaceManager:
     def __init__(self, config_path: str):
+        self.config_path = config_path
         try:
-            self.agent_config = load_agent_config(config=config_path, action="namespace")
+            self.agent_config = load_agent_config(config=config_path, action="namespace", reload=True)
         except DatusException as e:
             if e.code == ErrorCode.COMMON_FILE_NOT_FOUND:
                 console.print("❌ Configuration file not found.")
@@ -220,9 +221,9 @@ class NamespaceManager:
             console.print("✔ Database connection test successful\n")
 
             # Add to agent configuration (namespace is guaranteed to not exist from earlier check)
-            # Use service.databases directly — the namespaces property is a read-only compat view
+            # Use services.databases directly — the namespaces property is a read-only compat view
             db_config = DbConfig.filter_kwargs(DbConfig, config_data)
-            self.agent_config.service.databases[namespace_name] = db_config
+            self.agent_config.services.databases[namespace_name] = db_config
 
             # Save configuration
             if self._save_configuration():
@@ -283,7 +284,7 @@ class NamespaceManager:
     def _save_configuration(self) -> bool:
         """Save configuration to agent.yml file."""
         try:
-            configure_manager = configuration_manager()
+            configure_manager = configuration_manager(config_path=self.config_path, reload=True)
             namespace_section = {}
 
             for ns_name, db_configs in self.agent_config.namespaces.items():

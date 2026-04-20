@@ -135,7 +135,7 @@ class SchedulerAgenticNode(AgenticNode):
         return ", ".join(merged_patterns)
 
     def _setup_scheduler_tools(self):
-        """Setup scheduler tools if `agent.service.schedulers` is configured."""
+        """Setup scheduler tools if `agent.services.schedulers` is configured."""
         if not getattr(self.agent_config, "scheduler_services", None):
             return
         try:

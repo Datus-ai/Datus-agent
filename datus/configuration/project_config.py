@@ -9,7 +9,7 @@ pin three values without copying the full config:
 
 - ``target``: which LLM to use (must match a key under ``agent.models``)
 - ``default_database``: which database to connect to on startup (must
-  match a key under ``agent.service.databases``)
+  match a key under ``agent.services.databases``)
 - ``project_name``: shard name for ``~/.datus/sessions/{project_name}/``
   and ``~/.datus/data/{project_name}/`` (optional)
 

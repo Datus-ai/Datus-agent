@@ -146,7 +146,7 @@ class InitWorkspace:
             project_type = _detect_project_type(self.project_dir)
 
             # Build services section from config
-            services_section = _build_services_section(agent_config.service.databases)
+            services_section = _build_services_section(agent_config.services.databases)
 
             # Probe database schema if --database specified
             db_schema_info = ""
@@ -182,7 +182,7 @@ class InitWorkspace:
             from datus.tools.db_tools.db_manager import DBManager
 
             self.console.print(f"[dim]Probing database '{db_name}'...[/dim]")
-            db_config = agent_config.service.databases.get(db_name)
+            db_config = agent_config.services.databases.get(db_name)
             if not db_config:
                 self.console.print(f"[yellow]Database '{db_name}' not found in config, skipping probe.[/yellow]")
                 return ""

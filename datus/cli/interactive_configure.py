@@ -115,15 +115,15 @@ class InteractiveConfigure:
         self.target = agent.get("target", "")
         self.models = agent.get("models", {})
 
-        # Support both new service format and legacy namespace format
-        service = agent.get("service", {})
-        if service:
-            self.databases = service.get("databases", {})
+        # Support both new services format and legacy namespace format
+        services = agent.get("services", {})
+        if services:
+            self.databases = services.get("databases", {})
         elif "namespace" in agent:
             # Auto-migrate legacy namespace format
-            from datus.configuration.agent_config import ServiceConfig
+            from datus.configuration.agent_config import ServicesConfig
 
-            migrated = ServiceConfig.migrate_from_namespace(agent["namespace"])
+            migrated = ServicesConfig.migrate_from_namespace(agent["namespace"])
             self.databases = migrated.get("databases", {})
 
     def _load_provider_catalog(self) -> dict:
@@ -592,16 +592,16 @@ class InteractiveConfigure:
         agent["target"] = self.target
         agent["models"] = self.models
 
-        # Ensure service structure
-        service = agent.get("service", {})
-        service["databases"] = self.databases
-        if "semantic_layer" not in service:
-            service["semantic_layer"] = {}
-        if "bi_tools" not in service:
-            service["bi_tools"] = {}
-        if "schedulers" not in service:
-            service["schedulers"] = {}
-        agent["service"] = service
+        # Ensure services structure
+        services = agent.get("services", {})
+        services["databases"] = self.databases
+        if "semantic_layer" not in services:
+            services["semantic_layer"] = {}
+        if "bi_tools" not in services:
+            services["bi_tools"] = {}
+        if "schedulers" not in services:
+            services["schedulers"] = {}
+        agent["services"] = services
 
         # Remove legacy namespace
         agent.pop("namespace", None)

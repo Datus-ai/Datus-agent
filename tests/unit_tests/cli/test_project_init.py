@@ -22,7 +22,7 @@ def _make_base_config(models, databases, target="", default_database=""):
     cfg = MagicMock()
     cfg.models = models
     cfg.target = target
-    cfg.service = SimpleNamespace(
+    cfg.services = SimpleNamespace(
         databases={name: SimpleNamespace(type=t) for name, t in databases.items()},
         default_database=default_database,
     )

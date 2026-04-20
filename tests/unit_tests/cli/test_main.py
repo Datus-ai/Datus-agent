@@ -252,7 +252,7 @@ class TestRepairProjectOverrides:
 
     def _raw_agent(self, models, databases):
         service_dbs = {name: {"type": db_type} for name, db_type in databases.items()}
-        return {"models": {name: {} for name in models}, "service": {"databases": service_dbs}}
+        return {"models": {name: {} for name in models}, "services": {"databases": service_dbs}}
 
     def _mock_mgr(self, raw):
         mgr = MagicMock()
@@ -436,13 +436,13 @@ class TestRepairProjectOverrides:
 class TestResolveDefaultDatabase:
     def _make_config(self, databases: dict, default: str = ""):
         cfg = MagicMock()
-        cfg.service.databases = databases
-        cfg.service.default_database = default
+        cfg.services.databases = databases
+        cfg.services.default_database = default
         return cfg
 
     def test_returns_service_default_database(self):
         """_resolve_default_database is now a thin wrapper over
-        config.service.default_database — the overlay is applied upstream by
+        config.services.default_database — the overlay is applied upstream by
         _apply_project_override, so this function just reads the resolved
         value. We verify the resolved value wins regardless of the base
         agent.yml: the mock returns "b" directly."""

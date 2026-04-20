@@ -124,7 +124,7 @@ def agent_config():
 def db_manager(agent_config: AgentConfig) -> DBManager:
     # Only pass sqlite/duckdb databases to avoid connector-not-installed errors
     sqlite_dbs = {
-        name: {name: cfg} for name, cfg in agent_config.service.databases.items() if cfg.type in ("sqlite", "duckdb")
+        name: {name: cfg} for name, cfg in agent_config.services.databases.items() if cfg.type in ("sqlite", "duckdb")
     }
     return db_manager_instance(sqlite_dbs)
 

@@ -176,65 +176,66 @@ agent:
   # Supported benchmarks: bird_dev, spider2, semantic_layer
 
   # local databases configuration
-  namespace:
-    bird_sqlite:
-      type: sqlite
-      path_pattern: ~/benchmark/bird/dev_20240627/dev_databases/**/*.sqlite # just support glob pattern
-    bird_school:
-      name: california_schools
-      type: sqlite
-      uri: ~/benchmark/bird/dev_20240627/dev_databases/california_schools/california_schools.sqlite # just support glob pattern
-      default: true
-    duckdb:
-      type: duckdb
-      name: duck
-      uri: tests/data/datus_metricflow_db/duck.db # absolute path: sqlite:////full/path/to/example.db
-    local_duckdb:
-      type: duckdb
-      name: ssb
-      uri: sample_data/duckdb-demo.duckdb
-    ssb_sqlite:
-      type: sqlite
-      name: SSB
-      uri: tests/data/SSB.db
-    snowflake:
-      type: snowflake
-      account: ${SNOWFLAKE_ACCOUNT}
-      username: ${SNOWFLAKE_USERNAME}
-      password: ${SNOWFLAKE_PASSWORD}
-
-    starrocks:
-      type: starrocks
-      host: ${STARROCKS_HOST}
-      port: ${STARROCKS_PORT}
-      username: ${STARROCKS_USER}
-      password: ${STARROCKS_PASSWORD}
-      database: ${STARROCKS_DATABASE}
-    superset:
-      type: postgresql
-      host: 127.0.0.1
-      port: 15432
-      username: superset
-      password: superset
-      database: examples
+  services:
+    databases:
+      bird_sqlite:
+        type: sqlite
+        path_pattern: ~/benchmark/bird/dev_20240627/dev_databases/**/*.sqlite # just support glob pattern
+      bird_school:
+        name: california_schools
+        type: sqlite
+        uri: ~/benchmark/bird/dev_20240627/dev_databases/california_schools/california_schools.sqlite # just support glob pattern
+      duckdb:
+        type: duckdb
+        name: duck
+        uri: tests/data/datus_metricflow_db/duck.db # absolute path: sqlite:////full/path/to/example.db
+      local_duckdb:
+        type: duckdb
+        name: ssb
+        uri: sample_data/duckdb-demo.duckdb
+      ssb_sqlite:
+        type: sqlite
+        name: SSB
+        uri: tests/data/SSB.db
+      snowflake:
+        type: snowflake
+        account: ${SNOWFLAKE_ACCOUNT}
+        username: ${SNOWFLAKE_USERNAME}
+        password: ${SNOWFLAKE_PASSWORD}
+      starrocks:
+        type: starrocks
+        host: ${STARROCKS_HOST}
+        port: ${STARROCKS_PORT}
+        username: ${STARROCKS_USER}
+        password: ${STARROCKS_PASSWORD}
+        database: ${STARROCKS_DATABASE}
+      superset:
+        type: postgresql
+        host: 127.0.0.1
+        port: 15432
+        username: superset
+        password: superset
+        database: examples
+    semantic_layer:
+      metricflow: {}
+    bi_tools:
+      superset:
+        type: superset
+        api_url: http://localhost:8088
+        username: admin
+        password: admin
+        extra:
+          provider: db
+    schedulers:
+      airflow_local:
+        name: airflow_local
+        type: airflow
+        api_base_url: http://localhost:8080/api/v1
+        username: admin
+        password: admin123
+        dags_folder: /tmp/dags
+        dag_discovery_timeout: 60
+        dag_discovery_poll_interval: 5
   storage:
     base_path: data
     embedding_device_type: cpu
-
-  dashboard:
-    superset:
-      api_url: http://localhost:8088
-      username: admin
-      password: admin
-      extra:
-        provider: db
-
-  scheduler:
-    name: airflow_local
-    type: airflow
-    api_base_url: http://localhost:8080/api/v1
-    username: admin
-    password: admin123
-    dags_folder: /tmp/dags
-    dag_discovery_timeout: 60
-    dag_discovery_poll_interval: 5

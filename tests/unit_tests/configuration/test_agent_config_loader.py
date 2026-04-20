@@ -206,7 +206,7 @@ class TestApplyProjectOverride:
         return {
             "target": "openai",
             "models": {"openai": {"type": "openai"}, "deepseek": {"type": "deepseek"}},
-            "service": {"databases": {"db1": {"type": "sqlite"}, "db2": {"type": "duckdb"}}},
+            "services": {"databases": {"db1": {"type": "sqlite"}, "db2": {"type": "duckdb"}}},
         }
 
     def test_no_override_is_noop(self):
@@ -258,7 +258,7 @@ class TestApplyProjectOverride:
 
     def test_valid_default_database_flips_default_flags(self):
         """default_database overlay is applied by flipping databases[*].default
-        so AgentConfig.service.default_database resolves to the override target
+        so AgentConfig.services.default_database resolves to the override target
         uniformly across every entry point (REPL, datus-api, SDK)."""
         agent_raw = self._base_raw()
         with patch(
@@ -266,22 +266,22 @@ class TestApplyProjectOverride:
             return_value=ProjectOverride(default_database="db2"),
         ):
             _apply_project_override(agent_raw)
-        assert agent_raw["service"]["databases"]["db2"]["default"] is True
-        assert agent_raw["service"]["databases"]["db1"]["default"] is False
+        assert agent_raw["services"]["databases"]["db2"]["default"] is True
+        assert agent_raw["services"]["databases"]["db1"]["default"] is False
 
     def test_default_database_overlay_clears_prior_default(self):
         """A base config marking db1 as default must have that flag cleared
         when the overlay points elsewhere, otherwise default_database would
         return the first match (db1) and ignore the overlay."""
         agent_raw = self._base_raw()
-        agent_raw["service"]["databases"]["db1"]["default"] = True
+        agent_raw["services"]["databases"]["db1"]["default"] = True
         with patch(
             "datus.configuration.agent_config_loader.load_project_override",
             return_value=ProjectOverride(default_database="db2"),
         ):
             _apply_project_override(agent_raw)
-        assert agent_raw["service"]["databases"]["db1"]["default"] is False
-        assert agent_raw["service"]["databases"]["db2"]["default"] is True
+        assert agent_raw["services"]["databases"]["db1"]["default"] is False
+        assert agent_raw["services"]["databases"]["db2"]["default"] is True
 
     def test_invalid_default_database_raises(self):
         agent_raw = self._base_raw()
@@ -305,7 +305,7 @@ class TestApplyProjectOverride:
         assert agent_raw["project_name"] == "p"
 
     def test_missing_models_section_invalid_target_raises(self):
-        agent_raw = {"service": {"databases": {"db1": {}}}}
+        agent_raw = {"services": {"databases": {"db1": {}}}}
         with patch(
             "datus.configuration.agent_config_loader.load_project_override",
             return_value=ProjectOverride(target="deepseek"),

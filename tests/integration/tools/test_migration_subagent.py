@@ -69,7 +69,7 @@ agent:
       api_key: sk-fake
       model: claude-sonnet-4-6
       temperature: 0.0
-  service:
+  services:
     databases:
       source_duckdb:
         type: duckdb

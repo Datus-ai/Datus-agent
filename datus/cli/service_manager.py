@@ -6,7 +6,7 @@
 """
 Manage command for Services (databases, semantic layer, BI tools, schedulers).
 
-Replaces the legacy NamespaceManager. Works with the new service.databases
+Replaces the legacy NamespaceManager. Works with the new services.databases
 config structure where each database is an independent entry.
 """
 
@@ -54,8 +54,9 @@ class ServiceManager:
     """Manage services (databases, semantic layer, BI tools, schedulers) in agent.yml."""
 
     def __init__(self, config_path: str):
+        self.config_path = config_path
         try:
-            self.agent_config = load_agent_config(config=config_path, action="service")
+            self.agent_config = load_agent_config(config=config_path, action="service", reload=True)
         except DatusException as e:
             if e.code == ErrorCode.COMMON_FILE_NOT_FOUND:
                 console.print("Configuration file not found.")
@@ -83,7 +84,7 @@ class ServiceManager:
             return 1
 
     def list(self) -> int:
-        databases = self.agent_config.service.databases
+        databases = self.agent_config.services.databases
         if not databases:
             console.print("No databases configured.")
             return 0
@@ -94,7 +95,7 @@ class ServiceManager:
         table.add_column("Connection")
         table.add_column("Default")
 
-        default_db = self.agent_config.service.default_database
+        default_db = self.agent_config.services.default_database
         for db_name, db_config in databases.items():
             connection = ""
             if db_config.uri:
@@ -109,19 +110,19 @@ class ServiceManager:
 
         console.print(table)
 
-        semantic_layer = self.agent_config.service.semantic_layer
+        semantic_layer = self.agent_config.services.semantic_layer
         if semantic_layer:
             console.print("\n[bold yellow]Semantic Layer:[/bold yellow]")
             for name, cfg in semantic_layer.items():
                 console.print(f"  {name}: {cfg}")
 
-        bi_tools = self.agent_config.service.bi_tools
+        bi_tools = self.agent_config.services.bi_tools
         if bi_tools:
             console.print("\n[bold yellow]BI Tools:[/bold yellow]")
             for name, cfg in bi_tools.items():
                 console.print(f"  {name}: {cfg}")
 
-        schedulers = self.agent_config.service.schedulers
+        schedulers = self.agent_config.services.schedulers
         if schedulers:
             console.print("\n[bold yellow]Schedulers:[/bold yellow]")
             for name, cfg in schedulers.items():
@@ -139,7 +140,7 @@ class ServiceManager:
             console.print(f"{error_msg}")
             return 1
 
-        if db_name in self.agent_config.service.databases:
+        if db_name in self.agent_config.services.databases:
             console.print(f"Database '{db_name}' already exists")
             return 1
 
@@ -207,7 +208,7 @@ class ServiceManager:
                 config_data[field_name] = value
 
         # Ask if this should be the default
-        if not self.agent_config.service.databases:
+        if not self.agent_config.services.databases:
             config_data["default"] = True
         elif Confirm.ask("- Set as default database?", default=False):
             config_data["default"] = True
@@ -222,7 +223,7 @@ class ServiceManager:
             db_config = DbConfig.filter_kwargs(DbConfig, config_data)
             db_config.logic_name = db_name
             db_config.default = config_data.get("default", False)
-            self.agent_config.service.databases[db_name] = db_config
+            self.agent_config.services.databases[db_name] = db_config
 
             if self._save_configuration():
                 console.print(f"Database '{db_name}' added successfully")
@@ -238,7 +239,7 @@ class ServiceManager:
         """Interactive method to delete a database configuration."""
         console.print("[bold yellow]Delete Database[/bold yellow]")
 
-        databases = self.agent_config.service.databases
+        databases = self.agent_config.services.databases
         if not databases:
             console.print("No databases configured to delete")
             return 1
@@ -264,7 +265,7 @@ class ServiceManager:
             console.print("Deletion cancelled")
             return 1
 
-        del self.agent_config.service.databases[db_name]
+        del self.agent_config.services.databases[db_name]
 
         if self._save_configuration():
             console.print(f"Database '{db_name}' deleted successfully")
@@ -274,12 +275,12 @@ class ServiceManager:
             return 1
 
     def _save_configuration(self) -> bool:
-        """Save service configuration to agent.yml file."""
+        """Save services configuration to the agent.yml file."""
         try:
-            configure_manager = configuration_manager()
+            configure_manager = configuration_manager(config_path=self.config_path, reload=True)
             databases_section = {}
 
-            for db_name, db_config in self.agent_config.service.databases.items():
+            for db_name, db_config in self.agent_config.services.databases.items():
                 if db_config.type in (DBType.SQLITE, DBType.DUCKDB):
                     entry = {
                         "type": db_config.type,
@@ -298,14 +299,14 @@ class ServiceManager:
 
                 databases_section[db_name] = entry
 
-            service_section = {
+            services_section = {
                 "databases": databases_section,
-                "semantic_layer": dict(self.agent_config.service.semantic_layer),
-                "bi_tools": dict(self.agent_config.service.bi_tools),
-                "schedulers": dict(self.agent_config.service.schedulers),
+                "semantic_layer": dict(self.agent_config.services.semantic_layer),
+                "bi_tools": dict(self.agent_config.services.bi_tools),
+                "schedulers": dict(self.agent_config.services.schedulers),
             }
 
-            configure_manager.update(updates={"service": service_section}, delete_old_key=True)
+            configure_manager.update(updates={"services": services_section}, delete_old_key=True)
             # Remove legacy namespace key if it exists
             if "namespace" in configure_manager.data:
                 del configure_manager.data["namespace"]

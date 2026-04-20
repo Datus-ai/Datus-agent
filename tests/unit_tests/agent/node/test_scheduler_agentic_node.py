@@ -73,8 +73,8 @@ def _scheduler_service_config():
 
 def _add_scheduler_config(agent_config, max_turns=25, node_name="scheduler", scheduler_service="airflow_local"):
     """Add scheduler service config and scheduler agentic node config to an AgentConfig."""
-    agent_config.service.schedulers = {scheduler_service: _scheduler_service_config()}
-    agent_config.init_scheduler_services(agent_config.service.schedulers)
+    agent_config.services.schedulers = {scheduler_service: _scheduler_service_config()}
+    agent_config.init_scheduler_services(agent_config.services.schedulers)
     agent_config.agentic_nodes[node_name] = {
         "system_prompt": "scheduler",
         "max_turns": max_turns,
@@ -135,8 +135,8 @@ class TestSchedulerAgenticNodeInit:
     def test_max_turns_default(self, real_agent_config, mock_llm_create):
         """Default max_turns is 30 when scheduler not in agentic_nodes."""
         # Add scheduler service config but no scheduler agentic node config
-        real_agent_config.service.schedulers = {"airflow_local": _scheduler_service_config()}
-        real_agent_config.init_scheduler_services(real_agent_config.service.schedulers)
+        real_agent_config.services.schedulers = {"airflow_local": _scheduler_service_config()}
+        real_agent_config.init_scheduler_services(real_agent_config.services.schedulers)
         with patch(_SCHEDULER_TOOLS_PATCH, return_value=_make_mock_scheduler_tools()):
             from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
 
@@ -207,7 +207,7 @@ class TestSchedulerToolSetup:
 
     def test_no_scheduler_config_no_tools(self, real_agent_config, mock_llm_create):
         """Without scheduler service config, node should have 0 scheduler tools (graceful no-op)."""
-        real_agent_config.service.schedulers = {}
+        real_agent_config.services.schedulers = {}
         real_agent_config.init_scheduler_services({})
         from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
 
@@ -494,7 +494,7 @@ class TestSchedulerTemplateContext:
 
     def test_context_without_tools(self, real_agent_config, mock_llm_create):
         """Without scheduler config, native_tools should be 'None'."""
-        real_agent_config.service.schedulers = {}
+        real_agent_config.services.schedulers = {}
         real_agent_config.init_scheduler_services({})
         from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
 

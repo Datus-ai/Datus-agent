@@ -242,12 +242,12 @@ class TestLoadExistingConfig:
     """Tests for InteractiveConfigure._load_existing_config()."""
 
     def test_service_databases_format_populates_self_databases(self, tmp_path):
-        """New service.databases format is loaded into self.databases correctly."""
+        """New services.databases format is loaded into self.databases correctly."""
         raw = {
             "agent": {
                 "target": "openai",
                 "models": {"openai": {"type": "openai", "model": "gpt-4o", "api_key": "sk-test"}},
-                "service": {
+                "services": {
                     "databases": {
                         "my_db": {"type": "sqlite", "uri": "data/test.sqlite"},
                     },
@@ -269,7 +269,7 @@ class TestLoadExistingConfig:
         assert "openai" in cfg.models
 
     def test_legacy_namespace_format_auto_migrates(self, tmp_path):
-        """Legacy namespace format is auto-migrated via ServiceConfig.migrate_from_namespace."""
+        """Legacy namespace format is auto-migrated via ServicesConfig.migrate_from_namespace."""
         raw = {
             "agent": {
                 "target": "",
@@ -288,7 +288,7 @@ class TestLoadExistingConfig:
         migrate_result = {"databases": {"legacy_db": {"type": "duckdb", "uri": "legacy.duckdb"}}}
 
         with patch(
-            "datus.configuration.agent_config.ServiceConfig.migrate_from_namespace",
+            "datus.configuration.agent_config.ServicesConfig.migrate_from_namespace",
             return_value=migrate_result,
         ):
             cfg = _make_configure(tmp_path)
@@ -1862,7 +1862,7 @@ class TestSave:
     """Tests for InteractiveConfigure._save()."""
 
     def test_save_writes_yaml_with_service_structure(self, tmp_path):
-        """_save() writes a YAML file containing the service.databases section."""
+        """_save() writes a YAML file containing the services.databases section."""
         cfg = _make_configure(tmp_path)
         cfg.models = {"openai": {"type": "openai", "model": "gpt-4o", "api_key": "sk-test"}}
         cfg.databases = {"my_db": {"type": "sqlite", "uri": "path/to/db.sqlite", "default": True}}
@@ -1876,10 +1876,10 @@ class TestSave:
 
         agent = saved["agent"]
         assert agent["target"] == "openai"
-        assert "my_db" in agent["service"]["databases"]
-        assert "semantic_layer" in agent["service"]
-        assert "bi_tools" in agent["service"]
-        assert "schedulers" in agent["service"]
+        assert "my_db" in agent["services"]["databases"]
+        assert "semantic_layer" in agent["services"]
+        assert "bi_tools" in agent["services"]
+        assert "schedulers" in agent["services"]
 
     def test_save_merges_with_existing_config_preserves_other_sections(self, tmp_path):
         """_save() preserves sections not managed by InteractiveConfigure."""

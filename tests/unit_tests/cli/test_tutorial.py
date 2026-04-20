@@ -162,8 +162,8 @@ class TestBenchmarkTutorialEnsureConfig:
         mock_agent_config = MagicMock()
         mock_agent_config.home = str(tmp_path)
         mock_agent_config.benchmark_configs = {"california_schools": {}}
-        mock_agent_config.service = MagicMock()
-        mock_agent_config.service.databases = {"california_schools": {}}
+        mock_agent_config.services = MagicMock()
+        mock_agent_config.services.databases = {"california_schools": {}}
         mock_agent_config.path_manager = MagicMock()
         mock_agent_config.path_manager.benchmark_dir = tmp_path / "benchmark"
 
@@ -183,8 +183,8 @@ class TestBenchmarkTutorialEnsureConfig:
         mock_agent_config = MagicMock()
         mock_agent_config.home = str(tmp_path)
         mock_agent_config.benchmark_configs = {}
-        mock_agent_config.service = MagicMock()
-        mock_agent_config.service.databases = {}
+        mock_agent_config.services = MagicMock()
+        mock_agent_config.services.databases = {}
         mock_agent_config.path_manager = MagicMock()
         mock_agent_config.path_manager.benchmark_dir = tmp_path / "benchmark"
 
@@ -206,9 +206,9 @@ class TestBenchmarkTutorialEnsureConfig:
 
         assert result is True
         assert mock_config_manager.update_item.call_count == 2
-        # First call for service config (databases)
+        # First call for services config (databases)
         first_call = mock_config_manager.update_item.call_args_list[0]
-        assert first_call[0][0] == "service"
+        assert first_call[0][0] == "services"
         # Second call for benchmark config
         second_call = mock_config_manager.update_item.call_args_list[1]
         assert second_call[0][0] == "benchmark"
@@ -222,8 +222,8 @@ class TestBenchmarkTutorialEnsureConfig:
         mock_agent_config = MagicMock()
         mock_agent_config.home = str(tmp_path)
         mock_agent_config.benchmark_configs = {}
-        mock_agent_config.service = MagicMock()
-        mock_agent_config.service.databases = {}
+        mock_agent_config.services = MagicMock()
+        mock_agent_config.services.databases = {}
         mock_agent_config.path_manager = MagicMock()
         mock_agent_config.path_manager.benchmark_dir = tmp_path / "benchmark"
 
@@ -242,11 +242,11 @@ class TestBenchmarkTutorialEnsureConfig:
         seed_agent = (yaml.safe_load(seed_config.read_text(encoding="utf-8")) or {}).get("agent", {})
         target_agent = (yaml.safe_load(target_config.read_text(encoding="utf-8")) or {}).get("agent", {})
 
-        assert "service" not in seed_agent
+        assert "services" not in seed_agent
         assert "benchmark" not in seed_agent
-        assert "service" in target_agent
+        assert "services" in target_agent
         assert "benchmark" in target_agent
-        assert "california_schools" in target_agent["service"]["databases"]
+        assert "california_schools" in target_agent["services"]["databases"]
         assert "california_schools" in target_agent["benchmark"]
 
 
@@ -404,8 +404,8 @@ class TestBenchmarkTutorialRun:
         mock_agent_config = MagicMock()
         mock_agent_config.home = str(tmp_path)
         mock_agent_config.benchmark_configs = {"california_schools": {}}
-        mock_agent_config.service = MagicMock()
-        mock_agent_config.service.databases = {"california_schools": {}}
+        mock_agent_config.services = MagicMock()
+        mock_agent_config.services.databases = {"california_schools": {}}
         benchmark_path = tmp_path / "benchmark"
         benchmark_path.mkdir()
         mock_agent_config.path_manager = MagicMock()

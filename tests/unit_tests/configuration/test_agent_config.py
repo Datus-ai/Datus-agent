@@ -356,7 +356,7 @@ class TestLoadModelConfig:
 
 
 class TestAgentConfigServiceSelectors:
-    def _make(self, tmp_path, *, service=None, agentic_nodes=None):
+    def _make(self, tmp_path, *, services=None, agentic_nodes=None):
         return AgentConfig(
             nodes={"test": NodeConfig(model="test-model", input=None)},
             home=str(tmp_path / "h"),
@@ -369,7 +369,7 @@ class TestAgentConfigServiceSelectors:
                     "base_url": "http://localhost:0",
                 }
             },
-            service=service or {"databases": {}},
+            services=services or {"databases": {}},
             agentic_nodes=agentic_nodes or {},
             skip_init_dirs=True,
         )
@@ -377,7 +377,7 @@ class TestAgentConfigServiceSelectors:
     def test_resolve_semantic_adapter_returns_explicit_configured_adapter(self, tmp_path):
         cfg = self._make(
             tmp_path,
-            service={
+            services={
                 "databases": {},
                 "semantic_layer": {
                     "metricflow": {"timeout": 300},
@@ -389,7 +389,7 @@ class TestAgentConfigServiceSelectors:
     def test_resolve_semantic_adapter_auto_selects_single_configured_entry(self, tmp_path):
         cfg = self._make(
             tmp_path,
-            service={
+            services={
                 "databases": {},
                 "semantic_layer": {
                     "metricflow": {"timeout": 300},
@@ -401,7 +401,7 @@ class TestAgentConfigServiceSelectors:
     def test_resolve_semantic_adapter_requires_explicit_choice_for_multiple_entries(self, tmp_path):
         cfg = self._make(
             tmp_path,
-            service={
+            services={
                 "databases": {},
                 "semantic_layer": {
                     "metricflow": {"timeout": 300},
@@ -415,7 +415,7 @@ class TestAgentConfigServiceSelectors:
     def test_default_scheduler_service_prefers_single_default(self, tmp_path):
         cfg = self._make(
             tmp_path,
-            service={
+            services={
                 "databases": {},
                 "schedulers": {
                     "airflow_prod": {"type": "airflow", "default": True},
@@ -429,7 +429,7 @@ class TestAgentConfigServiceSelectors:
         with pytest.raises(DatusException, match="Multiple scheduler services are marked"):
             self._make(
                 tmp_path,
-                service={
+                services={
                     "databases": {},
                     "schedulers": {
                         "airflow_prod": {"type": "airflow", "default": True},
@@ -441,7 +441,7 @@ class TestAgentConfigServiceSelectors:
     def test_get_scheduler_config_requires_explicit_choice_when_multiple_instances_exist(self, tmp_path):
         cfg = self._make(
             tmp_path,
-            service={
+            services={
                 "databases": {},
                 "schedulers": {
                     "airflow_prod": {"type": "airflow"},
@@ -455,7 +455,7 @@ class TestAgentConfigServiceSelectors:
     def test_get_scheduler_config_returns_requested_instance(self, tmp_path):
         cfg = self._make(
             tmp_path,
-            service={
+            services={
                 "databases": {},
                 "schedulers": {
                     "airflow_prod": {"type": "airflow", "api_base_url": "http://prod"},
@@ -469,7 +469,7 @@ class TestAgentConfigServiceSelectors:
         with pytest.raises(DatusException, match="must declare a scheduler `type`"):
             self._make(
                 tmp_path,
-                service={
+                services={
                     "databases": {},
                     "schedulers": {
                         "airflow_prod": {"api_base_url": "http://prod"},

@@ -171,7 +171,7 @@ def real_agent_config(tmp_path, reset_global_singletons):
                 "base_url": "http://localhost:0",
             },
         },
-        "service": {
+        "services": {
             "databases": {
                 "california_schools": {
                     "type": "sqlite",

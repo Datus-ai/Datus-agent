@@ -67,7 +67,7 @@ def _make_agent_config(scheduler_config=None):
             return next(iter(cfg.scheduler_services.values()))
         raise DatusException(
             ErrorCode.COMMON_CONFIG_ERROR,
-            message="No scheduler configured in `agent.service.schedulers`.",
+            message="No scheduler configured in `agent.services.schedulers`.",
         )
 
     cfg.get_scheduler_config.side_effect = _get_scheduler_config

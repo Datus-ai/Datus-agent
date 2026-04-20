@@ -3,7 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 """
-Config migration tool: converts legacy namespace-based agent.yml to new service-based format.
+Config migration tool: converts legacy namespace-based agent.yml to new services-based format.
 
 Usage:
     python -m datus.configuration.config_migrator [--config path/to/agent.yml] [--dry-run]
@@ -21,8 +21,8 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
-def migrate_namespace_to_service(config: dict) -> dict:
-    """Convert legacy namespace config to new service.databases format.
+def migrate_namespace_to_services(config: dict) -> dict:
+    """Convert legacy namespace config to new services.databases format.
 
     Old format:
         agent:
@@ -39,7 +39,7 @@ def migrate_namespace_to_service(config: dict) -> dict:
 
     New format:
         agent:
-          service:
+          services:
             databases:
               db1:
                 type: sqlite
@@ -54,8 +54,8 @@ def migrate_namespace_to_service(config: dict) -> dict:
     config = copy.deepcopy(config)
     agent = config.get("agent", {})
 
-    if "service" in agent:
-        logger.info("Config already uses 'service' format, no migration needed.")
+    if "services" in agent:
+        logger.info("Config already uses 'services' format, no migration needed.")
         return config
 
     namespace_config = agent.pop("namespace", {})
@@ -96,7 +96,7 @@ def migrate_namespace_to_service(config: dict) -> dict:
         only_key = next(iter(databases))
         databases[only_key]["default"] = True
 
-    agent["service"] = {
+    agent["services"] = {
         "databases": databases,
         "semantic_layer": {},
         "bi_tools": {},
@@ -125,7 +125,7 @@ def migrate_file(config_path: str, dry_run: bool = False) -> bool:
         logger.error(f"Invalid config file (no 'agent' section): {config_path}")
         return False
 
-    if "service" in config.get("agent", {}):
+    if "services" in config.get("agent", {}):
         logger.info(f"Already migrated: {config_path}")
         return False
 
@@ -133,7 +133,7 @@ def migrate_file(config_path: str, dry_run: bool = False) -> bool:
         logger.info(f"No namespace section to migrate: {config_path}")
         return False
 
-    migrated = migrate_namespace_to_service(config)
+    migrated = migrate_namespace_to_services(config)
 
     if dry_run:
         print("--- Migrated config (dry run) ---")
@@ -153,7 +153,7 @@ def migrate_file(config_path: str, dry_run: bool = False) -> bool:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Migrate agent.yml from namespace to service format")
+    parser = argparse.ArgumentParser(description="Migrate agent.yml from namespace to services format")
     parser.add_argument("--config", type=str, default="conf/agent.yml", help="Path to agent.yml")
     parser.add_argument("--dry-run", action="store_true", help="Print migrated config without writing")
     args = parser.parse_args()

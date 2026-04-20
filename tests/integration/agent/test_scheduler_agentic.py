@@ -63,7 +63,7 @@ def scheduler_agent_config():
     }
 
     # Ensure scheduler service config points to the running Airflow
-    config.service.schedulers = {
+    config.services.schedulers = {
         "airflow_local": {
             "name": "airflow_local",
             "type": "airflow",
@@ -75,7 +75,7 @@ def scheduler_agent_config():
             "dag_discovery_poll_interval": 5,
         }
     }
-    config.init_scheduler_services(config.service.schedulers)
+    config.init_scheduler_services(config.services.schedulers)
 
     return config
 

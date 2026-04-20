@@ -150,8 +150,8 @@ class DbConfig:
 
 
 @dataclass
-class ServiceConfig:
-    """Structured service configuration: databases, semantic layer, BI tools, schedulers.
+class ServicesConfig:
+    """Structured services configuration: databases, semantic layer, BI tools, schedulers.
 
     Replaces the old flat 'namespace' config. Each database is an independent entry.
     """
@@ -172,10 +172,10 @@ class ServiceConfig:
         return None
 
     @classmethod
-    def from_dict(cls, raw: Dict[str, Any]) -> "ServiceConfig":
-        """Parse service config from agent.yml 'service' section."""
+    def from_dict(cls, raw: Dict[str, Any]) -> "ServicesConfig":
+        """Parse services config from agent.yml 'services' section."""
         return cls(
-            databases={},  # populated by AgentConfig._init_service_config()
+            databases={},  # populated by AgentConfig._init_services_config()
             semantic_layer=raw.get("semantic_layer", {}),
             bi_tools=raw.get("bi_tools", {}),
             schedulers=raw.get("schedulers", {}),
@@ -183,7 +183,7 @@ class ServiceConfig:
 
     @classmethod
     def migrate_from_namespace(cls, namespace_config: Dict[str, Any]) -> Dict[str, Any]:
-        """Convert old namespace config format to new service.databases format.
+        """Convert old namespace config format to new services.databases format.
 
         Old format:
             namespace:
@@ -196,7 +196,7 @@ class ServiceConfig:
                     uri: ...
 
         New format:
-            service:
+            services:
               databases:
                 db1:
                   type: sqlite
@@ -411,7 +411,7 @@ class AgentConfig:
     _current_database: str
     _project_name: str
     _trajectory_dir: str
-    service: ServiceConfig
+    services: ServicesConfig
     scheduler_services: Dict[str, Dict[str, Any]]
     semantic_layer_configs: Dict[str, Dict[str, Any]]
 
@@ -489,18 +489,18 @@ class AgentConfig:
             if k != "plan":
                 # Store workflow configuration, supporting both list format and {steps: [], config: {}} format
                 self.custom_workflows[k] = v
-        # Initialize service config (databases, semantic layer, BI tools, schedulers)
-        # Supports both new 'service' format and legacy 'namespace' format with auto-migration
-        service_raw = kwargs.get("service", {})
+        # Initialize services config (databases, semantic layer, BI tools, schedulers)
+        # Supports the new 'services' format and legacy 'namespace' format with auto-migration
+        services_raw = kwargs.get("services", {})
         namespace_raw = kwargs.get("namespace", {})
-        if not service_raw and namespace_raw:
-            logger.info("Migrating legacy 'namespace' config to 'service.databases' format")
-            service_raw = ServiceConfig.migrate_from_namespace(namespace_raw)
-        self.service = ServiceConfig.from_dict(service_raw)
-        self._init_service_config(service_raw.get("databases", {}))
-        self.init_semantic_layer(self.service.semantic_layer)
-        self.init_dashboard(self.service.bi_tools)
-        self.init_scheduler_services(self.service.schedulers)
+        if not services_raw and namespace_raw:
+            logger.info("Migrating legacy 'namespace' config to 'services.databases' format")
+            services_raw = ServicesConfig.migrate_from_namespace(namespace_raw)
+        self.services = ServicesConfig.from_dict(services_raw)
+        self._init_services_config(services_raw.get("databases", {}))
+        self.init_semantic_layer(self.services.semantic_layer)
+        self.init_dashboard(self.services.bi_tools)
+        self.init_scheduler_services(self.services.schedulers)
 
         # SaaS mode: skip _init_dirs() because callers want only derived paths here,
         # not full local directory / backend initialization.
@@ -593,16 +593,16 @@ class AgentConfig:
 
     @current_database.setter
     def current_database(self, value):
-        """Set the current database name (must exist in service.databases)."""
+        """Set the current database name (must exist in services.databases)."""
         if not value:
             return
-        if value not in self.service.databases:
+        if value not in self.services.databases:
             raise DatusException(
                 ErrorCode.COMMON_CONFIG_ERROR,
-                message=f"No database configuration named `{value}` found. Available: {list(self.service.databases.keys())}",
+                message=f"No database configuration named `{value}` found. Available: {list(self.services.databases.keys())}",
             )
         self._current_database = value
-        self.db_type = self.service.databases[value].type
+        self.db_type = self.services.databases[value].type
 
     @property
     def project_name(self) -> str:
@@ -643,7 +643,7 @@ class AgentConfig:
     def current_namespace(self, value: str):
         """Backward-compat: setting current_namespace now sets current_database.
 
-        Accepts a database name from service.databases. Also accepts legacy namespace names
+        Accepts a database name from services.databases. Also accepts legacy namespace names
         which are auto-migrated to database names.
         """
         if not value:
@@ -651,7 +651,7 @@ class AgentConfig:
                 code=ErrorCode.COMMON_FIELD_REQUIRED,
                 message_args={"field_name": "database"},
             )
-        if value not in self.service.databases:
+        if value not in self.services.databases:
             raise DatusException(
                 code=ErrorCode.COMMON_UNSUPPORTED,
                 message_args={"field_name": "database", "your_value": value},
@@ -659,20 +659,20 @@ class AgentConfig:
         if value == self._current_database:
             return
         self._current_database = value
-        db_config = self.service.databases[value]
+        db_config = self.services.databases[value]
         self.db_type = db_config.type
 
     @property
     def namespaces(self) -> Dict[str, Dict[str, DbConfig]]:
-        """Backward-compat: wraps service.databases in old namespace structure.
+        """Backward-compat: wraps services.databases in old namespace structure.
 
         Each database entry becomes its own "namespace" with a single db inside,
         so DBManager only initializes one connection per namespace key.
         """
-        return {db_name: {db_name: db_config} for db_name, db_config in self.service.databases.items()}
+        return {db_name: {db_name: db_config} for db_name, db_config in self.services.databases.items()}
 
-    def _init_service_config(self, databases_config: Dict[str, Any]):
-        """Parse service.databases section into ServiceConfig.databases."""
+    def _init_services_config(self, databases_config: Dict[str, Any]):
+        """Parse services.databases section into ServicesConfig.databases."""
         for db_name, db_config_dict in databases_config.items():
             if not isinstance(db_config_dict, dict):
                 continue
@@ -692,12 +692,12 @@ class AgentConfig:
                     db_config = _parse_single_file_db(db_config_dict, db_type)
                     db_config.logic_name = db_name
                     db_config.default = is_default
-                    self.service.databases[db_name] = db_config
+                    self.services.databases[db_name] = db_config
             else:
                 db_config = DbConfig.filter_kwargs(DbConfig, db_config_dict)
                 db_config.logic_name = db_name
                 db_config.default = is_default
-                self.service.databases[db_name] = db_config
+                self.services.databases[db_name] = db_config
 
     def _parse_glob_pattern_flat(self, base_name: str, path_pattern: str, db_type: str):
         """Parse glob pattern and register each matched file as an independent database entry."""
@@ -722,7 +722,7 @@ class AgentConfig:
                 schema="",
                 logic_name=entry_name,
             )
-            self.service.databases[entry_name] = child_config
+            self.services.databases[entry_name] = child_config
 
         if not any_db_path:
             logger.warning(
@@ -772,7 +772,7 @@ class AgentConfig:
 
     def current_db_config(self, db_name: str = "") -> DbConfig:
         """Get a database config by name, or the current/default one."""
-        databases = self.service.databases
+        databases = self.services.databases
         if db_name and db_name in databases:
             return databases[db_name]
         if self._current_database and self._current_database in databases:
@@ -780,7 +780,7 @@ class AgentConfig:
         if len(databases) == 1:
             return list(databases.values())[0]
         if not db_name:
-            default = self.service.default_database
+            default = self.services.default_database
             if default:
                 return databases[default]
         raise DatusException(
@@ -790,7 +790,7 @@ class AgentConfig:
 
     def current_db_configs(self) -> Dict[str, DbConfig]:
         """Backward-compat: returns all databases (was namespace-scoped, now returns all)."""
-        return self.service.databases
+        return self.services.databases
 
     def default_scheduler_service(self) -> Optional[str]:
         defaults = [name for name, cfg in self.scheduler_services.items() if cfg.get("default")]
@@ -799,7 +799,7 @@ class AgentConfig:
                 ErrorCode.COMMON_CONFIG_ERROR,
                 message=(
                     "Multiple scheduler services are marked with `default: true` in "
-                    "`agent.service.schedulers`. Keep at most one default scheduler."
+                    "`agent.services.schedulers`. Keep at most one default scheduler."
                 ),
             )
         if defaults:
@@ -827,13 +827,13 @@ class AgentConfig:
         if not self.scheduler_services:
             raise DatusException(
                 ErrorCode.COMMON_CONFIG_ERROR,
-                message="No scheduler configured in `agent.service.schedulers`.",
+                message="No scheduler configured in `agent.services.schedulers`.",
             )
 
         raise DatusException(
             ErrorCode.COMMON_CONFIG_ERROR,
             message=(
-                "Multiple scheduler services are configured in `agent.service.schedulers`, "
+                "Multiple scheduler services are configured in `agent.services.schedulers`, "
                 "set `scheduler_service` on the scheduler node."
             ),
         )
@@ -848,7 +848,7 @@ class AgentConfig:
             raise DatusException(
                 ErrorCode.COMMON_CONFIG_ERROR,
                 message=(
-                    f"No semantic layer named `{normalized}` found in `agent.service.semantic_layer`. "
+                    f"No semantic layer named `{normalized}` found in `agent.services.semantic_layer`. "
                     f"Available: {list(self.semantic_layer_configs.keys())}"
                 ),
             )
@@ -860,7 +860,7 @@ class AgentConfig:
         raise DatusException(
             ErrorCode.COMMON_CONFIG_ERROR,
             message=(
-                "Multiple semantic layers are configured in `agent.service.semantic_layer`, "
+                "Multiple semantic layers are configured in `agent.services.semantic_layer`, "
                 "set `semantic_adapter` on the semantic node."
             ),
         )
@@ -883,7 +883,7 @@ class AgentConfig:
         config = self.get_semantic_layer_config(resolved_adapter)
         config.setdefault("type", resolved_adapter)
 
-        db_name = database_name or self.current_database or self.service.default_database
+        db_name = database_name or self.current_database or self.services.default_database
         if db_name:
             config.setdefault("namespace", db_name)
             db_config = _db_config_to_semantic_adapter_config(self.current_db_config(db_name))
@@ -1021,8 +1021,8 @@ class AgentConfig:
             db_arg = kwargs.get("database", "") or kwargs.get("namespace", "")
             if db_arg:
                 self.current_namespace = db_arg  # uses the compat setter
-            elif self.service.default_database:
-                self.current_namespace = self.service.default_database
+            elif self.services.default_database:
+                self.current_namespace = self.services.default_database
         if kwargs.get("benchmark", ""):
             benchmark_platform = kwargs["benchmark"]
             # Validate benchmark is supported (will raise exception if not)
@@ -1089,15 +1089,15 @@ class AgentConfig:
 
     def _current_db_config(self) -> Dict[str, DbConfig]:
         """Backward-compat: returns all database configs."""
-        if not self._current_database and not self.service.databases:
+        if not self._current_database and not self.services.databases:
             raise DatusException(
                 code=ErrorCode.COMMON_FIELD_REQUIRED,
                 message="Database is required, please run with --database <database>",
             )
-        return self.service.databases
+        return self.services.databases
 
     def current_db_name_type(self, db_name: str) -> tuple[str, str]:
-        databases = self.service.databases
+        databases = self.services.databases
         if db_name and db_name in databases:
             return db_name, databases[db_name].type
         if self._current_database and self._current_database in databases:
@@ -1195,7 +1195,7 @@ class AgentConfig:
                 raise DatusException(
                     ErrorCode.COMMON_CONFIG_ERROR,
                     message=(
-                        f"BI tool `{service_name}` must use the same key and type in `agent.service.bi_tools`. "
+                        f"BI tool `{service_name}` must use the same key and type in `agent.services.bi_tools`. "
                         f"Got key `{service_name}` with type `{declared_type}`."
                     ),
                 )
@@ -1234,7 +1234,7 @@ class AgentConfig:
                     ErrorCode.COMMON_CONFIG_ERROR,
                     message=(
                         f"Scheduler service `{service_name}` must declare a scheduler `type` in "
-                        f"`agent.service.schedulers.{service_name}`."
+                        f"`agent.services.schedulers.{service_name}`."
                     ),
                 )
             resolved["type"] = scheduler_type
@@ -1259,7 +1259,7 @@ class AgentConfig:
                     ErrorCode.COMMON_CONFIG_ERROR,
                     message=(
                         f"Semantic layer `{service_name}` must use the adapter type as the key in "
-                        f"`agent.service.semantic_layer`. Got key `{service_name}` with type `{declared_type}`."
+                        f"`agent.services.semantic_layer`. Got key `{service_name}` with type `{declared_type}`."
                     ),
                 )
             resolved["type"] = normalized_name

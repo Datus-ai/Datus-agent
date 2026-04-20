@@ -172,7 +172,7 @@ def _apply_project_override(agent_raw: Dict[str, Any]) -> None:
     ``default_database``. All three are written back into ``agent_raw``
     so ``AgentConfig.__init__`` picks them up naturally. For
     ``default_database`` this means flipping ``databases[*].default``
-    flags, since ``AgentConfig.service.default_database`` is derived
+    flags, since ``AgentConfig.services.default_database`` is derived
     from those flags — this keeps the overlay effective for every
     entry point that calls ``load_agent_config`` (REPL, print mode,
     web, ``datus-api``, SDK), not just the CLI layer.
@@ -193,7 +193,7 @@ def _apply_project_override(agent_raw: Dict[str, Any]) -> None:
             )
         agent_raw["target"] = override.target
     if override.default_database is not None:
-        databases = (agent_raw.get("service", {}) or {}).get("databases", {}) or {}
+        databases = (agent_raw.get("services", {}) or {}).get("databases", {}) or {}
         if override.default_database not in databases:
             raise DatusException(
                 code=ErrorCode.COMMON_FIELD_INVALID,
@@ -290,7 +290,7 @@ def load_agent_config(reload: bool = False, **kwargs) -> AgentConfig:
             )
     # Auto-select default database for file-based DBs if not already set
     if agent_config.db_type in {DBType.SQLITE, DBType.DUCKDB} and not agent_config.current_database:
-        databases = agent_config.service.databases
+        databases = agent_config.services.databases
         if databases:
             first_key = next(iter(databases))
             agent_config.current_database = first_key
