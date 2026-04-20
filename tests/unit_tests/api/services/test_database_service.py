@@ -108,9 +108,9 @@ class TestListDatabases:
         svc = DatabaseService(agent_config=real_agent_config)
         request = ListDatabasesInput()
         result = svc.list_databases(request)
-        for db in result.data.databases:
-            if db.connection_status == "connected":
-                assert db.tables_count > 0
+        connected_databases = [db for db in result.data.databases if db.connection_status == "connected"]
+        assert connected_databases
+        assert all(db.tables_count > 0 for db in connected_databases)
 
     def test_list_databases_with_datasource_filter(self, real_agent_config):
         """list_databases with datasource_id filter."""
@@ -132,9 +132,9 @@ class TestListDatabases:
         svc = DatabaseService(agent_config=real_agent_config)
         request = ListDatabasesInput()
         result = svc.list_databases(request)
-        for db in result.data.databases:
-            if db.tables is not None:
-                assert isinstance(db.tables, list)
+        databases_with_tables = [db for db in result.data.databases if db.tables is not None]
+        assert databases_with_tables
+        assert all(isinstance(db.tables, list) for db in databases_with_tables)
 
     def test_list_databases_has_type_field(self, real_agent_config):
         """list_databases includes database type."""

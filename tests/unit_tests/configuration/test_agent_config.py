@@ -161,7 +161,10 @@ class TestBenchmarkConfigValidate:
             question_file="dev.json",
             question_id_key="id",
         )
-        cfg.validate()  # should not raise
+        assert cfg.validate() is None
+        assert cfg.question_key == "question"
+        assert cfg.question_file == "dev.json"
+        assert cfg.question_id_key == "id"
 
     def test_missing_question_key_raises(self):
         cfg = BenchmarkConfig(question_file="dev.json", question_id_key="id")

@@ -174,12 +174,18 @@ class TestChatTaskManagerBehavior:
         """shutdown completes cleanly with no tasks."""
         manager = ChatTaskManager()
         await manager.shutdown()
+        assert manager._tasks == {}
+        assert manager._completed_tasks == {}
+        assert manager.has_active_tasks() is False
 
     @pytest.mark.asyncio
     async def test_wait_all_tasks_completes_without_tasks(self):
         """wait_all_tasks completes cleanly with no tasks."""
         manager = ChatTaskManager()
         await manager.wait_all_tasks()
+        assert manager._tasks == {}
+        assert manager._completed_tasks == {}
+        assert manager.has_active_tasks() is False
 
     @pytest.mark.asyncio
     async def test_push_event_appends_to_buffer(self):
@@ -297,10 +303,14 @@ class TestStartChat:
 
         manager = ChatTaskManager()
         request = StreamChatInput(message="wait test", session_id="wait-test")
-        await manager.start_chat(real_agent_config, request)
+        task = await manager.start_chat(real_agent_config, request)
 
         # wait_all_tasks should return (tasks may finish quickly with mock LLM)
         await manager.wait_all_tasks()
+        assert task.asyncio_task.done() is True
+        assert manager._tasks == {}
+        assert manager.get_task("wait-test") is task
+        assert manager.has_active_tasks() is False
         await manager.shutdown()
 
     async def test_consume_events_yields_ping_when_idle(self, monkeypatch):

@@ -8,6 +8,7 @@ import subprocess
 from unittest.mock import MagicMock, patch
 
 import yaml
+from rich.console import Console
 
 
 def _make_configure(tmp_path):
@@ -217,9 +218,12 @@ class TestInitDirsAndCopyFiles:
         """_copy_files() swallows exceptions from copy_data_file without raising."""
         cfg = _make_configure(tmp_path)
 
-        with patch("datus.cli.interactive_configure.copy_data_file", side_effect=Exception("copy failed")):
-            # Should not raise
+        with (
+            patch("datus.cli.interactive_configure.copy_data_file", side_effect=Exception("copy failed")),
+            patch("datus.cli.interactive_configure.logger.debug") as mock_debug,
+        ):
             cfg._copy_files()
+        assert mock_debug.call_count == 3
 
     def test_copy_files_copies_prompts_and_samples(self, tmp_path):
         """_copy_files() attempts to copy prompts, sample_data, and skills."""
@@ -421,9 +425,14 @@ class TestShowCurrentState:
             "my_db": {"type": "sqlite", "uri": "path/to/db.sqlite"},
         }
         cfg.target = "openai"
+        cfg.console = Console(record=True, width=120)
 
-        # Should not raise
         cfg._show_current_state()
+        output = cfg.console.export_text()
+        assert "Current Models" in output
+        assert "Current Databases" in output
+        assert "openai" in output
+        assert "my_db" in output
 
     def test_with_empty_models_and_databases_no_exception(self, tmp_path):
         """_show_current_state() handles empty state without errors."""
@@ -431,8 +440,12 @@ class TestShowCurrentState:
         cfg.models = {}
         cfg.databases = {}
         cfg.target = ""
+        cfg.console = Console(record=True, width=120)
 
         cfg._show_current_state()
+        output = cfg.console.export_text()
+        assert "No models configured." in output
+        assert "No databases configured." in output
 
     def test_marks_default_model_with_asterisk(self, tmp_path):
         """_show_current_state() shows '*' next to the target/default model."""
@@ -443,9 +456,13 @@ class TestShowCurrentState:
         }
         cfg.databases = {}
         cfg.target = "openai"
+        cfg.console = Console(record=True, width=120)
 
-        # No exception + table is rendered (verified by no exception)
         cfg._show_current_state()
+        output = cfg.console.export_text()
+        assert "openai" in output
+        assert "deepseek" in output
+        assert "*" in output
 
     def test_database_with_host_field_shows_host(self, tmp_path):
         """_show_current_state() uses 'host' as connection when 'uri' is absent."""
@@ -455,8 +472,12 @@ class TestShowCurrentState:
             "pg_db": {"type": "postgresql", "host": "localhost"},
         }
         cfg.target = ""
+        cfg.console = Console(record=True, width=120)
 
         cfg._show_current_state()
+        output = cfg.console.export_text()
+        assert "pg_db" in output
+        assert "localhost" in output
 
     def test_database_default_marked_with_asterisk(self, tmp_path):
         """_show_current_state() shows '*' next to the database with default=True."""
@@ -467,8 +488,13 @@ class TestShowCurrentState:
             "other_db": {"type": "sqlite", "uri": "other.sqlite"},
         }
         cfg.target = ""
+        cfg.console = Console(record=True, width=120)
 
         cfg._show_current_state()
+        output = cfg.console.export_text()
+        assert "main_db" in output
+        assert "other_db" in output
+        assert "*" in output
 
 
 # ─────────────────────────────────────────────────────────────────────────────

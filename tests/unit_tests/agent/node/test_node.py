@@ -146,7 +146,6 @@ def init_metricflow_db() -> None:
     if not db_dir.exists():
         db_dir.mkdir(parents=True, exist_ok=True)
     csv_path: Path = Path(__file__).parent / "data/metricflow_csv" / "*.csv"
-    print(f"Creating db_path: {db_path}")
     conn = duckdb.connect(db_path)
     conn.execute("CREATE SCHEMA IF NOT EXISTS mf_demo;")
     csv_files = glob.glob(str(csv_path))
@@ -155,7 +154,6 @@ def init_metricflow_db() -> None:
         file_name = full_file_name.split(".")[0]
         table_name = f"mf_demo.{file_name}"
         conn.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM read_csv_auto('{csv_file}', header=TRUE)")
-        print(f"finish the import of {csv_file}")
     conn.close()
 
 
@@ -251,7 +249,6 @@ class TestNode:
             assert node.input.input_text == test_case["input_text"]
             result = node.run()
             assert isinstance(result, SchemaLinkingResult)
-            print(f"result is {type(result)}, {result.success}, {result.schema_count}")
             assert isinstance(result, SchemaLinkingResult)
             assert result.success
             assert result.schema_count > 0
@@ -756,13 +753,6 @@ class TestNode:
                 "Suggestions should mention JOIN or table differences"
             )
 
-            # Print results for manual inspection
-            print("\n=== Compare Node Test Results ===")
-            print(f"Explanation: {result.explanation}")
-            print(f"Suggestions: {result.suggest}")
-            print(f"Success: {result.success}")
-            print("=====================================\n")
-
         except Exception as e:
             logger.error(f"Compare node test failed: {str(e)}")
             raise
@@ -868,18 +858,11 @@ class TestNode:
             )
 
             # Suggestions should be actionable and database-informed
-            if result.suggest:
-                suggest_lower = result.suggest.lower()
-                assert "join" in suggest_lower or "table" in suggest_lower or "modify" in suggest_lower, (
-                    "Should provide actionable database-informed suggestions"
-                )
-
-            # Print results for manual inspection
-            print("\n=== Compare MCP Node Test Results ===")
-            print(f"Explanation: {result.explanation}")
-            print(f"Suggestions: {result.suggest}")
-            print(f"Success: {result.success}")
-            print("==========================================\n")
+            assert result.suggest
+            suggest_lower = result.suggest.lower()
+            assert "join" in suggest_lower or "table" in suggest_lower or "modify" in suggest_lower, (
+                "Should provide actionable database-informed suggestions"
+            )
 
         except Exception as e:
             logger.error(f"Compare MCP node test failed: {str(e)}")

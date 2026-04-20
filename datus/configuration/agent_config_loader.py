@@ -262,17 +262,16 @@ def load_agent_config(reload: bool = False, **kwargs) -> AgentConfig:
 
         if override_kwargs:
             agent_config.override_by_args(**override_kwargs)
-    # Resolve current_database regardless of CLI ``action`` so API / claw /
-    # SDK entry points that bypass ``override_by_args``'s action whitelist
-    # still get a usable default. Priority already applied upstream:
+    # Resolve current_database when an unambiguous default exists. Priority
+    # already applied upstream:
     #   1. ``./.datus/config.yml::default_database`` (via _apply_project_override)
     #   2. ``service.databases[*].default: true`` flag in base agent.yml
     #   3. single-DB auto-select (ServiceConfig.default_database)
-    if not agent_config.current_database and agent_config.service.databases:
-        default_db = agent_config.service.default_database
+    if not agent_config.current_database and agent_config.services.databases:
+        default_db = agent_config.services.default_database
         if default_db:
             agent_config.current_namespace = default_db
-        else:
+        elif kwargs.get("action"):
             raise DatusException(
                 code=ErrorCode.COMMON_CONFIG_ERROR,
                 message_args={

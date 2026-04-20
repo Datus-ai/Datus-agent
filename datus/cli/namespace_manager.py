@@ -54,7 +54,10 @@ class NamespaceManager:
     def __init__(self, config_path: str):
         self.config_path = config_path
         try:
-            self.agent_config = load_agent_config(config=config_path, action="namespace", reload=True)
+            # NamespaceManager is now a compat shell over services.databases.
+            # Load without action-specific default-db enforcement because
+            # namespace CRUD should work even when no default DB is selected.
+            self.agent_config = load_agent_config(config=config_path, reload=True)
         except DatusException as e:
             if e.code == ErrorCode.COMMON_FILE_NOT_FOUND:
                 console.print("❌ Configuration file not found.")
@@ -83,33 +86,33 @@ class NamespaceManager:
             return 1
 
     def list(self) -> int:
-        if not self.agent_config.namespaces:
+        databases = self.agent_config.services.databases
+        if not databases:
             console.print("No namespace configured.")
             return 0
 
         console.print("[bold yellow]Configured namespaces:[/bold yellow]")
-        for namespace_name, db_configs in self.agent_config.namespaces.items():
+        for namespace_name, db_config in databases.items():
             console.print(f"\nNamespace: {namespace_name}")
-            for db_name, db_config in db_configs.items():
-                console.print(f"  Database: {db_name}")
-                console.print(f"    Type: {db_config.type}")
-                if db_config.host:
-                    console.print(f"    Host: {db_config.host}:{db_config.port}")
-                if db_config.uri:
-                    console.print(f"    URI: {db_config.uri}")
-                if db_config.database:
-                    console.print(f"    Database: {db_config.database}")
-                if db_config.schema:
-                    console.print(f"    Schema: {db_config.schema}")
-                if db_config.account:
-                    console.print(f"    Account: {db_config.account}")
-                if db_config.warehouse:
-                    console.print(f"    Warehouse: {db_config.warehouse}")
-                if db_config.catalog:
-                    console.print(f"    Catalog: {db_config.catalog}")
-                if db_config.username:
-                    console.print(f"    Username: {db_config.username}")
-                console.print()
+            console.print(f"  Database: {namespace_name}")
+            console.print(f"    Type: {db_config.type}")
+            if db_config.host:
+                console.print(f"    Host: {db_config.host}:{db_config.port}")
+            if db_config.uri:
+                console.print(f"    URI: {db_config.uri}")
+            if db_config.database:
+                console.print(f"    Database: {db_config.database}")
+            if db_config.schema:
+                console.print(f"    Schema: {db_config.schema}")
+            if db_config.account:
+                console.print(f"    Account: {db_config.account}")
+            if db_config.warehouse:
+                console.print(f"    Warehouse: {db_config.warehouse}")
+            if db_config.catalog:
+                console.print(f"    Catalog: {db_config.catalog}")
+            if db_config.username:
+                console.print(f"    Username: {db_config.username}")
+            console.print()
         return 0
 
     def add(self) -> int:
@@ -124,7 +127,7 @@ class NamespaceManager:
             return 1
 
         # Check if namespace already exists
-        if namespace_name in self.agent_config.namespaces:
+        if namespace_name in self.agent_config.services.databases:
             console.print(f"❌ Namespace '{namespace_name}' already exists")
             return 1
 
@@ -241,13 +244,14 @@ class NamespaceManager:
         console.print("[bold yellow]Delete Namespace[/bold yellow]")
 
         # Check if there are any namespaces to delete
-        if not self.agent_config.namespaces:
+        databases = self.agent_config.services.databases
+        if not databases:
             console.print("❌ No namespaces configured to delete")
             return 1
 
         # List available namespaces
         console.print("Available namespaces:")
-        for namespace_name in self.agent_config.namespaces.keys():
+        for namespace_name in databases.keys():
             console.print(f"  - {namespace_name}")
 
         # Get namespace name to delete
@@ -257,7 +261,7 @@ class NamespaceManager:
             return 1
 
         # Check if namespace exists
-        if namespace_name not in self.agent_config.namespaces:
+        if namespace_name not in databases:
             console.print(f"❌ Namespace '{namespace_name}' does not exist")
             return 1
 
@@ -271,7 +275,7 @@ class NamespaceManager:
             return 1
 
         # Delete namespace from configuration
-        del self.agent_config.namespaces[namespace_name]
+        del self.agent_config.services.databases[namespace_name]
 
         # Save configuration
         if self._save_configuration():
@@ -285,33 +289,37 @@ class NamespaceManager:
         """Save configuration to agent.yml file."""
         try:
             configure_manager = configuration_manager(config_path=self.config_path, reload=True)
-            namespace_section = {}
+            databases_section = {}
 
-            for ns_name, db_configs in self.agent_config.namespaces.items():
-                namespace_dict = {}
-                db_configs_list = list(db_configs.values())
-
-                if len(db_configs_list) == 1:
-                    db_config = db_configs_list[0]
-                    if db_config.type in (DBType.SQLITE, DBType.DUCKDB):
-                        namespace_dict["uri"] = db_config.uri
-                        namespace_dict["type"] = db_config.type
-                        namespace_dict["name"] = db_config.logic_name
-                    else:
-                        # Filter out empty fields from to_dict()
-                        namespace_dict = {k: v for k, v in db_config.to_dict().items() if v}
+            for db_name, db_config in self.agent_config.services.databases.items():
+                if db_config.type in (DBType.SQLITE, DBType.DUCKDB):
+                    entry = {
+                        "type": db_config.type,
+                        "uri": db_config.uri,
+                    }
+                    if db_config.logic_name and db_config.logic_name != db_name:
+                        entry["name"] = db_config.logic_name
                 else:
-                    namespace_dict["type"] = db_configs_list[0].type
-                    namespace_dict["dbs"] = []
-                    for db_config in db_configs_list:
-                        _db_config = {}
-                        _db_config["name"] = db_config.logic_name
-                        _db_config["uri"] = db_config.uri
-                        namespace_dict["dbs"].append(_db_config)
+                    entry = {k: v for k, v in db_config.to_dict().items() if v}
+                    for key in ("logic_name", "path_pattern", "extra", "default"):
+                        entry.pop(key, None)
 
-                namespace_section[ns_name] = namespace_dict
+                if db_config.default:
+                    entry["default"] = True
 
-            configure_manager.update(updates={"namespace": namespace_section}, delete_old_key=True)
+                databases_section[db_name] = entry
+
+            services_section = {
+                "databases": databases_section,
+                "semantic_layer": dict(self.agent_config.services.semantic_layer),
+                "bi_tools": dict(self.agent_config.services.bi_tools),
+                "schedulers": dict(self.agent_config.services.schedulers),
+            }
+
+            configure_manager.update(updates={"services": services_section}, delete_old_key=True)
+            if "namespace" in configure_manager.data:
+                del configure_manager.data["namespace"]
+                configure_manager.save()
             console.print(f"Configuration saved to {configure_manager.config_path}")
             return True
         except Exception as e:

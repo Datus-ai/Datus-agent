@@ -43,11 +43,8 @@ def scheduler_agent_config():
         pytest.skip("DEEPSEEK_API_KEY not set")
     if not _is_airflow_running():
         pytest.skip(f"Airflow not reachable at {AIRFLOW_URL}. Run docker compose up -d")
-    try:
-        import datus_scheduler_airflow  # noqa: F401
-        import datus_scheduler_core  # noqa: F401
-    except ImportError:
-        pytest.skip("datus-scheduler-core or datus-scheduler-airflow package not installed")
+    pytest.importorskip("datus_scheduler_core")
+    pytest.importorskip("datus_scheduler_airflow")
 
     from tests.conftest import load_acceptance_config
 

@@ -373,7 +373,7 @@ class TestLoadAgentConfigResolution:
                                 "base_url": "http://localhost:0",
                             }
                         },
-                        "service": {"databases": databases},
+                        "services": {"databases": databases},
                         "project_root": str(tmp_path / "workspace"),
                     }
                 }
