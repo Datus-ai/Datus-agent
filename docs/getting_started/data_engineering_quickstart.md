@@ -59,6 +59,9 @@ Start Superset:
 
 ```bash
 cd "$DATUS_AGENT_REPO/quickstart/data_engineering/superset"
+export SUPERSET_DB_PASSWORD='superset'
+export SUPERSET_SECRET_KEY='datus-test-secret-key-not-for-prod'
+export SUPERSET_ADMIN_PASSWORD='admin'
 docker compose up -d
 ```
 
@@ -73,6 +76,8 @@ Default local endpoints:
 
 - Superset: `http://127.0.0.1:8088`, username `admin`, password `admin`
 - Airflow: `http://127.0.0.1:8080`, username `admin`, password `admin`
+
+For this quickstart, the Superset compose file reads its database password, admin password, and secret key from environment variables. The three `export` commands above intentionally use local demo values so the walkthrough stays copy-pasteable.
 
 The Airflow compose file mounts `${DACOMP_HOME}` into the container and preloads an Airflow connection named `duckdb_dacomp_lever`, which points to `/workspace/lever_workbench.duckdb`.
 

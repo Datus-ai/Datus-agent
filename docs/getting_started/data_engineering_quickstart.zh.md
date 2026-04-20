@@ -59,6 +59,9 @@ cd "$DACOMP_HOME"
 
 ```bash
 cd "$DATUS_AGENT_REPO/quickstart/data_engineering/superset"
+export SUPERSET_DB_PASSWORD='superset'
+export SUPERSET_SECRET_KEY='datus-test-secret-key-not-for-prod'
+export SUPERSET_ADMIN_PASSWORD='admin'
 docker compose up -d
 ```
 
@@ -73,6 +76,8 @@ docker compose up -d
 
 - Superset：`http://127.0.0.1:8088`，用户名 `admin`，密码 `admin`
 - Airflow：`http://127.0.0.1:8080`，用户名 `admin`，密码 `admin`
+
+这套 quickstart 的 Superset compose 会从环境变量读取数据库密码、管理员密码和 secret key。上面的 3 个 `export` 命令故意用了本地演示值，方便直接按文档复制运行。
 
 Airflow 的 compose 文件会挂载 `${DACOMP_HOME}`，并自动注入一个名为 `duckdb_dacomp_lever` 的连接，指向 `/workspace/lever_workbench.duckdb`。
 

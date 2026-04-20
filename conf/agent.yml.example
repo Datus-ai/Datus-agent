@@ -153,19 +153,15 @@ agent:
       #   path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite # https://bird-bench.oss-cn-beijing.aliyuncs.com/dev.zip
       local_sqlite_ssb:
         type: sqlite
-        name: ssb
         uri: sqlite:////Users/xxx/benchmark/SSB.db
       local_sqlite2:
         type: sqlite
-        name: ssb
         uri: sqlite:////Users/xxx/benchmark/SSB.db
       local_duckdb_ssb:
         type: duckdb
-        name: ssb
         uri: duckdb:////absolute/path/to/db.db # absolute path
       local_duckdb_abc:
         type: duckdb
-        name: abc
         uri: duckdb:///relative/path/to/abc.duckdb # relative path
       starrocks:
         type: starrocks
@@ -179,6 +175,7 @@ agent:
     bi_tools:
       superset:
         type: superset
+        api_url: http://localhost:8088
         username: admin
         password: admin
         extra: # Special configurations for different platforms

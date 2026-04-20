@@ -9,9 +9,9 @@ services:
     image: postgres:15
     container_name: datus-quickstart-superset-postgres
     environment:
-      POSTGRES_DB: superset_examples
-      POSTGRES_USER: superset
-      POSTGRES_PASSWORD: superset
+      POSTGRES_DB: ${SUPERSET_DB_NAME:-superset_examples}
+      POSTGRES_USER: ${SUPERSET_DB_USER:-superset}
+      POSTGRES_PASSWORD: ${SUPERSET_DB_PASSWORD:?Set SUPERSET_DB_PASSWORD}
     ports:
       - "5433:5432"
     healthcheck:
@@ -28,10 +28,16 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      SUPERSET_SECRET_KEY: "datus-test-secret-key-not-for-prod"
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:?Set SUPERSET_SECRET_KEY}
       WTF_CSRF_ENABLED: "false"
       SUPERSET_CONFIG_PATH: /app/pythonpath/superset_config.py
-      SQLALCHEMY_EXAMPLES_URI: "postgresql+psycopg2://superset:superset@postgres:5432/superset_examples"
+      SUPERSET_DB_NAME: ${SUPERSET_DB_NAME:-superset_examples}
+      SUPERSET_DB_USER: ${SUPERSET_DB_USER:-superset}
+      SUPERSET_DB_PASSWORD: ${SUPERSET_DB_PASSWORD:?Set SUPERSET_DB_PASSWORD}
+      SQLALCHEMY_EXAMPLES_URI: "postgresql+psycopg2://${SUPERSET_DB_USER:-superset}:${SUPERSET_DB_PASSWORD:?Set SUPERSET_DB_PASSWORD}@postgres:5432/${SUPERSET_DB_NAME:-superset_examples}"
+      SUPERSET_ADMIN_USERNAME: ${SUPERSET_ADMIN_USERNAME:-admin}
+      SUPERSET_ADMIN_EMAIL: ${SUPERSET_ADMIN_EMAIL:-admin@example.com}
+      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:?Set SUPERSET_ADMIN_PASSWORD}
     user: root
     volumes:
       - ./superset_config.py:/app/pythonpath/superset_config.py:ro
@@ -41,8 +47,8 @@ services:
       bash -lc '
       python -m pip install --no-cache-dir psycopg2-binary -q &&
       superset db upgrade &&
-      if ! superset fab list-users | grep -q "username:admin |"; then
-        superset fab create-admin --username admin --firstname Admin --lastname User --email admin@example.com --password admin;
+      if ! superset fab list-users | grep -q "username:$$SUPERSET_ADMIN_USERNAME |"; then
+        superset fab create-admin --username "$$SUPERSET_ADMIN_USERNAME" --firstname Admin --lastname User --email "$$SUPERSET_ADMIN_EMAIL" --password "$$SUPERSET_ADMIN_PASSWORD";
       fi &&
       superset init &&
       superset load-examples &&
