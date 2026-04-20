@@ -108,8 +108,12 @@ create_venv() {
         if [ -n "$DATUS_FORCE" ]; then
             info "DATUS_FORCE=1: removing existing venv at $VENV_DIR"
             rm -rf "$VENV_DIR"
+        elif [ -x "$VENV_DIR/bin/python" ] && \
+             "$VENV_DIR/bin/python" -c 'import sys; sys.exit(0 if sys.version_info[:2]==(3,12) else 1)' >/dev/null 2>&1; then
+            info "reusing existing Python 3.12 venv at $VENV_DIR (set DATUS_FORCE=1 to recreate)"
         else
-            info "reusing existing venv at $VENV_DIR (set DATUS_FORCE=1 to recreate)"
+            warn "existing venv at $VENV_DIR is not Python 3.12; recreating"
+            rm -rf "$VENV_DIR"
         fi
     fi
     if [ ! -d "$VENV_DIR" ]; then
@@ -124,15 +128,21 @@ create_venv() {
 
 install_package() {
     need_cmd git
-    # Clone without submodules: benchmark/* is excluded from the wheel build
-    # (see pyproject.toml), and upstream submodule chains (e.g. Spider2) may
-    # fail `git submodule update --recursive` for reasons unrelated to this
-    # install. A non-recursive clone sidesteps that.
+    # Full clone (not --filter=blob:none): partial clones can fail to check
+    # out arbitrary commit SHAs not reachable from fetched refs, because
+    # on-demand fetch via `git fetch origin <sha>` is rejected by servers
+    # for non-ref OIDs. A full clone is more bytes but makes DATUS_REF
+    # work reliably for any branch/tag/commit SHA.
+    #
+    # No submodules: benchmark/* is excluded from the wheel build (see
+    # pyproject.toml), and upstream submodule chains (e.g. Spider2) may
+    # fail `git submodule update --recursive` for reasons unrelated to
+    # this install.
     src_dir=$(mktemp -d -t datus-src-XXXXXX)
     # shellcheck disable=SC2064
     trap "rm -rf \"$src_dir\"" EXIT
     info "cloning ${GIT_REPO} @ ${DATUS_REF} -> $src_dir (no submodules)"
-    git clone --quiet --filter=blob:none "$GIT_REPO" "$src_dir"
+    git clone --quiet "$GIT_REPO" "$src_dir"
     git -C "$src_dir" -c advice.detachedHead=false checkout --quiet "$DATUS_REF"
     info "building and installing datus-agent from local source"
     uv pip install --python "$VENV_PY" --upgrade "$src_dir"

@@ -108,8 +108,12 @@ create_venv() {
         if [ -n "$DATUS_FORCE" ]; then
             info "DATUS_FORCE=1: removing existing venv at $VENV_DIR"
             rm -rf "$VENV_DIR"
+        elif [ -x "$VENV_DIR/bin/python" ] && \
+             "$VENV_DIR/bin/python" -c 'import sys; sys.exit(0 if sys.version_info[:2]==(3,12) else 1)' >/dev/null 2>&1; then
+            info "reusing existing Python 3.12 venv at $VENV_DIR (set DATUS_FORCE=1 to recreate)"
         else
-            info "reusing existing venv at $VENV_DIR (set DATUS_FORCE=1 to recreate)"
+            warn "existing venv at $VENV_DIR is not Python 3.12; recreating"
+            rm -rf "$VENV_DIR"
         fi
     fi
     if [ ! -d "$VENV_DIR" ]; then
