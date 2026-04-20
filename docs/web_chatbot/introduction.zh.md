@@ -90,16 +90,14 @@ datus --web --database production --subagent finance_report
 
 侧边栏显示最近的会话信息，包括：
 
-- 会话 ID（截断显示）
+- 会话名称
 - 创建时间
-- 消息数量
-- 最新用户消息预览
 
 **加载历史会话**：
 
 1. 在侧边栏找到目标会话
-2. 点击 "🔗 Load Session"
-3. 以只读方式查看会话内容
+2. 点击对应的会话名称
+3. 即可进入会话详情，查看历史消息或者你可以继续进行对话
 
 **会话分享**：
 
@@ -116,7 +114,7 @@ http://localhost:8501?session=abc123def456...
 当 AI 生成的 SQL 工作良好时：
 
 1. 先审阅生成的 SQL
-2. 点击 "👍 Success" 按钮
+2. 点击 "Save to success story" 按钮
 3. 查询会保存到 `~/.datus/benchmark/[subagent]/success_story.csv`
 
 ![Save Generated SQL](../assets/geneated_sql_save.png)
@@ -129,18 +127,6 @@ http://localhost:8501?session=...,abc123...,chatbot,"Show revenue by category",S
 ```
 
 这有助于沉淀有效查询用于基准评测与持续改进。
-
-### 5. 问题反馈（Report Issues）
-
-**便捷分享问题**：
-
-1. 在侧边栏点击 "🐛 Report Issue"
-2. 系统会自动将会话链接复制到剪贴板
-3. 将链接粘贴给开发者即可定位问题
-
-会话链接包含完整的对话上下文，便于排查与复现。
-
-![Report Issue](../assets/report_issue_sessionid_copied.png){ width="50%" }
 
 ## 总结
 

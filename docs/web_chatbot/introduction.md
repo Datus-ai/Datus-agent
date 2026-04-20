@@ -91,16 +91,14 @@ datus --web --database production --subagent finance_report
 
 The sidebar shows your recent chat sessions with:
 
-- Session ID (shortened)
+- Session name
 - Creation time
-- Message count
-- Latest user message preview
 
 **Load Previous Sessions**:
 
 1. Find the session in the sidebar
-2. Click "🔗 Load Session"
-3. View the conversation in read-only mode
+2. Click the session name
+3. Open the session to review its history or continue the conversation
 
 **Session Sharing**:
 
@@ -110,14 +108,14 @@ Each session has a unique URL that can be shared:
 http://localhost:8501?session=abc123def456...
 ```
 
-### 4. Success Story Tracking
+### 4. Success Story Archive
 
 **Mark Successful Queries**:
 
 When the AI generates a SQL query that works well:
 
 1. Review the generated SQL
-2. Click the "👍 Success" button
+2. Click the "Save to success story" button
 3. The query is saved to `~/.datus/benchmark/[subagent]/success_story.csv`
 
 ![Save Generated SQL](../assets/geneated_sql_save.png)
@@ -130,18 +128,6 @@ http://localhost:8501?session=...,abc123...,chatbot,"Show revenue by category",S
 ```
 
 This helps track effective queries for benchmarking and improvement.
-
-### 5. Report Issues
-
-**Share Problems Easily**:
-
-1. Click "🐛 Report Issue" in the sidebar
-2. Session link is automatically copied to clipboard
-3. Paste the link when reporting issues to developers
-
-The session link includes full conversation context, making debugging easier.
-
-![Report Issue](../assets/report_issue_sessionid_copied.png){ width="50%" }
 
 ## Summary
 
