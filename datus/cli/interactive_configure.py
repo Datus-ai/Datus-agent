@@ -115,10 +115,13 @@ class InteractiveConfigure:
         self.target = agent.get("target", "")
         self.models = agent.get("models", {})
 
-        # Support both new services format and legacy namespace format
-        services = agent.get("services", {})
-        if services:
+        # Support new services format and legacy singular service / namespace formats
+        services = agent.get("services") or {}
+        legacy_service = agent.get("service") or {}
+        if isinstance(services, dict) and services.get("databases") is not None:
             self.databases = services.get("databases", {})
+        elif isinstance(legacy_service, dict) and legacy_service.get("databases") is not None:
+            self.databases = legacy_service.get("databases", {})
         elif "namespace" in agent:
             # Auto-migrate legacy namespace format
             from datus.configuration.agent_config import ServicesConfig
@@ -592,8 +595,13 @@ class InteractiveConfigure:
         agent["target"] = self.target
         agent["models"] = self.models
 
-        # Ensure services structure
-        services = agent.get("services", {})
+        # Ensure services structure, migrating any leftover legacy singular `service`
+        raw_services = agent.get("services")
+        services = dict(raw_services) if isinstance(raw_services, dict) else {}
+        legacy_service = agent.get("service")
+        if isinstance(legacy_service, dict):
+            for key, value in legacy_service.items():
+                services.setdefault(key, value)
         services["databases"] = self.databases
         if "semantic_layer" not in services:
             services["semantic_layer"] = {}
@@ -603,8 +611,9 @@ class InteractiveConfigure:
             services["schedulers"] = {}
         agent["services"] = services
 
-        # Remove legacy namespace
+        # Remove legacy namespace and singular service keys
         agent.pop("namespace", None)
+        agent.pop("service", None)
 
         # Set default nodes if not present
         if "nodes" not in agent:

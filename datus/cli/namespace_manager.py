@@ -293,10 +293,11 @@ class NamespaceManager:
 
             for db_name, db_config in self.agent_config.services.databases.items():
                 if db_config.type in (DBType.SQLITE, DBType.DUCKDB):
-                    entry = {
-                        "type": db_config.type,
-                        "uri": db_config.uri,
-                    }
+                    entry: dict = {"type": db_config.type}
+                    if db_config.path_pattern:
+                        entry["path_pattern"] = db_config.path_pattern
+                    elif db_config.uri:
+                        entry["uri"] = db_config.uri
                     if db_config.logic_name and db_config.logic_name != db_name:
                         entry["name"] = db_config.logic_name
                 else:

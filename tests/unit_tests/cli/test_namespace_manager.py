@@ -118,13 +118,9 @@ class TestNamespaceManagerAdd:
         result = nm.add()
 
         assert result == 0  # 0 means success
-        # After add, the new entry should be in services.databases (keyed by logical name)
-        # The namespace_manager adds with logical_name = namespace_name input ("test_duckdb")
-        # or may use the path stem as the database name (e.g. "test")
+        # After add, the new entry should be in services.databases keyed by the requested logical name.
         db_names = set(nm.agent_config.services.databases.keys())
-        assert "test_duckdb" in db_names or "test" in db_names, (
-            f"Expected 'test_duckdb' or 'test' in services.databases, got: {db_names}"
-        )
+        assert "test_duckdb" in db_names, f"Expected 'test_duckdb' in services.databases, got: {db_names}"
         mock_console.print.assert_any_call("✔ Database connection test successful\n")
         mock_console.print.assert_any_call("✔ Namespace 'test_duckdb' added successfully")
 

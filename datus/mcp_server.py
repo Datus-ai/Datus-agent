@@ -214,7 +214,16 @@ class ToolContextManager:
         services = self._config_manager.get("services", {}) or {}
         databases = services.get("databases", {}) or {}
         legacy_namespaces = self._config_manager.get("namespace", {}) or {}
-        self._available_namespaces: Set[str] = set(databases.keys()) or set(legacy_namespaces.keys())
+        if databases:
+            available_namespaces = set(databases.keys())
+        elif legacy_namespaces:
+            from datus.configuration.agent_config import ServicesConfig
+
+            migrated = ServicesConfig.migrate_from_namespace(legacy_namespaces)
+            available_namespaces = set(migrated.get("databases", {}).keys())
+        else:
+            available_namespaces = set()
+        self._available_namespaces: Set[str] = available_namespaces
         self._available_subagents: Set[str] = set(self._config_manager.get("agentic_nodes", {}).keys())
 
         logger.info(

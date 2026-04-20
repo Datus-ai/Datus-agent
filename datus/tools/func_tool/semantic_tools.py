@@ -97,11 +97,19 @@ class SemanticTools:
         except Exception:
             return None
         raw = db_config_obj.to_dict()
-        return {
+        extra = raw.get("extra")
+        db_config = {
             k: str(v)
             for k, v in raw.items()
             if v is not None and v != "" and k not in ("extra", "logic_name", "path_pattern", "catalog", "default")
         }
+        # Preserve connector-specific `extra` fields without overwriting explicit top-level keys
+        if isinstance(extra, dict):
+            for k, v in extra.items():
+                if v is None or v == "":
+                    continue
+                db_config.setdefault(k, str(v))
+        return db_config
 
     @property
     def adapter(self) -> Optional[BaseSemanticAdapter]:

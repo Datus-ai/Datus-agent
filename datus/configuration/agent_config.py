@@ -491,8 +491,12 @@ class AgentConfig:
                 self.custom_workflows[k] = v
         # Initialize services config (databases, semantic layer, BI tools, schedulers)
         # Supports the new 'services' format and legacy 'namespace' format with auto-migration
-        services_raw = kwargs.get("services", {})
-        namespace_raw = kwargs.get("namespace", {})
+        services_raw = kwargs.get("services") or {}
+        namespace_raw = kwargs.get("namespace") or {}
+        if not isinstance(services_raw, dict):
+            services_raw = {}
+        if not isinstance(namespace_raw, dict):
+            namespace_raw = {}
         if not services_raw and namespace_raw:
             logger.info("Migrating legacy 'namespace' config to 'services.databases' format")
             services_raw = ServicesConfig.migrate_from_namespace(namespace_raw)
@@ -883,7 +887,7 @@ class AgentConfig:
         config = self.get_semantic_layer_config(resolved_adapter)
         config.setdefault("type", resolved_adapter)
 
-        db_name = database_name or self.current_database or self.services.default_database
+        db_name = database_name or config.get("namespace") or self.current_database or self.services.default_database
         if db_name:
             config.setdefault("namespace", db_name)
             db_config = _db_config_to_semantic_adapter_config(self.current_db_config(db_name))
@@ -1286,13 +1290,21 @@ def _db_config_to_semantic_adapter_config(db_config: Optional[DbConfig]) -> Opti
         return None
 
     raw = db_config.to_dict()
-    return {
+    extra = raw.get("extra")
+    semantic_db_config = {
         key: str(value)
         for key, value in raw.items()
         if value is not None
         and value != ""
         and key not in ("extra", "logic_name", "path_pattern", "catalog", "default")
     }
+    # Merge connector-specific `extra` fields without overwriting explicit top-level keys
+    if isinstance(extra, dict):
+        for key, value in extra.items():
+            if value is None or value == "":
+                continue
+            semantic_db_config.setdefault(key, str(value))
+    return semantic_db_config
 
 
 def _resolve_nested_value(value: Any) -> Any:
