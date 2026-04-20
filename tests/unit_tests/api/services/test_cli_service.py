@@ -1,6 +1,7 @@
 """Tests for datus.api.services.cli_service — CLI command operations."""
 
 import asyncio
+import uuid
 
 import pytest
 
@@ -20,10 +21,15 @@ def cli_svc(real_agent_config):
 class TestCLIServiceInit:
     """Tests for CLIService initialization."""
 
-    def test_init_with_real_config(self, cli_svc):
-        """CLIService initializes with real agent config."""
-        assert cli_svc is not None
-        assert cli_svc.current_db_connector is not None
+    def test_init_with_real_config(self, cli_svc, real_agent_config):
+        """CLIService initializes with real agent config and connector."""
+        from datus.tools.db_tools.db_manager import DBManager
+
+        assert cli_svc.agent_config is real_agent_config
+        assert isinstance(cli_svc.db_manager, DBManager)
+        assert cli_svc.current_namespace == real_agent_config.current_namespace
+        # Connector must expose execute() — the only contract CLIService relies on
+        assert callable(getattr(cli_svc.current_db_connector, "execute", None))
 
     def test_init_without_config(self):
         """CLIService initializes without agent config."""
@@ -33,12 +39,15 @@ class TestCLIServiceInit:
         assert svc.current_db_connector is None
 
     def test_init_sets_cli_context(self, cli_svc):
-        """CLIService initializes CLI context."""
-        assert cli_svc.cli_context is not None
+        """CLIService initializes CLI context with california_schools database."""
+        from datus.cli.cli_context import CliContext
+
+        assert isinstance(cli_svc.cli_context, CliContext)
+        assert cli_svc.cli_context.current_db_name == "california_schools"
 
     def test_init_sets_current_db_name(self, cli_svc):
-        """Init resolves current_db_name from namespace."""
-        assert cli_svc.current_db_name is not None
+        """Init resolves current_db_name to the default database in the namespace."""
+        assert cli_svc.current_db_name == "california_schools"
 
 
 class TestCLIServiceExecuteSQL:
@@ -47,30 +56,40 @@ class TestCLIServiceExecuteSQL:
     @pytest.mark.asyncio
     async def test_execute_sql_select_success(self, cli_svc):
         """execute_sql runs a SELECT query and returns data."""
+        from datus.api.models.cli_models import ExecuteSQLData
+
         request = ExecuteSQLInput(sql_query="SELECT COUNT(*) as cnt FROM schools")
         result = await cli_svc.execute_sql(request)
         assert result.success is True
-        assert result.data is not None
+        assert isinstance(result.data, ExecuteSQLData)
         assert result.data.sql_query == "SELECT COUNT(*) as cnt FROM schools"
         assert result.data.execution_time > 0
-        assert result.data.execute_task_id is not None
+        # Server-generated IDs are UUID4 strings (36 chars with dashes)
+        assert isinstance(result.data.execute_task_id, str)
+        assert len(result.data.execute_task_id) == 36
+        assert result.data.execute_task_id.count("-") == 4
 
     @pytest.mark.asyncio
     async def test_execute_sql_returns_row_count(self, cli_svc):
-        """execute_sql reports row count."""
+        """execute_sql reports row count matching the LIMIT clause."""
         request = ExecuteSQLInput(sql_query="SELECT * FROM schools LIMIT 5")
         result = await cli_svc.execute_sql(request)
         assert result.success is True
-        assert result.data.row_count is not None
+        assert result.data.row_count == 5
 
     @pytest.mark.asyncio
     async def test_execute_sql_csv_format(self, cli_svc):
-        """execute_sql with csv format returns CSV string."""
+        """execute_sql with csv format returns CSV string with header and rows."""
         request = ExecuteSQLInput(sql_query="SELECT CDSCode, School FROM schools LIMIT 3", result_format="csv")
         result = await cli_svc.execute_sql(request)
         assert result.success is True
-        if result.data.sql_return:
-            assert "CDSCode" in result.data.sql_return or "School" in result.data.sql_return
+        # CSV writer emits header line + 3 data rows; assertion holds unconditionally
+        csv_text = result.data.sql_return
+        assert isinstance(csv_text, str)
+        assert "CDSCode" in csv_text
+        assert "School" in csv_text
+        # Header + 3 rows => 4 newline-terminated lines
+        assert csv_text.count("\n") == 4
 
     @pytest.mark.asyncio
     async def test_execute_sql_json_format(self, cli_svc):
@@ -104,30 +123,37 @@ class TestCLIServiceExecuteSQL:
 
     @pytest.mark.asyncio
     async def test_execute_sql_arrow_default_format(self, cli_svc):
-        """execute_sql with default format returns arrow string."""
+        """execute_sql with arrow format returns row_count matching LIMIT."""
         request = ExecuteSQLInput(sql_query="SELECT CDSCode FROM schools LIMIT 3", result_format="arrow")
         result = await cli_svc.execute_sql(request)
         assert result.success is True
-        assert result.data.row_count is not None
+        assert result.data.row_count == 3
+        assert result.data.columns == ["CDSCode"]
 
     @pytest.mark.asyncio
     async def test_execute_sql_has_executed_at(self, cli_svc):
-        """execute_sql result includes executed_at timestamp."""
+        """execute_sql result includes an ISO-8601 executed_at timestamp."""
+        from datetime import datetime
+
         request = ExecuteSQLInput(sql_query="SELECT 1 as val")
         result = await cli_svc.execute_sql(request)
         assert result.success is True
-        assert result.data.executed_at is not None
+        # ExecuteSQLData uses datetime.now().isoformat() + "Z"
+        assert isinstance(result.data.executed_at, str)
+        assert result.data.executed_at.endswith("Z")
+        # Must parse as ISO-8601 after stripping the trailing Z
+        datetime.fromisoformat(result.data.executed_at[:-1])
 
     @pytest.mark.asyncio
     async def test_execute_sql_with_database_name(self, cli_svc):
-        """execute_sql with database_name parameter."""
+        """execute_sql with database_name parameter succeeds against that DB."""
         request = ExecuteSQLInput(
             sql_query="SELECT COUNT(*) FROM schools",
             database_name="california_schools",
         )
         result = await cli_svc.execute_sql(request)
-        # May or may not work with switch_context — exercise the code path
-        assert result is not None
+        assert result.success is True
+        assert result.data.sql_query == "SELECT COUNT(*) FROM schools"
 
 
 class TestCLIServiceStopExecuteSQL:
@@ -156,12 +182,16 @@ class TestCLIServiceStopExecuteSQL:
 
     @pytest.mark.asyncio
     async def test_execute_sql_returns_execute_task_id(self, cli_svc):
-        """execute_sql result contains a non-empty execute_task_id."""
+        """execute_sql result contains a UUID4-formatted execute_task_id."""
         request = ExecuteSQLInput(sql_query="SELECT 1 as val")
         result = await cli_svc.execute_sql(request)
         assert result.success is True
-        assert result.data.execute_task_id
-        assert len(result.data.execute_task_id) > 0
+        # Server-generated IDs are canonical UUID4 strings
+        task_id = result.data.execute_task_id
+        assert isinstance(task_id, str)
+        assert len(task_id) == 36
+        assert task_id.count("-") == 4
+        uuid.UUID(task_id, version=4)
 
     @pytest.mark.asyncio
     async def test_stop_running_task(self):
@@ -235,13 +265,18 @@ class TestCLIServiceExecuteContext:
     """Tests for execute_context — context commands with real DB."""
 
     def test_context_tables(self, cli_svc):
-        """execute_context 'tables' returns table list."""
+        """execute_context 'tables' returns table list with expected entries."""
+        from datus.api.models.cli_models import ExecuteContextData, TableInfo
+
         request = ExecuteContextInput(context_type="tables")
         result = cli_svc.execute_context("tables", request)
         assert result.success is True
-        assert result.data is not None
-        assert result.data.result.tables is not None
-        assert len(result.data.result.tables) > 0
+        assert isinstance(result.data, ExecuteContextData)
+        tables = result.data.result.tables
+        assert isinstance(tables, list)
+        # california_schools SQLite DB has schools/satscores/frpm tables
+        assert len(tables) >= 3
+        assert all(isinstance(t, TableInfo) for t in tables)
 
     def test_context_tables_has_schools(self, cli_svc):
         """execute_context 'tables' includes schools table."""
@@ -251,11 +286,11 @@ class TestCLIServiceExecuteContext:
         assert "schools" in table_names
 
     def test_context_catalogs(self, cli_svc):
-        """execute_context 'catalogs' returns catalog info."""
+        """execute_context 'catalogs' returns catalog info as a dict."""
         request = ExecuteContextInput(context_type="tables")
         result = cli_svc.execute_context("catalogs", request)
         assert result.success is True
-        assert result.data.result.context_info is not None
+        assert isinstance(result.data.result.context_info, dict)
 
     def test_context_context(self, cli_svc):
         """execute_context 'context' returns connection context."""
@@ -341,7 +376,7 @@ class TestCLIServiceExecuteInternalCommand:
         result = cli_svc.execute_internal_command("databases", request)
         assert result.success is True
         assert result.data.result.action_taken == "list_databases"
-        assert result.data.result.data is not None
+        assert isinstance(result.data.result.data, dict)
         assert "databases" in result.data.result.data
 
     def test_tables_command(self, cli_svc):
@@ -444,6 +479,9 @@ class TestCLIServiceInitializeConnection:
 
     def test_initialize_connection_updates_cli_context(self, cli_svc):
         """_initialize_connection updates CLI context with database info."""
-        assert cli_svc.cli_context is not None
-        # CLI context should have been updated during init
-        assert cli_svc.current_db_name is not None
+        from datus.cli.cli_context import CliContext
+
+        assert isinstance(cli_svc.cli_context, CliContext)
+        # CLI context should have been updated during init with the default DB
+        assert cli_svc.current_db_name == "california_schools"
+        assert cli_svc.cli_context.current_db_name == "california_schools"
