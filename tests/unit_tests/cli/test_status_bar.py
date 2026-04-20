@@ -135,6 +135,36 @@ class TestStatusBarState:
         styles = [style for style, _ in state.to_formatted_tokens()]
         assert "class:status-bar.connector" not in styles
 
+    def test_to_formatted_tokens_appends_running_segment_when_agent_running(self):
+        # The TUI path sets ``agent_running`` true while the worker thread is
+        # dispatching; the status bar must surface a ``● running`` indicator
+        # as the trailing segment so users can tell the REPL is busy at a
+        # glance even though input remains editable.
+        state = StatusBarState(agent="chat", agent_running=True)
+        tokens = state.to_formatted_tokens()
+        styles = [style for style, _ in tokens]
+        texts = [text for _, text in tokens]
+        assert "class:status-bar.running" in styles
+        running_text = texts[styles.index("class:status-bar.running")]
+        assert "running" in running_text
+        # The running token must be the last meaningful segment (followed
+        # only by the trailing pad so the bar has a breathing space at the
+        # terminal edge).
+        last_non_pad = None
+        for style, text in reversed(tokens):
+            if style == "class:status-bar":
+                continue
+            last_non_pad = style
+            break
+        assert last_non_pad == "class:status-bar.running"
+
+    def test_to_formatted_tokens_omits_running_segment_when_idle(self):
+        # The legacy PromptSession path never sets ``agent_running`` true,
+        # so the running indicator must never appear outside the TUI.
+        state = StatusBarState(agent="chat")
+        styles = [style for style, _ in state.to_formatted_tokens()]
+        assert "class:status-bar.running" not in styles
+
 
 class TestStatusBarProviderAgent:
     def test_subagent_name_wins_over_default(self):

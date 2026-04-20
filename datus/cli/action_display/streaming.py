@@ -613,7 +613,21 @@ class InlineStreamingContext:
         """Start or update the Live display showing all active subagent groups."""
         renderable = self._build_subagent_groups_renderable()
         if self._subagent_live is None:
-            self._subagent_live = Live(renderable, console=self.display.console, refresh_per_second=4, transient=True)
+            # ``redirect_stdout`` / ``redirect_stderr`` are set to ``False`` so
+            # Rich does not install its own stdout wrapper. When the REPL runs
+            # under the TUI, stdout is already patched by prompt_toolkit's
+            # ``patch_stdout(raw=True)`` — double-patching would fight the
+            # pinned status-bar + input. Outside the TUI the behavior is
+            # unchanged: Rich writes ANSI directly to the real stdout.
+            self._subagent_live = Live(
+                renderable,
+                console=self.display.console,
+                refresh_per_second=4,
+                transient=True,
+                redirect_stdout=False,
+                redirect_stderr=False,
+                screen=False,
+            )
             self._subagent_live.start()
         else:
             self._subagent_live.update(renderable)
@@ -680,7 +694,18 @@ class InlineStreamingContext:
 
         with self._print_lock:
             if self._live is None:
-                self._live = Live(renderable, console=self.display.console, refresh_per_second=4, transient=True)
+                # See the comment in ``_update_subagent_groups_live``: Live
+                # must not install its own stdout wrapper when the TUI is
+                # active, and the flags are safe for non-TUI callers too.
+                self._live = Live(
+                    renderable,
+                    console=self.display.console,
+                    refresh_per_second=4,
+                    transient=True,
+                    redirect_stdout=False,
+                    redirect_stderr=False,
+                    screen=False,
+                )
                 self._live.start()
             else:
                 self._live.update(renderable)

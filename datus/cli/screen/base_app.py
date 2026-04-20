@@ -33,6 +33,34 @@ class BaseApp(App):
         self._app_ready = False
         self._error_console = Console(stderr=True, force_terminal=True)
 
+    def run(self, *args, **kwargs):  # type: ignore[override]
+        """Run the Textual App, suspending any active prompt_toolkit TUI first.
+
+        The Datus REPL's persistent TUI owns the normal screen + stdin; a
+        Textual app needs to take over the same terminal for its own
+        fullscreen rendering. Scheduling the Textual ``run`` via
+        ``run_in_terminal`` tells prompt_toolkit to relinquish control,
+        execute the callable, and reinstall its pinned layout when the
+        callable returns. When no TUI is active this is a no-op and the
+        call path is unchanged.
+        """
+        from prompt_toolkit.application import get_app_or_none
+
+        pt_app = get_app_or_none()
+        if pt_app is None:
+            return super().run(*args, **kwargs)
+
+        from prompt_toolkit.application.run_in_terminal import run_in_terminal
+
+        result_box: dict = {}
+
+        def _invoke() -> None:
+            result_box["value"] = super(BaseApp, self).run(*args, **kwargs)
+
+        future = run_in_terminal(_invoke)
+        future.result()
+        return result_box.get("value")
+
     def on_mount(self) -> None:
         """App mount handler"""
         self._app_ready = True

@@ -14,6 +14,7 @@ import platform
 import re
 import subprocess
 import sys
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
 from rich.markdown import Markdown
@@ -28,7 +29,20 @@ from datus.cli.execution_state import ExecutionInterrupted, auto_submit_interact
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
 from datus.utils.loggings import get_logger
-from datus.utils.terminal_utils import interrupt_on_escape
+from datus.utils.terminal_utils import EscapeGuard, interrupt_on_escape
+
+
+@contextmanager
+def _noop_escape_guard():
+    """Context manager that yields an inert :class:`EscapeGuard`.
+
+    Used in TUI mode where prompt_toolkit owns stdin and installing the
+    termios-based ESC listener would conflict. The inert guard's
+    ``paused()`` is a no-op so callers written against the termios path
+    (e.g. ``_make_input_collector``) continue to work unchanged.
+    """
+    yield EscapeGuard()
+
 
 if TYPE_CHECKING:
     from datus.cli.repl import DatusCLI
@@ -82,6 +96,10 @@ class ChatCommands:
         self.last_actions = []
         self.all_turn_actions: List[Tuple[str, List[ActionHistory]]] = []
         self._trace_verbose = False  # toggle state for post-run Ctrl+O
+        # Live handle to the active streaming context, consumed by the TUI
+        # to route ESC (interrupt) and Ctrl+O (verbose toggle) key bindings
+        # to the currently running agent loop. ``None`` when idle.
+        self.current_streaming_ctx = None
 
     def update_chat_node_tools(self):
         """Update current node tools when namespace changes."""
@@ -355,21 +373,36 @@ class ChatCommands:
                     current_user_message=message,
                     interaction_broker=current_node.interaction_broker,
                 )
-                with (
-                    interrupt_on_escape(
+
+                # In TUI mode the persistent prompt_toolkit Application owns
+                # stdin, so the termios-based ``interrupt_on_escape`` listener
+                # would fight the main input loop. Skip it and rely on
+                # dedicated ESC / Ctrl+O key bindings registered on the TUI
+                # (see ``DatusCLI._init_tui_app``), which consult this
+                # streaming_ctx and the node's interrupt_controller directly.
+                if getattr(self.cli, "_use_tui", False):
+                    esc_cm = _noop_escape_guard()
+                else:
+                    esc_cm = interrupt_on_escape(
                         current_node.interrupt_controller,
                         key_callbacks={b"\x0f": streaming_ctx.toggle_verbose},
-                    ) as esc_guard,
-                    streaming_ctx,
-                ):
-                    streaming_ctx.set_input_collector(self._make_input_collector(esc_guard))
-                    try:
-                        asyncio.run(run_chat_stream())
-                    except KeyboardInterrupt:
-                        current_node.interrupt_controller.interrupt()
-                        logger.info("KeyboardInterrupt caught, execution interrupted gracefully")
-                    except ExecutionInterrupted:
-                        logger.info("ExecutionInterrupted caught, execution stopped gracefully")
+                    )
+
+                # Publish the streaming context so the TUI Ctrl+O / ESC
+                # bindings can locate it while the agent runs.
+                self.current_streaming_ctx = streaming_ctx
+                try:
+                    with esc_cm as esc_guard, streaming_ctx:
+                        streaming_ctx.set_input_collector(self._make_input_collector(esc_guard))
+                        try:
+                            asyncio.run(run_chat_stream())
+                        except KeyboardInterrupt:
+                            current_node.interrupt_controller.interrupt()
+                            logger.info("KeyboardInterrupt caught, execution interrupted gracefully")
+                        except ExecutionInterrupted:
+                            logger.info("ExecutionInterrupted caught, execution stopped gracefully")
+                finally:
+                    self.current_streaming_ctx = None
             else:
 
                 async def run_stream():
