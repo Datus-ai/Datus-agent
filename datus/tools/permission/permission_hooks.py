@@ -316,20 +316,18 @@ class PermissionHooks(AgentHooks):
             logger.debug("Filesystem zone HIDDEN: letting tool return not-found for %s", resolved.display)
             return True
 
-        # EXTERNAL in strict mode → deny up front, no broker prompt. Mirrors
-        # FilesystemFuncTool.strict so callers without an interactive broker
-        # (API / claw) fail fast instead of hanging waiting for user input.
+        # EXTERNAL in strict mode → delegate to the tool, which returns
+        # FuncToolResult(success=0). We return True here (no broker prompt,
+        # no exception) so callers without an interactive broker (API / claw)
+        # still fail fast but surface the denial as a normal tool-failure
+        # payload the agent can read, rather than an uncaught exception.
         if policy.strict:
             logger.info(
-                "Filesystem strict mode: rejecting EXTERNAL access to %s (tool=%s)",
+                "Filesystem strict mode: delegating EXTERNAL access to tool for %s (tool=%s)",
                 resolved.resolved,
                 tool_name,
             )
-            raise PermissionDeniedException(
-                f"Filesystem strict mode: path outside workspace is not allowed: {resolved.resolved}",
-                tool_category="filesystem_tools",
-                tool_name=pattern_name,
-            )
+            return True
 
         # EXTERNAL: force ASK, keyed by absolute path to prevent broad auto-approval.
         cache_key = f"filesystem_tools.external::{resolved.resolved}"

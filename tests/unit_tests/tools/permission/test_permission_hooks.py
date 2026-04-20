@@ -543,10 +543,12 @@ class TestFilesystemZoneBranch:
             await hooks.on_tool_start(ctx, MagicMock(), tool)
 
     @pytest.mark.asyncio
-    async def test_strict_external_denies_without_broker(self, mock_broker, tmp_path):
-        """Strict policy → EXTERNAL is rejected with PermissionDenied and the
-        broker is never touched. Regression guard for API/claw flows that
-        have no interactive prompt — they must fail fast, not hang."""
+    async def test_strict_external_delegates_to_tool_without_broker(self, mock_broker, tmp_path):
+        """Strict policy → EXTERNAL is delegated to the tool layer (which
+        returns FuncToolResult(success=0)) instead of raising. The broker is
+        still never touched. Regression guard for API/claw flows: they must
+        fail fast with a readable tool-failure payload, not hang and not
+        raise."""
         hooks, _, _ = self._build(mock_broker, tmp_path, strict=True)
         target = tmp_path / "elsewhere.md"
         target.write_text("x")
@@ -554,9 +556,7 @@ class TestFilesystemZoneBranch:
         ctx.tool_arguments = f'{{"path": "{target}"}}'
         tool = MagicMock()
         tool.name = "read_file"
-        with pytest.raises(PermissionDeniedException) as exc_info:
-            await hooks.on_tool_start(ctx, MagicMock(), tool)
-        assert "strict mode" in str(exc_info.value).lower()
+        await hooks.on_tool_start(ctx, MagicMock(), tool)
         mock_broker.request.assert_not_called()
 
     @pytest.mark.asyncio
@@ -571,6 +571,58 @@ class TestFilesystemZoneBranch:
         tool.name = "read_file"
         await hooks.on_tool_start(ctx, MagicMock(), tool)
         mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_strict_external_end_to_end_returns_success_0(self, mock_broker, tmp_path):
+        """End-to-end contract: hook + real tool in strict mode must surface
+        EXTERNAL denials as ``FuncToolResult(success=0)`` with a "strict mode"
+        error message, never as an exception. Cross-component guard for the
+        fix that moved the rejection from the hook (raise) to the tool
+        (success=0)."""
+        from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+
+        project = tmp_path / "proj"
+        project.mkdir()
+        external = tmp_path / "outside.md"
+        external.write_text("secret")
+
+        registry = ToolRegistry()
+        fs_tool = MagicMock()
+        fs_tool.name = "read_file"
+        registry.register_tools("filesystem_tools", [fs_tool])
+
+        manager = PermissionManager(global_config=PermissionConfig(default_permission=PermissionLevel.ALLOW, rules=[]))
+        hooks = PermissionHooks(
+            broker=mock_broker,
+            permission_manager=manager,
+            node_name="chat",
+            tool_registry=registry,
+            fs_policy=FilesystemPolicy(root_path=project, current_node="chat", strict=True),
+        )
+        tool = FilesystemFuncTool(root_path=str(project), current_node="chat", strict=True)
+
+        # 1. Hook must not raise and must not prompt.
+        ctx = MagicMock()
+        ctx.tool_arguments = f'{{"path": "{external}"}}'
+        hook_tool = MagicMock()
+        hook_tool.name = "read_file"
+        await hooks.on_tool_start(ctx, MagicMock(), hook_tool)
+        mock_broker.request.assert_not_called()
+
+        # 2. Tool layer produces the success=0 payload with the strict-mode message.
+        read_result = tool.read_file(str(external))
+        assert read_result.success == 0
+        assert read_result.error is not None
+        assert "strict mode" in read_result.error.lower()
+        assert str(external) in read_result.error
+
+        write_result = tool.write_file(str(external), "new content")
+        assert write_result.success == 0
+        assert write_result.error is not None
+        assert "strict mode" in write_result.error.lower()
+
+        # Guardrail: the external file was not actually touched.
+        assert external.read_text() == "secret"
 
     @pytest.mark.asyncio
     async def test_external_broker_cancel_denies(self, mock_broker, tmp_path):

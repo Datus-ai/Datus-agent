@@ -204,6 +204,11 @@ class TestEnsureProjectConfig:
         mock_wizard.assert_called_once_with(mock_base)
 
     def test_idempotent_when_file_exists(self):
+        """File exists + override empty → neither wizard nor repair runs.
+
+        ``load_project_override`` is mocked to ``None`` so the repair path
+        short-circuits before touching the real YAML loader.
+        """
         app = Application()
         args = SimpleNamespace(config=None)
         mock_path = MagicMock()
@@ -212,6 +217,7 @@ class TestEnsureProjectConfig:
             patch("datus.configuration.project_config.project_config_path", return_value=mock_path),
             patch("datus.configuration.agent_config_loader.load_agent_config") as mock_load,
             patch("datus.cli.project_init.run_project_init") as mock_wizard,
+            patch("datus.configuration.project_config.load_project_override", return_value=None),
         ):
             app._ensure_project_config(args)
         mock_load.assert_not_called()
@@ -233,6 +239,159 @@ class TestEnsureProjectConfig:
             with pytest.raises(RuntimeError, match="boom"):
                 app._ensure_project_config(args)
         mock_wizard.assert_not_called()
+
+
+class TestRepairProjectOverrides:
+    """``_repair_project_overrides`` re-prompts the user when stale values
+    in ``./.datus/config.yml`` reference models/databases that no longer
+    exist in the base ``agent.yml``, and persists the corrected values.
+    It must be a no-op when every override is already valid — the
+    regression that surfaced this fix was a stale ``target`` leaving the
+    CLI stuck in ``print_help``."""
+
+    def _raw_agent(self, models, databases):
+        service_dbs = {name: {"type": db_type} for name, db_type in databases.items()}
+        return {"models": {name: {} for name in models}, "service": {"databases": service_dbs}}
+
+    def _mock_mgr(self, raw):
+        mgr = MagicMock()
+        mgr.data = raw
+        return mgr
+
+    def test_returns_when_override_is_none(self):
+        """No overlay file → nothing to validate; must not touch loader."""
+        app = Application()
+        args = SimpleNamespace(config=None)
+        with (
+            patch("datus.configuration.project_config.load_project_override", return_value=None),
+            patch("datus.configuration.agent_config_loader.configuration_manager") as mock_cfg_mgr,
+            patch("datus.configuration.project_config.save_project_override") as mock_save,
+        ):
+            app._repair_project_overrides(args)
+        mock_cfg_mgr.assert_not_called()
+        mock_save.assert_not_called()
+
+    def test_skips_when_all_valid(self):
+        """All override values match the base config → no prompt, no save."""
+        from datus.configuration.project_config import ProjectOverride
+
+        app = Application()
+        args = SimpleNamespace(config=None)
+        override = ProjectOverride(target="claude", default_database="bench")
+        raw = self._raw_agent(["claude", "deepseek"], {"bench": "sqlite"})
+        with (
+            patch("datus.configuration.project_config.load_project_override", return_value=override),
+            patch(
+                "datus.configuration.agent_config_loader.configuration_manager",
+                return_value=self._mock_mgr(raw),
+            ),
+            patch("datus.cli._cli_utils.select_choice") as mock_pick,
+            patch("datus.configuration.project_config.save_project_override") as mock_save,
+        ):
+            app._repair_project_overrides(args)
+        mock_pick.assert_not_called()
+        mock_save.assert_not_called()
+
+    def test_repairs_stale_target(self):
+        """Stale target → prompt, write back corrected overlay, keep db."""
+        from datus.configuration.project_config import ProjectOverride
+
+        app = Application()
+        args = SimpleNamespace(config=None)
+        override = ProjectOverride(target="claude-sonnet", default_database="bench")
+        raw = self._raw_agent(["claude", "deepseek"], {"bench": "sqlite"})
+        with (
+            patch("datus.configuration.project_config.load_project_override", return_value=override),
+            patch(
+                "datus.configuration.agent_config_loader.configuration_manager",
+                return_value=self._mock_mgr(raw),
+            ),
+            patch("datus.cli._cli_utils.select_choice", return_value="deepseek") as mock_pick,
+            patch("datus.configuration.project_config.save_project_override") as mock_save,
+        ):
+            app._repair_project_overrides(args)
+        # select_choice called exactly once (for target), not for the valid db.
+        assert mock_pick.call_count == 1
+        mock_save.assert_called_once()
+        (saved_override,) = mock_save.call_args.args
+        assert saved_override.target == "deepseek"
+        assert saved_override.default_database == "bench"
+
+    def test_repairs_stale_default_database(self):
+        """Stale default_database → prompt only for db; keep valid target."""
+        from datus.configuration.project_config import ProjectOverride
+
+        app = Application()
+        args = SimpleNamespace(config=None)
+        override = ProjectOverride(target="claude", default_database="benchmark1")
+        raw = self._raw_agent(["claude", "deepseek"], {"bench": "sqlite"})
+        with (
+            patch("datus.configuration.project_config.load_project_override", return_value=override),
+            patch(
+                "datus.configuration.agent_config_loader.configuration_manager",
+                return_value=self._mock_mgr(raw),
+            ),
+            patch("datus.cli._cli_utils.select_choice", return_value="bench") as mock_pick,
+            patch("datus.configuration.project_config.save_project_override") as mock_save,
+        ):
+            app._repair_project_overrides(args)
+        assert mock_pick.call_count == 1
+        mock_save.assert_called_once()
+        (saved_override,) = mock_save.call_args.args
+        assert saved_override.target == "claude"
+        assert saved_override.default_database == "bench"
+
+    def test_repairs_both_fields(self):
+        """Both values stale → two prompts, saved override uses both picks."""
+        from datus.configuration.project_config import ProjectOverride
+
+        app = Application()
+        args = SimpleNamespace(config=None)
+        override = ProjectOverride(target="claude1", default_database="benchmark1")
+        raw = self._raw_agent(["claude", "deepseek"], {"bench": "sqlite"})
+        with (
+            patch("datus.configuration.project_config.load_project_override", return_value=override),
+            patch(
+                "datus.configuration.agent_config_loader.configuration_manager",
+                return_value=self._mock_mgr(raw),
+            ),
+            patch(
+                "datus.cli._cli_utils.select_choice",
+                side_effect=["claude", "bench"],
+            ) as mock_pick,
+            patch("datus.configuration.project_config.save_project_override") as mock_save,
+        ):
+            app._repair_project_overrides(args)
+        assert mock_pick.call_count == 2
+        mock_save.assert_called_once()
+        (saved_override,) = mock_save.call_args.args
+        assert saved_override.target == "claude"
+        assert saved_override.default_database == "bench"
+
+    def test_raises_when_base_has_no_models(self):
+        """Base config empty on the same key we need to repair → nothing to
+        offer, so surface a config error instead of silently writing a bad
+        value."""
+        from datus.configuration.project_config import ProjectOverride
+        from datus.utils.exceptions import DatusException
+
+        app = Application()
+        args = SimpleNamespace(config=None)
+        override = ProjectOverride(target="claude-sonnet", default_database=None)
+        raw = self._raw_agent([], {"bench": "sqlite"})
+        with (
+            patch("datus.configuration.project_config.load_project_override", return_value=override),
+            patch(
+                "datus.configuration.agent_config_loader.configuration_manager",
+                return_value=self._mock_mgr(raw),
+            ),
+            patch("datus.cli._cli_utils.select_choice") as mock_pick,
+            patch("datus.configuration.project_config.save_project_override") as mock_save,
+        ):
+            with pytest.raises(DatusException):
+                app._repair_project_overrides(args)
+        mock_pick.assert_not_called()
+        mock_save.assert_not_called()
 
 
 class TestResolveDefaultDatabase:

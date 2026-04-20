@@ -14,6 +14,7 @@ from datus import __version__
 from datus.cli.repl import DatusCLI
 from datus.utils.async_utils import setup_windows_policy
 from datus.utils.constants import DBType
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import configure_logging, get_logger
 
 logger = get_logger(__name__)
@@ -249,26 +250,119 @@ class Application:
         return ""
 
     def _ensure_project_config(self, args) -> None:
-        """Trigger the first-run wizard if ``./.datus/config.yml`` is absent.
+        """Trigger the first-run wizard if ``./.datus/config.yml`` is absent,
+        or repair it when existing overrides no longer match the base
+        ``agent.yml`` (e.g. a ``target`` that was renamed or removed).
 
-        Idempotent: does nothing when the overlay file already exists.
-        Loads the base ``agent.yml`` first so the wizard can constrain
-        choices to models/databases that actually exist; when the base
-        config itself cannot be loaded, surface that error directly
-        (the wizard has nothing to offer in that case).
+        Idempotent: does nothing when the overlay file is valid. Loads the
+        base ``agent.yml`` first so the wizard can constrain choices to
+        models/databases that actually exist; when the base config itself
+        cannot be loaded, surface that error directly (the wizard has
+        nothing to offer in that case).
+
+        Repair is REPL-only: API / print / web paths keep raising on
+        invalid overrides, because they have no broker to prompt the user.
         """
         from datus.cli.project_init import run_project_init
         from datus.configuration.agent_config_loader import load_agent_config
         from datus.configuration.project_config import project_config_path
 
-        if project_config_path().exists():
+        if not project_config_path().exists():
+            try:
+                base_config = load_agent_config(config=args.config or "", reload=True)
+            except Exception as e:
+                logger.error(f"Cannot run project setup wizard: base agent.yml failed to load: {e}")
+                raise
+            run_project_init(base_config)
             return
+
+        self._repair_project_overrides(args)
+
+    def _repair_project_overrides(self, args) -> None:
+        """Re-prompt the user when ``./.datus/config.yml`` references a
+        ``target`` or ``default_database`` that no longer exists in the base
+        agent.yml, and persist the corrected values.
+
+        Reads the raw agent.yml directly via ``configuration_manager`` to
+        avoid tripping ``_apply_project_override`` (which is exactly what
+        would raise on the stale value we're trying to fix).
+        """
+        from rich.console import Console
+
+        from datus.cli._cli_utils import select_choice
+        from datus.configuration.agent_config_loader import configuration_manager
+        from datus.configuration.project_config import (
+            load_project_override,
+            project_config_path,
+            save_project_override,
+        )
+
+        override = load_project_override()
+        if override is None or override.is_empty():
+            return
+
         try:
-            base_config = load_agent_config(config=args.config or "", reload=True)
+            raw = dict(configuration_manager(config_path=args.config or "", reload=True).data)
         except Exception as e:
-            logger.error(f"Cannot run project setup wizard: base agent.yml failed to load: {e}")
+            logger.error(f"Cannot validate project overrides: base agent.yml failed to load: {e}")
             raise
-        run_project_init(base_config)
+
+        model_names = list((raw.get("models") or {}).keys())
+        db_names = list(((raw.get("service") or {}).get("databases") or {}).keys())
+
+        target_invalid = override.target is not None and override.target not in model_names
+        db_invalid = override.default_database is not None and override.default_database not in db_names
+        if not (target_invalid or db_invalid):
+            return
+
+        console = Console()
+        console.print()
+        console.print(f"[yellow]Project config {project_config_path()} has stale values:[/]")
+
+        if target_invalid:
+            if not model_names:
+                raise DatusException(
+                    code=ErrorCode.COMMON_CONFIG_ERROR,
+                    message_args={
+                        "config_error": (
+                            "Base agent.yml has no 'agent.models' defined; cannot repair "
+                            f"target={override.target!r} in .datus/config.yml."
+                        )
+                    },
+                )
+            console.print(
+                f"  [red]target[/] = {override.target!r} not found in agent.yml models "
+                f"({sorted(model_names)}). Please pick a replacement:"
+            )
+            choices = {name: name for name in model_names}
+            picked = select_choice(console, choices, default=model_names[0])
+            override.target = picked or model_names[0]
+
+        if db_invalid:
+            if not db_names:
+                raise DatusException(
+                    code=ErrorCode.COMMON_CONFIG_ERROR,
+                    message_args={
+                        "config_error": (
+                            "Base agent.yml has no 'agent.service.databases' defined; cannot repair "
+                            f"default_database={override.default_database!r} in .datus/config.yml."
+                        )
+                    },
+                )
+            console.print(
+                f"  [red]default_database[/] = {override.default_database!r} not found in agent.yml "
+                f"service.databases ({sorted(db_names)}). Please pick a replacement:"
+            )
+            db_types = (raw.get("service") or {}).get("databases") or {}
+            choices = {name: f"{name}  ({(db_types.get(name) or {}).get('type', 'unknown')})" for name in db_names}
+            picked = select_choice(console, choices, default=db_names[0])
+            override.default_database = picked or db_names[0]
+
+        written = save_project_override(override)
+        console.print(
+            f"[green]Updated project config:[/] {written} "
+            f"(target={override.target}, default_database={override.default_database})"
+        )
 
     def _run_web_interface(self, args):
         """Launch web chatbot interface"""
