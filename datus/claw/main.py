@@ -235,6 +235,28 @@ def _build_parser() -> argparse.ArgumentParser:
         type=str,
         help=f"Daemon log file path (default: ~/.datus/logs/{_SERVICE_NAME}.log)",
     )
+
+    # Optional subcommands (backwards-compatible: no subcommand = daemon flow).
+    subparsers = parser.add_subparsers(dest="subcommand")
+    configure_parser = subparsers.add_parser(
+        "configure",
+        help="Manage Claw IM channels (list / add / delete / install-deps)",
+    )
+    configure_parser.add_argument(
+        "configure_action",
+        nargs="?",
+        choices=["list", "add", "delete", "install-deps"],
+        default=None,
+        help="Configuration action (omit to enter an interactive menu)",
+    )
+    configure_parser.add_argument(
+        "--config",
+        dest="configure_config",
+        type=str,
+        default=None,
+        help="Override agent configuration file for this command",
+    )
+
     return parser
 
 
@@ -251,6 +273,15 @@ def main() -> None:
 
     if args.debug:
         args.log_level = "DEBUG"
+
+    # Subcommand dispatch (does not touch daemon/pid paths).
+    if getattr(args, "subcommand", None) == "configure":
+        from datus.claw.configure import ChannelConfigurator
+
+        configure_logging(args.debug)
+        config_path = getattr(args, "configure_config", None) or args.config or ""
+        configurator = ChannelConfigurator(config_path)
+        raise SystemExit(configurator.run(getattr(args, "configure_action", None)))
 
     # Resolve defaults for pid/log
     default_pid, default_log = _default_paths(args.config or "")
