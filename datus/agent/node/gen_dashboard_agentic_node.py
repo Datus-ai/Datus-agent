@@ -71,7 +71,6 @@ class GenDashboardAgenticNode(AgenticNode):
         )
 
         self.bi_func_tool = None
-        self._read_connector = None
         self.ask_user_tool = None
         self.setup_tools()
 
@@ -85,7 +84,6 @@ class GenDashboardAgenticNode(AgenticNode):
             return
 
         self.tools = []
-        self._setup_db_read_connector()
         self._setup_bi_tools()
         self._setup_dashboard_skills()
         if self.execution_mode == "interactive":
@@ -147,89 +145,38 @@ class GenDashboardAgenticNode(AgenticNode):
 
         return ", ".join(merged_patterns)
 
-    def _setup_db_read_connector(self):
-        """Create a source DB connector for write_query support (no tools exposed)."""
-        try:
-            from datus.tools.db_tools.db_manager import db_manager_instance
-
-            db_manager = db_manager_instance(self.agent_config.namespaces)
-            conn = db_manager.get_conn(self.agent_config.current_database, self.agent_config.current_database)
-            self._read_connector = conn
-        except Exception as e:
-            logger.warning(f"No source DB connector for write_query: {e}")
-            self._read_connector = None
-
     def _setup_bi_tools(self):
         """Setup BI tools based on bi_platform config.
 
         Resolution order for bi_platform:
         1. self.node_config["bi_platform"] (explicit in gen_dashboard agentic_nodes config)
         2. Auto-detect: if exactly one platform in agent_config.dashboard_config, use it
+
+        Adapter construction, dataset_db derivation, and source-DB connector
+        lookup all live inside BIFuncTool — this node only decides which
+        platform to target.
         """
+        bi_platform = self._resolve_bi_platform()
+        if not bi_platform:
+            return
         try:
-            bi_platform = self._resolve_bi_platform()
-            if not bi_platform:
-                return
-
-            dash_cfg = getattr(self.agent_config, "dashboard_config", {}).get(bi_platform)
-            if not dash_cfg:
-                logger.warning(f"bi_platform '{bi_platform}' configured but no dashboard config found")
-                return
-
-            from datus_bi_core import AuthParam, adapter_registry
-
-            adapter_registry.discover_adapters()
-            adapter_cls = adapter_registry.get(bi_platform)
-            if not adapter_cls:
-                logger.warning(f"No BI adapter registered for platform '{bi_platform}'")
-                return
-
-            api_url = dash_cfg.api_url
-            auth_params = AuthParam(
-                username=dash_cfg.username,
-                password=dash_cfg.password,
-                api_key=dash_cfg.api_key,
-                extra=dash_cfg.extra or {},
-            )
-            # Derive dialect from dataset_db config
-            dialect = ""
-            if dash_cfg.dataset_db:
-                dialect = dash_cfg.dataset_db.get("dialect", "")
-                if not dialect:
-                    ds_uri = dash_cfg.dataset_db.get("uri", "")
-                    if ds_uri:
-                        try:
-                            from sqlalchemy.engine.url import make_url
-
-                            dialect = make_url(ds_uri).get_backend_name()
-                        except Exception:
-                            pass
-
-            adapter = adapter_cls(api_base_url=api_url, auth_params=auth_params, dialect=dialect)
-
-            dataset_db_uri = ""
-            dataset_db_schema = ""
-            datasource_name = ""
-            if dash_cfg.dataset_db:
-                dataset_db_uri = dash_cfg.dataset_db.get("uri", "")
-                dataset_db_schema = dash_cfg.dataset_db.get("schema", "")
-                datasource_name = dash_cfg.dataset_db.get("datasource_name", "")
-
             from datus.tools.func_tool.bi_tools import BIFuncTool
 
-            self.bi_func_tool = BIFuncTool(
-                adapter,
-                dataset_db_uri=dataset_db_uri,
-                dataset_db_schema=dataset_db_schema,
-                read_connector=self._read_connector,
-                datasource_name=datasource_name,
-            )
-            self.tools.extend(self.bi_func_tool.available_tools())
-            logger.info(f"BI tools initialized for platform '{bi_platform}'")
+            bi_func_tool = BIFuncTool(self.agent_config, bi_service=bi_platform)
+            # Trigger adapter build + capability sniff before publishing the
+            # instance so that a failing `datus_bi_core` import leaves
+            # `self.bi_func_tool` as `None`.
+            tools = bi_func_tool.available_tools()
         except ImportError as e:
             logger.warning(f"BI adapter package not installed: {e}")
+            return
         except Exception as e:
             logger.error(f"Failed to setup BI tools: {e}")
+            return
+
+        self.bi_func_tool = bi_func_tool
+        self.tools.extend(tools)
+        logger.info(f"BI tools initialized for platform '{bi_platform}'")
 
     def _resolve_bi_platform(self) -> Optional[str]:
         """Resolve which BI platform to use."""

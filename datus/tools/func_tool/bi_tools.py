@@ -7,12 +7,16 @@
 from __future__ import annotations
 
 import re
-from typing import Any, List
+from typing import TYPE_CHECKING, Any, List, Optional
 
 from agents import Tool
 
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
+
+if TYPE_CHECKING:
+    from datus.configuration.agent_config import AgentConfig, DashboardConfig
 
 _VALID_TABLE_NAME = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]{0,62}$")
 _VALID_IF_EXISTS = {"replace", "append", "fail"}
@@ -24,31 +28,189 @@ class BIFuncTool:
     """
     LLM function calling layer for BI adapters.
 
+    Aligned with ``SemanticTools`` / ``SchedulerTools`` pattern: takes
+    ``agent_config`` plus an optional service name and constructs the underlying
+    BI adapter lazily via ``datus_bi_core.adapter_registry``.
+
     Dynamically exposes tools based on adapter capabilities:
     - All adapters: list_dashboards, get_dashboard, list_charts, get_chart, list_datasets
     - Supported adapters: get_chart_data
     - DashboardWriteMixin: create_dashboard, update_dashboard
     - ChartWriteMixin: create_chart, update_chart, add_chart_to_dashboard
     - DatasetWriteMixin: create_dataset, list_bi_databases
-    - dataset_db_uri set: write_query (execute SQL on source DB and write result to dashboard DB)
+    - dataset_db set on the service config: write_query
     """
 
     def __init__(
         self,
-        adapter: Any,
-        dataset_db_uri: str = "",
-        dataset_db_schema: str = "",
-        read_connector: Any = None,
-        datasource_name: str = "",
+        agent_config: Optional["AgentConfig"] = None,
+        bi_service: Optional[str] = None,
+        *,
+        adapter: Any = None,
     ) -> None:
-        self.adapter = adapter
-        self._dataset_db_uri = dataset_db_uri
-        self._dataset_db_schema = dataset_db_schema
-        self._read_connector = read_connector
-        self._datasource_name = datasource_name  # name of pre-configured datasource in BI platform
-        self._write_engine = None  # lazy-initialized
-        self._dataset_db_id = None  # lazy-resolved from BI platform
-        self._grafana_ds_uid = None  # lazy-resolved Grafana datasource UID
+        self.agent_config = agent_config
+        self.bi_service = bi_service
+        self._adapter = adapter
+        self._dash_cfg_resolved = False
+        self._dash_cfg: Optional["DashboardConfig"] = None
+        self._read_connector: Any = None
+        self._read_connector_loaded = False
+        self._write_engine = None
+        self._dataset_db_id = None
+        self._grafana_ds_uid = None
+
+    # ------------------------------------------------------------------ #
+    # Service resolution + lazy adapter construction
+    # ------------------------------------------------------------------ #
+
+    def _resolved_platform(self) -> Optional[str]:
+        """Return the BI platform name to use.
+
+        Preference order:
+        1. Explicit ``bi_service`` passed to the constructor.
+        2. Auto-pick when ``agent_config.dashboard_config`` has exactly one entry.
+        3. Raise ``DatusException`` when multiple are configured and no
+           ``bi_service`` disambiguates — mirrors ``SemanticTools`` behavior.
+        """
+        if self.bi_service:
+            return self.bi_service
+        if self.agent_config is None:
+            return None
+        dashboard_config = getattr(self.agent_config, "dashboard_config", {}) or {}
+        if len(dashboard_config) == 1:
+            return next(iter(dashboard_config))
+        if len(dashboard_config) > 1:
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message=(
+                    f"Multiple BI platforms configured ({list(dashboard_config.keys())}); "
+                    "pass `bi_service` explicitly to disambiguate."
+                ),
+            )
+        return None
+
+    @property
+    def _resolved_dash_cfg(self) -> Optional["DashboardConfig"]:
+        """Lazily resolve the ``DashboardConfig`` for the selected service."""
+        if not self._dash_cfg_resolved:
+            self._dash_cfg_resolved = True
+            platform = self._resolved_platform()
+            if platform and self.agent_config is not None:
+                dashboard_config = getattr(self.agent_config, "dashboard_config", {}) or {}
+                self._dash_cfg = dashboard_config.get(platform)
+        return self._dash_cfg
+
+    @property
+    def adapter(self) -> Any:
+        """Lazily construct the underlying BI adapter on first access.
+
+        Tests may short-circuit construction by passing ``adapter=`` to the
+        constructor.
+        """
+        if self._adapter is None:
+            self._adapter = self._build_adapter()
+        return self._adapter
+
+    def _build_adapter(self) -> Any:
+        """Build the BI adapter from the resolved DashboardConfig.
+
+        Encapsulates the logic previously inline in
+        ``gen_dashboard_agentic_node._setup_bi_tools``.
+        """
+        platform = self._resolved_platform()
+        dash_cfg = self._resolved_dash_cfg
+        if not platform or dash_cfg is None:
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message=(
+                    f"BI service '{platform}' not found in `agent.services.bi_tools`. "
+                    "Configure it or pass a pre-built adapter to BIFuncTool(adapter=...)."
+                ),
+            )
+
+        from datus_bi_core import AuthParam, adapter_registry
+
+        adapter_registry.discover_adapters()
+        adapter_cls = adapter_registry.get(platform)
+        if not adapter_cls:
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message=f"No BI adapter registered for platform '{platform}'",
+            )
+
+        # Derive dialect from dataset_db config (explicit > inferred from URI).
+        dialect = ""
+        if dash_cfg.dataset_db:
+            dialect = dash_cfg.dataset_db.get("dialect", "")
+            if not dialect:
+                ds_uri = dash_cfg.dataset_db.get("uri", "")
+                if ds_uri:
+                    try:
+                        from sqlalchemy.engine.url import make_url
+
+                        dialect = make_url(ds_uri).get_backend_name()
+                    except Exception:
+                        pass
+
+        return adapter_cls(
+            api_base_url=dash_cfg.api_url,
+            auth_params=AuthParam(
+                username=dash_cfg.username,
+                password=dash_cfg.password,
+                api_key=dash_cfg.api_key,
+                extra=dash_cfg.extra or {},
+            ),
+            dialect=dialect,
+        )
+
+    # ------------------------------------------------------------------ #
+    # Derived config properties (sourced from DashboardConfig.dataset_db)
+    # ------------------------------------------------------------------ #
+
+    @property
+    def dataset_db_uri(self) -> str:
+        dash_cfg = self._resolved_dash_cfg
+        if dash_cfg and dash_cfg.dataset_db:
+            return dash_cfg.dataset_db.get("uri", "") or ""
+        return ""
+
+    @property
+    def dataset_db_schema(self) -> str:
+        dash_cfg = self._resolved_dash_cfg
+        if dash_cfg and dash_cfg.dataset_db:
+            return dash_cfg.dataset_db.get("schema", "") or ""
+        return ""
+
+    @property
+    def datasource_name(self) -> str:
+        dash_cfg = self._resolved_dash_cfg
+        if dash_cfg and dash_cfg.dataset_db:
+            return dash_cfg.dataset_db.get("datasource_name", "") or ""
+        return ""
+
+    @property
+    def read_connector(self) -> Any:
+        """Source DB connector for ``write_query`` (lazy).
+
+        Loaded once on first access from ``db_manager_instance``. Tests that
+        need to inject a mock can assign ``self._read_connector`` directly
+        before first access — the property short-circuits when a non-None
+        connector is already cached.
+        """
+        if self._read_connector is None and not self._read_connector_loaded:
+            self._read_connector_loaded = True
+            if self.agent_config is None:
+                return None
+            try:
+                from datus.tools.db_tools.db_manager import db_manager_instance
+
+                db_manager = db_manager_instance(getattr(self.agent_config, "namespaces", {}) or {})
+                current_db = getattr(self.agent_config, "current_database", "") or ""
+                self._read_connector = db_manager.get_conn(current_db, current_db)
+            except Exception as exc:
+                logger.warning(f"No source DB connector for write_query: {exc}")
+                self._read_connector = None
+        return self._read_connector
 
     # ------------------------------------------------------------------ #
     # Read operations (available on all adapters)
@@ -387,7 +549,7 @@ class BIFuncTool:
             if_exists: What to do if the table already exists: "replace" (default),
                        "append", or "fail".
         """
-        if not self._dataset_db_uri:
+        if not self.dataset_db_uri:
             return FuncToolResult(success=0, error="dataset_db is not configured for this BI platform")
         if not _VALID_TABLE_NAME.match(table_name):
             return FuncToolResult(success=0, error="Invalid table_name: must match [a-zA-Z_][a-zA-Z0-9_]{0,62}")
@@ -401,21 +563,21 @@ class BIFuncTool:
         if ";" in sql_stripped.rstrip(";"):
             return FuncToolResult(success=0, error="Multi-statement SQL is not allowed in write_query")
         try:
-            read_connector = self._read_connector
+            read_connector = self.read_connector
             if read_connector is None:
                 return FuncToolResult(success=0, error="No source database connector available for write_query")
 
             from sqlalchemy import create_engine
 
             if self._write_engine is None:
-                self._write_engine = create_engine(self._dataset_db_uri)
+                self._write_engine = create_engine(self.dataset_db_uri)
 
             result = read_connector.execute_query(sql, result_format="pandas")
             if not result.success:
                 return FuncToolResult(success=0, error=result.error)
 
             df = result.sql_return
-            schema = self._dataset_db_schema or None
+            schema = self.dataset_db_schema or None
             df.to_sql(table_name, self._write_engine, schema=schema, if_exists=if_exists, index=False)
             rows = len(df)
             result_data = {
@@ -444,7 +606,7 @@ class BIFuncTool:
             return None
         try:
             datasets = self.adapter.list_datasets("")
-            target_name = self._datasource_name
+            target_name = self.datasource_name
             # Try matching by configured datasource_name first
             if target_name:
                 for ds in datasets:
@@ -456,10 +618,10 @@ class BIFuncTool:
                             return ds_uid
 
             # Fallback: match by database name from dataset_db_uri
-            if self._dataset_db_uri:
+            if self.dataset_db_uri:
                 from sqlalchemy.engine.url import make_url
 
-                db_name = make_url(self._dataset_db_uri).database or ""
+                db_name = make_url(self.dataset_db_uri).database or ""
                 if db_name:
                     for ds in datasets:
                         extra = (ds.extra or {}).get("grafana_ds", {}) if hasattr(ds, "extra") else {}
@@ -484,7 +646,7 @@ class BIFuncTool:
         try:
             from sqlalchemy.engine.url import make_url
 
-            target_url = make_url(self._dataset_db_uri)
+            target_url = make_url(self.dataset_db_uri)
             target_db_name = target_url.database or ""
             if not target_db_name:
                 return None
@@ -560,7 +722,7 @@ class BIFuncTool:
         if has_dataset_write:
             methods += [self.create_dataset, self.list_bi_databases, self.delete_dataset]
 
-        if self._dataset_db_uri:
+        if self.dataset_db_uri:
             methods.append(self.write_query)
 
         return [trans_to_function_tool(m) for m in methods]
