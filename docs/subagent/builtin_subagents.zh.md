@@ -990,7 +990,7 @@ gen_dashboard subagent 在 Superset 和 Grafana 上创建、更新和管理 BI �
 
 ### 关键特性
 
-- **多平台支持**：支持 Apache Superset 和 Grafana；平台可通过 `bi_platform` 显式指定，或从 `agent.service.bi_tools` 自动检测
+- **多平台支持**：支持 Apache Superset 和 Grafana；平台可通过 `bi_platform` 显式指定，或从 `agent.services.bi_tools` 自动检测
 - **动态工具暴露**：工具根据 adapter Mixin 能力动态暴露——只有平台实际支持的操作才作为 LLM 工具出现
 - **数据物化桥接**：`write_query` 将源数据库查询结果写入 BI 平台自有数据库，解耦源数据与可视化层
 - **Skill 引导工作流**：内置 `gen-dashboard` skill 为各平台提供分步工作流指导
@@ -999,7 +999,7 @@ gen_dashboard subagent 在 Superset 和 Grafana 上创建、更新和管理 BI �
 
 ```yaml
 agent:
-  service:
+  services:
     bi_tools:
       superset:
         type: superset
@@ -1018,7 +1018,7 @@ agent:
 ```
 
 **前置条件**：
-- `agent.yml` 中包含 `agent.service.bi_tools` 配置段及平台凭据
+- `agent.yml` 中包含 `agent.services.bi_tools` 配置段及平台凭据
 - 已安装 `datus-bi-superset` 或 `datus-bi-grafana` 包（`pip install datus-agent[bi]`）
 
 ### 工作原理
@@ -1109,7 +1109,7 @@ scheduler subagent 在 Apache Airflow 上提交、监控、更新和排查定时
 
 ```yaml
 agent:
-  service:
+  services:
     schedulers:
       airflow_prod:
         type: airflow
@@ -1126,7 +1126,7 @@ agent:
 ```
 
 **前置条件**：
-- `agent.yml` 中包含 `agent.service.schedulers` 配置段及 Airflow 凭据
+- `agent.yml` 中包含 `agent.services.schedulers` 配置段及 Airflow 凭据
 - 已安装 `datus-scheduler-core` 和 `datus-scheduler-airflow` 包
 
 ### 工作原理

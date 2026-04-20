@@ -48,13 +48,13 @@ pip install -e ../datus-semantic-adapter/datus-semantic-metricflow
 
 ## 配置
 
-在 `agent.yml` 的 `agent.service.semantic_layer` 中配置语义层适配器：
+在 `agent.yml` 的 `agent.services.semantic_layer` 中配置语义层适配器：
 
 ### MetricFlow
 
 ```yaml
 agent:
-  service:
+  services:
     semantic_layer:
       metricflow:
         timeout: 300  # 可选，默认 300 秒
@@ -76,7 +76,7 @@ agent:
 
 ### 选择规则
 
-- `service.semantic_layer` 下的 key 就是 adapter type，例如 `metricflow`。
+- `services.semantic_layer` 下的 key 就是 adapter type，例如 `metricflow`。
 - 语义相关节点通过 `semantic_adapter` 选择适配器。
 - 如果只配置了一个 semantic layer，省略 `semantic_adapter` 时会自动使用它。
 - 如果配置了多个 semantic layer，则必须显式填写 `semantic_adapter`。
@@ -85,7 +85,7 @@ agent:
 
 `config_path` 是可选项。正常运行时，Datus 会从以下上下文构造 MetricFlow 配置：
 
-1. `service.databases` 中当前选中的数据库
+1. `services.databases` 中当前选中的数据库
 2. 当前项目的语义模型目录
 3. 当前生效的 `agent.home`
 

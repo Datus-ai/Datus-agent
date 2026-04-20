@@ -992,7 +992,7 @@ The gen_dashboard subagent creates, updates, and manages BI dashboards on Supers
 
 ### Key Features
 
-- **Multi-platform**: Supports Apache Superset and Grafana; platform is explicit via `bi_platform` or auto-detected from `agent.service.bi_tools`
+- **Multi-platform**: Supports Apache Superset and Grafana; platform is explicit via `bi_platform` or auto-detected from `agent.services.bi_tools`
 - **Dynamic tool exposure**: Tools are exposed based on adapter Mixin capabilities — only operations the platform actually supports appear as LLM tools
 - **Data materialization**: `write_query` bridges source database results to the BI platform's own database, decoupling source data from visualization
 - **Skill-guided workflows**: The built-in `gen-dashboard` skill provides step-by-step workflow guidance for each platform
@@ -1001,7 +1001,7 @@ The gen_dashboard subagent creates, updates, and manages BI dashboards on Supers
 
 ```yaml
 agent:
-  service:
+  services:
     bi_tools:
       superset:
         type: superset
@@ -1020,7 +1020,7 @@ agent:
 ```
 
 **Requirements:**
-- `agent.service.bi_tools` section in `agent.yml` with platform credentials
+- `agent.services.bi_tools` section in `agent.yml` with platform credentials
 - `datus-bi-superset` or `datus-bi-grafana` package installed (`pip install datus-agent[bi]`)
 
 ### How It Works
@@ -1111,7 +1111,7 @@ The scheduler subagent submits, monitors, updates, and troubleshoots scheduled j
 
 ```yaml
 agent:
-  service:
+  services:
     schedulers:
       airflow_prod:
         type: airflow
@@ -1128,7 +1128,7 @@ agent:
 ```
 
 **Requirements:**
-- `agent.service.schedulers` section in `agent.yml` with Airflow credentials
+- `agent.services.schedulers` section in `agent.yml` with Airflow credentials
 - `datus-scheduler-core` and `datus-scheduler-airflow` packages installed
 
 ### How It Works

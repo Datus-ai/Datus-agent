@@ -15,7 +15,7 @@ scheduler subagent 是一个专用节点（`SchedulerAgenticNode`），它：
 
 ## 快速开始
 
-确保已在 `agent.yml` 中配置 `agent.service.schedulers` 并安装了所需包：
+确保已在 `agent.yml` 中配置 `agent.services.schedulers` 并安装了所需包：
 
 ```bash
 pip install datus-scheduler-core datus-scheduler-airflow
@@ -85,7 +85,7 @@ graph LR
 
 ```yaml
 agent:
-  service:
+  services:
     schedulers:
       airflow_prod:
         type: airflow
@@ -109,15 +109,15 @@ agent:
 |------|------|------|--------|
 | `model` | 否 | 使用的 LLM 模型 | 使用已配置的默认模型 |
 | `max_turns` | 否 | 最大对话轮数 | 30 |
-| `scheduler_service` | 否 | `service.schedulers` 中的 scheduler 服务键名 | 仅配置一个 scheduler 时自动选择，或使用唯一的 `default: true` |
-| `service.schedulers.<name>.type` | 是 | 调度器类型（目前为 `airflow`） | — |
-| `service.schedulers.<name>.api_base_url` | 是 | Airflow REST API 基础 URL | — |
-| `service.schedulers.<name>.username` | 是 | Airflow 登录用户名 | — |
-| `service.schedulers.<name>.password` | 是 | Airflow 登录密码 | — |
-| `service.schedulers.<name>.dags_folder` | 是 | 生成的 DAG 文件目录 | — |
-| `service.schedulers.<name>.dag_discovery_timeout` | 否 | 等待 Airflow 发现新 DAG 的超时秒数 | 60 |
-| `service.schedulers.<name>.dag_discovery_poll_interval` | 否 | DAG 发现的轮询间隔 | 5 |
-| `service.schedulers.<name>.default` | 否 | 多实例场景下标记唯一默认 scheduler | `false` |
+| `scheduler_service` | 否 | `services.schedulers` 中的 scheduler 服务键名 | 仅配置一个 scheduler 时自动选择，或使用唯一的 `default: true` |
+| `services.schedulers.<name>.type` | 是 | 调度器类型（目前为 `airflow`） | — |
+| `services.schedulers.<name>.api_base_url` | 是 | Airflow REST API 基础 URL | — |
+| `services.schedulers.<name>.username` | 是 | Airflow 登录用户名 | — |
+| `services.schedulers.<name>.password` | 是 | Airflow 登录密码 | — |
+| `services.schedulers.<name>.dags_folder` | 是 | 生成的 DAG 文件目录 | — |
+| `services.schedulers.<name>.dag_discovery_timeout` | 否 | 等待 Airflow 发现新 DAG 的超时秒数 | 60 |
+| `services.schedulers.<name>.dag_discovery_poll_interval` | 否 | DAG 发现的轮询间隔 | 5 |
+| `services.schedulers.<name>.default` | 否 | 多实例场景下标记唯一默认 scheduler | `false` |
 
 所有敏感值支持 `${ENV_VAR}` 环境变量替换。
 
@@ -126,7 +126,7 @@ agent:
 - Agent 主机可访问 Airflow 实例
 - `dags_folder` 目录对 agent 进程可写，且 Airflow scheduler 可访问
 
-`service.schedulers` 是 scheduler 配置的唯一运行时来源。顶层 `scheduler:` 已不再读取。
+`services.schedulers` 是 scheduler 配置的唯一运行时来源。顶层 `scheduler:` 已不再读取。
 
 ## 常用 Cron 表达式
 

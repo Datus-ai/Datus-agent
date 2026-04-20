@@ -6,7 +6,7 @@
 
 Interactive wizard to configure LLM provider, database connections, and workspace settings.
 
-Writes configuration to `~/.datus/conf/agent.yml` using the `service.databases` format.
+Writes configuration to `~/.datus/conf/agent.yml` using the `services.databases` format.
 
 ```bash
 datus configure
@@ -29,7 +29,7 @@ agent:
       base_url: https://api.deepseek.com
       api_key: sk-xxx
       model: deepseek-chat
-  service:
+  services:
     databases:
       my_duckdb:
         type: duckdb
@@ -152,7 +152,7 @@ agent:
 **New format:**
 ```yaml
 agent:
-  service:
+  services:
     databases:
       db1:
         type: sqlite

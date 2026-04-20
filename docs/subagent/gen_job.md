@@ -24,11 +24,11 @@ The chat agent can also automatically delegate to gen_job when it detects an ETL
 
 ### Database Configuration
 
-All databases involved must be configured in `agent.yml` under `service.databases`:
+All databases involved must be configured in `agent.yml` under `services.databases`:
 
 ```yaml
 agent:
-  service:
+  services:
     databases:
       local_duckdb:
         type: duckdb

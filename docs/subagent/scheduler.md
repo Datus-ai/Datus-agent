@@ -15,7 +15,7 @@ The scheduler subagent is a specialized node (`SchedulerAgenticNode`) that:
 
 ## Quick Start
 
-Ensure you have configured `agent.service.schedulers` in `agent.yml` and installed the required packages:
+Ensure you have configured `agent.services.schedulers` in `agent.yml` and installed the required packages:
 
 ```bash
 pip install datus-scheduler-core datus-scheduler-airflow
@@ -85,7 +85,7 @@ When submitting a new job:
 
 ```yaml
 agent:
-  service:
+  services:
     schedulers:
       airflow_prod:
         type: airflow
@@ -109,15 +109,15 @@ agent:
 |-----------|----------|-------------|---------|
 | `model` | No | LLM model to use | Uses default configured model |
 | `max_turns` | No | Maximum conversation turns | 30 |
-| `scheduler_service` | No | Scheduler service key from `service.schedulers` | Auto-selected when only one scheduler is configured, or when exactly one service has `default: true` |
-| `service.schedulers.<name>.type` | Yes | Scheduler type (currently `airflow`) | — |
-| `service.schedulers.<name>.api_base_url` | Yes | Airflow REST API base URL | — |
-| `service.schedulers.<name>.username` | Yes | Airflow login username | — |
-| `service.schedulers.<name>.password` | Yes | Airflow login password | — |
-| `service.schedulers.<name>.dags_folder` | Yes | Directory for generated DAG files | — |
-| `service.schedulers.<name>.dag_discovery_timeout` | No | Seconds to wait for Airflow to discover new DAGs | 60 |
-| `service.schedulers.<name>.dag_discovery_poll_interval` | No | Polling interval for DAG discovery | 5 |
-| `service.schedulers.<name>.default` | No | Mark one scheduler as the default when multiple are configured | `false` |
+| `scheduler_service` | No | Scheduler service key from `services.schedulers` | Auto-selected when only one scheduler is configured, or when exactly one service has `default: true` |
+| `services.schedulers.<name>.type` | Yes | Scheduler type (currently `airflow`) | — |
+| `services.schedulers.<name>.api_base_url` | Yes | Airflow REST API base URL | — |
+| `services.schedulers.<name>.username` | Yes | Airflow login username | — |
+| `services.schedulers.<name>.password` | Yes | Airflow login password | — |
+| `services.schedulers.<name>.dags_folder` | Yes | Directory for generated DAG files | — |
+| `services.schedulers.<name>.dag_discovery_timeout` | No | Seconds to wait for Airflow to discover new DAGs | 60 |
+| `services.schedulers.<name>.dag_discovery_poll_interval` | No | Polling interval for DAG discovery | 5 |
+| `services.schedulers.<name>.default` | No | Mark one scheduler as the default when multiple are configured | `false` |
 
 All sensitive values support `${ENV_VAR}` substitution.
 
@@ -126,7 +126,7 @@ All sensitive values support `${ENV_VAR}` substitution.
 - Airflow instance accessible from the agent host
 - `dags_folder` writable by the agent process and accessible by the Airflow scheduler
 
-`service.schedulers` is the only runtime source for scheduler config. Top-level `scheduler:` is no longer read.
+`services.schedulers` is the only runtime source for scheduler config. Top-level `scheduler:` is no longer read.
 
 ## Common Cron Expressions
 

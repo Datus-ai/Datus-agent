@@ -1,12 +1,12 @@
 # Scheduler Configuration
 
-Scheduler services are configured under `agent.service.schedulers`.
+Scheduler services are configured under `agent.services.schedulers`.
 
 ## Structure
 
 ```yaml
 agent:
-  service:
+  services:
     schedulers:
       airflow_prod:
         type: airflow
@@ -32,7 +32,7 @@ agent:
 
 ## Selection Rules
 
-- `scheduler_service` selects one scheduler instance from `service.schedulers`.
+- `scheduler_service` selects one scheduler instance from `services.schedulers`.
 - If only one scheduler is configured, Datus can use it automatically.
 - If multiple schedulers are configured, either:
   - set `scheduler_service`, or
@@ -41,5 +41,5 @@ agent:
 
 ## Notes
 
-- `service.schedulers` is now the only runtime source for scheduler config.
+- `services.schedulers` is now the only runtime source for scheduler config.
 - Top-level `scheduler:` is no longer read at runtime.

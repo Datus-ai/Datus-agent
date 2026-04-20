@@ -138,7 +138,7 @@ agent:
 
 
   # local databases configuration
-  service:
+  services:
     databases:
       snowflake:
         type: snowflake

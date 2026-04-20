@@ -25,7 +25,7 @@
 
 ```yaml
 agent:
-  service:
+  services:
     databases:
       local_duckdb:
         type: duckdb

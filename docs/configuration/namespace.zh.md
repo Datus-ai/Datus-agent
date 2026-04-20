@@ -4,17 +4,17 @@
 
 ## 概览
 
-Datus 现在通过 `agent.service` 统一管理运行时服务：
-- **数据库**：`service.databases`
-- **语义层**：`service.semantic_layer`
-- **BI 工具**：`service.bi_tools`
-- **调度器**：`service.schedulers`
+Datus 现在通过 `agent.services` 统一管理运行时服务：
+- **数据库**：`services.databases`
+- **语义层**：`services.semantic_layer`
+- **BI 工具**：`services.bi_tools`
+- **调度器**：`services.schedulers`
 - **凭证安全**：支持 `${ENV_VAR}` 环境变量展开
 
 ## 结构
 ```yaml
 agent:
-  service:
+  services:
     databases:
       analytics:
         type: duckdb

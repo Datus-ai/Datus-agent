@@ -1,12 +1,12 @@
 # Semantic Layer Configuration
 
-Semantic adapters are configured under `agent.service.semantic_layer`.
+Semantic adapters are configured under `agent.services.semantic_layer`.
 
 ## Structure
 
 ```yaml
 agent:
-  service:
+  services:
     semantic_layer:
       metricflow:
         timeout: 300
@@ -22,7 +22,7 @@ agent:
 
 ## Selection Rules
 
-- The key under `service.semantic_layer` is the adapter type, for example `metricflow`.
+- The key under `services.semantic_layer` is the adapter type, for example `metricflow`.
 - Semantic nodes choose the adapter with `semantic_adapter`.
 - There is no `default: true` for semantic adapters.
 - If `semantic_adapter` is omitted and only one semantic layer is configured, Datus uses that adapter automatically.
@@ -31,5 +31,5 @@ agent:
 ## MetricFlow Notes
 
 - `config_path` is optional.
-- Datus prefers the current `service.databases` entry and the project semantic model directory to build runtime config automatically.
+- Datus prefers the current `services.databases` entry and the project semantic model directory to build runtime config automatically.
 - `config_path` is only needed when you want MetricFlow to read a specific `agent.yml` file directly.

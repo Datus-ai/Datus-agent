@@ -131,7 +131,7 @@ Add the following configuration to your `~/.datus/agent.yml`:
 
 ```yaml
 agent:
-  service:
+  services:
     databases:
       superset:
         type: postgresql
@@ -153,9 +153,9 @@ agent:
 ```
 
 !!! note "Configuration Sections"
-    - **service.databases**: Defines database connections for SQL execution
-    - **service.semantic_layer**: Registers the semantic adapter used by metric and semantic-model workflows
-    - **service.bi_tools**: Defines the BI platform credentials for dashboard access
+    - **services.databases**: Defines database connections for SQL execution
+    - **services.semantic_layer**: Registers the semantic adapter used by metric and semantic-model workflows
+    - **services.bi_tools**: Defines the BI platform credentials for dashboard access
 
 !!! tip
     You can also add the database interactively with `datus-agent configure` instead of editing YAML manually.

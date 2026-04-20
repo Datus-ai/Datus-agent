@@ -15,7 +15,7 @@ The gen_dashboard subagent is a specialized node (`GenDashboardAgenticNode`) tha
 
 ## Quick Start
 
-Ensure you have configured `agent.service.bi_tools` in `agent.yml` and installed the appropriate adapter package:
+Ensure you have configured `agent.services.bi_tools` in `agent.yml` and installed the appropriate adapter package:
 
 ```bash
 pip install datus-agent[bi]   # installs datus-bi-superset and datus-bi-grafana
@@ -89,7 +89,7 @@ Tools are exposed dynamically based on which Mixins the platform adapter impleme
 
 ```yaml
 agent:
-  service:
+  services:
     bi_tools:
       superset:
         type: superset
@@ -120,19 +120,19 @@ agent:
 |-----------|----------|-------------|---------|
 | `model` | No | LLM model to use | Uses default configured model |
 | `max_turns` | No | Maximum conversation turns | 30 |
-| `bi_platform` | No | Explicit platform key from `service.bi_tools` (`superset`, `grafana`) | Auto-detected when only one BI tool is configured |
-| `service.bi_tools.<platform>.type` | No | BI platform type. If set, it must match the config key | Uses the config key |
-| `service.bi_tools.<platform>.api_url` | Yes | BI platform API endpoint | — |
-| `service.bi_tools.<platform>.username` | Superset | Login username | — |
-| `service.bi_tools.<platform>.password` | Superset | Login password | — |
-| `service.bi_tools.<platform>.api_key` | Grafana | Grafana API key | — |
-| `service.bi_tools.<platform>.dataset_db.uri` | Yes | SQLAlchemy URI for materialization target DB | — |
-| `service.bi_tools.<platform>.dataset_db.schema` | No | Schema for materialized tables | — |
-| `service.bi_tools.<platform>.dataset_db.datasource_name` | Grafana | Grafana datasource name | — |
+| `bi_platform` | No | Explicit platform key from `services.bi_tools` (`superset`, `grafana`) | Auto-detected when only one BI tool is configured |
+| `services.bi_tools.<platform>.type` | No | BI platform type. If set, it must match the config key | Uses the config key |
+| `services.bi_tools.<platform>.api_url` | Yes | BI platform API endpoint | — |
+| `services.bi_tools.<platform>.username` | Superset | Login username | — |
+| `services.bi_tools.<platform>.password` | Superset | Login password | — |
+| `services.bi_tools.<platform>.api_key` | Grafana | Grafana API key | — |
+| `services.bi_tools.<platform>.dataset_db.uri` | Yes | SQLAlchemy URI for materialization target DB | — |
+| `services.bi_tools.<platform>.dataset_db.schema` | No | Schema for materialized tables | — |
+| `services.bi_tools.<platform>.dataset_db.datasource_name` | Grafana | Grafana datasource name | — |
 
 All sensitive values support `${ENV_VAR}` substitution.
 
-`service.bi_tools` is the only runtime source for BI credentials. Top-level `dashboard:` is no longer read.
+`services.bi_tools` is the only runtime source for BI credentials. Top-level `dashboard:` is no longer read.
 
 ## Platform Differences
 

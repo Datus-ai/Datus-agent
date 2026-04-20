@@ -28,7 +28,7 @@ Here's a high-level summary of each module and how they relate:
 | **[Nodes](nodes.md)** | Task-level processing units | Each "node" handles a specific step (schema linking, SQL generation, reasoning, reflection, output formatting, chat, utilities) in the data-to-SQL pipeline |
 | **[Workflow](workflow.md)** | Orchestration of nodes | Defines execution plans (sequential, parallel, sub-workflows, reflection paths) that specify how nodes are chained to answer a user's query |
 | **[Storage](storage.md)** | Embeddings & vector store configuration | Manages embedding models, device settings, embedding storage paths, and how metadata / documents / metrics are embedded and retrieved |
-| **[Services](namespace.md)** | Runtime service configuration | Defines database connections plus semantic adapters, BI tools, and schedulers under `agent.service.*` |
+| **[Services](namespace.md)** | Runtime service configuration | Defines database connections plus semantic adapters, BI tools, and schedulers under `agent.services.*` |
 | **[Benchmark](benchmark.md)** | Evaluation & testing setup | Defines benchmark datasets (e.g. BIRD-DEV, Spider2, semantic layer) and paths to evaluate the SQL-generation performance of the agent |
 
 ## Configuration Structure
@@ -38,7 +38,7 @@ The main configuration file follows a hierarchical structure:
 ```yaml
 agent:
   target: openai                     # Default model provider key
-  service:
+  services:
     databases:
       production:
         type: snowflake

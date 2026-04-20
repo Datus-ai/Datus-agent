@@ -24,11 +24,11 @@ chat agent 检测到 ETL 或迁移任务时也会自动委派给 gen_job。
 
 ### 数据库配置
 
-所有涉及的数据库必须在 `agent.yml` 的 `service.databases` 中配置：
+所有涉及的数据库必须在 `agent.yml` 的 `services.databases` 中配置：
 
 ```yaml
 agent:
-  service:
+  services:
     databases:
       local_duckdb:
         type: duckdb

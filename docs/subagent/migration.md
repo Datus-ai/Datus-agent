@@ -25,7 +25,7 @@ Both source and target databases must be configured in `agent.yml`:
 
 ```yaml
 agent:
-  service:
+  services:
     databases:
       local_duckdb:
         type: duckdb
