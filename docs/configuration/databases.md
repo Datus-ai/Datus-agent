@@ -101,7 +101,29 @@ my_sqlite:
 ```yaml
 my_duckdb:
   type: duckdb
-  uri: ./data/analytics.duckdb
+  uri: duckdb:////Users/xxx/data/analytics.duckdb
+```
+
+### MySQL
+```yaml
+my_mysql:
+  type: mysql
+  host: localhost
+  port: 3306
+  username: ${MYSQL_USER}
+  password: ${MYSQL_PASSWORD}
+  database: analytics
+```
+
+### PostgreSQL
+```yaml
+my_postgresql:
+  type: postgresql
+  host: localhost
+  port: 5432
+  username: ${POSTGRES_USER}
+  password: ${POSTGRES_PASSWORD}
+  database: analytics
 ```
 
 ### Path Pattern (Multiple Files)
@@ -136,6 +158,7 @@ Supported patterns: `*.sqlite`, `**/*.sqlite`, `data/2024/*.db`
 - **Snowflake**: `account`, `warehouse`, `role`, `schema`
 - **StarRocks**: `catalog`
 - **SQLite/DuckDB**: `path_pattern` for glob-based discovery
+- **MySQL/PostgreSQL**: `host`, `port`, `username`, `password`, `database`
 
 ## Managing Databases
 

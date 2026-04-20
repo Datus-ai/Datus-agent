@@ -41,7 +41,7 @@ services:
       # DAG files written by the adapter land here
       - ./dags:/opt/airflow/dags
       # Mount the local DAComp workspace so scheduled SQL jobs can reach the DuckDB file.
-      - ${DACOMP_HOME}:/workspace
+      - ${DACOMP_HOME:?Set DACOMP_HOME to the DAComp workspace path}:/workspace
 
     ports:
       - "8080:8080"

@@ -245,7 +245,7 @@ Once the marts table exists, hand it to the BI subagent.
 Under the hood, the Superset workflow is:
 
 ```text
-write_query -> create_dataset -> create_chart -> create_dashboard
+write_query -> create_dataset -> create_chart -> create_dashboard -> add_chart_to_dashboard
 ```
 
 Because `bi_tools.superset.dataset_db` points to the local Superset PostgreSQL service, Datus can materialize the query result and register it as a Superset dataset automatically.

@@ -73,12 +73,12 @@ agent:
     scheduler:
       scheduler_service: airflow_prod
 
-models:
-  openai:
-    type: "openai"
-    base_url: "https://api.openai.com/v1"
-    api_key: "${OPENAI_API_KEY}"
-    model: "gpt-4-turbo"
+  models:
+    openai:
+      type: "openai"
+      base_url: "https://api.openai.com/v1"
+      api_key: "${OPENAI_API_KEY}"
+      model: "gpt-4-turbo"
 
 storage:
   database:

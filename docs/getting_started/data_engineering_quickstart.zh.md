@@ -245,7 +245,7 @@ SELECT COUNT(*) FROM marts.lever__recruitment_analytics_dashboard;
 这条 Superset 工作流内部会依次执行：
 
 ```text
-write_query -> create_dataset -> create_chart -> create_dashboard
+write_query -> create_dataset -> create_chart -> create_dashboard -> add_chart_to_dashboard
 ```
 
 因为 `bi_tools.superset.dataset_db` 已经指向本地 Superset 所用的 PostgreSQL，Datus 会把查询结果物化进去，并自动注册成 Superset dataset。

@@ -69,11 +69,11 @@ agent:
     scheduler:
       scheduler_service: airflow_prod
 
-models:
-  openai:
-    type: "openai"
-    base_url: "https://api.openai.com/v1"
-    api_key: "${OPENAI_API_KEY}"
+  models:
+    openai:
+      type: "openai"
+      base_url: "https://api.openai.com/v1"
+      api_key: "${OPENAI_API_KEY}"
 
 # 存储与嵌入
 storage:
