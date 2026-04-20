@@ -39,7 +39,7 @@ services:
       - "8088:8088"
     command: >
       bash -lc '
-      uv pip install psycopg2-binary -q &&
+      python -m pip install --no-cache-dir psycopg2-binary -q &&
       superset db upgrade &&
       if ! superset fab list-users | grep -q "username:admin |"; then
         superset fab create-admin --username admin --firstname Admin --lastname User --email admin@example.com --password admin;
