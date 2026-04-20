@@ -72,6 +72,9 @@ class MinimalCLI:
         """Return empty string for prompt input."""
         return ""
 
+    def _print_welcome(self):
+        """No-op stand-in for the real banner printer."""
+
 
 # ===========================================================================
 # Shared helper to capture console output

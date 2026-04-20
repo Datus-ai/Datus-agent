@@ -27,13 +27,16 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.lexers import PygmentsLexer
 from prompt_toolkit.styles import Style, merge_styles, style_from_pygments_cls
 from rich.console import Console
+from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
 if TYPE_CHECKING:
     from datus.agent.workflow_runner import WorkflowRunner
 
 from datus_db_core import BaseSqlConnector
 
+from datus import __version__
 from datus.cli._cli_utils import prompt_input, select_choice
 from datus.cli.agent_commands import AgentCommands
 from datus.cli.autocomplete import AtReferenceCompleter, CustomPygmentsStyle, CustomSqlLexer, SubagentCompleter
@@ -55,6 +58,17 @@ from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import parse_sql_type
 
 logger = get_logger(__name__)
+
+
+DATUS_BANNER_TEXT = (
+    "██████╗   █████╗  ████████╗ ██╗   ██╗ ███████╗\n"
+    "██╔══██╗ ██╔══██╗ ╚══██╔══╝ ██║   ██║ ██╔════╝\n"
+    "██║  ██║ ███████║    ██║    ██║   ██║ ███████╗\n"
+    "██║  ██║ ██╔══██║    ██║    ██║   ██║ ╚════██║\n"
+    "██████╔╝ ██║  ██║    ██║    ╚██████╔╝ ███████║\n"
+    "╚═════╝  ╚═╝  ╚═╝    ╚═╝     ╚═════╝  ╚══════╝"
+)
+_BANNER_MIN_WIDTH = 60
 
 
 class CommandType(Enum):
@@ -697,7 +711,6 @@ class DatusCLI:
             return
 
         self.agent_initializing = True
-        self.console.print("[dim]Initializing AI capabilities in background...[/]")
 
         # Capture the current ContextVar state so the background task sees
         # ``set_current_path_manager`` bindings made in the main thread.
@@ -1377,39 +1390,65 @@ class DatusCLI:
         self.selected_catalog_path = selected_path
         self.selected_catalog_data = selected_data
 
-    def _print_welcome(self):
-        """Print the welcome message."""
-        welcome_text = """
-[bold green]Datus[/] - [bold]AI-powered SQL command-line interface[/]
-Type '.help' for a list of commands or '.exit' to quit.
-"""
-        self.console.print(welcome_text)
-
+    def _build_banner_panel(self) -> Panel:
+        """Build the unified startup banner as a Rich Panel."""
         database = (
             getattr(self.args, "database", "")
             or getattr(self.args, "namespace", "")
             or getattr(self.agent_config, "current_database", "")
         )
-        if database:
-            self.console.print(f"Database [bold green]{database}[/] selected")
+        db_type = getattr(self.agent_config, "db_type", "") or ""
+
+        if self.db_connector and database:
+            db_line = f"[bold green]{database}[/]"
+            if db_type:
+                db_line += f"  [dim]({db_type})[/]"
+            if self.cli_context.current_db_name and self.cli_context.current_db_name != database:
+                db_line += f"  [dim]using {self.cli_context.current_db_name}[/]"
+        elif database:
+            db_line = f"[bold green]{database}[/]  [yellow]not connected[/]"
         else:
-            self.console.print("[yellow]Warning: No database selected, please use .database to select a database[/]")
-        # Display connection info
-        if self.db_connector:
-            db_info = f"Connected to [bold green]{self.agent_config.db_type}[/]"
-            if self.cli_context.current_db_name:
-                db_info += f" using database [bold]{self.cli_context.current_db_name}[/]"
+            db_line = "[yellow]not selected  (use .database to choose)[/]"
 
-            self.console.print(db_info)
+        context_summary = self.cli_context.get_context_summary() if self.db_connector else "No context available"
+        show_context = context_summary and context_summary != "No context available"
 
-            # Show CLI context summary
-            context_summary = self.cli_context.get_context_summary()
-            if context_summary != "No context available":
-                self.console.print(f"[dim]Context: {context_summary}[/]")
+        use_art = self.console.width >= _BANNER_MIN_WIDTH
+        body = Table.grid(padding=(0, 0))
+        body.add_column()
 
-            self.console.print("Type SQL statements or use ! @ . commands to interact.")
+        if use_art:
+            body.add_row(Text(DATUS_BANNER_TEXT, style="bold"))
         else:
-            self.console.print("[yellow]Warning: No database connection initialized.[/]")
+            body.add_row(Text(f"DATUS v{__version__}", style="bold"))
+        body.add_row(Text(""))
+        body.add_row(Text("AI-powered SQL command-line interface", style="bold"))
+        body.add_row(Text(""))
+
+        info = Table.grid(padding=(0, 2))
+        info.add_column(style="dim", justify="left", no_wrap=True)
+        info.add_column()
+        info.add_row("Database", Text.from_markup(db_line))
+        if show_context:
+            info.add_row("Context", Text.from_markup(f"[dim]{context_summary}[/]"))
+        body.add_row(info)
+        body.add_row(Text(""))
+        body.add_row(Text.from_markup("[dim]Type .help for commands, .exit to quit[/]"))
+
+        return Panel(
+            body,
+            title=f"v{__version__}",
+            title_align="left",
+            padding=(1, 2),
+        )
+
+    def _print_welcome(self):
+        """Print the unified startup banner.
+
+        Also used as the Ctrl+O clear-screen header callback so the banner
+        reappears at the top after verbose-mode toggles redraw the terminal.
+        """
+        self.console.print(self._build_banner_panel())
 
     def prompt_input(self, message: str, default: str = "", choices: list = None, multiline: bool = False):
         """

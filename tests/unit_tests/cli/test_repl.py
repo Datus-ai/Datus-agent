@@ -746,10 +746,11 @@ class TestInitConnection:
 
 
 class TestPrintWelcome:
-    """Test _print_welcome database fallback chain."""
+    """Test _print_welcome banner output and database fallback chain."""
 
-    def _get_output(self, cli):
+    def _get_output(self, cli, width: int = 100):
         """Call _print_welcome and return the console output."""
+        cli.console = Console(file=io.StringIO(), no_color=True, width=width)
         cli._print_welcome()
         return cli.console.file.getvalue()
 
@@ -759,7 +760,9 @@ class TestPrintWelcome:
         cli.args = MagicMock(database="my_db", namespace="my_ns")
         real_agent_config._current_database = "config_db"
         output = self._get_output(cli)
-        assert "Database my_db selected" in output
+        assert "my_db" in output
+        assert "my_ns" not in output
+        assert "config_db" not in output
 
     def test_database_fallback_to_args_namespace(self, real_agent_config):
         """Falls back to args.namespace when args.database is empty."""
@@ -767,7 +770,7 @@ class TestPrintWelcome:
         cli.args = MagicMock(database="", namespace="my_ns")
         real_agent_config._current_database = ""
         output = self._get_output(cli)
-        assert "Database my_ns selected" in output
+        assert "my_ns" in output
 
     def test_database_fallback_to_agent_config(self, real_agent_config):
         """Falls back to agent_config.current_database when args are empty."""
@@ -775,15 +778,107 @@ class TestPrintWelcome:
         cli.args = MagicMock(database="", namespace="")
         real_agent_config._current_database = "config_db"
         output = self._get_output(cli)
-        assert "Database config_db selected" in output
+        assert "config_db" in output
 
     def test_no_database_warning(self, real_agent_config):
-        """Shows warning when no database is available."""
+        """Shows 'not selected' hint when no database is available."""
         cli = _make_cli(real_agent_config)
         cli.args = MagicMock(database="", namespace="")
         real_agent_config._current_database = ""
         output = self._get_output(cli)
-        assert "No database selected" in output
+        assert "not selected" in output
+
+
+class TestBuildBannerPanel:
+    """Test the unified banner structure (version, art, AI status)."""
+
+    def _render(self, cli, width: int = 100) -> str:
+        cli.console = Console(file=io.StringIO(), no_color=True, width=width)
+        cli._print_welcome()
+        return cli.console.file.getvalue()
+
+    def test_contains_version(self, real_agent_config):
+        from datus import __version__
+
+        cli = _make_cli(real_agent_config)
+        cli.args = MagicMock(database="benchmark", namespace="")
+        real_agent_config._current_database = ""
+        output = self._render(cli)
+        assert f"v{__version__}" in output
+
+    def test_contains_subtitle(self, real_agent_config):
+        cli = _make_cli(real_agent_config)
+        cli.args = MagicMock(database="benchmark", namespace="")
+        real_agent_config._current_database = ""
+        output = self._render(cli)
+        assert "AI-powered SQL command-line interface" in output
+
+    def test_contains_ascii_art_on_wide_terminal(self, real_agent_config):
+        cli = _make_cli(real_agent_config)
+        cli.args = MagicMock(database="benchmark", namespace="")
+        real_agent_config._current_database = ""
+        output = self._render(cli, width=100)
+        assert "██████╗" in output
+
+    def test_narrow_terminal_falls_back_to_text(self, real_agent_config):
+        from datus import __version__
+
+        cli = _make_cli(real_agent_config)
+        cli.args = MagicMock(database="benchmark", namespace="")
+        real_agent_config._current_database = ""
+        output = self._render(cli, width=40)
+        assert f"DATUS v{__version__}" in output
+        assert "██████╗" not in output
+
+    def test_no_ai_status_row(self, real_agent_config):
+        """Banner must not include an AI status row."""
+        cli = _make_cli(real_agent_config)
+        cli.args = MagicMock(database="benchmark", namespace="")
+        real_agent_config._current_database = ""
+        cli.agent_ready = True
+        cli.agent_initializing = False
+        output = self._render(cli)
+        assert "initializing" not in output
+        # "AI" label should not appear as a standalone banner row
+        for line in output.splitlines():
+            stripped = line.strip("│ ").strip()
+            assert not stripped.startswith("AI ")
+
+    def test_not_connected_label(self, real_agent_config):
+        cli = _make_cli(real_agent_config)
+        cli.args = MagicMock(database="benchmark", namespace="")
+        real_agent_config._current_database = ""
+        cli.db_connector = None
+        output = self._render(cli)
+        assert "not connected" in output
+
+    def test_no_command_prefix_cheatsheet(self, real_agent_config):
+        """Banner must not include the '/ . @ !' command prefix cheatsheet row."""
+        cli = _make_cli(real_agent_config)
+        cli.args = MagicMock(database="benchmark", namespace="")
+        real_agent_config._current_database = ""
+        output = self._render(cli)
+        assert "! @ ." not in output
+        assert "Commands:" not in output
+
+    def test_using_suffix_when_active_db_differs(self, real_agent_config):
+        """Database line appends 'using <name>' when current_db_name != configured db."""
+        cli = _make_cli(real_agent_config)
+        cli.args = MagicMock(database="benchmark", namespace="")
+        real_agent_config._current_database = ""
+        cli.cli_context.current_db_name = "other_db"
+        output = self._render(cli)
+        assert "using other_db" in output
+
+    def test_context_row_rendered_when_available(self, real_agent_config):
+        """Context row appears when cli_context has a non-empty summary."""
+        cli = _make_cli(real_agent_config)
+        cli.args = MagicMock(database="benchmark", namespace="")
+        real_agent_config._current_database = ""
+        cli.cli_context.current_db_name = "benchmark"
+        output = self._render(cli)
+        assert "Context" in output
+        assert "database: benchmark" in output
 
 
 # ---------------------------------------------------------------------------

@@ -73,6 +73,7 @@ class InlineStreamingContext:
         self._broker = interaction_broker
         self._input_collector: Optional[Callable[[ActionHistory, Console], Optional[str]]] = None
         self._event_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._clear_header_callback: Optional[Callable[[], None]] = None
 
     @property
     def live(self) -> Optional[Live]:
@@ -106,6 +107,14 @@ class InlineStreamingContext:
         The collector returns the user's choice string, or None if the interaction was aborted.
         """
         self._input_collector = collector
+
+    def set_clear_header_callback(self, callback: Optional[Callable[[], None]]) -> None:
+        """Register a callback invoked at the top of the screen after Ctrl+O clears it.
+
+        Used to reprint the CLI banner so it remains the first thing on screen
+        after a verbose-mode toggle redraw.
+        """
+        self._clear_header_callback = callback
 
     # -- sync mode entry point ---------------------------------------------
 
@@ -264,6 +273,8 @@ class InlineStreamingContext:
                         self.display.console.clear()
                         sys.stdout.write("\033[3J")
                         sys.stdout.flush()
+                        if self._clear_header_callback is not None:
+                            self._clear_header_callback()
                         self.display.console.print(
                             "[bold bright_black]  \u23af switched to verbose mode (frozen) \u23af[/]"
                         )
@@ -278,6 +289,8 @@ class InlineStreamingContext:
                         self.display.console.clear()
                         sys.stdout.write("\033[3J")
                         sys.stdout.flush()
+                        if self._clear_header_callback is not None:
+                            self._clear_header_callback()
                         self.display.console.print("[bold bright_black]  \u23af switched to compact mode \u23af[/]")
                     self._reprint_history(verbose=self._verbose)
                     # Restart Live for any remaining active subagent groups

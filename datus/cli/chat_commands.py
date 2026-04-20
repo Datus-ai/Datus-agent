@@ -373,6 +373,10 @@ class ChatCommands:
                     current_user_message=message,
                     interaction_broker=current_node.interaction_broker,
                 )
+                # Reprint the CLI banner at the top after Ctrl+O clears the screen.
+                banner_callback = getattr(self.cli, "_print_welcome", None)
+                if banner_callback is not None:
+                    streaming_ctx.set_clear_header_callback(banner_callback)
 
                 # In TUI mode the persistent prompt_toolkit Application owns
                 # stdin, so the termios-based ``interrupt_on_escape`` listener
@@ -1050,6 +1054,9 @@ class ChatCommands:
         self.console.clear()
         sys.stdout.write("\033[3J")
         sys.stdout.flush()
+        banner_callback = getattr(self.cli, "_print_welcome", None)
+        if banner_callback is not None:
+            banner_callback()
         self.console.print(f"[bold bright_black]  ⎯ switched to {mode_label} mode ⎯[/]")
         action_display = ActionHistoryDisplay(self.console)
 

@@ -456,6 +456,19 @@ class TestStreamingInteractionProcessing:
         finally:
             loop.close()
 
+    def test_set_clear_header_callback(self):
+        """set_clear_header_callback stores and clears the banner reprint hook."""
+        display = ActionHistoryDisplay()
+        ctx = InlineStreamingContext([], display)
+        assert ctx._clear_header_callback is None
+
+        callback = MagicMock()
+        ctx.set_clear_header_callback(callback)
+        assert ctx._clear_header_callback is callback
+
+        ctx.set_clear_header_callback(None)
+        assert ctx._clear_header_callback is None
+
     def test_history_reprint_skips_interaction(self):
         """Ctrl+O reprint skips INTERACTION actions (only shown during live interaction)."""
         buf = StringIO()
