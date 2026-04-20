@@ -3499,7 +3499,10 @@ class TestUpdateChatNodeToolsExtended:
     def test_no_current_node_no_crash(self, chat_cmd):
         chat_cmd.current_node = None
         chat_cmd.chat_node = None
-        chat_cmd.update_chat_node_tools()  # should not raise
+        chat_cmd.update_chat_node_tools()
+        # Both node handles remain None — no setup work was attempted.
+        assert chat_cmd.current_node is None
+        assert chat_cmd.chat_node is None
 
 
 # ---------------------------------------------------------------------------

@@ -59,10 +59,14 @@ def test_swallows_future_exceptions() -> None:
 
     with (
         mock.patch("datus.cli.tui.console_bridge.get_app_or_none", return_value=fake_app),
-        mock.patch("datus.cli.tui.console_bridge.run_in_terminal", return_value=fake_future),
+        mock.patch("datus.cli.tui.console_bridge.run_in_terminal", return_value=fake_future) as mocked_rit,
     ):
-        # Must not raise.
         run_in_terminal_sync(lambda: None)
+
+    # The bridge both scheduled the callback and awaited its result even
+    # though the result raised — the exception was swallowed, not re-raised.
+    mocked_rit.assert_called_once()
+    fake_future.result.assert_called_once()
 
 
 def test_passes_exact_callable_without_wrapping() -> None:

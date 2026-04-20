@@ -287,6 +287,8 @@ def test_invalidate_without_loop_is_noop(tui_app: DatusApp) -> None:
     # several of them fire during startup/shutdown when the loop pointer
     # is ``None``. The method must tolerate that without crashing.
     tui_app.invalidate()
+    # No loop was created as a side effect; the app stays in pre-start state.
+    assert tui_app._loop is None
 
 
 def test_env_var_whitespace_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
