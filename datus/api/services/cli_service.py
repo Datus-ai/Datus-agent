@@ -236,10 +236,20 @@ class CLIService:
     async def execute_sql(self, request: ExecuteSQLInput) -> Result[ExecuteSQLData]:
         """Execute SQL query asynchronously with cancellation support.
 
-        Returns a Result containing an execute_task_id that can be used
-        to stop the execution via stop_execute_sql().
+        If the request carries an ``execute_task_id``, it is used as the task ID
+        and echoed back in the response. Otherwise the server generates one.
+        Either way, the returned ID can be passed to ``stop_execute_sql`` to
+        cancel the task.
         """
-        task_id = str(uuid.uuid4())
+        task_id = request.execute_task_id or str(uuid.uuid4())
+
+        with self._sql_tasks_lock:
+            if task_id in self._sql_tasks and not self._sql_tasks[task_id].done():
+                return Result(
+                    success=False,
+                    errorCode=ErrorCode.SQL_EXECUTION_ERROR,
+                    errorMessage=f"Another SQL execution is already running for task ID: {task_id}",
+                )
 
         async def _run() -> Result[ExecuteSQLData]:
             try:

@@ -164,6 +164,54 @@ class TestCLIServiceStopExecuteSQL:
         assert len(result.data.execute_task_id) > 0
 
     @pytest.mark.asyncio
+    async def test_execute_sql_honors_client_task_id(self, cli_svc):
+        """execute_sql echoes back a client-provided execute_task_id."""
+        client_task_id = "client-task-123"
+        request = ExecuteSQLInput(sql_query="SELECT 1 as val", execute_task_id=client_task_id)
+        result = await cli_svc.execute_sql(request)
+        assert result.success is True
+        assert result.data.execute_task_id == client_task_id
+
+    @pytest.mark.asyncio
+    async def test_execute_sql_rejects_duplicate_running_task_id(self, cli_svc):
+        """execute_sql refuses to start when another task shares the same running ID."""
+        task_id = "duplicate-running-id"
+
+        async def _slow_task():
+            await asyncio.sleep(60)
+
+        running = asyncio.create_task(_slow_task())
+        cli_svc._sql_tasks[task_id] = running
+        try:
+            request = ExecuteSQLInput(sql_query="SELECT 1", execute_task_id=task_id)
+            result = await cli_svc.execute_sql(request)
+            assert result.success is False
+            assert "already running" in result.errorMessage
+        finally:
+            running.cancel()
+            await asyncio.sleep(0)
+            cli_svc._sql_tasks.pop(task_id, None)
+
+    @pytest.mark.asyncio
+    async def test_execute_sql_reuses_client_id_for_stop(self, cli_svc):
+        """A client-provided execute_task_id can be used to stop the task while it is running."""
+        task_id = "stoppable-client-id"
+
+        async def _slow_task():
+            await asyncio.sleep(60)
+
+        running = asyncio.create_task(_slow_task())
+        cli_svc._sql_tasks[task_id] = running
+        try:
+            stop_result = await cli_svc.stop_execute_sql(task_id)
+            assert stop_result.success is True
+            assert stop_result.data.execute_task_id == task_id
+            assert stop_result.data.stopped is True
+        finally:
+            await asyncio.sleep(0)
+            cli_svc._sql_tasks.pop(task_id, None)
+
+    @pytest.mark.asyncio
     async def test_stop_running_task(self):
         """stop_execute_sql cancels a running task."""
         svc = CLIService(agent_config=None, chat_service=None)
