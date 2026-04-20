@@ -15,7 +15,7 @@ The gen_dashboard subagent is a specialized node (`GenDashboardAgenticNode`) tha
 
 ## Quick Start
 
-Ensure you have configured `agent.dashboard` in `agent.yml` and installed the appropriate adapter package:
+Ensure you have configured `agent.service.bi_tools` in `agent.yml` and installed the appropriate adapter package:
 
 ```bash
 pip install datus-agent[bi]   # installs datus-bi-superset and datus-bi-grafana
@@ -89,26 +89,29 @@ Tools are exposed dynamically based on which Mixins the platform adapter impleme
 
 ```yaml
 agent:
+  service:
+    bi_tools:
+      superset:
+        type: superset
+        api_url: "http://localhost:8088"
+        username: "${SUPERSET_USER}"
+        password: "${SUPERSET_PASSWORD}"
+        dataset_db:
+          uri: "${SUPERSET_DB_URI}"
+          schema: "public"
+      grafana:
+        type: grafana
+        api_url: "http://localhost:3000"
+        api_key: "${GRAFANA_API_KEY}"
+        dataset_db:
+          uri: "${GRAFANA_DB_URI}"
+          datasource_name: "PostgreSQL"
+
   agentic_nodes:
     gen_dashboard:
       model: claude           # Optional: defaults to configured model
       max_turns: 30           # Optional: defaults to 30
-      bi_platform: superset   # Optional: auto-detected from dashboard config if omitted
-
-  dashboard:
-    superset:
-      api_url: "http://localhost:8088"
-      username: "${SUPERSET_USER}"
-      password: "${SUPERSET_PASSWORD}"
-      dataset_db:
-        uri: "${SUPERSET_DB_URI}"
-        schema: "public"
-    grafana:
-      api_url: "http://localhost:3000"
-      api_key: "${GRAFANA_API_KEY}"
-      dataset_db:
-        uri: "${GRAFANA_DB_URI}"
-        datasource_name: "PostgreSQL"
+      bi_platform: superset   # Optional: auto-detected when only one BI tool is configured
 ```
 
 ### Configuration Parameters
@@ -117,16 +120,19 @@ agent:
 |-----------|----------|-------------|---------|
 | `model` | No | LLM model to use | Uses default configured model |
 | `max_turns` | No | Maximum conversation turns | 30 |
-| `bi_platform` | No | Explicit platform name (`superset` or `grafana`) | Auto-detected from `dashboard` config |
-| `dashboard.<platform>.api_url` | Yes | BI platform API endpoint | — |
-| `dashboard.<platform>.username` | Superset | Login username | — |
-| `dashboard.<platform>.password` | Superset | Login password | — |
-| `dashboard.<platform>.api_key` | Grafana | Grafana API key | — |
-| `dashboard.<platform>.dataset_db.uri` | Yes | SQLAlchemy URI for materialization target DB | — |
-| `dashboard.<platform>.dataset_db.schema` | No | Schema for materialized tables | — |
-| `dashboard.<platform>.dataset_db.datasource_name` | Grafana | Grafana datasource name | — |
+| `bi_platform` | No | Explicit platform key from `service.bi_tools` (`superset`, `grafana`) | Auto-detected when only one BI tool is configured |
+| `service.bi_tools.<platform>.type` | No | BI platform type. If set, it must match the config key | Uses the config key |
+| `service.bi_tools.<platform>.api_url` | Yes | BI platform API endpoint | — |
+| `service.bi_tools.<platform>.username` | Superset | Login username | — |
+| `service.bi_tools.<platform>.password` | Superset | Login password | — |
+| `service.bi_tools.<platform>.api_key` | Grafana | Grafana API key | — |
+| `service.bi_tools.<platform>.dataset_db.uri` | Yes | SQLAlchemy URI for materialization target DB | — |
+| `service.bi_tools.<platform>.dataset_db.schema` | No | Schema for materialized tables | — |
+| `service.bi_tools.<platform>.dataset_db.datasource_name` | Grafana | Grafana datasource name | — |
 
 All sensitive values support `${ENV_VAR}` substitution.
+
+`service.bi_tools` is the only runtime source for BI credentials. Top-level `dashboard:` is no longer read.
 
 ## Platform Differences
 

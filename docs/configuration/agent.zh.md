@@ -211,7 +211,9 @@ codex:
 - `workspace_root`
 - `scoped_context`
 - `subagents`
+- semantic 节点使用的 `semantic_adapter`
 - dashboard agent 使用的 `bi_platform`
+- scheduler 节点使用的 `scheduler_service`
 
 `scoped_kb_path` 已废弃。新配置使用共享的全局存储，并在查询时应用过滤，而不是为每个 subagent 持有独立 scoped KB 目录。
 
@@ -270,6 +272,18 @@ agent:
       node_class: gen_dashboard
       model: claude
       bi_platform: superset
+      max_turns: 30
+
+    semantic_metrics:
+      node_class: gen_metrics
+      model: claude
+      semantic_adapter: metricflow
+      max_turns: 30
+
+    etl_scheduler:
+      node_class: scheduler
+      model: claude
+      scheduler_service: airflow_prod
       max_turns: 30
 ```
 

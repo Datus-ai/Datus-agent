@@ -1,33 +1,43 @@
-# 命名空间（Namespace）
+# 服务配置（Services）
 
-为不同数据源配置数据库命名空间与连接。
+为不同数据源配置数据库与运行时服务。
 
 ## 概览
 
-命名空间为多数据库接入提供统一抽象：
-- **通用连接**：支持云数仓（Snowflake、StarRocks）、本地数据库（SQLite、DuckDB）与基准数据集
-- **环境隔离**：开发/预发/生产分离
-- **凭证安全**：环境变量管理 + 安全协议
-- **动态发现**：基于路径模式自动纳入多库文件
-- **可扩展组织**：按层级组织命名空间
+Datus 现在通过 `agent.service` 统一管理运行时服务：
+- **数据库**：`service.databases`
+- **语义层**：`service.semantic_layer`
+- **BI 工具**：`service.bi_tools`
+- **调度器**：`service.schedulers`
+- **凭证安全**：支持 `${ENV_VAR}` 环境变量展开
 
 ## 结构
 ```yaml
-namespace:
+agent:
   service:
-    type: cloud_provider
-    endpoint: ${SERVICE_ENDPOINT}
-    access_key: ${ACCESS_KEY}
-    secret_key: ${SECRET_KEY}
-    region: ${SERVICE_REGION}
+    databases:
+      analytics:
+        type: duckdb
+        uri: ./data/analytics.duckdb
+        default: true
 
-  local_resource:
-    type: local_service
-    resources:
-      - name: primary
-        uri: protocol://path/to/resource
-      - name: secondary
-        uri: protocol://path/to/backup
+    semantic_layer:
+      metricflow: {}
+
+    bi_tools:
+      superset:
+        type: superset
+        api_url: http://localhost:8088
+        username: ${SUPERSET_USER}
+        password: ${SUPERSET_PASSWORD}
+
+    schedulers:
+      airflow_prod:
+        type: airflow
+        api_base_url: ${AIRFLOW_URL}
+        username: ${AIRFLOW_USER}
+        password: ${AIRFLOW_PASSWORD}
+        dags_folder: ${AIRFLOW_DAGS_DIR}
 ```
 
 ## 支持的数据库类型

@@ -1,10 +1,10 @@
 # Service Configuration
 
-Configure database connections and services for your data sources.
+Configure shared runtime services for your data sources.
 
 ## Overview
 
-The service configuration in Datus Agent organizes database connections under `service.databases` in `agent.yml`. Each database is an independent entry with its own connection parameters.
+The service configuration in Datus Agent organizes runtime integrations under `agent.service` in `agent.yml`. Databases live under `service.databases`, while semantic adapters, BI tools, and schedulers each have their own sibling section.
 
 Key features:
 
@@ -35,9 +35,33 @@ agent:
         type: duckdb
         uri: ./data/analytics.duckdb
 
-    bi_tools: {}       # Future: BI tool connections
-    schedulers: {}     # Future: Scheduler connections
+    semantic_layer:
+      metricflow: {}
+
+    bi_tools:
+      superset:
+        type: superset
+        api_url: http://localhost:8088
+        username: ${SUPERSET_USER}
+        password: ${SUPERSET_PASSWORD}
+
+    schedulers:
+      airflow_prod:
+        type: airflow
+        api_base_url: ${AIRFLOW_URL}
+        username: ${AIRFLOW_USER}
+        password: ${AIRFLOW_PASSWORD}
+        dags_folder: ${AIRFLOW_DAGS_DIR}
 ```
+
+## Service Sections
+
+| Section | Purpose | Selector |
+|---------|---------|----------|
+| `service.databases` | Database connections used by SQL and KB operations | `--database` / current database / default database |
+| `service.semantic_layer` | Semantic adapter configuration such as MetricFlow | `semantic_adapter` |
+| `service.bi_tools` | BI platform credentials and dataset materialization config | `bi_platform` |
+| `service.schedulers` | Scheduler service instances such as Airflow | `scheduler_service` |
 
 ## Supported Database Types
 
@@ -192,4 +216,7 @@ password: "actual_password"
 ## See Also
 
 - [Database Adapters](../adapters/db_adapters.md) - Install plugin adapters for MySQL, Snowflake, StarRocks, and more
+- [Semantic Layer Configuration](semantic_layer.md) - Configure semantic adapters
+- [BI Tools Configuration](bi_tools.md) - Configure Superset or Grafana
+- [Scheduler Configuration](schedulers.md) - Configure Airflow services
 - [CLI Commands](../cli-commands.md) - Full CLI reference including configure, init, and service commands

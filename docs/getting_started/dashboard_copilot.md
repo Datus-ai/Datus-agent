@@ -140,17 +140,22 @@ agent:
         username: superset
         password: superset
         database: examples
-  dashboard:
-    superset:
-      username: admin
-      password: admin
-      extra:
-        provider: db
+    semantic_layer:
+      metricflow: {}
+    bi_tools:
+      superset:
+        type: superset
+        api_url: http://localhost:8088
+        username: admin
+        password: admin
+        extra:
+          provider: db
 ```
 
 !!! note "Configuration Sections"
     - **service.databases**: Defines database connections for SQL execution
-    - **dashboard**: Defines the BI platform credentials for dashboard access
+    - **service.semantic_layer**: Registers the semantic adapter used by metric and semantic-model workflows
+    - **service.bi_tools**: Defines the BI platform credentials for dashboard access
 
 !!! tip
     You can also add the database interactively with `datus-agent configure` instead of editing YAML manually.

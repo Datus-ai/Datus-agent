@@ -226,7 +226,9 @@ The runtime currently reads these commonly used fields from `agentic_nodes` entr
 - `workspace_root`
 - `scoped_context`
 - `subagents`
+- `semantic_adapter` for semantic-model and metrics agents
 - `bi_platform` for dashboard agents
+- `scheduler_service` for scheduler agents
 
 `scoped_kb_path` is deprecated. New configs use shared global storage with query-time filters instead of per-subagent scoped KB directories.
 
@@ -285,6 +287,18 @@ agent:
       node_class: gen_dashboard
       model: claude
       bi_platform: superset
+      max_turns: 30
+
+    semantic_metrics:
+      node_class: gen_metrics
+      model: claude
+      semantic_adapter: metricflow
+      max_turns: 30
+
+    etl_scheduler:
+      node_class: scheduler
+      model: claude
+      scheduler_service: airflow_prod
       max_turns: 30
 ```
 

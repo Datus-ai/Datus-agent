@@ -130,25 +130,31 @@ pip install datus-postgresql datus-semantic-metricflow
 
 ```yaml
 agent:
-  namespace:
-    superset:
-      type: postgresql
-      host: 127.0.0.1
-      port: 15432
-      username: superset
-      password: superset
-      database: examples
-  dashboard:
-    superset:
-      username: admin
-      password: admin
-      extra:
-        provider: db
+  service:
+    databases:
+      superset:
+        type: postgresql
+        host: 127.0.0.1
+        port: 15432
+        username: superset
+        password: superset
+        database: examples
+    semantic_layer:
+      metricflow: {}
+    bi_tools:
+      superset:
+        type: superset
+        api_url: http://localhost:8088
+        username: admin
+        password: admin
+        extra:
+          provider: db
 ```
 
 !!! note "配置说明"
-    - **namespace**：定义用于 SQL 执行的数据库连接
-    - **dashboard**：定义用于仪表盘访问的 BI 平台凭据
+    - **service.databases**：定义用于 SQL 执行的数据库连接
+    - **service.semantic_layer**：注册 metric 与 semantic model 工作流使用的语义适配器
+    - **service.bi_tools**：定义用于仪表盘访问的 BI 平台凭据
 
 ## 步骤 3：从仪表盘 Bootstrap
 

@@ -18,7 +18,7 @@ Agent 是 Datus 的核心配置单元。它决定智能体的行为方式、所�
 
 ## 配置总览
 
-Datus Agent 配置决定系统“如何工作”——选用哪些模型、组件如何连接（节点、工作流、存储、命名空间、基准测试），以及查询如何端到端处理。
+Datus Agent 配置决定系统“如何工作”——选用哪些模型、组件如何连接（节点、工作流、存储、服务、基准测试），以及查询如何端到端处理。
 
 | 模块 | 作用 | 关键概念/职责 |
 |---|---|---|
@@ -26,45 +26,54 @@ Datus Agent 配置决定系统“如何工作”——选用哪些模型、组�
 | **[Nodes](nodes.md)** | 任务级处理单元 | 每个“节点”负责一环（结构关联、SQL 生成、推理、反思、输出、聊天、实用工具） |
 | **[Workflow](workflow.md)** | 节点编排 | 定义顺序/并行/子工作流/反思路径，描述回答用户问题的执行链 |
 | **[Storage](storage.md)** | 向量与嵌入配置 | 管理嵌入模型、设备、存储路径，以及元数据/文档/指标的嵌入与检索 |
-| **[Namespace](namespace.md)** | 数据库连接抽象 | 以命名空间封装多数据库连接（Snowflake、StarRocks、SQLite、DuckDB 等） |
+| **[Services](namespace.md)** | 运行时服务配置 | 在 `agent.service.*` 下统一定义数据库、语义层、BI 工具与调度器 |
 | **[Benchmark](benchmark.md)** | 评测与测试 | 配置基准数据集（如 BIRD-DEV、Spider2、Semantic Layer）评估 SQL 生成效果 |
 
 ## 配置结构
 
 ```yaml
-# 模型
+agent:
+  target: openai
+  service:
+    databases:
+      production:
+        type: snowflake
+        account: "${SNOWFLAKE_ACCOUNT}"
+        username: "${SNOWFLAKE_USER}"
+        password: "${SNOWFLAKE_PASSWORD}"
+        default: true
+
+    semantic_layer:
+      metricflow: {}
+
+    bi_tools:
+      superset:
+        type: superset
+        api_url: "http://localhost:8088"
+        username: "${SUPERSET_USER}"
+        password: "${SUPERSET_PASSWORD}"
+
+    schedulers:
+      airflow_prod:
+        type: airflow
+        api_base_url: "${AIRFLOW_URL}"
+        username: "${AIRFLOW_USER}"
+        password: "${AIRFLOW_PASSWORD}"
+        dags_folder: "${AIRFLOW_DAGS_DIR}"
+
+  agentic_nodes:
+    gen_metrics:
+      semantic_adapter: metricflow
+    gen_dashboard:
+      bi_platform: superset
+    scheduler:
+      scheduler_service: airflow_prod
+
 models:
-  default: "openai:gpt-4"
-  providers:
-    openai:
-      type: "openai"
-      base_url: "https://api.openai.com/v1"
-      api_key: "${OPENAI_API_KEY}"
-
-# 数据库连接
-namespace:
-  production:
-    type: snowflake
-    account: "${SNOWFLAKE_ACCOUNT}"
-    username: "${SNOWFLAKE_USER}"
-    password: "${SNOWFLAKE_PASSWORD}"
-
-# 工作流
-workflow:
-  default: "reflection"
-  plans:
-    reflection:
-      - schema_linking
-      - generate_sql
-      - execute_sql
-      - reflect
-      - output
-
-# 节点
-nodes:
-  schema_linking:
-    model: "openai:gpt-3.5-turbo"
-    similarity_threshold: 0.7
+  openai:
+    type: "openai"
+    base_url: "https://api.openai.com/v1"
+    api_key: "${OPENAI_API_KEY}"
 
 # 存储与嵌入
 storage:
@@ -108,7 +117,10 @@ conf/
 
 ## 下一步
 - **[Agent 设置](agent.md)**：配置模型、提供方与全局设置
-- **[数据库命名空间](namespace.md)**：接入多数据库
+- **[服务配置](namespace.md)**：统一配置数据库与运行时服务
+- **[语义层配置](semantic_layer.md)**：配置 MetricFlow 等 semantic adapter
+- **[BI 工具配置](bi_tools.md)**：配置 Superset / Grafana
+- **[调度器配置](schedulers.md)**：配置 Airflow 等 scheduler 服务
 - **[数据库适配器](../adapters/db_adapters.md)**：安装额外的数据库连接器
 - **[工作流定义](workflow.md)**：自定义执行路径
 - **[节点配置](nodes.md)**：微调各节点行为

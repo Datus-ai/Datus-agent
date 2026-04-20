@@ -15,7 +15,7 @@ The scheduler subagent is a specialized node (`SchedulerAgenticNode`) that:
 
 ## Quick Start
 
-Ensure you have configured `agent.scheduler` in `agent.yml` and installed the required packages:
+Ensure you have configured `agent.service.schedulers` in `agent.yml` and installed the required packages:
 
 ```bash
 pip install datus-scheduler-core datus-scheduler-airflow
@@ -85,20 +85,22 @@ When submitting a new job:
 
 ```yaml
 agent:
+  service:
+    schedulers:
+      airflow_prod:
+        type: airflow
+        api_base_url: "${AIRFLOW_URL}"       # e.g. http://localhost:8080/api/v1
+        username: "${AIRFLOW_USER}"
+        password: "${AIRFLOW_PASSWORD}"
+        dags_folder: "${AIRFLOW_DAGS_DIR}"   # where generated DAG files are written
+        dag_discovery_timeout: 60            # Optional: seconds to wait for DAG discovery
+        dag_discovery_poll_interval: 5       # Optional: polling interval in seconds
+
   agentic_nodes:
     scheduler:
-      model: claude     # Optional: defaults to configured model
-      max_turns: 30     # Optional: defaults to 30
-
-  scheduler:
-    name: airflow_prod
-    type: airflow
-    api_base_url: "${AIRFLOW_URL}"       # e.g. http://localhost:8080/api/v1
-    username: "${AIRFLOW_USER}"
-    password: "${AIRFLOW_PASSWORD}"
-    dags_folder: "${AIRFLOW_DAGS_DIR}"   # where generated DAG files are written
-    dag_discovery_timeout: 60            # Optional: seconds to wait for DAG discovery
-    dag_discovery_poll_interval: 5       # Optional: polling interval in seconds
+      model: claude                  # Optional: defaults to configured model
+      max_turns: 30                  # Optional: defaults to 30
+      scheduler_service: airflow_prod
 ```
 
 ### Configuration Parameters
@@ -107,14 +109,15 @@ agent:
 |-----------|----------|-------------|---------|
 | `model` | No | LLM model to use | Uses default configured model |
 | `max_turns` | No | Maximum conversation turns | 30 |
-| `scheduler.name` | Yes | Human-readable name for this scheduler | — |
-| `scheduler.type` | Yes | Scheduler type (currently `airflow`) | — |
-| `scheduler.api_base_url` | Yes | Airflow REST API base URL | — |
-| `scheduler.username` | Yes | Airflow login username | — |
-| `scheduler.password` | Yes | Airflow login password | — |
-| `scheduler.dags_folder` | Yes | Directory for generated DAG files | — |
-| `scheduler.dag_discovery_timeout` | No | Seconds to wait for Airflow to discover new DAGs | 60 |
-| `scheduler.dag_discovery_poll_interval` | No | Polling interval for DAG discovery | 5 |
+| `scheduler_service` | No | Scheduler service key from `service.schedulers` | Auto-selected when only one scheduler is configured, or when exactly one service has `default: true` |
+| `service.schedulers.<name>.type` | Yes | Scheduler type (currently `airflow`) | — |
+| `service.schedulers.<name>.api_base_url` | Yes | Airflow REST API base URL | — |
+| `service.schedulers.<name>.username` | Yes | Airflow login username | — |
+| `service.schedulers.<name>.password` | Yes | Airflow login password | — |
+| `service.schedulers.<name>.dags_folder` | Yes | Directory for generated DAG files | — |
+| `service.schedulers.<name>.dag_discovery_timeout` | No | Seconds to wait for Airflow to discover new DAGs | 60 |
+| `service.schedulers.<name>.dag_discovery_poll_interval` | No | Polling interval for DAG discovery | 5 |
+| `service.schedulers.<name>.default` | No | Mark one scheduler as the default when multiple are configured | `false` |
 
 All sensitive values support `${ENV_VAR}` substitution.
 
@@ -122,6 +125,8 @@ All sensitive values support `${ENV_VAR}` substitution.
 - `datus-scheduler-core` and `datus-scheduler-airflow` packages installed
 - Airflow instance accessible from the agent host
 - `dags_folder` writable by the agent process and accessible by the Airflow scheduler
+
+`service.schedulers` is the only runtime source for scheduler config. Top-level `scheduler:` is no longer read.
 
 ## Common Cron Expressions
 
@@ -206,6 +211,7 @@ agent:
     etl_scheduler:
       node_class: scheduler
       max_turns: 30
+      scheduler_service: airflow_prod
 ```
 
 Then invoke it via `/etl_scheduler Submit the weekly ETL aggregation job to run every Sunday at midnight`.

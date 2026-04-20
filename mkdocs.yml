@@ -58,7 +58,10 @@ nav:
       - Agent: configuration/agent.md
       - Workflow: configuration/workflow.md
       - Benchmark: configuration/benchmark.md
-      - Namespace: configuration/namespace.md
+      - Services: configuration/namespace.md
+      - Semantic Layer: configuration/semantic_layer.md
+      - BI Tools: configuration/bi_tools.md
+      - Schedulers: configuration/schedulers.md
       - Storage: configuration/storage.md
       - Nodes: configuration/nodes.md
     - Adapters:

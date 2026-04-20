@@ -992,7 +992,7 @@ The gen_dashboard subagent creates, updates, and manages BI dashboards on Supers
 
 ### Key Features
 
-- **Multi-platform**: Supports Apache Superset and Grafana; platform is explicit via `bi_platform` config or auto-detected from `agent.dashboard` config
+- **Multi-platform**: Supports Apache Superset and Grafana; platform is explicit via `bi_platform` or auto-detected from `agent.service.bi_tools`
 - **Dynamic tool exposure**: Tools are exposed based on adapter Mixin capabilities — only operations the platform actually supports appear as LLM tools
 - **Data materialization**: `write_query` bridges source database results to the BI platform's own database, decoupling source data from visualization
 - **Skill-guided workflows**: The built-in `gen-dashboard` skill provides step-by-step workflow guidance for each platform
@@ -1001,30 +1001,26 @@ The gen_dashboard subagent creates, updates, and manages BI dashboards on Supers
 
 ```yaml
 agent:
+  service:
+    bi_tools:
+      superset:
+        type: superset
+        api_url: "http://localhost:8088"
+        username: "${SUPERSET_USER}"
+        password: "${SUPERSET_PASSWORD}"
+        dataset_db:
+          uri: "${SUPERSET_DB_URI}"
+          schema: "public"
+
   agentic_nodes:
     gen_dashboard:
       model: claude           # Optional: defaults to configured model
       max_turns: 30           # Optional: defaults to 30
-      bi_platform: superset   # Optional: auto-detected from dashboard config
-
-  dashboard:
-    superset:
-      api_url: "http://localhost:8088"
-      username: "${SUPERSET_USER}"
-      password: "${SUPERSET_PASSWORD}"
-      dataset_db:
-        uri: "${SUPERSET_DB_URI}"
-        schema: "public"
-    grafana:
-      api_url: "http://localhost:3000"
-      api_key: "${GRAFANA_API_KEY}"
-      dataset_db:
-        uri: "${GRAFANA_DB_URI}"
-        datasource_name: "PostgreSQL"
+      bi_platform: superset   # Optional: auto-detected when only one BI tool is configured
 ```
 
 **Requirements:**
-- `agent.dashboard` section in `agent.yml` with platform credentials
+- `agent.service.bi_tools` section in `agent.yml` with platform credentials
 - `datus-bi-superset` or `datus-bi-grafana` package installed (`pip install datus-agent[bi]`)
 
 ### How It Works
@@ -1115,22 +1111,24 @@ The scheduler subagent submits, monitors, updates, and troubleshoots scheduled j
 
 ```yaml
 agent:
+  service:
+    schedulers:
+      airflow_prod:
+        type: airflow
+        api_base_url: "${AIRFLOW_URL}"
+        username: "${AIRFLOW_USER}"
+        password: "${AIRFLOW_PASSWORD}"
+        dags_folder: "${AIRFLOW_DAGS_DIR}"
+
   agentic_nodes:
     scheduler:
-      model: claude     # Optional: defaults to configured model
-      max_turns: 30     # Optional: defaults to 30
-
-  scheduler:
-    name: airflow_prod
-    type: airflow
-    api_base_url: "${AIRFLOW_URL}"
-    username: "${AIRFLOW_USER}"
-    password: "${AIRFLOW_PASSWORD}"
-    dags_folder: "${AIRFLOW_DAGS_DIR}"
+      model: claude                  # Optional: defaults to configured model
+      max_turns: 30                  # Optional: defaults to 30
+      scheduler_service: airflow_prod
 ```
 
 **Requirements:**
-- `agent.scheduler` section in `agent.yml` with Airflow credentials
+- `agent.service.schedulers` section in `agent.yml` with Airflow credentials
 - `datus-scheduler-core` and `datus-scheduler-airflow` packages installed
 
 ### How It Works

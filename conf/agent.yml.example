@@ -138,43 +138,67 @@ agent:
 
 
   # local databases configuration
-  namespace:
-    snowflake:
-      type: snowflake
-      account: ${SNOWFLAKE_ACCOUNT}  # Use environment variables or real values
-      username: ${SNWOFLAKE_USER}
-      password: ${SNOWFLAKE_PASSWORD}
-      # database: BBC
-      # schema: BBC_NEWS
-    # bird_sqlite: # This section is configured for the bird-dev benchmarking, you should download the database file and unzip it before you can continue
-    #   type: sqlite
-    #   # just support glob pattern. Ensure that the corresponding database files exist in the configuration directory.
-    #   path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite # https://bird-bench.oss-cn-beijing.aliyuncs.com/dev.zip
-    local_sqlite:
-      type: sqlite
-      # Only sqlite and duckdb support multiple data source configuration
-      dbs:
-        - name: ssb # sqlite and duckdb must have a name
-          uri: sqlite:////Users/xxx/benchmark/SSB.db
-    local_sqlite2:
-      type: sqlite
-      # Only sqlite and duckdb support multiple data source configuration
-      name: ssb # sqlite and duckdb must have a name
-      uri: sqlite:////Users/xxx/benchmark/SSB.db
-    local_duckdb:
-      type: duckdb
-      dbs:
-        - name: ssb
-          uri: duckdb:////absolute/path/to/db.db # absolute path
-        - name: abc
-          uri: duckdb:///relative/path/to/abc.duckdb # relative path
-    starrocks:
-      type: starrocks
-      host: ${STARROCKS_HOST}
-      port: ${STARROCKS_PORT}
-      username: ${STARROCKS_USER}
-      password: ${STARROCKS_PASSWORD}
-      database: ${STARROCKS_DATABASE}
+  service:
+    databases:
+      snowflake:
+        type: snowflake
+        account: ${SNOWFLAKE_ACCOUNT}  # Use environment variables or real values
+        username: ${SNWOFLAKE_USER}
+        password: ${SNOWFLAKE_PASSWORD}
+        # database: BBC
+        # schema: BBC_NEWS
+      # bird_sqlite: # This section is configured for the bird-dev benchmarking, you should download the database file and unzip it before you can continue
+      #   type: sqlite
+      #   # just support glob pattern. Ensure that the corresponding database files exist in the configuration directory.
+      #   path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite # https://bird-bench.oss-cn-beijing.aliyuncs.com/dev.zip
+      local_sqlite_ssb:
+        type: sqlite
+        name: ssb
+        uri: sqlite:////Users/xxx/benchmark/SSB.db
+      local_sqlite2:
+        type: sqlite
+        name: ssb
+        uri: sqlite:////Users/xxx/benchmark/SSB.db
+      local_duckdb_ssb:
+        type: duckdb
+        name: ssb
+        uri: duckdb:////absolute/path/to/db.db # absolute path
+      local_duckdb_abc:
+        type: duckdb
+        name: abc
+        uri: duckdb:///relative/path/to/abc.duckdb # relative path
+      starrocks:
+        type: starrocks
+        host: ${STARROCKS_HOST}
+        port: ${STARROCKS_PORT}
+        username: ${STARROCKS_USER}
+        password: ${STARROCKS_PASSWORD}
+        database: ${STARROCKS_DATABASE}
+    semantic_layer:
+      metricflow: {}
+    bi_tools:
+      superset:
+        type: superset
+        username: admin
+        password: admin
+        extra: # Special configurations for different platforms
+          provider: db
+    schedulers:
+      airflow_local:
+        name: airflow_local
+        type: airflow
+        api_base_url: http://localhost:8080/api/v1
+        username: ${AIRFLOW_USERNAME}
+        password: ${AIRFLOW_PASSWORD}
+        dags_folder: /path/to/airflow/dags
+        dag_discovery_timeout: 60
+        dag_discovery_poll_interval: 5
+        # Available Airflow Connection IDs for scheduled jobs.
+        # Create these connections in Airflow (Admin > Connections) first,
+        # then list them here so the agent knows which conn_id to use.
+        connections:
+          starrocks_default: "StarRocks production database"
+          # pg_analytics: "PostgreSQL analytics warehouse"
 
   storage:
     # Data path is now fixed at {agent.home}/data
@@ -291,7 +315,7 @@ agent:
       - reflect
 
   # Sub-workflow with config example
-   workflow:
+  workflow:
     plan: bird_para
 
     bird_para:
@@ -344,29 +368,6 @@ agent:
       model: anthropic
       max_turns: 20
       skills: "gen-table"
-  dashboard:
-    superset:
-      username: admin
-      password: admin
-      extra: # Special configurations for different platforms
-        provider: db
-  # Scheduler configuration for submitting and managing SQL/SparkSQL jobs
-  # Requires datus-scheduler-core and a platform adapter (e.g. datus-scheduler-airflow)
-  scheduler:
-    name: airflow_local
-    type: airflow
-    api_base_url: http://localhost:8080/api/v1
-    username: ${AIRFLOW_USERNAME}
-    password: ${AIRFLOW_PASSWORD}
-    dags_folder: /path/to/airflow/dags
-    dag_discovery_timeout: 60
-    dag_discovery_poll_interval: 5
-    # Available Airflow Connection IDs for scheduled jobs.
-    # Create these connections in Airflow (Admin > Connections) first,
-    # then list them here so the agent knows which conn_id to use.
-    connections:
-      starrocks_default: "StarRocks production database"
-      # pg_analytics: "PostgreSQL analytics warehouse"
   # Platform documentation (namespace-independent, stored at {home}/data/document/{platform}/)
   # Each key under 'document' is either a reserved global setting (e.g. tavily_api_key)
   #

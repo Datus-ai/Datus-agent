@@ -48,32 +48,48 @@ pip install -e ../datus-semantic-adapter/datus-semantic-metricflow
 
 ## 配置
 
-在 `config.yaml` 文件的 `semantic` 部分配置语义层：
+在 `agent.yml` 的 `agent.service.semantic_layer` 中配置语义层适配器：
 
 ### MetricFlow
 
 ```yaml
-semantic:
-  type: metricflow
-  namespace: my_project
-  timeout: 300  # 可选，默认 300 秒
-  config_path: /path/to/agent.yml  # 可选，未指定时使用默认查找路径
+agent:
+  service:
+    semantic_layer:
+      metricflow:
+        timeout: 300  # 可选，默认 300 秒
+        config_path: /path/to/agent.yml  # 可选的高级覆盖项
+
+  agentic_nodes:
+    gen_semantic_model:
+      semantic_adapter: metricflow
+    gen_metrics:
+      semantic_adapter: metricflow
 ```
 
 **语义模型文件位置**：
-MetricFlow 自动在以下位置查找语义模型文件：
+默认情况下，Datus 会把 MetricFlow 指向当前项目的语义模型目录：
 ```text
-{agent.home}/semantic_models/{namespace}/
+{project_root}/subject/semantic_models/
 ```
-- `agent.home` 从 `agent.yml` 读取（默认为 `~/.datus`）
+- `project_root` 是当前 Datus 项目的根目录。
 
-### 配置查找优先级
+### 选择规则
 
-初始化 MetricFlow 适配器时：
+- `service.semantic_layer` 下的 key 就是 adapter type，例如 `metricflow`。
+- 语义相关节点通过 `semantic_adapter` 选择适配器。
+- 如果只配置了一个 semantic layer，省略 `semantic_adapter` 时会自动使用它。
+- 如果配置了多个 semantic layer，则必须显式填写 `semantic_adapter`。
 
-1. `config_path` 参数（如果显式提供）
-2. `./conf/agent.yml`（当前目录）
-3. `~/.datus/conf/agent.yml`（主目录）
+### 关于 `config_path`
+
+`config_path` 是可选项。正常运行时，Datus 会从以下上下文构造 MetricFlow 配置：
+
+1. `service.databases` 中当前选中的数据库
+2. 当前项目的语义模型目录
+3. 当前生效的 `agent.home`
+
+只有在你明确希望 MetricFlow 从另一份 agent 配置文件初始化时，才需要填写 `config_path`。
 
 ## 核心接口
 
@@ -140,7 +156,7 @@ asyncio.run(dry_run_example())
 ### 从适配器同步数据
 
 ```bash
-datus-agent bootstrap-kb --namespace my_project --components metrics \
+datus-agent bootstrap-kb --database my_project --components metrics \
   --from_adapter metricflow --kb-update-strategy overwrite
 ```
 
@@ -215,7 +231,7 @@ myservice = "datus_semantic_myservice:register"
 | 问题 | 解决方案 |
 |------|---------|
 | 适配器未找到 | 安装适配器：`pip install datus-semantic-metricflow` |
-| 连接问题 | 验证 `agent.yml` 配置，检查 namespace 与语义模型目录匹配 |
+| 连接问题 | 验证 `agent.yml` 配置，检查当前数据库选择与语义模型目录 |
 | 验证错误 | 运行 `adapter.validate_semantic()` 检查配置 |
 
 ## 下一步

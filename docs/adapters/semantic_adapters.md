@@ -48,32 +48,48 @@ Once installed, Datus Agent will automatically detect and load the adapter.
 
 ## Configuration
 
-Configure your semantic layer in the `agent.yml` file under the `semantic` section:
+Configure semantic adapters under `agent.service.semantic_layer` in `agent.yml`:
 
 ### MetricFlow
 
 ```yaml
-semantic:
-  type: metricflow
-  namespace: my_project
-  timeout: 30  # optional, default is 30 seconds
-  config_path: /path/to/agent.yml  # optional, uses default lookup if not specified
+agent:
+  service:
+    semantic_layer:
+      metricflow:
+        timeout: 30  # optional, default is 30 seconds
+        config_path: /path/to/agent.yml  # optional advanced override
+
+  agentic_nodes:
+    gen_semantic_model:
+      semantic_adapter: metricflow
+    gen_metrics:
+      semantic_adapter: metricflow
 ```
 
 **Semantic Model File Location**:
-MetricFlow automatically locates semantic model files at:
+By default, Datus points MetricFlow at the current project's semantic model directory:
 ```text
-{agent.home}/semantic_models/{namespace}/
+{project_root}/subject/semantic_models/
 ```
-- `agent.home` is read from `agent.yml` (defaults to `~/.datus`)
+- `project_root` is the active Datus project root.
 
-### Configuration Lookup Priority
+### Selection Rules
 
-When initializing MetricFlow adapter:
+- The key under `service.semantic_layer` is the adapter type, for example `metricflow`.
+- Semantic nodes choose the adapter with `semantic_adapter`.
+- If `semantic_adapter` is omitted and only one semantic layer is configured, Datus uses that adapter automatically.
+- If multiple semantic layers are configured, set `semantic_adapter` explicitly.
 
-1. `config_path` parameter (if explicitly provided)
-2. `./conf/agent.yml` (current directory)
-3. `~/.datus/conf/agent.yml` (home directory)
+### About `config_path`
+
+`config_path` is optional. The normal runtime path builds MetricFlow config from:
+
+1. the selected database in `service.databases`
+2. the current project's semantic model directory
+3. the active `agent.home`
+
+Use `config_path` only when you explicitly need MetricFlow to initialize from a different agent config file.
 
 ## Core Interfaces
 
@@ -215,7 +231,7 @@ See the MetricFlow adapter implementation for a complete example:
 | Issue | Solution |
 |-------|----------|
 | Adapter not found | Install the adapter: `pip install datus-semantic-metricflow` |
-| Connection issues | Verify `agent.yml` config, check namespace matches semantic model directory |
+| Connection issues | Verify `agent.yml` config, check the selected database and semantic model directory |
 | Validation errors | Run `adapter.validate_semantic()` to check configuration |
 
 ## Next Steps
