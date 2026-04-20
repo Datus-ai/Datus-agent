@@ -240,14 +240,7 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="subcommand")
     configure_parser = subparsers.add_parser(
         "configure",
-        help="Manage Claw IM channels (list / add / delete / install-deps)",
-    )
-    configure_parser.add_argument(
-        "configure_action",
-        nargs="?",
-        choices=["list", "add", "delete", "install-deps"],
-        default=None,
-        help="Configuration action (omit to enter an interactive menu)",
+        help="Manage Claw IM channels interactively",
     )
     configure_parser.add_argument(
         "--config",
@@ -280,8 +273,7 @@ def main() -> None:
 
         configure_logging(args.debug)
         config_path = getattr(args, "configure_config", None) or args.config or ""
-        configurator = ChannelConfigurator(config_path)
-        raise SystemExit(configurator.run(getattr(args, "configure_action", None)))
+        raise SystemExit(ChannelConfigurator(config_path).run())
 
     # Resolve defaults for pid/log
     default_pid, default_log = _default_paths(args.config or "")
