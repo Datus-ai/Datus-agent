@@ -209,7 +209,7 @@ curl -N -X POST http://localhost:8000/api/v1/kb/bootstrap-docs \
 
 API 接受与 CLI 相同的参数（映射为 JSON 字段），并以 SSE 事件流推送进度。未提供的字段从 `agent.yml` 中读取。
 
-完整的接口定义、请求/响应格式和 SSE 事件说明请参见 [知识库 API](../API/knowledge_base.zh.md#platform-documentation-bootstrap)。
+完整的接口定义、请求/响应格式和 SSE 事件说明请参见 [知识库 API](../api/knowledge_base.zh.md#platform-documentation-bootstrap)。
 
 ## 注意事项与排错
 

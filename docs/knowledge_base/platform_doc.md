@@ -210,7 +210,7 @@ curl -N -X POST http://localhost:8000/api/v1/kb/bootstrap-docs \
 The API accepts the same parameters as the CLI (mapped to JSON fields) and streams progress events as SSE. If a
 field is omitted, the value from `agent.yml` is used.
 
-See [Knowledge Base API](../API/knowledge_base.md#platform-documentation-bootstrap) for the full endpoint reference,
+See [Knowledge Base API](../api/knowledge_base.md#platform-documentation-bootstrap) for the full endpoint reference,
 request/response schema, and SSE event format.
 
 ## Notes and Troubleshooting

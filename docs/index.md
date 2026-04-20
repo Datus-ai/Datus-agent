@@ -10,7 +10,7 @@ With Datus, data engineers shift from writing repetitive SQL to building reusabl
 
 - **[Datus-CLI](cli/introduction.md)**: An AI-powered command-line interface for data engineers—think "Claude Code for data engineers." Write SQL, build subagents, and construct context interactively.
 - **[Datus-Chat](datus_chat/chatbot.md)**: A web chatbot providing multi-turn conversations with built-in feedback mechanisms (upvotes, issue reports, success stories) for data analysts.
-- **[Datus-API](API/introduction.md)**: RESTful APIs for other agents or applications that need stable, accurate data services. See [Deployment](API/deployment.md) and [Chat](API/chat.md).
+- **[Datus-API](api/introduction.md)**: RESTful APIs for other agents or applications that need stable, accurate data services. See [Deployment](api/deployment.md) and [Chat](api/chat.md).
 
 **Two Execution Modes**
 

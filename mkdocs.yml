@@ -53,10 +53,10 @@ nav:
       - Orchestration: workflow/orchestration.md
       - API: workflow/api.md
     - REST API:
-      - Introduction: API/introduction.md
-      - Deployment: API/deployment.md
-      - Chat: API/chat.md
-      - Knowledge Base API: API/knowledge_base.md
+      - Introduction: api/introduction.md
+      - Deployment: api/deployment.md
+      - Chat: api/chat.md
+      - Knowledge Base API: api/knowledge_base.md
     - Configuration:
       - Introduction: configuration/introduction.md
       - Agent: configuration/agent.md
