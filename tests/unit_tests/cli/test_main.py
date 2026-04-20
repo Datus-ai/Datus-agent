@@ -8,6 +8,7 @@ Unit tests for datus/cli/main.py — ArgumentParser, Application, main().
 All external dependencies (DatusCLI, run_web_interface, configure_logging) are mocked.
 """
 
+import argparse
 import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -24,7 +25,7 @@ from datus.cli.main import Application, ArgumentParser
 class TestArgumentParser:
     def test_init_creates_parser(self):
         ap = ArgumentParser()
-        assert ap.parser is not None
+        assert isinstance(ap.parser, argparse.ArgumentParser)
 
     def test_parse_args_defaults(self):
         ap = ArgumentParser()
@@ -308,7 +309,9 @@ class TestRepairProjectOverrides:
             ),
             patch("datus.cli._cli_utils.select_choice", return_value="deepseek") as mock_pick,
             patch("datus.configuration.project_config.save_project_override") as mock_save,
+            patch("sys.stdin") as mock_stdin,
         ):
+            mock_stdin.isatty.return_value = True
             app._repair_project_overrides(args)
         # select_choice called exactly once (for target), not for the valid db.
         assert mock_pick.call_count == 1
@@ -333,7 +336,9 @@ class TestRepairProjectOverrides:
             ),
             patch("datus.cli._cli_utils.select_choice", return_value="bench") as mock_pick,
             patch("datus.configuration.project_config.save_project_override") as mock_save,
+            patch("sys.stdin") as mock_stdin,
         ):
+            mock_stdin.isatty.return_value = True
             app._repair_project_overrides(args)
         assert mock_pick.call_count == 1
         mock_save.assert_called_once()
@@ -360,7 +365,9 @@ class TestRepairProjectOverrides:
                 side_effect=["claude", "bench"],
             ) as mock_pick,
             patch("datus.configuration.project_config.save_project_override") as mock_save,
+            patch("sys.stdin") as mock_stdin,
         ):
+            mock_stdin.isatty.return_value = True
             app._repair_project_overrides(args)
         assert mock_pick.call_count == 2
         mock_save.assert_called_once()
@@ -387,9 +394,41 @@ class TestRepairProjectOverrides:
             ),
             patch("datus.cli._cli_utils.select_choice") as mock_pick,
             patch("datus.configuration.project_config.save_project_override") as mock_save,
+            patch("sys.stdin") as mock_stdin,
         ):
+            mock_stdin.isatty.return_value = True
             with pytest.raises(DatusException):
                 app._repair_project_overrides(args)
+        mock_pick.assert_not_called()
+        mock_save.assert_not_called()
+
+    def test_raises_when_stdin_is_not_a_tty(self):
+        """Stale value + non-interactive stdin → raise instead of silently
+        persisting select_choice's default fallback. Guards against the
+        REPL-only repair flow accidentally writing a bad config when run
+        from a pipe / CI / API surface."""
+        from datus.configuration.project_config import ProjectOverride
+        from datus.utils.exceptions import DatusException
+
+        app = Application()
+        args = SimpleNamespace(config=None)
+        override = ProjectOverride(target="claude-sonnet", default_database=None)
+        raw = self._raw_agent(["claude", "deepseek"], {"bench": "sqlite"})
+        with (
+            patch("datus.configuration.project_config.load_project_override", return_value=override),
+            patch(
+                "datus.configuration.agent_config_loader.configuration_manager",
+                return_value=self._mock_mgr(raw),
+            ),
+            patch("datus.cli._cli_utils.select_choice") as mock_pick,
+            patch("datus.configuration.project_config.save_project_override") as mock_save,
+            patch("sys.stdin") as mock_stdin,
+        ):
+            mock_stdin.isatty.return_value = False
+            with pytest.raises(DatusException) as exc_info:
+                app._repair_project_overrides(args)
+        assert "stdin is not a TTY" in str(exc_info.value)
+        assert "target='claude-sonnet'" in str(exc_info.value)
         mock_pick.assert_not_called()
         mock_save.assert_not_called()
 
@@ -445,7 +484,7 @@ class TestRunWebInterface:
         with patch("datus.cli.web.run_web_interface") as mock_web:
             with patch.dict("sys.modules", {"datus.cli.web": MagicMock(run_web_interface=mock_web)}):
                 app._run_web_interface(mock_args)
-        # Just verify no exceptions are raised — the method delegates to lazy import
+        mock_web.assert_called_once_with(mock_args)
 
 
 # ---------------------------------------------------------------------------

@@ -286,7 +286,14 @@ class Application:
         Reads the raw agent.yml directly via ``configuration_manager`` to
         avoid tripping ``_apply_project_override`` (which is exactly what
         would raise on the stale value we're trying to fix).
+
+        Requires an interactive TTY: ``select_choice`` silently falls back
+        to its default when prompt_toolkit cannot run, which would
+        otherwise persist an unintended choice. When stdin is not a TTY,
+        raise instead of silently auto-writing.
         """
+        import sys
+
         from rich.console import Console
 
         from datus.cli._cli_utils import select_choice
@@ -314,6 +321,24 @@ class Application:
         db_invalid = override.default_database is not None and override.default_database not in db_names
         if not (target_invalid or db_invalid):
             return
+
+        if not sys.stdin.isatty():
+            stale = []
+            if target_invalid:
+                stale.append(f"target={override.target!r}")
+            if db_invalid:
+                stale.append(f"default_database={override.default_database!r}")
+            raise DatusException(
+                code=ErrorCode.COMMON_CONFIG_ERROR,
+                message_args={
+                    "config_error": (
+                        f"Project config {project_config_path()} has stale values "
+                        f"({', '.join(stale)}) and stdin is not a TTY; cannot prompt "
+                        f"for replacements. Edit .datus/config.yml manually or rerun "
+                        f"the CLI in an interactive terminal."
+                    )
+                },
+            )
 
         console = Console()
         console.print()

@@ -75,11 +75,14 @@ class FilesystemPolicy:
 
     ``strict`` mirrors :attr:`FilesystemFuncTool.strict` so the hook and the
     tool agree on what to do with ``EXTERNAL`` paths. When ``True``, the
-    hook denies them up front (no broker prompt) because the API / claw
-    surfaces have no interactive broker attached — prompting would hang the
-    request. The tool-level ``strict`` is still the source of truth, but
-    having the same flag in the policy lets the hook fail fast before the
-    tool even gets invoked.
+    hook skips the broker prompt and delegates the denial to the
+    filesystem tool, which returns ``FuncToolResult(success=0)`` with a
+    "strict mode" error message. This matters for API / claw surfaces with
+    no interactive broker attached — prompting would hang the request,
+    while raising would surface as an uncaught exception. The tool-level
+    ``strict`` is still the source of truth; having the same flag in the
+    policy lets the hook avoid prompting while preserving the normal
+    tool-failure payload the caller already knows how to handle.
     """
 
     root_path: Path

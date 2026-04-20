@@ -612,14 +612,13 @@ class TestFilesystemZoneBranch:
         # 2. Tool layer produces the success=0 payload with the strict-mode message.
         read_result = tool.read_file(str(external))
         assert read_result.success == 0
-        assert read_result.error is not None
-        assert "strict mode" in read_result.error.lower()
+        assert read_result.error.startswith("Path outside workspace is not allowed in strict mode:")
         assert str(external) in read_result.error
 
         write_result = tool.write_file(str(external), "new content")
         assert write_result.success == 0
-        assert write_result.error is not None
-        assert "strict mode" in write_result.error.lower()
+        assert write_result.error.startswith("Path outside workspace is not allowed in strict mode:")
+        assert str(external) in write_result.error
 
         # Guardrail: the external file was not actually touched.
         assert external.read_text() == "secret"
