@@ -3,12 +3,29 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
 
 from datus.utils.text_utils import clean_text
+
+_CSV_FORMULA_TRIGGERS = ("=", "+", "-", "@")
+
+
+def sanitize_csv_field(value: Optional[str]) -> Optional[str]:
+    """Neutralize Excel/Sheets formula injection in CSV fields.
+
+    If the field starts with ``=``, ``+``, ``-``, or ``@``, prefix it with a
+    single quote so spreadsheet applications treat the value as text.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        value = str(value)
+    if value and value[0] in _CSV_FORMULA_TRIGGERS:
+        return "'" + value
+    return value
 
 
 def read_csv_and_clean_text(csv_path: str | Path) -> List[Dict[str, Any]]:

@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 
 
-from datus.utils.csv_utils import file_encoding, read_csv_and_clean_text
+from datus.utils.csv_utils import file_encoding, read_csv_and_clean_text, sanitize_csv_field
 
 
 class TestFileEncoding:
@@ -90,3 +90,33 @@ class TestReadCsvAndCleanText:
         result = read_csv_and_clean_text(str(csv_file))
         assert len(result) == 1
         assert result[0]["name"] == "hello"
+
+
+class TestSanitizeCsvField:
+    def test_returns_none_for_none(self):
+        assert sanitize_csv_field(None) is None
+
+    def test_passes_through_regular_string(self):
+        assert sanitize_csv_field("hello world") == "hello world"
+
+    def test_passes_through_empty_string(self):
+        assert sanitize_csv_field("") == ""
+
+    def test_prefixes_equals(self):
+        assert sanitize_csv_field("=SUM(A1:A3)") == "'=SUM(A1:A3)"
+
+    def test_prefixes_plus(self):
+        assert sanitize_csv_field("+1234") == "'+1234"
+
+    def test_prefixes_minus(self):
+        assert sanitize_csv_field("-1234") == "'-1234"
+
+    def test_prefixes_at(self):
+        assert sanitize_csv_field("@import") == "'@import"
+
+    def test_coerces_non_string_to_string(self):
+        assert sanitize_csv_field(42) == "42"
+        assert sanitize_csv_field(True) == "True"
+
+    def test_does_not_prefix_mid_formula_trigger(self):
+        assert sanitize_csv_field("a=b") == "a=b"

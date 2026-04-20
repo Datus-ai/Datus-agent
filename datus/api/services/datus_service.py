@@ -52,6 +52,7 @@ class DatusService:
         self._kb = None
         self._visualization = None
         self._tool = None
+        self._success_story = None
 
     # ------------------------------------------------------------------
     # Read-only properties
@@ -154,6 +155,14 @@ class DatusService:
 
             self._tool = ToolService(agent_config=self._agent_config)
         return self._tool
+
+    @property
+    def success_story(self):
+        if self._success_story is None:
+            from datus.api.services.success_story_service import SuccessStoryService
+
+            self._success_story = SuccessStoryService(agent_config=self._agent_config)
+        return self._success_story
 
     @property
     def visualization(self):
