@@ -207,15 +207,17 @@ class TestInitFromAdapter:
 
         # agent_config must NOT have cube_config so code falls through
         # to the metadata.config_class branch. Use spec to restrict attributes.
-        config = MagicMock(spec=["namespace", "current_database", "namespaces", "home"])
+        config = MagicMock(spec=["namespace", "current_database", "namespaces", "path_manager"])
         config.namespace = "ns1"
         config.current_database = "ns1"
         config.namespaces = {}
-        config.home = None
+        config.path_manager.semantic_models_dir = "/tmp/project/subject/semantic_models"
 
         await init_from_adapter(config, "cube")
 
-        mock_config_class.assert_called_once_with(namespace="ns1", db_config=None, agent_home=None)
+        mock_config_class.assert_called_once_with(
+            namespace="ns1", db_config=None, semantic_models_path="/tmp/project/subject/semantic_models"
+        )
 
     @pytest.mark.asyncio
     @patch("datus.storage.semantic_model.adapter_init.SemanticStorageManager")
@@ -234,11 +236,11 @@ class TestInitFromAdapter:
         MockStorageManager.return_value = mock_manager
 
         # Use spec to prevent auto-generated attributes like dbt_config
-        config = MagicMock(spec=["namespace", "current_database", "namespaces", "home"])
+        config = MagicMock(spec=["namespace", "current_database", "namespaces", "path_manager"])
         config.namespace = None
         config.current_database = "fallback_ns"
         config.namespaces = {}
-        config.home = None
+        config.path_manager.semantic_models_dir = "/tmp/project/subject/semantic_models"
 
         with patch("datus.tools.semantic_tools.config.SemanticAdapterConfig") as MockConfig:
             MockConfig.return_value = MagicMock()
@@ -333,18 +335,18 @@ class TestInitFromAdapter:
             "logic_name": "ignore_me_too",
         }
 
-        config = MagicMock(spec=["namespace", "current_database", "namespaces", "home"])
+        config = MagicMock(spec=["namespace", "current_database", "namespaces", "path_manager"])
         config.namespace = "ns1"
         config.current_database = "ns1"
         config.namespaces = {"ns1": {"default": mock_db_config}}
-        config.home = "/home/agent"
+        config.path_manager.semantic_models_dir = "/tmp/project/subject/semantic_models"
 
         await init_from_adapter(config, "metricflow")
 
         mock_config_class.assert_called_once()
         call_kwargs = mock_config_class.call_args[1]
         assert call_kwargs["namespace"] == "ns1"
-        assert call_kwargs["agent_home"] == "/home/agent"
+        assert call_kwargs["semantic_models_path"] == "/tmp/project/subject/semantic_models"
         # db_config should contain stringified values, excluding "extra" and "logic_name"
         db_config = call_kwargs["db_config"]
         assert db_config["db_type"] == "mysql"
