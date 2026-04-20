@@ -7,7 +7,36 @@ Get started with Datus Agent in just a few minutes. This guide will walk you thr
 
 ## Step 1: Installation & Setup
 
-### Install Python 3.12
+### Option A — One-liner (Linux / macOS, recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh | sh
+```
+
+The script bootstraps `uv`, creates a dedicated venv at `~/.datus/venv` (Python 3.12 is downloaded automatically if missing), installs `datus-agent` from PyPI, and writes `datus`, `datus-cli`, `datus-api`, `datus-mcp`, `datus-agent`, `datus-claw`, and `datus-pip` shims into `~/.local/bin`. Open a new shell (or `source ~/.zshrc`) so the new PATH takes effect.
+
+To install additional Python packages into the global venv later, use:
+
+```bash
+datus-pip install <package>
+# equivalent to ~/.datus/venv/bin/pip install <package>
+```
+
+Common overrides — note these must be passed to the receiving shell, not to `curl`:
+
+```bash
+# Pin a released version
+curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh | DATUS_VERSION=0.2.6 sh
+
+# Install from GitHub source at a specific branch, tag, or commit
+curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh | DATUS_FROM_GIT=1 DATUS_REF=main sh
+```
+
+Once the script finishes, skip the rest of this step and go straight to **Configure LLM & Database** below.
+
+### Option B — Manual install
+
+#### Install Python 3.12
 
 Datus requires a Python 3.12 environment. Choose your preferred method:
 

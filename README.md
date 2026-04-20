@@ -50,7 +50,31 @@ Built-in evaluation framework supporting **BIRD** and **Spider 2.0-Snow** datase
 
 ### Install
 
-**Requirements:** Python >= 3.12
+**Requirements:** Linux or macOS. Python 3.12 is installed automatically when you use the one-liner.
+
+#### One-liner (Linux / macOS)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh | sh
+```
+
+This creates a dedicated venv at `~/.datus/venv`, installs `datus-agent` from PyPI into it, and drops `datus`, `datus-cli`, `datus-api`, `datus-mcp`, `datus-agent`, `datus-claw`, and `datus-pip` shims into `~/.local/bin`. Open a new shell (or `source ~/.zshrc`) to pick up PATH, then run `datus-agent init`.
+
+To install additional Python packages into the global venv later, use `datus-pip install <package>` (it is a shim for `~/.datus/venv/bin/pip`).
+
+Common overrides (set on the receiving shell, not on `curl`):
+
+```bash
+# Pin a released version
+curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh | DATUS_VERSION=0.2.6 sh
+
+# Install from GitHub source (branch/tag/commit)
+curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh | DATUS_FROM_GIT=1 DATUS_REF=main sh
+```
+
+Other variables: `DATUS_HOME` (default `~/.datus`), `DATUS_BIN_DIR` (default `~/.local/bin`), `DATUS_FORCE=1` to recreate the venv, `DATUS_NO_MODIFY_PATH=1` to skip shell rc edits.
+
+#### Manual install
 
 ```bash
 pip install datus-agent
