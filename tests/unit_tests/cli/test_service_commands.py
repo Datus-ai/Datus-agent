@@ -1,0 +1,267 @@
+# Copyright 2025-present DatusAI, Inc.
+# Licensed under the Apache License, Version 2.0.
+
+"""Unit tests for ``datus.cli.service_commands`` dispatcher."""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+from datus.cli.service_client import READ_METHODS, ServiceClient, ServiceClientRegistry
+from datus.cli.service_commands import ServiceCommands
+from datus.tools.func_tool.base import FuncToolResult
+
+
+class _BiToolStub:
+    def list_dashboards(self, search: str = "") -> FuncToolResult:
+        """List dashboards (read)."""
+        return FuncToolResult(result=[{"id": 1, "search": search}])
+
+    def get_dashboard(self, dashboard_id: str) -> FuncToolResult:
+        """Get one dashboard by id."""
+        if not dashboard_id:
+            return FuncToolResult(success=0, error="dashboard_id required")
+        return FuncToolResult(result={"id": dashboard_id})
+
+    def get_chart_data(self, chart_id: str, dashboard_id: str = "", limit: int = 0) -> FuncToolResult:
+        """Get chart data with optional limit."""
+        return FuncToolResult(result={"chart_id": chart_id, "limit": limit, "dashboard_id": dashboard_id})
+
+    def create_dashboard(self, title: str) -> FuncToolResult:
+        """Write method — should NOT be dispatchable."""
+        return FuncToolResult(result={"created": title})
+
+
+def _fake_cli():
+    cli = MagicMock()
+    cli.console = MagicMock()
+    cli._bg_loop = None  # commands use asyncio.run in this case
+    cli.agent_config = SimpleNamespace(
+        services=SimpleNamespace(bi_tools={"superset": {}}, schedulers={}, semantic_layer={}),
+    )
+    return cli
+
+
+def _make_commands_with_bi_stub(tool_instance=None):
+    cli = _fake_cli()
+    cmd = ServiceCommands(cli)
+    # Inject a registry with the stub tool directly — bypass factory.
+    registry = ServiceClientRegistry.__new__(ServiceClientRegistry)
+    registry._agent_config = cli.agent_config
+    registry._entries = {}
+    registry._clients = {
+        "superset": ServiceClient(
+            service_type="bi_tools",
+            service_name="superset",
+            tool_instance=tool_instance or _BiToolStub(),
+            method_names=READ_METHODS["bi_tools"],
+        ),
+    }
+    # _entries drives list_services output + has() lookups (2-tuple per current schema).
+    registry._entries["superset"] = ("bi_tools", "superset")
+    cmd._registry = registry
+    return cmd, cli
+
+
+class TestDispatchServiceListing:
+    def test_dispatch_bare_service_prints_methods(self):
+        cmd, cli = _make_commands_with_bi_stub()
+        handled = cmd.dispatch(".superset", "")
+        assert handled is True
+        # Rich table passed through console.print — at least one call occurred.
+        assert cli.console.print.call_count >= 1
+
+    def test_dispatch_unknown_service_returns_false(self):
+        cmd, _ = _make_commands_with_bi_stub()
+        handled = cmd.dispatch(".mystery", "")
+        assert handled is False
+
+    def test_dispatch_non_dot_command_returns_false(self):
+        cmd, _ = _make_commands_with_bi_stub()
+        assert cmd.dispatch("superset", "") is False
+
+    def test_cmd_services_lists_all(self):
+        cmd, cli = _make_commands_with_bi_stub()
+        cmd.cmd_services("")
+        # Printed a table (Table object, not a string).
+        assert cli.console.print.call_count == 1
+
+    def test_cmd_services_empty_prints_hint(self):
+        cli = _fake_cli()
+        cli.agent_config = SimpleNamespace(
+            services=SimpleNamespace(bi_tools={}, schedulers={}, semantic_layer={}),
+        )
+        cmd = ServiceCommands(cli)
+        cmd.cmd_services("")
+        # Should have printed at least one yellow hint message.
+        msg = str(cli.console.print.call_args_list[0])
+        assert "No services configured" in msg
+
+
+class TestDispatchInvokeMethod:
+    def test_positional_arg_success(self):
+        cmd, cli = _make_commands_with_bi_stub()
+        cmd.dispatch(".superset.get_dashboard", "42")
+        # Rendered result contains the id.
+        rendered = " ".join(str(c) for c in cli.console.print.call_args_list)
+        assert "42" in rendered
+
+    def test_named_arg_success(self):
+        cmd, cli = _make_commands_with_bi_stub()
+        cmd.dispatch(".superset.get_dashboard", "--dashboard_id=7")
+        rendered = " ".join(str(c) for c in cli.console.print.call_args_list)
+        assert "7" in rendered
+
+    def test_int_coercion_from_schema(self):
+        cmd, cli = _make_commands_with_bi_stub()
+        cmd.dispatch(".superset.get_chart_data", "99 --limit=50")
+        rendered = " ".join(str(c) for c in cli.console.print.call_args_list)
+        assert "99" in rendered
+        assert "50" in rendered  # int, not str
+
+    def test_missing_required_shows_schema(self):
+        cmd, cli = _make_commands_with_bi_stub()
+        cmd.dispatch(".superset.get_dashboard", "")
+        rendered = " ".join(str(c) for c in cli.console.print.call_args_list)
+        assert "Missing required argument" in rendered or "required" in rendered.lower()
+
+    def test_help_flag_shows_schema(self):
+        cmd, cli = _make_commands_with_bi_stub()
+        cmd.dispatch(".superset.get_dashboard", "--help")
+        # Rich Table object is passed to console.print; inspect its title.
+        printed = cli.console.print.call_args_list[-1].args[0]
+        assert "parameters" in str(getattr(printed, "title", "")).lower()
+
+    def test_write_method_is_blocked(self):
+        cmd, cli = _make_commands_with_bi_stub()
+        cmd.dispatch(".superset.create_dashboard", "--title=x")
+        msg = " ".join(str(c) for c in cli.console.print.call_args_list)
+        assert "write" in msg.lower() or "privileged" in msg.lower() or "read-only" in msg.lower()
+
+    def test_unknown_method_prints_hint(self):
+        cmd, cli = _make_commands_with_bi_stub()
+        cmd.dispatch(".superset.no_such_method", "")
+        msg = " ".join(str(c) for c in cli.console.print.call_args_list)
+        assert "Unknown method" in msg or "no_such_method" in msg
+
+    def test_tool_error_rendered(self):
+        """When FuncToolResult.success==0, error is surfaced."""
+        cmd, cli = _make_commands_with_bi_stub()
+        # get_dashboard with empty id returns success=0
+        cmd.dispatch(".superset.get_dashboard", "''")
+        msg = " ".join(str(c) for c in cli.console.print.call_args_list)
+        assert "required" in msg.lower() or "Error" in msg
+
+
+class TestArgParser:
+    def test_parse_positional_only(self):
+        cmd = ServiceCommands(_fake_cli())
+        schema = {"properties": {"a": {"type": "string"}, "b": {"type": "integer"}}}
+        parsed = cmd._parse_args("foo 42", schema)
+        assert parsed == {"a": "foo", "b": 42}
+
+    def test_parse_named_only(self):
+        cmd = ServiceCommands(_fake_cli())
+        schema = {"properties": {"a": {"type": "string"}, "b": {"type": "integer"}}}
+        parsed = cmd._parse_args("--b=99 --a=hi", schema)
+        assert parsed == {"a": "hi", "b": 99}
+
+    def test_parse_mixed(self):
+        cmd = ServiceCommands(_fake_cli())
+        schema = {"properties": {"a": {"type": "string"}, "b": {"type": "integer"}}}
+        parsed = cmd._parse_args("first --b=7", schema)
+        assert parsed == {"a": "first", "b": 7}
+
+    def test_parse_bool_flag(self):
+        cmd = ServiceCommands(_fake_cli())
+        schema = {"properties": {"flag": {"type": "boolean"}}}
+        assert cmd._parse_args("--flag", schema) == {"flag": True}
+        assert cmd._parse_args("--flag=true", schema) == {"flag": True}
+        assert cmd._parse_args("--flag=no", schema) == {"flag": False}
+
+    def test_parse_array_csv(self):
+        cmd = ServiceCommands(_fake_cli())
+        schema = {"properties": {"items": {"type": "array"}}}
+        parsed = cmd._parse_args("--items=a,b,c", schema)
+        assert parsed == {"items": ["a", "b", "c"]}
+
+    def test_parse_array_json(self):
+        cmd = ServiceCommands(_fake_cli())
+        schema = {"properties": {"items": {"type": "array"}}}
+        # Shell-quoted JSON array: shlex keeps the JSON bracketed form intact.
+        parsed = cmd._parse_args('\'--items=["x","y"]\'', schema)
+        assert parsed == {"items": ["x", "y"]}
+
+    def test_parse_extra_positional_returns_none(self):
+        cmd = ServiceCommands(_fake_cli())
+        schema = {"properties": {"only": {"type": "string"}}}
+        assert cmd._parse_args("first second", schema) is None
+
+    def test_parse_unknown_named_is_dropped(self):
+        cmd = ServiceCommands(_fake_cli())
+        schema = {"properties": {"a": {"type": "string"}}}
+        assert cmd._parse_args("--bogus=x --a=ok", schema) == {"a": "ok"}
+
+    def test_parse_malformed_quoting_returns_none(self):
+        cmd = ServiceCommands(_fake_cli())
+        schema = {"properties": {"a": {"type": "string"}}}
+        # Unclosed single quote → shlex.split raises → parser returns None.
+        assert cmd._parse_args("'unclosed", schema) is None
+
+    def test_missing_required_reports_all(self):
+        cmd = ServiceCommands(_fake_cli())
+        schema = {"properties": {"a": {}, "b": {}}, "required": ["a", "b"]}
+        missing = cmd._missing_required(schema, {"a": 1})
+        assert missing == ["b"]
+
+
+class TestRenderHelpers:
+    def test_render_result_success_payload(self):
+        cli = _fake_cli()
+        cmd = ServiceCommands(cli)
+        cmd._render_result({"success": 1, "result": {"id": 42}})
+        msg = str(cli.console.print.call_args_list[0])
+        assert "42" in msg
+
+    def test_render_result_failure(self):
+        cli = _fake_cli()
+        cmd = ServiceCommands(cli)
+        cmd._render_result({"success": 0, "error": "boom"})
+        msg = str(cli.console.print.call_args_list[0])
+        assert "boom" in msg and "Error" in msg
+
+
+class TestAsyncExecution:
+    def test_run_async_without_bg_loop_uses_asyncio_run(self):
+        """When CLI has no running background loop, a fresh loop is used."""
+
+        async def _async_result():
+            return "ok"
+
+        cmd = ServiceCommands(_fake_cli())  # cli._bg_loop is None
+        result = cmd._run_async(_async_result())
+        assert result == "ok"
+
+    def test_run_async_with_bg_loop_schedules_there(self):
+        import asyncio
+        import threading
+
+        bg_loop = asyncio.new_event_loop()
+        thread = threading.Thread(target=bg_loop.run_forever, daemon=True)
+        thread.start()
+        try:
+            cli = _fake_cli()
+            cli._bg_loop = bg_loop
+            cmd = ServiceCommands(cli)
+
+            async def _async_result():
+                return "from-bg"
+
+            with patch.object(cmd, "_run_async", wraps=cmd._run_async) as spy:
+                res = cmd._run_async(_async_result())
+                assert res == "from-bg"
+                assert spy.call_count == 1
+        finally:
+            bg_loop.call_soon_threadsafe(bg_loop.stop)
+            thread.join(timeout=2)

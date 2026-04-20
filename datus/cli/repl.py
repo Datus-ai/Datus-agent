@@ -41,6 +41,7 @@ from datus.cli.bi_dashboard import BiDashboardCommands
 from datus.cli.chat_commands import ChatCommands
 from datus.cli.context_commands import ContextCommands
 from datus.cli.metadata_commands import MetadataCommands
+from datus.cli.service_commands import ServiceCommands
 from datus.cli.status_bar import StatusBarProvider
 from datus.cli.sub_agent_commands import SubAgentCommands
 from datus.configuration.agent_config_loader import configuration_manager, load_agent_config
@@ -165,6 +166,7 @@ class DatusCLI:
         self.metadata_commands = MetadataCommands(self)
         self.sub_agent_commands = SubAgentCommands(self)
         self.bi_dashboard_commands = BiDashboardCommands(self)
+        self.service_commands = ServiceCommands(self)
         self._status_bar_provider = StatusBarProvider(self)
 
         # Dictionary of available commands - created after handlers are initialized
@@ -208,6 +210,7 @@ class DatusCLI:
             ".mcp": self._cmd_mcp,
             ".skill": self._cmd_skill,
             ".bootstrap-bi": self.bi_dashboard_commands.cmd,
+            ".services": self.service_commands.cmd_services,
             ".help": self._cmd_help,
             ".exit": self._cmd_exit,
             ".quit": self._cmd_exit,
@@ -968,6 +971,8 @@ class DatusCLI:
             # cmd_rewind returns a user message to prefill in input buffer
             if cmd == ".rewind" and result is not None:
                 self._prefill_input = result
+        elif self.service_commands.dispatch(cmd, args):
+            return
         else:
             self.console.print(f"[bold red]Unknown command:[/] {cmd}")
 

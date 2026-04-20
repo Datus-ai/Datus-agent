@@ -68,6 +68,9 @@ def _make_cli(agent_config, available_subagents=None):
     cli.metadata_commands = MagicMock()
     cli.sub_agent_commands = MagicMock()
     cli.bi_dashboard_commands = MagicMock()
+    cli.service_commands = MagicMock()
+    # Unknown services fall through to the "Unknown command" path.
+    cli.service_commands.dispatch = MagicMock(return_value=False)
     cli._workflow_runner = None
     cli.last_sql = None
     cli.last_result = None
