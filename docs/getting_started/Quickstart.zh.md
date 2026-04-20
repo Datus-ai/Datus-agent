@@ -78,51 +78,11 @@ datus-agent configure
 
 #### 配置向导支持的模型厂商
 
-当前配置向导内置了以下 provider：
+`datus-agent configure` 自带一份 provider 目录 —— 通过方向键选择，粘贴 API Key（或接受自动识别的环境变量）即可完成。
 
-| Provider | 典型模型 | 认证方式 | 适用场景 |
-|---|---|---|---|
-| `openai` | `gpt-5.2`、`gpt-4.1`、`o3` | API Key（支持自动识别 `OPENAI_API_KEY`） | 通用对话、推理、工具调用 |
-| `deepseek` | `deepseek-chat`、`deepseek-reasoner` | API Key（支持自动识别 `DEEPSEEK_API_KEY`） | 性价比较高的通用推理与 SQL 生成 |
-| `claude` | `claude-sonnet-4-5`、`claude-opus-4-5` | API Key（支持自动识别 `ANTHROPIC_API_KEY`） | 长上下文、复杂推理 |
-| `kimi` | `kimi-k2.5`、`kimi-k2-thinking` | API Key（支持自动识别 `KIMI_API_KEY`） | 中文场景、长上下文 |
-| `qwen` | `qwen3-max`、`qwen3-coder-plus` | API Key（支持自动识别 `DASHSCOPE_API_KEY`） | 中文场景、通用对话与编码 |
-| `gemini` | `gemini-2.5-flash`、`gemini-2.5-pro` | API Key（支持自动识别 `GEMINI_API_KEY`） | 超长上下文、多轮分析 |
-| `minimax` | `MiniMax-M2.7`、`MiniMax-M2.5` | API Key | 通用对话与推理 |
-| `glm` | `glm-5`、`glm-4.7` | API Key | 中文场景、推理与工具调用 |
+开箱支持：**OpenAI**、**DeepSeek**、**Claude**、**Kimi**、**Qwen**、**Gemini**、**MiniMax**、**GLM**、**OpenRouter**，订阅/OAuth 流程的 **Claude Subscription** 与 **Codex**，以及 `*_coding` plan provider（Alibaba / GLM / MiniMax / Kimi）。
 
-另外还有两类特殊入口：
-
-| Provider | 认证方式 | 说明 |
-|---|---|---|
-| `claude_subscription` | Claude 订阅 token | 向导会优先自动探测本地 Claude 订阅凭据，探测失败时可手动粘贴 `sk-ant-oat01-...` |
-
-!!! note
-    `codex` 目前虽然仍出现在 provider catalog 中，但现阶段 `datus-agent configure` 还不能稳定完成它的完整初始化流程，因此这里不把它视为当前可用的交互式配置选项。
-
-#### Coding Plan providers 是什么
-
-配置向导还提供一组面向编码/规划场景的 provider。它们底层使用 Anthropic-compatible endpoint，但在 Datus 里和普通模型一样，最终都会写入 `agent.models`，可以设为默认模型，也可以在节点级单独引用。
-
-| Provider | 默认模型 | 适合场景 |
-|---|---|---|
-| `alibaba_coding` | `qwen3-coder-plus` | 希望在同一个 coding endpoint 下使用 Qwen / GLM / Kimi / MiniMax 等模型 |
-| `glm_coding` | `glm-5` | 使用 GLM 的 coding endpoint |
-| `minimax_coding` | `MiniMax-M2.7` | 使用 MiniMax 的 coding endpoint |
-| `kimi_coding` | `kimi-for-coding` | 使用 Kimi 的 coding endpoint |
-
-这类 provider 适合以下场景：
-
-- 你希望默认模型更偏向规划、编码或结构化任务拆解
-- 你会频繁使用 [计划模式](../cli/plan_mode.zh.md) 处理复杂任务
-- 你想把通用聊天模型和 coding/plan 模型分开配置，后续按节点指定
-
-!!! tip "环境变量与参数覆盖"
-    对 OpenAI、DeepSeek、Claude、Kimi、Qwen、Gemini，向导会自动提示对应的环境变量。
-
-    对 `minimax`、`glm` 以及各类 `*_coding` provider，即使没有内置自动提示，你仍然可以直接输入 `${MINIMAX_API_KEY}`、`${GLM_API_KEY}`、`${KIMI_API_KEY}`、`${DASHSCOPE_API_KEY}` 这类环境变量引用。
-
-    其中 `kimi-k2.5` 和 `qwen3-coder-plus` 会自动附带当前实现要求的参数覆盖，例如 `temperature` 和 `top_p`。
+完整 provider 列表、配置示例、可选字段、认证模式，以及如何扩展 `conf/providers.yml`，请参见 **[模型](../configuration/models.zh.md)** 参考文档。
 
 ### 初始化项目（可选）
 

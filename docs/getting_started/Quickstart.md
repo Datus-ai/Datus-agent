@@ -117,51 +117,11 @@ Configuration is saved to `~/.datus/conf/agent.yml`. Run `datus-agent configure`
 
 #### Built-in model providers in the configuration wizard
 
-The current wizard includes these providers out of the box:
+`datus-agent configure` ships with a catalog of providers — pick one from the arrow-key menu, paste an API key (or accept the auto-detected env var), and you're done.
 
-| Provider | Typical models | Auth | Best for |
-|---|---|---|---|
-| `openai` | `gpt-5.2`, `gpt-4.1`, `o3` | API key with `OPENAI_API_KEY` auto-detection | General chat, reasoning, tool use |
-| `deepseek` | `deepseek-chat`, `deepseek-reasoner` | API key with `DEEPSEEK_API_KEY` auto-detection | Cost-effective reasoning and SQL generation |
-| `claude` | `claude-sonnet-4-5`, `claude-opus-4-5` | API key with `ANTHROPIC_API_KEY` auto-detection | Long context and complex reasoning |
-| `kimi` | `kimi-k2.5`, `kimi-k2-thinking` | API key with `KIMI_API_KEY` auto-detection | Chinese-heavy workloads and long context |
-| `qwen` | `qwen3-max`, `qwen3-coder-plus` | API key with `DASHSCOPE_API_KEY` auto-detection | Chinese workloads, general chat, coding |
-| `gemini` | `gemini-2.5-flash`, `gemini-2.5-pro` | API key with `GEMINI_API_KEY` auto-detection | Large-context analysis |
-| `minimax` | `MiniMax-M2.7`, `MiniMax-M2.5` | API key | General reasoning |
-| `glm` | `glm-5`, `glm-4.7` | API key | Chinese workloads and tool-calling |
+Out of the box: **OpenAI**, **DeepSeek**, **Claude**, **Kimi**, **Qwen**, **Gemini**, **MiniMax**, **GLM**, **OpenRouter**, plus subscription/OAuth flows for **Claude Subscription** and **Codex**, and the `*_coding` plan providers (Alibaba / GLM / MiniMax / Kimi).
 
-There are also two special auth flows:
-
-| Provider | Auth | Notes |
-|---|---|---|
-| `claude_subscription` | Claude subscription token | The wizard first tries to auto-detect a local Claude subscription credential, then falls back to manual token input |
-
-!!! note
-    `codex` still appears in the provider catalog, but the current `datus-agent configure` flow is not ready to set it up end-to-end yet. Do not rely on it as a working interactive wizard option for now.
-
-#### What are Coding Plan providers
-
-The wizard also includes coding/plan-oriented providers. These use Anthropic-compatible endpoints, but from Datus's perspective they are configured just like any other model entry in `agent.models`.
-
-| Provider | Default model | Best for |
-|---|---|---|
-| `alibaba_coding` | `qwen3-coder-plus` | One coding endpoint that can serve Qwen / GLM / Kimi / MiniMax models |
-| `glm_coding` | `glm-5` | GLM coding endpoint |
-| `minimax_coding` | `MiniMax-M2.7` | MiniMax coding endpoint |
-| `kimi_coding` | `kimi-for-coding` | Kimi coding endpoint |
-
-These are a good fit when:
-
-- You want the default model to lean toward planning, coding, or structured decomposition
-- You use [Plan Mode](../cli/plan_mode.md) frequently for multi-step tasks
-- You want to separate general-purpose chat models from coding/plan models and bind them to different nodes later
-
-!!! tip "Environment variables and model overrides"
-    For OpenAI, DeepSeek, Claude, Kimi, Qwen, and Gemini, the wizard can prompt with provider-specific environment variable hints.
-
-    For `minimax`, `glm`, and the `*_coding` providers, you can still enter environment-variable references directly, such as `${MINIMAX_API_KEY}`, `${GLM_API_KEY}`, `${KIMI_API_KEY}`, or `${DASHSCOPE_API_KEY}`.
-
-    The current implementation also auto-applies required parameter overrides for some models, such as `kimi-k2.5` and `qwen3-coder-plus`.
+For the full catalog with config examples, optional fields, authentication modes, and how to extend `conf/providers.yml`, see the **[Models](../configuration/models.md)** reference.
 
 ### Initialize Project (Optional)
 
