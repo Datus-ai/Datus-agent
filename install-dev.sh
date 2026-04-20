@@ -114,7 +114,9 @@ create_venv() {
     fi
     if [ ! -d "$VENV_DIR" ]; then
         info "creating venv at $VENV_DIR (Python 3.12)"
-        uv venv --python 3.12 "$VENV_DIR"
+        # --seed installs pip/setuptools/wheel into the venv so the datus-pip
+        # shim and any tool that shells out to `pip` keep working.
+        uv venv --python 3.12 --seed "$VENV_DIR"
     fi
     VENV_PY="$VENV_DIR/bin/python"
     [ -x "$VENV_PY" ] || die "venv python not found at $VENV_PY"
@@ -122,9 +124,18 @@ create_venv() {
 
 install_package() {
     need_cmd git
-    spec="git+${GIT_REPO}@${DATUS_REF}"
-    info "installing datus-agent from GitHub source: $spec"
-    uv pip install --python "$VENV_PY" --upgrade "$spec"
+    # Clone without submodules: benchmark/* is excluded from the wheel build
+    # (see pyproject.toml), and upstream submodule chains (e.g. Spider2) may
+    # fail `git submodule update --recursive` for reasons unrelated to this
+    # install. A non-recursive clone sidesteps that.
+    src_dir=$(mktemp -d -t datus-src-XXXXXX)
+    # shellcheck disable=SC2064
+    trap "rm -rf \"$src_dir\"" EXIT
+    info "cloning ${GIT_REPO} @ ${DATUS_REF} -> $src_dir (no submodules)"
+    git clone --quiet --filter=blob:none "$GIT_REPO" "$src_dir"
+    git -C "$src_dir" -c advice.detachedHead=false checkout --quiet "$DATUS_REF"
+    info "building and installing datus-agent from local source"
+    uv pip install --python "$VENV_PY" --upgrade "$src_dir"
 }
 
 write_shims() {

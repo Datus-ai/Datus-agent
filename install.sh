@@ -114,7 +114,9 @@ create_venv() {
     fi
     if [ ! -d "$VENV_DIR" ]; then
         info "creating venv at $VENV_DIR (Python 3.12)"
-        uv venv --python 3.12 "$VENV_DIR"
+        # --seed installs pip/setuptools/wheel into the venv so the datus-pip
+        # shim and any tool that shells out to `pip` keep working.
+        uv venv --python 3.12 --seed "$VENV_DIR"
     fi
     VENV_PY="$VENV_DIR/bin/python"
     [ -x "$VENV_PY" ] || die "venv python not found at $VENV_PY"
