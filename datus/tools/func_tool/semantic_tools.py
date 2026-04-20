@@ -116,7 +116,7 @@ class SemanticTools:
 
                     # Extract db_config to pass to adapter (avoids re-reading agent.yml)
                     db_config = self._extract_db_config(namespace)
-                    agent_home = getattr(self.agent_config, "home", None)
+                    semantic_models_path = str(self.agent_config.path_manager.semantic_models_dir)
 
                     # Get the registered config class for this adapter type
                     metadata = semantic_adapter_registry.get_metadata(self.adapter_type)
@@ -124,7 +124,7 @@ class SemanticTools:
                         adapter_config = metadata.config_class(
                             namespace=namespace,
                             db_config=db_config,
-                            agent_home=agent_home,
+                            semantic_models_path=semantic_models_path,
                         )
                     else:
                         # Fallback to base config

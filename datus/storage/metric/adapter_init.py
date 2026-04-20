@@ -67,13 +67,13 @@ async def init_from_adapter(
                     for k, v in raw.items()
                     if v is not None and v != "" and k not in ("extra", "logic_name", "path_pattern", "catalog")
                 }
-            agent_home = getattr(agent_config, "home", None)
+            semantic_models_path = str(agent_config.path_manager.semantic_models_dir)
 
             if metadata and metadata.config_class:
                 adapter_config = metadata.config_class(
                     namespace=namespace,
                     db_config=db_config,
-                    agent_home=agent_home,
+                    semantic_models_path=semantic_models_path,
                 )
             else:
                 from datus.tools.semantic_tools.config import SemanticAdapterConfig
