@@ -49,21 +49,19 @@ class SchedulerTools(BaseTool):
         config = self._selected_scheduler_config()
         platform = config.get("type", "airflow")
 
-        # Datus's ``agent.project_name`` (a cwd-derived workspace identifier
-        # used for ``~/.datus/sessions/<project>/`` etc.) is NOT the same
-        # concept as Airflow's ``project_name`` (a multi-tenant knob that
-        # controls the DAG folder layout and, crucially, ``dag_id_prefix``
-        # client-side filtering). Airflow itself has no project concept at
-        # all: silently piping the Datus workspace into the adapter config
-        # used to make ``.airflow.list_scheduler_jobs`` and friends hide
-        # every DAG that wasn't created by *this* Datus instance in *this*
-        # cwd — including DAGs the user owns on the same Airflow account.
-        #
-        # The multi-tenant isolation is still available, just explicit: the
-        # user sets ``project_name`` / ``dag_id_prefix`` under
-        # ``services.schedulers.<name>`` in agent.yml when they want it.
-        # Without those, reads return the full set of DAGs the account can
-        # see, and submits run against the default DAG folder.
+        # For Airflow, the adapter config's ``project_name`` is a
+        # filesystem-namespace knob ONLY — it controls the DAG subdirectory
+        # (``{dags_folder_root}/{project_name}/``) so multiple Datus
+        # instances writing DAG files to the same Airflow cluster never
+        # collide on disk. It does NOT auto-derive a ``dag_id_prefix``
+        # anymore (the two concerns were split in datus-scheduler-airflow
+        # 0.2.0), so reads aren't silently filtered by the Datus workspace.
+        # Auto-injecting the Datus workspace identifier is safe: it stays
+        # on the file side, and users who want list-level multi-tenant
+        # isolation opt in by setting ``dag_id_prefix`` explicitly in
+        # ``services.schedulers.<name>``.
+        if platform == "airflow":
+            config.setdefault("project_name", self.agent_config.project_name)
 
         return SchedulerAdapterRegistry.create_adapter(platform=platform, config=config)
 

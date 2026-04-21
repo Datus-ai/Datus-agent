@@ -121,14 +121,14 @@ class TestGetAdapter:
                 adapter = tools._get_adapter()
         assert adapter is mock_adapter
 
-    def test_airflow_does_not_auto_inject_datus_project_name(self):
-        """Datus's ``agent.project_name`` (cwd-derived workspace identifier)
-        is a different concept from Airflow's ``project_name`` (multi-tenant
-        DAG folder / ``dag_id_prefix`` knob). Auto-injecting the former as
-        the latter silently filters out every DAG the user actually owns
-        on the Airflow account but that wasn't created by this Datus
-        instance in this cwd. ``_get_adapter`` must leave the scheduler
-        config alone when the user hasn't asked for namespacing.
+    def test_airflow_injects_project_name_as_file_namespace_only(self):
+        """Datus auto-injects ``agent.project_name`` into the Airflow
+        adapter config — but *only* for the filesystem-namespace role
+        (DAG subdirectory under ``dags_folder_root``). In the adapter
+        0.2.0+ schema ``project_name`` no longer drives ``dag_id_prefix``
+        defaulting, so list/get operations aren't silently filtered by
+        the Datus workspace. Users who want list-level multi-tenant
+        isolation set ``dag_id_prefix`` explicitly in agent.yml.
         """
         agent_cfg = _make_agent_config(
             scheduler_config={
@@ -138,10 +138,11 @@ class TestGetAdapter:
                 "username": "admin",
                 "password": "admin",
                 "dags_folder_root": "/opt/airflow/dags",
-                # Deliberately no ``project_name`` — user wants unfiltered reads.
+                # Deliberately no explicit project_name — adapter expects
+                # Datus to fill it from agent.project_name.
             }
         )
-        agent_cfg.project_name = "reports-team"  # Datus-side workspace name, not Airflow's
+        agent_cfg.project_name = "reports-team"
         tools = SchedulerTools(agent_cfg)
 
         mock_registry = MagicMock()
@@ -152,10 +153,12 @@ class TestGetAdapter:
         ):
             tools._get_adapter()
 
-        # Datus must NOT leak its workspace name into the adapter config.
         call_kwargs = mock_registry.create_adapter.call_args.kwargs
         assert call_kwargs["platform"] == "airflow"
-        assert "project_name" not in call_kwargs["config"]
+        # File-namespace is auto-filled so DAG files land in a per-workspace subdir.
+        assert call_kwargs["config"]["project_name"] == "reports-team"
+        # dag_id_prefix is NOT auto-set — that's an explicit opt-in.
+        assert "dag_id_prefix" not in call_kwargs["config"]
 
     def test_airflow_explicit_project_name_takes_precedence(self):
         """setdefault semantics: if user writes project_name in agent.yml, Datus
