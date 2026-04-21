@@ -163,39 +163,3 @@ class ConfigurationErrorDetails(BaseModel):
     """Configuration error details."""
 
     failed_tests: List[FailedTest] = Field(..., description="List of failed tests")
-
-
-# LLM Provider Models
-class LLMProviderInfo(BaseModel):
-    """LLM provider information."""
-
-    type: str = Field(..., description="Provider type")
-    base_url: str = Field(..., description="Base URL")
-    model: str = Field(..., description="Default model")
-    description: str = Field(..., description="Provider description")
-
-
-class LLMProvidersData(BaseModel):
-    """LLM providers data."""
-
-    providers: Dict[str, LLMProviderInfo] = Field(..., description="Available providers")
-    default: str = Field(..., description="Default provider")
-
-
-# Database Types Models
-class DatabaseTypeInfo(BaseModel):
-    """Database type information."""
-
-    type: str = Field(..., description="Database type")
-    name: str = Field(..., description="Display name")
-    description: str = Field(..., description="Database description")
-    connection_method: str = Field(..., description="Connection method")
-    required_fields: List[str] = Field(..., description="Required configuration fields")
-    default_catalog: Optional[str] = Field(None, description="Default catalog name")
-
-
-class DatabaseTypesData(BaseModel):
-    """Database types data."""
-
-    database_types: List[DatabaseTypeInfo] = Field(..., description="Available database types")
-    default: str = Field(..., description="Default database type")
