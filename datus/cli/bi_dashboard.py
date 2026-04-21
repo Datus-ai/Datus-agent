@@ -122,12 +122,12 @@ class BiDashboardCommands:
             return
 
         adapter = self._create_adapter(options)
-        default_catalog, default_datasource, default_schema = self._resolve_default_table_context()
+        default_catalog, default_database, default_schema = self._resolve_default_table_context()
         assembler = DashboardAssembler(
             adapter,
             default_dialect=options.dialect,
             default_catalog=default_catalog,
-            default_datasource=default_datasource,
+            default_database=default_database,
             default_schema=default_schema,
         )
 
