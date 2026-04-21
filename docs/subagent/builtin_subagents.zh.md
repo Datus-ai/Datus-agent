@@ -532,10 +532,13 @@ metric:
 
 #### 文件组织
 
-使用 YAML 文档分隔符 `---` 将指标追加到现有语义模型文件：
+指标存放在独立文件中，与语义模型文件分离：
 
+- **语义模型**：`{table_name}.yml` —— `data_source` 定义（measures、dimensions、identifiers）
+- **指标**：`metrics/{table_name}_metrics.yml` —— 一个或多个指标定义，使用 YAML 文档分隔符 `---` 分隔
+
+**语义模型文件** (`transactions.yml`)：
 ```yaml
-# 现有语义模型
 data_source:
   name: transactions
   sql_table: transactions
@@ -546,9 +549,10 @@ data_source:
   dimensions:
     - name: transaction_date
       type: TIME
+```
 
----
-# 第一个指标（追加）
+**指标文件** (`metrics/transactions_metrics.yml`)：
+```yaml
 metric:
   name: total_revenue
   type: measure_proxy
@@ -556,7 +560,6 @@ metric:
     measure: revenue
 
 ---
-# 第二个指标（追加）
 metric:
   name: avg_transaction_value
   type: ratio
@@ -565,10 +568,12 @@ metric:
     denominator: transaction_count
 ```
 
-**为什么追加而不是单独文件？**
-- 保持相关指标靠近其语义模型
-- 更易于维护和验证
-- MetricFlow 可以一起验证所有定义
+**为什么使用独立文件？**
+- 清晰分离 schema 定义与业务指标
+- 指标可以独立于底层语义模型维护
+- MetricFlow 会把 semantic_models 目录下所有 YAML 文档一起验证
+
+更多细节见 [gen_metrics](gen_metrics.md)。
 
 #### 知识库存储
 
@@ -590,7 +595,7 @@ metric:
 - ✅ **验证**：MetricFlow 验证确保正确性
 - ✅ **交互式工作流**：同步前审阅和批准
 - ✅ **知识库集成**：语义搜索以发现指标
-- ✅ **文件管理**：安全地追加到现有语义模型文件
+- ✅ **文件管理**：在 `metrics/` 目录下维护独立的指标文件
 
 ---
 

@@ -533,10 +533,13 @@ metric:
 
 #### File Organization
 
-Metrics are appended to existing semantic model files using the YAML document separator `---`:
+Metrics are stored in dedicated files, separate from their semantic models:
 
+- **Semantic Model**: `{table_name}.yml` — `data_source` definition (measures, dimensions, identifiers)
+- **Metrics**: `metrics/{table_name}_metrics.yml` — one or more metric definitions, separated by the YAML document separator `---`
+
+**Semantic Model File** (`transactions.yml`):
 ```yaml
-# Existing semantic model
 data_source:
   name: transactions
   sql_table: transactions
@@ -547,9 +550,10 @@ data_source:
   dimensions:
     - name: transaction_date
       type: TIME
+```
 
----
-# First metric (appended)
+**Metrics File** (`metrics/transactions_metrics.yml`):
+```yaml
 metric:
   name: total_revenue
   type: measure_proxy
@@ -557,7 +561,6 @@ metric:
     measure: revenue
 
 ---
-# Second metric (appended)
 metric:
   name: avg_transaction_value
   type: ratio
@@ -566,10 +569,12 @@ metric:
     denominator: transaction_count
 ```
 
-**Why append instead of separate files?**
-- Keeps related metrics close to their semantic model
-- Easier maintenance and validation
-- MetricFlow can validate all definitions together
+**Why separate files?**
+- Clear separation between schema definitions and business metrics
+- Metrics can be maintained independently from the underlying semantic model
+- MetricFlow validates all YAML documents under the semantic model directory together
+
+See [gen_metrics](gen_metrics.md) for full details.
 
 #### Knowledge Base Storage
 
