@@ -12,7 +12,7 @@ The Agent is the central configuration unit in Datus. It defines how your agent 
     2. `./conf/agent.yml`
     3. `~/.datus/conf/agent.yml`
 
-- **Separation of concerns**: MCP (Model Context Protocol) configuration is stored in `/mcp.json`, not in `agent.yml`, ensuring a clear boundary between agent settings and MCP server management
+- **Separation of concerns**: MCP (Model Context Protocol) configuration is stored in `.mcp.json`, not in `agent.yml`, ensuring a clear boundary between agent settings and MCP server management
 
 With this structure, agents in Datus remain modular, portable, and easy to maintain, giving you full control over how they run across different environments.
 
@@ -123,7 +123,7 @@ conf/
 ├── agent.yml.dev          # Development overrides
 ├── agent.yml.staging      # Staging environment
 ├── agent.yml.production   # Production settings
-└── /mcp.json              # MCP server configuration
+└── .mcp.json              # MCP server configuration
 ```
 
 ## Next Steps

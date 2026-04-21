@@ -13,7 +13,8 @@ catch that class of regression without needing an interactive terminal.
 
 from __future__ import annotations
 
-from prompt_toolkit.layout.menus import CompletionsMenu
+from prompt_toolkit.layout.containers import ConditionalContainer, Window
+from prompt_toolkit.layout.menus import CompletionsMenuControl
 
 from datus.cli.tui.app import DatusApp
 
@@ -23,12 +24,20 @@ def _build_app() -> DatusApp:
 
 
 class TestCompletionsMenuWired:
-    def test_completions_menu_is_prompt_toolkit_builtin(self):
+    def test_completions_menu_wraps_completions_menu_control(self):
+        """DatusApp inlines prompt_toolkit's ``CompletionsMenu`` layout — a
+        ``ConditionalContainer`` wrapping a ``Window`` over a
+        ``CompletionsMenuControl`` — but drops the scrollbar margin. The
+        collapse-to-zero-rows behaviour the bottom-pin relies on comes from
+        the same ``has_completions & ~is_done`` filter used by the builtin,
+        so assert on structure rather than the concrete class."""
+
         app = _build_app()
-        assert isinstance(app._completions_menu, CompletionsMenu), (
-            "DatusApp must use prompt_toolkit's built-in CompletionsMenu so it "
-            "collapses to zero rows when no completions are active."
-        )
+        menu = app._completions_menu
+        assert isinstance(menu, ConditionalContainer)
+        inner_window = menu.content
+        assert isinstance(inner_window, Window)
+        assert isinstance(inner_window.content, CompletionsMenuControl)
 
     def test_menu_sits_between_input_and_bottom_separator(self):
         """The HSplit order status → input → menu → separator is what lets

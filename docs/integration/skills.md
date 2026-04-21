@@ -192,7 +192,7 @@ Each subagent in `agentic_nodes` supports three types of tool extensions that ca
 | Field | Source | Description |
 |-------|--------|-------------|
 | `tools` | Built-in | Datus native tools (e.g. `db_tools.*`, `context_search_tools.*`, `date_parsing_tools.*`) |
-| `mcp` | Third-party | External MCP server tools, configured via `/mcp.json` (e.g. `metricflow_mcp`, `filesystem`) |
+| `mcp` | Third-party | External MCP server tools, configured via `.mcp.json` (e.g. `metricflow_mcp`, `filesystem`) |
 | `skills` | User-defined | Skills discovered from `SKILL.md` files — can define workflows in Markdown and extend with custom scripts |
 
 To enable skills in a customized subagent, add the `skills` field under the subagent's config in `agentic_nodes` section of `agent.yml`:

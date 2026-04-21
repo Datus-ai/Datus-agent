@@ -88,7 +88,7 @@ MCP（Model Context Protocol）是 Datus-CLI 连接外部工具服务器的方�
 /mcp remove <name>
 ```
 
-从你的 `~/.datus/conf//mcp.json` 中移除已有的 MCP 服务器配置。
+从你的 `~/.datus/conf/.mcp.json` 中移除已有的 MCP 服务器配置。
 
 ---
 
@@ -116,7 +116,7 @@ MCP（Model Context Protocol）是 Datus-CLI 连接外部工具服务器的方�
 
 ### 存储与配置
 
-- 所有 MCP 服务器定义存放在单一 JSON 文件：`~/.datus/conf//mcp.json`
+- 所有 MCP 服务器定义存放在单一 JSON 文件：`~/.datus/conf/.mcp.json`
 - 每条记录包含命令、参数、可选的环境变量与 Header
 - 可以在 command、args、env、url、headers 中使用 `${VAR}` 或 `${VAR:-default}` 展开环境变量
 

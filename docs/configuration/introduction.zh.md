@@ -12,7 +12,7 @@ Agent 是 Datus 的核心配置单元。它决定智能体的行为方式、所�
     2. `./conf/agent.yml`
     3. `~/.datus/conf/agent.yml`
 
-- **职责分离**：MCP（Model Context Protocol）配置独立存放在 `/mcp.json`，不混入 `agent.yml`
+- **职责分离**：MCP（Model Context Protocol）配置独立存放在 `.mcp.json`，不混入 `agent.yml`
 
 这种结构让 Agent 模块化、可移植、易维护，便于在不同环境中保持一致的运行方式。
 
@@ -112,7 +112,7 @@ conf/
 ├── agent.yml.dev          # 开发环境覆盖
 ├── agent.yml.staging      # 预发布环境
 ├── agent.yml.production   # 生产环境
-└── /mcp.json              # MCP 服务器配置
+└── .mcp.json              # MCP 服务器配置
 ```
 
 ## 下一步

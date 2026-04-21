@@ -88,7 +88,7 @@ Verifies connectivity and prints available tools from that server.
 /mcp remove <name>
 ```
 
-Removes an existing MCP server configuration from your `~/.datus/conf//mcp.json`.
+Removes an existing MCP server configuration from your `~/.datus/conf/.mcp.json`.
 
 ---
 
@@ -116,7 +116,7 @@ Allows you to explicitly include or exclude specific tools exposed by a server.
 
 ### Storage & Configuration
 
-- All MCP server definitions are stored in a single JSON file: `~/.datus/conf//mcp.json`
+- All MCP server definitions are stored in a single JSON file: `~/.datus/conf/.mcp.json`
 - Each entry includes command, args, optional env, and headers
 - Environment variables can be expanded with `${VAR}` or `${VAR:-default}` inside command, args, env, url, or headers
 
