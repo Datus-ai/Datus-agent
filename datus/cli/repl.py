@@ -36,7 +36,13 @@ from datus_db_core import BaseSqlConnector
 
 from datus.cli._cli_utils import prompt_input, select_choice
 from datus.cli.agent_commands import AgentCommands
-from datus.cli.autocomplete import AtReferenceCompleter, CustomPygmentsStyle, CustomSqlLexer, SubagentCompleter
+from datus.cli.autocomplete import (
+    AtReferenceCompleter,
+    CustomPygmentsStyle,
+    CustomSqlLexer,
+    ServiceCommandCompleter,
+    SubagentCompleter,
+)
 from datus.cli.bi_dashboard import BiDashboardCommands
 from datus.cli.chat_commands import ChatCommands
 from datus.cli.context_commands import ContextCommands
@@ -374,6 +380,7 @@ class DatusCLI:
         from datus.cli.autocomplete import SQLCompleter
 
         sql_completer = SQLCompleter()
+        self.service_completer = ServiceCommandCompleter(self)
         self.at_completer = AtReferenceCompleter(
             self.agent_config, available_subagents=self.available_subagents
         )  # Router completer
@@ -385,6 +392,7 @@ class DatusCLI:
         return merge_completers(
             [
                 self.subagent_completer,  # Subagent completer (highest priority)
+                self.service_completer,  # .<service>.<method> completer
                 self.at_completer,  # @ reference completer
                 sql_completer,  # SQL keyword completer (lowest priority)
             ]
