@@ -11,6 +11,22 @@ agent:
   target: openai
 ```
 
+### 响应语言（language）
+`language` 是**可选**字段，用于把所有 agentic 节点的**面向用户自然语言输出**统一到指定语言，覆盖：回答文本、总结、澄清提问、通过 `task` 工具调用子 agent 时写入的 prompt、以及写入文件的注释与说明。代码、SQL、表/列标识符、文件路径、URL、JSON key 等机器可读成分保持原样。
+
+若不填写该字段，系统不会向 system prompt 注入任何语言指令，模型将自行根据上下文选择回答语言。
+
+```yaml
+agent:
+  # 完全省略该字段即可让模型自行决定语言。
+  # 填写语言码即可固定所有 agentic 节点的输出语言：
+  language: zh   # 常用取值：en, zh, ja, ko, es, fr, de, pt, ru, it
+```
+
+内置语言码映射：`en` → English、`zh` / `zh-cn` → Chinese、`zh-tw` → Traditional Chinese、`ja` → Japanese、`ko` → Korean、`es` → Spanish、`fr` → French、`de` → German、`pt` → Portuguese、`ru` → Russian、`it` → Italian。未知代码将原样注入 system prompt，方便扩展。
+
+Chat API 请求可通过请求体中的 `language` 字段按任务覆盖该默认值（详见 [Chat API](../API/chat.zh.md)）。CLI 无覆盖参数，直接沿用 yaml 中的默认。
+
 ### 模型提供方（models） {#models-configuration}
 为智能体配置可用的 LLM 提供方：
 

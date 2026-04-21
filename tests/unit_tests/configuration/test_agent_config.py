@@ -757,6 +757,44 @@ class TestAgentConfigFilesystemStrict:
         assert cfg.filesystem_strict is True
 
 
+class TestAgentConfigLanguage:
+    """``agent.language`` is the default response language for all agentic
+    nodes. Chat API requests may override it per-task on the cloned config.
+    """
+
+    def _make(self, tmp_path, **extra_kwargs):
+        kwargs = dict(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            target="mock",
+            models={
+                "mock": {
+                    "type": "openai",
+                    "api_key": "k",
+                    "model": "m",
+                    "base_url": "http://localhost:0",
+                }
+            },
+            skip_init_dirs=True,
+        )
+        kwargs.update(extra_kwargs)
+        return AgentConfig(**kwargs)
+
+    def test_default_language_is_none(self, tmp_path):
+        """Unset language lets the model choose its own response language."""
+        cfg = self._make(tmp_path)
+        assert cfg.language is None
+
+    def test_custom_language_preserved(self, tmp_path):
+        cfg = self._make(tmp_path, language="zh")
+        assert cfg.language == "zh"
+
+    def test_runtime_override_sets_language(self, tmp_path):
+        cfg = self._make(tmp_path, language="en")
+        cfg.language = "ja"
+        assert cfg.language == "ja"
+
+
 class TestServicesConfigFromDict:
     def test_bi_platforms_key_is_parsed(self):
         cfg = ServicesConfig.from_dict({"bi_platforms": {"superset": {"type": "superset"}}})

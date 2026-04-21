@@ -229,6 +229,10 @@ class ChatTaskManager:
         # access, so force filesystem strict mode — every node constructed
         # below reads this flag via AgenticNode._resolve_filesystem_strict().
         agent_config.filesystem_strict = True
+        # Per-request response language override. Empty / None keeps the
+        # yaml-level ``agent.language`` default intact.
+        if request.language:
+            agent_config.language = request.language
         _fill_database_context(
             agent_config,
             catalog=request.catalog,

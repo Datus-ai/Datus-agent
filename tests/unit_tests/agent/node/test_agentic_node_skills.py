@@ -155,6 +155,7 @@ class TestFinalizeSystemPrompt:
         )
         node.skill_func_tool = None
         monkeypatch.setattr(node, "_inject_memory_context", lambda p, override_node_name=None: p)
+        monkeypatch.setattr(node, "_inject_response_language", lambda p: p)
 
         base_prompt = "This is the base system prompt."
         result = node._finalize_system_prompt(base_prompt)
@@ -198,6 +199,7 @@ class TestFinalizeSystemPrompt:
         node.skill_manager = skill_manager
         node.skill_func_tool = SkillFuncTool(manager=skill_manager, node_name="test_node")
         monkeypatch.setattr(node, "_inject_memory_context", lambda p, override_node_name=None: p)
+        monkeypatch.setattr(node, "_inject_response_language", lambda p: p)
 
         base_prompt = "This is the base system prompt."
         result = node._finalize_system_prompt(base_prompt)

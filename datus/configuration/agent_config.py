@@ -482,6 +482,11 @@ class AgentConfig:
         self.benchmark_configs: Dict[str, BenchmarkConfig] = {}
         self.schema_linking_rate = kwargs.get("schema_linking_rate", "fast")
         self.search_metrics_rate = kwargs.get("search_metrics_rate", "fast")
+        # Response language for model outputs (user-facing text). ``None`` (the
+        # default) means the model picks its own language per turn; set a code
+        # like "en"/"zh" in agent.yml or via ``StreamChatInput.language`` to pin
+        # every AgenticNode to a specific output language.
+        self.language = kwargs.get("language")
         self.db_type = ""
 
         # Benchmark paths are now fixed at {agent.home}/benchmark/{name}

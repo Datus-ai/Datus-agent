@@ -890,3 +890,49 @@ class TestCreateNodeCustomSubAgent:
         node = ChatTaskManager()._create_node(agent_config, "unknown", "s1")
         assert isinstance(node, _StubGenSQLNode)
         assert node.node_name == "unknown"
+
+
+class TestStartChatLanguageOverride:
+    """``StreamChatInput.language`` must land on the cloned config's
+    ``language`` attribute so every downstream AgenticNode sees it.
+
+    We short-circuit the async loop to avoid spinning up real nodes: the
+    override happens synchronously inside ``start_chat`` before
+    ``_run_loop`` is awaited.
+    """
+
+    @pytest.mark.asyncio
+    async def test_request_language_overrides_cloned_config(self, real_agent_config, monkeypatch):
+        from datus.api.models.cli_models import StreamChatInput
+
+        real_agent_config.language = "en"
+        captured = {}
+
+        async def fake_run_loop(self, task, agent_config, request, **kwargs):
+            captured["agent_config"] = agent_config
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
+        manager = ChatTaskManager()
+        request = StreamChatInput(message="hi", language="zh")
+        task = await manager.start_chat(real_agent_config, request)
+        await task.asyncio_task  # drain the fake loop
+        assert captured["agent_config"].language == "zh"
+        # Source config remains untouched because start_chat deep-copies.
+        assert real_agent_config.language == "en"
+
+    @pytest.mark.asyncio
+    async def test_missing_language_preserves_yaml_default(self, real_agent_config, monkeypatch):
+        from datus.api.models.cli_models import StreamChatInput
+
+        real_agent_config.language = "zh"
+        captured = {}
+
+        async def fake_run_loop(self, task, agent_config, request, **kwargs):
+            captured["agent_config"] = agent_config
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
+        manager = ChatTaskManager()
+        request = StreamChatInput(message="hi")  # no language field
+        task = await manager.start_chat(real_agent_config, request)
+        await task.asyncio_task
+        assert captured["agent_config"].language == "zh"

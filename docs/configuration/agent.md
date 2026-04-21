@@ -13,6 +13,23 @@ agent:
   target: openai  # Default model configuration key from models section
 ```
 
+### Response Language
+
+`language` is an **optional** field that pins the natural language used by every agentic node for **user-facing** outputs — replies, summaries, clarifying questions, sub-agent prompts issued via `task`, and prose written into files. Code, SQL, identifiers, file paths, URLs, and JSON keys stay in their original form regardless of the setting.
+
+When omitted, no directive is injected into the system prompt and the model picks its own response language per turn.
+
+```yaml
+agent:
+  # Leave it out entirely to let the model decide.
+  # Set a code to pin every agentic node to that language.
+  language: zh   # Common codes: en, zh, ja, ko, es, fr, de, pt, ru, it
+```
+
+Built-in code → name mapping (injected into the system prompt): `en` → English, `zh` / `zh-cn` → Chinese, `zh-tw` → Traditional Chinese, `ja` → Japanese, `ko` → Korean, `es` → Spanish, `fr` → French, `de` → German, `pt` → Portuguese, `ru` → Russian, `it` → Italian. Unknown codes are used verbatim.
+
+Chat API requests can override this per task by sending a `language` field in the request body (see [Chat API](../API/chat.md)). CLI usage inherits the yaml default.
+
 ### Models Configuration
 
 Configure LLM providers that your agent can use. Each model configuration includes the provider type, API endpoints, credentials, and specific model names.

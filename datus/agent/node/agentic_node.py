@@ -39,6 +39,33 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+_LANGUAGE_NAME_MAP: Dict[str, str] = {
+    "en": "English",
+    "zh": "Chinese",
+    "zh-cn": "Chinese",
+    "zh-tw": "Traditional Chinese",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "es": "Spanish",
+    "fr": "French",
+    "de": "German",
+    "pt": "Portuguese",
+    "ru": "Russian",
+    "it": "Italian",
+}
+
+
+def _resolve_language_name(code: str) -> str:
+    """Map a language code (e.g. ``"zh"``) to a human-readable name.
+
+    Unknown codes are returned as-is so operators can plug in custom values
+    without a code change.
+    """
+    if not code:
+        return "English"
+    return _LANGUAGE_NAME_MAP.get(code.strip().lower(), code)
+
+
 class AgenticNode(Node):
     """
     Base agentic node that provides session-based, streaming interactions
@@ -261,6 +288,36 @@ class AgenticNode(Node):
         # Inject memory context for eligible nodes.
         base_prompt = self._inject_memory_context(base_prompt, override_node_name=memory_node_name_override)
 
+        # Inject response language policy so every agentic node — including
+        # sub-agents invoked via ``task`` — honors the configured output language.
+        base_prompt = self._inject_response_language(base_prompt)
+
+        return base_prompt
+
+    def _inject_response_language(self, base_prompt: str) -> str:
+        """Append a language directive driven by ``agent_config.language``.
+
+        When ``language`` is unset (``None`` or empty), this is a no-op so the
+        model decides the response language on its own. Setting a code (e.g.
+        ``"en"``/``"zh"``) in yaml or via the Chat API pins every AgenticNode
+        to that output language through a single append hook.
+        """
+        language_raw = getattr(self.agent_config, "language", None)
+        if not language_raw or not str(language_raw).strip():
+            return base_prompt
+        language_code = str(language_raw).strip()
+        try:
+            language_section = get_prompt_manager(agent_config=self.agent_config).render_template(
+                template_name="response_language",
+                version=None,
+                language_code=language_code,
+                language_name=_resolve_language_name(language_code),
+            )
+        except Exception as e:
+            logger.warning(f"Failed to render response_language template: {e}")
+            return base_prompt
+        if language_section and language_section.strip():
+            base_prompt = base_prompt + "\n\n" + language_section
         return base_prompt
 
     def _inject_memory_context(self, base_prompt: str, override_node_name: Optional[str] = None) -> str:
