@@ -55,8 +55,8 @@ class ProbeModelRequest(BaseModel):
     base_url: Optional[str] = None
 
 
-class ProbeDatabaseRequest(BaseModel):
-    """Single database config dict — flat shape matching IDatabaseConfig."""
+class ProbeDatasourceRequest(BaseModel):
+    """Single datasource config dict — flat shape matching IDatasourceConfig."""
 
     model_config = {"extra": "allow"}
 
@@ -78,7 +78,7 @@ def _probe_llm_sync(payload: Dict[str, Any]) -> None:
     client.generate("Hello")
 
 
-def _probe_database_sync(payload: Dict[str, Any]) -> None:
+def _probe_datasource_sync(payload: Dict[str, Any]) -> None:
     """Build a one-shot connector from a raw dict and run a SELECT 1 probe."""
     from datus.tools.db_tools.db_manager import DBManager
 
@@ -143,7 +143,7 @@ async def get_agent_config_endpoint(
         data={
             "target": config.target,
             "models": config.models,
-            "current_database": config.current_namespace,
+            "current_datasource": config.current_namespace,
             "datasources": flat_datasources,
             "home": config.home,
         },
@@ -237,20 +237,20 @@ async def probe_model_connectivity_endpoint(
 
 
 @router.post(
-    "/config/databases/test",
+    "/config/datasources/test",
     response_model=Result[dict],
-    summary="Test Database Connectivity",
-    description="Run SELECT 1 against a database config to verify reachability and credentials.",
+    summary="Test Datasource Connectivity",
+    description="Run SELECT 1 against a datasource config to verify reachability and credentials.",
 )
-async def probe_database_connectivity_endpoint(
-    body: ProbeDatabaseRequest,
+async def probe_datasource_connectivity_endpoint(
+    body: ProbeDatasourceRequest,
     svc: ServiceDep,  # noqa: ARG001
 ) -> Result[dict]:
     """Return `{ok: True}` if the probe succeeds, else `{ok: False, message: ...}`."""
     payload = body.model_dump()
     try:
-        await asyncio.to_thread(_probe_database_sync, payload)
+        await asyncio.to_thread(_probe_datasource_sync, payload)
         return Result(success=True, data={"ok": True})
     except Exception as e:
-        logger.info(f"Database connectivity probe failed: {e}")
+        logger.info(f"Datasource connectivity probe failed: {e}")
         return Result(success=True, data={"ok": False, "message": str(e)})

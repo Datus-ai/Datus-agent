@@ -10,12 +10,12 @@ import pytest
 
 from datus.api.routes import config_routes
 from datus.api.routes.config_routes import (
-    ProbeDatabaseRequest,
+    ProbeDatasourceRequest,
     ProbeModelRequest,
     UpdateDatasourcesRequest,
     UpdateModelsRequest,
     get_agent_config_endpoint,
-    probe_database_connectivity_endpoint,
+    probe_datasource_connectivity_endpoint,
     probe_model_connectivity_endpoint,
     update_datasources_endpoint,
     update_models_endpoint,
@@ -23,23 +23,23 @@ from datus.api.routes.config_routes import (
 from datus.utils.exceptions import DatusException
 
 
-def _mock_svc(databases, *, target="deepseek", current_database="starrocks", models=None, home="~/.datus"):
+def _mock_svc(datasources, *, target="deepseek", current_datasource="starrocks", models=None, home="~/.datus"):
     svc = MagicMock()
     svc.agent_config.target = target
     svc.agent_config.models = models if models is not None else {}
-    svc.agent_config.current_namespace = current_database
-    svc.agent_config.namespaces = databases
+    svc.agent_config.current_namespace = current_datasource
+    svc.agent_config.namespaces = datasources
     svc.agent_config.home = home
     return svc
 
 
 @pytest.mark.asyncio
 async def test_get_agent_config_flattens_matching_inner_key():
-    """When inner key matches the database name, that entry is returned flat."""
+    """When inner key matches the datasource name, that entry is returned flat."""
     starrocks_cfg = {"logic_name": "starrocks", "type": "starrocks", "host": "h1"}
     starrocks22_cfg = {"logic_name": "starrocks22", "type": "starrocks", "host": "h2"}
     svc = _mock_svc(
-        databases={
+        datasources={
             "starrocks": {"starrocks": starrocks_cfg},
             "starrocks22": {"starrocks22": starrocks22_cfg},
         },
@@ -53,15 +53,15 @@ async def test_get_agent_config_flattens_matching_inner_key():
         "starrocks22": starrocks22_cfg,
     }
     assert result.data["target"] == "deepseek"
-    assert result.data["current_database"] == "starrocks"
+    assert result.data["current_datasource"] == "starrocks"
     assert result.data["home"] == "~/.datus"
 
 
 @pytest.mark.asyncio
 async def test_get_agent_config_falls_back_to_first_inner_value():
-    """When inner key does not match database name, first inner value is used."""
+    """When inner key does not match datasource name, first inner value is used."""
     inner_cfg = {"logic_name": "db_a", "type": "duckdb"}
-    svc = _mock_svc(databases={"my_db": {"db_a": inner_cfg}})
+    svc = _mock_svc(datasources={"my_db": {"db_a": inner_cfg}})
 
     result = await get_agent_config_endpoint(svc)
 
@@ -70,9 +70,9 @@ async def test_get_agent_config_falls_back_to_first_inner_value():
 
 @pytest.mark.asyncio
 async def test_get_agent_config_skips_empty_inner_dict():
-    """Databases with empty inner dicts are dropped from the response."""
+    """Datasources with empty inner dicts are dropped from the response."""
     real_cfg = {"logic_name": "real", "type": "duckdb"}
-    svc = _mock_svc(databases={"empty": {}, "real": {"real": real_cfg}})
+    svc = _mock_svc(datasources={"empty": {}, "real": {"real": real_cfg}})
 
     result = await get_agent_config_endpoint(svc)
 
@@ -80,8 +80,8 @@ async def test_get_agent_config_skips_empty_inner_dict():
 
 
 @pytest.mark.asyncio
-async def test_get_agent_config_handles_empty_databases():
-    svc = _mock_svc(databases={})
+async def test_get_agent_config_handles_empty_datasources():
+    svc = _mock_svc(datasources={})
 
     result = await get_agent_config_endpoint(svc)
 
@@ -334,17 +334,17 @@ async def test_test_model_connectivity_passes_extra_fields(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_test_database_connectivity_ok(monkeypatch):
-    """Successful DB probe returns ok=True and forwards the payload unchanged."""
+async def test_test_datasource_connectivity_ok(monkeypatch):
+    """Successful datasource probe returns ok=True and forwards the payload unchanged."""
     captured = {}
 
     def fake_probe(payload):
         captured["payload"] = payload
 
-    monkeypatch.setattr(config_routes, "_probe_database_sync", fake_probe)
+    monkeypatch.setattr(config_routes, "_probe_datasource_sync", fake_probe)
 
-    body = ProbeDatabaseRequest.model_validate({"type": "duckdb", "uri": "/tmp/test.duckdb"})
-    result = await probe_database_connectivity_endpoint(body, svc=MagicMock())
+    body = ProbeDatasourceRequest.model_validate({"type": "duckdb", "uri": "/tmp/test.duckdb"})
+    result = await probe_datasource_connectivity_endpoint(body, svc=MagicMock())
 
     assert result.data == {"ok": True}
     assert captured["payload"]["type"] == "duckdb"
@@ -352,16 +352,16 @@ async def test_test_database_connectivity_ok(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_test_database_connectivity_reports_error_message(monkeypatch):
+async def test_test_datasource_connectivity_reports_error_message(monkeypatch):
     """Probe exception is surfaced as ok=False with message; HTTP stays 200."""
 
     def fake_probe(payload):
         raise RuntimeError("connection refused")
 
-    monkeypatch.setattr(config_routes, "_probe_database_sync", fake_probe)
+    monkeypatch.setattr(config_routes, "_probe_datasource_sync", fake_probe)
 
-    body = ProbeDatabaseRequest.model_validate({"type": "starrocks", "host": "unreachable", "port": "9999"})
-    result = await probe_database_connectivity_endpoint(body, svc=MagicMock())
+    body = ProbeDatasourceRequest.model_validate({"type": "starrocks", "host": "unreachable", "port": "9999"})
+    result = await probe_datasource_connectivity_endpoint(body, svc=MagicMock())
 
     assert result.data["ok"] is False
     assert "connection refused" in result.data["message"]
