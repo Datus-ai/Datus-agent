@@ -85,7 +85,11 @@ def run_project_init(base_config: AgentConfig, cwd: Optional[str] = None) -> Pro
     console.print()
     console.print("[bold]- Select default datasource (from agent.yml):[/]")
     db_choices = {name: f"{name}  ({cfg.type})" for name, cfg in base_config.services.datasources.items()}
-    db_default = base_config.services.default_datasource or next(iter(db_choices))
+    db_default = (
+        base_config.services.default_datasource
+        if base_config.services.default_datasource in db_choices
+        else next(iter(db_choices))
+    )
     default_datasource = select_choice(console, db_choices, default=db_default)
     if not default_datasource:
         default_datasource = db_default

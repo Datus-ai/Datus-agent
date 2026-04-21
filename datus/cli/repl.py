@@ -1058,8 +1058,10 @@ class DatusCLI:
             self._cmd_list_namespaces()
             return
         else:
-            self.agent_config.current_datasource = args.strip()
-            name, self.db_connector = self.db_manager.first_conn_with_name(self.agent_config.current_datasource)
+            next_datasource = args.strip()
+            name, connector = self.db_manager.first_conn_with_name(next_datasource)
+            self.agent_config.current_datasource = next_datasource
+            self.db_connector = connector
             db_name = self.db_connector.database_name
             db_logic_name = name or self.agent_config.current_datasource
             self.cli_context.update_database_context(

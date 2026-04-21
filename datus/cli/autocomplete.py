@@ -561,7 +561,6 @@ class TableCompleter(DynamicAtReferenceCompleter):
         storage = SchemaWithValueRAG(self.agent_config, sub_agent_name=self.sub_agent_name or None)
         try:
             schema_table = storage.search_all_schemas(
-                # database_name=self.agent_config.current_datasource,
                 select_fields=[
                     "catalog_name",
                     "database_name",

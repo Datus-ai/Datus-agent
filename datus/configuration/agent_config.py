@@ -1117,7 +1117,7 @@ class AgentConfig:
         if not self._current_datasource and not self.services.datasources:
             raise DatusException(
                 code=ErrorCode.COMMON_FIELD_REQUIRED,
-                message="Database is required, please run with --database <database>",
+                message="Datasource is required, please run with --datasource <datasource>",
             )
         return self.services.datasources
 

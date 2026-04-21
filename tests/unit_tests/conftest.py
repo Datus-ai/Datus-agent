@@ -240,7 +240,7 @@ def real_agent_config(tmp_path, reset_global_singletons):
     nodes: dict[str, NodeConfig] = {}
     agent_config = AgentConfig(nodes=nodes, **config_kwargs)
 
-    # Set current database (was: current_datasource = "test_ns")
+    # Set current datasource (was: current_namespace = "test_ns")
     agent_config.current_datasource = "california_schools"
 
     yield agent_config
