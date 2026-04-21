@@ -375,7 +375,7 @@ graph LR
     C --> D[Reads measures]
     D --> E[Checks for duplicates]
     E --> F[Generates metric YAML]
-    F --> G[Appends to file]
+    F --> G[Writes metric to metrics file]
     G --> H[Validates]
     H --> I[User confirms]
     I --> J[Syncs to Knowledge Base]
@@ -596,7 +596,7 @@ The metrics generation feature provides:
 - ✅ **Validation**: MetricFlow validation ensures correctness
 - ✅ **Interactive Workflow**: Review and approve before syncing
 - ✅ **Knowledge Base Integration**: Semantic search for metric discovery
-- ✅ **File Management**: Appends to existing semantic model files safely
+- ✅ **File Management**: Maintains dedicated per-table metrics files under `metrics/`
 
 ---
 

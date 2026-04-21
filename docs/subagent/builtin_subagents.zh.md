@@ -374,7 +374,7 @@ graph LR
     C --> D[读取度量]
     D --> E[检查重复]
     E --> F[生成指标 YAML]
-    F --> G[追加到文件]
+    F --> G[写入指标文件]
     G --> H[验证]
     H --> I[用户确认]
     I --> J[同步到知识库]
@@ -573,7 +573,7 @@ metric:
 - 指标可以独立于底层语义模型维护
 - MetricFlow 会把 semantic_models 目录下所有 YAML 文档一起验证
 
-更多细节见 [gen_metrics](gen_metrics.md)。
+更多细节见 [gen_metrics](gen_metrics.zh.md)。
 
 #### 知识库存储
 
