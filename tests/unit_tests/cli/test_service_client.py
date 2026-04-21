@@ -361,6 +361,27 @@ class TestServiceClientRegistry:
             # list_services itself triggers invalidation.
             assert registry.list_services()[0][2] == "configured"
 
+    def test_missing_adapter_status_beats_active_even_with_cached_client(self):
+        """A cached ServiceClient does not imply the adapter is usable.
+
+        ``dispatch`` has to build the wrapper to run the preflight probe,
+        which puts the client in ``_clients``. Without the fix,
+        ``.services`` would then report the service as ``active`` even
+        though any invocation would fail with "adapter not installed".
+        """
+        cfg = _fake_agent_config(bi_tools={"broken": {}})
+        with patch.dict("datus.cli.service_client._PROBES", {"bi_tools": lambda c, n: False}):
+            registry = ServiceClientRegistry(cfg)
+            # Simulate a prior dispatch that built the lightweight wrapper.
+            registry._clients["broken"] = ServiceClient(
+                service_type="bi_tools",
+                service_name="broken",
+                tool_instance=_FakeBITool(),
+                method_names=READ_METHODS["bi_tools"],
+            )
+            rows = registry.list_services()
+        assert rows[0] == ("broken", "bi_tools", "missing adapter")
+
     def test_missing_adapter_status_when_probe_fails(self):
         """Probe failing → status is 'missing adapter'."""
         cfg = _fake_agent_config(bi_tools={"superset": {}})

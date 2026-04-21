@@ -413,12 +413,19 @@ class ServiceClientRegistry:
         self._invalidate_if_stale()
         out: List[Tuple[str, str, str]] = []
         for key, (section, original_name) in sorted(self._entries.items()):
-            if key in self._clients:
-                status = "active"
-            elif self.adapter_available(original_name):
-                status = "configured"
-            else:
+            # Adapter availability is the source of truth for "is this
+            # usable?". A ServiceClient in ``_clients`` only means the
+            # lightweight wrapper has been constructed — the *FuncTool
+            # constructors are lazy, so a client can exist for a service
+            # whose platform adapter is missing (e.g. ``dispatch`` built
+            # one before the preflight hint fired). Check probe first so
+            # we never call such services "active".
+            if not self.adapter_available(original_name):
                 status = "missing adapter"
+            elif key in self._clients:
+                status = "active"
+            else:
+                status = "configured"
             out.append((original_name, section, status))
         return out
 
