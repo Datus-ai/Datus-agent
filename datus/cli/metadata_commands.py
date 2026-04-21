@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 from rich.box import SIMPLE_HEAD
 from rich.panel import Panel
-from rich.table import Table
 
+from datus.cli._render_utils import build_row_table
 from datus.tools.db_tools import connector_registry
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
@@ -87,19 +87,19 @@ class MetadataCommands:
                 self.cli.console.print("[yellow]Empty set.[/]")
                 return
 
-            # Display results
-            table = Table(title="Databases", show_header=True, header_style="bold green")
+            # Display results via the shared row-table helper so styling
+            # matches ``.<service>.list_*`` output.
             if show_uri:
-                table.add_column("Logic Name(Used for switch)")
-                table.add_column("Database Name")
-                table.add_column("URI")
-                for db_config in result:
-                    table.add_row(db_config["logic_name"], db_config["name"], db_config["uri"])
+                columns = [
+                    ("logic_name", "Logic Name(Used for switch)"),
+                    ("name", "Database Name"),
+                    ("uri", "URI"),
+                ]
             else:
-                table.add_column("Name")
-                for db_config in result:
-                    table.add_row(db_config["name"])
-            self.cli.console.print(table)
+                columns = [("name", "Name")]
+            table = build_row_table(result, title="Databases", columns=columns)
+            if table is not None:
+                self.cli.console.print(table)
 
         except Exception as e:
             logger.error(f"Database listing error: {str(e)}")
@@ -166,15 +166,14 @@ class MetadataCommands:
             )
             self.cli.last_result = result
             if result:
-                # Display results
-                table = Table(
-                    show_header=True,
-                    header_style="bold green",
+                # Display results via the shared row-table helper. The
+                # connector returns a list of names; wrap as single-field
+                # dicts so ``build_row_table`` can label the column.
+                table = build_row_table(
+                    [{"name": row} for row in result],
+                    columns=[("name", "Table Name")],
                 )
-                # Add columns
-                table.add_column("Table Name")
-                for row in result:
-                    table.add_row(row)
+                assert table is not None  # non-empty input, helper returns Table
                 if self.cli.cli_context.current_schema:
                     if self.cli.cli_context.current_db_name:
                         show_name = f"{self.cli.cli_context.current_db_name}.{self.cli.cli_context.current_schema}"
@@ -203,15 +202,12 @@ class MetadataCommands:
         )
         self.cli.last_result = result
         if result:
-            # Display results
-            table = Table(
-                show_header=True,
-                header_style="bold green",
+            # Display results via the shared row-table helper.
+            table = build_row_table(
+                [{"name": row} for row in result],
+                columns=[("name", "Schema Name")],
             )
-            # Add columns
-            table.add_column("Schema Name")
-            for row in result:
-                table.add_row(row)
+            assert table is not None
             if self.cli.cli_context.current_catalog:
                 if self.cli.cli_context.current_db_name:
                     show_name = f"{self.cli.cli_context.current_catalog}.{self.cli.cli_context.current_db_name}"
@@ -260,30 +256,23 @@ class MetadataCommands:
                 )
                 self.cli.last_result = result
 
-                # Display schema for the specific table
-                schema_table = Table(
+                # Display schema for the specific table via the shared helper.
+                schema_table = build_row_table(
+                    result,
                     title=f"Schema for {table_name}",
-                    show_header=True,
-                    header_style="bold green",
+                    columns=[
+                        ("cid", "Column Position"),
+                        ("name", "Name"),
+                        ("type", "Type"),
+                        ("nullable", "Nullable"),
+                        ("default_value", "Default"),
+                        ("pk", "PK"),
+                    ],
                 )
-                schema_table.add_column("Column Position")
-                schema_table.add_column("Name")
-                schema_table.add_column("Type")
-                schema_table.add_column("Nullable")
-                schema_table.add_column("Default")
-                schema_table.add_column("PK")
-
-                for row in result:
-                    schema_table.add_row(
-                        str(row.get("cid", "")),
-                        str(row.get("name", "")),
-                        str(row.get("type", "")),
-                        str(row.get("nullable", "")),
-                        str(row.get("default_value", "")) if row.get("default_value") is not None else "",
-                        str(row.get("pk", "")),
-                    )
-
-                self.cli.console.print(schema_table)
+                if schema_table is not None:
+                    self.cli.console.print(schema_table)
+                else:
+                    self.cli.console.print("[yellow]Empty set.[/]")
             else:
                 # List all tables with basic schema info
                 table_names = self.cli.db_connector.get_tables(
@@ -339,18 +328,12 @@ class MetadataCommands:
                     return
 
                 indexes = result.sql_return.replace({np.nan: None}).to_dict(orient="records")
-                if indexes:
-                    index_table = Table(title=f"Indexes for {table_name}")
-                    index_table.add_column("Index Name")
-                    for idx in indexes:
-                        # Handle both dict and tuple formats
-                        if isinstance(idx, dict):
-                            index_name = idx.get("name", str(idx))
-                        elif isinstance(idx, (list, tuple)) and len(idx) > 0:
-                            index_name = idx[0]
-                        else:
-                            index_name = str(idx)
-                        index_table.add_row(index_name)
+                index_table = build_row_table(
+                    indexes,
+                    title=f"Indexes for {table_name}",
+                    columns=[("name", "Index Name")],
+                )
+                if index_table is not None:
                     self.cli.console.print(index_table)
                 else:
                     self.cli.console.print(f"[yellow]Table {table_name} has no indexes[/]")

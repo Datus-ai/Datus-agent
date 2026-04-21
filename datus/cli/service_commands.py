@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from rich.table import Table
 
+from datus.cli._render_utils import build_row_table
 from datus.cli.service_client import ServiceClient, ServiceClientRegistry, service_type_label
 from datus.utils.loggings import get_logger
 
@@ -208,43 +209,17 @@ class ServiceCommands:
     def _render_payload_as_table(self, payload: Any) -> bool:
         """Render ``payload`` as a Rich table if it looks like rows.
 
-        Returns ``True`` when a table was printed so the caller skips the
-        JSON fallback. Uses the union of keys seen across rows (in first
-        appearance order) for column order — tolerates rows with sparse or
-        extra fields without dropping data.
+        Delegates to the shared ``build_row_table`` helper so the visual
+        style matches ``.tables`` / ``.databases``. Returns ``True`` when a
+        table was printed so the caller skips the JSON fallback. Column
+        set is inferred from the union of dict keys (first-appearance
+        order) — tolerant of sparse rows from arbitrary service adapters.
         """
-        if not isinstance(payload, list) or not payload:
+        table = build_row_table(payload)
+        if table is None:
             return False
-        if not all(isinstance(item, dict) for item in payload):
-            return False
-
-        columns: List[str] = []
-        seen = set()
-        for item in payload:
-            for k in item.keys():
-                if k not in seen:
-                    seen.add(k)
-                    columns.append(k)
-        if not columns:
-            return False
-
-        table = Table(show_header=True, header_style="bold green")
-        for col in columns:
-            table.add_column(str(col))
-        for item in payload:
-            table.add_row(*(self._format_cell(item.get(col)) for col in columns))
         self.cli.console.print(table)
         return True
-
-    @staticmethod
-    def _format_cell(value: Any) -> str:
-        if value is None:
-            return ""
-        if isinstance(value, bool):
-            return "true" if value else "false"
-        if isinstance(value, (dict, list)):
-            return json.dumps(value, ensure_ascii=False, default=str)
-        return str(value)
 
     # ------------------------------------------------------------------ #
     # Invocation
