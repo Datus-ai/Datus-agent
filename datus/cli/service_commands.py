@@ -22,6 +22,7 @@ that method does not belong in the CLI allow-list.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import inspect
 import json
@@ -39,8 +40,6 @@ if TYPE_CHECKING:
     from datus.cli.repl import DatusCLI
 
 logger = get_logger(__name__)
-
-_INVOCATION_TIMEOUT_SEC = 60.0
 
 
 class ServiceCommands:
@@ -292,14 +291,39 @@ class ServiceCommands:
         if t == "boolean":
             return raw.strip().lower() in ("1", "true", "yes", "y")
         if t == "array":
-            stripped = raw.strip()
-            if stripped.startswith("["):
+            return cls._coerce_collection(raw, expect=list)
+        if t == "object":
+            return cls._coerce_collection(raw, expect=dict)
+        return raw
+
+    @staticmethod
+    def _coerce_collection(raw: str, *, expect: type) -> Any:
+        """Coerce ``raw`` to ``expect`` (``list`` or ``dict``).
+
+        Attempts, in order:
+
+        1. ``json.loads`` — standard JSON form (``["a"]`` / ``{"k": 1}``).
+        2. ``ast.literal_eval`` — Python literal form which tolerates single
+           quotes and ``None`` / ``True``. LLMs and humans frequently emit
+           ``--metrics=['sales']`` or ``--ctx={'k': 'v'}``; JSON rejects both.
+        3. For arrays only: CSV fallback (``a,b,c`` → ``["a", "b", "c"]``).
+           For objects, a parse failure returns the raw string so the tool
+           can surface a clearer type error than a silently mangled value.
+        """
+        stripped = raw.strip()
+        if stripped and stripped[0] in "[{":
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                parsed = None
+            if parsed is None:
                 try:
-                    parsed = json.loads(stripped)
-                    if isinstance(parsed, list):
-                        return parsed
-                except json.JSONDecodeError:
-                    pass
+                    parsed = ast.literal_eval(stripped)
+                except (SyntaxError, ValueError):
+                    parsed = None
+            if isinstance(parsed, expect):
+                return parsed
+        if expect is list:
             return [item.strip() for item in raw.split(",") if item.strip()]
         return raw
 
@@ -368,10 +392,20 @@ class ServiceCommands:
     # ------------------------------------------------------------------ #
 
     def _run_async(self, coro) -> Any:
-        """Run the coroutine on the CLI's background loop and block for the result."""
-        bg_loop = getattr(self.cli, "_bg_loop", None)
-        if bg_loop is None or not bg_loop.is_running():
-            # No background loop (e.g. in a unit test); use a fresh loop.
-            return asyncio.run(coro)
-        future = asyncio.run_coroutine_threadsafe(coro, bg_loop)
-        return future.result(timeout=_INVOCATION_TIMEOUT_SEC)
+        """Run the tool coroutine on a fresh private loop.
+
+        ``ServiceCommands`` is invoked synchronously from the REPL thread.
+        The allow-listed service methods are synchronous Python (typically a
+        blocking HTTP call into Superset/Airflow/MetricFlow) and
+        ``trans_to_function_tool`` runs them inline inside the coroutine.
+        Scheduling this on the shared ``DatusCLI._bg_loop`` would freeze
+        every *other* background task (``_async_init_agent``, session
+        writes, etc.) for the full duration of the sync call — the 60s
+        ``future.result`` timeout only unblocks the REPL; it does not
+        interrupt the sync call still running on the loop thread.
+
+        Using ``asyncio.run`` creates a private event loop that lives only
+        for this one invocation and is torn down when we return, so a slow
+        or hanging backend call cannot leak into the shared loop.
+        """
+        return asyncio.run(coro)

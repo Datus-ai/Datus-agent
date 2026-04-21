@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from datus.cli.service_client import READ_METHODS, ServiceClient, ServiceClientRegistry
 from datus.cli.service_commands import ServiceCommands
@@ -210,6 +210,52 @@ class TestArgParser:
         parsed = cmd._parse_args("--limit=42", schema)
         assert parsed == {"limit": 42}
 
+    def test_parse_array_python_literal_single_quoted(self):
+        """``--metrics=['sales']`` is valid Python literal but invalid JSON."""
+        cmd = ServiceCommands(_fake_cli())
+        schema = {"properties": {"metrics": {"type": "array"}}}
+        parsed = cmd._parse_args("\"--metrics=['sales','revenue']\"", schema)
+        assert parsed == {"metrics": ["sales", "revenue"]}
+
+    def test_parse_object_type_json(self):
+        """Object parameters accept standard JSON."""
+        cmd = ServiceCommands(_fake_cli())
+        schema = {"properties": {"ctx": {"type": "object"}}}
+        parsed = cmd._parse_args('\'--ctx={"dim": "region", "metric": "revenue"}\'', schema)
+        assert parsed == {"ctx": {"dim": "region", "metric": "revenue"}}
+
+    def test_parse_object_type_python_literal(self):
+        """Object parameters also accept Python-literal form (single quotes)."""
+        cmd = ServiceCommands(_fake_cli())
+        schema = {"properties": {"ctx": {"type": "object"}}}
+        parsed = cmd._parse_args("\"--ctx={'dim': 'region'}\"", schema)
+        assert parsed == {"ctx": {"dim": "region"}}
+
+    def test_parse_object_malformed_falls_back_to_raw(self):
+        """Unparseable object input returns raw string so downstream can complain clearly."""
+        cmd = ServiceCommands(_fake_cli())
+        schema = {"properties": {"ctx": {"type": "object"}}}
+        parsed = cmd._parse_args("--ctx=not-a-dict", schema)
+        assert parsed == {"ctx": "not-a-dict"}
+
+    def test_parse_array_malformed_json_falls_back_to_csv(self):
+        """Truly broken brackets fall through to CSV split."""
+        cmd = ServiceCommands(_fake_cli())
+        schema = {"properties": {"items": {"type": "array"}}}
+        parsed = cmd._parse_args("--items=a,b,c", schema)
+        assert parsed == {"items": ["a", "b", "c"]}
+
+    def test_coerce_helper_directly_for_array(self):
+        assert ServiceCommands._coerce("['a','b']", {"type": "array"}) == ["a", "b"]
+        assert ServiceCommands._coerce('["a","b"]', {"type": "array"}) == ["a", "b"]
+        assert ServiceCommands._coerce("a,b", {"type": "array"}) == ["a", "b"]
+
+    def test_coerce_helper_directly_for_object(self):
+        assert ServiceCommands._coerce('{"k": 1}', {"type": "object"}) == {"k": 1}
+        assert ServiceCommands._coerce("{'k': 1}", {"type": "object"}) == {"k": 1}
+        # Malformed falls through to raw.
+        assert ServiceCommands._coerce("not-a-dict", {"type": "object"}) == "not-a-dict"
+
     def test_primary_type_helper(self):
         assert ServiceCommands._primary_type({"type": "integer"}) == "integer"
         assert ServiceCommands._primary_type({"type": ["string", "null"]}) == "string"
@@ -307,7 +353,15 @@ class TestAsyncExecution:
         result = cmd._run_async(_async_result())
         assert result == "ok"
 
-    def test_run_async_with_bg_loop_schedules_there(self):
+    def test_run_async_never_touches_shared_bg_loop(self):
+        """Service calls must NOT be scheduled on ``DatusCLI._bg_loop``.
+
+        That loop hosts ``_async_init_agent`` and session-write tasks; a slow
+        synchronous service method (HTTP call) would freeze every other
+        task on it for its full duration. ``_run_async`` must use a
+        private loop (``asyncio.run``) regardless of whether ``_bg_loop``
+        is a running loop.
+        """
         import asyncio
         import threading
 
@@ -315,17 +369,27 @@ class TestAsyncExecution:
         thread = threading.Thread(target=bg_loop.run_forever, daemon=True)
         thread.start()
         try:
+            # Spy that records whether anything was scheduled on bg_loop.
+            scheduled = []
+            original = bg_loop.call_soon_threadsafe
+
+            def _tracking(callback, *args):
+                scheduled.append(callback)
+                return original(callback, *args)
+
+            bg_loop.call_soon_threadsafe = _tracking  # type: ignore[assignment]
+
             cli = _fake_cli()
             cli._bg_loop = bg_loop
             cmd = ServiceCommands(cli)
 
             async def _async_result():
-                return "from-bg"
+                return "private-loop"
 
-            with patch.object(cmd, "_run_async", wraps=cmd._run_async) as spy:
-                res = cmd._run_async(_async_result())
-                assert res == "from-bg"
-                assert spy.call_count == 1
+            result = cmd._run_async(_async_result())
+            assert result == "private-loop"
+            assert scheduled == [], "service call leaked onto shared bg_loop"
         finally:
-            bg_loop.call_soon_threadsafe(bg_loop.stop)
+            bg_loop.call_soon_threadsafe = original  # type: ignore[assignment]
+            original(bg_loop.stop)
             thread.join(timeout=2)
