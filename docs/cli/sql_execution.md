@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-Besides the magic commands (`/`, `@`, `!`), Datus-CLI can also act as a traditional SQL client. You can directly run SQL queries and explore database metadata with built-in metadata commands (`.tables`, `.databases`, `.schemas`, etc.).
+Besides the magic commands (`/`, `@`, `!`), Datus-CLI can also act as a traditional SQL client. You can directly run SQL queries and explore database metadata with built-in metadata commands (`/tables`, `/databases`, `/schemas`, etc.).
 
 We use a set of built-in Metadata Commands to provide a unified way to access metadata across all databases — but the native commands like `SHOW DATABASES` or `DESCRIBE TABLES` are still available and can be used as well.
 
@@ -37,13 +37,13 @@ Returned 5 rows in 0.01 seconds
 Use the built-in metadata commands to explore your database structure:
 
 ```bash
-.databases                       # List all databases
-.database <database_name>        # Switch current database
-.schemas                         # List all schemas (or show details)
-.schema <schema_name>            # Switch current schema
-.tables                          # List all tables in current schema
-.table_schema <table_name>       # Show table structure
-.indexes <table_name>            # Show table indexes
+/databases                       # List all databases
+/database <database_name>        # Switch current database
+/schemas                         # List all schemas (or show details)
+/schema <schema_name>            # Switch current schema
+/tables                          # List all tables in current schema
+/table_schema <table_name>       # Show table structure
+/indexes <table_name>            # Show table indexes
 ```
 
 Use these commands to quickly inspect your data environment while chatting or debugging SQL.
@@ -89,18 +89,18 @@ Results can be exported in various formats:
 ### Query Optimization
 
 1. **Use LIMIT** for exploratory queries on large tables
-2. **Index awareness**: Check `.indexes` before writing complex JOINs
-3. **Schema understanding**: Use `.table_schema` to understand data types
+2. **Index awareness**: Check `/indexes` before writing complex JOINs
+3. **Schema understanding**: Use `/table_schema` to understand data types
 4. **Performance monitoring**: Pay attention to execution times
 
 ### Metadata Exploration Workflow
 
-1. Start with `.databases` to see available databases
-2. Switch to target database with `.database <name>`
-3. Explore schemas with `.schemas`
-4. List tables with `.tables`
-5. Examine specific table structure with `.table_schema <table>`
-6. Check indexes for performance with `.indexes <table>`
+1. Start with `/databases` to see available databases
+2. Switch to target database with `/database <name>`
+3. Explore schemas with `/schemas`
+4. List tables with `/tables`
+5. Examine specific table structure with `/table_schema <table>`
+6. Check indexes for performance with `/indexes <table>`
 
 ### Integration with Chat
 
@@ -118,6 +118,6 @@ ORDER BY revenue DESC
 LIMIT 10;
 
 # Follow up with context injection
-@catalog customers
+/catalog customers
 / Now show me their contact information
 ```

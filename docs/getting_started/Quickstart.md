@@ -193,7 +193,7 @@ datus-cli --database duckdb-demo
 Initializing AI capabilities in background...
 
 Datus - AI-powered SQL command-line interface
-Type '.help' for a list of commands or '.exit' to quit.
+Type '/help' for a list of commands or '/exit' to quit.
 
 Database duckdb-demo selected
 Connected to duckdb-demo using database duckdb-demo
@@ -210,7 +210,7 @@ Datus>
 List all tables:
 
 ```bash title="Terminal"
-Datus> .tables
+Datus> /tables
 ```
 ```{ .yaml .no-copy }
 Tables in Database duckdb-demo
@@ -636,7 +636,7 @@ Datus will automatically analyze the table and add metadata to the context.
     ```
 
 !!! tip
-    For more command references and options, see [CLI](../cli/introduction.md) or simply type `.help`.
+    For more command references and options, see [CLI](../cli/introduction.md) or simply type `/help`.
 
 ## Next Steps
 

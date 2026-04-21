@@ -289,7 +289,7 @@ created_at: "2025-01-15T10:00:00Z"
 
 #### Step 5: Verify the Result
 
-Start the cli, first use `@subject` to browse the generated knowledge entries, then test with the original question:
+Start the cli, first use `/subject` to browse the generated knowledge entries, then test with the original question:
 
 ```bash
 datus-agent --database california_schools
@@ -297,7 +297,7 @@ datus-agent --database california_schools
 
 ```
 # Browse the knowledge tree and entries
-Datus> @subject
+Datus> /subject
 # Should show Education/SAT/Administrators and Education/SAT/Scores with the generated knowledge entries
 ```
 
@@ -362,5 +362,5 @@ Approve to save the entry to the Knowledge Base. You can also decline and edit t
 ### Tips
 
 1. **Emphasize knowledge usage when verifying**: When testing in the CLI, add "Please search the knowledge base first" to your question to ensure the agent uses stored knowledge rather than relying solely on its own reasoning.
-2. **Pre-build subject tree**: Create the subject tree structure in advance via `@subject`. Subsequent runs without `--subject_tree` will automatically reuse existing categories (learning mode), giving you control over taxonomy without requiring `subject_path` in every CSV row.
+2. **Pre-build subject tree**: Create the subject tree structure in advance via `/subject`. Subsequent runs without `--subject_tree` will automatically reuse existing categories (learning mode), giving you control over taxonomy without requiring `subject_path` in every CSV row.
 3. **Iterate for stability**: Run bootstrap multiple times with `incremental` mode. Each run may produce improved knowledge entries, and the upsert mechanism ensures existing entries are updated with better content.

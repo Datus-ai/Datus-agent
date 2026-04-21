@@ -299,7 +299,7 @@ class MetadataCommands:
                 for idx, table_name in enumerate(table_names):
                     self.cli.console.print(f"{idx + 1}. {table_name}")
 
-                self.cli.console.print("\n[dim]Use .schemas [table_name] to view detailed schema.[/]")
+                self.cli.console.print("\n[dim]Use /schemas [table_name] to view detailed schema.[/]")
 
         except Exception as e:
             logger.error(f"Schema listing error: {str(e)}")

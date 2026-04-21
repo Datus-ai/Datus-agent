@@ -21,7 +21,7 @@ from pygments.token import Token
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
 from datus.tools.db_tools import connector_registry
-from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS, DBType
+from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 from datus.utils.path_utils import get_file_fuzzy_matches
 from datus.utils.reference_paths import REFERENCE_PATH_REGEX, normalize_reference_path
@@ -171,56 +171,26 @@ class SQLCompleter(Completer):
         self.at_cmds = ["table", "metric"]
 
     def _get_command_completions(self) -> Dict:
-        """Get a nested completer for command completions."""
+        """Return tool-command prefixes for the fallback Word-style completer.
+
+        Slash commands are handled by :class:`SlashCommandCompleter` which
+        reads :data:`datus.cli.slash_registry.SLASH_COMMANDS` directly, so
+        they must not be duplicated here.
+        """
+
         return {
-            # Tool commands
+            # Tool commands (! prefix)
             "!": None,
-            # "!darun": None,
-            # "!dastart": None,
             "!sl": None,
             "!schema_linking": None,
             "!sq": None,
             "!search_sql": None,
             "!sm": None,
             "!search_metrics": None,
-            # "!gen": None,
-            # "!run": None,
-            # "!fix": None,
-            # "!rf": None,
-            # "!reason": None,
+            "!sd": None,
+            "!search_document": None,
             "!save": None,
             "!bash": None,
-            # "!daend": None,
-            # Context commands
-            "@catalog": None,
-            "@subject": None,
-            # Internal commands
-            ".help": None,
-            ".exit": None,
-            ".quit": None,
-            ".clear": None,
-            ".chat_info": None,
-            ".compact": None,
-            ".sessions": None,
-            # temporary commands for sqlite, remove after mcp server is ready
-            ".databases": None,
-            ".database": None,
-            ".tables": None,
-            ".schemas": None,
-            ".schema": None,
-            ".table_schema": None,
-            ".indexes": None,
-            # ".show": None,
-            ".namespace": None,
-            ".mcp": None,
-            ".agent": None,
-            ".subagent": None,
-            ".subagent list": None,
-            ".subagent add": None,
-            ".subagent update": None,
-            ".subagent remove": None,
-            ".subagent bootstrap": None,
-            ".bootstrap-bi": None,
         }
 
     def update_tables(self, tables: Dict[str, List[str]]):
@@ -1045,80 +1015,42 @@ class AtReferenceCompleter(Completer):
         yield from self.completer_dict[type_].get_completions(path_document, complete_event)
 
 
-class SubagentCompleter(Completer):
-    """Completer for /subagent commands."""
+class SlashCommandCompleter(Completer):
+    """Top-level ``/command`` completer driven by :data:`SLASH_COMMANDS`.
 
-    def __init__(self, agent_config: AgentConfig):
-        """Initialize with agent configuration."""
-        self.agent_config = agent_config
-        self._available_subagent = []
-        self.refresh()
-
-    def refresh(self):
-        self._available_subagents = self._load_subagents()
-
-    def _load_subagents(self) -> List[str]:
-        """Load available subagents from configuration and include built-in subagents.
-
-        Excludes ``HIDDEN_SYS_SUB_AGENTS`` (e.g. ``feedback``) from the completion
-        list so meta/internal agents don't clutter the user-facing picker,
-        while remaining invokable via the explicit ``/<name> ...`` command path.
-        """
-        subagents = [name for name in SYS_SUB_AGENTS if name not in HIDDEN_SYS_SUB_AGENTS]
-        subagents.append("chat")
-        if hasattr(self.agent_config, "agentic_nodes") and self.agent_config.agentic_nodes:
-            for name, sub_config in self.agent_config.agentic_nodes.items():
-                if name != "chat" and name not in SYS_SUB_AGENTS:  # Exclude default chat and avoid duplicates
-                    sub_namespace = sub_config.get("scoped_context", {}).get("namespace")
-                    # Can only access sub-agent under the current namespace
-                    if not sub_namespace or sub_namespace == self.agent_config.current_database:
-                        subagents.append(name)
-        return subagents
+    Triggers only when the current line begins with ``/`` (start-of-line in
+    multi-line input), so ``@Table`` inline references and mid-message slashes
+    are left untouched. Subcommand completion (e.g. ``/mcp list``) is out of
+    scope for this completer — callers can still type the full subcommand.
+    """
 
     def get_completions(self, document: Document, complete_event=None) -> Iterable[Completion]:
-        """
-        Get completions for subagent commands.
+        from datus.cli.slash_registry import iter_visible
 
-        Args:
-            document: The document to complete
-            complete_event: Complete event (not used)
-
-        Returns:
-            Iterable of completions
-        """
-        text = document.text_before_cursor
-
-        # Only provide completions for slash commands
-        if not text.startswith("/"):
+        cursor_line = document.current_line_before_cursor
+        stripped_line = cursor_line.lstrip()
+        if not stripped_line.startswith("/"):
             return
 
-        # Get the text after the slash
-        slash_content = text[1:]
-
-        # If there's already a space, don't provide subagent completions
+        # Only complete the head token — once the user has typed a space the
+        # interpretation shifts to command arguments, which prompt-toolkit's
+        # other completers (e.g. ``@Table`` references) may handle.
+        slash_content = stripped_line[1:]
         if " " in slash_content:
             return
 
-        # Generate completions for available subagents
-        for subagent_name in self._available_subagents:
-            if subagent_name.lower().startswith(slash_content.lower()) or not slash_content:
-                # Choose emoji based on subagent name/type
-                # We can add more if gen_metrics gen_table coder_revier added
-                emoji = "🤖"
-                if "chat" in subagent_name.lower():
-                    emoji = "💬"
-                elif "bot" in subagent_name.lower():
-                    emoji = "🤖"
-
-                display_text = f"{emoji} {subagent_name}"
-                completion_text = f"{subagent_name} "  # Add space after subagent name
-
-                yield Completion(
-                    completion_text,
-                    start_position=-len(slash_content),
-                    display=display_text,
-                    style="class:subagent",
-                )
+        typed = slash_content.lower()
+        for spec in iter_visible():
+            tokens = (spec.name, *spec.aliases)
+            matched_token = next((t for t in tokens if t.lower().startswith(typed) or not typed), None)
+            if matched_token is None:
+                continue
+            yield Completion(
+                text=f"{matched_token} ",
+                start_position=-len(slash_content),
+                display=f"/{matched_token}",
+                display_meta=spec.summary,
+            )
 
 
 class AtReferenceParser:

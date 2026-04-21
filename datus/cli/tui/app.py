@@ -37,6 +37,7 @@ from typing import Callable, List, Optional, Tuple
 from prompt_toolkit.application import Application
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.completion import Completer
+from prompt_toolkit.filters import to_filter
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.history import History
 from prompt_toolkit.key_binding import KeyBindings
@@ -44,6 +45,7 @@ from prompt_toolkit.layout import Layout
 from prompt_toolkit.layout.containers import HSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
+from prompt_toolkit.layout.menus import CompletionsMenu
 from prompt_toolkit.lexers import Lexer
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import Style
@@ -107,8 +109,17 @@ class DatusApp:
         # Input: multi-line TextArea. We intentionally do not set an
         # ``accept_handler`` — Enter is handled by our own key binding so we
         # can swallow it while the agent is running.
+        # ``preferred=1`` keeps the input collapsed to a single row by default
+        # so HSplit doesn't allocate the full remaining terminal height to
+        # the TextArea. ``max=6`` lets multi-line pastes expand up to a
+        # reasonable cap before the content itself needs to scroll inside the
+        # buffer. The inner Window created by TextArea defaults to
+        # ``dont_extend_height=not multiline`` (i.e. False when multiline is
+        # on), which makes the Window ignore ``preferred`` in favour of
+        # ``max`` when space is plentiful — override it after construction so
+        # the collapsed-by-default behaviour is actually honoured.
         self._input_area = TextArea(
-            height=Dimension(min=1),
+            height=Dimension(min=1, preferred=1, max=6),
             multiline=True,
             wrap_lines=True,
             completer=completer,
@@ -120,6 +131,11 @@ class DatusApp:
             style="class:input-area",
             prompt=self._get_input_prompt,
         )
+        # ``Window.dont_extend_height`` is stored as a Filter instance
+        # (``to_filter`` runs in ``Window.__init__``), so assigning a plain
+        # ``True`` would break the callable the renderer later expects. Wrap
+        # the boolean so the override is honoured.
+        self._input_area.window.dont_extend_height = to_filter(True)
 
         self._status_window = Window(
             content=FormattedTextControl(
@@ -137,12 +153,25 @@ class DatusApp:
         # program output above that region is emitted via ``patch_stdout``,
         # which inserts new lines above the Application's rendered area, so
         # no explicit output window is required here.
+        #
+        # prompt-toolkit's built-in ``CompletionsMenu`` wraps its own window
+        # in a ``ConditionalContainer`` filtered by ``has_completions & ~is_done``,
+        # so the row collapses to zero height as soon as the user confirms or
+        # cancels. Placing it directly in the ``HSplit`` keeps the popup
+        # pinned below the input area (no floating overlay) and lets the
+        # input + status bar slide back to the bottom of the terminal with no
+        # custom erase logic. Styling is controlled via ``completion-menu.*``
+        # keys in ``DatusCLI._build_app_style`` so both TUI and PromptSession
+        # render identically. Mirrors hermes-agent ``cli.py:9355``.
+        self._completions_menu = CompletionsMenu(max_height=10, scroll_offset=1)
+
         root = HSplit(
             [
                 self._make_separator(),
                 self._status_window,
                 self._make_separator(),
                 self._input_area,
+                self._completions_menu,
                 self._make_separator(),
             ]
         )
@@ -249,7 +278,13 @@ class DatusApp:
             pass
 
     def run(self) -> int:
-        """Run the Application under ``patch_stdout``. Blocks until exit."""
+        """Run the Application under ``patch_stdout``. Blocks until exit.
+
+        Pinning the layout to the bottom of the terminal is done by the
+        caller *before* printing the banner (see ``DatusCLI._pin_to_bottom``),
+        so the banner still lands in the visible area. Anchoring inside this
+        method would push the already-printed banner off screen.
+        """
 
         async def _main() -> None:
             self._loop = asyncio.get_running_loop()

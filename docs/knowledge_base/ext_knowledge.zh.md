@@ -289,7 +289,7 @@ created_at: "2025-01-15T10:00:00Z"
 
 #### 步骤 5：验证结果
 
-启动 CLI，先用 `@subject` 浏览生成的知识条目，然后用原始问题测试：
+启动 CLI，先用 `/subject` 浏览生成的知识条目，然后用原始问题测试：
 
 ```bash
 datus-agent --namespace california_schools
@@ -297,7 +297,7 @@ datus-agent --namespace california_schools
 
 ```
 # 浏览知识树和条目
-Datus> @subject
+Datus> /subject
 # 应显示 Education/SAT/Administrators 和 Education/SAT/Scores 及其生成的知识条目
 ```
 
@@ -362,5 +362,5 @@ Sync this knowledge entry to the Knowledge Base? [y/n]: y
 ### 使用技巧
 
 1. **验证时强调使用知识库**：在 CLI 中测试时，在问题中加上"请先搜索知识库"，确保 Agent 使用已存储的知识而非仅依赖自身推理。
-2. **预构建主题树**：通过 `@subject` 提前创建主题树结构。后续不指定 `--subject_tree` 运行时，系统会自动复用已有分类（学习模式），无需在每行 CSV 中都指定 `subject_path`。
+2. **预构建主题树**：通过 `/subject` 提前创建主题树结构。后续不指定 `--subject_tree` 运行时，系统会自动复用已有分类（学习模式），无需在每行 CSV 中都指定 `subject_path`。
 3. **多次迭代提升稳定性**：使用 `incremental` 模式多次运行 bootstrap。每次运行可能生成更优的知识条目，upsert 机制确保已有条目以更好的内容更新。

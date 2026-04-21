@@ -7,7 +7,7 @@ Unit tests for datus/cli/repl.py.
 
 Tests cover:
 - CommandType enum
-- DatusCLI._parse_command: EXIT, TOOL, CONTEXT, CHAT, INTERNAL, SQL, subagent routing
+- DatusCLI._parse_command: EXIT, TOOL, SLASH, CHAT, SQL, legacy-prefix UNKNOWN
 - DatusCLI.check_agent_available: ready / initializing / not ready
 - DatusCLI._cmd_list_namespaces: smoke test
 - DatusCLI._cmd_switch_namespace: empty args, same namespace, switch
@@ -72,14 +72,17 @@ def _make_cli(agent_config, available_subagents=None):
     cli.last_sql = None
     cli.last_result = None
 
-    # Build commands dict referencing the mocks
+    # Build commands dict referencing the mocks. Keys mirror the canonical
+    # slash names wired by ``DatusCLI._build_slash_handler_map``.
     cli.commands = {
         "!sl": cli.agent_commands.cmd_schema_linking,
-        "@catalog": cli.context_commands.cmd_catalog,
-        ".tables": cli.metadata_commands.cmd_tables,
-        ".namespace": cli._cmd_switch_namespace,
-        ".help": cli._cmd_help,
-        ".exit": lambda a: None,
+        "/catalog": cli.context_commands.cmd_catalog,
+        "/tables": cli.metadata_commands.cmd_tables,
+        "/namespace": cli._cmd_switch_namespace,
+        "/help": cli._cmd_help,
+        "/exit": lambda a: None,
+        "/quit": lambda a: None,
+        "/rewind": cli.chat_commands.cmd_rewind,
         "!bash": cli._cmd_bash,
     }
 
@@ -112,10 +115,10 @@ class TestCommandType:
     def test_all_types_exist(self):
         assert CommandType.SQL.value == "sql"
         assert CommandType.TOOL.value == "tool"
-        assert CommandType.CONTEXT.value == "context"
+        assert CommandType.SLASH.value == "slash"
         assert CommandType.CHAT.value == "chat"
-        assert CommandType.INTERNAL.value == "internal"
         assert CommandType.EXIT.value == "exit"
+        assert CommandType.UNKNOWN.value == "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -124,17 +127,25 @@ class TestCommandType:
 
 
 class TestParseCommand:
-    def test_exit_command_dot(self, cli):
-        cmd_type, cmd, args = cli._parse_command(".exit")
-        assert cmd_type == CommandType.EXIT
-
     def test_exit_command_quit(self, cli):
-        cmd_type, cmd, args = cli._parse_command("quit")
+        cmd_type, _, _ = cli._parse_command("quit")
         assert cmd_type == CommandType.EXIT
 
     def test_exit_command_exit(self, cli):
-        cmd_type, cmd, args = cli._parse_command("exit")
+        cmd_type, _, _ = cli._parse_command("exit")
         assert cmd_type == CommandType.EXIT
+
+    def test_slash_exit_routes_through_slash_dispatch(self, cli):
+        """``/exit`` goes through SLASH so ``_cmd_exit`` can close the DB."""
+        cmd_type, cmd, _ = cli._parse_command("/exit")
+        assert cmd_type == CommandType.SLASH
+        assert cmd == "/exit"
+
+    def test_slash_quit_alias_resolves_to_exit(self, cli):
+        """``/quit`` is an alias of ``/exit`` and keeps its own canonical key."""
+        cmd_type, cmd, _ = cli._parse_command("/quit")
+        assert cmd_type == CommandType.SLASH
+        assert cmd == "/exit"
 
     def test_tool_command_with_args(self, cli):
         cmd_type, cmd, args = cli._parse_command("!sl find revenue tables")
@@ -148,42 +159,53 @@ class TestParseCommand:
         assert cmd == "!sl"
         assert args == ""
 
-    def test_context_command(self, cli):
-        cmd_type, cmd, args = cli._parse_command("@catalog mydb")
-        assert cmd_type == CommandType.CONTEXT
-        assert cmd == "@catalog"
+    def test_slash_catalog_command(self, cli):
+        cmd_type, cmd, args = cli._parse_command("/catalog mydb")
+        assert cmd_type == CommandType.SLASH
+        assert cmd == "/catalog"
         assert args == "mydb"
 
-    def test_internal_command(self, cli):
-        cmd_type, cmd, args = cli._parse_command(".tables")
-        assert cmd_type == CommandType.INTERNAL
-        assert cmd == ".tables"
+    def test_slash_command_no_args(self, cli):
+        cmd_type, cmd, args = cli._parse_command("/tables")
+        assert cmd_type == CommandType.SLASH
+        assert cmd == "/tables"
         assert args == ""
 
-    def test_internal_command_with_args(self, cli):
-        cmd_type, cmd, args = cli._parse_command(".namespace test_ns")
-        assert cmd_type == CommandType.INTERNAL
-        assert cmd == ".namespace"
+    def test_slash_command_with_args(self, cli):
+        cmd_type, cmd, args = cli._parse_command("/namespace test_ns")
+        assert cmd_type == CommandType.SLASH
+        assert cmd == "/namespace"
         assert args == "test_ns"
 
-    def test_chat_command_slash(self, cli):
-        cmd_type, cmd, args = cli._parse_command("/how many users?")
-        assert cmd_type == CommandType.CHAT
-        assert cmd == ""
-        assert "how many users" in args
+    def test_slash_help_canonical(self, cli):
+        cmd_type, cmd, _ = cli._parse_command("/help")
+        assert cmd_type == CommandType.SLASH
+        assert cmd == "/help"
 
-    def test_chat_command_with_known_subagent(self, cli):
-        cli.available_subagents = {"gensql", "compare"}
-        cmd_type, cmd, args = cli._parse_command("/gensql show me revenue by month")
-        assert cmd_type == CommandType.CHAT
-        assert cmd == "gensql"
-        assert args == "show me revenue by month"
+    def test_unknown_slash_is_not_chat(self, cli):
+        """Typos such as ``/halp`` must fail loudly, never flow to chat."""
+        cmd_type, cmd, args = cli._parse_command("/halp me please")
+        assert cmd_type == CommandType.UNKNOWN
+        assert cmd == "/halp"
+        assert args == ""
 
-    def test_chat_command_unknown_first_word(self, cli):
-        cli.available_subagents = {"gensql"}
-        cmd_type, cmd, args = cli._parse_command("/notasubagent do something")
-        assert cmd_type == CommandType.CHAT
-        assert cmd == ""
+    def test_legacy_dot_prefix_hints_rename(self, cli):
+        cmd_type, cmd, args = cli._parse_command(".tables")
+        assert cmd_type == CommandType.UNKNOWN
+        assert cmd == ".tables"
+        assert args == "/tables"
+
+    def test_legacy_at_prefix_hints_rename(self, cli):
+        cmd_type, cmd, args = cli._parse_command("@catalog mydb")
+        assert cmd_type == CommandType.UNKNOWN
+        assert cmd == "@catalog"
+        assert args == "/catalog"
+
+    def test_bare_exit_still_wins_over_legacy_dot(self, cli):
+        """``.exit`` surfaces as a rename hint; bare ``exit`` keeps EXIT type."""
+        cmd_type, _, hint = cli._parse_command(".exit")
+        assert cmd_type == CommandType.UNKNOWN
+        assert hint == "/exit"
 
     def test_sql_trailing_semicolon_stripped(self, cli):
         """Trailing semicolon is stripped before parsing."""
@@ -191,22 +213,23 @@ class TestParseCommand:
             from datus.utils.constants import SQLType
 
             mock_parse.return_value = SQLType.SELECT
-            cmd_type, cmd, args = cli._parse_command("SELECT 1;")
+            cmd_type, _, _ = cli._parse_command("SELECT 1;")
         assert cmd_type == CommandType.SQL
 
     def test_natural_language_treated_as_chat(self, cli):
-        """Natural language without prefix is treated as CHAT."""
+        """Natural language without any prefix still routes to CHAT."""
         with patch("datus.cli.repl.parse_sql_type") as mock_parse:
             from datus.utils.constants import SQLType
 
-            mock_parse.return_value = SQLType.UNKNOWN  # UNKNOWN is always defined
-            cmd_type, cmd, args = cli._parse_command("show me the revenue")
+            mock_parse.return_value = SQLType.UNKNOWN
+            cmd_type, cmd, _ = cli._parse_command("show me the revenue")
         assert cmd_type == CommandType.CHAT
+        assert cmd == cli.default_agent
 
     def test_parse_sql_exception_falls_back_to_chat(self, cli):
         """Exception during parse_sql_type falls back to CHAT."""
         with patch("datus.cli.repl.parse_sql_type", side_effect=Exception("parse error")):
-            cmd_type, cmd, args = cli._parse_command("ambiguous text")
+            cmd_type, _, _ = cli._parse_command("ambiguous text")
         assert cmd_type == CommandType.CHAT
 
 
@@ -490,37 +513,44 @@ class TestExecuteToolCommand:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _execute_context_command
+# Tests: _execute_slash_command
 # ---------------------------------------------------------------------------
 
 
-class TestExecuteContextCommand:
-    def test_known_context_command_called(self, cli):
-        cli.commands["@catalog"] = MagicMock()
-        cli._execute_context_command("@catalog", "mydb")
-        cli.commands["@catalog"].assert_called_once_with("mydb")
+class TestExecuteSlashCommand:
+    def test_known_slash_command_called(self, cli):
+        cli.commands["/tables"] = MagicMock()
+        cli._execute_slash_command("/tables", "")
+        cli.commands["/tables"].assert_called_once_with("")
 
-    def test_unknown_context_command_prints_error(self, cli):
-        cli._execute_context_command("@nonexistent", "")
+    def test_context_command_called_through_slash(self, cli):
+        cli.commands["/catalog"] = MagicMock()
+        cli._execute_slash_command("/catalog", "mydb")
+        cli.commands["/catalog"].assert_called_once_with("mydb")
+
+    def test_unknown_slash_command_prints_error(self, cli):
+        cli._execute_slash_command("/nonexistent", "")
         output = cli.console.file.getvalue()
         assert "Unknown command" in output
 
+    def test_rewind_return_captured_as_prefill(self, cli):
+        cli.commands["/rewind"] = MagicMock(return_value="previous user message")
+        cli._prefill_input = None
+        cli._execute_slash_command("/rewind", "2")
+        assert cli._prefill_input == "previous user message"
 
-# ---------------------------------------------------------------------------
-# Tests: _execute_internal_command
-# ---------------------------------------------------------------------------
 
+class TestRenderUnknownCommand:
+    def test_legacy_prefix_hint_rendered(self, cli):
+        cli._render_unknown_command(".tables", "/tables")
+        output = cli.console.file.getvalue()
+        assert "renamed to '/tables'" in output
 
-class TestExecuteInternalCommand:
-    def test_known_internal_command_called(self, cli):
-        cli.commands[".tables"] = MagicMock()
-        cli._execute_internal_command(".tables", "")
-        cli.commands[".tables"].assert_called_once_with("")
-
-    def test_unknown_internal_command_prints_error(self, cli):
-        cli._execute_internal_command(".nonexistent", "")
+    def test_plain_unknown_command_rendered(self, cli):
+        cli._render_unknown_command("/halp", "")
         output = cli.console.file.getvalue()
         assert "Unknown command" in output
+        assert "/halp" in output
 
 
 # ---------------------------------------------------------------------------
@@ -640,10 +670,10 @@ class TestWaitForAgentAvailable:
 
 class TestCreateCombinedCompleterExtended:
     def test_returns_a_completer(self, cli):
-        from datus.cli.autocomplete import AtReferenceCompleter, SubagentCompleter
+        from datus.cli.autocomplete import AtReferenceCompleter, SlashCommandCompleter
 
         with patch.object(AtReferenceCompleter, "__init__", return_value=None):
-            with patch.object(SubagentCompleter, "__init__", return_value=None):
+            with patch.object(SlashCommandCompleter, "__init__", return_value=None):
                 with patch(
                     "prompt_toolkit.completion.merge_completers",
                     return_value=MagicMock(),
@@ -939,36 +969,22 @@ class TestCmdAgent:
 
 
 class TestParseCommandDefaultAgent:
-    def test_slash_message_uses_default_agent(self, cli):
-        """'/message' uses default_agent when no explicit subagent prefix."""
-        cli.available_subagents = {"chat", "gen_sql"}
+    """After the slash refactor, agent selection is driven by ``/agent`` and
+    bare text (no prefix) is the only path that routes to chat. ``/<word>`` is
+    now exclusively a command namespace — unknown slashes surface as UNKNOWN
+    instead of silently being interpreted as a chat message.
+    """
+
+    def test_slash_unknown_prefix_is_not_chat(self, cli):
+        """``/show revenue`` is no longer chat — it's an unknown command."""
         cli.default_agent = "gen_sql"
         cmd_type, cmd, args = cli._parse_command("/show revenue")
-        assert cmd_type == CommandType.CHAT
-        assert cmd == "gen_sql"
-        assert args == "show revenue"
-
-    def test_explicit_subagent_overrides_default(self, cli):
-        """'/gen_report msg' uses gen_report even when default is gen_sql."""
-        cli.available_subagents = {"chat", "gen_sql", "gen_report"}
-        cli.default_agent = "gen_sql"
-        cmd_type, cmd, args = cli._parse_command("/gen_report show revenue")
-        assert cmd_type == CommandType.CHAT
-        assert cmd == "gen_report"
-        assert args == "show revenue"
-
-    def test_chat_explicit_maps_to_empty(self, cli):
-        """'/chat msg' always maps subagent_name to '' regardless of default."""
-        cli.available_subagents = {"chat", "gen_sql"}
-        cli.default_agent = "gen_sql"
-        cmd_type, cmd, args = cli._parse_command("/chat show revenue")
-        assert cmd_type == CommandType.CHAT
-        assert cmd == ""
-        assert args == "show revenue"
+        assert cmd_type == CommandType.UNKNOWN
+        assert cmd == "/show"
+        assert args == ""
 
     def test_bare_text_uses_default_agent(self, cli):
-        """Bare natural language text uses default_agent."""
-        cli.available_subagents = {"chat", "gen_sql"}
+        """Bare natural language text uses ``default_agent``."""
         cli.default_agent = "gen_sql"
         with patch("datus.cli.repl.parse_sql_type") as mock_parse:
             from datus.utils.constants import SQLType
@@ -979,24 +995,15 @@ class TestParseCommandDefaultAgent:
         assert cmd == "gen_sql"
 
     def test_bare_text_default_chat(self, cli):
-        """Bare text with default_agent='' routes to chat."""
+        """Bare text with ``default_agent=''`` still routes to the chat node."""
         cli.default_agent = ""
         with patch("datus.cli.repl.parse_sql_type") as mock_parse:
             from datus.utils.constants import SQLType
 
             mock_parse.return_value = SQLType.UNKNOWN
-            cmd_type, cmd, args = cli._parse_command("hello world")
+            cmd_type, cmd, _ = cli._parse_command("hello world")
         assert cmd_type == CommandType.CHAT
         assert cmd == ""
-
-    def test_single_word_slash_uses_default(self, cli):
-        """'/message' (single word, not a subagent) uses default_agent."""
-        cli.available_subagents = {"chat", "gen_sql"}
-        cli.default_agent = "gen_sql"
-        cmd_type, cmd, args = cli._parse_command("/hello")
-        assert cmd_type == CommandType.CHAT
-        assert cmd == "gen_sql"
-        assert args == "hello"
 
 
 # ---------------------------------------------------------------------------

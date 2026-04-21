@@ -208,7 +208,7 @@ The current implementation also auto-applies fixed parameter overrides for a few
 This section is used for:
 
 - built-in agentic nodes such as `chat`, `explore`, `gen_sql`, `gen_report`, `gen_dashboard`, and `scheduler`
-- custom subagents created with `.subagent`
+- custom subagents created with `/subagent`
 - advanced manual aliases that point a custom name at a built-in node class
 
 ### Common Fields
@@ -255,7 +255,7 @@ scoped_context:
   sqls: finance.revenue.region_rollup
 ```
 
-When writing YAML manually, set `namespace` explicitly. The `.subagent` wizard fills it from the current database automatically.
+When writing YAML manually, set `namespace` explicitly. The `/subagent` wizard fills it from the current database automatically.
 
 ### Example
 

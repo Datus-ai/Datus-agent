@@ -39,11 +39,17 @@ from datus_db_core import BaseSqlConnector
 from datus import __version__
 from datus.cli._cli_utils import prompt_input, select_choice
 from datus.cli.agent_commands import AgentCommands
-from datus.cli.autocomplete import AtReferenceCompleter, CustomPygmentsStyle, CustomSqlLexer, SubagentCompleter
+from datus.cli.autocomplete import (
+    AtReferenceCompleter,
+    CustomPygmentsStyle,
+    CustomSqlLexer,
+    SlashCommandCompleter,
+)
 from datus.cli.bi_dashboard import BiDashboardCommands
 from datus.cli.chat_commands import ChatCommands
 from datus.cli.context_commands import ContextCommands
 from datus.cli.metadata_commands import MetadataCommands
+from datus.cli.slash_registry import GROUP_ORDER, GROUP_TITLES, iter_visible, lookup
 from datus.cli.status_bar import StatusBarProvider
 from datus.cli.sub_agent_commands import SubAgentCommands
 from datus.cli.tui import DatusApp, tui_enabled
@@ -74,12 +80,40 @@ _BANNER_MIN_WIDTH = 60
 class CommandType(Enum):
     """Type of command entered by the user."""
 
-    SQL = "sql"  # Regular SQL
+    SQL = "sql"  # Regular SQL statement
     TOOL = "tool"  # !command (tool/workflow)
-    CONTEXT = "context"  # @command (context explorer)
-    CHAT = "chat"  # /command (chat)
-    INTERNAL = "internal"  # .command (CLI control)
+    SLASH = "slash"  # /command (session / metadata / context / agent / system)
+    CHAT = "chat"  # bare text routed to the default agent
     EXIT = "exit"  # exit/quit command
+    UNKNOWN = "unknown"  # unrecognized /command or renamed legacy prefix
+
+
+_LEGACY_PREFIX_HINTS: dict[str, str] = {
+    ".help": "/help",
+    ".exit": "/exit",
+    ".quit": "/quit",
+    ".clear": "/clear",
+    ".chat_info": "/chat_info",
+    ".compact": "/compact",
+    ".sessions": "/sessions",
+    ".resume": "/resume",
+    ".rewind": "/rewind",
+    ".databases": "/databases",
+    ".database": "/database",
+    ".tables": "/tables",
+    ".schemas": "/schemas",
+    ".schema": "/schema",
+    ".table_schema": "/table_schema",
+    ".indexes": "/indexes",
+    ".namespace": "/namespace",
+    ".agent": "/agent",
+    ".subagent": "/subagent",
+    ".mcp": "/mcp",
+    ".skill": "/skill",
+    ".bootstrap-bi": "/bootstrap-bi",
+    "@catalog": "/catalog",
+    "@subject": "/subject",
+}
 
 
 class DatusCLI:
@@ -195,7 +229,7 @@ class DatusCLI:
         self._status_bar_provider = StatusBarProvider(self)
 
         # Dictionary of available commands - created after handlers are initialized
-        self.commands = {
+        self.commands: Dict[str, Any] = {
             # "!run": self.agent_commands.cmd_darun_screen,
             "!sl": self.agent_commands.cmd_schema_linking,
             "!schema_linking": self.agent_commands.cmd_schema_linking,
@@ -212,37 +246,58 @@ class DatusCLI:
             # to be deprecated when sub agent is read
             # "!reason": self.agent_commands.cmd_reason_stream,
             # "!compare": self.agent_commands.cmd_compare_stream,
-            # catalog commands
-            "@catalog": self.context_commands.cmd_catalog,
-            "@subject": self.context_commands.cmd_subject,
-            # interal commands
-            ".clear": self.chat_commands.cmd_clear_chat,
-            ".chat_info": self.chat_commands.cmd_chat_info,
-            ".compact": self.chat_commands.cmd_compact,
-            ".sessions": self.chat_commands.cmd_list_sessions,
-            ".resume": self.chat_commands.cmd_resume,
-            ".rewind": self.chat_commands.cmd_rewind,
-            ".databases": self.metadata_commands.cmd_list_databases,
-            ".database": self.metadata_commands.cmd_switch_database,
-            ".tables": self.metadata_commands.cmd_tables,
-            ".schemas": self.metadata_commands.cmd_schemas,
-            ".schema": self.metadata_commands.cmd_switch_schema,
-            ".table_schema": self.metadata_commands.cmd_table_schema,
-            ".indexes": self.metadata_commands.cmd_indexes,
-            ".namespace": self._cmd_switch_namespace,
-            ".agent": self._cmd_agent,
-            ".subagent": self.sub_agent_commands.cmd,
-            ".mcp": self._cmd_mcp,
-            ".skill": self._cmd_skill,
-            ".bootstrap-bi": self.bi_dashboard_commands.cmd,
-            ".help": self._cmd_help,
-            ".exit": self._cmd_exit,
-            ".quit": self._cmd_exit,
         }
+        # Slash commands are driven by ``slash_registry.SLASH_COMMANDS`` so the
+        # completer, help text, and dispatcher share one source of truth.
+        for spec_name, handler in self._build_slash_handler_map().items():
+            spec = lookup(spec_name)
+            if spec is None:
+                raise RuntimeError(f"Slash handler '{spec_name}' has no registry entry")
+            self.commands[f"/{spec.name}"] = handler
+            for alias in spec.aliases:
+                self.commands[f"/{alias}"] = handler
 
         # Start agent initialization in background
         self._async_init_agent()
         self._init_connection()
+
+    def _build_slash_handler_map(self) -> Dict[str, Any]:
+        """Return the canonical-name -> handler map consumed by the commands dict.
+
+        Kept alongside ``SLASH_COMMANDS`` ordering so the registry integrity
+        test can assert every spec has a bound handler.
+        """
+
+        return {
+            # session
+            "help": self._cmd_help,
+            "exit": self._cmd_exit,
+            "clear": self.chat_commands.cmd_clear_chat,
+            "chat_info": self.chat_commands.cmd_chat_info,
+            "compact": self.chat_commands.cmd_compact,
+            "sessions": self.chat_commands.cmd_list_sessions,
+            "resume": self.chat_commands.cmd_resume,
+            "rewind": self.chat_commands.cmd_rewind,
+            # metadata
+            "databases": self.metadata_commands.cmd_list_databases,
+            "database": self.metadata_commands.cmd_switch_database,
+            "tables": self.metadata_commands.cmd_tables,
+            "schemas": self.metadata_commands.cmd_schemas,
+            "schema": self.metadata_commands.cmd_switch_schema,
+            "table_schema": self.metadata_commands.cmd_table_schema,
+            "indexes": self.metadata_commands.cmd_indexes,
+            # context
+            "catalog": self.context_commands.cmd_catalog,
+            "subject": self.context_commands.cmd_subject,
+            # agent
+            "agent": self._cmd_agent,
+            "subagent": self.sub_agent_commands.cmd,
+            "namespace": self._cmd_switch_namespace,
+            # system
+            "mcp": self._cmd_mcp,
+            "skill": self._cmd_skill,
+            "bootstrap-bi": self.bi_dashboard_commands.cmd,
+        }
 
     @property
     def workflow_runner(self) -> WorkflowRunner:
@@ -386,6 +441,19 @@ class DatusCLI:
                         "status-bar.ctx": "#9a9aaa",
                         "status-bar.running": "#ffb86c bold",
                         "separator": "#444444",
+                        # Slash-command autocomplete popup. ``bg:default`` and
+                        # ``fg:default`` pin the non-current rows to the
+                        # terminal's own palette so the menu blends into a
+                        # dark CLI theme instead of prompt_toolkit's stock
+                        # teal-on-white. The current row gets a subdued blue
+                        # highlight with bold text — enough contrast to see
+                        # the cursor without the harsh ``reverse`` look the
+                        # default theme ends up producing on dark terminals.
+                        "completion-menu": "bg:default",
+                        "completion-menu.completion": "bg:default fg:default",
+                        "completion-menu.completion.current": "bg:ansiblue fg:ansiwhite bold",
+                        "completion-menu.meta.completion": "bg:default fg:ansibrightblack",
+                        "completion-menu.meta.completion.current": "bg:ansiblue fg:ansiwhite",
                     }
                 ),
             ]
@@ -555,22 +623,22 @@ class DatusCLI:
 
     # Create combined completer
     def create_combined_completer(self):
-        """Create combined completer: SubagentCompleter + AtReferenceCompleter + SqlCompleter"""
+        """Build SlashCommandCompleter + AtReferenceCompleter + SqlCompleter."""
         from datus.cli.autocomplete import SQLCompleter
 
         sql_completer = SQLCompleter()
         self.at_completer = AtReferenceCompleter(
             self.agent_config, available_subagents=self.available_subagents
-        )  # Router completer
-        self.subagent_completer = SubagentCompleter(self.agent_config)  # Subagent completer
+        )  # Router for @Table / @Metrics / @Sql inline references
+        self.slash_completer = SlashCommandCompleter()
 
         # Use merge_completers to combine completers
         from prompt_toolkit.completion import merge_completers
 
         return merge_completers(
             [
-                self.subagent_completer,  # Subagent completer (highest priority)
-                self.at_completer,  # @ reference completer
+                self.slash_completer,  # Top-level slash commands (highest priority)
+                self.at_completer,  # @Table / @Metrics / @Sql inline references
                 sql_completer,  # SQL keyword completer (lowest priority)
             ]
         )
@@ -611,20 +679,23 @@ class DatusCLI:
                 self._execute_sql(user_input)
             elif cmd_type == CommandType.TOOL:
                 self._execute_tool_command(cmd, args)
-            elif cmd_type == CommandType.CONTEXT:
-                self._execute_context_command(cmd, args)
-            elif cmd_type == CommandType.CHAT:
-                self._execute_chat_command(args, subagent_name=cmd)
-            elif cmd_type == CommandType.INTERNAL:
-                self._execute_internal_command(cmd, args)
-                # ``.rewind`` sets ``_prefill_input`` from inside the internal
-                # command. In TUI mode the buffer was already drained before
-                # dispatch, so push the rewound message back into the live
-                # input area here. ``set_input_text`` schedules the mutation
-                # onto the prompt_toolkit loop, so it is safe from the worker.
+            elif cmd_type == CommandType.SLASH:
+                self._execute_slash_command(cmd, args)
+                # ``/rewind`` sets ``_prefill_input`` from inside the handler.
+                # In TUI mode the buffer was already drained before dispatch,
+                # so push the rewound message back into the live input area
+                # here. ``set_input_text`` schedules the mutation onto the
+                # prompt_toolkit loop, so it is safe from the worker.
                 if self._use_tui and self.tui_app is not None and self._prefill_input:
                     self.tui_app.set_input_text(self._prefill_input)
                     self._prefill_input = None
+            elif cmd_type == CommandType.CHAT:
+                self._execute_chat_command(args, subagent_name=cmd)
+            elif cmd_type == CommandType.UNKNOWN:
+                # ``cmd`` carries the full rejected token, ``args`` the hint
+                # (renamed target or empty). Rendering lives here so parsing
+                # stays side-effect free.
+                self._render_unknown_command(cmd, args)
         except KeyboardInterrupt:
             # Interrupt during a single command dispatch is non-fatal: the
             # outer loop (or TUI event loop) stays alive.
@@ -682,6 +753,30 @@ class DatusCLI:
                 logger.error(f"Error: {str(e)}")
                 self.console.print(f"[bold red]Error:[/] {str(e)}")
 
+    def _pin_tui_to_bottom(self) -> None:
+        """Push the cursor to the last terminal row before the banner prints.
+
+        prompt_toolkit's ``Application`` in ``full_screen=False`` mode renders
+        its layout anchored to the cursor's position. If the cursor sits in
+        the middle of a tall terminal when the slash completion menu
+        expands, the menu scrolls new rows upward and the input + status bar
+        no longer slide back to the bottom once the menu collapses. Filling
+        the terminal with blank rows at startup ensures every render cycle
+        begins at the very last row, which matches the behaviour hermes-agent
+        relies on (``cli.py:8188``). The banner is printed *after* this call
+        so it ends up in the bottom portion of the visible area rather than
+        scrolled into history.
+        """
+
+        import shutil
+
+        try:
+            term_lines = shutil.get_terminal_size().lines
+        except (OSError, ValueError):  # pragma: no cover - non-tty fallback
+            return
+        if term_lines > 2:
+            print("\n" * (term_lines - 1), end="", flush=True)
+
     def _run_tui(self):
         """Persistent TUI main loop.
 
@@ -691,6 +786,7 @@ class DatusCLI:
         ``asyncio.run(...)`` inside those handlers does not collide with the
         Application's event loop.
         """
+        self._pin_tui_to_bottom()
         self._print_welcome()
 
         # Prefill support mirrors the PromptSession path: ``.rewind`` stores
@@ -895,6 +991,24 @@ class DatusCLI:
             # Perhaps we should reload the data here.
             self.at_completer.reload_data()
 
+    def _visible_subagents_for_default(self) -> set[str]:
+        """Filter ``self.available_subagents`` to those eligible as default agent.
+
+        Drops :data:`HIDDEN_SYS_SUB_AGENTS` (internal meta agents such as
+        ``feedback``) and scoped agents whose namespace doesn't match the
+        current database. Mirrors the previous ``SubagentCompleter._load_subagents``
+        behaviour now that the completer no longer surfaces agents directly.
+        """
+
+        visible = {name for name in self.available_subagents if name not in HIDDEN_SYS_SUB_AGENTS}
+        if hasattr(self.agent_config, "agentic_nodes") and self.agent_config.agentic_nodes:
+            current_db = getattr(self.agent_config, "current_database", None)
+            for name, sub_config in self.agent_config.agentic_nodes.items():
+                scoped_ns = (sub_config or {}).get("scoped_context", {}).get("namespace")
+                if scoped_ns and scoped_ns != current_db:
+                    visible.discard(name)
+        return visible
+
     def _cmd_agent(self, args: str):
         """Set or show the default agent for message routing.
 
@@ -902,13 +1016,7 @@ class DatusCLI:
         <name>   -> set directly
         """
         args = args.strip()
-        # Mirror SubagentCompleter._load_subagents(): drop HIDDEN_SYS_SUB_AGENTS
-        # (e.g. feedback — invokable via "/<name>" but not a default-agent
-        # choice) and out-of-namespace scoped subagents.
-        if getattr(self, "subagent_completer", None) is not None:
-            visible_subagents = set(self.subagent_completer._available_subagents)
-        else:
-            visible_subagents = {name for name in self.available_subagents if name not in HIDDEN_SYS_SUB_AGENTS}
+        visible_subagents = self._visible_subagents_for_default()
 
         if not args:
             current_default = self.default_agent or "chat"
@@ -921,7 +1029,7 @@ class DatusCLI:
             args = selected
 
         if args not in visible_subagents:
-            self.console.print(f"[bold red]Error:[/] Unknown agent '{args}'. Run '.agent' to see available agents.")
+            self.console.print(f"[bold red]Error:[/] Unknown agent '{args}'. Run '/agent' to see available agents.")
             return
 
         # "chat" resets to empty string (the chat node)
@@ -960,62 +1068,64 @@ class DatusCLI:
             self.console.print(f"[bold green]Namespace changed to: {self.agent_config.current_database}[/]")
 
     def _parse_command(self, text: str) -> Tuple[CommandType, str, str]:
-        """
-        Parse the command and determine its type.
+        """Classify raw user input into a ``CommandType`` + canonical cmd + args.
+
+        All side-effects (printing hints, running handlers) live in the
+        dispatcher so this function stays deterministic and trivially
+        unit-testable.
 
         Returns:
-            Tuple containing (command_type, command, arguments)
+            Tuple ``(command_type, command, arguments)``:
+
+            * ``SQL``    — ``command`` empty, ``arguments`` is the raw SQL
+            * ``TOOL``   — ``command`` is ``"!name"`` (lowercased)
+            * ``SLASH``  — ``command`` is the canonical ``"/name"`` (aliases resolved)
+            * ``CHAT``   — ``command`` is the default agent, ``arguments`` is the message
+            * ``EXIT``   — both empty
+            * ``UNKNOWN`` — ``command`` is the rejected token, ``arguments`` is a hint
         """
+
         text = text.strip()
 
         # Remove trailing semicolons (common in SQL)
         if text.endswith(";"):
             text = text[:-1].strip()
 
-        # Exit commands
-        if text.lower() in [".exit", ".quit", "exit", "quit"]:
+        # Exit: bare ``exit`` / ``quit`` still work; ``/exit`` and ``/quit`` flow
+        # through the SLASH branch via the registry's alias map.
+        if text.lower() in ("exit", "quit"):
             return CommandType.EXIT, "", ""
 
-        # Tool commands (!prefix)
+        # Tool commands (!prefix). Unchanged by this refactor.
         if text.startswith("!"):
             parts = text.split(maxsplit=1)
             cmd = parts[0].lower()
             args = parts[1] if len(parts) > 1 else ""
             return CommandType.TOOL, cmd, args
 
-        # Context commands (@prefix)
-        if text.startswith("@"):
-            parts = text.split(maxsplit=1)
-            cmd = parts[0].lower()
-            args = parts[1] if len(parts) > 1 else ""
-            return CommandType.CONTEXT, cmd, args
-
-        # Chat commands (/prefix)
+        # Slash commands (/prefix). ``/<agent> <msg>`` was removed — agent
+        # selection is now exclusively handled by ``/agent``. Unknown tokens
+        # surface as ``UNKNOWN`` rather than silently flowing to chat so typos
+        # fail loudly.
         if text.startswith("/"):
-            message = text[1:].strip()
-            parts = message.split(maxsplit=1)
-            if len(parts) > 1:
-                # Check if first part is a valid subagent
-                potential_subagent = parts[0]
-                if potential_subagent in self.available_subagents:
-                    # Sub-agent syntax: /subagent_name message
-                    # "/chat message" explicitly routes to the chat node
-                    subagent_name = "" if potential_subagent == "chat" else potential_subagent
-                    actual_message = parts[1]
-                    return CommandType.CHAT, subagent_name, actual_message
-                else:
-                    # Regular chat: /message (first part is not a valid subagent)
-                    return CommandType.CHAT, self.default_agent, message
-            else:
-                # Regular chat: /message
-                return CommandType.CHAT, self.default_agent, message
-
-        # Internal commands (.prefix)
-        if text.startswith("."):
-            parts = text.split(maxsplit=1)
-            cmd = parts[0].lower()
+            parts = text[1:].split(maxsplit=1)
+            token = parts[0].lower() if parts and parts[0] else ""
             args = parts[1] if len(parts) > 1 else ""
-            return CommandType.INTERNAL, cmd, args
+            spec = lookup(token) if token else None
+            if spec is not None:
+                # ``/exit`` / ``/quit`` flow through SLASH dispatch so
+                # ``_cmd_exit`` gets to close the DB connector before
+                # ``sys.exit(0)`` (mirrors the pre-refactor ``.exit`` path).
+                return CommandType.SLASH, f"/{spec.name}", args
+            return CommandType.UNKNOWN, f"/{token}", ""
+
+        # Legacy prefix hints: ``.xxx`` / ``@catalog`` / ``@subject`` used to
+        # be live commands. Surface a rename hint instead of running them so
+        # shell-history replay reports a clear error.
+        first_token = text.split(maxsplit=1)[0].lower()
+        legacy_target = _LEGACY_PREFIX_HINTS.get(first_token)
+        if legacy_target is not None:
+            return CommandType.UNKNOWN, first_token, legacy_target
 
         # Determine if text is SQL or chat using parse_sql_type
         try:
@@ -1026,8 +1136,7 @@ class DatusCLI:
             # If parse_sql_type returns a valid SQL type (not UNKNOWN), treat as SQL
             if sql_type != SQLType.UNKNOWN:
                 return CommandType.SQL, "", text
-            else:
-                return CommandType.CHAT, self.default_agent, text.strip()
+            return CommandType.CHAT, self.default_agent, text.strip()
         except Exception:
             # If any exception occurs, treat as chat
             return CommandType.CHAT, self.default_agent, text.strip()
@@ -1208,27 +1317,28 @@ class DatusCLI:
         else:
             self.console.print(f"[bold red]Unknown command:[/] {cmd}")
 
-    def _execute_context_command(self, cmd: str, args: str):
-        """Execute a context command (@ prefix)."""
-        if cmd in self.commands:
-            self.commands[cmd](args)
-        else:
-            self.console.print(f"[bold red]Unknown command:[/] {cmd}")
-
     def _execute_chat_command(self, message: str, subagent_name: str = None):
-        """Execute a chat command (/ prefix) using ChatAgenticNode."""
+        """Route free-form chat text to the configured default agent."""
         self.chat_commands.execute_chat_command(message, plan_mode=self.plan_mode_active, subagent_name=subagent_name)
 
-    def _execute_internal_command(self, cmd: str, args: str):
-        """Execute an internal command (. prefix)."""
-        logger.debug(f"Executing internal command: '{cmd}' with args: '{args}'")
-        if cmd in self.commands:
-            result = self.commands[cmd](args)
-            # cmd_rewind returns a user message to prefill in input buffer
-            if cmd == ".rewind" and result is not None:
-                self._prefill_input = result
+    def _execute_slash_command(self, cmd: str, args: str):
+        """Execute a slash command resolved via ``SLASH_COMMANDS`` registry."""
+        logger.debug(f"Executing slash command: '{cmd}' with args: '{args}'")
+        handler = self.commands.get(cmd)
+        if handler is None:
+            self.console.print(f"[bold red]Unknown command:[/] {cmd}. Type /help.")
+            return
+        result = handler(args)
+        # ``/rewind`` returns a user message to prefill in the input buffer.
+        if cmd == "/rewind" and result is not None:
+            self._prefill_input = result
+
+    def _render_unknown_command(self, token: str, hint: str):
+        """Report an unrecognised slash or renamed legacy prefix to the user."""
+        if hint:
+            self.console.print(f"[bold red]Unknown command:[/] '{token}' has been renamed to '{hint}'. Type /help.")
         else:
-            self.console.print(f"[bold red]Unknown command:[/] {cmd}")
+            self.console.print(f"[bold red]Unknown command:[/] {token}. Type /help.")
 
     def _wait_for_agent_available(self, max_attempts=5, delay=1):
         """Wait for the agent to become available, with timeout."""
@@ -1284,103 +1394,53 @@ class DatusCLI:
             self.console.print(f"[bold red]Error:[/] {str(e)}")
 
     def _cmd_help(self, args: str):
-        """Display help information with aligned command explanations."""
+        """Display help for all CLI commands.
+
+        Slash commands are rendered from :data:`SLASH_COMMANDS`. Tool commands
+        and chat behaviour are described inline; use ``/<command>`` help output
+        from the command itself for deeper usage (e.g. ``/mcp`` without args).
+        """
+
         CMD_WIDTH = 30
-        lines = []
-        lines.append("[bold green]Datus-CLI Help[/]\n")
-        lines.append("[bold]SQL Commands:[/]")
-        lines.append(f"    {'<sql>':<{CMD_WIDTH}}Execute SQL query directly\n")
+        lines: list[str] = ["[bold green]Datus-CLI Help[/]\n"]
+        lines.append("[bold]SQL:[/]")
+        lines.append(f"    {'<sql>':<{CMD_WIDTH}}Execute SQL query directly")
+        lines.append("")
+
+        lines.append("[bold]Chat:[/]")
+        lines.append(f"    {'<message>':<{CMD_WIDTH}}Chat with the default agent (configure via /agent)")
+        lines.append("")
 
         lines.append("[bold]Tool Commands (! prefix):[/]")
         tool_cmds = [
-            # ("!run <query>", "Run a natural language query with live workflow status display"),
-            ("!sl/!schema_linking", "Schema linking: show list of recommended tables and values"),
-            ("!sm/!search_metrics", "Use natural language to search for corresponding metrics"),
-            ("!sq/!search_sql", "Use natural language to search for reference SQL"),
-            ("!sd/!search_document", "Search platform documentation by keywords"),
-            # ("!gen", "Generate SQL, optionally with table constraints"),
-            # ("!fix <description>", "Fix the last SQL query"),
+            ("!sl, !schema_linking", "Schema linking: recommended tables and values"),
+            ("!sm, !search_metrics", "Search metrics by natural language"),
+            ("!sq, !search_sql", "Search reference SQL by natural language"),
+            ("!sd, !search_document", "Search platform documentation by keywords"),
             ("!save", "Save the last result to a file"),
             ("!bash <command>", "Execute a bash command (limited to safe commands)"),
-            # remove this when sub agent is ready
-            # ("!reason", "Run SQL reasoning with streaming output"),
-            # ("!compare", "Compare SQL results with streaming output"),
         ]
         for cmd, desc in tool_cmds:
             lines.append(f"    {cmd:<{CMD_WIDTH}}{desc}")
         lines.append("")
 
-        lines.append("[bold]Context Commands (@ prefix):[/]")
-        context_cmds = [
-            ("@catalog", "Display database catalog"),
-            ("@subject", "Display Semantic Model, Metrics etc."),
-        ]
-        for cmd, desc in context_cmds:
-            lines.append(f"    {cmd:<{CMD_WIDTH}}{desc}")
-        lines.append("")
+        by_group: dict[str, list] = {group: [] for group in GROUP_ORDER}
+        for spec in iter_visible():
+            by_group.setdefault(spec.group, []).append(spec)
+        for group in GROUP_ORDER:
+            specs = by_group.get(group) or []
+            if not specs:
+                continue
+            title = GROUP_TITLES.get(group, group.title())
+            lines.append(f"[bold]{title} (/ prefix):[/]")
+            for spec in specs:
+                token = f"/{spec.name}"
+                if spec.aliases:
+                    token = token + ", " + ", ".join(f"/{alias}" for alias in spec.aliases)
+                lines.append(f"    {token:<{CMD_WIDTH}}{spec.summary}")
+            lines.append("")
 
-        lines.append("[bold]Chat Commands (/ prefix):[/]")
-        chat_cmds = [
-            ("/<message>", "Chat with the AI assistant (uses default agent)"),
-            ("/chat <message>", "Chat with the chat node explicitly"),
-            ("/<agent> <message>", "Chat with a specific agent"),
-        ]
-        for cmd, desc in chat_cmds:
-            lines.append(f"    {cmd:<{CMD_WIDTH}}{desc}")
-        lines.append("")
-
-        lines.append("[bold]Internal Commands (. prefix):[/]")
-        internal_cmds = [
-            (".help", "Display this help message"),
-            (".exit, .quit", "Exit the CLI"),
-            (".clear", "Clear console and chat session"),
-            (".chat_info", "Show current chat session information"),
-            (".compact", "Compact chat session by summarizing conversation history"),
-            (".sessions", "List all stored SQLite sessions with detailed information"),
-            (".resume [session_id]", "Resume a previous chat session"),
-            (".rewind [turn]", "Rewind current session to a specific turn, creating a new branch"),
-            (".bootstrap_bi", "Extract BI dashboard assets to assemble sub-agent context"),
-            (".databases", "List all databases"),
-            (".database database_name", "Switch current database"),
-            (".tables", "List all tables"),
-            (".schemas", "List all schemas or show detailed schema information"),
-            (".schema schema_name", "Switch current schema"),
-            (".table_schema table_name", "Show table field details"),
-            (".indexes table_name", "Show indexes for a table"),
-            (".agent", "Interactive selector to switch default agent"),
-            ("     .agent <name>", "Set default agent directly (e.g., .agent gensql)"),
-            ("     .agent chat", "Reset default agent to chat node"),
-            (".namespace namespace", "Switch current namespace"),
-            (".mcp", "Manage MCP (Model Configuration Protocol) servers"),
-            ("     .mcp list", "List all MCP servers"),
-            (
-                "     .mcp add --transport \\[stdio/sse/http] <name> <command> \\[args1 args2 ...]",
-                "Add a new MCP server configuration",
-            ),
-            ("     .mcp remove <name>", "Remove an MCP server configuration"),
-            ("     .mcp check <name>", "Check connectivity to an MCP server"),
-            ("     .mcp call <server.tool> \\[params]", "Call a tool on an MCP server"),
-            ("     .mcp filter", "Manage tool filters for MCP servers"),
-            (
-                "       .mcp filter set <server> \\[--allowed tool1,tool2] "
-                + "\\[--blocked tool3,tool4] \\[--enabled true/false]",
-                "Set tool filter",
-            ),
-            ("       .mcp filter get <server>", "Get current tool filter configuration"),
-            ("       .mcp filter remove <server>", "Remove tool filter configuration"),
-            (".skill", "Manage skills and marketplace"),
-            ("     .skill list", "List locally installed skills"),
-            ("     .skill search <query>", "Search skills in marketplace"),
-            ("     .skill install <name> [version]", "Install skill from marketplace"),
-            ("     .skill publish <path>", "Publish local skill to marketplace"),
-            ("     .skill info <name>", "Show skill details"),
-            ("     .skill update", "Update all marketplace skills to latest"),
-            ("     .skill remove <name>", "Remove a locally installed skill"),
-        ]
-        for cmd, desc in internal_cmds:
-            lines.append(f"    {cmd:<{CMD_WIDTH}}{desc}")
-        help_text = "\n".join(lines)
-        self.console.print(help_text)
+        self.console.print("\n".join(lines).rstrip())
 
     def _cmd_exit(self, args: str):
         """Exit the CLI."""
@@ -1416,7 +1476,7 @@ class DatusCLI:
         elif database:
             db_line = f"[bold green]{database}[/]  [yellow]not connected[/]"
         else:
-            db_line = "[yellow]not selected  (use .database to choose)[/]"
+            db_line = "[yellow]not selected  (use /database to choose)[/]"
 
         context_summary = self.cli_context.get_context_summary() if self.db_connector else "No context available"
         show_context = context_summary and context_summary != "No context available"
@@ -1441,7 +1501,7 @@ class DatusCLI:
             info.add_row("Context", Text.from_markup(f"[dim]{context_summary}[/]"))
         body.add_row(info)
         body.add_row(Text(""))
-        body.add_row(Text.from_markup("[dim]Type .help for commands, .exit to quit[/]"))
+        body.add_row(Text.from_markup("[dim]Type / for commands, /help for the full list, /exit to quit[/]"))
 
         return Panel(
             body,

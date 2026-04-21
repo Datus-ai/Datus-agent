@@ -6,8 +6,8 @@
 
 上下文条目被组织成三棵独立的树：
 
-- `@catalog` —— 物理数据结构（数据库、Schema、数据表）
-- `@subject` —— 语义/业务层（域、层级、语义模型、指标）
+- `/catalog` —— 物理数据结构（数据库、Schema、数据表）
+- `/subject` —— 语义/业务层（域、层级、语义模型、指标）
 
 通过组合这些结构，你向 Datus 提供与你一致的心智模型，让它以你的视角理解数据，而不是凭猜测推断。
 
@@ -17,7 +17,7 @@
 
 输入 `@` 并按 Tab 可以唤起上下文浏览器。根据不同命令，会显示可逐级展开的树状视图：
 
-### @catalog
+### /catalog
 ```text
 catalog
   └── database
@@ -31,7 +31,7 @@ catalog
 
 ![Catalog Screen_Edit_Semantic](../assets/catalog_screen_edit_semantic.png)
 
-### @subject
+### /subject
 ```text
 domain
   └── layer1
@@ -69,7 +69,7 @@ domain
 在聊天命令中有两种方式注入上下文：
 
 #### 浏览模式
-输入 `@`（或 `@catalog`、`@subject`、`@sql`）并按 Tab，逐级浏览树状结构，直到找到需要的数据表、指标或 SQL。
+输入 `@`（或 `/catalog`、`/subject`、`@sql`）并按 Tab，逐级浏览树状结构，直到找到需要的数据表、指标或 SQL。
 
 #### 模糊搜索模式
 输入 `@`（或 `@任意文本`）后跟关键词，再按 Tab。Datus 会跨所有上下文树进行模糊搜索并推荐最佳匹配，无需记住精确路径。在 [!执行命令](execution_command.md) 中最近搜索过的表、指标与 SQL 会优先显示。
@@ -78,7 +78,7 @@ domain
 
 ```bash
 # 浏览模式 —— 按步骤选择
-/ pay attention to @catalog <Tab>
+/ pay attention to /catalog <Tab>
 # 依次选择 catalog > my_database > public > customers
 
 # 模糊搜索模式 —— 关键字快速查找
@@ -88,13 +88,13 @@ domain
 
 ### 上下文类型
 
-#### 物理数据（`@catalog`）
+#### 物理数据（`/catalog`）
 - 数据库与 Schema
 - 表结构与字段定义
 - 数据类型与约束
 - 外键关系
 
-#### 业务上下文（`@subject`）
+#### 业务上下文（`/subject`）
 - 业务域与层级划分
 - 语义模型与业务逻辑
 - 计算指标与 KPI
@@ -107,7 +107,7 @@ domain
 - 优化示例
 
 ### 内联上下文注入
-除了独立的 UI 界面命令（`@catalog` 和 `@subject`）外，你还可以通过键入 `@` 后跟实体类型或名称的方式，在聊天命令中向当前提示中插入上下文实体。自动补全功能（`AtReferenceCompleter`）会协助你将以下内容内联注入：
+除了独立的 UI 界面命令（`/catalog` 和 `/subject`）外，你还可以通过键入 `@` 后跟实体类型或名称的方式，在聊天命令中向当前提示中插入上下文实体。自动补全功能（`AtReferenceCompleter`）会协助你将以下内容内联注入：
 - `@Table`
 - `@Metrics`
 - `@Sql`

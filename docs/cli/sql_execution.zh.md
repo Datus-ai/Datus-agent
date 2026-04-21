@@ -2,7 +2,7 @@
 
 ## 1. 概览
 
-除了命令（`/`、`@`、`!`），Datus-CLI 也能像传统 SQL 客户端一样工作。你可以直接执行 SQL 查询，并通过内置的元数据命令（如 `.tables`、`.databases`、`.schemas` 等）探索数据库结构。
+除了命令（`/`、`@`、`!`），Datus-CLI 也能像传统 SQL 客户端一样工作。你可以直接执行 SQL 查询，并通过内置的元数据命令（如 `/tables`、`/databases`、`/schemas` 等）探索数据库结构。
 
 我们提供了一组内置的元数据命令，以统一方式访问不同数据库的元信息；当然，也可以继续使用原生命令，如 `SHOW DATABASES`、`DESCRIBE TABLES` 等。
 
@@ -37,13 +37,13 @@ Returned 5 rows in 0.01 seconds
 使用内置元数据命令查看数据库结构：
 
 ```bash
-.databases                       # 列出所有数据库
-.database <database_name>        # 切换当前数据库
-.schemas                         # 列出所有 Schema（或展示详情）
-.schema <schema_name>            # 切换当前 Schema
-.tables                          # 列出当前 Schema 的所有表
-.table_schema <table_name>       # 查看表结构详情
-.indexes <table_name>            # 查看表索引
+/databases                       # 列出所有数据库
+/database <database_name>        # 切换当前数据库
+/schemas                         # 列出所有 Schema（或展示详情）
+/schema <schema_name>            # 切换当前 Schema
+/tables                          # 列出当前 Schema 的所有表
+/table_schema <table_name>       # 查看表结构详情
+/indexes <table_name>            # 查看表索引
 ```
 
 结合聊天或调试 SQL 时，这些命令能帮助你快速熟悉数据环境。
@@ -89,18 +89,18 @@ SQL 结果会带来：
 ### 查询优化
 
 1. **充分利用 LIMIT**：对大表做探索性查询时先限制返回行数
-2. **关注索引**：复杂 JOIN 前先用 `.indexes` 查看索引
-3. **理解 Schema**：通过 `.table_schema` 明确字段类型
+2. **关注索引**：复杂 JOIN 前先用 `/indexes` 查看索引
+3. **理解 Schema**：通过 `/table_schema` 明确字段类型
 4. **监控性能**：关注执行时间提示
 
 ### 元数据探索流程
 
-1. 使用 `.databases` 查看可用数据库
-2. 通过 `.database <name>` 切换目标数据库
-3. 使用 `.schemas` 浏览 Schema
-4. 用 `.tables` 列出表
-5. 通过 `.table_schema <table>` 查看特定表结构
-6. 使用 `.indexes <table>` 查看性能相关索引
+1. 使用 `/databases` 查看可用数据库
+2. 通过 `/database <name>` 切换目标数据库
+3. 使用 `/schemas` 浏览 Schema
+4. 用 `/tables` 列出表
+5. 通过 `/table_schema <table>` 查看特定表结构
+6. 使用 `/indexes <table>` 查看性能相关索引
 
 ### 与聊天能力结合
 
@@ -118,7 +118,7 @@ ORDER BY revenue DESC
 LIMIT 10;
 
 # 随后注入上下文
-@catalog customers
+/catalog customers
 / Now show me their contact information
 ```
 

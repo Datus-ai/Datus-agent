@@ -192,7 +192,7 @@ Each subagent in `agentic_nodes` supports three types of tool extensions that ca
 | Field | Source | Description |
 |-------|--------|-------------|
 | `tools` | Built-in | Datus native tools (e.g. `db_tools.*`, `context_search_tools.*`, `date_parsing_tools.*`) |
-| `mcp` | Third-party | External MCP server tools, configured via `.mcp.json` (e.g. `metricflow_mcp`, `filesystem`) |
+| `mcp` | Third-party | External MCP server tools, configured via `/mcp.json` (e.g. `metricflow_mcp`, `filesystem`) |
 | `skills` | User-defined | Skills discovered from `SKILL.md` files — can define workflows in Markdown and extend with custom scripts |
 
 To enable skills in a customized subagent, add the `skills` field under the subagent's config in `agentic_nodes` section of `agent.yml`:
@@ -363,7 +363,7 @@ datus skill logout --marketplace http://datus-marketplace:9000
 
 In the REPL:
 ```
-datus> .skill login http://datus-marketplace:9000
+datus> /skill login http://datus-marketplace:9000
 Email: user@example.com
 Password: ****
 Login successful! Token saved for http://datus-marketplace:9000
@@ -534,13 +534,13 @@ datus skill remove sql-optimization
 The same skill operations are available inside the interactive REPL session:
 
 ```
-datus> .skill list                          # List local skills
-datus> .skill search sql                    # Search marketplace
-datus> .skill install sql-optimization      # Install from marketplace
-datus> .skill publish ./skills/my-skill     # Publish to marketplace
-datus> .skill info sql-optimization         # Show skill details
-datus> .skill update                        # Update marketplace skills
-datus> .skill remove sql-optimization       # Remove local skill
+datus> /skill list                          # List local skills
+datus> /skill search sql                    # Search marketplace
+datus> /skill install sql-optimization      # Install from marketplace
+datus> /skill publish ./skills/my-skill     # Publish to marketplace
+datus> /skill info sql-optimization         # Show skill details
+datus> /skill update                        # Update marketplace skills
+datus> /skill remove sql-optimization       # Remove local skill
 ```
 
 ### End-to-End Workflow Example

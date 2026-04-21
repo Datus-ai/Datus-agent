@@ -43,7 +43,7 @@ Subagent 可以是：
 
 自定义 subagent 配置在 `agent.agentic_nodes` 下。
 
-`.subagent` 向导当前可以创建 `gen_sql` 风格或 `gen_report` 风格的自定义 subagent。如果你想把更专用的节点类别名成一个自定义入口，例如 `explore`、`gen_table`、`gen_skill`、`gen_dashboard`、`scheduler`，需要直接手工编辑 `agent.yml`。
+`/subagent` 向导当前可以创建 `gen_sql` 风格或 `gen_report` 风格的自定义 subagent。如果你想把更专用的节点类别名成一个自定义入口，例如 `explore`、`gen_table`、`gen_skill`、`gen_dashboard`、`scheduler`，需要直接手工编辑 `agent.yml`。
 
 示例：
 

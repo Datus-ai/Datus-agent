@@ -140,7 +140,7 @@ datus-agent bootstrap-kb \
 
 ```
 Datus-cli --database california_schools
-@subject
+/subject
 ```
 
 ![主题树结构](../assets/tutorial_subject_tree.png)

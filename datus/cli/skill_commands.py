@@ -46,7 +46,7 @@ class SkillCommands:
         return SkillManager(config=config)
 
     def cmd_skill(self, args: str):
-        """Dispatch .skill subcommands."""
+        """Dispatch /skill subcommands."""
         args = args.strip()
         if not args or args == "help":
             self._show_usage()
@@ -73,7 +73,7 @@ class SkillCommands:
             self._show_usage()
 
     def cmd_skill_login(self, args: str = ""):
-        """Authenticate with the Town Marketplace: .skill login [marketplace_url]"""
+        """Authenticate with the Town Marketplace: /skill login [marketplace_url]"""
         import getpass
 
         import httpx
@@ -114,7 +114,7 @@ class SkillCommands:
             self.console.print(f"[red]Login error: {exc}[/]")
 
     def cmd_skill_logout(self):
-        """Clear saved marketplace credentials: .skill logout"""
+        """Clear saved marketplace credentials: /skill logout"""
         from datus.tools.skill_tools.marketplace_auth import clear_token
 
         manager = self._get_skill_manager()
@@ -161,7 +161,7 @@ class SkillCommands:
     def cmd_skill_search(self, query: str):
         """Search marketplace for skills."""
         if not query:
-            self.console.print("[yellow]Usage: .skill search <query>[/]")
+            self.console.print("[yellow]Usage: /skill search <query>[/]")
             return
 
         manager = self._get_skill_manager()
@@ -194,10 +194,10 @@ class SkillCommands:
         self.console.print(table)
 
     def cmd_skill_install(self, args: str):
-        """Install skill from marketplace: .skill install <name> [version]"""
+        """Install skill from marketplace: /skill install <name> [version]"""
         parts = args.strip().split()
         if not parts:
-            self.console.print("[yellow]Usage: .skill install <name> [version][/]")
+            self.console.print("[yellow]Usage: /skill install <name> [version][/]")
             return
 
         name = parts[0]
@@ -213,10 +213,10 @@ class SkillCommands:
             self.console.print(f"[bold red]Error:[/] {msg}")
 
     def cmd_skill_publish(self, args: str):
-        """Publish local skill to marketplace: .skill publish <path> [--owner <name>]"""
+        """Publish local skill to marketplace: /skill publish <path> [--owner <name>]"""
         parts = args.strip().split()
         if not parts:
-            self.console.print("[yellow]Usage: .skill publish <path> [--owner <name>][/]")
+            self.console.print("[yellow]Usage: /skill publish <path> [--owner <name>][/]")
             return
 
         skill_dir = parts[0]
@@ -238,7 +238,7 @@ class SkillCommands:
     def cmd_skill_info(self, name: str):
         """Show skill details (local + remote)."""
         if not name:
-            self.console.print("[yellow]Usage: .skill info <name>[/]")
+            self.console.print("[yellow]Usage: /skill info <name>[/]")
             return
 
         manager = self._get_skill_manager()
@@ -309,7 +309,7 @@ class SkillCommands:
     def cmd_skill_remove(self, name: str):
         """Remove a locally installed skill."""
         if not name:
-            self.console.print("[yellow]Usage: .skill remove <name>[/]")
+            self.console.print("[yellow]Usage: /skill remove <name>[/]")
             return
 
         manager = self._get_skill_manager()
@@ -341,18 +341,18 @@ class SkillCommands:
             self.console.print(f"[bold red]Failed to remove skill '{name}'[/]")
 
     def _show_usage(self):
-        """Show .skill command usage."""
+        """Show /skill command usage."""
         self.console.print("[bold]Skill Marketplace Commands:[/]")
         cmds = [
-            (".skill login [url]", "Authenticate with marketplace"),
-            (".skill logout", "Clear saved marketplace credentials"),
-            (".skill list", "List locally installed skills"),
-            (".skill search <query>", "Search skills in marketplace"),
-            (".skill install <name> [version]", "Install skill from marketplace"),
-            (".skill publish <path>", "Publish local skill to marketplace"),
-            (".skill info <name>", "Show skill details"),
-            (".skill update", "Update all marketplace skills to latest"),
-            (".skill remove <name>", "Remove a locally installed skill"),
+            ("/skill login [url]", "Authenticate with marketplace"),
+            ("/skill logout", "Clear saved marketplace credentials"),
+            ("/skill list", "List locally installed skills"),
+            ("/skill search <query>", "Search skills in marketplace"),
+            ("/skill install <name> [version]", "Install skill from marketplace"),
+            ("/skill publish <path>", "Publish local skill to marketplace"),
+            ("/skill info <name>", "Show skill details"),
+            ("/skill update", "Update all marketplace skills to latest"),
+            ("/skill remove <name>", "Remove a locally installed skill"),
         ]
         for cmd, desc in cmds:
             self.console.print(f"  {cmd:<35} {desc}")

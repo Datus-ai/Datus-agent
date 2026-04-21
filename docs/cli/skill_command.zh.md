@@ -100,16 +100,16 @@ datus skill remove sql-optimization
 
 ## REPL 等效命令
 
-所有 `datus skill` 子命令在 REPL 中都可以作为 `.skill` 命令使用：
+所有 `datus skill` 子命令在 REPL 中都可以作为 `/skill` 命令使用：
 
 ```
-datus> .skill list
-datus> .skill search sql
-datus> .skill install sql-optimization
-datus> .skill publish ./skills/my-skill
-datus> .skill info sql-optimization
-datus> .skill update
-datus> .skill remove sql-optimization
+datus> /skill list
+datus> /skill search sql
+datus> /skill install sql-optimization
+datus> /skill publish ./skills/my-skill
+datus> /skill info sql-optimization
+datus> /skill update
+datus> /skill remove sql-optimization
 ```
 
 ## 配置

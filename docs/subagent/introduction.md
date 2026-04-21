@@ -43,7 +43,7 @@ See [Built-in subagents](./builtin_subagents.md) for details.
 
 Custom subagents are configured under `agent.agentic_nodes`.
 
-The `.subagent` wizard currently creates `gen_sql`-style or `gen_report`-style custom subagents. If you want to alias more specialized node classes such as `explore`, `gen_table`, `gen_skill`, `gen_dashboard`, or `scheduler`, edit `agent.yml` manually.
+The `/subagent` wizard currently creates `gen_sql`-style or `gen_report`-style custom subagents. If you want to alias more specialized node classes such as `explore`, `gen_table`, `gen_skill`, `gen_dashboard`, or `scheduler`, edit `agent.yml` manually.
 
 Example:
 

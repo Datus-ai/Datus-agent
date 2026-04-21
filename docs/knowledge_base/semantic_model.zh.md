@@ -158,11 +158,11 @@ Agent 处理流程：
 
 ## 与上下文搜索集成
 
-语义模型可通过 `@subject` 上下文命令搜索：
+语义模型可通过 `/subject` 上下文命令搜索：
 
 ```bash
 # 在 CLI 聊天模式中
-@subject <domain>/<layer1>/<layer2>
+/subject <domain>/<layer1>/<layer2>
 
 # 搜索语义对象
 search_semantic_objects(query="customer revenue", kinds=["table", "column"])

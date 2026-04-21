@@ -4,7 +4,7 @@
 
 MCP（Model Context Protocol）是 Datus-CLI 连接外部工具服务器的方式，让你的智能体能力超越内置功能。
 
-通过 `.mcp`，你可以：
+通过 `/mcp`，你可以：
 
 - 添加本地或远程 MCP 服务器（stdio、HTTP、SSE）
 - 列出所有可用服务器及其状态
@@ -18,21 +18,21 @@ MCP（Model Context Protocol）是 Datus-CLI 连接外部工具服务器的方�
 ### 添加新的 MCP 服务器
 
 ```bash
-.mcp add <name> <command> [args...]
+/mcp add <name> <command> [args...]
 ```
 
 **示例：**
 
 ```bash
 # 本地 stdio 服务器
-.mcp add --transport stdio sqlite /Users/me/bin/uv -- -m mcp_sqlite_server
+/mcp add --transport stdio sqlite /Users/me/bin/uv -- -m mcp_sqlite_server
 
 # 携带认证头的 SSE 服务器
-.mcp add --transport sse api-server https://api.example.com/mcp/sse \
+/mcp add --transport sse api-server https://api.example.com/mcp/sse \
   --header "Authorization: Bearer token" --timeout 30.0
 
 # HTTP 流式服务器
-.mcp add --transport http metricflow https://localhost:9000/mcp
+/mcp add --transport http metricflow https://localhost:9000/mcp
 ```
 
 ---
@@ -40,7 +40,7 @@ MCP（Model Context Protocol）是 Datus-CLI 连接外部工具服务器的方�
 ### 查看已有服务器
 
 ```bash
-.mcp list
+/mcp list
 ```
 
 展示所有已配置的 MCP 服务器及其状态：
@@ -60,7 +60,7 @@ MCP（Model Context Protocol）是 Datus-CLI 连接外部工具服务器的方�
 ### 检查指定服务器
 
 ```bash
-.mcp check <mcp_name>
+/mcp check <mcp_name>
 ```
 
 验证连接状况并打印该服务器提供的工具列表。
@@ -70,14 +70,14 @@ MCP（Model Context Protocol）是 Datus-CLI 连接外部工具服务器的方�
 ### 调用服务器工具
 
 ```bash
-.mcp call <mcp_name>.<tool_name> <args>
+/mcp call <mcp_name>.<tool_name> <args>
 ```
 
 **示例：**
 
 ```bash
-.mcp call sqlite.list_tables
-.mcp call metricflow.query_metrics '{"metrics": "revenue"}'
+/mcp call sqlite.list_tables
+/mcp call metricflow.query_metrics '{"metrics": "revenue"}'
 ```
 
 ---
@@ -85,10 +85,10 @@ MCP（Model Context Protocol）是 Datus-CLI 连接外部工具服务器的方�
 ### 移除服务器
 
 ```bash
-.mcp remove <name>
+/mcp remove <name>
 ```
 
-从你的 `~/.datus/conf/.mcp.json` 中移除已有的 MCP 服务器配置。
+从你的 `~/.datus/conf//mcp.json` 中移除已有的 MCP 服务器配置。
 
 ---
 
@@ -98,16 +98,16 @@ MCP（Model Context Protocol）是 Datus-CLI 连接外部工具服务器的方�
 
 ```bash
 # 只允许特定工具（排除其他所有工具）
-.mcp filter set <mcp_name> include read_query,list_tables
+/mcp filter set <mcp_name> include read_query,list_tables
 
 # 拒绝特定工具（允许其他所有工具）
-.mcp filter set <mcp_name> exclude write_query,drop_table
+/mcp filter set <mcp_name> exclude write_query,drop_table
 
 # 查看当前的过滤配置
-.mcp filter get <mcp_name>
+/mcp filter get <mcp_name>
 
 # 移除该服务器的所有过滤配置
-.mcp filter remove <mcp_name>
+/mcp filter remove <mcp_name>
 ```
 
 ---
@@ -116,7 +116,7 @@ MCP（Model Context Protocol）是 Datus-CLI 连接外部工具服务器的方�
 
 ### 存储与配置
 
-- 所有 MCP 服务器定义存放在单一 JSON 文件：`~/.datus/conf/.mcp.json`
+- 所有 MCP 服务器定义存放在单一 JSON 文件：`~/.datus/conf//mcp.json`
 - 每条记录包含命令、参数、可选的环境变量与 Header
 - 可以在 command、args、env、url、headers 中使用 `${VAR}` 或 `${VAR:-default}` 展开环境变量
 
@@ -189,32 +189,32 @@ MCP 配置支持环境变量展开：
 
 ```bash
 # 为本地开发添加 SQLite 服务器
-.mcp add sqlite uvx mcp-server-sqlite --db-path ./data/sample.db
+/mcp add sqlite uvx mcp-server-sqlite --db-path ./data/sample.db
 
 # 通过 MCP 查询数据表
-.mcp call sqlite.list_tables
-.mcp call sqlite.read_query "SELECT * FROM customers LIMIT 5"
+/mcp call sqlite.list_tables
+/mcp call sqlite.read_query "SELECT * FROM customers LIMIT 5"
 ```
 
 ### MetricFlow 集成
 
 ```bash
 # 添加 MetricFlow 服务器以访问语义层
-.mcp add metricflow python -m mcp_metricflow_server
+/mcp add metricflow python -m mcp_metricflow_server
 
 # 调用业务指标
-.mcp call metricflow.list_metrics
-.mcp call metricflow.query_metrics '{"metrics": ["revenue"], "dimensions": ["customer_segment"]}'
+/mcp call metricflow.list_metrics
+/mcp call metricflow.query_metrics '{"metrics": ["revenue"], "dimensions": ["customer_segment"]}'
 ```
 
 ### 文件系统集成
 
 ```bash
 # 添加文件系统服务器以执行文件操作
-.mcp add filesystem python -m mcp_filesystem_server --base-path /project/data
+/mcp add filesystem python -m mcp_filesystem_server --base-path /project/data
 
 # 通过 MCP 执行文件操作
-.mcp call filesystem.list_directory /reports
-.mcp call filesystem.read_file /reports/summary.md
+/mcp call filesystem.list_directory /reports
+/mcp call filesystem.read_file /reports/summary.md
 ```
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Use `.subagent` to manage custom subagents stored under `agent.agentic_nodes` in `agent.yml`.
+Use `/subagent` to manage custom subagents stored under `agent.agentic_nodes` in `agent.yml`.
 
 The current CLI supports:
 
@@ -11,7 +11,7 @@ The current CLI supports:
 - `update <agent_name>`: edit an existing custom subagent
 - `remove <agent_name>`: delete a custom subagent
 
-Built-in system subagents from `SYS_SUB_AGENTS` are reserved and cannot be removed or edited with `.subagent`.
+Built-in system subagents from `SYS_SUB_AGENTS` are reserved and cannot be removed or edited with `/subagent`.
 
 ## What the Wizard Creates
 
@@ -58,22 +58,22 @@ Rules are stored as a string list under `rules` and appended to the final system
 
 ## Command Reference
 
-### `.subagent add`
+### `/subagent add`
 
 Starts the interactive wizard and creates a new custom subagent.
 
 ```bash
-.subagent add
+/subagent add
 ```
 
 ![Add subagent](../assets/add_subagent.png)
 
-### `.subagent list`
+### `/subagent list`
 
 Lists configured custom subagents.
 
 ```bash
-.subagent list
+/subagent list
 ```
 
 The table currently shows:
@@ -91,22 +91,22 @@ The list is filtered by the current database when a subagent has scoped context.
 
 ![List subagent](../assets/list_subagents.png)
 
-### `.subagent update <agent_name>`
+### `/subagent update <agent_name>`
 
 Loads the existing config into the wizard and saves changes back to `agent.yml`.
 
 ```bash
-.subagent update finance_report
+/subagent update finance_report
 ```
 
 ![Update subagent](../assets/update_subagent.png)
 
-### `.subagent remove <agent_name>`
+### `/subagent remove <agent_name>`
 
 Deletes the config entry and its generated prompt template.
 
 ```bash
-.subagent remove finance_report
+/subagent remove finance_report
 ```
 
 ## Example Output
@@ -145,7 +145,7 @@ Instead:
 
 That means:
 
-- there is no `.subagent bootstrap` command in the current CLI
+- there is no `/subagent bootstrap` command in the current CLI
 - `scoped_kb_path` is deprecated and not persisted for newly saved configs
 - global knowledge still needs to be populated separately with `datus-agent bootstrap-kb`
 

@@ -193,7 +193,7 @@ codex:
 这部分配置会被用于：
 
 - `chat`、`explore`、`gen_sql`、`gen_report`、`gen_dashboard`、`scheduler` 等内置 agentic 节点
-- 通过 `.subagent` 创建的自定义 subagent
+- 通过 `/subagent` 创建的自定义 subagent
 - 把自定义名称 alias 到某个内置节点类的高级手工配置
 
 ### 常见字段
@@ -240,7 +240,7 @@ scoped_context:
   sqls: finance.revenue.region_rollup
 ```
 
-手工写 YAML 时请显式填写 `namespace`。`.subagent` 向导会自动从当前数据库填充该值。
+手工写 YAML 时请显式填写 `namespace`。`/subagent` 向导会自动从当前数据库填充该值。
 
 ### 示例
 

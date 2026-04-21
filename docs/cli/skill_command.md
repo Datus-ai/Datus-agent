@@ -103,16 +103,16 @@ datus skill remove sql-optimization
 
 ## REPL Equivalents
 
-All `datus skill` subcommands are available in the REPL as `.skill` commands:
+All `datus skill` subcommands are available in the REPL as `/skill` commands:
 
 ```
-datus> .skill list
-datus> .skill search sql
-datus> .skill install sql-optimization
-datus> .skill publish ./skills/my-skill
-datus> .skill info sql-optimization
-datus> .skill update
-datus> .skill remove sql-optimization
+datus> /skill list
+datus> /skill search sql
+datus> /skill install sql-optimization
+datus> /skill publish ./skills/my-skill
+datus> /skill info sql-optimization
+datus> /skill update
+datus> /skill remove sql-optimization
 ```
 
 ## Configuration
