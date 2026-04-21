@@ -193,6 +193,7 @@ class ServiceClientRegistry:
         # monkey-patch the module-level helper functions.
         self._entries: Dict[str, Tuple[str, str]] = {}
         self._clients: Dict[str, ServiceClient] = {}
+        self._fingerprint: Optional[Tuple[Any, ...]] = None
         self._discover()
 
     def _discover(self) -> None:
@@ -214,12 +215,41 @@ class ServiceClientRegistry:
                     continue
                 self._entries[key] = (section, service_name)
 
+    def _namespace_fingerprint(self) -> Tuple[Any, ...]:
+        """Capture the agent_config state that affects built tool instances.
+
+        ``SemanticTools`` bakes ``current_database`` into ``MetricRAG`` /
+        ``SemanticModelRAG`` at init time and resolves the adapter against
+        the active namespace. ``BIFuncTool.read_connector`` is similarly
+        pulled via ``db_manager.get_conn(current_database, current_database)``
+        on first use. If any of those change, cached instances must be
+        rebuilt — a session-scoped cache would otherwise keep executing
+        queries against the pre-switch namespace after ``.database ...`` /
+        ``.namespace ...``.
+        """
+        cfg = self._agent_config
+        return (
+            getattr(cfg, "current_database", None),
+            getattr(cfg, "namespace", None),
+        )
+
+    def _invalidate_if_stale(self) -> None:
+        """Drop cached clients when the namespace fingerprint has changed."""
+        fp = self._namespace_fingerprint()
+        if self._fingerprint is None:
+            self._fingerprint = fp
+            return
+        if fp != self._fingerprint:
+            self._clients.clear()
+            self._fingerprint = fp
+
     def list_services(self) -> List[Tuple[str, str, str]]:
         """Return ``[(service_name, service_type, status), ...]`` sorted by name.
 
-        ``status`` is ``"ready"`` if the client has been constructed,
-        ``"lazy"`` otherwise.
+        ``status`` is ``"ready"`` if the client has been constructed under the
+        current namespace fingerprint, ``"lazy"`` otherwise.
         """
+        self._invalidate_if_stale()
         out: List[Tuple[str, str, str]] = []
         for key, (section, original_name) in sorted(self._entries.items()):
             status = "ready" if key in self._clients else "lazy"
@@ -231,6 +261,7 @@ class ServiceClientRegistry:
 
     def get(self, service_name: str) -> Optional[ServiceClient]:
         """Return the ``ServiceClient`` for ``service_name`` (lazy construct)."""
+        self._invalidate_if_stale()
         key = service_name.lower()
         cached = self._clients.get(key)
         if cached is not None:

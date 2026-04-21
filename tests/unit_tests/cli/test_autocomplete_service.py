@@ -38,6 +38,7 @@ def _make_completer(advertised=("list_dashboards", "get_dashboard")):
     registry = ServiceClientRegistry.__new__(ServiceClientRegistry)
     registry._agent_config = None
     registry._entries = {"superset": ("bi_tools", "superset")}
+    registry._fingerprint = None
     registry._clients = {
         "superset": ServiceClient(
             service_type="bi_tools",

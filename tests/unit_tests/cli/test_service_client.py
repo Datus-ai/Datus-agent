@@ -279,6 +279,71 @@ class TestServiceClientRegistry:
         registry = ServiceClientRegistry(cfg)
         assert registry.list_services() == []
 
+    def test_cache_invalidated_on_namespace_switch(self):
+        """After ``.database`` / ``.namespace`` switch, cached ``ServiceClient``s
+        must be dropped — ``SemanticTools`` / ``BIFuncTool`` internalise the
+        active namespace at construction time (MetricRAG, read_connector,
+        adapter config resolution) and continuing to reuse them would run
+        queries against the old namespace.
+        """
+        cfg = SimpleNamespace(
+            services=SimpleNamespace(bi_tools={"superset": {}}, schedulers={}, semantic_layer={}),
+            current_database="namespace_a",
+        )
+        factory = MagicMock(side_effect=lambda *_: _FakeBITool())
+        with patch.dict("datus.cli.service_client._FACTORIES", {"bi_tools": factory}):
+            registry = ServiceClientRegistry(cfg)
+            c1 = registry.get("superset")
+            assert c1 is not None
+            factory.assert_called_once()
+
+            # Same namespace → cached instance reused.
+            assert registry.get("superset") is c1
+            factory.assert_called_once()
+
+            # User runs ``.database namespace_b`` — current_database mutates.
+            cfg.current_database = "namespace_b"
+            c2 = registry.get("superset")
+            assert c2 is not c1
+            assert factory.call_count == 2
+            # list_services also reflects the invalidation by dropping ready status.
+            statuses = {name: status for name, _type, status in registry.list_services()}
+            assert statuses["superset"] == "ready"  # rebuilt under the new namespace
+
+    def test_namespace_field_also_triggers_invalidation(self):
+        """Not every install uses ``current_database`` — the ``namespace``
+        attribute is also part of the fingerprint."""
+        cfg = SimpleNamespace(
+            services=SimpleNamespace(bi_tools={"superset": {}}, schedulers={}, semantic_layer={}),
+            current_database="shared",
+            namespace="tenant_a",
+        )
+        factory = MagicMock(side_effect=lambda *_: _FakeBITool())
+        with patch.dict("datus.cli.service_client._FACTORIES", {"bi_tools": factory}):
+            registry = ServiceClientRegistry(cfg)
+            registry.get("superset")
+            cfg.namespace = "tenant_b"
+            registry.get("superset")
+            assert factory.call_count == 2
+
+    def test_list_services_shows_lazy_after_invalidation(self):
+        cfg = SimpleNamespace(
+            services=SimpleNamespace(bi_tools={"superset": {}}, schedulers={}, semantic_layer={}),
+            current_database="a",
+        )
+        with patch.dict(
+            "datus.cli.service_client._FACTORIES",
+            {"bi_tools": MagicMock(side_effect=lambda *_: _FakeBITool())},
+        ):
+            registry = ServiceClientRegistry(cfg)
+            registry.get("superset")
+            assert registry.list_services()[0][2] == "ready"
+
+            # Namespace switch without a follow-up get() — status drops back to lazy.
+            cfg.current_database = "b"
+            # list_services itself triggers invalidation.
+            assert registry.list_services()[0][2] == "lazy"
+
     def test_registry_uses_expected_factories(self):
         """Registry honors the mocked factory for each service type."""
         cfg = _fake_agent_config(

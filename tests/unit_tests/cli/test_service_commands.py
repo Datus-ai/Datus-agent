@@ -50,6 +50,7 @@ def _make_commands_with_bi_stub(tool_instance=None):
     registry = ServiceClientRegistry.__new__(ServiceClientRegistry)
     registry._agent_config = cli.agent_config
     registry._entries = {}
+    registry._fingerprint = None
     registry._clients = {
         "superset": ServiceClient(
             service_type="bi_tools",
@@ -276,10 +277,38 @@ class TestArgParser:
         schema = {"properties": {"only": {"type": "string"}}}
         assert cmd._parse_args("first second", schema) is None
 
-    def test_parse_unknown_named_is_dropped(self):
+    def test_parse_unknown_named_fails_fast_with_hint(self):
+        """Unknown ``--flag`` must not be silently dropped — a typoed
+        ``--limti`` or ``--serach`` silently ignored would execute the
+        request without the filter the user intended, which is a subtle
+        bug to diagnose at the REPL. Parser returns None and stores a
+        pointed hint naming the valid parameters.
+        """
+        cmd = ServiceCommands(_fake_cli())
+        schema = {"properties": {"a": {"type": "string"}, "limit": {"type": "integer"}}}
+        assert cmd._parse_args("--bogus=x --a=ok", schema) is None
+        assert cmd._last_parse_error is not None
+        assert "bogus" in cmd._last_parse_error
+        # Valid alternatives listed so the user sees what they could have typed.
+        assert "a" in cmd._last_parse_error
+        assert "limit" in cmd._last_parse_error
+
+    def test_parse_error_resets_between_calls(self):
+        """A successful parse after a failed one must clear the stale error."""
         cmd = ServiceCommands(_fake_cli())
         schema = {"properties": {"a": {"type": "string"}}}
-        assert cmd._parse_args("--bogus=x --a=ok", schema) == {"a": "ok"}
+        assert cmd._parse_args("--bogus=x", schema) is None
+        assert cmd._last_parse_error is not None
+        # Second call succeeds → sentinel cleared.
+        assert cmd._parse_args("--a=ok", schema) == {"a": "ok"}
+        assert cmd._last_parse_error is None
+
+    def test_parse_extra_positional_records_hint(self):
+        cmd = ServiceCommands(_fake_cli())
+        schema = {"properties": {"only": {"type": "string"}}}
+        assert cmd._parse_args("first second third", schema) is None
+        assert cmd._last_parse_error is not None
+        assert "Too many positional" in cmd._last_parse_error
 
     def test_parse_malformed_quoting_returns_none(self):
         cmd = ServiceCommands(_fake_cli())

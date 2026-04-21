@@ -48,6 +48,10 @@ class ServiceCommands:
     def __init__(self, cli_instance: "DatusCLI"):
         self.cli = cli_instance
         self._registry: Optional[ServiceClientRegistry] = None
+        # Populated by ``_parse_args`` when parsing fails in a way that has a
+        # specific user-facing hint (e.g. misspelled ``--flag``). ``_invoke``
+        # surfaces it alongside the schema so typos fail fast.
+        self._last_parse_error: Optional[str] = None
 
     # ------------------------------------------------------------------ #
     # Registry access (lazy so ServiceCommands can be created before
@@ -196,7 +200,8 @@ class ServiceCommands:
 
         parsed = self._parse_args(args, tool.params_json_schema or {})
         if parsed is None:
-            self._print_schema(tool, hint="Could not parse arguments. Expected schema:")
+            hint = self._last_parse_error or "Could not parse arguments. Expected schema:"
+            self._print_schema(tool, hint=hint)
             return
 
         bound_method = getattr(client.tool_instance, method_name, None)
@@ -232,16 +237,22 @@ class ServiceCommands:
         """Parse positional + ``--key=value`` arguments against a JSON schema.
 
         Returns a ``{key: coerced_value}`` dict, or ``None`` if the input is
-        malformed (e.g. more positional args than the schema accepts, or a
-        quoting error from ``shlex``).
+        malformed (quoting error, extra positional, unknown named flag).
+        When parsing fails in a way that has a specific user-facing hint
+        (e.g. typoed flag name), the hint is stored on
+        ``self._last_parse_error`` so ``_invoke`` can surface it before
+        printing the schema.
         """
+        self._last_parse_error = None
         try:
             tokens = shlex.split(args) if args else []
         except ValueError:
+            self._last_parse_error = "Malformed arguments: unmatched quotes."
             return None
 
         props = (schema.get("properties") or {}) if isinstance(schema, dict) else {}
         prop_order = [k for k in props.keys() if k != "self"]
+        valid_named = [k for k in prop_order]
 
         positional: List[str] = []
         named: Dict[str, str] = {}
@@ -249,6 +260,7 @@ class ServiceCommands:
             if tok.startswith("--"):
                 body = tok[2:]
                 if not body:
+                    self._last_parse_error = "Empty flag '--'. Expected '--<name>' or '--<name>=<value>'."
                     return None
                 key, sep, value = body.partition("=")
                 if not sep:
@@ -262,15 +274,21 @@ class ServiceCommands:
         parsed: Dict[str, Any] = {}
         for idx, value in enumerate(positional):
             if idx >= len(prop_order):
-                logger.warning(f"Ignoring extra positional argument '{value}' (schema has {len(prop_order)} params)")
+                self._last_parse_error = (
+                    f"Too many positional arguments. Method accepts {len(prop_order)} (got extra: '{value}')."
+                )
                 return None
             key = prop_order[idx]
             parsed[key] = self._coerce(value, props.get(key) or {})
 
         for key, raw in named.items():
             if key not in props:
-                logger.warning(f"Unknown parameter '{key}' — ignored")
-                continue
+                # Fail fast — a silently dropped ``--limti=1`` or
+                # ``--serach=...`` is worse than a parse error because the
+                # method executes without the filter the user intended.
+                suggestions = ", ".join(valid_named) if valid_named else "(none)"
+                self._last_parse_error = f"Unknown parameter '--{key}'. Valid parameters: {suggestions}."
+                return None
             parsed[key] = self._coerce(raw, props.get(key) or {})
 
         return parsed
