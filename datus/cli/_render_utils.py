@@ -37,6 +37,7 @@ def build_row_table(
     title: Optional[str] = None,
     columns: Optional[Sequence[Tuple[str, str]]] = None,
     header_style: str = "bold green",
+    hide_empty_columns: Optional[bool] = None,
 ) -> Optional[Table]:
     """Build a Rich ``Table`` from a list-of-dict payload.
 
@@ -51,6 +52,15 @@ def build_row_table(
     provided, callers pick which keys to expose and how to label them,
     which preserves existing command UX like
     ``"Logic Name(Used for switch)"`` from ``.databases``.
+
+    ``hide_empty_columns`` drops columns whose value is "empty" for every
+    row (``None`` / ``""`` / ``[]`` / ``{}``). The default is tied to
+    whether columns are inferred: list-of-dict service output routinely
+    carries placeholder fields that are only populated by the *detail*
+    endpoint (``DashboardInfo.chart_ids`` in Superset / Grafana
+    ``list_dashboards`` → always ``[]``), so pruning noise columns is the
+    right default for the inference path. Explicit columns are left
+    alone — the caller hand-picked them, don't second-guess.
     """
     if not isinstance(payload, list) or not payload:
         return None
@@ -60,10 +70,20 @@ def build_row_table(
     resolved_columns: List[Tuple[str, str]]
     if columns is None:
         resolved_columns = list(_infer_columns(payload))
+        if hide_empty_columns is None:
+            hide_empty_columns = True
     else:
         resolved_columns = [(k, label) for k, label in columns]
+        if hide_empty_columns is None:
+            hide_empty_columns = False
     if not resolved_columns:
         return None
+
+    if hide_empty_columns:
+        non_empty_keys = _collect_non_empty_keys(payload)
+        resolved_columns = [(key, label) for key, label in resolved_columns if key in non_empty_keys]
+        if not resolved_columns:
+            return None
 
     table = Table(show_header=True, header_style=header_style, title=title)
     for _, label in resolved_columns:
@@ -71,6 +91,29 @@ def build_row_table(
     for item in payload:
         table.add_row(*(format_cell(item.get(key)) for key, _ in resolved_columns))
     return table
+
+
+def _is_empty_value(value: Any) -> bool:
+    """True for values that add no information to a table cell."""
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value == ""
+    if isinstance(value, (list, dict, tuple, set)):
+        return len(value) == 0
+    return False
+
+
+def _collect_non_empty_keys(rows: Iterable[dict]) -> set:
+    """Return the set of dict keys that have a non-empty value in any row."""
+    keys: set = set()
+    for row in rows:
+        for key, value in row.items():
+            if key in keys:
+                continue
+            if not _is_empty_value(value):
+                keys.add(key)
+    return keys
 
 
 def _infer_columns(rows: Iterable[dict]) -> Iterable[Tuple[str, str]]:

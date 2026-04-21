@@ -94,3 +94,64 @@ class TestBuildRowTableExplicitColumns:
 
     def test_empty_columns_list_returns_none(self):
         assert build_row_table([{"x": 1}], columns=[]) is None
+
+
+class TestHideEmptyColumns:
+    """Pruning all-empty columns in the inference path.
+
+    Motivation: BI adapters (Superset, Grafana) return placeholder fields
+    like ``chart_ids: []`` and ``extra: {}`` from ``list_dashboards``
+    because those platforms populate them only in the per-dashboard
+    detail endpoint. Without this trim, ``.superset.list_dashboards``
+    showed two always-empty columns that contributed nothing.
+    """
+
+    def test_inference_default_drops_all_empty_columns(self):
+        rows = [
+            {"id": 1, "name": "a", "chart_ids": [], "extra": {}},
+            {"id": 2, "name": "b", "chart_ids": [], "extra": {}},
+        ]
+        table = build_row_table(rows)
+        labels = [str(c.header) for c in table.columns]
+        assert labels == ["id", "name"]
+
+    def test_inference_keeps_column_with_any_nonempty_row(self):
+        """A column with a single non-empty row is real data, not noise."""
+        rows = [
+            {"id": 1, "description": None},
+            {"id": 2, "description": "has desc"},
+            {"id": 3, "description": ""},
+        ]
+        table = build_row_table(rows)
+        labels = [str(c.header) for c in table.columns]
+        assert "description" in labels
+
+    def test_inference_returns_none_when_all_columns_empty(self):
+        rows = [{"a": None, "b": ""}, {"a": [], "b": {}}]
+        assert build_row_table(rows) is None
+
+    def test_explicit_columns_do_not_prune_by_default(self):
+        """Explicitly listed columns stay — the caller hand-picked them."""
+        rows = [{"x": "v", "empty": []}]
+        table = build_row_table(rows, columns=[("x", "X"), ("empty", "E")])
+        labels = [str(c.header) for c in table.columns]
+        assert labels == ["X", "E"]
+
+    def test_explicit_columns_honors_opt_in(self):
+        rows = [{"x": "v", "empty": []}]
+        table = build_row_table(rows, columns=[("x", "X"), ("empty", "E")], hide_empty_columns=True)
+        labels = [str(c.header) for c in table.columns]
+        assert labels == ["X"]
+
+    def test_inference_honors_opt_out(self):
+        rows = [{"x": "v", "empty": []}]
+        table = build_row_table(rows, hide_empty_columns=False)
+        labels = [str(c.header) for c in table.columns]
+        assert labels == ["x", "empty"]
+
+    def test_zero_and_false_are_not_treated_as_empty(self):
+        """``0`` / ``False`` / ``0.0`` are meaningful values, keep them."""
+        rows = [{"count": 0, "enabled": False, "ratio": 0.0}]
+        table = build_row_table(rows)
+        labels = [str(c.header) for c in table.columns]
+        assert set(labels) == {"count", "enabled", "ratio"}
