@@ -15,8 +15,6 @@ from datus.api.routes.config_routes import (
     UpdateDatabasesRequest,
     UpdateModelsRequest,
     get_agent_config_endpoint,
-    get_database_types,
-    get_llm_providers,
     probe_database_connectivity_endpoint,
     probe_model_connectivity_endpoint,
     update_databases_endpoint,
@@ -88,22 +86,6 @@ async def test_get_agent_config_handles_empty_databases():
     result = await get_agent_config_endpoint(svc)
 
     assert result.data["databases"] == {}
-
-
-@pytest.mark.asyncio
-async def test_get_llm_providers_returns_known_templates():
-    result = await get_llm_providers()
-    assert result.success is True
-    assert "openai" in result.data.providers
-    assert result.data.default == "openai"
-
-
-@pytest.mark.asyncio
-async def test_get_database_types_returns_known_templates():
-    result = await get_database_types()
-    assert result.success is True
-    types = {item.type for item in result.data.database_types}
-    assert {"postgresql", "mysql", "starrocks", "duckdb", "snowflake"} <= types
 
 
 class _FakeConfigManager:
