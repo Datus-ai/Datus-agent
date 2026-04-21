@@ -66,7 +66,8 @@ Datus Gateway uses the Feishu WebSocket long connection to receive events. This 
 
 | Permission | Scope Key | Purpose |
 |------------|-----------|---------|
-| Read messages sent to the bot | `im:message` | Receive direct messages |
+| Read messages sent to the bot | `im:message` | Receive messages (base permission) |
+| Read p2p messages sent to the bot | `im:message.p2p_msg:readonly` | Receive direct messages |
 | Read group messages | `im:message.group_msg` | Receive all group messages (required for thread replies without @bot) |
 | Send messages as the bot | `im:message:send_as_bot` | Reply to users |
 | Read card info | `cardkit:card:read` | Convert message ID to card ID for streaming cards |
@@ -91,6 +92,7 @@ Datus Gateway uses the Feishu WebSocket long connection to receive events. This 
           "contact:user.base:readonly",
           "im:chat:readonly",
           "im:message",
+          "im:message.p2p_msg:readonly",
           "im:message.group_msg",
           "im:message:send_as_bot",
           "im:resource"
@@ -100,7 +102,7 @@ Datus Gateway uses the Feishu WebSocket long connection to receive events. This 
     ```
 
 !!! note "Required vs Optional"
-    `im:message`, `im:message.group_msg`, `im:message:send_as_bot`, `cardkit:card:read`, and `cardkit:card:write` are required for full functionality (including group @bot messages, thread replies, and streaming card responses). The other permissions are optional and depend on your use case. Without CardKit permissions, the bot falls back to sending separate messages for each response chunk.
+    `im:message`, `im:message.p2p_msg:readonly`, `im:message.group_msg`, `im:message:send_as_bot`, `cardkit:card:read`, and `cardkit:card:write` are required for full functionality (including group @bot messages, thread replies, and streaming card responses). The other permissions are optional and depend on your use case. Without CardKit permissions, the bot falls back to sending separate messages for each response chunk.
 
 ## Step 7: Publish the App
 

@@ -66,7 +66,8 @@ Datus Gateway 使用飞书 WebSocket 长连接接收事件，无需公网回调 
 
 | 权限名称 | 权限标识 | 用途 |
 |----------|----------|------|
-| 读取发给机器人的消息 | `im:message` | 接收私聊消息 |
+| 读取发给机器人的消息 | `im:message` | 接收消息（基础权限） |
+| 读取发给机器人的单聊消息 | `im:message.p2p_msg:readonly` | 接收私聊消息 |
 | 读取群聊消息 | `im:message.group_msg` | 接收所有群聊消息（thread 中不带 @bot 的回复也能收到） |
 | 以机器人身份发送消息 | `im:message:send_as_bot` | 回复用户 |
 | 读取卡片信息 | `cardkit:card:read` | 将消息 ID 转换为卡片 ID，用于流式卡片 |
@@ -91,6 +92,7 @@ Datus Gateway 使用飞书 WebSocket 长连接接收事件，无需公网回调 
           "contact:user.base:readonly",
           "im:chat:readonly",
           "im:message",
+          "im:message.p2p_msg:readonly",
           "im:message.group_msg",
           "im:message:send_as_bot",
           "im:resource"
@@ -100,7 +102,7 @@ Datus Gateway 使用飞书 WebSocket 长连接接收事件，无需公网回调 
     ```
 
 !!! note "必需权限与可选权限"
-    `im:message`、`im:message.group_msg`、`im:message:send_as_bot`、`cardkit:card:read` 和 `cardkit:card:write` 是完整功能（包括群聊 @bot 消息、thread 回复和流式卡片响应）所必需的。其他权限为可选，取决于你的使用场景。如果未开通 CardKit 权限，机器人会回退为每个响应片段发送独立消息。
+    `im:message`、`im:message.p2p_msg:readonly`、`im:message.group_msg`、`im:message:send_as_bot`、`cardkit:card:read` 和 `cardkit:card:write` 是完整功能（包括群聊 @bot 消息、thread 回复和流式卡片响应）所必需的。其他权限为可选，取决于你的使用场景。如果未开通 CardKit 权限，机器人会回退为每个响应片段发送独立消息。
 
 ## 步骤 7：发布应用
 
