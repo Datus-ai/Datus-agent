@@ -80,11 +80,20 @@ Please enter your choice: [1/2]
 Most configurations are built-in. In `agent.yml`, minimal setup is needed:
 
 ```yaml
-agentic_nodes:
-  gen_metrics:
-    model: claude        # Optional: defaults to configured model
-    max_turns: 40        # Optional: defaults to 30
+agent:
+  services:
+    semantic_layer:
+      metricflow: {}     # Key MUST equal the adapter type (e.g. `metricflow`).
+                         # If `type:` is given, it must match the key; otherwise Datus raises a config error at startup.
+
+  agentic_nodes:
+    gen_metrics:
+      model: claude      # Optional: defaults to configured model
+      max_turns: 40      # Optional: defaults to 30
+      semantic_adapter: metricflow   # Optional when only one semantic layer is configured
 ```
+
+See [Semantic Layer Configuration](../configuration/semantic_layer.md) for the full set of options.
 
 **Built-in configurations** (automatically enabled):
 - **Tools**: Generation tools and filesystem tools

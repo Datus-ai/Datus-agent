@@ -22,7 +22,7 @@ agent:
 
 ## Selection Rules
 
-- The key under `services.semantic_layer` is the adapter type, for example `metricflow`.
+- The key under `services.semantic_layer` **must equal the adapter type** (for example `metricflow`). If a `type:` field is present, it must match the key; otherwise Datus raises a configuration error at startup.
 - Semantic nodes choose the adapter with `semantic_adapter`.
 - There is no `default: true` for semantic adapters.
 - If `semantic_adapter` is omitted and only one semantic layer is configured, Datus uses that adapter automatically.

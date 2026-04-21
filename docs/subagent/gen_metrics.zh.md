@@ -78,11 +78,20 @@ Please enter your choice: [1/2]
 大部分配置是内置的。在 `agent.yml` 中，最小化设置即可：
 
 ```yaml
-agentic_nodes:
-  gen_metrics:
-    model: claude        # 可选：默认使用已配置的模型
-    max_turns: 30        # 可选：默认为 30
+agent:
+  services:
+    semantic_layer:
+      metricflow: {}     # key 必须等于 adapter type（例如 `metricflow`）。
+                         # 如果同时写了 `type:` 字段，必须与 key 一致，否则 Datus 会在启动时抛出配置错误。
+
+  agentic_nodes:
+    gen_metrics:
+      model: claude      # 可选：默认使用已配置的模型
+      max_turns: 30      # 可选：默认为 30
+      semantic_adapter: metricflow   # 当仅配置了一个 semantic layer 时可省略
 ```
+
+完整配置项见 [语义层配置](../configuration/semantic_layer.zh.md)。
 
 **内置配置**（自动启用）：
 - **工具**：生成工具和文件系统工具
