@@ -331,6 +331,8 @@ class DatusApp:
                 return
 
             text = buffer.text
+            if text.strip():
+                buffer.append_to_history()
             buffer.reset()
             self.submit_user_input(text)
 
