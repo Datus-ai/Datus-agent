@@ -552,6 +552,109 @@ class TestSkillManagerSetup:
         assert node.skill_manager.get_skill_count() > 0
 
 
+@pytest.fixture
+def scoped_skill_manager(tmp_path, permission_manager):
+    """A SkillManager whose directory contains skills with allowed_agents scoping."""
+    skills_dir = tmp_path / "scoped_skills"
+    skills_dir.mkdir()
+
+    # Skill only for the "gen_dashboard" subagent.
+    scoped = skills_dir / "scoped-dashboard"
+    scoped.mkdir()
+    (scoped / "SKILL.md").write_text(
+        """---
+name: scoped-dashboard
+description: Scoped dashboard workflow
+allowed_agents:
+  - gen_dashboard
+---
+
+# Scoped Dashboard
+Body for the subagent only.
+"""
+    )
+
+    # Skill unrestricted (no allowed_agents), visible to every agent.
+    shared = skills_dir / "shared-helper"
+    shared.mkdir()
+    (shared / "SKILL.md").write_text(
+        """---
+name: shared-helper
+description: Shared across agents
+---
+
+# Shared Helper
+Body visible to everyone.
+"""
+    )
+
+    config = SkillConfig(directories=[str(skills_dir)])
+    return SkillManager(config=config, permission_manager=permission_manager)
+
+
+class TestAllowedAgentsInAgenticNode:
+    """Agent-scoped skills must be filtered out of a node's <available_skills> XML."""
+
+    def test_disallowed_agent_hides_scoped_skill(self, mock_agent_config, scoped_skill_manager):
+        mock_agent_config.agentic_nodes = {"test_node": {"skills": "*"}}
+
+        node = MinimalAgenticNode(
+            node_id="scoped1",
+            description="Test node",
+            node_type="chat",
+            agent_config=mock_agent_config,
+        )
+        node.skill_manager = scoped_skill_manager
+
+        xml = node._get_available_skills_context()
+        # test_node is not in any skill's allowed_agents → scoped-dashboard hidden.
+        assert "scoped-dashboard" not in xml
+        # Unrestricted skill still visible.
+        assert "shared-helper" in xml
+
+    def test_allowed_agent_sees_scoped_skill(self, mock_agent_config, scoped_skill_manager):
+        mock_agent_config.agentic_nodes = {"gen_dashboard": {"skills": "*"}}
+
+        class DashboardNode(MinimalAgenticNode):
+            def get_node_name(self) -> str:
+                return "gen_dashboard"
+
+        node = DashboardNode(
+            node_id="scoped2",
+            description="Dashboard node",
+            node_type="chat",
+            agent_config=mock_agent_config,
+        )
+        node.skill_manager = scoped_skill_manager
+
+        xml = node._get_available_skills_context()
+        assert "scoped-dashboard" in xml
+        assert "shared-helper" in xml
+
+    def test_custom_alias_with_matching_class_sees_scoped_skill(self, mock_agent_config, scoped_skill_manager):
+        """A subagent registered under a custom alias should still match a
+        class-scoped ``allowed_agents`` whitelist via its ``NODE_NAME``."""
+        mock_agent_config.agentic_nodes = {"my_dashboard": {"skills": "*"}}
+
+        class AliasedDashboardNode(MinimalAgenticNode):
+            NODE_NAME = "gen_dashboard"
+
+            def get_node_name(self) -> str:
+                return "my_dashboard"
+
+        node = AliasedDashboardNode(
+            node_id="scoped3",
+            description="Aliased dashboard node",
+            node_type="chat",
+            agent_config=mock_agent_config,
+        )
+        node.skill_manager = scoped_skill_manager
+
+        xml = node._get_available_skills_context()
+        assert "scoped-dashboard" in xml, "alias should inherit class-level scope"
+        assert "shared-helper" in xml
+
+
 class TestSkillIntegrationEdgeCases:
     """Edge case tests for skill integration."""
 

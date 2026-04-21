@@ -37,6 +37,15 @@ class SkillCreatorAgenticNode(AgenticNode):
     interview, and skill loading tools for edit mode.
     """
 
+    # Canonical class identifier. ``get_node_class_name()`` returns this even
+    # when a custom alias (e.g. ``my_skill_editor: { node_class: gen_skill }``)
+    # is used, so skill ``allowed_agents: [gen_skill]`` still matches aliases.
+    NODE_NAME = "gen_skill"
+
+    # Authoring agent: its ``load_skill`` bypasses ``allowed_agents`` so the
+    # optimize/edit workflow can read any skill by name.
+    SKILL_AUTHORING_MODE = True
+
     def __init__(
         self,
         node_id: str = "skill_creator",
@@ -49,17 +58,16 @@ class SkillCreatorAgenticNode(AgenticNode):
         execution_mode: Literal["interactive", "workflow"] = "interactive",
         is_subagent: bool = False,
     ):
-        self.configured_node_name = node_name
+        # Support custom node_name for alias subagents (e.g. my_skill_editor:
+        # {node_class: gen_skill}); fall back to the canonical class name.
+        self._configured_node_name = node_name or self.NODE_NAME
         self.execution_mode = execution_mode
 
         # Default max_turns = 30, can be overridden by agent.yml
         self.max_turns = 30
-        if (
-            agent_config
-            and hasattr(agent_config, "agentic_nodes")
-            and (node_name or "gen_skill") in (agent_config.agentic_nodes or {})
-        ):
-            agentic_node_config = agent_config.agentic_nodes.get(node_name or "gen_skill", {})
+        config_key = self._configured_node_name
+        if agent_config and hasattr(agent_config, "agentic_nodes") and config_key in (agent_config.agentic_nodes or {}):
+            agentic_node_config = agent_config.agentic_nodes.get(config_key, {})
             if isinstance(agentic_node_config, dict):
                 self.max_turns = agentic_node_config.get("max_turns", 30)
 
@@ -86,7 +94,7 @@ class SkillCreatorAgenticNode(AgenticNode):
         logger.debug(f"SkillCreatorAgenticNode tools: {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
 
     def get_node_name(self) -> str:
-        return self.configured_node_name or "gen_skill"
+        return self._configured_node_name
 
     def setup_tools(self):
         """Setup tools for skill creation: filesystem, db, ask_user, skill loading."""
@@ -156,6 +164,8 @@ class SkillCreatorAgenticNode(AgenticNode):
             self.skill_func_tool_instance = SkillFuncTool(
                 manager=skill_manager,
                 node_name=self.get_node_name(),
+                node_class=self.get_node_class_name(),
+                authoring_mode=self.SKILL_AUTHORING_MODE,
             )
             self.tools.extend(self.skill_func_tool_instance.available_tools())
             logger.debug(f"Setup skill loading tools with {skill_manager.get_skill_count()} skills")

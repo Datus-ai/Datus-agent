@@ -9,6 +9,8 @@ tags:
 version: "1.0.0"
 user_invocable: false
 disable_model_invocation: false
+allowed_agents:
+  - gen_dashboard
 ---
 
 # Grafana Dashboard Skill

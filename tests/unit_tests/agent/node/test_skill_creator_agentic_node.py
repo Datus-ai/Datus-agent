@@ -90,6 +90,33 @@ class TestSkillCreatorAgenticNodeInit:
         )
         assert node.mcp_servers == {}
 
+    def test_aliased_node_wires_class_name_and_authoring_mode(self, real_agent_config, mock_llm_create):
+        """A custom-aliased ``gen_skill`` subagent (``my_skill_editor:
+        { node_class: gen_skill }``) must construct its ``SkillFuncTool`` with
+        ``node_class="gen_skill"`` (so class-level ``allowed_agents`` match)
+        AND ``authoring_mode=True`` (so scoped skills can still be loaded for
+        editing). Regression guard for the alias path identified in review.
+        """
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
+
+        node = SkillCreatorAgenticNode(
+            node_id="test_skill_creator_alias",
+            description="Aliased skill editor",
+            node_type=NodeType.TYPE_GEN_SKILL,
+            agent_config=real_agent_config,
+            node_name="my_skill_editor",
+        )
+
+        # Alias flows through to get_node_name(), class name still resolves.
+        assert node.get_node_name() == "my_skill_editor"
+        assert node.get_node_class_name() == "gen_skill"
+
+        # The SkillFuncTool instance inherits both dimensions.
+        assert node.skill_func_tool_instance is not None
+        assert node.skill_func_tool_instance.node_name == "my_skill_editor"
+        assert node.skill_func_tool_instance.node_class == "gen_skill"
+        assert node.skill_func_tool_instance.authoring_mode is True
+
 
 class TestSkillCreatorAgenticNodeTools:
     """Tests for SkillCreatorAgenticNode tool setup."""

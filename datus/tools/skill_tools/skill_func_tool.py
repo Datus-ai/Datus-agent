@@ -47,15 +47,29 @@ class SkillFuncTool:
         self,
         manager: SkillManager,
         node_name: str,
+        node_class: Optional[str] = None,
+        authoring_mode: bool = False,
     ):
         """Initialize the skill function tool.
 
         Args:
-            manager: SkillManager for skill operations
-            node_name: Name of the current agentic node
+            manager: SkillManager for skill operations.
+            node_name: Agent node name (alias) of the current agentic node.
+            node_class: Canonical class identifier (e.g. ``gen_dashboard`` for
+                a subagent aliased as ``my_dashboard``). Passed alongside
+                ``node_name`` when matching ``allowed_agents`` so class-level
+                scoping applies to custom aliases. Defaults to ``node_name``.
+            authoring_mode: When True, ``load_skill`` bypasses each skill's
+                ``allowed_agents`` scope so that a skill-authoring workflow
+                (e.g. the ``gen_skill`` subagent editing an existing skill)
+                can fetch content by explicit name. Visibility through
+                ``get_available_skills`` is unaffected and permissions still
+                apply.
         """
         self.manager = manager
         self.node_name = node_name
+        self.node_class = node_class or node_name
+        self.authoring_mode = authoring_mode
         self._tool_context: Any = None
         self._permission_callback: Optional[Callable[[str, str, Dict[str, Any]], Awaitable[bool]]] = None
 
@@ -130,6 +144,8 @@ class SkillFuncTool:
                 skill_name=skill_name,
                 node_name=self.node_name,
                 check_permission=False,  # Already checked above
+                check_scope=not self.authoring_mode,
+                node_class=self.node_class,
             )
 
             if not success:

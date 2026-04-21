@@ -10,6 +10,8 @@ tags:
 version: "1.0.0"
 user_invocable: false
 disable_model_invocation: false
+allowed_agents:
+  - gen_table
 ---
 
 ## CRITICAL: Cancel = Immediate Stop

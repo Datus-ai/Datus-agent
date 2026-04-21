@@ -224,3 +224,93 @@ class TestSkillMetadata:
         # Content can be set later
         metadata.content = "# Test Skill\n\nContent here"
         assert metadata.content == "# Test Skill\n\nContent here"
+
+
+class TestAllowedAgents:
+    """Tests for the allowed_agents frontmatter field on SkillMetadata."""
+
+    def test_defaults_to_empty_list(self):
+        metadata = SkillMetadata(
+            name="open",
+            description="open-access skill",
+            location=Path("/test"),
+        )
+        assert metadata.allowed_agents == []
+
+    def test_from_frontmatter_parses_list(self):
+        metadata = SkillMetadata.from_frontmatter(
+            {
+                "name": "scoped",
+                "description": "only for one agent",
+                "allowed_agents": ["gen_dashboard", "gen_table"],
+            },
+            Path("/skills/scoped"),
+        )
+        assert metadata.allowed_agents == ["gen_dashboard", "gen_table"]
+
+    def test_from_frontmatter_defaults_when_absent(self):
+        metadata = SkillMetadata.from_frontmatter(
+            {"name": "open", "description": "no scoping"},
+            Path("/skills/open"),
+        )
+        assert metadata.allowed_agents == []
+
+    def test_to_dict_roundtrips_allowed_agents(self):
+        metadata = SkillMetadata(
+            name="scoped",
+            description="scoped",
+            location=Path("/test"),
+            allowed_agents=["scheduler"],
+        )
+        data = metadata.to_dict()
+        assert data["allowed_agents"] == ["scheduler"]
+
+    def test_is_allowed_for_empty_list_allows_everyone(self):
+        metadata = SkillMetadata(
+            name="open",
+            description="open",
+            location=Path("/test"),
+        )
+        assert metadata.is_allowed_for("chat") is True
+        assert metadata.is_allowed_for("gen_dashboard") is True
+
+    def test_is_allowed_for_hit(self):
+        metadata = SkillMetadata(
+            name="scoped",
+            description="scoped",
+            location=Path("/test"),
+            allowed_agents=["gen_dashboard"],
+        )
+        assert metadata.is_allowed_for("gen_dashboard") is True
+
+    def test_is_allowed_for_miss(self):
+        metadata = SkillMetadata(
+            name="scoped",
+            description="scoped",
+            location=Path("/test"),
+            allowed_agents=["gen_dashboard"],
+        )
+        assert metadata.is_allowed_for("chat") is False
+
+    def test_is_allowed_for_accepts_alias_plus_class(self):
+        """A custom alias should still match when its class name is whitelisted."""
+        metadata = SkillMetadata(
+            name="scoped",
+            description="scoped",
+            location=Path("/test"),
+            allowed_agents=["gen_dashboard"],
+        )
+        # Alias not in whitelist, but class is → allowed.
+        assert metadata.is_allowed_for("my_dashboard", "gen_dashboard") is True
+        # Neither alias nor class is whitelisted → denied.
+        assert metadata.is_allowed_for("my_dashboard", "gen_table") is False
+
+    def test_is_allowed_for_ignores_none_identifiers(self):
+        metadata = SkillMetadata(
+            name="scoped",
+            description="scoped",
+            location=Path("/test"),
+            allowed_agents=["gen_dashboard"],
+        )
+        assert metadata.is_allowed_for("gen_dashboard", None) is True
+        assert metadata.is_allowed_for(None, "chat") is False

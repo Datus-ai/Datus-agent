@@ -47,6 +47,12 @@ class AgenticNode(Node):
 
     DEFAULT_SUBAGENTS = "explore"
 
+    # When True, this node's ``SkillFuncTool`` loads skills in *authoring* mode:
+    # ``allowed_agents`` scoping on ``load_skill`` is bypassed so the agent can
+    # read any skill by name (used by ``gen_skill`` for edit/optimize flows).
+    # Visibility in ``<available_skills>`` is still filtered normally.
+    SKILL_AUTHORING_MODE: bool = False
+
     def __init__(
         self,
         node_id: str,
@@ -171,6 +177,23 @@ class AgenticNode(Node):
             template_name = class_name
 
         return template_name.lower()
+
+    def get_node_class_name(self) -> str:
+        """Canonical identifier for this node's underlying class.
+
+        ``get_node_name()`` may return a per-instance alias when a subagent is
+        registered under a custom id (e.g. ``my_dashboard`` backed by
+        ``GenDashboardAgenticNode``). Scoping mechanisms like
+        ``SkillMetadata.allowed_agents`` need a stable class-level identifier so
+        a whitelist written against the canonical class (``gen_dashboard``)
+        still applies to all aliases of that class.
+
+        Returns:
+            The subclass ``NODE_NAME`` constant when defined; otherwise
+            ``get_node_name()``.
+        """
+        node_class = getattr(type(self), "NODE_NAME", None)
+        return node_class or self.get_node_name()
 
     def _get_system_prompt(
         self, conversation_summary: Optional[str] = None, prompt_version: Optional[str] = None
@@ -729,6 +752,8 @@ class AgenticNode(Node):
             self.skill_func_tool = SkillFuncTool(
                 manager=self.skill_manager,
                 node_name=self.get_node_name(),
+                node_class=self.get_node_class_name(),
+                authoring_mode=self.SKILL_AUTHORING_MODE,
             )
             logger.info(
                 f"Skill func tools activated for node '{self.get_node_name()}' with pattern '{skill_patterns_str}'"
@@ -858,6 +883,7 @@ class AgenticNode(Node):
         return self.skill_manager.generate_available_skills_xml(
             node_name=self.get_node_name(),
             patterns=skill_patterns,
+            node_class=self.get_node_class_name(),
         )
 
     def _get_tool_category(self, tool_name: str) -> str:
