@@ -5,7 +5,7 @@
 """
 Configuration management for web interface.
 Handles:
-- Namespace discovery
+- Datasource discovery
 - CLI argument creation
 - Model configuration
 - Agent config setup
@@ -33,16 +33,16 @@ def get_home_from_config(config_path: str) -> str:
         return "~/.datus"
 
 
-def get_available_namespaces(config_path: str = "") -> List[str]:
-    """Extract available namespaces from config file"""
+def get_available_datasources(config_path: str = "") -> List[str]:
+    """Extract available datasource keys from config file."""
     try:
         config = _load_config_cached(config_path)
         agent_config = config.get("agent", config)
         services = agent_config.get("services", {}) or {}
-        databases = services.get("databases", {}) or {}
-        return list(databases.keys())
+        datasources = services.get("datasources", {}) or {}
+        return list(datasources.keys())
     except Exception as e:
-        logger.error(f"Failed to read namespaces from config: {e}")
+        logger.error(f"Failed to read datasources from config: {e}")
         return []
 
 
