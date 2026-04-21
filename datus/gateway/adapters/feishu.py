@@ -145,7 +145,7 @@ class FeishuAdapter(ChannelAdapter):
             chat_type = getattr(message, "chat_type", None)
 
             # Auto-learn bot_open_id from the first group @mention.
-            # With im:message.group_msg:readonly the bot receives all group
+            # With im:message.group_msg the bot receives all group
             # messages; in the first @mention the open_id that differs from
             # the sender is the bot itself.
             if chat_type == "group" and not self._bot_open_id and message.mentions:
