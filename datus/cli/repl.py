@@ -441,19 +441,19 @@ class DatusCLI:
                         "status-bar.ctx": "#9a9aaa",
                         "status-bar.running": "#ffb86c bold",
                         "separator": "#444444",
-                        # Slash-command autocomplete popup. ``bg:default`` and
-                        # ``fg:default`` pin the non-current rows to the
-                        # terminal's own palette so the menu blends into a
-                        # dark CLI theme instead of prompt_toolkit's stock
-                        # teal-on-white. The current row gets a subdued blue
-                        # highlight with bold text — enough contrast to see
-                        # the cursor without the harsh ``reverse`` look the
-                        # default theme ends up producing on dark terminals.
+                        # Slash-command autocomplete popup. Every row pins
+                        # ``bg:default`` so the menu blends into the terminal
+                        # palette instead of prompt_toolkit's stock teal-on-
+                        # white block. prompt_toolkit's default style for
+                        # ``.current`` ships with ``reverse`` (swaps fg/bg,
+                        # producing a highlighted bar); ``noreverse`` strips
+                        # that so the selection is conveyed by text color
+                        # alone — bold bright cyan — with no colored band.
                         "completion-menu": "bg:default",
                         "completion-menu.completion": "bg:default fg:default",
-                        "completion-menu.completion.current": "bg:ansiblue fg:ansiwhite bold",
+                        "completion-menu.completion.current": "noreverse bg:default fg:ansibrightcyan bold",
                         "completion-menu.meta.completion": "bg:default fg:ansibrightblack",
-                        "completion-menu.meta.completion.current": "bg:ansiblue fg:ansiwhite",
+                        "completion-menu.meta.completion.current": "noreverse bg:default fg:ansibrightcyan bold",
                     }
                 ),
             ]

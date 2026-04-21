@@ -37,15 +37,15 @@ from typing import Callable, List, Optional, Tuple
 from prompt_toolkit.application import Application
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.completion import Completer
-from prompt_toolkit.filters import to_filter
+from prompt_toolkit.filters import has_completions, is_done, to_filter
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.history import History
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import Layout
-from prompt_toolkit.layout.containers import HSplit, Window
+from prompt_toolkit.layout.containers import ConditionalContainer, HSplit, ScrollOffsets, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
-from prompt_toolkit.layout.menus import CompletionsMenu
+from prompt_toolkit.layout.menus import CompletionsMenuControl
 from prompt_toolkit.lexers import Lexer
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import Style
@@ -154,16 +154,23 @@ class DatusApp:
         # which inserts new lines above the Application's rendered area, so
         # no explicit output window is required here.
         #
-        # prompt-toolkit's built-in ``CompletionsMenu`` wraps its own window
-        # in a ``ConditionalContainer`` filtered by ``has_completions & ~is_done``,
-        # so the row collapses to zero height as soon as the user confirms or
-        # cancels. Placing it directly in the ``HSplit`` keeps the popup
-        # pinned below the input area (no floating overlay) and lets the
-        # input + status bar slide back to the bottom of the terminal with no
-        # custom erase logic. Styling is controlled via ``completion-menu.*``
-        # keys in ``DatusCLI._build_app_style`` so both TUI and PromptSession
-        # render identically. Mirrors hermes-agent ``cli.py:9355``.
-        self._completions_menu = CompletionsMenu(max_height=10, scroll_offset=1)
+        # Inlines the layout of prompt_toolkit's ``CompletionsMenu`` but drops
+        # the ``ScrollbarMargin`` so the slash-command popup never renders a
+        # right-hand scrollbar column. Styling is controlled via
+        # ``completion-menu.*`` keys in ``DatusCLI._build_app_style``.
+        self._completions_menu = ConditionalContainer(
+            content=Window(
+                content=CompletionsMenuControl(),
+                width=Dimension(min=8),
+                height=Dimension(min=1, max=10),
+                scroll_offsets=ScrollOffsets(top=1, bottom=1),
+                right_margins=[],
+                dont_extend_width=True,
+                style="class:completion-menu",
+                z_index=10**8,
+            ),
+            filter=has_completions & ~is_done,
+        )
 
         root = HSplit(
             [
