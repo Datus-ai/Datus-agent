@@ -27,7 +27,7 @@ class TestCLIServiceInit:
 
         assert cli_svc.agent_config is real_agent_config
         assert isinstance(cli_svc.db_manager, DBManager)
-        assert cli_svc.current_namespace == real_agent_config.current_namespace
+        assert cli_svc.current_datasource == real_agent_config.current_datasource
         # Connector must expose execute() — the only contract CLIService relies on
         assert callable(getattr(cli_svc.current_db_connector, "execute", None))
 
@@ -35,7 +35,7 @@ class TestCLIServiceInit:
         """CLIService initializes without agent config."""
         svc = CLIService(agent_config=None, chat_service=None)
         assert svc.db_manager is None
-        assert svc.current_namespace is None
+        assert svc.current_datasource is None
         assert svc.current_db_connector is None
 
     def test_init_sets_cli_context(self, cli_svc):
@@ -298,7 +298,7 @@ class TestCLIServiceExecuteContext:
         result = cli_svc.execute_context("context", request)
         assert result.success is True
         info = result.data.result.context_info
-        assert "current_namespace" in info
+        assert "current_datasource" in info
         assert "database" in info
 
     def test_context_catalog(self, cli_svc):

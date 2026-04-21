@@ -114,7 +114,7 @@ class ExploreAgenticNode(AgenticNode):
         """Setup database tools (all are read-only)."""
         try:
             db_manager = db_manager_instance(self.agent_config.namespaces)
-            namespace = self.agent_config.current_namespace or self.agent_config.current_datasource
+            namespace = self.agent_config.current_datasource
             conn = db_manager.get_conn(namespace, self.agent_config.current_datasource)
             dynamic_scoped_tables = None
             if isinstance(self.input, ExploreNodeInput) and self.input.scoped_tables:

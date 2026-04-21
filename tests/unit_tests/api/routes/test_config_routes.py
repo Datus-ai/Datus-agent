@@ -27,7 +27,7 @@ def _mock_svc(databases, *, target="deepseek", current_datasource="starrocks", m
     svc = MagicMock()
     svc.agent_config.target = target
     svc.agent_config.models = models if models is not None else {}
-    svc.agent_config.current_namespace = current_datasource
+    svc.agent_config.current_datasource = current_datasource
     svc.agent_config.namespaces = databases
     svc.agent_config.home = home
     return svc

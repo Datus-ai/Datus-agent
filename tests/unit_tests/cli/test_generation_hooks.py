@@ -54,7 +54,7 @@ def agent_config(tmp_path):
     cfg = MagicMock()
     cfg.home = str(tmp_path)
     cfg.current_datasource = "test_ns"
-    cfg.current_namespace = "test_ns"
+    cfg.current_datasource = "test_ns"
     cfg.db_type = "sqlite"
     cfg.path_manager = MagicMock()
     cfg.path_manager.semantic_model_path.return_value = subject_dir / "semantic_models"
@@ -1388,7 +1388,7 @@ class TestGetBaseDirEdgeCases:
     def test_returns_none_when_resolver_attr_is_none(self, broker):
         """path_manager exists but the named resolver attribute is None."""
         cfg = MagicMock()
-        cfg.current_namespace = "ns"
+        cfg.current_datasource = "ns"
         cfg.path_manager = MagicMock(spec=[])  # no attrs → getattr returns None
         h = GenerationHooks(broker=broker, agent_config=cfg)
         assert h._get_base_dir("semantic") is None
@@ -1396,7 +1396,7 @@ class TestGetBaseDirEdgeCases:
     def test_returns_none_when_resolver_raises(self, broker):
         """Exceptions raised by the resolver are caught and return None."""
         cfg = MagicMock()
-        cfg.current_namespace = "ns"
+        cfg.current_datasource = "ns"
         cfg.path_manager = MagicMock()
         cfg.path_manager.semantic_model_path = MagicMock(side_effect=RuntimeError("boom"))
         h = GenerationHooks(broker=broker, agent_config=cfg)

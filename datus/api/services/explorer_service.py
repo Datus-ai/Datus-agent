@@ -40,7 +40,7 @@ class ExplorerService:
             agent_config: Agent configuration object
         """
         self.agent_config = agent_config
-        self.datasource_id = agent_config.current_namespace
+        self.datasource_id = agent_config.current_datasource
         logger.info("ExplorerService initialized")
 
         from datus.storage.ext_knowledge.store import ExtKnowledgeRAG
@@ -745,7 +745,7 @@ class ExplorerService:
             yaml_content=yaml_content,
             file_path=file_path,
             datus_home=self.agent_config.home,
-            namespace=self.agent_config.current_namespace,
+            namespace=self.agent_config.current_datasource,
         )
 
     async def create_metric(self, request: EditMetricInput) -> Result[dict]:

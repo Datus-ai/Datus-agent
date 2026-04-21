@@ -48,7 +48,7 @@ class DatabaseService:
         self.agent_config = agent_config
 
         self.db_manager = DBManager(agent_config.namespaces)
-        self.current_namespace = agent_config.current_namespace
+        self.current_datasource = agent_config.current_datasource
         self.semantic_rag = SemanticModelRAG(self.agent_config)
 
         self.current_db_connector = None
@@ -70,8 +70,8 @@ class DatabaseService:
         target_db = database_name or self.current_database
 
         try:
-            if self.agent_config and self.current_namespace in self.agent_config.namespaces:
-                namespace_config = self.agent_config.namespaces[self.current_namespace]
+            if self.agent_config and self.current_datasource in self.agent_config.namespaces:
+                namespace_config = self.agent_config.namespaces[self.current_datasource]
                 if target_db and target_db in namespace_config:
                     db_config = namespace_config[target_db]
                     db_type = db_config.type.value if hasattr(db_config.type, "value") else str(db_config.type)
@@ -86,9 +86,9 @@ class DatabaseService:
 
     def _initialize_connection(self):
         """Initialize the current database connection."""
-        if self.db_manager and self.current_namespace:
+        if self.db_manager and self.current_datasource:
             try:
-                db_name, connector = self.db_manager.first_conn_with_name(self.current_namespace)
+                db_name, connector = self.db_manager.first_conn_with_name(self.current_datasource)
                 self.current_db_connector = connector
                 self.current_database = connector.database_name or db_name
             except Exception as e:
@@ -272,7 +272,7 @@ class DatabaseService:
                 )
 
             # Get connections from the specified namespace
-            namespace = request.datasource_id or self.current_namespace
+            namespace = request.datasource_id or self.current_datasource
             connections = self.db_manager.get_connections(namespace)
 
             databases = []
@@ -569,7 +569,7 @@ class DatabaseService:
                 yaml_content=request.yaml,
                 file_path=semantic_file_path,
                 datus_home=self.agent_config.home,
-                namespace=self.agent_config.current_namespace,
+                namespace=self.agent_config.current_datasource,
             )
 
             if not is_valid:

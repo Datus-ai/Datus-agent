@@ -151,10 +151,10 @@ def _fill_database_context(
     database: Optional[str] = None,
     schema: Optional[str] = None,  # noqa: ARG001 — reserved for future use
 ) -> None:
-    """Set agent_config's current_namespace and current_datasource based on request context.
+    """Set agent_config's current_datasource and current_datasource based on request context.
 
     If database is provided, searches for it in agent_config.namespaces and updates both
-    current_namespace and current_datasource. Otherwise, falls back to treating database
+    current_datasource and current_datasource. Otherwise, falls back to treating database
     as a namespace name if it exists in agent_config.namespaces.
     """
     # agent_config.current_datasource is resolved at bootstrap by load_agent_config;
@@ -163,13 +163,13 @@ def _fill_database_context(
         return
     for ns_name, ns_dbs in agent_config.namespaces.items():
         if database in ns_dbs:
-            if agent_config.current_namespace != ns_name:
-                agent_config.current_namespace = ns_name
+            if agent_config.current_datasource != ns_name:
+                agent_config.current_datasource = ns_name
             agent_config.current_datasource = database
             return
     # Fallback: database itself is a namespace name
     if database in agent_config.namespaces:
-        agent_config.current_namespace = database
+        agent_config.current_datasource = database
 
 
 class ChatTask:

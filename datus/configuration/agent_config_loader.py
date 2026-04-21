@@ -270,7 +270,7 @@ def load_agent_config(reload: bool = False, **kwargs) -> AgentConfig:
     if not agent_config.current_datasource and agent_config.services.datasources:
         default_db = agent_config.services.default_datasource
         if default_db:
-            agent_config.current_namespace = default_db
+            agent_config.current_datasource = default_db
         elif kwargs.get("action"):
             raise DatusException(
                 code=ErrorCode.COMMON_CONFIG_ERROR,

@@ -335,7 +335,7 @@ class GenSQLAgenticNode(AgenticNode):
             db_tool = self.db_func_tool
             if not db_tool:
                 db_manager = db_manager_instance(self.agent_config.namespaces)
-                conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_datasource)
+                conn = db_manager.get_conn(self.agent_config.current_datasource, self.agent_config.current_datasource)
                 db_tool = DBFuncTool(
                     conn,
                     agent_config=self.agent_config,
@@ -480,7 +480,7 @@ class GenSQLAgenticNode(AgenticNode):
                     if not db_tool:
                         _db_manager = db_manager_instance(self.agent_config.namespaces)
                         _conn = _db_manager.get_conn(
-                            self.agent_config.current_namespace, self.agent_config.current_datasource
+                            self.agent_config.current_datasource, self.agent_config.current_datasource
                         )
                         db_tool = DBFuncTool(
                             _conn,

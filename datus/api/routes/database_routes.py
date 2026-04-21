@@ -40,7 +40,7 @@ async def list_catalogs(
 ) -> Result[DatabasesData]:
     """List available databases."""
     request = ListDatabasesInput(
-        datasource_id=datasource_id or svc.database.current_namespace,
+        datasource_id=datasource_id or svc.database.current_datasource,
         catalog_name=catalog_name,
         database_name=database_name,
         schema_name=schema_name,

@@ -74,11 +74,11 @@ def test_configuration_load(database: str, agent_config: AgentConfig):
     assert f"/data/{agent_config.project_name}/datus_db" in storage_path.replace(os.sep, "/")
 
     with pytest.raises(DatusException, match="Missing required field: datasource"):
-        agent_config.current_namespace = ""
+        agent_config.current_datasource = ""
 
     error_db = "abc"
     with pytest.raises(DatusException, match=f"Unsupported value `{error_db}` for field `datasource`"):
-        agent_config.current_namespace = error_db
+        agent_config.current_datasource = error_db
 
     error_benchmark = "abc"
     with pytest.raises(DatusException, match=f"Unsupported value `{error_benchmark}` for field `benchmark`"):

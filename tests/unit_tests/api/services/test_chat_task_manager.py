@@ -28,35 +28,35 @@ class TestFillDatabaseContext:
 
     def test_no_database_is_noop(self, real_agent_config):
         """No database parameter leaves config unchanged."""
-        original_ns = real_agent_config.current_namespace
+        original_ns = real_agent_config.current_datasource
         _fill_database_context(real_agent_config, database=None)
-        assert real_agent_config.current_namespace == original_ns
+        assert real_agent_config.current_datasource == original_ns
 
     def test_empty_database_is_noop(self, real_agent_config):
         """Empty string database leaves config unchanged."""
-        original_ns = real_agent_config.current_namespace
+        original_ns = real_agent_config.current_datasource
         _fill_database_context(real_agent_config, database="")
-        assert real_agent_config.current_namespace == original_ns
+        assert real_agent_config.current_datasource == original_ns
 
     def test_known_database_updates_namespace_and_db(self, real_agent_config):
-        """Known database in namespaces updates current_namespace and current_datasource."""
+        """Known database in namespaces updates current_datasource and current_datasource."""
         # real_agent_config has "california_schools" in services.datasources
         # After the namespace→services.datasources refactor, each DB is its own namespace key
         _fill_database_context(real_agent_config, database="california_schools")
-        assert real_agent_config.current_namespace == "california_schools"
+        assert real_agent_config.current_datasource == "california_schools"
         assert real_agent_config.current_datasource == "california_schools"
 
     def test_database_as_namespace_name(self, real_agent_config):
         """Database matching a namespace name falls back to namespace lookup."""
         # After refactor, namespace keys equal database names
         _fill_database_context(real_agent_config, database="california_schools")
-        assert real_agent_config.current_namespace == "california_schools"
+        assert real_agent_config.current_datasource == "california_schools"
 
     def test_unknown_database_leaves_unchanged(self, real_agent_config):
         """Unknown database leaves config unchanged."""
-        original_ns = real_agent_config.current_namespace
+        original_ns = real_agent_config.current_datasource
         _fill_database_context(real_agent_config, database="nonexistent_db")
-        assert real_agent_config.current_namespace == original_ns
+        assert real_agent_config.current_datasource == original_ns
 
 
 class TestChatTaskInit:

@@ -22,7 +22,7 @@ class TestExplorerServiceInit:
         svc = ExplorerService(agent_config=real_agent_config)
         assert svc is not None
         assert svc.agent_config is real_agent_config
-        assert svc.datasource_id == real_agent_config.current_namespace
+        assert svc.datasource_id == real_agent_config.current_datasource
 
     def test_init_creates_rag_stores(self, real_agent_config):
         """ExplorerService creates metric, ref_sql, and knowledge RAG stores."""

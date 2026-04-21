@@ -14,7 +14,7 @@ from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTool
 @pytest.fixture
 def mock_agent_config():
     config = MagicMock()
-    config.current_namespace = "test_namespace"
+    config.current_datasource = "test_namespace"
     return config
 
 

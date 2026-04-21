@@ -634,12 +634,17 @@ class AgentConfig:
     def current_datasource(self, value):
         """Set the current datasource name (must exist in services.datasources)."""
         if not value:
-            return
+            raise DatusException(
+                code=ErrorCode.COMMON_FIELD_REQUIRED,
+                message_args={"field_name": "datasource"},
+            )
         if value not in self.services.datasources:
             raise DatusException(
-                ErrorCode.COMMON_CONFIG_ERROR,
-                message=f"No datasource configuration named `{value}` found. Available: {list(self.services.datasources.keys())}",
+                code=ErrorCode.COMMON_UNSUPPORTED,
+                message_args={"field_name": "datasource", "your_value": value},
             )
+        if value == self._current_datasource:
+            return
         self._current_datasource = value
         self.db_type = self.services.datasources[value].type
 
@@ -670,36 +675,8 @@ class AgentConfig:
         return str(self._project_root)
 
     @property
-    def current_namespace(self) -> str:
-        """Backward-compat: returns current_datasource as namespace key for DBManager compat."""
-        return self._current_datasource
-
-    @property
     def max_export_lines(self) -> int:
         return self.export_config.get("max_lines", 1000)
-
-    @current_namespace.setter
-    def current_namespace(self, value: str):
-        """Backward-compat: setting current_namespace now sets current_datasource.
-
-        Accepts a datasource name from services.datasources. Also accepts legacy namespace names
-        which are auto-migrated to datasource names.
-        """
-        if not value:
-            raise DatusException(
-                code=ErrorCode.COMMON_FIELD_REQUIRED,
-                message_args={"field_name": "datasource"},
-            )
-        if value not in self.services.datasources:
-            raise DatusException(
-                code=ErrorCode.COMMON_UNSUPPORTED,
-                message_args={"field_name": "datasource", "your_value": value},
-            )
-        if value == self._current_datasource:
-            return
-        self._current_datasource = value
-        db_config = self.services.datasources[value]
-        self.db_type = db_config.type
 
     @property
     def namespaces(self) -> Dict[str, Dict[str, DbConfig]]:
@@ -1068,9 +1045,9 @@ class AgentConfig:
             # Support both --datasource (new) and --namespace (legacy) CLI args
             db_arg = kwargs.get("datasource", "") or kwargs.get("namespace", "")
             if db_arg:
-                self.current_namespace = db_arg  # uses the compat setter
+                self.current_datasource = db_arg
             elif self.services.default_datasource:
-                self.current_namespace = self.services.default_datasource
+                self.current_datasource = self.services.default_datasource
         if kwargs.get("benchmark", ""):
             benchmark_platform = kwargs["benchmark"]
             # Validate benchmark is supported (will raise exception if not)
