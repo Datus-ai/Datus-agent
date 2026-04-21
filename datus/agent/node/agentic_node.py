@@ -188,12 +188,23 @@ class AgenticNode(Node):
         a whitelist written against the canonical class (``gen_dashboard``)
         still applies to all aliases of that class.
 
+        Resolution order:
+        1. ``type(self).NODE_NAME`` if the subclass declares it — the
+           recommended form, used by ``gen_dashboard``, ``gen_table``,
+           ``scheduler``, ``gen_skill`` etc.
+        2. Otherwise derive from the class name via the *base*
+           ``AgenticNode.get_node_name`` (e.g. ``ExploreAgenticNode`` →
+           ``explore``). This is the safety net for alias-capable subclasses
+           that haven't added ``NODE_NAME``: we must NOT fall back to
+           ``self.get_node_name()``, since overrides there return the alias.
+
         Returns:
-            The subclass ``NODE_NAME`` constant when defined; otherwise
-            ``get_node_name()``.
+            A stable class-level identifier independent of any alias.
         """
         node_class = getattr(type(self), "NODE_NAME", None)
-        return node_class or self.get_node_name()
+        if node_class:
+            return node_class
+        return AgenticNode.get_node_name(self)
 
     def _get_system_prompt(
         self, conversation_summary: Optional[str] = None, prompt_version: Optional[str] = None

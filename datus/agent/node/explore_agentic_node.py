@@ -44,6 +44,11 @@ class ExploreAgenticNode(AgenticNode):
     and uses a low max_turns budget for fast exploration.
     """
 
+    # Canonical class identifier. ``get_node_class_name()`` returns this even
+    # when a custom alias (e.g. ``my_explorer: { node_class: explore }``) is
+    # used, so skill ``allowed_agents: [explore]`` still matches aliases.
+    NODE_NAME = "explore"
+
     def __init__(
         self,
         node_id: str,
@@ -59,8 +64,9 @@ class ExploreAgenticNode(AgenticNode):
 
         # Default max_turns = 15, can be overridden by agent.yml
         self.max_turns = 15
-        if agent_config and hasattr(agent_config, "agentic_nodes") and node_name in agent_config.agentic_nodes:
-            agentic_node_config = agent_config.agentic_nodes[node_name]
+        config_key = node_name or self.NODE_NAME
+        if agent_config and hasattr(agent_config, "agentic_nodes") and config_key in agent_config.agentic_nodes:
+            agentic_node_config = agent_config.agentic_nodes[config_key]
             if isinstance(agentic_node_config, dict):
                 self.max_turns = agentic_node_config.get("max_turns", 15)
 

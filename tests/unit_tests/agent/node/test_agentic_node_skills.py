@@ -631,6 +631,66 @@ class TestAllowedAgentsInAgenticNode:
         assert "scoped-dashboard" in xml
         assert "shared-helper" in xml
 
+    def test_alias_capable_subclass_without_NODE_NAME_resolves_via_base(
+        self, mock_agent_config, tmp_path, permission_manager
+    ):
+        """Regression guard for CodeRabbit review: an alias-capable subclass
+        that overrides ``get_node_name()`` but hasn't declared ``NODE_NAME``
+        must still resolve ``get_node_class_name()`` to a stable class-level
+        identifier (derived via the base ``AgenticNode.get_node_name``), not
+        the alias. Mirrors the real ``ExploreAgenticNode`` shape prior to the
+        fix (override returns alias, no class constant)."""
+        skills_dir = tmp_path / "explore_skills"
+        skills_dir.mkdir()
+        scoped = skills_dir / "explore-guide"
+        scoped.mkdir()
+        # The class below is ``MockedExploreAgenticNode``; the base
+        # ``AgenticNode.get_node_name`` strips the ``AgenticNode`` suffix and
+        # lowercases, yielding ``"mockedexplore"`` as the canonical class id.
+        (scoped / "SKILL.md").write_text(
+            """---
+name: explore-guide
+description: Scoped to the explore subagent
+allowed_agents:
+  - mockedexplore
+---
+
+# Explore Guide
+"""
+        )
+
+        from datus.tools.skill_tools.skill_config import SkillConfig as _Cfg
+
+        manager = SkillManager(config=_Cfg(directories=[str(skills_dir)]), permission_manager=permission_manager)
+
+        mock_agent_config.agentic_nodes = {"my_explorer": {"skills": "*"}}
+
+        class MockedExploreAgenticNode(MinimalAgenticNode):
+            """No NODE_NAME; ``get_node_name`` returns the alias — same shape
+            as pre-fix ExploreAgenticNode. ``AgenticNode.get_node_name``
+            strips the ``AgenticNode`` suffix and lowercases, yielding
+            ``"mockedexplore"`` as the class-derived identifier."""
+
+            def get_node_name(self) -> str:  # returns the alias
+                return "my_explorer"
+
+        node = MockedExploreAgenticNode(
+            node_id="alias_no_nodename",
+            description="alias-capable no NODE_NAME",
+            node_type="chat",
+            agent_config=mock_agent_config,
+        )
+        node.skill_manager = manager
+
+        # get_node_class_name must ignore the override and return the stable
+        # class-derived name.
+        assert node.get_node_class_name() == "mockedexplore"
+
+        # ``allowed_agents: [mockedexplore]`` matches via class name even
+        # though the alias ``my_explorer`` is not whitelisted.
+        xml = node._get_available_skills_context()
+        assert "explore-guide" in xml
+
     def test_custom_alias_with_matching_class_sees_scoped_skill(self, mock_agent_config, scoped_skill_manager):
         """A subagent registered under a custom alias should still match a
         class-scoped ``allowed_agents`` whitelist via its ``NODE_NAME``."""
