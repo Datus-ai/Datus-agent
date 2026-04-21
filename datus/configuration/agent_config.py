@@ -543,6 +543,8 @@ class AgentConfig:
                 self.storage_configs = init_embedding_models(
                     storage_config, openai_configs=self.models, default_openai_config=self.active_model()
                 )
+        else:
+            self.storage_configs = {}
 
         from datus_storage_base.backend_config import StorageBackendConfig
 
