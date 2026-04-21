@@ -34,10 +34,10 @@ nav:
       - ETL Job: subagent/gen_job.md
       - Migration: subagent/migration.md
     - Chatbot: web_chatbot/introduction.md
-    - IM Gateway (Claw):
-      - Introduction: claw/introduction.md
-      - Slack: claw/slack.md
-      - Feishu: claw/feishu.md
+    - IM Gateway:
+      - Introduction: gateway/introduction.md
+      - Slack: gateway/slack.md
+      - Feishu: gateway/feishu.md
     - Knowledge Base:
       - Introduction: knowledge_base/introduction.md
       - External Knowledge: knowledge_base/ext_knowledge.md
@@ -129,7 +129,7 @@ plugins:
             Generate Semantic Model: 生成语义模型
             Scheduler: 调度器
             Chatbot: chatbot
-            IM Gateway (Claw): IM 网关 (Claw)
+            IM Gateway: IM 网关
             Slack: Slack
             Feishu: 飞书
 

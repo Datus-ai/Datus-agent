@@ -783,7 +783,7 @@ class TestConsumeEventsCoalescing:
 class TestRunLoopPathManagerContext:
     """Regression: _run_loop must pin agent_config.path_manager into its own context.
 
-    The claw bridge dispatches messages from a Feishu SDK worker thread via
+    The gateway bridge dispatches messages from a Feishu SDK worker thread via
     ``asyncio.run_coroutine_threadsafe``. That thread never inherited the
     ContextVar set by ``AgentConfig.__init__``, so the spawned task starts
     with an empty ``_current_path_manager`` and downstream stores

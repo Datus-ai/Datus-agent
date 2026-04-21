@@ -456,7 +456,7 @@ class AgentConfig:
         # ``FilesystemFuncTool`` fail-closed for EXTERNAL paths (outside the
         # project root) instead of prompting the broker. Set via
         # ``agent.filesystem.strict`` in YAML, ``--filesystem-strict`` on the
-        # CLI, or direct assignment from API/claw bootstraps.
+        # CLI, or direct assignment from API/gateway bootstraps.
         filesystem_raw = kwargs.get("filesystem") or {}
         self._filesystem_strict = bool(filesystem_raw.get("strict", False))
         self._current_database = ""
@@ -559,7 +559,7 @@ class AgentConfig:
         # Initialize skills configuration
         self.skills_config = self._init_skills_config(kwargs.get("skills", {}))
 
-        # Initialize channels configuration for Claw IM gateway
+        # Initialize channels configuration for Datus Gateway IM gateway
         self.channels_config: Dict[str, Any] = kwargs.get("channels", {})
 
         # Platform documentation fetch configs (namespace-independent)
@@ -589,7 +589,7 @@ class AgentConfig:
 
         ``True``: fail-closed — the tool returns a "not allowed in strict mode"
         error for any path outside the project root / whitelist. Used by the
-        API and claw surfaces, which have no interactive broker to confirm
+        API and gateway surfaces, which have no interactive broker to confirm
         out-of-workspace access.
 
         ``False`` (default): ``PermissionHooks`` prompts the user via the

@@ -77,7 +77,7 @@ class FilesystemPolicy:
     tool agree on what to do with ``EXTERNAL`` paths. When ``True``, the
     hook skips the broker prompt and delegates the denial to the
     filesystem tool, which returns ``FuncToolResult(success=0)`` with a
-    "strict mode" error message. This matters for API / claw surfaces with
+    "strict mode" error message. This matters for API / gateway surfaces with
     no interactive broker attached — prompting would hang the request,
     while raising would surface as an uncaught exception. The tool-level
     ``strict`` is still the source of truth; having the same flag in the
@@ -321,7 +321,7 @@ class PermissionHooks(AgentHooks):
 
         # EXTERNAL in strict mode → delegate to the tool, which returns
         # FuncToolResult(success=0). We return True here (no broker prompt,
-        # no exception) so callers without an interactive broker (API / claw)
+        # no exception) so callers without an interactive broker (API / gateway)
         # still fail fast but surface the denial as a normal tool-failure
         # payload the agent can read, rather than an uncaught exception.
         if policy.strict:

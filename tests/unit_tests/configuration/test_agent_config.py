@@ -680,7 +680,7 @@ class TestAgentConfigFilesystemStrict:
     """``filesystem_strict`` is the process-wide fail-closed switch for
     FilesystemFuncTool EXTERNAL access. It has three input channels
     (``agent.filesystem.strict`` in YAML, ``--filesystem-strict`` CLI flag
-    via ``override_by_args``, direct setter from API/claw bootstraps) and
+    via ``override_by_args``, direct setter from API/gateway bootstraps) and
     all three must land on the same underlying property.
     """
 

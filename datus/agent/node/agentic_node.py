@@ -1241,7 +1241,7 @@ class AgenticNode(Node):
         """Resolve the ``strict`` flag for this node's filesystem tool.
 
         Reads ``self.agent_config.filesystem_strict`` (process-wide default set
-        by API / claw bootstraps, or by ``agent.filesystem.strict`` / the
+        by API / gateway bootstraps, or by ``agent.filesystem.strict`` / the
         ``--filesystem-strict`` CLI flag). CLI leaves it unset so EXTERNAL
         access falls back to broker-prompt behavior.
         """
@@ -1257,7 +1257,7 @@ class AgenticNode(Node):
         ``get_node_name()`` — the two inputs the path policy module expects to
         classify ``.datus/memory/{current_node}/**`` as a whitelist subtree
         for this node only. The ``strict`` flag is resolved from
-        ``agent_config.filesystem_strict`` so API / claw can opt out of
+        ``agent_config.filesystem_strict`` so API / gateway can opt out of
         interactive EXTERNAL prompts.
         """
         from datus.tools.func_tool import FilesystemFuncTool

@@ -585,7 +585,7 @@ class TestPathZones:
     def test_strict_rejects_external_read(self, tmp_path):
         """Strict mode fails closed on EXTERNAL: reads never touch the host fs.
 
-        Used by API / claw where there's no broker to ask the user. We do
+        Used by API / gateway where there's no broker to ask the user. We do
         not fall through to an ``exists()`` probe either, so a missing
         external path and an existing one produce the same rejection.
         """

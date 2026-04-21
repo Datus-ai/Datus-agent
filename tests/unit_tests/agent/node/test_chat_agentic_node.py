@@ -176,7 +176,7 @@ class TestChatAgenticNodeToolSetup:
 
     def test_filesystem_strict_from_agent_config(self, real_agent_config, mock_llm_create):
         """agent_config.filesystem_strict = True propagates into the tool
-        and the permission-hook policy. This is how API / claw bootstraps
+        and the permission-hook policy. This is how API / gateway bootstraps
         force strict mode for every node they spawn."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
 

@@ -358,7 +358,7 @@ class ChatTaskManager:
 
         # Pin the path manager into this task's context. Required when the caller
         # dispatched us from a thread that never inherited AgentConfig's ContextVar
-        # (e.g. claw bridge dispatching from an IM SDK worker thread via
+        # (e.g. gateway bridge dispatching from an IM SDK worker thread via
         # ``asyncio.run_coroutine_threadsafe``); otherwise downstream stores fall
         # back to ``get_path_manager()`` and get an empty project_name.
         set_current_path_manager(agent_config.path_manager)
