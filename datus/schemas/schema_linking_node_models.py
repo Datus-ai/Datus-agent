@@ -83,14 +83,18 @@ class SchemaLinkingResult(BaseResult):
     value_count: int = Field(..., description="Number of table values found")
 
     @field_validator("schema_count")
-    def validate_schema_count(cls, v, values):
-        if "table_schemas" in values.data and len(values.data["table_schemas"]) != v:
+    def validate_schema_count(cls, v, info):
+        # info.data is None when pydantic invokes the validator outside the
+        # normal field-by-field pipeline (e.g. some model_validate_json paths).
+        data = info.data or {}
+        if "table_schemas" in data and len(data["table_schemas"]) != v:
             raise ValueError("'schema_count' must match the length of 'table_schemas'")
         return v
 
     @field_validator("value_count")
-    def validate_value_count(cls, v, values):
-        if "table_values" in values.data and len(values.data["table_values"]) != v:
+    def validate_value_count(cls, v, info):
+        data = info.data or {}
+        if "table_values" in data and len(data["table_values"]) != v:
             raise ValueError("'value_count' must match the length of 'table_values'")
         return v
 

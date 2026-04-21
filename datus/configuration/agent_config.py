@@ -360,8 +360,8 @@ class DocumentConfig:
 
 @dataclass
 class DashboardConfig:
-    # Service alias — the key under ``services.bi_tools`` in agent.yml. Used
-    # for CLI addressing (``.<platform>.<method>``) and ``dashboard_config``
+    # Service alias — the key under ``services.bi_platforms`` in agent.yml.
+    # Used for CLI addressing (``/<platform>.<method>``) and ``dashboard_config``
     # dict lookup. May be an arbitrary user-chosen name (``superset_prod``,
     # ``grafana_staging``, ...).
     platform: str
@@ -1221,7 +1221,7 @@ class AgentConfig:
             platform = str(service_name)
             # ``type`` is the adapter kind (``superset`` / ``grafana`` / ...).
             # When omitted, default to the key — preserves the single-instance
-            # convention ``services.bi_tools.superset: { api_url: ... }``.
+            # convention ``services.bi_platforms.superset: { api_url: ... }``.
             # When provided and different from the key, the user is opting
             # into a multi-instance deployment (alias ``superset_prod`` or
             # similar); we keep both fields on ``DashboardConfig`` so the

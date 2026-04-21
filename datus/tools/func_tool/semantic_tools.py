@@ -495,16 +495,17 @@ class SemanticTools:
                 )
             )
 
-            # Format result — sanitize metadata to ensure JSON-serializable
-            # Adapters (e.g. MetricFlow) may put non-serializable objects
-            # like DataflowPlan into metadata; convert them to strings.
+            # Drop non-JSON-serializable metadata entries (MetricFlow puts a
+            # ``DataflowPlan`` object under ``dataflow_plan``). ``str(v)`` on
+            # those yields ``<... object at 0x...>`` which is useless to
+            # both LLM callers and humans.
             safe_metadata = {}
             for k, v in (result.metadata or {}).items():
                 try:
                     json.dumps(v)
                     safe_metadata[k] = v
                 except (TypeError, ValueError):
-                    safe_metadata[k] = str(v)
+                    continue
 
             result_dict = {
                 "columns": result.columns,

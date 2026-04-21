@@ -4,7 +4,7 @@
 
 """CLI service client registry.
 
-Exposes read-only tool methods from ``services.bi_tools`` /
+Exposes read-only tool methods from ``services.bi_platforms`` /
 ``services.schedulers`` / ``services.semantic_layer`` to the CLI via
 ``ServiceClientRegistry``. Write methods are never registered here — the CLI
 is a read surface; mutating operations belong to the agent.
@@ -33,7 +33,7 @@ logger = get_logger(__name__)
 # never appear here — so even if a new one is added to a *FuncTool class it
 # will not accidentally surface in the CLI.
 READ_METHODS: Dict[str, Set[str]] = {
-    "bi_tools": {
+    "bi_platforms": {
         "list_dashboards",
         "get_dashboard",
         "list_charts",
@@ -169,7 +169,7 @@ def _build_semantic_tool(agent_config: "AgentConfig", service_name: str) -> Any:
 # Section-name → (factory, READ_METHODS key). Order is deterministic so
 # ``list_services`` output is stable.
 _FACTORIES: Dict[str, _FactoryFn] = {
-    "bi_tools": _build_bi_tool,
+    "bi_platforms": _build_bi_tool,
     "schedulers": _build_scheduler_tool,
     "semantic_layer": _build_semantic_tool,
 }
@@ -191,7 +191,7 @@ _FACTORIES: Dict[str, _FactoryFn] = {
 # Human-readable label for the YAML section name. The section key remains
 # the source of truth for config lookups; this mapping is display-only.
 TYPE_LABELS: Dict[str, str] = {
-    "bi_tools": "BI platform",
+    "bi_platforms": "BI platform",
     "schedulers": "scheduler",
     "semantic_layer": "semantic layer",
 }
@@ -286,7 +286,7 @@ def _probe_scheduler_adapter(agent_config: "AgentConfig", service_name: str) -> 
 
 
 _PROBES: Dict[str, _ProbeFn] = {
-    "bi_tools": _probe_bi_adapter,
+    "bi_platforms": _probe_bi_adapter,
     "schedulers": _probe_scheduler_adapter,
     "semantic_layer": _probe_semantic_adapter,
 }

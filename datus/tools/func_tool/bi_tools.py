@@ -119,7 +119,7 @@ class BIFuncTool:
 
         The adapter is looked up by ``DashboardConfig.adapter_type`` — not
         by the service alias — so a multi-instance deployment like
-        ``services.bi_tools.superset_prod: { type: superset, ... }`` targets
+        ``services.bi_platforms.superset_prod: { type: superset, ... }`` targets
         the registered ``superset`` adapter while the service still appears
         under its unique alias for CLI / dashboard addressing. When
         ``adapter_type`` is empty (legacy single-instance configs that
@@ -132,7 +132,7 @@ class BIFuncTool:
             raise DatusException(
                 ErrorCode.COMMON_CONFIG_ERROR,
                 message=(
-                    f"BI service '{platform}' not found in `agent.services.bi_tools`. "
+                    f"BI service '{platform}' not found in `agent.services.bi_platforms`. "
                     "Configure it or pass a pre-built adapter to BIFuncTool(adapter=...)."
                 ),
             )

@@ -195,7 +195,7 @@ class TestQueryMetricsCompression:
         assert result.result["columns"] == ["metric_time__day", "revenue", "cost"]
         assert result.result["metadata"] == {"sql": "SELECT ...", "row_count": 1}
 
-    def test_query_metrics_sanitizes_non_serializable_metadata(self, semantic_tools):
+    def test_query_metrics_drops_non_serializable_metadata(self, semantic_tools):
         """Test that non-JSON-serializable metadata values are converted to strings."""
 
         class FakePlan:
@@ -213,9 +213,8 @@ class TestQueryMetricsCompression:
 
         assert result.success == 1
         meta = result.result["metadata"]
-        # Non-serializable object should be converted to str
-        assert meta["dataflow_plan"] == "<FakePlan: node1 -> node2>"
-        # Serializable values should be preserved as-is
+        # Non-serializable entries are dropped; serializable ones pass through.
+        assert "dataflow_plan" not in meta
         assert meta["sql"] == "SELECT 1"
         assert meta["count"] == 42
 

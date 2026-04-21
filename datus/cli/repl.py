@@ -247,11 +247,6 @@ class DatusCLI:
             # to be deprecated when sub agent is read
             # "!reason": self.agent_commands.cmd_reason_stream,
             # "!compare": self.agent_commands.cmd_compare_stream,
-            # ``.services`` + ``.<service>.<method>`` use the dot prefix because
-            # the dynamic method router needs a stable prefix to key off. All
-            # other legacy ``.``/``@`` commands moved to ``/`` slashes in PR #621
-            # and are registered below via ``_build_slash_handler_map``.
-            ".services": self.service_commands.cmd_services,
         }
         # Slash commands are driven by ``slash_registry.SLASH_COMMANDS`` so the
         # completer, help text, and dispatcher share one source of truth.
@@ -302,6 +297,7 @@ class DatusCLI:
             "mcp": self._cmd_mcp,
             "skill": self._cmd_skill,
             "bootstrap-bi": self.bi_dashboard_commands.cmd,
+            "services": self.service_commands.cmd_services,
         }
 
     @property
@@ -1118,7 +1114,8 @@ class DatusCLI:
         # fail loudly.
         if text.startswith("/"):
             parts = text[1:].split(maxsplit=1)
-            token = parts[0].lower() if parts and parts[0] else ""
+            raw_token = parts[0] if parts and parts[0] else ""
+            token = raw_token.lower()
             args = parts[1] if len(parts) > 1 else ""
             spec = lookup(token) if token else None
             if spec is not None:
@@ -1126,6 +1123,12 @@ class DatusCLI:
                 # ``_cmd_exit`` gets to close the DB connector before the
                 # handler returns ``EXIT_SENTINEL`` to the outer loop.
                 return CommandType.SLASH, f"/{spec.name}", args
+            # ``/<service>.<method>`` dynamic routes are resolved in
+            # ``_execute_slash_command`` via ``ServiceCommands.dispatch``.
+            # Use the raw token (not lowercased) because service / method
+            # names are case-sensitive in the registry.
+            if "." in raw_token:
+                return CommandType.SLASH, f"/{raw_token}", args
             return CommandType.UNKNOWN, f"/{token}", ""
 
         # Legacy prefix hints: ``.xxx`` / ``@catalog`` / ``@subject`` used to
@@ -1333,12 +1336,18 @@ class DatusCLI:
     def _execute_slash_command(self, cmd: str, args: str):
         """Execute a slash command resolved via ``SLASH_COMMANDS`` registry.
 
+        Falls back to :meth:`ServiceCommands.dispatch` for dynamic
+        ``/<service>.<method>`` routes (BI / scheduler / semantic methods
+        enumerated at runtime, not statically registered in the registry).
+
         Returns ``EXIT_SENTINEL`` when the handler requested shutdown (``/exit``
         / ``/quit``) so the dispatcher can forward it to the outer loop.
         """
         logger.debug(f"Executing slash command: '{cmd}' with args: '{args}'")
         handler = self.commands.get(cmd)
         if handler is None:
+            if self.service_commands.dispatch(cmd, args):
+                return None
             self.console.print(f"[bold red]Unknown command:[/] {cmd}. Type /help.")
             return None
         result = handler(args)
@@ -1349,24 +1358,6 @@ class DatusCLI:
         if result == EXIT_SENTINEL:
             return EXIT_SENTINEL
         return None
-
-    def _execute_internal_command(self, cmd: str, args: str):
-        """Execute a dot-prefix command.
-
-        The only remaining dot commands are the service dispatcher
-        (``.services`` + the dynamic ``.<service>.<method>`` routes) —
-        the rest migrated to the slash registry in the CLI unification work.
-        Everything not registered statically falls through to
-        ``service_commands.dispatch`` so dynamic method calls work without
-        a central registration step.
-        """
-        logger.debug(f"Executing internal command: '{cmd}' with args: '{args}'")
-        if cmd in self.commands:
-            self.commands[cmd](args)
-            return
-        if self.service_commands.dispatch(cmd, args):
-            return
-        self.console.print(f"[bold red]Unknown command:[/] {cmd}. Type /help.")
 
     def _render_unknown_command(self, token: str, hint: str):
         """Report an unrecognised slash or renamed legacy prefix to the user."""

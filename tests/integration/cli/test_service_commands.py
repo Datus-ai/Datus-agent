@@ -1,7 +1,7 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 
-"""Integration tests for ``.<service>.<method>`` CLI routing.
+"""Integration tests for ``/<service>.<method>`` CLI routing.
 
 Scope = integration (end-to-end through ``AgentConfig`` → services config →
 ``ServiceClientRegistry`` → ``BIFuncTool._build_adapter`` → stub adapter →
@@ -346,7 +346,7 @@ class TestServicesListing:
 class TestMethodListing:
     def test_full_adapter_lists_read_methods_only(self, cli_with_superset):
         cmd = ServiceCommands(cli_with_superset)
-        handled = cmd.dispatch(".superset", "")
+        handled = cmd.dispatch("/superset", "")
         assert handled is True
         out = _output(cli_with_superset)
         # Read methods advertised.
@@ -362,7 +362,7 @@ class TestMethodListing:
 
     def test_readonly_adapter_hides_gated_methods(self, cli_with_two_bi_services):
         cmd = ServiceCommands(cli_with_two_bi_services)
-        cmd.dispatch(".grafana_ro", "")
+        cmd.dispatch("/grafana_ro", "")
         out = _output(cli_with_two_bi_services)
         assert "list_dashboards" in out
         assert "get_dashboard" in out
@@ -375,21 +375,21 @@ class TestMethodListing:
 class TestInvocation:
     def test_list_dashboards_end_to_end(self, cli_with_superset):
         cmd = ServiceCommands(cli_with_superset)
-        cmd.dispatch(".superset.list_dashboards", "")
+        cmd.dispatch("/superset.list_dashboards", "")
         out = _output(cli_with_superset)
         assert "Finance Overview" in out
         assert "Sales Overview" in out
 
     def test_list_dashboards_with_named_filter(self, cli_with_superset):
         cmd = ServiceCommands(cli_with_superset)
-        cmd.dispatch(".superset.list_dashboards", "--search=Sales")
+        cmd.dispatch("/superset.list_dashboards", "--search=Sales")
         out = _output(cli_with_superset)
         assert "Sales Overview" in out
         assert "Finance Overview" not in out
 
     def test_get_dashboard_positional(self, cli_with_superset):
         cmd = ServiceCommands(cli_with_superset)
-        cmd.dispatch(".superset.get_dashboard", "1")
+        cmd.dispatch("/superset.get_dashboard", "1")
         out = _output(cli_with_superset)
         # Single-dict payloads render as a Field/Value table; both the
         # returned id and name should appear as cell contents.
@@ -398,14 +398,14 @@ class TestInvocation:
 
     def test_get_dashboard_missing_id_shows_schema(self, cli_with_superset):
         cmd = ServiceCommands(cli_with_superset)
-        cmd.dispatch(".superset.get_dashboard", "")
+        cmd.dispatch("/superset.get_dashboard", "")
         out = _output(cli_with_superset)
         assert "Missing required argument" in out
         assert "dashboard_id" in out
 
     def test_help_flag_renders_schema(self, cli_with_superset):
         cmd = ServiceCommands(cli_with_superset)
-        cmd.dispatch(".superset.get_chart_data", "--help")
+        cmd.dispatch("/superset.get_chart_data", "--help")
         out = _output(cli_with_superset)
         assert "parameters" in out.lower()
         assert "chart_id" in out
@@ -413,13 +413,13 @@ class TestInvocation:
     def test_tool_error_rendered(self, cli_with_superset):
         cmd = ServiceCommands(cli_with_superset)
         # Adapter returns None → FuncToolResult.success=0 with "not found".
-        cmd.dispatch(".superset.get_dashboard", "missing")
+        cmd.dispatch("/superset.get_dashboard", "missing")
         out = _output(cli_with_superset)
         assert "not found" in out.lower()
 
     def test_int_coercion_for_limit(self, cli_with_superset):
         cmd = ServiceCommands(cli_with_superset)
-        cmd.dispatch(".superset.get_chart_data", "42 --limit=1")
+        cmd.dispatch("/superset.get_chart_data", "42 --limit=1")
         out = _output(cli_with_superset)
         # Single-dict payload renders as a K/V table. Limit=1 → one row
         # returned; ``row_count`` and ``1`` both appear as cell contents.
@@ -431,13 +431,13 @@ class TestInvocation:
 class TestWriteBlockedAndUnknown:
     def test_write_method_is_blocked(self, cli_with_superset):
         cmd = ServiceCommands(cli_with_superset)
-        cmd.dispatch(".superset.create_dashboard", "--title=new")
+        cmd.dispatch("/superset.create_dashboard", "--title=new")
         out = _output(cli_with_superset).lower()
         assert "write" in out or "read-only" in out or "privileged" in out
 
     def test_unknown_method_prints_hint(self, cli_with_superset):
         cmd = ServiceCommands(cli_with_superset)
-        cmd.dispatch(".superset.no_such", "")
+        cmd.dispatch("/superset.no_such", "")
         out = _output(cli_with_superset)
         assert "Unknown method" in out or "no_such" in out
 
@@ -488,14 +488,14 @@ class TestMultiInstanceSamePlatform:
     def test_both_aliases_route_to_same_adapter_class(self, cli_with_two_supersets):
         cmd = ServiceCommands(cli_with_two_supersets)
 
-        cmd.dispatch(".superset_prod.list_dashboards", "")
+        cmd.dispatch("/superset_prod.list_dashboards", "")
         out = _output(cli_with_two_supersets)
         assert "Finance Overview" in out
 
         cli_with_two_supersets.console.file.seek(0)
         cli_with_two_supersets.console.file.truncate()
 
-        cmd.dispatch(".superset_staging.list_dashboards", "")
+        cmd.dispatch("/superset_staging.list_dashboards", "")
         out = _output(cli_with_two_supersets)
         assert "Finance Overview" in out  # same stub data, no crosstalk error
 
@@ -529,14 +529,14 @@ class TestMissingAdapterEndToEnd:
 
     def test_invocation_prints_install_hint(self, cli_with_unregistered_platform):
         cmd = ServiceCommands(cli_with_unregistered_platform)
-        cmd.dispatch(".tableau.list_dashboards", "")
+        cmd.dispatch("/tableau.list_dashboards", "")
         out = _output(cli_with_unregistered_platform)
         assert "not installed" in out
         assert "datus-bi-" in out
 
     def test_bare_service_prints_install_hint(self, cli_with_unregistered_platform):
         cmd = ServiceCommands(cli_with_unregistered_platform)
-        cmd.dispatch(".tableau", "")
+        cmd.dispatch("/tableau", "")
         out = _output(cli_with_unregistered_platform)
         assert "not installed" in out
         # Method table is suppressed.
@@ -547,7 +547,7 @@ class TestMultiServiceRouting:
     def test_two_services_invoked_independently(self, cli_with_two_bi_services):
         cmd = ServiceCommands(cli_with_two_bi_services)
 
-        cmd.dispatch(".superset.list_dashboards", "")
+        cmd.dispatch("/superset.list_dashboards", "")
         out_a = _output(cli_with_two_bi_services)
         assert "Finance Overview" in out_a
 
@@ -555,7 +555,7 @@ class TestMultiServiceRouting:
         cli_with_two_bi_services.console.file.seek(0)
         cli_with_two_bi_services.console.file.truncate()
 
-        cmd.dispatch(".grafana_ro.list_dashboards", "")
+        cmd.dispatch("/grafana_ro.list_dashboards", "")
         out_b = _output(cli_with_two_bi_services)
         assert "Read Only" in out_b
         # The two adapters respond with different data — no cross-talk.
@@ -563,5 +563,5 @@ class TestMultiServiceRouting:
 
     def test_unknown_service_not_handled(self, cli_with_superset):
         cmd = ServiceCommands(cli_with_superset)
-        handled = cmd.dispatch(".mystery.foo", "")
+        handled = cmd.dispatch("/mystery.foo", "")
         assert handled is False

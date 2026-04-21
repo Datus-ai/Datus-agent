@@ -2,9 +2,9 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""CLI ``.<service>.<method>`` command handler.
+"""CLI ``/<service>.<method>`` command handler.
 
-Routes dotted commands to the underlying ``*FuncTool`` instance via
+Routes slash-dotted commands to the underlying ``*FuncTool`` instance via
 ``ServiceClientRegistry``. Read-only by design: any method not listed in
 ``datus.cli.service_client.READ_METHODS`` is rejected with a clear error
 message pointing the user to agent mode.
@@ -12,8 +12,8 @@ message pointing the user to agent mode.
 Argument parsing is intentionally minimal — the allow-listed read methods take
 at most three simple arguments (``str`` / ``int`` / ``List[str]``):
 
-- Positional, in schema order: ``.superset.get_dashboard 1``
-- Named overrides: ``.superset.get_chart_data 42 --limit=100``
+- Positional, in schema order: ``/superset.get_dashboard 1``
+- Named overrides: ``/superset.get_chart_data 42 --limit=100``
 - Lists: ``--subject_path=a,b`` or ``--subject_path=['a','b']``
 
 JSON-blob input is deliberately out of scope — if a method's schema needs it,
@@ -44,7 +44,7 @@ logger = get_logger(__name__)
 
 
 class ServiceCommands:
-    """Handler for ``.services`` / ``.<service>`` / ``.<service>.<method>``."""
+    """Handler for ``/services`` / ``/<service>`` / ``/<service>.<method>``."""
 
     def __init__(self, cli_instance: "DatusCLI"):
         self.cli = cli_instance
@@ -70,12 +70,12 @@ class ServiceCommands:
     # ------------------------------------------------------------------ #
 
     def cmd_services(self, args: str = "") -> None:
-        """Handler for the ``.services`` command."""
+        """Handler for the ``/services`` command."""
         rows = self.registry.list_services()
         if not rows:
             self.cli.console.print(
                 "[yellow]No services configured. Add entries under "
-                "`services.bi_tools`, `services.schedulers`, or "
+                "`services.bi_platforms`, `services.schedulers`, or "
                 "`services.semantic_layer` in agent.yml.[/]"
             )
             return
@@ -88,13 +88,13 @@ class ServiceCommands:
         self.cli.console.print(table)
 
     def dispatch(self, cmd: str, args: str) -> bool:
-        """Handle a ``.<service>`` or ``.<service>.<method>`` command.
+        """Handle a ``/<service>`` or ``/<service>.<method>`` command.
 
         Returns ``True`` if ``cmd`` was recognised as a service command (and
         therefore handled); ``False`` to let the caller fall through to the
         normal "Unknown command" error path.
         """
-        if not cmd.startswith("."):
+        if not cmd.startswith("/"):
             return False
 
         body = cmd[1:]
@@ -125,7 +125,7 @@ class ServiceCommands:
     # and pip pulls it in automatically. Listing core here used to confuse
     # users into thinking they had to install two separate packages.
     _ADAPTER_PACKAGE_HINTS = {
-        "bi_tools": "datus-bi-<platform>  (e.g. datus-bi-superset, datus-bi-grafana)",
+        "bi_platforms": "datus-bi-<platform>  (e.g. datus-bi-superset, datus-bi-grafana)",
         "schedulers": "datus-scheduler-<platform>  (e.g. datus-scheduler-airflow)",
         "semantic_layer": "datus-semantic-<type>  (e.g. datus-semantic-metricflow)",
     }
@@ -138,7 +138,7 @@ class ServiceCommands:
             f"[red]Service '{client.service_name}' ({label}) is configured "
             f"but the adapter is not installed.[/]\n"
             f"[dim]Install {pkg_hint} and restart the CLI, "
-            f"then re-run `.services` to confirm.[/]"
+            f"then re-run `/services` to confirm.[/]"
         )
 
     def _print_methods(self, client: ServiceClient) -> None:
@@ -213,12 +213,87 @@ class ServiceCommands:
         # Fast-path: FuncToolListResult envelope from any list_* tool.
         if self._render_list_envelope(payload, service=service, method=method):
             return
+        if self._render_query_envelope(payload):
+            return
         if self._render_payload_as_table(payload):
             return
         if self._render_payload_as_kv(payload):
             return
         rendered = json.dumps(payload, indent=2, ensure_ascii=False, default=str)
         self.cli.console.print(rendered)
+
+    # ``DataCompressor.compress`` canonical keys — matched as a set so a
+    # near-miss payload (e.g. one missing key) doesn't accidentally hit this
+    # branch and hide a real bug downstream.
+    _COMPRESSOR_KEYS = frozenset(
+        {"original_rows", "original_columns", "is_compressed", "compressed_data", "compression_type"}
+    )
+
+    def _render_query_envelope(self, payload: Any) -> bool:
+        """Render the ``query_metrics`` result shape.
+
+        Payload: ``{"columns": [...], "data": <compressor envelope>,
+        "metadata": {...}}``. ``data.compressed_data`` is a CSV string
+        produced by ``DataCompressor``; parse it into rows so the CLI
+        shows actual values rather than serializer metadata.
+        """
+        if not isinstance(payload, dict):
+            return False
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            return False
+        if not self._COMPRESSOR_KEYS.issubset(data.keys()):
+            return False
+
+        compressed = data.get("compressed_data", "")
+        rows = self._parse_compressor_csv(compressed) if isinstance(compressed, str) else []
+
+        if rows:
+            table = build_row_table(rows, max_cell_width=self._MAX_CELL_WIDTH)
+            if table is not None:
+                self.cli.console.print(table)
+            else:
+                self.cli.console.print(json.dumps(rows, indent=2, ensure_ascii=False, default=str))
+        elif isinstance(compressed, str) and compressed and compressed != "Empty dataset":
+            # Compressor produced a non-CSV form (e.g. ``_format_as_table``)
+            # or a format we don't parse. Show it verbatim — better than
+            # swallowing the payload.
+            self.cli.console.print(compressed)
+        else:
+            self.cli.console.print("[yellow]Empty set.[/]")
+
+        removed = data.get("removed_columns") or []
+        total = data.get("original_rows")
+        hint_parts: List[str] = []
+        if isinstance(total, int) and total > len(rows) and rows:
+            hint_parts.append(f"Showing {len(rows)} of {total} rows (compressed).")
+        if removed:
+            hint_parts.append(f"Omitted columns: {', '.join(removed)}.")
+        if hint_parts:
+            self.cli.console.print(f"[dim]{' '.join(hint_parts)}[/]")
+
+        metadata = payload.get("metadata")
+        if isinstance(metadata, dict) and metadata:
+            self.cli.console.print(f"[dim]metadata: {json.dumps(metadata, ensure_ascii=False, default=str)}[/]")
+        return True
+
+    @staticmethod
+    def _parse_compressor_csv(text: str) -> List[Dict[str, Any]]:
+        """Parse ``DataCompressor.compressed_data`` CSV into row dicts.
+
+        Returns ``[]`` for empty / unparseable input so the caller can fall
+        back to printing the raw compressed string.
+        """
+        if not text or text == "Empty dataset":
+            return []
+        import csv
+        import io
+
+        try:
+            reader = csv.DictReader(io.StringIO(text))
+            return [dict(row) for row in reader]
+        except csv.Error:
+            return []
 
     def _render_list_envelope(self, payload: Any, *, service: str, method: str) -> bool:
         """Render ``FuncToolListResult`` envelopes; return True when handled.
@@ -267,7 +342,7 @@ class ServiceCommands:
         service: str,
         method: str,
     ) -> str:
-        """Build the ``Showing X of Y. Next: .<service>.<method> --offset=...``
+        """Build the ``Showing X of Y. Next: /<service>.<method> --offset=...``
         hint. Returns an empty string when there's no next page to suggest.
         """
         if next_offset is None:
@@ -283,14 +358,14 @@ class ServiceCommands:
             prefix = f"Showing {shown} items."
         cmd_hint = ""
         if service and method:
-            cmd_hint = f" Next: .{service}.{method} --offset={next_offset}"
+            cmd_hint = f" Next: /{service}.{method} --offset={next_offset}"
         return f"[dim]{prefix}{cmd_hint}[/]"
 
     def _render_payload_as_table(self, payload: Any) -> bool:
         """Render a list-of-dict payload as a Rich table.
 
         Delegates to the shared ``build_row_table`` helper so the visual
-        style matches ``.tables`` / ``.databases``. Column set is inferred
+        style matches ``/tables`` / ``/databases``. Column set is inferred
         from the union of dict keys; all-empty columns (e.g.
         ``chart_ids`` on BI list responses) are pruned. Returns ``True``
         when a table was printed so the caller skips the JSON fallback.
@@ -336,7 +411,7 @@ class ServiceCommands:
             else:
                 self.cli.console.print(
                     f"[red]Unknown method '{method_name}' on service '{client.service_name}'.[/] "
-                    f"[dim]Run `.{client.service_name}` to list available methods.[/]"
+                    f"[dim]Run `/{client.service_name}` to list available methods.[/]"
                 )
             return
 

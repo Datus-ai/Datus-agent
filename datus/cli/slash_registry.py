@@ -79,6 +79,7 @@ SLASH_COMMANDS: tuple[SlashSpec, ...] = (
     SlashSpec("mcp", "Manage MCP servers (list/add/remove/check/call/filter)", "system"),
     SlashSpec("skill", "Manage skills and marketplace (list/install/publish/...)", "system"),
     SlashSpec("bootstrap-bi", "Extract BI dashboard assets for sub-agent context", "system"),
+    SlashSpec("services", "List configured service platforms and their read-only methods", "system"),
 )
 
 

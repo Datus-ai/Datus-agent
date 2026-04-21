@@ -38,7 +38,7 @@ def _fake_cli():
     cli.console = MagicMock()
     cli._bg_loop = None  # commands use asyncio.run in this case
     cli.agent_config = SimpleNamespace(
-        services=SimpleNamespace(bi_tools={"superset": {}}, schedulers={}, semantic_layer={}),
+        services=SimpleNamespace(bi_platforms={"superset": {}}, schedulers={}, semantic_layer={}),
     )
     return cli
 
@@ -79,14 +79,14 @@ def _make_commands_with_bi_stub(tool_instance=None):
     registry._adapter_available = {"superset": True}
     registry._clients = {
         "superset": ServiceClient(
-            service_type="bi_tools",
+            service_type="bi_platforms",
             service_name="superset",
             tool_instance=tool_instance or _BiToolStub(),
-            method_names=READ_METHODS["bi_tools"],
+            method_names=READ_METHODS["bi_platforms"],
         ),
     }
     # _entries drives list_services output + has() lookups (2-tuple per current schema).
-    registry._entries["superset"] = ("bi_tools", "superset")
+    registry._entries["superset"] = ("bi_platforms", "superset")
     cmd._registry = registry
     return cmd, cli
 
@@ -94,19 +94,23 @@ def _make_commands_with_bi_stub(tool_instance=None):
 class TestDispatchServiceListing:
     def test_dispatch_bare_service_prints_methods(self):
         cmd, cli = _make_commands_with_bi_stub()
-        handled = cmd.dispatch(".superset", "")
+        handled = cmd.dispatch("/superset", "")
         assert handled is True
         # Rich table passed through console.print — at least one call occurred.
         assert cli.console.print.call_count >= 1
 
     def test_dispatch_unknown_service_returns_false(self):
         cmd, _ = _make_commands_with_bi_stub()
-        handled = cmd.dispatch(".mystery", "")
+        handled = cmd.dispatch("/mystery", "")
         assert handled is False
 
-    def test_dispatch_non_dot_command_returns_false(self):
+    def test_dispatch_non_slash_command_returns_false(self):
         cmd, _ = _make_commands_with_bi_stub()
+        # Only slash-prefixed input is recognised; bare or dot-prefixed
+        # tokens are ignored so the caller can fall through to SQL / chat
+        # without the dispatcher swallowing the input.
         assert cmd.dispatch("superset", "") is False
+        assert cmd.dispatch(".superset", "") is False
 
     def test_cmd_services_lists_all(self):
         cmd, cli = _make_commands_with_bi_stub()
@@ -117,7 +121,7 @@ class TestDispatchServiceListing:
     def test_cmd_services_empty_prints_hint(self):
         cli = _fake_cli()
         cli.agent_config = SimpleNamespace(
-            services=SimpleNamespace(bi_tools={}, schedulers={}, semantic_layer={}),
+            services=SimpleNamespace(bi_platforms={}, schedulers={}, semantic_layer={}),
         )
         cmd = ServiceCommands(cli)
         cmd.cmd_services("")
@@ -129,44 +133,44 @@ class TestDispatchServiceListing:
 class TestDispatchInvokeMethod:
     def test_positional_arg_success(self):
         cmd, cli = _make_commands_with_bi_stub()
-        cmd.dispatch(".superset.get_dashboard", "42")
+        cmd.dispatch("/superset.get_dashboard", "42")
         # Single-dict payload renders as a K/V Table; id appears as a Value cell.
         assert "42" in _printed_text(cli)
 
     def test_named_arg_success(self):
         cmd, cli = _make_commands_with_bi_stub()
-        cmd.dispatch(".superset.get_dashboard", "--dashboard_id=7")
+        cmd.dispatch("/superset.get_dashboard", "--dashboard_id=7")
         assert "7" in _printed_text(cli)
 
     def test_int_coercion_from_schema(self):
         cmd, cli = _make_commands_with_bi_stub()
-        cmd.dispatch(".superset.get_chart_data", "99 --limit=50")
+        cmd.dispatch("/superset.get_chart_data", "99 --limit=50")
         rendered = _printed_text(cli)
         assert "99" in rendered
         assert "50" in rendered  # int, not str
 
     def test_missing_required_shows_schema(self):
         cmd, cli = _make_commands_with_bi_stub()
-        cmd.dispatch(".superset.get_dashboard", "")
+        cmd.dispatch("/superset.get_dashboard", "")
         rendered = " ".join(str(c) for c in cli.console.print.call_args_list)
         assert "Missing required argument" in rendered or "required" in rendered.lower()
 
     def test_help_flag_shows_schema(self):
         cmd, cli = _make_commands_with_bi_stub()
-        cmd.dispatch(".superset.get_dashboard", "--help")
+        cmd.dispatch("/superset.get_dashboard", "--help")
         # Rich Table object is passed to console.print; inspect its title.
         printed = cli.console.print.call_args_list[-1].args[0]
         assert "parameters" in str(getattr(printed, "title", "")).lower()
 
     def test_write_method_is_blocked(self):
         cmd, cli = _make_commands_with_bi_stub()
-        cmd.dispatch(".superset.create_dashboard", "--title=x")
+        cmd.dispatch("/superset.create_dashboard", "--title=x")
         msg = " ".join(str(c) for c in cli.console.print.call_args_list)
         assert "write" in msg.lower() or "privileged" in msg.lower() or "read-only" in msg.lower()
 
     def test_unknown_method_prints_hint(self):
         cmd, cli = _make_commands_with_bi_stub()
-        cmd.dispatch(".superset.no_such_method", "")
+        cmd.dispatch("/superset.no_such_method", "")
         msg = " ".join(str(c) for c in cli.console.print.call_args_list)
         assert "Unknown method" in msg or "no_such_method" in msg
 
@@ -174,7 +178,7 @@ class TestDispatchInvokeMethod:
         """When FuncToolResult.success==0, error is surfaced."""
         cmd, cli = _make_commands_with_bi_stub()
         # get_dashboard with empty id returns success=0
-        cmd.dispatch(".superset.get_dashboard", "''")
+        cmd.dispatch("/superset.get_dashboard", "''")
         msg = " ".join(str(c) for c in cli.console.print.call_args_list)
         assert "required" in msg.lower() or "Error" in msg
 
@@ -393,16 +397,16 @@ class TestPreflightMissingAdapter:
         cmd = ServiceCommands(cli)
         registry = ServiceClientRegistry.__new__(ServiceClientRegistry)
         registry._agent_config = cli.agent_config
-        registry._entries = {"superset": ("bi_tools", "superset")}
+        registry._entries = {"superset": ("bi_platforms", "superset")}
         registry._fingerprint = None
         # Probe fails → adapter reported as missing.
         registry._adapter_available = {"superset": False}
         registry._clients = {
             "superset": ServiceClient(
-                service_type="bi_tools",
+                service_type="bi_platforms",
                 service_name="superset",
                 tool_instance=_BiToolStub(),
-                method_names=READ_METHODS["bi_tools"],
+                method_names=READ_METHODS["bi_platforms"],
             ),
         }
         cmd._registry = registry
@@ -410,14 +414,14 @@ class TestPreflightMissingAdapter:
 
     def test_invoke_skips_with_install_hint(self):
         cmd, cli = self._make_registry_with_missing_adapter()
-        cmd.dispatch(".superset.list_dashboards", "")
+        cmd.dispatch("/superset.list_dashboards", "")
         msg = " ".join(str(c) for c in cli.console.print.call_args_list)
         assert "not installed" in msg
         assert "datus-bi-" in msg
 
     def test_bare_service_also_skips(self):
         cmd, cli = self._make_registry_with_missing_adapter()
-        cmd.dispatch(".superset", "")
+        cmd.dispatch("/superset", "")
         msg = " ".join(str(c) for c in cli.console.print.call_args_list)
         assert "not installed" in msg
         # The normal "read methods" table is NOT shown when the adapter is missing.
@@ -440,7 +444,7 @@ class TestPreflightMissingAdapter:
             ),
         }
         cmd._registry = registry
-        cmd.dispatch(".airflow.list_scheduler_jobs", "")
+        cmd.dispatch("/airflow.list_scheduler_jobs", "")
         msg = " ".join(str(c) for c in cli.console.print.call_args_list)
         assert "datus-scheduler" in msg
 
@@ -583,7 +587,7 @@ class TestRenderHelpers:
 
     def test_render_list_envelope_shows_pagination_hint(self):
         """When more rows exist upstream and ``extra.next_offset`` is set, a
-        dim ``Showing 2 of 137. Next: .<service>.<method> --offset=2`` hint
+        dim ``Showing 2 of 137. Next: /<service>.<method> --offset=2`` hint
         follows the table so the user can paste the command back in."""
         from rich.table import Table
 
@@ -607,7 +611,7 @@ class TestRenderHelpers:
         hints = [c.args[0] for c in calls if isinstance(c.args[0], str)]
         assert len(tables) == 1
         assert any("Showing 2 of 137" in h for h in hints)
-        assert any(".superset.list_dashboards --offset=2" in h for h in hints)
+        assert any("/superset.list_dashboards --offset=2" in h for h in hints)
 
     def test_render_list_envelope_without_next_offset_is_silent(self):
         """Last page: ``has_more=False`` (no next_offset) means no hint."""
@@ -657,6 +661,99 @@ class TestRenderHelpers:
         assert not isinstance(arg, Table)
         assert isinstance(arg, str)
         assert "1" in arg and "three" in arg
+
+
+class TestQueryEnvelopeRendering:
+    """``query_metrics`` returns ``{columns, data: <compressor envelope>, metadata}``.
+
+    Without special handling the CLI renders the compressor envelope as a
+    K/V cell that shows only serializer metadata (``original_rows`` etc.)
+    and hides the row values. ``_render_query_envelope`` unwraps it.
+    """
+
+    _COMPRESSOR_PAYLOAD = {
+        "columns": ["new_product_ac_ratio"],
+        "data": {
+            "original_rows": 1,
+            "original_columns": ["new_product_ac_ratio"],
+            "is_compressed": False,
+            "compressed_data": "new_product_ac_ratio\n0.5284\n",
+            "removed_columns": [],
+            "compression_type": "none",
+        },
+        "metadata": {"request_id": "abc"},
+    }
+
+    def test_compressor_csv_rendered_as_row_table(self):
+        from rich.table import Table
+
+        cli = _fake_cli()
+        cmd = ServiceCommands(cli)
+        cmd._render_result({"success": 1, "result": self._COMPRESSOR_PAYLOAD})
+        tables = [c.args[0] for c in cli.console.print.call_args_list if isinstance(c.args[0], Table)]
+        assert len(tables) == 1
+        headers = [str(c.header) for c in tables[0].columns]
+        assert headers == ["new_product_ac_ratio"]
+        cells = list(tables[0].columns[0].cells)
+        assert cells == ["0.5284"]
+
+    def test_metadata_rendered_when_serializable(self):
+        cli = _fake_cli()
+        cmd = ServiceCommands(cli)
+        cmd._render_result({"success": 1, "result": self._COMPRESSOR_PAYLOAD})
+        rendered = " ".join(str(c) for c in cli.console.print.call_args_list)
+        assert "request_id" in rendered
+
+    def test_empty_dataset_prints_empty_set(self):
+        payload = {
+            "columns": [],
+            "data": {
+                "original_rows": 0,
+                "original_columns": [],
+                "is_compressed": False,
+                "compressed_data": "Empty dataset",
+                "removed_columns": [],
+                "compression_type": "none",
+            },
+            "metadata": {},
+        }
+        cli = _fake_cli()
+        cmd = ServiceCommands(cli)
+        cmd._render_result({"success": 1, "result": payload})
+        rendered = " ".join(str(c) for c in cli.console.print.call_args_list)
+        assert "Empty set" in rendered
+
+    def test_truncation_hint_when_rows_exceed_shown(self):
+        payload = {
+            "columns": ["a"],
+            "data": {
+                "original_rows": 500,
+                "original_columns": ["a", "b"],
+                "is_compressed": True,
+                "compressed_data": "a\n1\n2\n3\n",
+                "removed_columns": ["b"],
+                "compression_type": "drop_columns",
+            },
+            "metadata": {},
+        }
+        cli = _fake_cli()
+        cmd = ServiceCommands(cli)
+        cmd._render_result({"success": 1, "result": payload})
+        rendered = " ".join(str(c) for c in cli.console.print.call_args_list)
+        assert "Showing 3 of 500" in rendered
+        assert "Omitted columns: b" in rendered
+
+    def test_non_compressor_dict_falls_through_to_kv(self):
+        """A ``{columns, data, metadata}`` look-alike without the full
+        compressor key set must not be mistakenly unwrapped."""
+        payload = {"columns": ["x"], "data": {"some": "object"}, "metadata": {}}
+        cli = _fake_cli()
+        cmd = ServiceCommands(cli)
+        cmd._render_result({"success": 1, "result": payload})
+        from rich.table import Table
+
+        # Falls back to K/V table rendering (no unwrapping).
+        assert any(isinstance(c.args[0], Table) for c in cli.console.print.call_args_list)
 
 
 class TestAsyncExecution:
