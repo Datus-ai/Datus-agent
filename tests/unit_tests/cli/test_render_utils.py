@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from rich.table import Table
 
-from datus.cli._render_utils import build_row_table, format_cell
+from datus.cli._render_utils import build_kv_table, build_row_table, format_cell
 
 
 class TestFormatCell:
@@ -155,3 +155,62 @@ class TestHideEmptyColumns:
         table = build_row_table(rows)
         labels = [str(c.header) for c in table.columns]
         assert set(labels) == {"count", "enabled", "ratio"}
+
+
+class TestFormatCellTruncation:
+    def test_no_truncate_when_under_limit(self):
+        assert format_cell("hello", max_width=100) == "hello"
+
+    def test_middle_truncate_when_over_limit(self):
+        text = "x" * 200
+        out = format_cell(text, max_width=50)
+        assert out != text
+        assert "..." in out
+        assert len(out) <= 50
+
+    def test_truncate_applies_after_json_serialisation(self):
+        """Nested dict is compacted to JSON *then* truncated."""
+        value = {"a": "x" * 500}
+        out = format_cell(value, max_width=80)
+        assert "..." in out
+        assert len(out) <= 80
+
+
+class TestBuildKvTable:
+    def test_single_dict_renders_as_two_column_table(self):
+        table = build_kv_table({"id": 42, "name": "solo"})
+        assert isinstance(table, Table)
+        headers = [str(c.header) for c in table.columns]
+        assert headers == ["Field", "Value"]
+        field_cells = list(table.columns[0].cells)
+        value_cells = list(table.columns[1].cells)
+        assert field_cells == ["id", "name"]
+        assert value_cells == ["42", "solo"]
+
+    def test_preserves_insertion_order(self):
+        table = build_kv_table({"z": 1, "a": 2, "m": 3})
+        assert list(table.columns[0].cells) == ["z", "a", "m"]
+
+    def test_nested_values_inline_json(self):
+        table = build_kv_table({"extra": {"k": "v"}})
+        value = list(table.columns[1].cells)[0]
+        assert value == '{"k": "v"}'
+
+    def test_long_value_truncated(self):
+        big = {"stuff": "y" * 400}
+        table = build_kv_table({"extra": big}, max_cell_width=80)
+        value = list(table.columns[1].cells)[0]
+        assert "..." in value
+        assert len(value) <= 80
+
+    def test_non_dict_returns_none(self):
+        assert build_kv_table([{"id": 1}]) is None
+        assert build_kv_table("not a dict") is None
+        assert build_kv_table(42) is None
+
+    def test_empty_dict_returns_none(self):
+        assert build_kv_table({}) is None
+
+    def test_title_passed_through(self):
+        table = build_kv_table({"x": 1}, title="My Record")
+        assert "My Record" in str(table.title)

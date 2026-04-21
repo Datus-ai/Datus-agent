@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from rich.table import Table
 
-from datus.cli._render_utils import build_row_table
+from datus.cli._render_utils import build_kv_table, build_row_table
 from datus.cli.service_client import ServiceClient, ServiceClientRegistry, service_type_label
 from datus.utils.loggings import get_logger
 
@@ -186,13 +186,22 @@ class ServiceCommands:
             )
         self.cli.console.print(table)
 
+    # Cap long cell contents (huge nested ``extra.raw`` blobs, SQL texts,
+    # etc.) so a single command doesn't push the terminal through many
+    # screenfuls. Wide enough for names and short descriptions at
+    # typical terminal widths, truncated in the middle otherwise.
+    _MAX_CELL_WIDTH = 120
+
     def _render_result(self, result: Any) -> None:
         """Render a ``FuncToolResult``-shaped dict or a bare payload.
 
-        List-of-dict payloads (the common shape from ``list_dashboards`` /
-        ``list_charts`` / ``list_metrics`` / ``list_scheduler_jobs``) render
-        as a Rich table so the output is scannable. Everything else falls
-        back to indented JSON.
+        - List-of-dict payloads (``list_dashboards`` / ``list_charts`` /
+          ``list_metrics`` / ``list_scheduler_jobs`` / ...) render as a
+          Rich table.
+        - Single-dict payloads (``get_dashboard`` / ``get_chart`` /
+          ``get_scheduler_job`` / ...) render as a two-column Field/Value
+          K/V table — otherwise ``extra.raw`` blobs dominate the output.
+        - Everything else falls back to indented JSON.
         """
         if isinstance(result, dict) and "success" in result:
             if result.get("success") == 0:
@@ -203,19 +212,29 @@ class ServiceCommands:
             payload = result
         if self._render_payload_as_table(payload):
             return
+        if self._render_payload_as_kv(payload):
+            return
         rendered = json.dumps(payload, indent=2, ensure_ascii=False, default=str)
         self.cli.console.print(rendered)
 
     def _render_payload_as_table(self, payload: Any) -> bool:
-        """Render ``payload`` as a Rich table if it looks like rows.
+        """Render a list-of-dict payload as a Rich table.
 
         Delegates to the shared ``build_row_table`` helper so the visual
-        style matches ``.tables`` / ``.databases``. Returns ``True`` when a
-        table was printed so the caller skips the JSON fallback. Column
-        set is inferred from the union of dict keys (first-appearance
-        order) — tolerant of sparse rows from arbitrary service adapters.
+        style matches ``.tables`` / ``.databases``. Column set is inferred
+        from the union of dict keys; all-empty columns (e.g.
+        ``chart_ids`` on BI list responses) are pruned. Returns ``True``
+        when a table was printed so the caller skips the JSON fallback.
         """
-        table = build_row_table(payload)
+        table = build_row_table(payload, max_cell_width=self._MAX_CELL_WIDTH)
+        if table is None:
+            return False
+        self.cli.console.print(table)
+        return True
+
+    def _render_payload_as_kv(self, payload: Any) -> bool:
+        """Render a single-dict payload as a two-column Field/Value table."""
+        table = build_kv_table(payload, max_cell_width=self._MAX_CELL_WIDTH)
         if table is None:
             return False
         self.cli.console.print(table)

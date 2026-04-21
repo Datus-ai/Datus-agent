@@ -43,6 +43,28 @@ def _fake_cli():
     return cli
 
 
+def _printed_text(cli) -> str:
+    """Join all text that was sent to ``cli.console.print``.
+
+    Rich Table / Panel arguments are rendered through a disposable Rich
+    ``Console`` so assertions can check the actual on-screen text rather
+    than object reprs. Plain strings pass through unchanged.
+    """
+    import io
+
+    from rich.console import Console
+
+    buf = io.StringIO()
+    probe = Console(file=buf, no_color=True, width=400)
+    for call in cli.console.print.call_args_list:
+        for arg in call.args:
+            if isinstance(arg, str):
+                buf.write(arg + "\n")
+            else:
+                probe.print(arg)
+    return buf.getvalue()
+
+
 def _make_commands_with_bi_stub(tool_instance=None):
     cli = _fake_cli()
     cmd = ServiceCommands(cli)
@@ -108,20 +130,18 @@ class TestDispatchInvokeMethod:
     def test_positional_arg_success(self):
         cmd, cli = _make_commands_with_bi_stub()
         cmd.dispatch(".superset.get_dashboard", "42")
-        # Rendered result contains the id.
-        rendered = " ".join(str(c) for c in cli.console.print.call_args_list)
-        assert "42" in rendered
+        # Single-dict payload renders as a K/V Table; id appears as a Value cell.
+        assert "42" in _printed_text(cli)
 
     def test_named_arg_success(self):
         cmd, cli = _make_commands_with_bi_stub()
         cmd.dispatch(".superset.get_dashboard", "--dashboard_id=7")
-        rendered = " ".join(str(c) for c in cli.console.print.call_args_list)
-        assert "7" in rendered
+        assert "7" in _printed_text(cli)
 
     def test_int_coercion_from_schema(self):
         cmd, cli = _make_commands_with_bi_stub()
         cmd.dispatch(".superset.get_chart_data", "99 --limit=50")
-        rendered = " ".join(str(c) for c in cli.console.print.call_args_list)
+        rendered = _printed_text(cli)
         assert "99" in rendered
         assert "50" in rendered  # int, not str
 
@@ -430,8 +450,7 @@ class TestRenderHelpers:
         cli = _fake_cli()
         cmd = ServiceCommands(cli)
         cmd._render_result({"success": 1, "result": {"id": 42}})
-        msg = str(cli.console.print.call_args_list[0])
-        assert "42" in msg
+        assert "42" in _printed_text(cli)
 
     def test_render_result_failure(self):
         cli = _fake_cli()
@@ -479,15 +498,39 @@ class TestRenderHelpers:
         column_labels = [str(c.header) for c in arg.columns]
         assert column_labels == ["id", "name", "extra"]
 
-    def test_render_falls_back_to_json_for_single_dict(self):
-        """Single-object payloads stay as JSON — a key/value table would
-        just rotate the JSON without saving space."""
+    def test_render_single_dict_as_kv_table(self):
+        """Single-object payloads render as a Field/Value table so large
+        nested blobs (``extra.raw`` on BI get_* responses) don't turn
+        the output into a wall of JSON."""
+        from rich.table import Table
+
         cli = _fake_cli()
         cmd = ServiceCommands(cli)
         cmd._render_result({"success": 1, "result": {"id": 42, "name": "solo"}})
-        msg = str(cli.console.print.call_args_list[0])
-        assert '"id": 42' in msg
-        assert '"name": "solo"' in msg
+        arg = cli.console.print.call_args_list[0].args[0]
+        assert isinstance(arg, Table)
+        headers = [str(c.header) for c in arg.columns]
+        assert headers == ["Field", "Value"]
+        # Each row is (key, value) — pull cells out of Rich's internals.
+        field_cells = list(arg.columns[0].cells)
+        value_cells = list(arg.columns[1].cells)
+        assert field_cells == ["id", "name"]
+        assert value_cells == ["42", "solo"]
+
+    def test_render_single_dict_truncates_wide_values(self):
+        """Long nested values are middle-truncated so the table fits."""
+        from rich.table import Table
+
+        cli = _fake_cli()
+        cmd = ServiceCommands(cli)
+        wide = {"k": "x" * 500}
+        cmd._render_result({"success": 1, "result": {"extra": wide}})
+        arg = cli.console.print.call_args_list[0].args[0]
+        assert isinstance(arg, Table)
+        value_cell = list(arg.columns[1].cells)[0]
+        # Truncated form contains the marker plus the original head/tail.
+        assert "..." in value_cell
+        assert len(value_cell) < 500
 
     def test_render_nested_values_serialised_inline(self):
         """Cells for dict / list values show compact JSON, not a repr."""

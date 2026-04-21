@@ -391,9 +391,10 @@ class TestInvocation:
         cmd = ServiceCommands(cli_with_superset)
         cmd.dispatch(".superset.get_dashboard", "1")
         out = _output(cli_with_superset)
-        # Rendered result payload contains the id and name.
-        assert '"id": "1"' in out
+        # Single-dict payloads render as a Field/Value table; both the
+        # returned id and name should appear as cell contents.
         assert "Finance Overview" in out
+        assert "1" in out
 
     def test_get_dashboard_missing_id_shows_schema(self, cli_with_superset):
         cmd = ServiceCommands(cli_with_superset)
@@ -420,8 +421,11 @@ class TestInvocation:
         cmd = ServiceCommands(cli_with_superset)
         cmd.dispatch(".superset.get_chart_data", "42 --limit=1")
         out = _output(cli_with_superset)
-        # Limit=1 → exactly one row returned.
-        assert '"row_count": 1' in out
+        # Single-dict payload renders as a K/V table. Limit=1 → one row
+        # returned; ``row_count`` and ``1`` both appear as cell contents.
+        assert "row_count" in out
+        # Ensure the count really is 1, not 2 (the stub returns 2 without limit).
+        assert "2024-02" not in out
 
 
 class TestWriteBlockedAndUnknown:

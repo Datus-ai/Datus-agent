@@ -18,17 +18,35 @@ from typing import Any, Iterable, List, Optional, Sequence, Tuple
 from rich.table import Table
 
 
-def format_cell(value: Any) -> str:
-    """Convert a cell value to the string shown in a Rich Table cell."""
+def format_cell(value: Any, *, max_width: Optional[int] = None) -> str:
+    """Convert a cell value to the string shown in a Rich Table cell.
+
+    ``max_width`` caps the rendered length with a middle-truncation
+    (``"head ... tail"``) so large nested JSON values (``extra.raw``
+    from BI detail responses, multi-KB SQL texts, ...) don't blow out
+    the column width. ``None`` leaves the value untouched.
+    """
     if value is None:
-        return ""
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, (dict, list)):
+        text = ""
+    elif isinstance(value, bool):
+        text = "true" if value else "false"
+    elif isinstance(value, (dict, list)):
         # Nested structures render as compact inline JSON — the table is a
         # scanning aid, not a place to unfold trees.
-        return json.dumps(value, ensure_ascii=False, default=str)
-    return str(value)
+        text = json.dumps(value, ensure_ascii=False, default=str)
+    else:
+        text = str(value)
+    if max_width is not None and len(text) > max_width:
+        text = _truncate_middle(text, max_width)
+    return text
+
+
+def _truncate_middle(text: str, max_len: int) -> str:
+    """Truncate the middle of ``text`` once it exceeds ``max_len``."""
+    if max_len <= 0 or len(text) <= max_len:
+        return text
+    keep = max(1, (max_len - 5) // 2)
+    return text[:keep] + " ... " + text[-keep:]
 
 
 def build_row_table(
@@ -38,6 +56,7 @@ def build_row_table(
     columns: Optional[Sequence[Tuple[str, str]]] = None,
     header_style: str = "bold green",
     hide_empty_columns: Optional[bool] = None,
+    max_cell_width: Optional[int] = None,
 ) -> Optional[Table]:
     """Build a Rich ``Table`` from a list-of-dict payload.
 
@@ -89,7 +108,32 @@ def build_row_table(
     for _, label in resolved_columns:
         table.add_column(str(label))
     for item in payload:
-        table.add_row(*(format_cell(item.get(key)) for key, _ in resolved_columns))
+        table.add_row(*(format_cell(item.get(key), max_width=max_cell_width) for key, _ in resolved_columns))
+    return table
+
+
+def build_kv_table(
+    data: Any,
+    *,
+    title: Optional[str] = None,
+    max_cell_width: Optional[int] = None,
+    header_style: str = "bold green",
+) -> Optional[Table]:
+    """Render a single ``dict`` as a two-column Field/Value table.
+
+    Returns ``None`` when ``data`` isn't a non-empty dict — callers fall
+    back to JSON. Nested values are compacted to inline JSON by
+    ``format_cell``; ``max_cell_width`` keeps big nested blobs
+    (``extra.raw`` on BI ``get_dashboard`` responses, multi-KB SQL,
+    ...) from blowing out the Value column.
+    """
+    if not isinstance(data, dict) or not data:
+        return None
+    table = Table(show_header=True, header_style=header_style, title=title)
+    table.add_column("Field")
+    table.add_column("Value")
+    for key, value in data.items():
+        table.add_row(str(key), format_cell(value, max_width=max_cell_width))
     return table
 
 
