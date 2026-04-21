@@ -91,7 +91,10 @@ class TestDatusAPIServiceInitialize:
 
         with patch("datus.api.service.load_agent_config", return_value=mock_cfg):
             with patch("datus.api.service.TaskStore", return_value=mock_task_store):
-                await service.initialize()  # should not raise
+                await service.initialize()
+
+        mock_task_store.cleanup_old_tasks.assert_called_once()
+        assert service.agent_config is mock_cfg
 
 
 # ---------------------------------------------------------------------------

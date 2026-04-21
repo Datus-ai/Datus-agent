@@ -318,14 +318,16 @@ class TestSubworkflowNodeApplyNodeParams:
         fake_child.input = FakeInput()
         workflow.nodes.values.return_value = [fake_child]
 
-        # Should not raise, just warn
+        # Should not raise, just warn — and the attribute should not be set
         node._apply_node_params(workflow)
+        assert not hasattr(fake_child.input, "nonexistent_param")
 
     def test_apply_node_params_empty(self):
         node = make_node(SubworkflowInput(workflow_name="wf", node_params=None))
         workflow = MagicMock()
-        # Should be a no-op
+        # Should be a no-op — workflow.nodes should not be accessed
         node._apply_node_params(workflow)
+        workflow.nodes.values.assert_not_called()
 
 
 class TestSubworkflowNodeApplyConfigParams:
@@ -351,14 +353,16 @@ class TestSubworkflowNodeApplyConfigParams:
     def test_apply_config_none(self):
         node = make_node()
         workflow = MagicMock()
-        # Should be a no-op
+        # Should be a no-op — workflow.nodes should not be accessed
         node._apply_config_params(workflow, None)
+        workflow.nodes.values.assert_not_called()
 
     def test_apply_config_string_file_not_found(self):
         node = make_node()
         workflow = MagicMock()
         # File doesn't exist, should log warning but not raise
         node._apply_config_params(workflow, "/nonexistent/path/config.yaml")
+        workflow.nodes.values.assert_not_called()
 
 
 class TestSubworkflowNodeSetupInput:

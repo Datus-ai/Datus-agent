@@ -343,6 +343,7 @@ def test_evaluate_benchmark_and_report_with_csv_manifest(agent_config: AgentConf
         agent_config=agent_config,
         benchmark_platform=benchmark_name,
     )
+    assert report["status"] == "success"
     _assert_report_structure(report)
 
 
@@ -419,4 +420,5 @@ def test_evaluate_benchmark_and_report_with_jsonl_manifest(agent_config: AgentCo
         agent_config=agent_config,
         benchmark_platform=benchmark_name,
     )
+    assert report["status"] == "success"
     _assert_report_structure(report)

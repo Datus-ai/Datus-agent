@@ -250,9 +250,9 @@ class TestRefreshAgentConfig:
         cmds._sub_agent_manager.list_agents.return_value = {"my_sub": {"system_prompt": "my_sub"}}
         cmds.cli_instance.agent_config.agentic_nodes = {}
         cmds._refresh_agent_config()
-        # Should not raise
+        cmds._sub_agent_manager.list_agents.assert_called_once()
 
     def test_refresh_handles_exception_gracefully(self, cmds):
         cmds._sub_agent_manager.list_agents.side_effect = RuntimeError("oops")
-        # Should not raise (defensive)
         cmds._refresh_agent_config()
+        cmds._sub_agent_manager.list_agents.assert_called_once()

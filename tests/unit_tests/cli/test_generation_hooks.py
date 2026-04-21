@@ -148,16 +148,20 @@ class TestOnToolEnd:
 @pytest.mark.asyncio
 class TestStubHooks:
     async def test_on_start(self, hooks):
-        await hooks.on_start(MagicMock(), MagicMock())  # no exception
+        result = await hooks.on_start(MagicMock(), MagicMock())
+        assert result is None
 
     async def test_on_tool_start(self, hooks):
-        await hooks.on_tool_start(MagicMock(), MagicMock(), MagicMock())
+        result = await hooks.on_tool_start(MagicMock(), MagicMock(), MagicMock())
+        assert result is None
 
     async def test_on_handoff(self, hooks):
-        await hooks.on_handoff(MagicMock(), MagicMock(), MagicMock())
+        result = await hooks.on_handoff(MagicMock(), MagicMock(), MagicMock())
+        assert result is None
 
     async def test_on_end(self, hooks):
-        await hooks.on_end(MagicMock(), MagicMock(), MagicMock())
+        result = await hooks.on_end(MagicMock(), MagicMock(), MagicMock())
+        assert result is None
 
 
 # ---------------------------------------------------------------------------
@@ -400,7 +404,9 @@ class TestHandleEndSemanticModelGeneration:
     async def test_cancelled_exception_absorbed(self, hooks):
         hooks._process_single_file = AsyncMock(side_effect=GenerationCancelledException)
         result = {"result": {"semantic_model_files": ["/a.yaml"]}}
-        await hooks._handle_end_semantic_model_generation(result)  # should not raise
+        await hooks._handle_end_semantic_model_generation(result)
+        # Path rejected by sandbox validation — _process_single_file never reached
+        assert hooks._process_single_file.await_count == 0
 
 
 @pytest.fixture
@@ -1460,11 +1466,13 @@ class TestHandleEndMetricGeneration:
         hooks._extract_metric_generation_result = MagicMock(return_value=("m.yml", None, {}))
         hooks._resolve_path = MagicMock(side_effect=lambda p, k: p)
         hooks._process_single_file = AsyncMock(side_effect=GenerationCancelledException("user-cancel"))
-        await hooks._handle_end_metric_generation({"result": {}})  # must not raise
+        await hooks._handle_end_metric_generation({"result": {}})
+        hooks._process_single_file.assert_awaited_once()
 
     async def test_unexpected_exception_absorbed(self, hooks):
         hooks._extract_metric_generation_result = MagicMock(side_effect=RuntimeError("boom"))
-        await hooks._handle_end_metric_generation({"result": {}})  # must not raise
+        await hooks._handle_end_metric_generation({"result": {}})
+        hooks._extract_metric_generation_result.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

@@ -361,8 +361,8 @@ class TestRunWebInterface:
             patch("datus.utils.path_manager.set_current_path_manager"),
         ):
             mock_uvicorn.run.side_effect = KeyboardInterrupt
-            # Should not raise
             run_web_interface(args)
+            mock_uvicorn.run.assert_called_once()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
