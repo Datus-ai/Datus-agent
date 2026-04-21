@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from rich.table import Table
 
-from datus.cli._render_utils import build_kv_table, build_row_table
+from datus.cli._render_utils import build_kv_table, build_row_table, unwrap_compressor_envelope
 from datus.cli.service_client import ServiceClient, ServiceClientRegistry, service_type_label
 from datus.utils.loggings import get_logger
 
@@ -210,12 +210,44 @@ class ServiceCommands:
             payload = result.get("result")
         else:
             payload = result
+
+        # ``SemanticTools`` returns the ``DataCompressor`` envelope (CSV +
+        # compression metadata) because that shape is token-efficient for
+        # the LLM. For humans at the REPL it's the opposite of
+        # readable — unwrap it back to row dicts before rendering.
+        unwrapped_rows = unwrap_compressor_envelope(payload)
+        if unwrapped_rows is not None:
+            note = self._format_compression_note(payload)
+            if note:
+                self.cli.console.print(note)
+            if not unwrapped_rows:
+                self.cli.console.print("[yellow]Empty set.[/]")
+                return
+            payload = unwrapped_rows
+
         if self._render_payload_as_table(payload):
             return
         if self._render_payload_as_kv(payload):
             return
         rendered = json.dumps(payload, indent=2, ensure_ascii=False, default=str)
         self.cli.console.print(rendered)
+
+    @staticmethod
+    def _format_compression_note(envelope: dict) -> str:
+        """Return a short ``[dim]...[/]`` line summarising compression state,
+        or an empty string when the envelope didn't actually compress."""
+        if not envelope.get("is_compressed"):
+            return ""
+        original_rows = envelope.get("original_rows")
+        ctype = envelope.get("compression_type") or "unknown"
+        removed = envelope.get("removed_columns") or []
+        bits = []
+        if original_rows is not None:
+            bits.append(f"{original_rows} rows original")
+        bits.append(f"compression={ctype}")
+        if removed:
+            bits.append(f"dropped columns: {', '.join(removed)}")
+        return "[dim]" + "; ".join(bits) + "[/]"
 
     def _render_payload_as_table(self, payload: Any) -> bool:
         """Render a list-of-dict payload as a Rich table.

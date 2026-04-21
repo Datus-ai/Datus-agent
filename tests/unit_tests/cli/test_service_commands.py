@@ -553,6 +553,82 @@ class TestRenderHelpers:
         cells = list(arg.columns[extra_idx].cells)
         assert cells == ['{"k": "v"}']
 
+    def test_render_unwraps_compressor_envelope_to_row_table(self):
+        """``SemanticTools.list_metrics`` returns the ``DataCompressor``
+        envelope (CSV + metadata) for LLM efficiency. CLI must unwrap
+        it back to row dicts before rendering the table."""
+        from rich.table import Table
+
+        cli = _fake_cli()
+        cmd = ServiceCommands(cli)
+        cmd._render_result(
+            {
+                "success": 1,
+                "result": {
+                    "original_rows": 2,
+                    "original_columns": ["name", "type"],
+                    "is_compressed": False,
+                    "compressed_data": "name,type\nrevenue,metric\norders,count\n",
+                    "removed_columns": [],
+                    "compression_type": "none",
+                },
+            }
+        )
+        # One print call, one Rich Table.
+        tables = [c.args[0] for c in cli.console.print.call_args_list if isinstance(c.args[0], Table)]
+        assert len(tables) == 1
+        headers = [str(c.header) for c in tables[0].columns]
+        assert headers == ["name", "type"]
+        name_cells = list(tables[0].columns[0].cells)
+        assert name_cells == ["revenue", "orders"]
+
+    def test_render_unwraps_compressed_envelope_with_note(self):
+        """When ``is_compressed=True`` a small metadata note precedes the table."""
+        from rich.table import Table
+
+        cli = _fake_cli()
+        cmd = ServiceCommands(cli)
+        cmd._render_result(
+            {
+                "success": 1,
+                "result": {
+                    "original_rows": 1000,
+                    "original_columns": ["name", "type"],
+                    "is_compressed": True,
+                    "compressed_data": "name,type\nrevenue,metric\n",
+                    "removed_columns": ["extra"],
+                    "compression_type": "rows",
+                },
+            }
+        )
+        # First print is the dim compression note, second is the Table.
+        calls = cli.console.print.call_args_list
+        notes = [c.args[0] for c in calls if isinstance(c.args[0], str)]
+        tables = [c.args[0] for c in calls if isinstance(c.args[0], Table)]
+        assert tables, "compressor payload should still render as a table"
+        assert notes and "1000 rows original" in notes[0]
+        assert "compression=rows" in notes[0]
+        assert "dropped columns: extra" in notes[0]
+
+    def test_render_empty_compressor_envelope_prints_empty_set(self):
+        cli = _fake_cli()
+        cmd = ServiceCommands(cli)
+        cmd._render_result(
+            {
+                "success": 1,
+                "result": {
+                    "original_rows": 0,
+                    "original_columns": [],
+                    "is_compressed": False,
+                    "compressed_data": "Empty dataset",
+                    "removed_columns": [],
+                    "compression_type": "none",
+                },
+            }
+        )
+        rendered = " ".join(str(c) for c in cli.console.print.call_args_list)
+        assert "Empty set" in rendered
+
     def test_render_heterogeneous_list_falls_back_to_json(self):
         from rich.table import Table
 
