@@ -11,8 +11,6 @@ from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.utils.constants import DBType
 from tests.conftest import load_acceptance_config
 
-pytestmark = [pytest.mark.acceptance, pytest.mark.nightly]
-
 
 @pytest.fixture
 def agent_config() -> AgentConfig:
@@ -26,6 +24,7 @@ def db_manager(agent_config: AgentConfig) -> DBManager:
     return db_manager_instance(agent_config.namespaces)
 
 
+@pytest.mark.acceptance
 @pytest.mark.asyncio
 async def test_catalog_command(agent_config: AgentConfig, db_manager: DBManager):
     app = ContextApp(
@@ -82,6 +81,7 @@ async def test_catalog_command(agent_config: AgentConfig, db_manager: DBManager)
         app.exit()
 
 
+@pytest.mark.nightly
 @pytest.mark.asyncio
 async def test_subject_command(agent_config: AgentConfig):
     app = ContextApp(

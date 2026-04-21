@@ -84,7 +84,7 @@ async def authenticated_client(app, agent_args, auth_token):
         svc_mod.service = original_service
 
 
-@pytest.mark.nightly
+@pytest.mark.acceptance
 class TestAPI:
     """N8: Agent API tests."""
 

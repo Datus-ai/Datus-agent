@@ -46,6 +46,7 @@ def _make_config(*, home: Path, project_name: str, project_root: Path) -> AgentC
     )
 
 
+@pytest.mark.acceptance
 class TestStorageLayoutIntegration:
     def test_two_projects_isolate_subject_and_data(self, tmp_path):
         """Two independent project roots must produce isolated KB & data paths."""
@@ -136,6 +137,7 @@ def test_normalize_project_name_cases(cwd, expected):
     assert _normalize_project_name(cwd) == expected
 
 
+@pytest.mark.acceptance
 class TestBackendLandingPath:
     """Exercise the real sqlite/lance backends and assert on-disk locations.
 

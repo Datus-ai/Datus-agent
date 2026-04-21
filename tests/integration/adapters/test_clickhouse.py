@@ -19,22 +19,21 @@ from typing import Generator
 
 import pytest
 
-if os.getenv("ADAPTERS_CH") != "1":
-    pytest.skip(
-        "ADAPTERS_CH=1 not set; see tests/integration/adapters/README.md",
-        allow_module_level=True,
-    )
+from tests.nightly_requirements import import_required, require_opt_in_env
 
-pytest.importorskip(
+require_opt_in_env("ADAPTERS_CH", "tests/integration/adapters/README.md")
+
+datus_clickhouse = import_required(
     "datus_clickhouse",
     reason="datus-clickhouse not installed; run `uv pip install datus-clickhouse`",
 )
 
-from datus_clickhouse import ClickHouseConfig, ClickHouseConnector  # noqa: E402
+ClickHouseConfig = datus_clickhouse.ClickHouseConfig
+ClickHouseConnector = datus_clickhouse.ClickHouseConnector
 
 from datus.tools.func_tool.database import DBFuncTool  # noqa: E402
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.integration, pytest.mark.nightly]
 
 
 REGION_TABLE = "datus_adapter_region"

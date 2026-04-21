@@ -6,6 +6,7 @@ from datus.tools.func_tool.database import DBFuncTool
 from datus.utils.constants import DBType
 
 
+@pytest.mark.acceptance
 class TestDBFuncToolIntegrationReal:
     """Real integration tests for DBFuncTool with actual databases.
 
@@ -112,7 +113,7 @@ class TestDBFuncToolIntegrationReal:
         assert tool.connector is not None
 
 
-@pytest.mark.nightly
+@pytest.mark.acceptance
 class TestSqliteMultiConnector:
     @pytest.fixture
     def agent_config(self):
@@ -158,6 +159,7 @@ class TestSqliteMultiConnector:
         assert table_names == {"cards", "legalities", "set_translations", "foreign_data", "rulings", "sets"}
 
 
+@pytest.mark.acceptance
 class TestDuckDBTool:
     """Test the DuckDBTool class."""
 
@@ -240,6 +242,7 @@ class TestDuckDBTool:
 # =============================================================================
 
 
+@pytest.mark.acceptance
 class TestConnectorInterface:
     """Test BaseSqlConnector.test_connection() directly."""
 
@@ -273,11 +276,11 @@ class TestConnectorInterface:
 
 
 # =============================================================================
-# Nightly: DB error scenarios, scoped tables, search table
+# Acceptance: DB error scenarios, scoped tables, search table
 # =============================================================================
 
 
-@pytest.mark.nightly
+@pytest.mark.acceptance
 class TestDBFuncToolErrors:
     """N11-07: read_query failure scenarios with real SSB SQLite database."""
 
@@ -310,7 +313,7 @@ class TestDBFuncToolErrors:
         assert len(result.error) > 0, "Error message should not be empty"
 
 
-@pytest.mark.nightly
+@pytest.mark.acceptance
 class TestScopedTables:
     """N11-09: Scoped tables filtering with real SSB SQLite database."""
 
@@ -367,7 +370,7 @@ class TestScopedTables:
         assert blocked_result.error is not None, "Should have error message"
 
 
-@pytest.mark.nightly
+@pytest.mark.acceptance
 class TestSearchTable:
     """N11-08: search_table RAG functionality."""
 

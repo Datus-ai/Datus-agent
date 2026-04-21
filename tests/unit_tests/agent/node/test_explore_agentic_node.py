@@ -171,6 +171,7 @@ class TestExploreAgenticNodeTools:
         assert node.mcp_servers == {}
 
 
+@pytest.mark.acceptance
 class TestExploreAgenticNodeExecution:
     """Tests for ExploreAgenticNode execute_stream."""
 

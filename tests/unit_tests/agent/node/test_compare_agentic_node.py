@@ -100,6 +100,7 @@ class TestCompareAgenticNodeInit:
 # ===========================================================================
 
 
+@pytest.mark.acceptance
 class TestCompareAgenticNodeExecution:
     """Tests for CompareAgenticNode.execute_stream() with real tools."""
 

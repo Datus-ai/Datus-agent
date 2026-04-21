@@ -133,6 +133,7 @@ class TestGenSemanticModelAgenticNodeInit:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.acceptance
 class TestGenSemanticModelAgenticNodeExecution:
     """Tests for GenSemanticModelAgenticNode streaming execution."""
 

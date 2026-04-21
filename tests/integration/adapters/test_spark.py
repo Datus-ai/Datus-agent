@@ -22,22 +22,21 @@ from typing import Generator
 
 import pytest
 
-if os.getenv("ADAPTERS_SPARK") != "1":
-    pytest.skip(
-        "ADAPTERS_SPARK=1 not set; see tests/integration/adapters/README.md",
-        allow_module_level=True,
-    )
+from tests.nightly_requirements import import_required, require_opt_in_env
 
-pytest.importorskip(
+require_opt_in_env("ADAPTERS_SPARK", "tests/integration/adapters/README.md")
+
+datus_spark = import_required(
     "datus_spark",
     reason="datus-spark not installed; run `uv pip install datus-spark`",
 )
 
-from datus_spark import SparkConfig, SparkConnector  # noqa: E402
+SparkConfig = datus_spark.SparkConfig
+SparkConnector = datus_spark.SparkConnector
 
 from datus.tools.func_tool.database import DBFuncTool  # noqa: E402
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.integration, pytest.mark.nightly]
 
 
 REGION_TABLE = "datus_adapter_region"

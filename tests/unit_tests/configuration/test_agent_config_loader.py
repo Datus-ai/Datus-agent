@@ -193,6 +193,18 @@ class TestConfigurationManagerSingleton:
         # Without reload, returns the same cached instance
         assert m1 is m2
 
+    def test_explicit_different_path_replaces_cached_instance(self, tmp_path):
+        cfg1 = tmp_path / "agent1.yml"
+        cfg1.write_text(yaml.safe_dump({"agent": {"v": 1}}))
+        cfg2 = tmp_path / "agent2.yml"
+        cfg2.write_text(yaml.safe_dump({"agent": {"v": 2}}))
+
+        m1 = configuration_manager(str(cfg1), reload=True)
+        m2 = configuration_manager(str(cfg2), reload=False)
+
+        assert m1 is not m2
+        assert m2.get("v") == 2
+
 
 # ---------------------------------------------------------------------------
 # load_node_config

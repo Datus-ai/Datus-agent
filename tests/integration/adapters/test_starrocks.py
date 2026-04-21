@@ -19,22 +19,21 @@ from typing import Generator
 
 import pytest
 
-if os.getenv("ADAPTERS_SR") != "1":
-    pytest.skip(
-        "ADAPTERS_SR=1 not set; see tests/integration/adapters/README.md",
-        allow_module_level=True,
-    )
+from tests.nightly_requirements import import_required, require_opt_in_env
 
-pytest.importorskip(
+require_opt_in_env("ADAPTERS_SR", "tests/integration/adapters/README.md")
+
+datus_starrocks = import_required(
     "datus_starrocks",
     reason="datus-starrocks not installed; run `uv pip install datus-starrocks`",
 )
 
-from datus_starrocks import StarRocksConfig, StarRocksConnector  # noqa: E402
+StarRocksConfig = datus_starrocks.StarRocksConfig
+StarRocksConnector = datus_starrocks.StarRocksConnector
 
 from datus.tools.func_tool.database import DBFuncTool  # noqa: E402
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.integration, pytest.mark.nightly]
 
 
 REGION_TABLE = "datus_adapter_region"

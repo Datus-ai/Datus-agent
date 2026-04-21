@@ -19,27 +19,26 @@ from typing import Generator
 
 import pytest
 
+from tests.nightly_requirements import import_required, require_opt_in_env
+
 # Opt-in gate MUST run before the optional-package import. Otherwise, when the
 # user hasn't set ADAPTERS_PG=1 and hasn't installed the adapter, the tests
 # skip with a misleading "not installed" reason instead of "opt-in not set".
-if os.getenv("ADAPTERS_PG") != "1":
-    pytest.skip(
-        "ADAPTERS_PG=1 not set; see tests/integration/adapters/README.md",
-        allow_module_level=True,
-    )
+require_opt_in_env("ADAPTERS_PG", "tests/integration/adapters/README.md")
 
 # datus-postgresql is NOT a hard dep of Datus-agent; audit allows importorskip here
 # because the package is not in [project.dependencies].
-pytest.importorskip(
+datus_postgresql = import_required(
     "datus_postgresql",
     reason="datus-postgresql not installed; run `uv pip install datus-postgresql`",
 )
 
-from datus_postgresql import PostgreSQLConfig, PostgreSQLConnector  # noqa: E402
+PostgreSQLConfig = datus_postgresql.PostgreSQLConfig
+PostgreSQLConnector = datus_postgresql.PostgreSQLConnector
 
 from datus.tools.func_tool.database import DBFuncTool  # noqa: E402
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.integration, pytest.mark.nightly]
 
 
 SCHEMA = os.getenv("POSTGRESQL_SCHEMA", "public")

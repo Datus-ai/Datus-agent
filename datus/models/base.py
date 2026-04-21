@@ -18,15 +18,21 @@ from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
+
+def configure_multiprocessing_start_method() -> None:
+    """Set a safe multiprocessing start method for the current platform."""
+    try:
+        if platform.system() == "Windows":
+            multiprocessing.set_start_method("spawn", force=True)
+        else:
+            multiprocessing.set_start_method("fork", force=True)
+    except RuntimeError:
+        # set_start_method can only be called once
+        pass
+
+
 # Fix multiprocessing issues with PyTorch/sentence-transformers in Python 3.12
-try:
-    if platform.system() == "Windows":
-        multiprocessing.set_start_method("spawn", force=True)
-    else:
-        multiprocessing.set_start_method("fork", force=True)
-except RuntimeError:
-    # set_start_method can only be called once
-    pass
+configure_multiprocessing_start_method()
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 

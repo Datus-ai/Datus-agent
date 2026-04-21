@@ -33,6 +33,7 @@ from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamablehttp_client
+from sse_starlette.sse import AppStatus
 
 from datus.mcp_server import DatusMCPServer, create_dynamic_app, create_server
 from datus.utils.loggings import get_logger
@@ -78,6 +79,13 @@ async def start_uvicorn(app, port: int) -> tuple:
     step 3 (lifespan.shutdown) — connections can only close after the session
     manager cancels them, but the session manager only runs during lifespan exit.
     """
+    # sse-starlette stores exit state in process-global AppStatus objects. When
+    # pytest-asyncio creates a fresh event loop per test, reusing that global
+    # event leaks the previous loop into the next server instance and triggers
+    # "Event ... is bound to a different event loop" on the second test.
+    AppStatus.should_exit = False
+    AppStatus.should_exit_event = None
+
     config = uvicorn.Config(
         app=app,
         host="127.0.0.1",
@@ -115,6 +123,9 @@ async def stop_uvicorn(uvi_server, task, timeout: float = 10.0):
             await task
         except asyncio.CancelledError:
             pass
+    finally:
+        AppStatus.should_exit = False
+        AppStatus.should_exit_event = None
 
 
 @asynccontextmanager

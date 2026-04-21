@@ -37,11 +37,10 @@ def get_available_namespaces(config_path: str = "") -> List[str]:
     """Extract available namespaces from config file"""
     try:
         config = _load_config_cached(config_path)
-        if "agent" in config and "namespace" in config["agent"]:
-            return list(config["agent"]["namespace"].keys())
-        elif "namespace" in config:
-            return list(config["namespace"].keys())
-        return []
+        agent_config = config.get("agent", config)
+        services = agent_config.get("services", {}) or {}
+        databases = services.get("databases", {}) or {}
+        return list(databases.keys())
     except Exception as e:
         logger.error(f"Failed to read namespaces from config: {e}")
         return []

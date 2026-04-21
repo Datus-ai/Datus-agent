@@ -106,6 +106,7 @@ class TestGenJobAgenticNodeInit:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.acceptance
 class TestGenJobExecution:
     """Test execute_stream error paths and basic workflow."""
 

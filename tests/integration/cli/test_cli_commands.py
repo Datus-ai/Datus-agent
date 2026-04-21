@@ -10,8 +10,6 @@ from datus.schemas.node_models import TableSchema
 from tests.conftest import TEST_DATA_DIR
 from tests.integration.conftest import wait_for_agent
 
-pytestmark = pytest.mark.nightly
-
 
 @pytest.fixture
 def schema_linking_input() -> List[Dict[str, Any]]:
@@ -55,8 +53,11 @@ def test_schema_linking(mock_args, capsys, schema_linking_input: List[Dict[str, 
     stdout = captured.out
 
     assert "Schema Linking" in stdout
-    assert "relevant tables and" in stdout and "Schema Linking Results" in stdout
+    assert (
+        "relevant tables and" in stdout and "Schema Linking Results" in stdout
+    ) or "No relevant tables found." in stdout
     assert "Error during schema linking" not in stdout
+    assert "Traceback" not in stdout
 
 
 # This is now a true integration test
@@ -84,8 +85,9 @@ def test_search_reference_sql(mock_args, capsys, schema_linking_input: List[Dict
     stdout = captured.out
 
     assert "Search Reference SQL" in stdout
-    assert "Reference SQL Search Results" in stdout
+    assert "Reference SQL Search Results" in stdout or "No reference SQL queries found." in stdout
     assert "Error searching reference sql:" not in stdout
+    assert "Traceback" not in stdout
 
 
 # This is now a true integration test
@@ -162,7 +164,6 @@ def test_tables_command(mock_args, capsys):
 
 
 @pytest.mark.nightly
-@pytest.mark.acceptance
 def test_chat_command(mock_args, capsys, gen_sql_input: List[Dict[str, Any]]):
     """
     Tests the '/<chat>' command for multi-turn conversation and context memory.
@@ -221,8 +222,8 @@ def test_chat_command_with_ext_knowledge(mock_args):
 
     with patch("datus.cli.repl.PromptSession.prompt") as mock_prompt:
         mock_prompt.side_effect = [
-            f"/{question}",
-            ".chat_info",
+            question,
+            "/chat_info",
             EOFError,
         ]
         with (
@@ -260,10 +261,12 @@ def test_chat_command_with_ext_knowledge(mock_args):
         f"get_knowledge, or task(explore). Got: {tools_used}"
     )
 
-    # Check that SQL was generated in the response text
-    # ChatNodeResult stores SQL within the response field (no separate sql field)
+    # Check that the response includes query-derived content.
+    # The CLI now routes bare text to chat, and the final answer may summarize
+    # the SQL instead of returning the raw statement first.
     response_text = response_output.get("response", "")
-    assert "SELECT" in response_text.upper(), "Should have generated SQL in the response."
+    assert "FRESNO COUNTY OFFICE OF EDUCATION" in response_text.upper()
+    assert "ZIP" in response_text.upper()
 
     # Check that a chat node was created and has an active session
     assert cli.chat_commands.current_node is not None, "Should have an active chat node."

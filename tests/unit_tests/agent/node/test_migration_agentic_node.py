@@ -89,6 +89,7 @@ class TestMigrationAgenticNodeInit:
         check_tools_include(MigrationAgenticNode, real_agent_config, "transfer_query_result")
 
 
+@pytest.mark.acceptance
 class TestMigrationExecution:
     """Test execute_stream error paths and basic workflow."""
 

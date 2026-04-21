@@ -22,22 +22,21 @@ from typing import Generator
 
 import pytest
 
-if os.getenv("ADAPTERS_TRINO") != "1":
-    pytest.skip(
-        "ADAPTERS_TRINO=1 not set; see tests/integration/adapters/README.md",
-        allow_module_level=True,
-    )
+from tests.nightly_requirements import import_required, require_opt_in_env
 
-pytest.importorskip(
+require_opt_in_env("ADAPTERS_TRINO", "tests/integration/adapters/README.md")
+
+datus_trino = import_required(
     "datus_trino",
     reason="datus-trino not installed; run `uv pip install datus-trino`",
 )
 
-from datus_trino import TrinoConfig, TrinoConnector  # noqa: E402
+TrinoConfig = datus_trino.TrinoConfig
+TrinoConnector = datus_trino.TrinoConnector
 
 from datus.tools.func_tool.database import DBFuncTool  # noqa: E402
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.integration, pytest.mark.nightly]
 
 
 TPCH_TABLE = "region"  # Trino tpch.tiny: columns are unprefixed (regionkey, name, comment)

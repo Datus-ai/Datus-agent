@@ -125,6 +125,7 @@ class TestGenTableAgenticNodeInit:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.acceptance
 class TestGenTableAgenticNodeExecution:
     """Tests for GenTableAgenticNode streaming execution."""
 

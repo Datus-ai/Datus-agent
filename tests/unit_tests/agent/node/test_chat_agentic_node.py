@@ -298,6 +298,7 @@ class TestChatAgenticNodeToolSetup:
 # ===========================================================================
 
 
+@pytest.mark.acceptance
 class TestChatAgenticNodeExecuteStream:
     """Verify execute_stream produces markdown output without SQL extraction."""
 
@@ -986,6 +987,7 @@ class TestChatAgenticNodeExecuteStreamErrors:
 # ===========================================================================
 
 
+@pytest.mark.acceptance
 class TestChatAgenticNodeExecuteStreamWithTools:
     """Verify execute_stream correctly handles tool calls and content extraction."""
 

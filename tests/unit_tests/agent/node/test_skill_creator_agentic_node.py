@@ -280,6 +280,7 @@ class TestSkillCreatorSystemPrompt:
         assert "ask_user" in prompt
 
 
+@pytest.mark.acceptance
 class TestSkillCreatorExecution:
     """Tests for SkillCreatorAgenticNode execute_stream."""
 

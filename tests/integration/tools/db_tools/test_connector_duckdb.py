@@ -101,6 +101,7 @@ def test_get_schemas(duckdb_connector: DuckdbConnector):
     assert len(schemas) == 0
 
 
+@pytest.mark.acceptance
 def test_insert_round_trip(duckdb_memory_connector: DuckdbConnector):
     suffix = uuid.uuid4().hex[:8]
     table_name = f"datus_insert_test_{suffix}"
@@ -140,6 +141,7 @@ def test_insert_round_trip(duckdb_memory_connector: DuckdbConnector):
         duckdb_memory_connector.execute_ddl(drop_sql)
 
 
+@pytest.mark.acceptance
 def test_update_round_trip(duckdb_memory_connector: DuckdbConnector):
     suffix = uuid.uuid4().hex[:8]
     table_name = f"datus_update_test_{suffix}"
@@ -180,6 +182,7 @@ def test_update_round_trip(duckdb_memory_connector: DuckdbConnector):
         duckdb_memory_connector.execute_ddl(drop_sql)
 
 
+@pytest.mark.acceptance
 def test_delete_round_trip(duckdb_memory_connector: DuckdbConnector):
     suffix = uuid.uuid4().hex[:8]
     table_name = f"datus_delete_test_{suffix}"

@@ -24,22 +24,21 @@ from typing import Generator
 
 import pytest
 
-if os.getenv("ADAPTERS_GP") != "1":
-    pytest.skip(
-        "ADAPTERS_GP=1 not set; see tests/integration/adapters/README.md",
-        allow_module_level=True,
-    )
+from tests.nightly_requirements import import_required, require_opt_in_env
 
-pytest.importorskip(
+require_opt_in_env("ADAPTERS_GP", "tests/integration/adapters/README.md")
+
+datus_greenplum = import_required(
     "datus_greenplum",
     reason="datus-greenplum not installed; run `uv pip install datus-greenplum`",
 )
 
-from datus_greenplum import GreenplumConfig, GreenplumConnector  # noqa: E402
+GreenplumConfig = datus_greenplum.GreenplumConfig
+GreenplumConnector = datus_greenplum.GreenplumConnector
 
 from datus.tools.func_tool.database import DBFuncTool  # noqa: E402
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.integration, pytest.mark.nightly]
 
 
 SCHEMA = os.getenv("GREENPLUM_SCHEMA", "public")

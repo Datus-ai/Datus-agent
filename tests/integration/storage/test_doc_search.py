@@ -143,6 +143,7 @@ def agent_config() -> AgentConfig:
     return load_agent_config()
 
 
+@pytest.mark.acceptance
 class TestSearchTool:
     """Test SearchTool methods: list_document_nav, get_document, search_document.
 

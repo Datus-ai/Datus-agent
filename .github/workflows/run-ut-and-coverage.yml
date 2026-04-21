@@ -70,7 +70,7 @@ jobs:
 
       - name: Run tests and extract coverage
         id: metrics
-        run: python3 ci/run-tests-and-coverage.py "${{ github.event.pull_request.base.ref || github.ref_name }}"
+        run: python3 ci/run-pr-tests.py "${{ github.event.pull_request.base.ref || github.ref_name }}"
 
       - name: Post coverage comment
         if: always() && steps.metrics.outcome != 'cancelled'
@@ -100,7 +100,7 @@ jobs:
               print(f'::error::Diff coverage {diff}% is below the 80% threshold')
               failed = True
           if test_outcome != 'success':
-              print('::error::Unit tests did not pass')
+              print('::error::PR acceptance and impacted unit tests did not pass')
               failed = True
           sys.exit(1 if failed else 0)
           "

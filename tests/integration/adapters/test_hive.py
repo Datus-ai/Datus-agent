@@ -22,22 +22,21 @@ from typing import Generator
 
 import pytest
 
-if os.getenv("ADAPTERS_HIVE") != "1":
-    pytest.skip(
-        "ADAPTERS_HIVE=1 not set; see tests/integration/adapters/README.md",
-        allow_module_level=True,
-    )
+from tests.nightly_requirements import import_required, require_opt_in_env
 
-pytest.importorskip(
+require_opt_in_env("ADAPTERS_HIVE", "tests/integration/adapters/README.md")
+
+datus_hive = import_required(
     "datus_hive",
     reason="datus-hive not installed; run `uv pip install datus-hive`",
 )
 
-from datus_hive import HiveConfig, HiveConnector  # noqa: E402
+HiveConfig = datus_hive.HiveConfig
+HiveConnector = datus_hive.HiveConnector
 
 from datus.tools.func_tool.database import DBFuncTool  # noqa: E402
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.integration, pytest.mark.nightly]
 
 
 REGION_TABLE = "datus_adapter_region"

@@ -168,6 +168,7 @@ class TestGenSQLAgenticNodeExecutionMode:
         assert "ask_user" not in tool_names
 
 
+@pytest.mark.acceptance
 class TestGenSQLAgenticNodeExecution:
     """Tests for GenSQLAgenticNode execute_stream and related methods."""
 
@@ -2547,9 +2548,6 @@ class TestExecuteStreamGenSQLError:
         last = actions[-1]
         assert last.status == ActionStatus.FAILED
         assert last.action_type == "error"
-
-
-pytestmark = pytest.mark.ci
 
 
 # ---------------------------------------------------------------------------

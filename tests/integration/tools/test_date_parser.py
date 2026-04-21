@@ -142,7 +142,6 @@ def mixed_expressions_test_cases_cn() -> List[Dict[str, Any]]:
 class TestChineseDateParser:
     """Test suite for Chinese Date Parser"""
 
-    @pytest.mark.acceptance
     def test_chinese_expressions(self, chinese_expressions_test_cases, date_parser_cn):
         """Test Chinese temporal expressions parsing"""
         parser, model = date_parser_cn
@@ -151,7 +150,6 @@ class TestChineseDateParser:
             results = parser.extract_and_parse_dates(test_case["text"], test_case["reference"], model)
             _assert_date_results(results, test_case)
 
-    @pytest.mark.acceptance
     def test_mixed_expressions(self, mixed_expressions_test_cases_cn, date_parser_cn):
         """Test mixed Chinese temporal expressions parsing"""
         parser, model = date_parser_cn
@@ -246,7 +244,6 @@ def mixed_expressions_test_cases_en() -> List[Dict[str, Any]]:
 class TestEnglishDateParser:
     """Test suite for English Date Parser"""
 
-    @pytest.mark.acceptance
     def test_english_expressions(self, english_expressions_test_cases, date_parser_en):
         """Test English temporal expressions parsing"""
         parser, model = date_parser_en
@@ -255,7 +252,6 @@ class TestEnglishDateParser:
             results = parser.extract_and_parse_dates(test_case["text"], test_case["reference"], model)
             _assert_date_results(results, test_case)
 
-    @pytest.mark.acceptance
     def test_mixed_expressions(self, mixed_expressions_test_cases_en, date_parser_en):
         """Test mixed English temporal expressions parsing"""
         parser, model = date_parser_en

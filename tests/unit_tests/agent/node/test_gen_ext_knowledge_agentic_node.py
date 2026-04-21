@@ -114,6 +114,7 @@ class TestGenExtKnowledgeNodeInit:
 # ===========================================================================
 
 
+@pytest.mark.acceptance
 class TestGenExtKnowledgeNodeExecution:
     """Tests for GenExtKnowledgeAgenticNode.execute_stream() with real tools."""
 

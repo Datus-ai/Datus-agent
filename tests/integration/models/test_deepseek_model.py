@@ -155,7 +155,6 @@ class TestDeepSeekModel:
         except Exception:
             raise
 
-    @pytest.mark.acceptance
     @pytest.mark.asyncio
     async def test_generate_with_mcp_stream_acceptance(self):
         """Test MCP streaming functionality with SSB database."""
@@ -201,8 +200,7 @@ class TestDeepSeekModel:
         except Exception:
             raise
 
-    # Acceptance Tests for Performance Validation
-    @pytest.mark.acceptance
+    # Nightly Tests for real-model performance validation
     def test_generate_acceptance(self):
         """Acceptance test for basic generation performance."""
         prompts = [
@@ -219,7 +217,6 @@ class TestDeepSeekModel:
             assert len(result) > 0, "Response should not be empty"
             logger.info(f"Acceptance test prompt: {prompt[:30]}... -> Response length: {len(result)}")
 
-    @pytest.mark.acceptance
     @pytest.mark.asyncio
     async def test_generate_with_mcp_acceptance(self):
         """Acceptance test for MCP functionality with SSB business scenarios."""
@@ -439,7 +436,6 @@ class TestDeepSeekModel:
 
         logger.debug(f"MCP stream session: {action_count1} + {action_count2} total actions")
 
-    @pytest.mark.acceptance
     @pytest.mark.asyncio
     async def test_generate_with_mcp_token_consumption(self):
         """Test token consumption tracking between generate_with_tools and generate_with_tools_stream."""

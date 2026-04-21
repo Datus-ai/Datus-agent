@@ -108,7 +108,11 @@ CONFIGURATION_MANAGER: ConfigurationManager | None = None
 
 def configuration_manager(config_path: str = "", reload: bool = False) -> ConfigurationManager:
     global CONFIGURATION_MANAGER
-    if reload or not CONFIGURATION_MANAGER:
+    should_reload = reload or not CONFIGURATION_MANAGER
+    if not should_reload and config_path:
+        requested_path = parse_config_path(config_path)
+        should_reload = CONFIGURATION_MANAGER.config_path != requested_path
+    if should_reload:
         CONFIGURATION_MANAGER = ConfigurationManager(config_path)
     return CONFIGURATION_MANAGER
 

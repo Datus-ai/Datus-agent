@@ -207,6 +207,7 @@ class TestGenReportAgenticNodeExecutionMode:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.acceptance
 class TestGenReportAgenticNodeExecution:
     """Tests for GenReportAgenticNode streaming execution."""
 

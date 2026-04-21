@@ -19,13 +19,21 @@ from pathlib import Path
 
 import pytest
 
-requests = pytest.importorskip("requests", reason="requests not installed")
-pytest.importorskip(
+from tests.nightly_requirements import import_required
+
+requests = import_required("requests", reason="requests not installed")
+import_required(
     "pytest_playwright",
     reason=("pytest-playwright not installed. Run: pip install pytest-playwright && playwright install chromium"),
 )
+playwright_sync_api = import_required(
+    "playwright.sync_api",
+    reason="playwright not installed. Run: pip install pytest-playwright && playwright install chromium",
+)
 
-from playwright.sync_api import expect  # noqa: E402
+expect = playwright_sync_api.expect
+
+pytestmark = [pytest.mark.regression, pytest.mark.nightly]
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 WEB_PORT = 18501

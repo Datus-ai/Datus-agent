@@ -5,7 +5,7 @@
 """BI Dashboard integration tests.
 
 Contains two test classes at different verification levels:
-- TestPartialIntegration: Real Superset API + mocked LLM (acceptance + nightly)
+- TestPartialIntegration: Real Superset API + mocked LLM (nightly)
 - TestE2EIntegration: Full end-to-end with zero mocks (nightly only)
 """
 
@@ -265,7 +265,6 @@ class TestPartialIntegration:
     Mocked: LLM API calls (too expensive/slow).
     """
 
-    @pytest.mark.acceptance
     @pytest.mark.nightly
     def test_workflow_without_llm(
         self,

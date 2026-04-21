@@ -19,22 +19,21 @@ from typing import Generator
 
 import pytest
 
-if os.getenv("ADAPTERS_MYSQL") != "1":
-    pytest.skip(
-        "ADAPTERS_MYSQL=1 not set; see tests/integration/adapters/README.md",
-        allow_module_level=True,
-    )
+from tests.nightly_requirements import import_required, require_opt_in_env
 
-pytest.importorskip(
+require_opt_in_env("ADAPTERS_MYSQL", "tests/integration/adapters/README.md")
+
+datus_mysql = import_required(
     "datus_mysql",
     reason="datus-mysql not installed; run `uv pip install datus-mysql`",
 )
 
-from datus_mysql import MySQLConfig, MySQLConnector  # noqa: E402
+MySQLConfig = datus_mysql.MySQLConfig
+MySQLConnector = datus_mysql.MySQLConnector
 
 from datus.tools.func_tool.database import DBFuncTool  # noqa: E402
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.integration, pytest.mark.nightly]
 
 
 REGION_TABLE = "datus_adapter_region"

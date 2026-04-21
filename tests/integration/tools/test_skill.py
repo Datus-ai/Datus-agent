@@ -148,7 +148,6 @@ class TestAgenticNodeSkillFiltering:
 # ============================================================================
 
 
-@pytest.mark.acceptance
 @pytest.mark.nightly
 class TestRealLLMSkillIntegration:
     """Real LLM integration test: ChatAgenticNode + Skills + california_schools.
@@ -158,7 +157,7 @@ class TestRealLLMSkillIntegration:
     2. Load the report-generator skill via load_skill()
     3. Execute a report script via skill_execute_command()
 
-    Marked as 'acceptance' - requires API key and real database.
+    Nightly-only: requires API key and real database.
     """
 
     QUESTION = (
