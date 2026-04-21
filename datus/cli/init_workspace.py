@@ -83,13 +83,13 @@ def _detect_project_type(root: str) -> str:
     return ", ".join(detected) if detected else "Unknown"
 
 
-def _build_services_section(databases: Dict[str, Any]) -> str:
-    """Build Services section from configured databases."""
-    if not databases:
-        return "No services configured. Run `datus configure` to add databases.\n"
+def _build_services_section(datasources: Dict[str, Any]) -> str:
+    """Build Services section from configured datasources."""
+    if not datasources:
+        return "No services configured. Run `datus configure` to add datasources.\n"
 
     lines = ["| Name | Type | Connection |", "|------|------|------------|"]
-    for name, cfg in databases.items():
+    for name, cfg in datasources.items():
         conn = ""
         if hasattr(cfg, "uri") and cfg.uri:
             conn = cfg.uri
@@ -146,7 +146,7 @@ class InitWorkspace:
             project_type = _detect_project_type(self.project_dir)
 
             # Build services section from config
-            services_section = _build_services_section(agent_config.services.databases)
+            services_section = _build_services_section(agent_config.services.datasources)
 
             # Probe database schema if --database specified
             db_schema_info = ""
@@ -182,7 +182,7 @@ class InitWorkspace:
             from datus.tools.db_tools.db_manager import DBManager
 
             self.console.print(f"[dim]Probing database '{db_name}'...[/dim]")
-            db_config = agent_config.services.databases.get(db_name)
+            db_config = agent_config.services.datasources.get(db_name)
             if not db_config:
                 self.console.print(f"[yellow]Database '{db_name}' not found in config, skipping probe.[/yellow]")
                 return ""

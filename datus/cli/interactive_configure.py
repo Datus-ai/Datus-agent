@@ -60,7 +60,7 @@ def _prompt_with_back(label: str, default: str = "", password: bool = False) -> 
 
 
 class InteractiveConfigure:
-    """Incremental configuration manager for LLM models and databases."""
+    """Incremental configuration manager for LLM models and datasources."""
 
     def __init__(self, user_home: Optional[str] = None):
         self.user_home = user_home if user_home else Path.home()
@@ -75,7 +75,7 @@ class InteractiveConfigure:
         # Working state — loaded from existing config or empty
         self.target: str = ""
         self.models: Dict[str, dict] = {}
-        self.databases: Dict[str, dict] = {}
+        self.datasources: Dict[str, dict] = {}
 
     # ── Setup helpers ──────────────────────────────────────────────
 
@@ -101,7 +101,7 @@ class InteractiveConfigure:
             logger.debug(f"Error deploying built-in skills: {e}")
 
     def _load_existing_config(self):
-        """Load models and databases from existing agent.yml."""
+        """Load models and datasources from existing agent.yml."""
         if not self.config_path.exists():
             return
 
@@ -118,16 +118,16 @@ class InteractiveConfigure:
         # Support new services format and legacy singular service / namespace formats
         services = agent.get("services") or {}
         legacy_service = agent.get("service") or {}
-        if isinstance(services, dict) and services.get("databases") is not None:
-            self.databases = services.get("databases", {})
-        elif isinstance(legacy_service, dict) and legacy_service.get("databases") is not None:
-            self.databases = legacy_service.get("databases", {})
+        if isinstance(services, dict) and services.get("datasources") is not None:
+            self.datasources = services.get("datasources", {})
+        elif isinstance(legacy_service, dict) and legacy_service.get("datasources") is not None:
+            self.datasources = legacy_service.get("datasources", {})
         elif "namespace" in agent:
             # Auto-migrate legacy namespace format
             from datus.configuration.agent_config import ServicesConfig
 
             migrated = ServicesConfig.migrate_from_namespace(agent["namespace"])
-            self.databases = migrated.get("databases", {})
+            self.datasources = migrated.get("datasources", {})
 
     def _load_provider_catalog(self) -> dict:
         try:
@@ -148,7 +148,7 @@ class InteractiveConfigure:
     # ── Display ────────────────────────────────────────────────────
 
     def _show_current_state(self):
-        """Display current models and databases."""
+        """Display current models and datasources."""
         # Models table
         if self.models:
             table = Table(title="Current Models", show_header=True, header_style="bold green")
@@ -165,20 +165,20 @@ class InteractiveConfigure:
 
         self.console.print()
 
-        # Databases table
-        if self.databases:
-            table = Table(title="Current Databases", show_header=True, header_style="bold green")
+        # Datasources table
+        if self.datasources:
+            table = Table(title="Current Datasources", show_header=True, header_style="bold green")
             table.add_column("Name", style="cyan")
             table.add_column("Type")
             table.add_column("Connection")
             table.add_column("Default")
-            for name, cfg in self.databases.items():
+            for name, cfg in self.datasources.items():
                 conn = cfg.get("uri", "") or cfg.get("host", "") or cfg.get("account", "")
                 is_default = "*" if cfg.get("default") else ""
                 table.add_row(name, cfg.get("type", ""), str(conn), is_default)
             self.console.print(table)
         else:
-            self.console.print("[yellow]No databases configured.[/yellow]")
+            self.console.print("[yellow]No datasources configured.[/yellow]")
 
         self.console.print()
 
@@ -201,7 +201,7 @@ class InteractiveConfigure:
             self.console.print("\n[bold cyan]Datus Configure[/bold cyan]")
             self.console.print("Manage your LLM models and database connections.\n")
 
-            if not self.models and not self.databases:
+            if not self.models and not self.datasources:
                 return self._first_time_setup()
             else:
                 return self._interactive_menu()
@@ -246,7 +246,7 @@ class InteractiveConfigure:
             actions["add_database"] = "Add a database"
             if self.models:
                 actions["delete_model"] = "Delete a model"
-            if self.databases:
+            if self.datasources:
                 actions["delete_database"] = "Delete a database"
             if len(self.models) > 1:
                 actions["set_default_model"] = "Set default model"
@@ -409,7 +409,7 @@ class InteractiveConfigure:
                 if not db_name.strip():
                     self.console.print("Database name cannot be empty")
                     continue
-                if db_name in self.databases:
+                if db_name in self.datasources:
                     self.console.print(f"Database '{db_name}' already exists. Delete it first to re-add.")
                     continue
                 step = 1
@@ -543,14 +543,14 @@ class InteractiveConfigure:
         self.console.print("Database connection test successful\n")
 
         # Mark as default if first database
-        if not self.databases:
+        if not self.datasources:
             config_data["default"] = True
         elif Confirm.ask(f"- Set '{db_name}' as default database?", default=False):
-            for cfg in self.databases.values():
+            for cfg in self.datasources.values():
                 cfg.pop("default", None)
             config_data["default"] = True
 
-        self.databases[db_name] = config_data
+        self.datasources[db_name] = config_data
         return True
 
     # ── Delete ─────────────────────────────────────────────────────
@@ -566,9 +566,9 @@ class InteractiveConfigure:
 
     def _delete_database(self):
         """Delete a database configuration."""
-        name = Prompt.ask("- Database name to delete", choices=list(self.databases.keys()))
+        name = Prompt.ask("- Database name to delete", choices=list(self.datasources.keys()))
         if Confirm.ask(f"Delete database '{name}'?", default=False):
-            del self.databases[name]
+            del self.datasources[name]
             self.console.print(f"Database '{name}' deleted.")
 
     def _set_default_model(self):
@@ -580,7 +580,7 @@ class InteractiveConfigure:
     # ── Save ───────────────────────────────────────────────────────
 
     def _save(self):
-        """Save models and databases to agent.yml, preserving other sections."""
+        """Save models and datasources to agent.yml, preserving other sections."""
         existing = {}
         if self.config_path.exists():
             try:
@@ -602,7 +602,7 @@ class InteractiveConfigure:
         if isinstance(legacy_service, dict):
             for key, value in legacy_service.items():
                 services.setdefault(key, value)
-        services["databases"] = self.databases
+        services["datasources"] = self.datasources
         if "semantic_layer" not in services:
             services["semantic_layer"] = {}
         if "bi_platforms" not in services:
@@ -628,12 +628,12 @@ class InteractiveConfigure:
 
     def _display_completion(self):
         default_db = ""
-        for name, cfg in self.databases.items():
+        for name, cfg in self.datasources.items():
             if cfg.get("default"):
                 default_db = name
                 break
-        if not default_db and self.databases:
-            default_db = next(iter(self.databases))
+        if not default_db and self.datasources:
+            default_db = next(iter(self.datasources))
 
         if default_db:
             self.console.print(

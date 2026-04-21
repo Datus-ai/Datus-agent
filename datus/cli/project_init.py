@@ -7,9 +7,9 @@
 Runs only in REPL mode when the project-level overlay does not yet
 exist.  The wizard is intentionally minimal: it asks the user to pick
 one of the LLM models already defined in the shared ``agent.yml`` and
-one of the databases under ``agent.services.databases``, plus an
+one of the datasources under ``agent.services.datasources``, plus an
 optional ``project_name``.  Everything else (provider configuration,
-API keys, database URIs, etc.) still lives in the base file — this
+API keys, datasource URIs, etc.) still lives in the base file — this
 overlay is just "which one do I want for this project".
 """
 
@@ -40,7 +40,7 @@ def run_project_init(base_config: AgentConfig, cwd: Optional[str] = None) -> Pro
     """Interactively collect the three override values and persist them.
 
     The wizard refuses to run when the base ``agent.yml`` is missing
-    models or databases — there is nothing meaningful for the user to
+    models or datasources — there is nothing meaningful for the user to
     pick in that case, and silently writing an empty overlay would mask
     the real problem (a broken global config).
     """
@@ -55,13 +55,13 @@ def run_project_init(base_config: AgentConfig, cwd: Optional[str] = None) -> Pro
                 )
             },
         )
-    if not base_config.services.databases:
+    if not base_config.services.datasources:
         raise DatusException(
             code=ErrorCode.COMMON_CONFIG_ERROR,
             message_args={
                 "config_error": (
-                    "Base agent.yml has no 'agent.services.databases' defined. "
-                    "Run 'datus configure' to add at least one database first."
+                    "Base agent.yml has no 'agent.services.datasources' defined. "
+                    "Run 'datus configure' to add at least one datasource first."
                 )
             },
         )
@@ -83,8 +83,8 @@ def run_project_init(base_config: AgentConfig, cwd: Optional[str] = None) -> Pro
         target = target_default
 
     console.print()
-    console.print("[bold]- Select default database (from agent.yml):[/]")
-    db_choices = {name: f"{name}  ({cfg.type})" for name, cfg in base_config.services.databases.items()}
+    console.print("[bold]- Select default datasource (from agent.yml):[/]")
+    db_choices = {name: f"{name}  ({cfg.type})" for name, cfg in base_config.services.datasources.items()}
     db_default = base_config.services.default_database or next(iter(db_choices))
     default_database = select_choice(console, db_choices, default=db_default)
     if not default_database:

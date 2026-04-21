@@ -175,9 +175,9 @@ agent:
   # Benchmark data is stored at {agent.home}/benchmark/{name}
   # Supported benchmarks: bird_dev, spider2, semantic_layer
 
-  # local databases configuration
+  # local datasources configuration
   services:
-    databases:
+    datasources:
       bird_sqlite:
         type: sqlite
         path_pattern: ~/benchmark/bird/dev_20240627/dev_databases/**/*.sqlite # just support glob pattern

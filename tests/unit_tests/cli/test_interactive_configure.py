@@ -245,14 +245,14 @@ class TestInitDirsAndCopyFiles:
 class TestLoadExistingConfig:
     """Tests for InteractiveConfigure._load_existing_config()."""
 
-    def test_service_databases_format_populates_self_databases(self, tmp_path):
-        """New services.databases format is loaded into self.databases correctly."""
+    def test_service_datasources_format_populates_self_datasources(self, tmp_path):
+        """New services.datasources format is loaded into self.datasources correctly."""
         raw = {
             "agent": {
                 "target": "openai",
                 "models": {"openai": {"type": "openai", "model": "gpt-4o", "api_key": "sk-test"}},
                 "services": {
-                    "databases": {
+                    "datasources": {
                         "my_db": {"type": "sqlite", "uri": "data/test.sqlite"},
                     },
                     "semantic_layer": {},
@@ -267,8 +267,8 @@ class TestLoadExistingConfig:
         cfg = _make_configure(tmp_path)
         cfg._load_existing_config()
 
-        assert "my_db" in cfg.databases
-        assert cfg.databases["my_db"]["type"] == "sqlite"
+        assert "my_db" in cfg.datasources
+        assert cfg.datasources["my_db"]["type"] == "sqlite"
         assert cfg.target == "openai"
         assert "openai" in cfg.models
 
@@ -289,7 +289,7 @@ class TestLoadExistingConfig:
         config_file = tmp_path / "agent.yml"
         config_file.write_text(yaml.dump(raw), encoding="utf-8")
 
-        migrate_result = {"databases": {"legacy_db": {"type": "duckdb", "uri": "legacy.duckdb"}}}
+        migrate_result = {"datasources": {"legacy_db": {"type": "duckdb", "uri": "legacy.duckdb"}}}
 
         with patch(
             "datus.configuration.agent_config.ServicesConfig.migrate_from_namespace",
@@ -298,17 +298,17 @@ class TestLoadExistingConfig:
             cfg = _make_configure(tmp_path)
             cfg._load_existing_config()
 
-        assert "legacy_db" in cfg.databases
+        assert "legacy_db" in cfg.datasources
 
     def test_missing_config_file_leaves_empty_state(self, tmp_path):
-        """When config file does not exist, models and databases remain empty."""
+        """When config file does not exist, models and datasources remain empty."""
         cfg = _make_configure(tmp_path)
         # config_path points to nonexistent file
         cfg.config_path = tmp_path / "nonexistent.yml"
         cfg._load_existing_config()
 
         assert cfg.models == {}
-        assert cfg.databases == {}
+        assert cfg.datasources == {}
         assert cfg.target == ""
 
     def test_malformed_yaml_leaves_empty_state(self, tmp_path):
@@ -320,7 +320,7 @@ class TestLoadExistingConfig:
         cfg._load_existing_config()
 
         assert cfg.models == {}
-        assert cfg.databases == {}
+        assert cfg.datasources == {}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -417,11 +417,11 @@ class TestLoadProviderCatalog:
 class TestShowCurrentState:
     """Tests for InteractiveConfigure._show_current_state()."""
 
-    def test_with_models_and_databases_no_exception(self, tmp_path):
-        """_show_current_state() does not raise when both models and databases exist."""
+    def test_with_models_and_datasources_no_exception(self, tmp_path):
+        """_show_current_state() does not raise when both models and datasources exist."""
         cfg = _make_configure(tmp_path)
         cfg.models = {"openai": {"model": "gpt-4o", "base_url": "https://api.openai.com/v1", "api_key": "sk-test"}}
-        cfg.databases = {
+        cfg.datasources = {
             "my_db": {"type": "sqlite", "uri": "path/to/db.sqlite"},
         }
         cfg.target = "openai"
@@ -430,22 +430,22 @@ class TestShowCurrentState:
         cfg._show_current_state()
         output = cfg.console.export_text()
         assert "Current Models" in output
-        assert "Current Databases" in output
+        assert "Current Datasources" in output
         assert "openai" in output
         assert "my_db" in output
 
-    def test_with_empty_models_and_databases_no_exception(self, tmp_path):
+    def test_with_empty_models_and_datasources_no_exception(self, tmp_path):
         """_show_current_state() handles empty state without errors."""
         cfg = _make_configure(tmp_path)
         cfg.models = {}
-        cfg.databases = {}
+        cfg.datasources = {}
         cfg.target = ""
         cfg.console = Console(record=True, width=120)
 
         cfg._show_current_state()
         output = cfg.console.export_text()
         assert "No models configured." in output
-        assert "No databases configured." in output
+        assert "No datasources configured." in output
 
     def test_marks_default_model_with_asterisk(self, tmp_path):
         """_show_current_state() shows '*' next to the target/default model."""
@@ -454,7 +454,7 @@ class TestShowCurrentState:
             "openai": {"model": "gpt-4o", "base_url": "https://api.openai.com/v1", "api_key": "sk-test"},
             "deepseek": {"model": "deepseek-chat", "base_url": "https://api.deepseek.com/v1", "api_key": "sk-ds"},
         }
-        cfg.databases = {}
+        cfg.datasources = {}
         cfg.target = "openai"
         cfg.console = Console(record=True, width=120)
 
@@ -468,7 +468,7 @@ class TestShowCurrentState:
         """_show_current_state() uses 'host' as connection when 'uri' is absent."""
         cfg = _make_configure(tmp_path)
         cfg.models = {}
-        cfg.databases = {
+        cfg.datasources = {
             "pg_db": {"type": "postgresql", "host": "localhost"},
         }
         cfg.target = ""
@@ -483,7 +483,7 @@ class TestShowCurrentState:
         """_show_current_state() shows '*' next to the database with default=True."""
         cfg = _make_configure(tmp_path)
         cfg.models = {}
-        cfg.databases = {
+        cfg.datasources = {
             "main_db": {"type": "duckdb", "uri": "main.duckdb", "default": True},
             "other_db": {"type": "sqlite", "uri": "other.sqlite"},
         }
@@ -522,7 +522,7 @@ class TestRun:
             mock_root.handlers = []
             mock_get_logger.return_value = mock_root
             cfg.models = {}
-            cfg.databases = {}
+            cfg.datasources = {}
             result = cfg.run()
 
         mock_setup.assert_called_once()
@@ -543,7 +543,7 @@ class TestRun:
             mock_root.handlers = []
             mock_get_logger.return_value = mock_root
             cfg.models = {"openai": {"type": "openai"}}
-            cfg.databases = {}
+            cfg.datasources = {}
             result = cfg.run()
 
         mock_menu.assert_called_once()
@@ -564,7 +564,7 @@ class TestRun:
             mock_root.handlers = []
             mock_get_logger.return_value = mock_root
             cfg.models = {}
-            cfg.databases = {}
+            cfg.datasources = {}
             result = cfg.run()
 
         assert result == 1
@@ -585,7 +585,7 @@ class TestRun:
             mock_root.handlers = []
             mock_get_logger.return_value = mock_root
             cfg.models = {}
-            cfg.databases = {}
+            cfg.datasources = {}
             result = cfg.run()
 
         assert result == 1
@@ -614,7 +614,7 @@ class TestRun:
             patch("logging.getLogger", return_value=mock_root),
         ):
             cfg.models = {}
-            cfg.databases = {}
+            cfg.datasources = {}
             cfg.run()
 
         # Handler level should be restored to original_level
@@ -706,7 +706,7 @@ class TestInteractiveMenu:
         """Selecting 'done' from the menu returns 0."""
         cfg = _make_configure(tmp_path)
         cfg.models = {}
-        cfg.databases = {}
+        cfg.datasources = {}
 
         with (
             patch.object(cfg, "_show_current_state"),
@@ -721,7 +721,7 @@ class TestInteractiveMenu:
         """Selecting 'add_model' calls _add_model() and _save()."""
         cfg = _make_configure(tmp_path)
         cfg.models = {}
-        cfg.databases = {}
+        cfg.datasources = {}
 
         actions = ["add_model", "done"]
         action_iter = iter(actions)
@@ -742,7 +742,7 @@ class TestInteractiveMenu:
         """Selecting 'add_database' calls _add_database() and _save()."""
         cfg = _make_configure(tmp_path)
         cfg.models = {}
-        cfg.databases = {}
+        cfg.datasources = {}
 
         actions = ["add_database", "done"]
         action_iter = iter(actions)
@@ -763,7 +763,7 @@ class TestInteractiveMenu:
         """Selecting 'delete_model' calls _delete_model() and _save()."""
         cfg = _make_configure(tmp_path)
         cfg.models = {"openai": {"type": "openai"}}
-        cfg.databases = {}
+        cfg.datasources = {}
 
         actions = ["delete_model", "done"]
         action_iter = iter(actions)
@@ -784,7 +784,7 @@ class TestInteractiveMenu:
         """Selecting 'delete_database' calls _delete_database() and _save()."""
         cfg = _make_configure(tmp_path)
         cfg.models = {}
-        cfg.databases = {"my_db": {"type": "sqlite"}}
+        cfg.datasources = {"my_db": {"type": "sqlite"}}
 
         actions = ["delete_database", "done"]
         action_iter = iter(actions)
@@ -808,7 +808,7 @@ class TestInteractiveMenu:
             "openai": {"type": "openai"},
             "deepseek": {"type": "openai"},
         }
-        cfg.databases = {}
+        cfg.datasources = {}
 
         actions = ["set_default_model", "done"]
         action_iter = iter(actions)
@@ -1156,14 +1156,14 @@ class TestAddDatabase:
             result = cfg._add_database()
 
         assert result is True
-        assert "mydb" in cfg.databases
+        assert "mydb" in cfg.datasources
 
     def test_marks_first_database_as_default(self, tmp_path):
         """_add_database() marks the first database added as default."""
         from rich.prompt import Prompt
 
         cfg = _make_configure(tmp_path)
-        cfg.databases = {}
+        cfg.datasources = {}
         registry = self._mock_connector_registry()
 
         with (
@@ -1175,14 +1175,14 @@ class TestAddDatabase:
         ):
             cfg._add_database()
 
-        assert cfg.databases["first_db"].get("default") is True
+        assert cfg.datasources["first_db"].get("default") is True
 
     def test_asks_default_when_databases_already_exist(self, tmp_path):
         """_add_database() asks if new database should be default when others already exist."""
         from rich.prompt import Confirm, Prompt
 
         cfg = _make_configure(tmp_path)
-        cfg.databases = {"existing_db": {"type": "sqlite", "default": True}}
+        cfg.datasources = {"existing_db": {"type": "sqlite", "default": True}}
         registry = self._mock_connector_registry()
 
         with (
@@ -1196,8 +1196,8 @@ class TestAddDatabase:
             cfg._add_database()
 
         mock_confirm.assert_called_once()
-        assert cfg.databases["new_db"].get("default") is True
-        assert "default" not in cfg.databases["existing_db"]
+        assert cfg.datasources["new_db"].get("default") is True
+        assert "default" not in cfg.datasources["existing_db"]
 
     def test_returns_false_when_db_name_empty(self, tmp_path):
         """_add_database() loops when database name is empty, then exits when user provides one."""
@@ -1219,14 +1219,14 @@ class TestAddDatabase:
             result = cfg._add_database()
 
         assert result is True
-        assert "validname" in cfg.databases
+        assert "validname" in cfg.datasources
 
     def test_returns_false_when_db_name_already_exists(self, tmp_path):
         """_add_database() shows error when database name already exists."""
         from rich.prompt import Confirm, Prompt
 
         cfg = _make_configure(tmp_path)
-        cfg.databases = {"existingdb": {"type": "sqlite"}}
+        cfg.datasources = {"existingdb": {"type": "sqlite"}}
         registry = self._mock_connector_registry()
 
         # First: duplicate, second: new name
@@ -1243,7 +1243,7 @@ class TestAddDatabase:
             result = cfg._add_database()
 
         assert result is True
-        assert "newdb" in cfg.databases
+        assert "newdb" in cfg.datasources
 
     def test_returns_false_when_no_adapters_available(self, tmp_path):
         """_add_database() returns False when no adapter is installed and plugin install fails.
@@ -1401,7 +1401,7 @@ class TestAddDatabase:
             result = cfg._add_database()
 
         assert result is True
-        assert cfg.databases["pgdb"]["port"] == 5432
+        assert cfg.datasources["pgdb"]["port"] == 5432
 
     def test_int_field_rejects_non_integer_value(self, tmp_path):
         """Port field rejects non-integer strings and loops."""
@@ -1492,7 +1492,7 @@ class TestAddDatabase:
             result = cfg._add_database()
 
         assert result is True
-        assert cfg.databases["testdb"]["type"] == "sqlite"
+        assert cfg.datasources["testdb"]["type"] == "sqlite"
 
     def test_optional_field_with_default_uses_default_on_empty(self, tmp_path):
         """Optional field with a default value uses the default when user enters nothing."""
@@ -1515,7 +1515,7 @@ class TestAddDatabase:
         ):
             cfg._add_database()
 
-        assert "pgdb" in cfg.databases
+        assert "pgdb" in cfg.datasources
 
     def test_required_field_uses_plain_prompt(self, tmp_path):
         """Required field without default uses plain _prompt_with_back."""
@@ -1569,7 +1569,7 @@ class TestAddDatabase:
             result = cfg._add_database()
 
         assert result is True
-        assert cfg.databases["pgdb"]["host"] == "localhost2"
+        assert cfg.datasources["pgdb"]["host"] == "localhost2"
 
     def test_back_from_port_non_first_field_navigates_back(self, tmp_path):
         """Pressing Back at a port field that is NOT the first field navigates to prior field."""
@@ -1623,7 +1623,7 @@ class TestAddDatabase:
             cfg._add_database()
 
         # default_value (5432) should be used when empty string entered
-        assert "pgdb" in cfg.databases
+        assert "pgdb" in cfg.datasources
 
     def test_optional_field_without_default_uses_empty_prompt(self, tmp_path):
         """Optional field with no default uses _prompt_with_back with empty default."""
@@ -1712,7 +1712,7 @@ class TestAddDatabase:
             result = cfg._add_database()
 
         assert result is True
-        assert cfg.databases["testdb"]["type"] == "duckdb"
+        assert cfg.datasources["testdb"]["type"] == "duckdb"
 
     def test_back_from_port_first_field_returns_to_type_selection(self, tmp_path):
         """Pressing Back at a port field that IS the first field returns to DB type selection."""
@@ -1747,7 +1747,7 @@ class TestAddDatabase:
             result = cfg._add_database()
 
         assert result is True
-        assert cfg.databases["testdb"]["type"] == "duckdb"
+        assert cfg.datasources["testdb"]["type"] == "duckdb"
 
     def test_provider_has_no_api_key_env(self, tmp_path):
         """Provider with no api_key_env uses plain API key prompt."""
@@ -1833,11 +1833,11 @@ class TestDeleteAndSet:
         assert cfg.target == ""
 
     def test_delete_database_removes_database(self, tmp_path):
-        """_delete_database() removes the specified database from self.databases."""
+        """_delete_database() removes the specified datasource from self.datasources."""
         from rich.prompt import Confirm, Prompt
 
         cfg = _make_configure(tmp_path)
-        cfg.databases = {"mydb": {"type": "sqlite"}}
+        cfg.datasources = {"mydb": {"type": "sqlite"}}
 
         with (
             patch.object(Prompt, "ask", return_value="mydb"),
@@ -1845,14 +1845,14 @@ class TestDeleteAndSet:
         ):
             cfg._delete_database()
 
-        assert "mydb" not in cfg.databases
+        assert "mydb" not in cfg.datasources
 
     def test_delete_database_does_not_delete_when_confirm_false(self, tmp_path):
         """_delete_database() does not remove database when user declines."""
         from rich.prompt import Confirm, Prompt
 
         cfg = _make_configure(tmp_path)
-        cfg.databases = {"mydb": {"type": "sqlite"}}
+        cfg.datasources = {"mydb": {"type": "sqlite"}}
 
         with (
             patch.object(Prompt, "ask", return_value="mydb"),
@@ -1860,7 +1860,7 @@ class TestDeleteAndSet:
         ):
             cfg._delete_database()
 
-        assert "mydb" in cfg.databases
+        assert "mydb" in cfg.datasources
 
     def test_set_default_model_updates_target(self, tmp_path):
         """_set_default_model() updates self.target to the chosen model."""
@@ -1888,10 +1888,10 @@ class TestSave:
     """Tests for InteractiveConfigure._save()."""
 
     def test_save_writes_yaml_with_service_structure(self, tmp_path):
-        """_save() writes a YAML file containing the services.databases section."""
+        """_save() writes a YAML file containing the services.datasources section."""
         cfg = _make_configure(tmp_path)
         cfg.models = {"openai": {"type": "openai", "model": "gpt-4o", "api_key": "sk-test"}}
-        cfg.databases = {"my_db": {"type": "sqlite", "uri": "path/to/db.sqlite", "default": True}}
+        cfg.datasources = {"my_db": {"type": "sqlite", "uri": "path/to/db.sqlite", "default": True}}
         cfg.target = "openai"
 
         cfg._save()
@@ -1902,7 +1902,7 @@ class TestSave:
 
         agent = saved["agent"]
         assert agent["target"] == "openai"
-        assert "my_db" in agent["services"]["databases"]
+        assert "my_db" in agent["services"]["datasources"]
         assert "semantic_layer" in agent["services"]
         assert "bi_platforms" in agent["services"]
         assert "schedulers" in agent["services"]
@@ -1922,7 +1922,7 @@ class TestSave:
 
         cfg = _make_configure(tmp_path)
         cfg.models = {"openai": {"type": "openai", "model": "gpt-4o", "api_key": "sk-test"}}
-        cfg.databases = {}
+        cfg.datasources = {}
         cfg.target = "openai"
 
         cfg._save()
@@ -1949,7 +1949,7 @@ class TestSave:
 
         cfg = _make_configure(tmp_path)
         cfg.models = {}
-        cfg.databases = {}
+        cfg.datasources = {}
         cfg.target = ""
         cfg._save()
 
@@ -1962,7 +1962,7 @@ class TestSave:
         """_save() adds default nodes section when it is not already present."""
         cfg = _make_configure(tmp_path)
         cfg.models = {}
-        cfg.databases = {}
+        cfg.datasources = {}
         cfg.target = ""
         cfg._save()
 
@@ -1986,7 +1986,7 @@ class TestSave:
 
         cfg = _make_configure(tmp_path)
         cfg.models = {}
-        cfg.databases = {}
+        cfg.datasources = {}
         cfg.target = ""
         cfg._save()
 
@@ -2003,7 +2003,7 @@ class TestSave:
 
         cfg = _make_configure(tmp_path)
         cfg.models = {"openai": {"type": "openai"}}
-        cfg.databases = {}
+        cfg.datasources = {}
         cfg.target = "openai"
         cfg._save()
 
@@ -2024,7 +2024,7 @@ class TestDisplayCompletion:
     def test_shows_default_database_in_message(self, tmp_path):
         """_display_completion() includes the default database name in the output."""
         cfg = _make_configure(tmp_path)
-        cfg.databases = {
+        cfg.datasources = {
             "main_db": {"type": "duckdb", "default": True},
             "other_db": {"type": "sqlite"},
         }
@@ -2041,7 +2041,7 @@ class TestDisplayCompletion:
     def test_shows_first_database_when_no_default(self, tmp_path):
         """_display_completion() uses the first database when none is marked default."""
         cfg = _make_configure(tmp_path)
-        cfg.databases = {
+        cfg.datasources = {
             "first_db": {"type": "sqlite"},
             "second_db": {"type": "duckdb"},
         }
@@ -2058,7 +2058,7 @@ class TestDisplayCompletion:
     def test_shows_generic_message_when_no_databases(self, tmp_path):
         """_display_completion() shows a generic init message when no databases exist."""
         cfg = _make_configure(tmp_path)
-        cfg.databases = {}
+        cfg.datasources = {}
 
         printed = []
         cfg.console = MagicMock()

@@ -6,7 +6,7 @@
 
 Interactive wizard to configure LLM provider, database connections, and workspace settings.
 
-Writes configuration to `~/.datus/conf/agent.yml` using the `services.databases` format.
+Writes configuration to `~/.datus/conf/agent.yml` using the `services.datasources` format.
 
 ```bash
 datus configure

@@ -85,7 +85,7 @@ By default, Datus points MetricFlow at the current project's semantic model dire
 
 `config_path` is optional. The normal runtime path builds MetricFlow config from:
 
-1. the selected database in `services.databases`
+1. the selected datasource in `services.datasources`
 2. the current project's semantic model directory
 3. the active `agent.home`
 

@@ -31,5 +31,5 @@ agent:
 ## MetricFlow Notes
 
 - `config_path` is optional.
-- Datus prefers the current `services.databases` entry and the project semantic model directory to build runtime config automatically.
+- Datus prefers the current `services.datasources` entry and the project semantic model directory to build runtime config automatically.
 - `config_path` is only needed when you want MetricFlow to read a specific `agent.yml` file directly.

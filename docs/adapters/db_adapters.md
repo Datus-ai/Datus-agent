@@ -70,18 +70,18 @@ Once installed, Datus Agent will automatically detect and load the adapter.
 
 ## Configuration
 
-Configure database connections under `agent.services.databases` in `agent.yml`:
+Configure database connections under `agent.services.datasources` in `agent.yml`:
 
 ```yaml
 agent:
   services:
-    databases:
+    datasources:
       mydata:
         type: sqlite
         uri: sqlite:///path/to/database.db
 ```
 
-Each entry under `services.databases` is one logical database connection.
+Each entry under `services.datasources` is one logical database connection.
 
 ### SQLite
 
@@ -221,7 +221,7 @@ trino_data:
 ```yaml
 agent:
   services:
-    databases:
+    datasources:
       source_db:
         type: mysql
         host: source-server

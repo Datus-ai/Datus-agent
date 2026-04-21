@@ -132,7 +132,7 @@ Add the following configuration to your `~/.datus/agent.yml`:
 ```yaml
 agent:
   services:
-    databases:
+    datasources:
       superset:
         type: postgresql
         host: 127.0.0.1
@@ -153,7 +153,7 @@ agent:
 ```
 
 !!! note "Configuration Sections"
-    - **services.databases**: Defines database connections for SQL execution
+    - **services.datasources**: Defines datasource connections for SQL execution
     - **services.semantic_layer**: Registers the semantic adapter used by metric and semantic-model workflows
     - **services.bi_platforms**: Defines the BI platform credentials for dashboard access
 

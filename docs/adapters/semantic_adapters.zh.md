@@ -85,7 +85,7 @@ agent:
 
 `config_path` 是可选项。正常运行时，Datus 会从以下上下文构造 MetricFlow 配置：
 
-1. `services.databases` 中当前选中的数据库
+1. `services.datasources` 中当前选中的数据源
 2. 当前项目的语义模型目录
 3. 当前生效的 `agent.home`
 

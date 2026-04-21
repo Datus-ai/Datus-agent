@@ -278,5 +278,5 @@ export DATUS_LOG_LEVEL=DEBUG
 
 - [Configuration](../configuration/introduction.md) — Full agent configuration reference
 - [Chatbot](../web_chatbot/introduction.md) — Web-based chatbot interface
-- [Databases](../configuration/databases.md) — Database configuration details
+- [Datasources](../configuration/datasources.md) — Datasource configuration details
 - [Subagent](../subagent/introduction.md) — Sub-agent configuration and customization

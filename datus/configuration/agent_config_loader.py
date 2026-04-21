@@ -171,7 +171,7 @@ def _apply_project_override(agent_raw: Dict[str, Any]) -> None:
     Only three keys are honored: ``target``, ``project_name``, and
     ``default_database``. All three are written back into ``agent_raw``
     so ``AgentConfig.__init__`` picks them up naturally. For
-    ``default_database`` this means flipping ``databases[*].default``
+    ``default_database`` this means flipping ``datasources[*].default``
     flags, since ``AgentConfig.services.default_database`` is derived
     from those flags — this keeps the overlay effective for every
     entry point that calls ``load_agent_config`` (REPL, print mode,
@@ -193,17 +193,17 @@ def _apply_project_override(agent_raw: Dict[str, Any]) -> None:
             )
         agent_raw["target"] = override.target
     if override.default_database is not None:
-        databases = (agent_raw.get("services", {}) or {}).get("databases", {}) or {}
-        if override.default_database not in databases:
+        datasources = (agent_raw.get("services", {}) or {}).get("datasources", {}) or {}
+        if override.default_database not in datasources:
             raise DatusException(
                 code=ErrorCode.COMMON_FIELD_INVALID,
                 message_args={
                     "field_name": "default_database (from .datus/config.yml)",
-                    "except_values": sorted(databases.keys()),
+                    "except_values": sorted(datasources.keys()),
                     "your_value": override.default_database,
                 },
             )
-        for db_name, db_cfg in databases.items():
+        for db_name, db_cfg in datasources.items():
             if isinstance(db_cfg, dict):
                 db_cfg["default"] = db_name == override.default_database
     if override.project_name is not None:
@@ -265,9 +265,9 @@ def load_agent_config(reload: bool = False, **kwargs) -> AgentConfig:
     # Resolve current_database when an unambiguous default exists. Priority
     # already applied upstream:
     #   1. ``./.datus/config.yml::default_database`` (via _apply_project_override)
-    #   2. ``service.databases[*].default: true`` flag in base agent.yml
-    #   3. single-DB auto-select (ServiceConfig.default_database)
-    if not agent_config.current_database and agent_config.services.databases:
+    #   2. ``services.datasources[*].default: true`` flag in base agent.yml
+    #   3. single-entry auto-select (ServiceConfig.default_database)
+    if not agent_config.current_database and agent_config.services.datasources:
         default_db = agent_config.services.default_database
         if default_db:
             agent_config.current_namespace = default_db
@@ -276,22 +276,22 @@ def load_agent_config(reload: bool = False, **kwargs) -> AgentConfig:
                 code=ErrorCode.COMMON_CONFIG_ERROR,
                 message_args={
                     "config_error": (
-                        "No default database could be resolved. Project-level "
+                        "No default datasource could be resolved. Project-level "
                         "./.datus/config.yml is missing and agent.yml has multiple "
-                        "databases without any marked as `default: true`. Run "
+                        "datasources without any marked as `default: true`. Run "
                         "`datus` in this project directory first to launch the "
                         "init wizard (which writes ./.datus/config.yml with your "
                         "preferred default_database and target), or set "
-                        "`default: true` on one database under "
-                        "`service.databases` in agent.yml."
+                        "`default: true` on one entry under "
+                        "`services.datasources` in agent.yml."
                     )
                 },
             )
-    # Auto-select default database for file-based DBs if not already set
+    # Auto-select default datasource for file-based DBs if not already set
     if agent_config.db_type in {DBType.SQLITE, DBType.DUCKDB} and not agent_config.current_database:
-        databases = agent_config.services.databases
-        if databases:
-            first_key = next(iter(databases))
+        datasources = agent_config.services.datasources
+        if datasources:
+            first_key = next(iter(datasources))
             agent_config.current_database = first_key
 
     return agent_config

@@ -70,7 +70,7 @@ class NamespaceManager:
     def __init__(self, config_path: str):
         self.config_path = config_path
         try:
-            # NamespaceManager is now a compat shell over services.databases.
+            # NamespaceManager is now a compat shell over services.datasources.
             # Load without action-specific default-db enforcement because
             # namespace CRUD should work even when no default DB is selected.
             self.agent_config = load_agent_config(config=config_path, reload=True)
@@ -102,7 +102,7 @@ class NamespaceManager:
             return 1
 
     def list(self) -> int:
-        databases = self.agent_config.services.databases
+        databases = self.agent_config.services.datasources
         if not databases:
             console.print("No namespace configured.")
             return 0
@@ -143,7 +143,7 @@ class NamespaceManager:
             return 1
 
         # Check if namespace already exists
-        if namespace_name in self.agent_config.services.databases:
+        if namespace_name in self.agent_config.services.datasources:
             console.print(f"❌ Namespace '{namespace_name}' already exists")
             return 1
 
@@ -240,9 +240,9 @@ class NamespaceManager:
             console.print("✔ Database connection test successful\n")
 
             # Add to agent configuration (namespace is guaranteed to not exist from earlier check)
-            # Use services.databases directly — the namespaces property is a read-only compat view
+            # Use services.datasources directly — the namespaces property is a read-only compat view
             db_config = DbConfig.filter_kwargs(DbConfig, config_data)
-            self.agent_config.services.databases[namespace_name] = db_config
+            self.agent_config.services.datasources[namespace_name] = db_config
 
             # Save configuration
             if self._save_configuration():
@@ -260,7 +260,7 @@ class NamespaceManager:
         console.print("[bold yellow]Delete Namespace[/bold yellow]")
 
         # Check if there are any namespaces to delete
-        databases = self.agent_config.services.databases
+        databases = self.agent_config.services.datasources
         if not databases:
             console.print("❌ No namespaces configured to delete")
             return 1
@@ -291,7 +291,7 @@ class NamespaceManager:
             return 1
 
         # Delete namespace from configuration
-        del self.agent_config.services.databases[namespace_name]
+        del self.agent_config.services.datasources[namespace_name]
 
         # Save configuration
         if self._save_configuration():
@@ -305,9 +305,9 @@ class NamespaceManager:
         """Save configuration to agent.yml file."""
         try:
             configure_manager = configuration_manager(config_path=self.config_path, reload=True)
-            databases_section = {}
+            datasources_section = {}
 
-            for db_name, db_config in self.agent_config.services.databases.items():
+            for db_name, db_config in self.agent_config.services.datasources.items():
                 if db_config.type in (DBType.SQLITE, DBType.DUCKDB):
                     entry: dict = {"type": db_config.type}
                     if db_config.path_pattern:
@@ -332,10 +332,10 @@ class NamespaceManager:
                 if db_config.default:
                     entry["default"] = True
 
-                databases_section[db_name] = entry
+                datasources_section[db_name] = entry
 
             services_section = {
-                "databases": databases_section,
+                "datasources": datasources_section,
                 "semantic_layer": dict(self.agent_config.services.semantic_layer),
                 "bi_platforms": dict(self.agent_config.services.bi_platforms),
                 "schedulers": dict(self.agent_config.services.schedulers),

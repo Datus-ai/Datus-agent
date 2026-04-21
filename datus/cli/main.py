@@ -226,24 +226,24 @@ class Application:
             self.arg_parser.parser.print_help()
             return ""
 
-        databases = config.services.databases
-        if not databases:
-            console.print("[yellow]No databases configured. Run 'datus configure' first.[/yellow]")
+        datasources = config.services.datasources
+        if not datasources:
+            console.print("[yellow]No datasources configured. Run 'datus configure' first.[/yellow]")
             return ""
 
         # default_database reflects the project-level overlay when present — it
         # is applied inside load_agent_config via _apply_project_override which
-        # flips databases[*].default before AgentConfig is built.
+        # flips datasources[*].default before AgentConfig is built.
         default_db = config.services.default_database
         if default_db:
             return default_db
 
-        # Multiple databases, no default — show list and ask user to specify
-        console.print("[yellow]Multiple databases configured. Please specify --database <name>[/yellow]\n")
+        # Multiple datasources, no default — show list and ask user to specify
+        console.print("[yellow]Multiple datasources configured. Please specify --database <name>[/yellow]\n")
         table = Table(show_header=True, header_style="bold")
         table.add_column("Name", style="cyan")
         table.add_column("Type")
-        for name, cfg in databases.items():
+        for name, cfg in datasources.items():
             table.add_row(name, cfg.type)
         console.print(table)
         return ""
@@ -255,7 +255,7 @@ class Application:
 
         Idempotent: does nothing when the overlay file is valid. Loads the
         base ``agent.yml`` first so the wizard can constrain choices to
-        models/databases that actually exist; when the base config itself
+        models/datasources that actually exist; when the base config itself
         cannot be loaded, surface that error directly (the wizard has
         nothing to offer in that case).
 
@@ -314,7 +314,7 @@ class Application:
             raise
 
         model_names = list((raw.get("models") or {}).keys())
-        db_names = list(((raw.get("services") or {}).get("databases") or {}).keys())
+        db_names = list(((raw.get("services") or {}).get("datasources") or {}).keys())
 
         target_invalid = override.target is not None and override.target not in model_names
         db_invalid = override.default_database is not None and override.default_database not in db_names
@@ -368,16 +368,16 @@ class Application:
                     code=ErrorCode.COMMON_CONFIG_ERROR,
                     message_args={
                         "config_error": (
-                            "Base agent.yml has no 'agent.services.databases' defined; cannot repair "
+                            "Base agent.yml has no 'agent.services.datasources' defined; cannot repair "
                             f"default_database={override.default_database!r} in .datus/config.yml."
                         )
                     },
                 )
             console.print(
                 f"  [red]default_database[/] = {override.default_database!r} not found in agent.yml "
-                f"services.databases ({sorted(db_names)}). Please pick a replacement:"
+                f"services.datasources ({sorted(db_names)}). Please pick a replacement:"
             )
-            db_types = (raw.get("services") or {}).get("databases") or {}
+            db_types = (raw.get("services") or {}).get("datasources") or {}
             choices = {name: f"{name}  ({(db_types.get(name) or {}).get('type', 'unknown')})" for name in db_names}
             picked = select_choice(console, choices, default=db_names[0])
             override.default_database = picked or db_names[0]

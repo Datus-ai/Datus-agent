@@ -12,8 +12,8 @@ from datus.configuration.config_migrator import migrate_file, migrate_namespace_
 class TestMigrateNamespaceToServices:
     """Tests for migrate_namespace_to_services()."""
 
-    def test_single_db_namespace_produces_services_databases(self):
-        """Old namespace with single DB entry becomes services.databases entry."""
+    def test_single_db_namespace_produces_services_datasources(self):
+        """Old namespace with single DB entry becomes services.datasources entry."""
         config = {
             "agent": {
                 "namespace": {
@@ -26,9 +26,9 @@ class TestMigrateNamespaceToServices:
         }
         result = migrate_namespace_to_services(config)
         services = result["agent"]["services"]
-        assert "databases" in services
-        assert "my_db" in services["databases"]
-        db = services["databases"]["my_db"]
+        assert "datasources" in services
+        assert "my_db" in services["datasources"]
+        db = services["datasources"]["my_db"]
         assert db["type"] == "sqlite"
         assert db["uri"] == "path/to/my.sqlite"
         # Single-entry default mark
@@ -53,16 +53,16 @@ class TestMigrateNamespaceToServices:
             }
         }
         result = migrate_namespace_to_services(config)
-        databases = result["agent"]["services"]["databases"]
-        assert "db1" in databases
-        assert "db2" in databases
-        assert databases["db1"]["type"] == "sqlite"
-        assert databases["db1"]["uri"] == "path/to/db1.sqlite"
-        assert databases["db2"]["type"] == "sqlite"
-        assert databases["db2"]["uri"] == "path/to/db2.sqlite"
+        datasources = result["agent"]["services"]["datasources"]
+        assert "db1" in datasources
+        assert "db2" in datasources
+        assert datasources["db1"]["type"] == "sqlite"
+        assert datasources["db1"]["uri"] == "path/to/db1.sqlite"
+        assert datasources["db2"]["type"] == "sqlite"
+        assert datasources["db2"]["uri"] == "path/to/db2.sqlite"
         # 'name' key should be stripped from individual entries
-        assert "name" not in databases["db1"]
-        assert "name" not in databases["db2"]
+        assert "name" not in datasources["db1"]
+        assert "name" not in datasources["db2"]
 
     def test_path_pattern_preserved_under_namespace_name(self):
         """Namespace with path_pattern keeps the entry under namespace name."""
@@ -77,17 +77,17 @@ class TestMigrateNamespaceToServices:
             }
         }
         result = migrate_namespace_to_services(config)
-        databases = result["agent"]["services"]["databases"]
-        assert "glob_ns" in databases
-        assert databases["glob_ns"]["path_pattern"] == "data/*.sqlite"
-        assert databases["glob_ns"]["type"] == "sqlite"
+        datasources = result["agent"]["services"]["datasources"]
+        assert "glob_ns" in datasources
+        assert datasources["glob_ns"]["path_pattern"] == "data/*.sqlite"
+        assert datasources["glob_ns"]["type"] == "sqlite"
 
-    def test_already_migrated_config_is_no_op(self):
-        """Config with existing 'services' key is returned unchanged."""
+    def test_already_migrated_datasources_config_is_no_op(self):
+        """Config that already uses 'services.datasources' is returned unchanged."""
         config = {
             "agent": {
                 "services": {
-                    "databases": {"existing_db": {"type": "duckdb"}},
+                    "datasources": {"existing_db": {"type": "duckdb"}},
                     "semantic_layer": {},
                     "bi_platforms": {},
                     "schedulers": {},
@@ -97,7 +97,25 @@ class TestMigrateNamespaceToServices:
         result = migrate_namespace_to_services(config)
         # Namespace section should not have been touched; services intact
         assert "namespace" not in result["agent"]
-        assert result["agent"]["services"]["databases"]["existing_db"]["type"] == "duckdb"
+        assert result["agent"]["services"]["datasources"]["existing_db"]["type"] == "duckdb"
+
+    def test_legacy_services_databases_is_renamed_to_datasources(self):
+        """Config with the older 'services.databases' key is renamed to 'services.datasources'."""
+        config = {
+            "agent": {
+                "services": {
+                    "databases": {"legacy_db": {"type": "sqlite", "uri": "legacy.sqlite"}},
+                    "semantic_layer": {},
+                    "bi_platforms": {},
+                    "schedulers": {},
+                }
+            }
+        }
+        result = migrate_namespace_to_services(config)
+        services = result["agent"]["services"]
+        assert "databases" not in services
+        assert "datasources" in services
+        assert services["datasources"]["legacy_db"]["type"] == "sqlite"
 
     def test_no_namespace_section_is_no_op(self):
         """Config with no 'namespace' section is returned unchanged (no 'services' added)."""
@@ -131,8 +149,8 @@ class TestMigrateNamespaceToServices:
         migrate_namespace_to_services(config)
         assert config == original_copy
 
-    def test_multiple_namespaces_produce_multiple_databases(self):
-        """Multiple namespaces without dbs list each become their own database entry."""
+    def test_multiple_namespaces_produce_multiple_datasources(self):
+        """Multiple namespaces without dbs list each become their own datasource entry."""
         config = {
             "agent": {
                 "namespace": {
@@ -142,11 +160,13 @@ class TestMigrateNamespaceToServices:
             }
         }
         result = migrate_namespace_to_services(config)
-        databases = result["agent"]["services"]["databases"]
-        assert "snowflake_ns" in databases
-        assert "duckdb_ns" in databases
+        datasources = result["agent"]["services"]["datasources"]
+        assert "snowflake_ns" in datasources
+        assert "duckdb_ns" in datasources
         # Multiple entries: no automatic default marking
-        assert databases["snowflake_ns"].get("default") is None or databases["snowflake_ns"].get("default") is not True
+        assert (
+            datasources["snowflake_ns"].get("default") is None or datasources["snowflake_ns"].get("default") is not True
+        )
 
 
 class TestMigrateFile:
@@ -194,7 +214,7 @@ class TestMigrateFile:
         with open(config_file, encoding="utf-8") as f:
             new_config = yaml.safe_load(f)
         assert "services" in new_config["agent"]
-        assert "db1" in new_config["agent"]["services"]["databases"]
+        assert "db1" in new_config["agent"]["services"]["datasources"]
 
     def test_migrate_file_nonexistent_path_returns_false(self, tmp_path):
         """migrate_file returns False when config file does not exist."""
@@ -202,11 +222,11 @@ class TestMigrateFile:
         assert result is False
 
     def test_migrate_file_already_migrated_returns_false(self, tmp_path):
-        """migrate_file returns False when config already uses services format."""
+        """migrate_file returns False when config already uses the new datasources key."""
         config_data = {
             "agent": {
                 "services": {
-                    "databases": {},
+                    "datasources": {},
                     "semantic_layer": {},
                     "bi_platforms": {},
                     "schedulers": {},
@@ -218,3 +238,27 @@ class TestMigrateFile:
 
         result = migrate_file(str(config_file))
         assert result is False
+
+    def test_migrate_file_renames_legacy_databases_key(self, tmp_path):
+        """migrate_file rewrites 'services.databases' to 'services.datasources' in place."""
+        config_data = {
+            "agent": {
+                "services": {
+                    "databases": {"mydb": {"type": "sqlite", "uri": "mydb.sqlite"}},
+                    "semantic_layer": {},
+                    "bi_platforms": {},
+                    "schedulers": {},
+                }
+            }
+        }
+        config_file = tmp_path / "agent.yml"
+        config_file.write_text(yaml.dump(config_data), encoding="utf-8")
+
+        result = migrate_file(str(config_file), dry_run=False)
+        assert result is True
+
+        with open(config_file, encoding="utf-8") as f:
+            new_config = yaml.safe_load(f)
+        services = new_config["agent"]["services"]
+        assert "databases" not in services
+        assert services["datasources"]["mydb"]["type"] == "sqlite"

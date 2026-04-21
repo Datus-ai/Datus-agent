@@ -131,7 +131,7 @@ pip install datus-postgresql datus-semantic-metricflow
 ```yaml
 agent:
   services:
-    databases:
+    datasources:
       superset:
         type: postgresql
         host: 127.0.0.1
@@ -152,7 +152,7 @@ agent:
 ```
 
 !!! note "配置说明"
-    - **services.databases**：定义用于 SQL 执行的数据库连接
+    - **services.datasources**：定义用于 SQL 执行的数据源连接
     - **services.semantic_layer**：注册 metric 与 semantic model 工作流使用的语义适配器
     - **services.bi_platforms**：定义用于仪表盘访问的 BI 平台凭据
 

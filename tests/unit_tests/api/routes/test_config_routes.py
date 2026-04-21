@@ -12,14 +12,14 @@ from datus.api.routes import config_routes
 from datus.api.routes.config_routes import (
     ProbeDatabaseRequest,
     ProbeModelRequest,
-    UpdateDatabasesRequest,
+    UpdateDatasourcesRequest,
     UpdateModelsRequest,
     get_agent_config_endpoint,
     get_database_types,
     get_llm_providers,
     probe_database_connectivity_endpoint,
     probe_model_connectivity_endpoint,
-    update_databases_endpoint,
+    update_datasources_endpoint,
     update_models_endpoint,
 )
 from datus.utils.exceptions import DatusException
@@ -50,7 +50,7 @@ async def test_get_agent_config_flattens_matching_inner_key():
     result = await get_agent_config_endpoint(svc)
 
     assert result.success is True
-    assert result.data["databases"] == {
+    assert result.data["datasources"] == {
         "starrocks": starrocks_cfg,
         "starrocks22": starrocks22_cfg,
     }
@@ -67,7 +67,7 @@ async def test_get_agent_config_falls_back_to_first_inner_value():
 
     result = await get_agent_config_endpoint(svc)
 
-    assert result.data["databases"] == {"my_db": inner_cfg}
+    assert result.data["datasources"] == {"my_db": inner_cfg}
 
 
 @pytest.mark.asyncio
@@ -78,7 +78,7 @@ async def test_get_agent_config_skips_empty_inner_dict():
 
     result = await get_agent_config_endpoint(svc)
 
-    assert result.data["databases"] == {"real": real_cfg}
+    assert result.data["datasources"] == {"real": real_cfg}
 
 
 @pytest.mark.asyncio
@@ -87,7 +87,7 @@ async def test_get_agent_config_handles_empty_databases():
 
     result = await get_agent_config_endpoint(svc)
 
-    assert result.data["databases"] == {}
+    assert result.data["datasources"] == {}
 
 
 @pytest.mark.asyncio
@@ -139,20 +139,20 @@ def _ctx(project_id="proj_a"):
 
 
 @pytest.mark.asyncio
-async def test_update_databases_replaces_services_databases(patched_cm, patched_cache):
-    patched_cm.data = {"services": {"databases": {"old": {"type": "duckdb"}}, "other": "keep"}}
-    body = UpdateDatabasesRequest(
-        databases={
+async def test_update_datasources_replaces_services_datasources(patched_cm, patched_cache):
+    patched_cm.data = {"services": {"datasources": {"old": {"type": "duckdb"}}, "other": "keep"}}
+    body = UpdateDatasourcesRequest(
+        datasources={
             "db_a": {"type": "starrocks", "host": "h1"},
             "db_b": {"type": "duckdb", "uri": "/tmp/a.db"},
         }
     )
 
-    result = await update_databases_endpoint(body, svc=MagicMock(), ctx=_ctx("proj_a"))
+    result = await update_datasources_endpoint(body, svc=MagicMock(), ctx=_ctx("proj_a"))
 
     assert result.success is True
     assert result.data == {"updated": True}
-    assert patched_cm.data["services"]["databases"] == {
+    assert patched_cm.data["services"]["datasources"] == {
         "db_a": {"type": "starrocks", "host": "h1"},
         "db_b": {"type": "duckdb", "uri": "/tmp/a.db"},
     }
@@ -162,35 +162,35 @@ async def test_update_databases_replaces_services_databases(patched_cm, patched_
 
 
 @pytest.mark.asyncio
-async def test_update_databases_empty_dict_clears_block(patched_cm, patched_cache):
-    patched_cm.data = {"services": {"databases": {"old": {"type": "duckdb"}}}}
+async def test_update_datasources_empty_dict_clears_block(patched_cm, patched_cache):
+    patched_cm.data = {"services": {"datasources": {"old": {"type": "duckdb"}}}}
 
-    result = await update_databases_endpoint(UpdateDatabasesRequest(databases={}), svc=MagicMock(), ctx=_ctx())
+    result = await update_datasources_endpoint(UpdateDatasourcesRequest(datasources={}), svc=MagicMock(), ctx=_ctx())
 
     assert result.data["updated"] is True
-    assert patched_cm.data["services"]["databases"] == {}
+    assert patched_cm.data["services"]["datasources"] == {}
 
 
 @pytest.mark.asyncio
-async def test_update_databases_rejects_invalid_name(patched_cm, patched_cache):
-    body = UpdateDatabasesRequest(databases={"bad name!": {"type": "duckdb"}})
+async def test_update_datasources_rejects_invalid_name(patched_cm, patched_cache):
+    body = UpdateDatasourcesRequest(datasources={"bad name!": {"type": "duckdb"}})
     with pytest.raises(DatusException):
-        await update_databases_endpoint(body, svc=MagicMock(), ctx=_ctx())
+        await update_datasources_endpoint(body, svc=MagicMock(), ctx=_ctx())
     assert patched_cm.save_count == 0
     patched_cache.evict.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_update_databases_initializes_services_when_missing(patched_cm, patched_cache):
+async def test_update_datasources_initializes_services_when_missing(patched_cm, patched_cache):
     patched_cm.data = {}
 
-    await update_databases_endpoint(
-        UpdateDatabasesRequest(databases={"db_a": {"type": "duckdb"}}),
+    await update_datasources_endpoint(
+        UpdateDatasourcesRequest(datasources={"db_a": {"type": "duckdb"}}),
         svc=MagicMock(),
         ctx=_ctx(),
     )
 
-    assert patched_cm.data["services"]["databases"] == {"db_a": {"type": "duckdb"}}
+    assert patched_cm.data["services"]["datasources"] == {"db_a": {"type": "duckdb"}}
 
 
 @pytest.mark.asyncio
@@ -275,12 +275,12 @@ async def test_update_models_rejects_invalid_model_name(patched_cm, patched_cach
 
 
 @pytest.mark.asyncio
-async def test_update_databases_survives_missing_service_cache(monkeypatch, patched_cm):
+async def test_update_datasources_survives_missing_service_cache(monkeypatch, patched_cm):
     """No crash when the service cache hasn't been initialized yet."""
     monkeypatch.setattr(config_routes.deps, "_service_cache", None)
 
-    result = await update_databases_endpoint(
-        UpdateDatabasesRequest(databases={"db_a": {"type": "duckdb"}}),
+    result = await update_datasources_endpoint(
+        UpdateDatasourcesRequest(datasources={"db_a": {"type": "duckdb"}}),
         svc=MagicMock(),
         ctx=_ctx(),
     )
@@ -289,9 +289,9 @@ async def test_update_databases_survives_missing_service_cache(monkeypatch, patc
 
 
 @pytest.mark.asyncio
-async def test_update_databases_uses_default_project_when_missing(patched_cm, patched_cache):
-    await update_databases_endpoint(
-        UpdateDatabasesRequest(databases={"db_a": {"type": "duckdb"}}),
+async def test_update_datasources_uses_default_project_when_missing(patched_cm, patched_cache):
+    await update_datasources_endpoint(
+        UpdateDatasourcesRequest(datasources={"db_a": {"type": "duckdb"}}),
         svc=MagicMock(),
         ctx=_ctx(project_id=None),
     )

@@ -66,18 +66,18 @@ pip install datus-trino
 
 ## 配置
 
-在 `agent.yml` 的 `agent.services.databases` 下配置数据库连接：
+在 `agent.yml` 的 `agent.services.datasources` 下配置数据源连接：
 
 ```yaml
 agent:
   services:
-    databases:
+    datasources:
       mydata:
         type: sqlite
         uri: sqlite:///path/to/database.db
 ```
 
-`services.databases` 下的每个条目都表示一个逻辑数据库连接。
+`services.datasources` 下的每个条目都表示一个逻辑数据库连接。
 
 ### SQLite
 
@@ -214,12 +214,12 @@ trino_data:
 
 ## 多数据库连接
 
-可以在 `agent.services.databases` 下配置多个独立数据库连接：
+可以在 `agent.services.datasources` 下配置多个独立数据源连接：
 
 ```yaml
 agent:
   services:
-    databases:
+    datasources:
       source_db:
         type: mysql
         host: source-server

@@ -8,8 +8,8 @@ A small, strict overlay on the base ``agent.yml`` that lets every project
 pin three values without copying the full config:
 
 - ``target``: which LLM to use (must match a key under ``agent.models``)
-- ``default_database``: which database to connect to on startup (must
-  match a key under ``agent.services.databases``)
+- ``default_database``: which datasource to connect to on startup (must
+  match a key under ``agent.services.datasources``)
 - ``project_name``: shard name for ``~/.datus/sessions/{project_name}/``
   and ``~/.datus/data/{project_name}/`` (optional)
 

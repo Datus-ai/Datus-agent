@@ -63,7 +63,7 @@ nav:
       - Workflow: configuration/workflow.md
       - Benchmark: configuration/benchmark.md
       - Services:
-        - Databases: configuration/databases.md
+        - Datasources: configuration/datasources.md
         - Semantic Layer: configuration/semantic_layer.md
         - BI Platforms: configuration/bi_platforms.md
         - Schedulers: configuration/schedulers.md

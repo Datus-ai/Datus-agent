@@ -207,20 +207,20 @@ class ToolContextManager:
         self._contexts: OrderedDict[str, ToolContext] = OrderedDict()
         self._lock = asyncio.Lock()
 
-        # Load base configuration. Prefer the new services.databases layout,
+        # Load base configuration. Prefer the new services.datasources layout,
         # but keep legacy namespace support for older configs that may still
         # be passed to the MCP server.
         self._config_manager = configuration_manager(config_path=config_path or "")
         services = self._config_manager.get("services", {}) or {}
-        databases = services.get("databases", {}) or {}
+        datasources = services.get("datasources", {}) or {}
         legacy_namespaces = self._config_manager.get("namespace", {}) or {}
-        if databases:
-            available_namespaces = set(databases.keys())
+        if datasources:
+            available_namespaces = set(datasources.keys())
         elif legacy_namespaces:
             from datus.configuration.agent_config import ServicesConfig
 
             migrated = ServicesConfig.migrate_from_namespace(legacy_namespaces)
-            available_namespaces = set(migrated.get("databases", {}).keys())
+            available_namespaces = set(migrated.get("datasources", {}).keys())
         else:
             available_namespaces = set()
         self._available_namespaces: Set[str] = available_namespaces

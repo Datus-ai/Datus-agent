@@ -31,5 +31,5 @@ agent:
 ## MetricFlow 说明
 
 - `config_path` 是可选项。
-- Datus 默认会基于当前 `services.databases` 中选中的数据库和项目语义模型目录自动构建运行时配置。
+- Datus 默认会基于当前 `services.datasources` 中选中的数据源和项目语义模型目录自动构建运行时配置。
 - 仅当你需要 MetricFlow 直接读取某个指定的 `agent.yml` 时才需要设置 `config_path`。

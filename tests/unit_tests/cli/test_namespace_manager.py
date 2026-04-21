@@ -118,9 +118,9 @@ class TestNamespaceManagerAdd:
         result = nm.add()
 
         assert result == 0  # 0 means success
-        # After add, the new entry should be in services.databases keyed by the requested logical name.
-        db_names = set(nm.agent_config.services.databases.keys())
-        assert "test_duckdb" in db_names, f"Expected 'test_duckdb' in services.databases, got: {db_names}"
+        # After add, the new entry should be in services.datasources keyed by the requested logical name.
+        db_names = set(nm.agent_config.services.datasources.keys())
+        assert "test_duckdb" in db_names, f"Expected 'test_duckdb' in services.datasources, got: {db_names}"
         mock_console.print.assert_any_call("✔ Database connection test successful\n")
         mock_console.print.assert_any_call("✔ Namespace 'test_duckdb' added successfully")
 
@@ -132,7 +132,7 @@ class TestNamespaceManagerList:
         """Test listing namespaces when none are configured."""
         nm = NamespaceManager(config_path)
         # Clear all databases (namespaces is a compat property, so clear the source)
-        nm.agent_config.services.databases.clear()
+        nm.agent_config.services.datasources.clear()
 
         result = nm.list()
 

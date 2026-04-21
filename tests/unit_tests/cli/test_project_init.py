@@ -17,13 +17,13 @@ from datus.configuration.project_config import load_project_override
 from datus.utils.exceptions import DatusException
 
 
-def _make_base_config(models, databases, target="", default_database=""):
+def _make_base_config(models, datasources, target="", default_database=""):
     """Build a minimal AgentConfig stand-in with the attributes the wizard reads."""
     cfg = MagicMock()
     cfg.models = models
     cfg.target = target
     cfg.services = SimpleNamespace(
-        databases={name: SimpleNamespace(type=t) for name, t in databases.items()},
+        datasources={name: SimpleNamespace(type=t) for name, t in datasources.items()},
         default_database=default_database,
     )
     return cfg
@@ -33,7 +33,7 @@ class TestRunProjectInit:
     def test_happy_path_writes_all_three_fields(self, tmp_path):
         base = _make_base_config(
             models={"openai": {}, "deepseek": {}},
-            databases={"db1": "sqlite", "db2": "duckdb"},
+            datasources={"db1": "sqlite", "db2": "duckdb"},
             target="openai",
             default_database="db1",
         )
@@ -54,7 +54,7 @@ class TestRunProjectInit:
     def test_uses_base_target_as_default(self, tmp_path):
         base = _make_base_config(
             models={"openai": {}, "deepseek": {}},
-            databases={"db1": "sqlite"},
+            datasources={"db1": "sqlite"},
             target="deepseek",
             default_database="db1",
         )
@@ -70,25 +70,25 @@ class TestRunProjectInit:
     def test_no_models_raises(self, tmp_path):
         base = _make_base_config(
             models={},
-            databases={"db1": "sqlite"},
+            datasources={"db1": "sqlite"},
         )
         with pytest.raises(DatusException) as exc:
             run_project_init(base, cwd=str(tmp_path))
         assert "models" in str(exc.value)
 
-    def test_no_databases_raises(self, tmp_path):
+    def test_no_datasources_raises(self, tmp_path):
         base = _make_base_config(
             models={"openai": {}},
-            databases={},
+            datasources={},
         )
         with pytest.raises(DatusException) as exc:
             run_project_init(base, cwd=str(tmp_path))
-        assert "databases" in str(exc.value)
+        assert "datasources" in str(exc.value)
 
     def test_invalid_project_name_reprompts(self, tmp_path):
         base = _make_base_config(
             models={"openai": {}},
-            databases={"db1": "sqlite"},
+            datasources={"db1": "sqlite"},
             target="openai",
             default_database="db1",
         )
@@ -105,7 +105,7 @@ class TestRunProjectInit:
         so future CWD-derivation still works."""
         base = _make_base_config(
             models={"openai": {}},
-            databases={"db1": "sqlite"},
+            datasources={"db1": "sqlite"},
             target="openai",
             default_database="db1",
         )

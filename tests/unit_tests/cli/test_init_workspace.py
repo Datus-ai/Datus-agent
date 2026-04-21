@@ -191,7 +191,7 @@ class TestInitWorkspaceRun:
         args.database = ""
 
         mock_config = MagicMock()
-        mock_config.services.databases = {}
+        mock_config.services.datasources = {}
 
         with (
             patch("datus.configuration.agent_config_loader.load_agent_config", return_value=mock_config),
@@ -251,7 +251,7 @@ class TestInitWorkspaceProbeDatabase:
         mock_db_cfg.type = "sqlite"
 
         mock_agent_config = MagicMock()
-        mock_agent_config.services.databases = {"test_db": mock_db_cfg}
+        mock_agent_config.services.datasources = {"test_db": mock_db_cfg}
 
         mock_connector = MagicMock()
         mock_connector.get_tables.return_value = [
@@ -277,7 +277,7 @@ class TestInitWorkspaceProbeDatabase:
         iw = InitWorkspace(args)
 
         mock_agent_config = MagicMock()
-        mock_agent_config.services.databases = {}
+        mock_agent_config.services.datasources = {}
 
         result = iw._probe_database(mock_agent_config, "nonexistent_db")
         assert result == ""
@@ -291,7 +291,7 @@ class TestInitWorkspaceProbeDatabase:
 
         mock_db_cfg = MagicMock()
         mock_agent_config = MagicMock()
-        mock_agent_config.services.databases = {"db": mock_db_cfg}
+        mock_agent_config.services.datasources = {"db": mock_db_cfg}
 
         with patch("datus.tools.db_tools.db_manager.DBManager", side_effect=RuntimeError("connect failed")):
             result = iw._probe_database(mock_agent_config, "db")
@@ -309,7 +309,7 @@ class TestInitWorkspaceProbeDatabase:
         mock_db_cfg.type = "sqlite"
 
         mock_agent_config = MagicMock()
-        mock_agent_config.services.databases = {"mydb": mock_db_cfg}
+        mock_agent_config.services.datasources = {"mydb": mock_db_cfg}
 
         mock_connector = MagicMock()
         mock_connector.get_tables.return_value = []
@@ -334,7 +334,7 @@ class TestInitWorkspaceProbeDatabase:
         mock_db_cfg.type = "postgresql"
 
         mock_agent_config = MagicMock()
-        mock_agent_config.services.databases = {"bigdb": mock_db_cfg}
+        mock_agent_config.services.datasources = {"bigdb": mock_db_cfg}
 
         # 35 tables — triggers the > 30 truncation branch
         tables = [{"table_name": f"table_{i}"} for i in range(35)]
@@ -361,7 +361,7 @@ class TestInitWorkspaceProbeDatabase:
         mock_db_cfg.type = "duckdb"
 
         mock_agent_config = MagicMock()
-        mock_agent_config.services.databases = {"duck": mock_db_cfg}
+        mock_agent_config.services.datasources = {"duck": mock_db_cfg}
 
         mock_connector = MagicMock()
         mock_connector.get_tables.return_value = [{"name": "sales"}, {"name": "users"}]
@@ -631,7 +631,7 @@ class TestInitWorkspaceRunFullFlow:
         iw = self._setup_iw(tmp_path)
 
         mock_config = MagicMock()
-        mock_config.services.databases = {}
+        mock_config.services.datasources = {}
 
         llm_content = "# myproject\n\n## Architecture\n\nSome content here." * 10
 
@@ -651,7 +651,7 @@ class TestInitWorkspaceRunFullFlow:
         iw = self._setup_iw(tmp_path)
 
         mock_config = MagicMock()
-        mock_config.services.databases = {}
+        mock_config.services.datasources = {}
 
         with (
             patch("datus.configuration.agent_config_loader.load_agent_config", return_value=mock_config),
@@ -668,7 +668,7 @@ class TestInitWorkspaceRunFullFlow:
         iw = self._setup_iw(tmp_path, database="mydb")
 
         mock_config = MagicMock()
-        mock_config.services.databases = {}
+        mock_config.services.datasources = {}
 
         with (
             patch("datus.configuration.agent_config_loader.load_agent_config", return_value=mock_config),
@@ -688,7 +688,7 @@ class TestInitWorkspaceRunFullFlow:
         iw = self._setup_iw(tmp_path)
 
         mock_config = MagicMock()
-        mock_config.services.databases = {}
+        mock_config.services.datasources = {}
 
         new_content = "# myproject\n\n## Architecture\nNew content." * 10
 
@@ -719,7 +719,7 @@ class TestInitWorkspaceRunFullFlow:
         iw = self._setup_iw(tmp_path)
 
         mock_config = MagicMock()
-        mock_config.services.databases = {}
+        mock_config.services.datasources = {}
 
         with (
             patch("datus.configuration.agent_config_loader.load_agent_config", return_value=mock_config),

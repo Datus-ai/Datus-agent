@@ -47,19 +47,19 @@ class BenchmarkTutorial:
         self.benchmark_path = agent_config.path_manager.benchmark_dir
         if (
             self.namespace_name not in agent_config.benchmark_configs
-            or self.namespace_name not in agent_config.services.databases
+            or self.namespace_name not in agent_config.services.datasources
         ):
-            # Add california_schools database to services.databases
+            # Add california_schools datasource to services.datasources
             config_manager = configuration_manager(config_path=self.config_path, reload=True)
             services_config = config_manager.data.get(
                 "services",
-                {"databases": {}, "semantic_layer": {}, "bi_platforms": {}, "schedulers": {}},
+                {"datasources": {}, "semantic_layer": {}, "bi_platforms": {}, "schedulers": {}},
             )
-            services_config.setdefault("databases", {})
+            services_config.setdefault("datasources", {})
             services_config.setdefault("semantic_layer", {})
             services_config.setdefault("bi_platforms", {})
             services_config.setdefault("schedulers", {})
-            services_config["databases"]["california_schools"] = {
+            services_config["datasources"]["california_schools"] = {
                 "type": "sqlite",
                 "name": "california_schools",
                 "uri": "~/.datus/benchmark/california_schools/california_schools.sqlite",
@@ -70,11 +70,11 @@ class BenchmarkTutorial:
                 delete_old_key=False,
                 save=False,
             )
-            self.console.print("Database configuration added:")
+            self.console.print("Datasource configuration added:")
 
             from rich.syntax import Syntax
 
-            self.console.print(Syntax(dict_to_yaml_str(services_config["databases"]), lexer="yaml"))
+            self.console.print(Syntax(dict_to_yaml_str(services_config["datasources"]), lexer="yaml"))
 
             benchmark_config = {
                 self.namespace_name: {

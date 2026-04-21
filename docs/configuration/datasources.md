@@ -1,10 +1,10 @@
-# Database Configuration
+# Datasource Configuration
 
-Configure database connections under `agent.services.databases`.
+Configure database connections under `agent.services.datasources`.
 
 ## Overview
 
-The runtime services in Datus Agent live under `agent.services` in `agent.yml`. This page focuses on database connections in `services.databases`. Semantic adapters, BI platforms, and schedulers are documented on their sibling pages.
+The runtime services in Datus Agent live under `agent.services` in `agent.yml`. This page focuses on database connections in `services.datasources`. Semantic adapters, BI platforms, and schedulers are documented on their sibling pages.
 
 Key features:
 
@@ -14,16 +14,16 @@ Key features:
 - **Plugin Adapters**: Install additional database adapters via `datus-agent configure`
 - **Dynamic Discovery**: Glob pattern-based database discovery for multiple database files
 
-> **Migration note**: The old `namespace:` config format is auto-migrated to `services.databases` at runtime. You can also run `python -m datus.configuration.config_migrator --config conf/agent.yml` to migrate offline.
+> **Migration note**: The old `namespace:` config format is auto-migrated to `services.datasources` at runtime. The earlier `services.databases` key has been renamed to `services.datasources`; run `python -m datus.configuration.config_migrator --config conf/agent.yml` to rewrite the YAML automatically, or rename the key manually — the runtime rejects the old name.
 
 ## Configuration Structure
 
-Databases are configured under `agent.services.databases`. Each entry is an independent database connection:
+Datasources are configured under `agent.services.datasources`. Each entry is an independent database connection:
 
 ```yaml
 agent:
   services:
-    databases:
+    datasources:
       my_snowflake:
         type: snowflake
         account: ${SNOWFLAKE_ACCOUNT}
@@ -58,7 +58,7 @@ agent:
 
 | Section | Purpose | Selector |
 |---------|---------|----------|
-| `services.databases` | Database connections used by SQL and KB operations | `--database` / current database / default database |
+| `services.datasources` | Database connections used by SQL and KB operations | `--database` / current database / default database |
 | `services.semantic_layer` | Semantic adapter configuration such as MetricFlow | `semantic_adapter` |
 | `services.bi_platforms` | BI platform credentials and dataset materialization config | `bi_platform` |
 | `services.schedulers` | Scheduler service instances such as Airflow | `scheduler_service` |

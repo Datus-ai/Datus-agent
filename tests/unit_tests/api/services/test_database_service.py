@@ -115,7 +115,7 @@ class TestListDatabases:
     def test_list_databases_with_datasource_filter(self, real_agent_config):
         """list_databases with datasource_id filter."""
         svc = DatabaseService(agent_config=real_agent_config)
-        # After namespace→services.databases refactor, datasource_id is a database name
+        # After namespace→services.datasources refactor, datasource_id is a datasource name
         request = ListDatabasesInput(datasource_id="california_schools")
         result = svc.list_databases(request)
         assert result.success is True

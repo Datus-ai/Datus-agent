@@ -151,29 +151,37 @@ class DbConfig:
 
 @dataclass
 class ServicesConfig:
-    """Structured services configuration: databases, semantic layer, BI tools, schedulers.
+    """Structured services configuration: datasources, semantic layer, BI tools, schedulers.
 
-    Replaces the old flat 'namespace' config. Each database is an independent entry.
+    Replaces the old flat 'namespace' config. Each datasource is an independent entry.
     """
 
-    databases: Dict[str, DbConfig] = field(default_factory=dict)
+    datasources: Dict[str, DbConfig] = field(default_factory=dict)
     semantic_layer: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     bi_platforms: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     schedulers: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     @property
     def default_database(self) -> Optional[str]:
-        """Return the database marked as default, or the only one if just one exists."""
-        defaults = [name for name, cfg in self.databases.items() if cfg.default]
+        """Return the datasource entry marked as default, or the only one if just one exists."""
+        defaults = [name for name, cfg in self.datasources.items() if cfg.default]
         if defaults:
             return defaults[0]
-        if len(self.databases) == 1:
-            return next(iter(self.databases))
+        if len(self.datasources) == 1:
+            return next(iter(self.datasources))
         return None
 
     @classmethod
     def from_dict(cls, raw: Dict[str, Any]) -> "ServicesConfig":
         """Parse services config from agent.yml 'services' section."""
+        if "datasources" not in raw and "databases" in raw:
+            raise DatusException(
+                ErrorCode.COMMON_FIELD_INVALID,
+                message=(
+                    "services.databases has been renamed to services.datasources in agent.yml. "
+                    "Rename the key manually or run `python -m datus.configuration.config_migrator`."
+                ),
+            )
         bi_platforms_raw = raw.get("bi_platforms")
         if bi_platforms_raw is None and "bi_tools" in raw:
             import warnings
@@ -185,7 +193,7 @@ class ServicesConfig:
             )
             bi_platforms_raw = raw["bi_tools"]
         return cls(
-            databases={},  # populated by AgentConfig._init_services_config()
+            datasources={},  # populated by AgentConfig._init_services_config()
             semantic_layer=raw.get("semantic_layer", {}),
             bi_platforms=bi_platforms_raw or {},
             schedulers=raw.get("schedulers", {}),
@@ -193,7 +201,7 @@ class ServicesConfig:
 
     @classmethod
     def migrate_from_namespace(cls, namespace_config: Dict[str, Any]) -> Dict[str, Any]:
-        """Convert old namespace config format to new services.databases format.
+        """Convert old namespace config format to new services.datasources format.
 
         Old format:
             namespace:
@@ -207,7 +215,7 @@ class ServicesConfig:
 
         New format:
             services:
-              databases:
+              datasources:
                 db1:
                   type: sqlite
                   uri: ...
@@ -215,7 +223,7 @@ class ServicesConfig:
                   type: sqlite
                   uri: ...
         """
-        databases = {}
+        datasources = {}
         for ns_name, ns_cfg in namespace_config.items():
             if not isinstance(ns_cfg, dict):
                 continue
@@ -225,12 +233,12 @@ class ServicesConfig:
                     name = item.get("name", ns_name)
                     entry = {k: v for k, v in item.items() if k != "name"}
                     entry["type"] = db_type
-                    databases[name] = entry
+                    datasources[name] = entry
             elif "path_pattern" in ns_cfg:
-                databases[ns_name] = ns_cfg
+                datasources[ns_name] = ns_cfg
             else:
-                databases[ns_name] = ns_cfg
-        return {"databases": databases, "semantic_layer": {}, "bi_platforms": {}, "schedulers": {}}
+                datasources[ns_name] = ns_cfg
+        return {"datasources": datasources, "semantic_layer": {}, "bi_platforms": {}, "schedulers": {}}
 
 
 @dataclass
@@ -504,7 +512,7 @@ class AgentConfig:
             if k != "plan":
                 # Store workflow configuration, supporting both list format and {steps: [], config: {}} format
                 self.custom_workflows[k] = v
-        # Initialize services config (databases, semantic layer, BI tools, schedulers)
+        # Initialize services config (datasources, semantic layer, BI tools, schedulers)
         # Supports the new 'services' format and legacy 'namespace' format with auto-migration
         services_raw = kwargs.get("services") or {}
         namespace_raw = kwargs.get("namespace") or {}
@@ -513,10 +521,10 @@ class AgentConfig:
         if not isinstance(namespace_raw, dict):
             namespace_raw = {}
         if not services_raw and namespace_raw:
-            logger.info("Migrating legacy 'namespace' config to 'services.databases' format")
+            logger.info("Migrating legacy 'namespace' config to 'services.datasources' format")
             services_raw = ServicesConfig.migrate_from_namespace(namespace_raw)
         self.services = ServicesConfig.from_dict(services_raw)
-        self._init_services_config(services_raw.get("databases", {}))
+        self._init_services_config(services_raw.get("datasources", {}))
         self.init_semantic_layer(self.services.semantic_layer)
         self.init_dashboard(self.services.bi_platforms)
         self.init_scheduler_services(self.services.schedulers)
@@ -612,16 +620,16 @@ class AgentConfig:
 
     @current_database.setter
     def current_database(self, value):
-        """Set the current database name (must exist in services.databases)."""
+        """Set the current datasource name (must exist in services.datasources)."""
         if not value:
             return
-        if value not in self.services.databases:
+        if value not in self.services.datasources:
             raise DatusException(
                 ErrorCode.COMMON_CONFIG_ERROR,
-                message=f"No database configuration named `{value}` found. Available: {list(self.services.databases.keys())}",
+                message=f"No datasource configuration named `{value}` found. Available: {list(self.services.datasources.keys())}",
             )
         self._current_database = value
-        self.db_type = self.services.databases[value].type
+        self.db_type = self.services.datasources[value].type
 
     @property
     def project_name(self) -> str:
@@ -662,15 +670,15 @@ class AgentConfig:
     def current_namespace(self, value: str):
         """Backward-compat: setting current_namespace now sets current_database.
 
-        Accepts a database name from services.databases. Also accepts legacy namespace names
-        which are auto-migrated to database names.
+        Accepts a datasource name from services.datasources. Also accepts legacy namespace names
+        which are auto-migrated to datasource names.
         """
         if not value:
             raise DatusException(
                 code=ErrorCode.COMMON_FIELD_REQUIRED,
                 message_args={"field_name": "database"},
             )
-        if value not in self.services.databases:
+        if value not in self.services.datasources:
             raise DatusException(
                 code=ErrorCode.COMMON_UNSUPPORTED,
                 message_args={"field_name": "database", "your_value": value},
@@ -678,27 +686,27 @@ class AgentConfig:
         if value == self._current_database:
             return
         self._current_database = value
-        db_config = self.services.databases[value]
+        db_config = self.services.datasources[value]
         self.db_type = db_config.type
 
     @property
     def namespaces(self) -> Dict[str, Dict[str, DbConfig]]:
-        """Backward-compat: wraps services.databases in old namespace structure.
+        """Backward-compat: wraps services.datasources in old namespace structure.
 
-        Each database entry becomes its own "namespace" with a single db inside,
+        Each datasource entry becomes its own "namespace" with a single db inside,
         so DBManager only initializes one connection per namespace key.
         """
-        return {db_name: {db_name: db_config} for db_name, db_config in self.services.databases.items()}
+        return {db_name: {db_name: db_config} for db_name, db_config in self.services.datasources.items()}
 
-    def _init_services_config(self, databases_config: Dict[str, Any]):
-        """Parse services.databases section into ServicesConfig.databases."""
-        for db_name, db_config_dict in databases_config.items():
+    def _init_services_config(self, datasources_config: Dict[str, Any]):
+        """Parse services.datasources section into ServicesConfig.datasources."""
+        for db_name, db_config_dict in datasources_config.items():
             if not isinstance(db_config_dict, dict):
                 continue
             if not _SAFE_NAME_RE.match(db_name):
                 raise DatusException(
                     ErrorCode.COMMON_FIELD_INVALID,
-                    message=f"Invalid database name '{db_name}'. "
+                    message=f"Invalid datasource name '{db_name}'. "
                     f"Only alphanumeric characters, underscores, and hyphens are allowed.",
                 )
             db_type = db_config_dict.get("type", "")
@@ -711,12 +719,12 @@ class AgentConfig:
                     db_config = _parse_single_file_db(db_config_dict, db_type)
                     db_config.logic_name = db_name
                     db_config.default = is_default
-                    self.services.databases[db_name] = db_config
+                    self.services.datasources[db_name] = db_config
             else:
                 db_config = DbConfig.filter_kwargs(DbConfig, db_config_dict)
                 db_config.logic_name = db_name
                 db_config.default = is_default
-                self.services.databases[db_name] = db_config
+                self.services.datasources[db_name] = db_config
 
     def _parse_glob_pattern_flat(self, base_name: str, path_pattern: str, db_type: str):
         """Parse glob pattern and register each matched file as an independent database entry."""
@@ -741,7 +749,7 @@ class AgentConfig:
                 schema="",
                 logic_name=entry_name,
             )
-            self.services.databases[entry_name] = child_config
+            self.services.datasources[entry_name] = child_config
 
         if not any_db_path:
             logger.warning(
@@ -790,26 +798,26 @@ class AgentConfig:
             return None
 
     def current_db_config(self, db_name: str = "") -> DbConfig:
-        """Get a database config by name, or the current/default one."""
-        databases = self.services.databases
-        if db_name and db_name in databases:
-            return databases[db_name]
-        if self._current_database and self._current_database in databases:
-            return databases[self._current_database]
-        if len(databases) == 1:
-            return list(databases.values())[0]
+        """Get a datasource config by name, or the current/default one."""
+        datasources = self.services.datasources
+        if db_name and db_name in datasources:
+            return datasources[db_name]
+        if self._current_database and self._current_database in datasources:
+            return datasources[self._current_database]
+        if len(datasources) == 1:
+            return list(datasources.values())[0]
         if not db_name:
             default = self.services.default_database
             if default:
-                return databases[default]
+                return datasources[default]
         raise DatusException(
             code=ErrorCode.COMMON_UNSUPPORTED,
-            message=f"Database '{db_name}' not found. Available: {list(databases.keys())}",
+            message=f"Datasource '{db_name}' not found. Available: {list(datasources.keys())}",
         )
 
     def current_db_configs(self) -> Dict[str, DbConfig]:
-        """Backward-compat: returns all databases (was namespace-scoped, now returns all)."""
-        return self.services.databases
+        """Backward-compat: returns all datasources (was namespace-scoped, now returns all)."""
+        return self.services.datasources
 
     def default_scheduler_service(self) -> Optional[str]:
         defaults = [name for name, cfg in self.scheduler_services.items() if cfg.get("default")]
@@ -1107,26 +1115,26 @@ class AgentConfig:
         set_current_path_manager(self.path_manager)
 
     def _current_db_config(self) -> Dict[str, DbConfig]:
-        """Backward-compat: returns all database configs."""
-        if not self._current_database and not self.services.databases:
+        """Backward-compat: returns all datasource configs."""
+        if not self._current_database and not self.services.datasources:
             raise DatusException(
                 code=ErrorCode.COMMON_FIELD_REQUIRED,
                 message="Database is required, please run with --database <database>",
             )
-        return self.services.databases
+        return self.services.datasources
 
     def current_db_name_type(self, db_name: str) -> tuple[str, str]:
-        databases = self.services.databases
-        if db_name and db_name in databases:
-            return db_name, databases[db_name].type
-        if self._current_database and self._current_database in databases:
-            return self._current_database, databases[self._current_database].type
-        if len(databases) == 1:
-            cfg = list(databases.values())[0]
+        datasources = self.services.datasources
+        if db_name and db_name in datasources:
+            return db_name, datasources[db_name].type
+        if self._current_database and self._current_database in datasources:
+            return self._current_database, datasources[self._current_database].type
+        if len(datasources) == 1:
+            cfg = list(datasources.values())[0]
             return cfg.logic_name or db_name, cfg.type
         raise DatusException(
             code=ErrorCode.COMMON_UNSUPPORTED,
-            message=f"Database '{db_name}' not found. Available: {list(databases.keys())}",
+            message=f"Datasource '{db_name}' not found. Available: {list(datasources.keys())}",
         )
 
     def active_model(self) -> ModelConfig:

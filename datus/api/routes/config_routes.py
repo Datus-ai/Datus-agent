@@ -31,13 +31,13 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["configuration"])
 
 
-class UpdateDatabasesRequest(BaseModel):
-    """Full desired state for `services.databases`.
+class UpdateDatasourcesRequest(BaseModel):
+    """Full desired state for `services.datasources`.
 
-    Any existing database key absent from `databases` will be deleted.
+    Any existing datasource key absent from `datasources` will be deleted.
     """
 
-    databases: Dict[str, Dict[str, Any]]
+    datasources: Dict[str, Dict[str, Any]]
 
 
 class UpdateModelsRequest(BaseModel):
@@ -134,7 +134,7 @@ async def get_agent_config_endpoint(
 ) -> Result[dict]:
     """Return the project's loaded AgentConfig summary."""
     config = svc.agent_config
-    flat_databases: dict = {}
+    flat_datasources: dict = {}
 
     for db_name, inner in config.namespaces.items():
         if not inner:
@@ -142,7 +142,7 @@ async def get_agent_config_endpoint(
         db_config = inner.get(db_name)
         if db_config is None:
             db_config = next(iter(inner.values()))
-        flat_databases[db_name] = db_config
+        flat_datasources[db_name] = db_config
 
     return Result(
         success=True,
@@ -150,7 +150,7 @@ async def get_agent_config_endpoint(
             "target": config.target,
             "models": config.models,
             "current_database": config.current_namespace,
-            "databases": flat_databases,
+            "datasources": flat_datasources,
             "home": config.home,
         },
     )
@@ -255,22 +255,22 @@ async def get_database_types() -> Result[DatabaseTypesData]:
 
 
 @router.put(
-    "/config/databases",
+    "/config/datasources",
     response_model=Result[dict],
-    summary="Update Databases",
-    description="Replace the databases (services.databases) block in agent.yml.",
+    summary="Update Datasources",
+    description="Replace the datasources (services.datasources) block in agent.yml.",
 )
-async def update_databases_endpoint(
-    body: UpdateDatabasesRequest,
+async def update_datasources_endpoint(
+    body: UpdateDatasourcesRequest,
     svc: ServiceDep,  # noqa: ARG001  # populates request.state.app_context; must resolve before AppContextDep
     ctx: AppContextDep,
 ) -> Result[dict]:
-    """Full-replace `services.databases` with the provided databases."""
-    _validate_keys(body.databases, kind="database")
+    """Full-replace `services.datasources` with the provided datasources."""
+    _validate_keys(body.datasources, kind="datasource")
 
     cm = configuration_manager()
     services = cm.data.setdefault("services", {})
-    services["databases"] = dict(body.databases)
+    services["datasources"] = dict(body.datasources)
     cm.save()
 
     await _evict_current_project(ctx.project_id or "default")

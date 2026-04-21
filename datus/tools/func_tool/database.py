@@ -217,7 +217,7 @@ class DBFuncTool:
             return self._connector_cache[db_name]
 
         # Fetch from db_manager.
-        # Each database in services.databases is its own namespace (see AgentConfig.namespaces).
+        # Each datasource in services.datasources is its own namespace (see AgentConfig.namespaces).
         # For cross-database scenarios, use db_name as both namespace and logic_name.
         try:
             connector = self._db_manager.get_conn(db_name, db_name)

@@ -250,9 +250,9 @@ class TestRepairProjectOverrides:
     regression that surfaced this fix was a stale ``target`` leaving the
     CLI stuck in ``print_help``."""
 
-    def _raw_agent(self, models, databases):
-        service_dbs = {name: {"type": db_type} for name, db_type in databases.items()}
-        return {"models": {name: {} for name in models}, "services": {"databases": service_dbs}}
+    def _raw_agent(self, models, datasources):
+        service_dbs = {name: {"type": db_type} for name, db_type in datasources.items()}
+        return {"models": {name: {} for name in models}, "services": {"datasources": service_dbs}}
 
     def _mock_mgr(self, raw):
         mgr = MagicMock()
@@ -434,9 +434,9 @@ class TestRepairProjectOverrides:
 
 
 class TestResolveDefaultDatabase:
-    def _make_config(self, databases: dict, default: str = ""):
+    def _make_config(self, datasources: dict, default: str = ""):
         cfg = MagicMock()
-        cfg.services.databases = databases
+        cfg.services.datasources = datasources
         cfg.services.default_database = default
         return cfg
 

@@ -28,7 +28,7 @@ Here's a high-level summary of each module and how they relate:
 | **[Nodes](nodes.md)** | Task-level processing units | Each "node" handles a specific step (schema linking, SQL generation, reasoning, reflection, output formatting, chat, utilities) in the data-to-SQL pipeline |
 | **[Workflow](workflow.md)** | Orchestration of nodes | Defines execution plans (sequential, parallel, sub-workflows, reflection paths) that specify how nodes are chained to answer a user's query |
 | **[Storage](storage.md)** | Embeddings & vector store configuration | Manages embedding models, device settings, embedding storage paths, and how metadata / documents / metrics are embedded and retrieved |
-| **[Databases](databases.md)** | Database configuration | Defines database connections under `agent.services.databases`; semantic adapters, BI platforms, and schedulers are documented on sibling pages |
+| **[Datasources](datasources.md)** | Datasource configuration | Defines database connections under `agent.services.datasources`; semantic adapters, BI platforms, and schedulers are documented on sibling pages |
 | **[Benchmark](benchmark.md)** | Evaluation & testing setup | Defines benchmark datasets (e.g. BIRD-DEV, Spider2, semantic layer) and paths to evaluate the SQL-generation performance of the agent |
 
 ## Configuration Structure
@@ -131,7 +131,7 @@ conf/
 Explore the detailed configuration for each component:
 
 - **[Agent Settings](agent.md)**: Configure models, providers, and global settings
-- **[Databases](databases.md)**: Set up database connections under `agent.services.databases`
+- **[Datasources](datasources.md)**: Set up database connections under `agent.services.datasources`
 - **[Semantic Layer](semantic_layer.md)**: Configure semantic adapters such as MetricFlow
 - **[BI Platforms](bi_platforms.md)**: Configure Superset or Grafana access
 - **[Schedulers](schedulers.md)**: Configure Airflow scheduler services

@@ -9,11 +9,11 @@ from unittest.mock import MagicMock, patch
 from datus.utils.exceptions import DatusException, ErrorCode
 
 
-def _make_agent_config(databases=None):
-    """Build a minimal mock AgentConfig with services.databases."""
-    db_map = databases if databases is not None else {}
+def _make_agent_config(datasources=None):
+    """Build a minimal mock AgentConfig with services.datasources."""
+    db_map = datasources if datasources is not None else {}
     services = MagicMock()
-    services.databases = db_map
+    services.datasources = db_map
     services.default_database = next(iter(db_map), None)
     services.semantic_layer = {}
     services.bi_platforms = {}
@@ -882,8 +882,8 @@ class TestServiceManagerDelete:
     def test_delete_confirmed_saves_and_returns_0(self):
         """delete() removes the database, saves config, and returns 0 on success."""
         db_cfg = _make_db_config()
-        databases = {"my_db": db_cfg}
-        mock_config = _make_agent_config(databases)
+        datasources = {"my_db": db_cfg}
+        mock_config = _make_agent_config(datasources)
 
         with (
             patch("datus.cli.service_manager.load_agent_config", return_value=mock_config),
@@ -907,8 +907,8 @@ class TestServiceManagerDelete:
     def test_delete_confirmed_save_failure_returns_1(self):
         """delete() returns 1 when save fails after confirmed deletion."""
         db_cfg = _make_db_config()
-        databases = {"my_db": db_cfg}
-        mock_config = _make_agent_config(databases)
+        datasources = {"my_db": db_cfg}
+        mock_config = _make_agent_config(datasources)
 
         with (
             patch("datus.cli.service_manager.load_agent_config", return_value=mock_config),
@@ -951,7 +951,7 @@ class TestServiceManagerSaveConfiguration:
             call_kwargs = mock_cm.update.call_args
             updates = call_kwargs[1]["updates"] if call_kwargs[1] else call_kwargs[0][0]
             assert "services" in updates
-            assert "databases" in updates["services"]
+            assert "datasources" in updates["services"]
 
     def test_save_configuration_returns_false_on_exception(self):
         """_save_configuration() returns False when configuration_manager raises."""
@@ -1010,7 +1010,7 @@ class TestServiceManagerSaveConfiguration:
         db_cfg.to_dict.assert_called_once()
         call_kwargs = mock_cm.update.call_args
         updates = call_kwargs[1]["updates"] if call_kwargs[1] else call_kwargs[0][0]
-        pg_entry = updates["services"]["databases"]["pg_db"]
+        pg_entry = updates["services"]["datasources"]["pg_db"]
         # Internal fields should be removed
         assert "logic_name" not in pg_entry
         assert "path_pattern" not in pg_entry
@@ -1058,7 +1058,7 @@ class TestServiceManagerSaveConfiguration:
         assert result is True
         call_kwargs = mock_cm.update.call_args
         updates = call_kwargs[1]["updates"] if call_kwargs[1] else call_kwargs[0][0]
-        main_entry = updates["services"]["databases"]["main_db"]
+        main_entry = updates["services"]["datasources"]["main_db"]
         assert main_entry.get("default") is True
 
     def test_save_configuration_non_default_sqlite_no_logic_name_diff(self):
@@ -1112,7 +1112,7 @@ class TestServiceManagerSaveConfiguration:
         assert result is True
         call_kwargs = mock_cm.update.call_args
         updates = call_kwargs[1]["updates"] if call_kwargs[1] else call_kwargs[0][0]
-        main_entry = updates["services"]["databases"]["main_db"]
+        main_entry = updates["services"]["datasources"]["main_db"]
         assert main_entry.get("name") == "alias_name"
 
 

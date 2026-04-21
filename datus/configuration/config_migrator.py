@@ -7,6 +7,9 @@ Config migration tool: converts legacy namespace-based agent.yml to new services
 
 Usage:
     python -m datus.configuration.config_migrator [--config path/to/agent.yml] [--dry-run]
+
+Also handles the rename of ``services.databases`` → ``services.datasources`` (the
+previous key name from the earlier namespace migration).
 """
 
 import argparse
@@ -22,7 +25,10 @@ logger = get_logger(__name__)
 
 
 def migrate_namespace_to_services(config: dict) -> dict:
-    """Convert legacy namespace config to new services.databases format.
+    """Convert legacy namespace config to new services.datasources format.
+
+    Also renames a legacy ``services.databases`` section to ``services.datasources``
+    so configs produced by earlier versions of this migrator are brought up to date.
 
     Old format:
         agent:
@@ -40,7 +46,7 @@ def migrate_namespace_to_services(config: dict) -> dict:
     New format:
         agent:
           services:
-            databases:
+            datasources:
               db1:
                 type: sqlite
                 uri: path/to/db1.sqlite
@@ -55,6 +61,12 @@ def migrate_namespace_to_services(config: dict) -> dict:
     agent = config.get("agent", {})
 
     if "services" in agent:
+        services = agent["services"]
+        if isinstance(services, dict) and "datasources" not in services and "databases" in services:
+            services["datasources"] = services.pop("databases")
+            config["agent"] = agent
+            logger.info("Renamed legacy 'services.databases' to 'services.datasources'.")
+            return config
         logger.info("Config already uses 'services' format, no migration needed.")
         return config
 
@@ -63,7 +75,7 @@ def migrate_namespace_to_services(config: dict) -> dict:
         logger.info("No 'namespace' section found, nothing to migrate.")
         return config
 
-    databases = {}
+    datasources = {}
     first_db_name = None
 
     for ns_name, ns_cfg in namespace_config.items():
@@ -77,27 +89,27 @@ def migrate_namespace_to_services(config: dict) -> dict:
                 name = item.get("name", ns_name)
                 entry = {k: v for k, v in item.items() if k != "name"}
                 entry["type"] = db_type
-                databases[name] = entry
+                datasources[name] = entry
                 if first_db_name is None:
                     first_db_name = name
         elif "path_pattern" in ns_cfg:
             # Glob pattern: keep as-is under the namespace name
-            databases[ns_name] = ns_cfg
+            datasources[ns_name] = ns_cfg
             if first_db_name is None:
                 first_db_name = ns_name
         else:
-            # Single database or server-based (snowflake, starrocks, etc.)
-            databases[ns_name] = ns_cfg
+            # Single datasource or server-based (snowflake, starrocks, etc.)
+            datasources[ns_name] = ns_cfg
             if first_db_name is None:
                 first_db_name = ns_name
 
-    # Mark first database as default if only one entry or user had a single namespace
-    if len(databases) == 1:
-        only_key = next(iter(databases))
-        databases[only_key]["default"] = True
+    # Mark first datasource as default if only one entry or user had a single namespace
+    if len(datasources) == 1:
+        only_key = next(iter(datasources))
+        datasources[only_key]["default"] = True
 
     agent["services"] = {
-        "databases": databases,
+        "datasources": datasources,
         "semantic_layer": {},
         "bi_platforms": {},
         "schedulers": {},
@@ -125,11 +137,17 @@ def migrate_file(config_path: str, dry_run: bool = False) -> bool:
         logger.error(f"Invalid config file (no 'agent' section): {config_path}")
         return False
 
-    if "services" in config.get("agent", {}):
+    agent_section = config.get("agent", {})
+    services_section = agent_section.get("services") if isinstance(agent_section, dict) else None
+    needs_databases_rename = (
+        isinstance(services_section, dict) and "datasources" not in services_section and "databases" in services_section
+    )
+
+    if "services" in agent_section and not needs_databases_rename:
         logger.info(f"Already migrated: {config_path}")
         return False
 
-    if "namespace" not in config.get("agent", {}):
+    if "namespace" not in agent_section and not needs_databases_rename:
         logger.info(f"No namespace section to migrate: {config_path}")
         return False
 

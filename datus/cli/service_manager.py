@@ -4,10 +4,10 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 """
-Manage command for Services (databases, semantic layer, BI tools, schedulers).
+Manage command for Services (datasources, semantic layer, BI tools, schedulers).
 
-Replaces the legacy NamespaceManager. Works with the new services.databases
-config structure where each database is an independent entry.
+Replaces the legacy NamespaceManager. Works with the new services.datasources
+config structure where each datasource is an independent entry.
 """
 
 from getpass import getpass
@@ -84,7 +84,7 @@ class ServiceManager:
             return 1
 
     def list(self) -> int:
-        databases = self.agent_config.services.databases
+        databases = self.agent_config.services.datasources
         if not databases:
             console.print("No databases configured.")
             return 0
@@ -140,7 +140,7 @@ class ServiceManager:
             console.print(f"{error_msg}")
             return 1
 
-        if db_name in self.agent_config.services.databases:
+        if db_name in self.agent_config.services.datasources:
             console.print(f"Database '{db_name}' already exists")
             return 1
 
@@ -208,7 +208,7 @@ class ServiceManager:
                 config_data[field_name] = value
 
         # Ask if this should be the default
-        if not self.agent_config.services.databases:
+        if not self.agent_config.services.datasources:
             config_data["default"] = True
         elif Confirm.ask("- Set as default database?", default=False):
             config_data["default"] = True
@@ -223,7 +223,7 @@ class ServiceManager:
             db_config = DbConfig.filter_kwargs(DbConfig, config_data)
             db_config.logic_name = db_name
             db_config.default = config_data.get("default", False)
-            self.agent_config.services.databases[db_name] = db_config
+            self.agent_config.services.datasources[db_name] = db_config
 
             if self._save_configuration():
                 console.print(f"Database '{db_name}' added successfully")
@@ -239,7 +239,7 @@ class ServiceManager:
         """Interactive method to delete a database configuration."""
         console.print("[bold yellow]Delete Database[/bold yellow]")
 
-        databases = self.agent_config.services.databases
+        databases = self.agent_config.services.datasources
         if not databases:
             console.print("No databases configured to delete")
             return 1
@@ -265,7 +265,7 @@ class ServiceManager:
             console.print("Deletion cancelled")
             return 1
 
-        del self.agent_config.services.databases[db_name]
+        del self.agent_config.services.datasources[db_name]
 
         if self._save_configuration():
             console.print(f"Database '{db_name}' deleted successfully")
@@ -278,9 +278,9 @@ class ServiceManager:
         """Save services configuration to the agent.yml file."""
         try:
             configure_manager = configuration_manager(config_path=self.config_path, reload=True)
-            databases_section = {}
+            datasources_section = {}
 
-            for db_name, db_config in self.agent_config.services.databases.items():
+            for db_name, db_config in self.agent_config.services.datasources.items():
                 if db_config.type in (DBType.SQLITE, DBType.DUCKDB):
                     entry = {
                         "type": db_config.type,
@@ -297,10 +297,10 @@ class ServiceManager:
                 if db_config.default:
                     entry["default"] = True
 
-                databases_section[db_name] = entry
+                datasources_section[db_name] = entry
 
             services_section = {
-                "databases": databases_section,
+                "datasources": datasources_section,
                 "semantic_layer": dict(self.agent_config.services.semantic_layer),
                 "bi_platforms": dict(self.agent_config.services.bi_platforms),
                 "schedulers": dict(self.agent_config.services.schedulers),

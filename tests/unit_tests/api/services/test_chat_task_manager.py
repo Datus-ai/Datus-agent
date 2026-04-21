@@ -40,8 +40,8 @@ class TestFillDatabaseContext:
 
     def test_known_database_updates_namespace_and_db(self, real_agent_config):
         """Known database in namespaces updates current_namespace and current_database."""
-        # real_agent_config has "california_schools" in services.databases
-        # After the namespace→services.databases refactor, each DB is its own namespace key
+        # real_agent_config has "california_schools" in services.datasources
+        # After the namespace→services.datasources refactor, each DB is its own namespace key
         _fill_database_context(real_agent_config, database="california_schools")
         assert real_agent_config.current_namespace == "california_schools"
         assert real_agent_config.current_database == "california_schools"

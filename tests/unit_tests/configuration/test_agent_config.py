@@ -373,7 +373,7 @@ class TestAgentConfigServiceSelectors:
                     "base_url": "http://localhost:0",
                 }
             },
-            services=services or {"databases": {}},
+            services=services or {"datasources": {}},
             agentic_nodes=agentic_nodes or {},
             skip_init_dirs=True,
         )
@@ -382,7 +382,7 @@ class TestAgentConfigServiceSelectors:
         cfg = self._make(
             tmp_path,
             services={
-                "databases": {},
+                "datasources": {},
                 "semantic_layer": {
                     "metricflow": {"timeout": 300},
                 },
@@ -394,7 +394,7 @@ class TestAgentConfigServiceSelectors:
         cfg = self._make(
             tmp_path,
             services={
-                "databases": {},
+                "datasources": {},
                 "semantic_layer": {
                     "metricflow": {"timeout": 300},
                 },
@@ -406,7 +406,7 @@ class TestAgentConfigServiceSelectors:
         cfg = self._make(
             tmp_path,
             services={
-                "databases": {},
+                "datasources": {},
                 "semantic_layer": {
                     "metricflow": {"timeout": 300},
                     "cube": {"timeout": 60},
@@ -420,7 +420,7 @@ class TestAgentConfigServiceSelectors:
         cfg = self._make(
             tmp_path,
             services={
-                "databases": {},
+                "datasources": {},
                 "schedulers": {
                     "airflow_prod": {"type": "airflow", "default": True},
                     "airflow_dev": {"type": "airflow"},
@@ -434,7 +434,7 @@ class TestAgentConfigServiceSelectors:
             self._make(
                 tmp_path,
                 services={
-                    "databases": {},
+                    "datasources": {},
                     "schedulers": {
                         "airflow_prod": {"type": "airflow", "default": True},
                         "airflow_dev": {"type": "airflow", "default": True},
@@ -446,7 +446,7 @@ class TestAgentConfigServiceSelectors:
         cfg = self._make(
             tmp_path,
             services={
-                "databases": {},
+                "datasources": {},
                 "schedulers": {
                     "airflow_prod": {"type": "airflow"},
                     "airflow_dev": {"type": "airflow"},
@@ -460,7 +460,7 @@ class TestAgentConfigServiceSelectors:
         cfg = self._make(
             tmp_path,
             services={
-                "databases": {},
+                "datasources": {},
                 "schedulers": {
                     "airflow_prod": {"type": "airflow", "api_base_url": "http://prod"},
                     "airflow_dev": {"type": "airflow", "api_base_url": "http://dev"},
@@ -474,7 +474,7 @@ class TestAgentConfigServiceSelectors:
             self._make(
                 tmp_path,
                 services={
-                    "databases": {},
+                    "datasources": {},
                     "schedulers": {
                         "airflow_prod": {"api_base_url": "http://prod"},
                     },
@@ -813,3 +813,14 @@ class TestServicesConfigFromDict:
             }
         )
         assert cfg.bi_platforms == {"superset": {"type": "superset"}}
+
+    def test_legacy_databases_key_is_rejected(self):
+        """Old 'services.databases' layout must raise and point users at the migrator."""
+        with pytest.raises(DatusException, match="services.databases has been renamed to services.datasources"):
+            ServicesConfig.from_dict({"databases": {"my_db": {"type": "sqlite"}}})
+
+    def test_datasources_key_without_legacy_parses_cleanly(self):
+        """With only 'datasources' present, from_dict returns an empty dataclass (entries populated later)."""
+        cfg = ServicesConfig.from_dict({"datasources": {"my_db": {"type": "sqlite"}}})
+        # from_dict intentionally leaves datasources empty — AgentConfig._init_services_config fills it.
+        assert cfg.datasources == {}

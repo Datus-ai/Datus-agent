@@ -40,10 +40,10 @@ def test_config_exception(tmp_path):
 def test_service_config_structure(agent_config: AgentConfig):
     """Verify service config sections load into AgentConfig."""
     assert agent_config.services is not None
-    assert len(agent_config.services.databases) > 0
-    assert "bird_school" in agent_config.services.databases
-    assert "snowflake" in agent_config.services.databases
-    assert "local_duckdb" in agent_config.services.databases
+    assert len(agent_config.services.datasources) > 0
+    assert "bird_school" in agent_config.services.datasources
+    assert "snowflake" in agent_config.services.datasources
+    assert "local_duckdb" in agent_config.services.datasources
     assert "metricflow" in agent_config.services.semantic_layer
     assert "superset" in agent_config.services.bi_platforms
     assert "airflow_local" in agent_config.services.schedulers
@@ -87,7 +87,7 @@ def test_configuration_load(database: str, agent_config: AgentConfig):
 
 def test_benchmark_db_check(agent_config: AgentConfig):
     db_name = "snowflake"
-    agent_config.services.databases[db_name].type = DBType.SQLITE
+    agent_config.services.datasources[db_name].type = DBType.SQLITE
 
     with pytest.raises(DatusException, match="spider2 only support snowflake"):
         agent_config.override_by_args(

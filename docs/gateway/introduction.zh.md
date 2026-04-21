@@ -278,5 +278,5 @@ export DATUS_LOG_LEVEL=DEBUG
 
 - [配置](../configuration/introduction.md) — 完整的 Agent 配置参考
 - [Chatbot](../web_chatbot/introduction.md) — 基于 Web 的聊天界面
-- [数据库配置](../configuration/databases.md) — 数据库连接配置详情
+- [数据源配置](../configuration/datasources.md) — 数据源连接配置详情
 - [子代理](../subagent/introduction.md) — 子代理配置与自定义

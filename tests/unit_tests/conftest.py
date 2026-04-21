@@ -172,7 +172,7 @@ def real_agent_config(tmp_path, reset_global_singletons):
             },
         },
         "services": {
-            "databases": {
+            "datasources": {
                 "california_schools": {
                     "type": "sqlite",
                     "uri": db_path,

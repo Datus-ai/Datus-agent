@@ -123,7 +123,7 @@ def agent_config() -> AgentConfig:
     # needed. Seed a valid default here so fixtures that touch the DB (e.g. `function_tools`)
     # can initialize.
     agent_config = load_acceptance_config(namespace="bird_sqlite")
-    if not agent_config.current_database and agent_config.services.databases:
+    if not agent_config.current_database and agent_config.services.datasources:
         agent_config.current_database = "california_schools"
     Path(agent_config.rag_storage_path()).mkdir(parents=True, exist_ok=True)
     return agent_config
@@ -570,7 +570,7 @@ class TestNode:
                 exec_input = execute_sql_input[test_case_num]["input"]
                 input_data = ExecuteSQLInput(**exec_input)
                 # Use the database_name from the input to set the current database
-                if exec_input.get("database_name") and exec_input["database_name"] in agent_config.services.databases:
+                if exec_input.get("database_name") and exec_input["database_name"] in agent_config.services.datasources:
                     agent_config.current_database = exec_input["database_name"]
                 else:
                     agent_config.current_database = "california_schools"
