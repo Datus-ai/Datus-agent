@@ -437,6 +437,49 @@ class TestWriteBlockedAndUnknown:
         assert "Unknown method" in out or "no_such" in out
 
 
+class TestMissingAdapterEndToEnd:
+    """Service configured in agent.yml, but the adapter package isn't installed.
+
+    Without the probe / preflight, the failure surfaces as a cryptic
+    ``DatusException`` from ``BIFuncTool._build_adapter`` at the first
+    actual invocation. With preflight, ``.services`` explicitly reports
+    ``missing adapter`` and ``.<service>.<method>`` prints an install hint.
+    """
+
+    @pytest.fixture
+    def cli_with_unregistered_platform(self, tmp_path, bi_core_stub):
+        # bi_core_stub registers 'superset' and 'grafana_ro'. We intentionally
+        # configure a platform name NOT registered in the stub so the probe
+        # fails the way it would on a real machine missing ``datus-bi-<x>``.
+        agent_config = _build_agent_config(
+            tmp_path,
+            bi_tools={"tableau": {"api_url": "http://tableau.test", "type": "tableau"}},
+        )
+        return _FakeCLI(agent_config)
+
+    def test_services_lists_missing_adapter_status(self, cli_with_unregistered_platform):
+        cmd = ServiceCommands(cli_with_unregistered_platform)
+        cmd.cmd_services("")
+        out = _output(cli_with_unregistered_platform)
+        assert "tableau" in out
+        assert "missing adapter" in out
+
+    def test_invocation_prints_install_hint(self, cli_with_unregistered_platform):
+        cmd = ServiceCommands(cli_with_unregistered_platform)
+        cmd.dispatch(".tableau.list_dashboards", "")
+        out = _output(cli_with_unregistered_platform)
+        assert "not installed" in out
+        assert "datus-bi-" in out
+
+    def test_bare_service_prints_install_hint(self, cli_with_unregistered_platform):
+        cmd = ServiceCommands(cli_with_unregistered_platform)
+        cmd.dispatch(".tableau", "")
+        out = _output(cli_with_unregistered_platform)
+        assert "not installed" in out
+        # Method table is suppressed.
+        assert "read methods" not in out
+
+
 class TestMultiServiceRouting:
     def test_two_services_invoked_independently(self, cli_with_two_bi_services):
         cmd = ServiceCommands(cli_with_two_bi_services)

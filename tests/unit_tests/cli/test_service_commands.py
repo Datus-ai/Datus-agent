@@ -51,6 +51,10 @@ def _make_commands_with_bi_stub(tool_instance=None):
     registry._agent_config = cli.agent_config
     registry._entries = {}
     registry._fingerprint = None
+    # The probe path would check for a real datus_bi_core registration; since
+    # we're injecting a stub tool, mark the adapter as available so preflight
+    # in ``_invoke`` doesn't short-circuit.
+    registry._adapter_available = {"superset": True}
     registry._clients = {
         "superset": ServiceClient(
             service_type="bi_tools",
@@ -353,6 +357,72 @@ class TestArgParser:
         cmd = ServiceCommands(_fake_cli())
         # Safety: no callable → no blockage.
         assert cmd._missing_required(None, {}) == []
+
+
+class TestPreflightMissingAdapter:
+    """Preflight check in ``_invoke`` / ``dispatch`` for missing adapter packages.
+
+    When the adapter package behind a configured service isn't installed, the
+    generic ``_build_adapter`` path raises a cryptic ``DatusException`` deep
+    inside the call chain. Preflight surfaces a pointed, actionable message
+    before any invocation attempt.
+    """
+
+    def _make_registry_with_missing_adapter(self):
+        cli = _fake_cli()
+        cmd = ServiceCommands(cli)
+        registry = ServiceClientRegistry.__new__(ServiceClientRegistry)
+        registry._agent_config = cli.agent_config
+        registry._entries = {"superset": ("bi_tools", "superset")}
+        registry._fingerprint = None
+        # Probe fails → adapter reported as missing.
+        registry._adapter_available = {"superset": False}
+        registry._clients = {
+            "superset": ServiceClient(
+                service_type="bi_tools",
+                service_name="superset",
+                tool_instance=_BiToolStub(),
+                method_names=READ_METHODS["bi_tools"],
+            ),
+        }
+        cmd._registry = registry
+        return cmd, cli
+
+    def test_invoke_skips_with_install_hint(self):
+        cmd, cli = self._make_registry_with_missing_adapter()
+        cmd.dispatch(".superset.list_dashboards", "")
+        msg = " ".join(str(c) for c in cli.console.print.call_args_list)
+        assert "not installed" in msg
+        assert "datus-bi-" in msg
+
+    def test_bare_service_also_skips(self):
+        cmd, cli = self._make_registry_with_missing_adapter()
+        cmd.dispatch(".superset", "")
+        msg = " ".join(str(c) for c in cli.console.print.call_args_list)
+        assert "not installed" in msg
+        # The normal "read methods" table is NOT shown when the adapter is missing.
+        assert "read methods" not in msg
+
+    def test_scheduler_missing_mentions_scheduler_package(self):
+        cli = _fake_cli()
+        cmd = ServiceCommands(cli)
+        registry = ServiceClientRegistry.__new__(ServiceClientRegistry)
+        registry._agent_config = cli.agent_config
+        registry._entries = {"airflow": ("schedulers", "airflow")}
+        registry._fingerprint = None
+        registry._adapter_available = {"airflow": False}
+        registry._clients = {
+            "airflow": ServiceClient(
+                service_type="schedulers",
+                service_name="airflow",
+                tool_instance=_BiToolStub(),  # stub; never reached
+                method_names=READ_METHODS["schedulers"],
+            ),
+        }
+        cmd._registry = registry
+        cmd.dispatch(".airflow.list_scheduler_jobs", "")
+        msg = " ".join(str(c) for c in cli.console.print.call_args_list)
+        assert "datus-scheduler" in msg
 
 
 class TestRenderHelpers:

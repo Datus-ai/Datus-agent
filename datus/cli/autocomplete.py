@@ -1180,13 +1180,17 @@ class ServiceCommandCompleter(Completer):
         body = cmd_part[1:]  # drop leading '.'
         if "." not in body:
             # Completing ``.service`` or ``.services``.
-            for name, service_type, _status in registry.list_services():
+            for name, service_type, status in registry.list_services():
                 dotted = f".{name}"
                 if dotted.lower().startswith(cmd_part.lower()):
+                    if status == "missing adapter":
+                        display = f"{dotted}  ({service_type}, missing adapter)"
+                    else:
+                        display = f"{dotted}  ({service_type})"
                     yield Completion(
                         dotted,
                         start_position=-len(cmd_part),
-                        display=f"{dotted}  ({service_type})",
+                        display=display,
                         style="class:keyword",
                     )
             if ".services".startswith(cmd_part.lower()):

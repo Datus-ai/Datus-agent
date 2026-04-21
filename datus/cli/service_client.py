@@ -175,6 +175,77 @@ _FACTORIES: Dict[str, _FactoryFn] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Adapter-availability probes
+#
+# An entry in ``services.*`` only means "the user listed this in agent.yml" —
+# not that the corresponding adapter package is installed. We probe each
+# section's registry so listings / completion / dispatch can distinguish
+# ``configured`` (usable) from ``missing adapter`` (package not installed
+# or adapter not registered). Probes are intentionally cheap and defensive:
+# any ImportError / lookup failure is treated as "unavailable" rather than
+# raising.
+# ---------------------------------------------------------------------------
+
+
+_ProbeFn = Callable[["AgentConfig", str], bool]
+
+
+def _probe_bi_adapter(agent_config: "AgentConfig", service_name: str) -> bool:
+    try:
+        from datus_bi_core import adapter_registry
+    except ImportError:
+        return False
+    try:
+        adapter_registry.discover_adapters()
+        return adapter_registry.get(service_name) is not None
+    except Exception as exc:
+        logger.debug(f"BI adapter probe failed for '{service_name}': {exc}")
+        return False
+
+
+def _probe_semantic_adapter(agent_config: "AgentConfig", service_name: str) -> bool:
+    try:
+        from datus.tools.semantic_tools.registry import semantic_adapter_registry
+    except ImportError:
+        return False
+    try:
+        return semantic_adapter_registry.get_metadata(service_name) is not None
+    except Exception as exc:
+        logger.debug(f"Semantic adapter probe failed for '{service_name}': {exc}")
+        return False
+
+
+def _probe_scheduler_adapter(agent_config: "AgentConfig", service_name: str) -> bool:
+    # datus-scheduler-core does not expose a registry-only getter distinct
+    # from ``create_adapter``; importability is the closest zero-cost signal.
+    # Actual adapter-type registration is verified at invocation time.
+    try:
+        import datus_scheduler_core  # noqa: F401
+        import datus_scheduler_core.registry  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+_PROBES: Dict[str, _ProbeFn] = {
+    "bi_tools": _probe_bi_adapter,
+    "schedulers": _probe_scheduler_adapter,
+    "semantic_layer": _probe_semantic_adapter,
+}
+
+
+def _probe(agent_config: "AgentConfig", section: str, service_name: str) -> bool:
+    fn = _PROBES.get(section)
+    if fn is None:
+        return True
+    try:
+        return fn(agent_config, service_name)
+    except Exception as exc:
+        logger.debug(f"adapter probe raised for {section}/{service_name}: {exc}")
+        return False
+
+
 class ServiceClientRegistry:
     """Lazily-instantiated registry of CLI-exposed service clients.
 
@@ -194,6 +265,11 @@ class ServiceClientRegistry:
         self._entries: Dict[str, Tuple[str, str]] = {}
         self._clients: Dict[str, ServiceClient] = {}
         self._fingerprint: Optional[Tuple[Any, ...]] = None
+        # Probe results — cached because ``adapter_registry.discover_adapters``
+        # (BI) walks entry points, and repeating it on every tab-complete is
+        # wasteful. Invalidated together with the client cache when the
+        # namespace fingerprint changes.
+        self._adapter_available: Dict[str, bool] = {}
         self._discover()
 
     def _discover(self) -> None:
@@ -241,18 +317,51 @@ class ServiceClientRegistry:
             return
         if fp != self._fingerprint:
             self._clients.clear()
+            # Adapter availability can, in principle, change with namespace
+            # (different registered providers per tenant). Drop the probe
+            # cache too so the next listing re-checks.
+            self._adapter_available.clear()
             self._fingerprint = fp
+
+    def adapter_available(self, service_name: str) -> bool:
+        """Report whether the adapter backing ``service_name`` is installed.
+
+        ``ServiceClientRegistry`` discovers from ``agent.yml``; that tells us
+        the service is *configured*, not that its adapter package
+        (``datus-bi-<platform>``, ``datus-scheduler-core``, ``datus-semantic-<type>``)
+        is installed. The result is cached until the namespace fingerprint
+        changes.
+        """
+        self._invalidate_if_stale()
+        key = service_name.lower()
+        if key not in self._entries:
+            return False
+        if key in self._adapter_available:
+            return self._adapter_available[key]
+        section, original_name = self._entries[key]
+        available = _probe(self._agent_config, section, original_name)
+        self._adapter_available[key] = available
+        return available
 
     def list_services(self) -> List[Tuple[str, str, str]]:
         """Return ``[(service_name, service_type, status), ...]`` sorted by name.
 
-        ``status`` is ``"ready"`` if the client has been constructed under the
-        current namespace fingerprint, ``"lazy"`` otherwise.
+        ``status`` is user-facing:
+
+        - ``active`` — client already constructed under the current namespace.
+        - ``configured`` — adapter package installed; first use will build.
+        - ``missing adapter`` — configured in ``agent.yml`` but the adapter
+          package isn't installed (or its platform isn't registered).
         """
         self._invalidate_if_stale()
         out: List[Tuple[str, str, str]] = []
         for key, (section, original_name) in sorted(self._entries.items()):
-            status = "ready" if key in self._clients else "lazy"
+            if key in self._clients:
+                status = "active"
+            elif self.adapter_available(original_name):
+                status = "configured"
+            else:
+                status = "missing adapter"
             out.append((original_name, section, status))
         return out
 

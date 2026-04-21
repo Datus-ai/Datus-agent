@@ -39,6 +39,7 @@ def _make_completer(advertised=("list_dashboards", "get_dashboard")):
     registry._agent_config = None
     registry._entries = {"superset": ("bi_tools", "superset")}
     registry._fingerprint = None
+    registry._adapter_available = {"superset": True}
     registry._clients = {
         "superset": ServiceClient(
             service_type="bi_tools",
@@ -97,6 +98,21 @@ class TestServiceNameCompletion:
         completions = _completions(completer, ".sup")
         displays = [str(c.display) for c in completions]
         assert any("bi_tools" in d for d in displays)
+
+    def test_missing_adapter_annotated_in_display(self):
+        """Completions for services whose adapter isn't installed show a
+        "(missing adapter)" annotation so the user isn't surprised when
+        pressing Enter."""
+        completer, registry = _make_completer()
+        # Pretend the client was never built AND the probe failed — this is
+        # the real-world "datus-bi-<platform> not installed" scenario. (The
+        # default helper pre-caches a client for happy-path tests; drop it
+        # so ``list_services`` evaluates the probe path.)
+        registry._clients = {}
+        registry._adapter_available = {"superset": False}
+        completions = _completions(completer, ".sup")
+        displays = [str(c.display) for c in completions]
+        assert any("missing adapter" in d for d in displays)
 
 
 class TestMethodNameCompletion:

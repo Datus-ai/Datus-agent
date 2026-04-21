@@ -106,7 +106,10 @@ class ServiceCommands:
             return False
 
         if not tail:
-            self._print_methods(client)
+            if not self.registry.adapter_available(client.service_name):
+                self._print_missing_adapter_hint(client)
+            else:
+                self._print_methods(client)
             return True
 
         self._invoke(client, tail, args)
@@ -115,6 +118,22 @@ class ServiceCommands:
     # ------------------------------------------------------------------ #
     # Rendering helpers
     # ------------------------------------------------------------------ #
+
+    _ADAPTER_PACKAGE_HINTS = {
+        "bi_tools": "datus-bi-<platform>  (e.g. datus-bi-superset, datus-bi-grafana)",
+        "schedulers": "datus-scheduler-core",
+        "semantic_layer": "datus-semantic-<type>  (e.g. datus-semantic-metricflow)",
+    }
+
+    def _print_missing_adapter_hint(self, client: ServiceClient) -> None:
+        """Explain that the service is configured but its adapter isn't installed."""
+        pkg_hint = self._ADAPTER_PACKAGE_HINTS.get(client.service_type, "the matching adapter package")
+        self.cli.console.print(
+            f"[red]Service '{client.service_name}' ({client.service_type}) is configured "
+            f"but the adapter is not installed.[/]\n"
+            f"[dim]Install {pkg_hint} and restart the CLI, "
+            f"then re-run `.services` to confirm.[/]"
+        )
 
     def _print_methods(self, client: ServiceClient) -> None:
         methods = client.list_methods()
@@ -178,6 +197,16 @@ class ServiceCommands:
     # ------------------------------------------------------------------ #
 
     def _invoke(self, client: ServiceClient, method_name: str, args: str) -> None:
+        # Preflight: the service may be configured in agent.yml but the
+        # adapter package (or platform registration) might be missing.
+        # Without this check, ``client.get_tool(method_name)`` would still
+        # return a wrapper because the allow-list fallback kicks in, and we
+        # would only surface "No BI adapter registered" from deep inside
+        # ``_build_adapter``. Better to fail fast with an installable hint.
+        if not self.registry.adapter_available(client.service_name):
+            self._print_missing_adapter_hint(client)
+            return
+
         tool = client.get_tool(method_name)
         if tool is None:
             if hasattr(client.tool_instance, method_name):

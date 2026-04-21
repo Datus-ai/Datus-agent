@@ -205,29 +205,36 @@ class TestServiceClientRegistry:
             schedulers={"airflow": {"type": "airflow"}},
             semantic_layer={"metricflow": {"namespace": "x"}},
         )
-        registry = ServiceClientRegistry(cfg)
-        rows = registry.list_services()
+        always_available = {k: (lambda c, n: True) for k in ("bi_tools", "schedulers", "semantic_layer")}
+        with patch.dict("datus.cli.service_client._PROBES", always_available):
+            registry = ServiceClientRegistry(cfg)
+            rows = registry.list_services()
         names = {r[0] for r in rows}
         types = {r[0]: r[1] for r in rows}
         assert names == {"superset", "grafana", "airflow", "metricflow"}
         assert types["superset"] == "bi_tools"
         assert types["airflow"] == "schedulers"
         assert types["metricflow"] == "semantic_layer"
-        # All lazy at list time.
-        assert all(r[2] == "lazy" for r in rows)
+        # All "configured" at list time — adapter available, client not yet built.
+        assert all(r[2] == "configured" for r in rows)
 
-    def test_lazy_construction_then_ready_status(self):
+    def test_lazy_construction_then_active_status(self):
         cfg = _fake_agent_config(bi_tools={"superset": {}})
         factory = MagicMock(return_value=_FakeBITool())
-        with patch.dict("datus.cli.service_client._FACTORIES", {"bi_tools": factory}):
+        with (
+            patch.dict("datus.cli.service_client._FACTORIES", {"bi_tools": factory}),
+            patch.dict("datus.cli.service_client._PROBES", {"bi_tools": lambda c, n: True}),
+        ):
             registry = ServiceClientRegistry(cfg)
             # Not built yet.
             factory.assert_not_called()
+            # Before any get(), status is "configured" (adapter available, not built).
+            assert registry.list_services()[0][2] == "configured"
             client = registry.get("superset")
             assert client is not None
             factory.assert_called_once()
-            # Status now "ready".
-            assert registry.list_services()[0][2] == "ready"
+            # Status flips to "active" once the client is cached.
+            assert registry.list_services()[0][2] == "active"
             # Second get returns cached instance.
             assert registry.get("superset") is client
             factory.assert_called_once()
@@ -291,7 +298,10 @@ class TestServiceClientRegistry:
             current_database="namespace_a",
         )
         factory = MagicMock(side_effect=lambda *_: _FakeBITool())
-        with patch.dict("datus.cli.service_client._FACTORIES", {"bi_tools": factory}):
+        with (
+            patch.dict("datus.cli.service_client._FACTORIES", {"bi_tools": factory}),
+            patch.dict("datus.cli.service_client._PROBES", {"bi_tools": lambda c, n: True}),
+        ):
             registry = ServiceClientRegistry(cfg)
             c1 = registry.get("superset")
             assert c1 is not None
@@ -306,9 +316,9 @@ class TestServiceClientRegistry:
             c2 = registry.get("superset")
             assert c2 is not c1
             assert factory.call_count == 2
-            # list_services also reflects the invalidation by dropping ready status.
+            # list_services reflects the rebuild with the fresh client cached.
             statuses = {name: status for name, _type, status in registry.list_services()}
-            assert statuses["superset"] == "ready"  # rebuilt under the new namespace
+            assert statuses["superset"] == "active"
 
     def test_namespace_field_also_triggers_invalidation(self):
         """Not every install uses ``current_database`` — the ``namespace``
@@ -319,31 +329,114 @@ class TestServiceClientRegistry:
             namespace="tenant_a",
         )
         factory = MagicMock(side_effect=lambda *_: _FakeBITool())
-        with patch.dict("datus.cli.service_client._FACTORIES", {"bi_tools": factory}):
+        with (
+            patch.dict("datus.cli.service_client._FACTORIES", {"bi_tools": factory}),
+            patch.dict("datus.cli.service_client._PROBES", {"bi_tools": lambda c, n: True}),
+        ):
             registry = ServiceClientRegistry(cfg)
             registry.get("superset")
             cfg.namespace = "tenant_b"
             registry.get("superset")
             assert factory.call_count == 2
 
-    def test_list_services_shows_lazy_after_invalidation(self):
+    def test_list_services_drops_to_configured_after_invalidation(self):
         cfg = SimpleNamespace(
             services=SimpleNamespace(bi_tools={"superset": {}}, schedulers={}, semantic_layer={}),
             current_database="a",
         )
-        with patch.dict(
-            "datus.cli.service_client._FACTORIES",
-            {"bi_tools": MagicMock(side_effect=lambda *_: _FakeBITool())},
+        with (
+            patch.dict(
+                "datus.cli.service_client._FACTORIES",
+                {"bi_tools": MagicMock(side_effect=lambda *_: _FakeBITool())},
+            ),
+            patch.dict("datus.cli.service_client._PROBES", {"bi_tools": lambda c, n: True}),
         ):
             registry = ServiceClientRegistry(cfg)
             registry.get("superset")
-            assert registry.list_services()[0][2] == "ready"
+            assert registry.list_services()[0][2] == "active"
 
-            # Namespace switch without a follow-up get() — status drops back to lazy.
+            # Namespace switch without a follow-up get() — status drops back to
+            # "configured" (adapter still available, client cache cleared).
             cfg.current_database = "b"
             # list_services itself triggers invalidation.
-            assert registry.list_services()[0][2] == "lazy"
+            assert registry.list_services()[0][2] == "configured"
 
+    def test_missing_adapter_status_when_probe_fails(self):
+        """Probe failing → status is 'missing adapter'."""
+        cfg = _fake_agent_config(bi_tools={"superset": {}})
+        with patch.dict("datus.cli.service_client._PROBES", {"bi_tools": lambda c, n: False}):
+            registry = ServiceClientRegistry(cfg)
+            rows = registry.list_services()
+        assert rows[0] == ("superset", "bi_tools", "missing adapter")
+
+    def test_adapter_available_is_cached_until_fingerprint_change(self):
+        cfg = SimpleNamespace(
+            services=SimpleNamespace(bi_tools={"superset": {}}, schedulers={}, semantic_layer={}),
+            current_database="a",
+        )
+        probe = MagicMock(return_value=True)
+        with patch.dict("datus.cli.service_client._PROBES", {"bi_tools": probe}):
+            registry = ServiceClientRegistry(cfg)
+            assert registry.adapter_available("superset") is True
+            assert registry.adapter_available("superset") is True
+            # Cached → called once.
+            assert probe.call_count == 1
+
+            # Namespace switch → cache dropped → probe runs again.
+            cfg.current_database = "b"
+            assert registry.adapter_available("superset") is True
+            assert probe.call_count == 2
+
+    def test_adapter_available_false_for_unknown_service(self):
+        registry = ServiceClientRegistry(_fake_agent_config())
+        assert registry.adapter_available("not-configured") is False
+
+
+class TestAdapterProbes:
+    """Directly exercise the per-section adapter probes."""
+
+    def test_bi_probe_returns_false_when_datus_bi_core_missing(self):
+        from datus.cli.service_client import _probe_bi_adapter
+
+        # Simulate missing package via sys.modules.
+        with patch.dict("sys.modules", {"datus_bi_core": None}):
+            assert _probe_bi_adapter(None, "superset") is False
+
+    def test_bi_probe_returns_true_when_platform_registered(self):
+        from datus.cli.service_client import _probe_bi_adapter
+
+        stub_module = MagicMock()
+        stub_module.adapter_registry.get.return_value = object()
+        stub_module.adapter_registry.discover_adapters = MagicMock()
+        with patch.dict("sys.modules", {"datus_bi_core": stub_module}):
+            assert _probe_bi_adapter(None, "superset") is True
+
+    def test_bi_probe_returns_false_when_platform_unknown(self):
+        from datus.cli.service_client import _probe_bi_adapter
+
+        stub_module = MagicMock()
+        stub_module.adapter_registry.get.return_value = None
+        stub_module.adapter_registry.discover_adapters = MagicMock()
+        with patch.dict("sys.modules", {"datus_bi_core": stub_module}):
+            assert _probe_bi_adapter(None, "superset") is False
+
+    def test_scheduler_probe_needs_core_package_importable(self):
+        from datus.cli.service_client import _probe_scheduler_adapter
+
+        with patch.dict("sys.modules", {"datus_scheduler_core": None}):
+            assert _probe_scheduler_adapter(None, "airflow") is False
+
+    def test_probe_helper_defensive_on_exception(self):
+        from datus.cli.service_client import _probe
+
+        with patch.dict(
+            "datus.cli.service_client._PROBES",
+            {"bi_tools": MagicMock(side_effect=RuntimeError("boom"))},
+        ):
+            assert _probe(None, "bi_tools", "x") is False
+
+
+class TestRegistryFactoriesWired:
     def test_registry_uses_expected_factories(self):
         """Registry honors the mocked factory for each service type."""
         cfg = _fake_agent_config(
