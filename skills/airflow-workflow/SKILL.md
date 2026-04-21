@@ -7,6 +7,8 @@ tags:
   - workflow
 version: 1.0.0
 user_invocable: false
+allowed_agents:
+  - scheduler
 ---
 
 # Airflow Workflow

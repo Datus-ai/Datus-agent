@@ -4,6 +4,8 @@ description: Create new Datus skills from scratch. Use when users want to build 
 tags: [skill, development, authoring]
 version: "1.0.0"
 user_invocable: false
+allowed_agents:
+  - gen_skill
 allowed_commands:
   - "python:scripts/*.py"
 ---
@@ -49,6 +51,9 @@ allowed_commands:                   # Optional: script execution patterns
   - "python:scripts/*.py"           #   Format: "prefix:glob_pattern"
 disable_model_invocation: false     # Optional: true = user-only trigger
 user_invocable: true                # Optional: false = LLM-only
+allowed_agents:                     # Optional: whitelist of agent node names
+  - gen_dashboard                   #   that may see/load this skill
+                                    #   (empty/missing = unrestricted)
 context: fork                       # Optional: "fork" for isolated subagent
 agent: Explore                      # Optional: subagent type when context=fork
 compatibility:                      # Optional: version requirements

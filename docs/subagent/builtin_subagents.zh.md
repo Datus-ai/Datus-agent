@@ -68,7 +68,7 @@ agent:
     gen_dashboard:
       model: claude     # 可选：默认使用已配置的模型
       max_turns: 30     # 可选：默认为 30
-      bi_platform: superset  # 可选：显式指定平台（仅配置一个 BI 工具时可自动检测）
+      bi_platform: superset  # 可选：显式指定平台（仅配置一个 BI 平台时可自动检测）
 
     scheduler:
       model: claude     # 可选：默认使用已配置的模型
@@ -374,7 +374,7 @@ graph LR
     C --> D[读取度量]
     D --> E[检查重复]
     E --> F[生成指标 YAML]
-    F --> G[追加到文件]
+    F --> G[写入指标文件]
     G --> H[验证]
     H --> I[用户确认]
     I --> J[同步到知识库]
@@ -532,10 +532,13 @@ metric:
 
 #### 文件组织
 
-使用 YAML 文档分隔符 `---` 将指标追加到现有语义模型文件：
+指标存放在独立文件中，与语义模型文件分离：
 
+- **语义模型**：`{table_name}.yml` —— `data_source` 定义（measures、dimensions、identifiers）
+- **指标**：`metrics/{table_name}_metrics.yml` —— 一个或多个指标定义，使用 YAML 文档分隔符 `---` 分隔
+
+**语义模型文件** (`transactions.yml`)：
 ```yaml
-# 现有语义模型
 data_source:
   name: transactions
   sql_table: transactions
@@ -546,9 +549,10 @@ data_source:
   dimensions:
     - name: transaction_date
       type: TIME
+```
 
----
-# 第一个指标（追加）
+**指标文件** (`metrics/transactions_metrics.yml`)：
+```yaml
 metric:
   name: total_revenue
   type: measure_proxy
@@ -556,7 +560,6 @@ metric:
     measure: revenue
 
 ---
-# 第二个指标（追加）
 metric:
   name: avg_transaction_value
   type: ratio
@@ -565,10 +568,12 @@ metric:
     denominator: transaction_count
 ```
 
-**为什么追加而不是单独文件？**
-- 保持相关指标靠近其语义模型
-- 更易于维护和验证
-- MetricFlow 可以一起验证所有定义
+**为什么使用独立文件？**
+- 清晰分离 schema 定义与业务指标
+- 指标可以独立于底层语义模型维护
+- MetricFlow 会把 semantic_models 目录下所有 YAML 文档一起验证
+
+更多细节见 [gen_metrics](gen_metrics.zh.md)。
 
 #### 知识库存储
 
@@ -590,7 +595,7 @@ metric:
 - ✅ **验证**：MetricFlow 验证确保正确性
 - ✅ **交互式工作流**：同步前审阅和批准
 - ✅ **知识库集成**：语义搜索以发现指标
-- ✅ **文件管理**：安全地追加到现有语义模型文件
+- ✅ **文件管理**：在 `metrics/` 目录下维护独立的指标文件
 
 ---
 
@@ -990,7 +995,7 @@ gen_dashboard subagent 在 Superset 和 Grafana 上创建、更新和管理 BI �
 
 ### 关键特性
 
-- **多平台支持**：支持 Apache Superset 和 Grafana；平台可通过 `bi_platform` 显式指定，或从 `agent.services.bi_tools` 自动检测
+- **多平台支持**：支持 Apache Superset 和 Grafana；平台可通过 `bi_platform` 显式指定，或从 `agent.services.bi_platforms` 自动检测
 - **动态工具暴露**：工具根据 adapter Mixin 能力动态暴露——只有平台实际支持的操作才作为 LLM 工具出现
 - **数据物化桥接**：`write_query` 将源数据库查询结果写入 BI 平台自有数据库，解耦源数据与可视化层
 - **Skill 引导工作流**：内置 `gen-dashboard` skill 为各平台提供分步工作流指导
@@ -1000,7 +1005,7 @@ gen_dashboard subagent 在 Superset 和 Grafana 上创建、更新和管理 BI �
 ```yaml
 agent:
   services:
-    bi_tools:
+    bi_platforms:
       superset:
         type: superset
         api_url: "http://localhost:8088"
@@ -1014,11 +1019,11 @@ agent:
     gen_dashboard:
       model: claude           # 可选：默认使用已配置的模型
       max_turns: 30           # 可选：默认为 30
-      bi_platform: superset   # 可选：只配置一个 BI 工具时可自动检测
+      bi_platform: superset   # 可选：只配置一个 BI 平台时可自动检测
 ```
 
 **前置条件**：
-- `agent.yml` 中包含 `agent.services.bi_tools` 配置段及平台凭据
+- `agent.yml` 中包含 `agent.services.bi_platforms` 配置段及平台凭据
 - 已安装 `datus-bi-superset` 或 `datus-bi-grafana` 包
 
 ### 工作原理

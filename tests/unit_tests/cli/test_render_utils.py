@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from rich.table import Table
 
-from datus.cli._render_utils import build_kv_table, build_row_table, format_cell, unwrap_compressor_envelope
+from datus.cli._render_utils import build_kv_table, build_row_table, format_cell
 
 
 class TestFormatCell:
@@ -214,79 +214,3 @@ class TestBuildKvTable:
     def test_title_passed_through(self):
         table = build_kv_table({"x": 1}, title="My Record")
         assert "My Record" in str(table.title)
-
-
-class TestUnwrapCompressorEnvelope:
-    """Round-trip ``DataCompressor.compress()`` → unwrap for CLI display.
-
-    The envelope serialises row data into a CSV string with
-    ``original_rows`` / ``original_columns`` / ``is_compressed`` /
-    ``compression_type`` / ``compressed_data`` / ``removed_columns``
-    metadata. For the REPL user that is noise — they want the rows.
-    """
-
-    def test_non_envelope_returns_none(self):
-        # Plain dict / list / scalar payloads aren't envelopes.
-        assert unwrap_compressor_envelope({"id": 1}) is None
-        assert unwrap_compressor_envelope([{"id": 1}]) is None
-        assert unwrap_compressor_envelope("text") is None
-        assert unwrap_compressor_envelope(None) is None
-
-    def test_partial_envelope_returns_none(self):
-        # Missing keys → not an envelope.
-        assert (
-            unwrap_compressor_envelope(
-                {"original_rows": 1, "compressed_data": "a\n1\n"},
-            )
-            is None
-        )
-
-    def test_uncompressed_envelope_parses_csv(self):
-        envelope = {
-            "original_rows": 2,
-            "original_columns": ["id", "name"],
-            "is_compressed": False,
-            "compressed_data": "id,name\n1,alpha\n2,beta\n",
-            "removed_columns": [],
-            "compression_type": "none",
-        }
-        rows = unwrap_compressor_envelope(envelope)
-        assert rows == [{"id": "1", "name": "alpha"}, {"id": "2", "name": "beta"}]
-
-    def test_index_column_is_stripped(self):
-        """Compressor prefixes an unnamed index column — drop it so users
-        only see business fields."""
-        envelope = {
-            "original_rows": 1,
-            "original_columns": ["name"],
-            "is_compressed": False,
-            "compressed_data": ",name\n0,alpha\n",
-            "removed_columns": [],
-            "compression_type": "none",
-        }
-        rows = unwrap_compressor_envelope(envelope)
-        assert rows == [{"name": "alpha"}]
-
-    def test_empty_dataset_envelope_returns_empty_list(self):
-        envelope = {
-            "original_rows": 0,
-            "original_columns": [],
-            "is_compressed": False,
-            "compressed_data": "Empty dataset",
-            "removed_columns": [],
-            "compression_type": "none",
-        }
-        rows = unwrap_compressor_envelope(envelope)
-        # "Empty dataset" isn't really CSV; csv.DictReader returns no rows.
-        assert rows == []
-
-    def test_whitespace_only_data_returns_empty(self):
-        envelope = {
-            "original_rows": 0,
-            "original_columns": [],
-            "is_compressed": False,
-            "compressed_data": "   \n",
-            "removed_columns": [],
-            "compression_type": "none",
-        }
-        assert unwrap_compressor_envelope(envelope) == []

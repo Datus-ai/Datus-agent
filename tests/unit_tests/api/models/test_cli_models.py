@@ -7,7 +7,7 @@
 import pytest
 from pydantic import ValidationError
 
-from datus.api.models.cli_models import SSEEndData, UserInteractionInput
+from datus.api.models.cli_models import SSEEndData, StreamChatInput, UserInteractionInput
 
 
 class TestSSEEndDataTokenFields:
@@ -108,3 +108,25 @@ class TestUserInteractionInput:
         """Missing input raises validation error."""
         with pytest.raises(ValidationError):
             UserInteractionInput(session_id="s1", interaction_key="k1")
+
+
+class TestStreamChatInputLanguage:
+    """``language`` is an optional per-request override for the configured
+    ``agent.language``. Unset means "inherit yaml default".
+    """
+
+    def test_language_defaults_to_none(self):
+        obj = StreamChatInput(message="hi")
+        assert obj.language is None
+
+    def test_language_accepts_code(self):
+        obj = StreamChatInput(message="hi", language="zh")
+        assert obj.language == "zh"
+
+    def test_language_independent_from_prompt_language(self):
+        """``prompt_language`` selects prompt template variant (unchanged);
+        ``language`` controls user-facing response language (new). Both must
+        travel as separate fields."""
+        obj = StreamChatInput(message="hi", prompt_language="zh", language="en")
+        assert obj.prompt_language == "zh"
+        assert obj.language == "en"

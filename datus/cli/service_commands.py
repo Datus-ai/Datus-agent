@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from rich.table import Table
 
-from datus.cli._render_utils import build_kv_table, build_row_table, unwrap_compressor_envelope
+from datus.cli._render_utils import build_kv_table, build_row_table
 from datus.cli.service_client import ServiceClient, ServiceClientRegistry, service_type_label
 from datus.utils.loggings import get_logger
 
@@ -192,15 +192,14 @@ class ServiceCommands:
     # typical terminal widths, truncated in the middle otherwise.
     _MAX_CELL_WIDTH = 120
 
-    def _render_result(self, result: Any) -> None:
+    def _render_result(self, result: Any, *, service: str = "", method: str = "") -> None:
         """Render a ``FuncToolResult``-shaped dict or a bare payload.
 
-        - List-of-dict payloads (``list_dashboards`` / ``list_charts`` /
-          ``list_metrics`` / ``list_scheduler_jobs`` / ...) render as a
-          Rich table.
-        - Single-dict payloads (``get_dashboard`` / ``get_chart`` /
-          ``get_scheduler_job`` / ...) render as a two-column Field/Value
-          K/V table — otherwise ``extra.raw`` blobs dominate the output.
+        - ``FuncToolListResult`` envelopes (``{items, total, has_more, extra}``)
+          from list_* tools render as a Rich table with a pagination hint
+          when more rows exist upstream.
+        - Single-dict payloads (``get_dashboard`` / ``get_chart`` / ...)
+          render as a two-column Field/Value K/V table.
         - Everything else falls back to indented JSON.
         """
         if isinstance(result, dict) and "success" in result:
@@ -211,20 +210,9 @@ class ServiceCommands:
         else:
             payload = result
 
-        # ``SemanticTools`` returns the ``DataCompressor`` envelope (CSV +
-        # compression metadata) because that shape is token-efficient for
-        # the LLM. For humans at the REPL it's the opposite of
-        # readable — unwrap it back to row dicts before rendering.
-        unwrapped_rows = unwrap_compressor_envelope(payload)
-        if unwrapped_rows is not None:
-            note = self._format_compression_note(payload)
-            if note:
-                self.cli.console.print(note)
-            if not unwrapped_rows:
-                self.cli.console.print("[yellow]Empty set.[/]")
-                return
-            payload = unwrapped_rows
-
+        # Fast-path: FuncToolListResult envelope from any list_* tool.
+        if self._render_list_envelope(payload, service=service, method=method):
+            return
         if self._render_payload_as_table(payload):
             return
         if self._render_payload_as_kv(payload):
@@ -232,22 +220,71 @@ class ServiceCommands:
         rendered = json.dumps(payload, indent=2, ensure_ascii=False, default=str)
         self.cli.console.print(rendered)
 
+    def _render_list_envelope(self, payload: Any, *, service: str, method: str) -> bool:
+        """Render ``FuncToolListResult`` envelopes; return True when handled.
+
+        Envelope shape: ``{items, total, has_more, extra}`` — ``items`` is
+        always a ``List[Dict]``. After rendering the rows, append a pagination
+        hint showing how far into the upstream dataset we are and how to
+        fetch the next page.
+        """
+        if not isinstance(payload, dict):
+            return False
+        if "items" not in payload or not isinstance(payload["items"], list):
+            return False
+        items: list = payload["items"]
+        total = payload.get("total")
+        extra = payload.get("extra") or {}
+
+        if items:
+            table = build_row_table(items, max_cell_width=self._MAX_CELL_WIDTH)
+            if table is not None:
+                self.cli.console.print(table)
+            else:
+                self.cli.console.print(json.dumps(items, indent=2, ensure_ascii=False, default=str))
+        else:
+            self.cli.console.print("[yellow]Empty set.[/]")
+
+        # Pagination hint — only when meaningful (another page is reachable).
+        next_offset = extra.get("next_offset")
+        hint = self._format_pagination_hint(
+            shown=len(items),
+            total=total,
+            next_offset=next_offset,
+            service=service,
+            method=method,
+        )
+        if hint:
+            self.cli.console.print(hint)
+        return True
+
     @staticmethod
-    def _format_compression_note(envelope: dict) -> str:
-        """Return a short ``[dim]...[/]`` line summarising compression state,
-        or an empty string when the envelope didn't actually compress."""
-        if not envelope.get("is_compressed"):
+    def _format_pagination_hint(
+        *,
+        shown: int,
+        total: Optional[int],
+        next_offset: Optional[int],
+        service: str,
+        method: str,
+    ) -> str:
+        """Build the ``Showing X of Y. Next: .<service>.<method> --offset=...``
+        hint. Returns an empty string when there's no next page to suggest.
+        """
+        if next_offset is None:
+            # No "another page exists" signal from the adapter. If total is
+            # known and we already have it all, stay silent; otherwise silent
+            # is still the right call — the tool explicitly didn't hint.
             return ""
-        original_rows = envelope.get("original_rows")
-        ctype = envelope.get("compression_type") or "unknown"
-        removed = envelope.get("removed_columns") or []
-        bits = []
-        if original_rows is not None:
-            bits.append(f"{original_rows} rows original")
-        bits.append(f"compression={ctype}")
-        if removed:
-            bits.append(f"dropped columns: {', '.join(removed)}")
-        return "[dim]" + "; ".join(bits) + "[/]"
+        if total is not None and shown >= total:
+            return ""
+        if total is not None:
+            prefix = f"Showing {shown} of {total}."
+        else:
+            prefix = f"Showing {shown} items."
+        cmd_hint = ""
+        if service and method:
+            cmd_hint = f" Next: .{service}.{method} --offset={next_offset}"
+        return f"[dim]{prefix}{cmd_hint}[/]"
 
     def _render_payload_as_table(self, payload: Any) -> bool:
         """Render a list-of-dict payload as a Rich table.
@@ -328,7 +365,7 @@ class ServiceCommands:
             self.cli.console.print(f"[red]Invocation failed:[/] {exc}")
             return
 
-        self._render_result(result)
+        self._render_result(result, service=client.service_name, method=method_name)
 
     # ------------------------------------------------------------------ #
     # Argument parsing

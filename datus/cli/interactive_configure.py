@@ -605,8 +605,8 @@ class InteractiveConfigure:
         services["databases"] = self.databases
         if "semantic_layer" not in services:
             services["semantic_layer"] = {}
-        if "bi_tools" not in services:
-            services["bi_tools"] = {}
+        if "bi_platforms" not in services:
+            services["bi_platforms"] = {}
         if "schedulers" not in services:
             services["schedulers"] = {}
         agent["services"] = services

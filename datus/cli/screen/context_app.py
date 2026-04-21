@@ -61,7 +61,7 @@ def show_subject_screen(title: str, data: Dict):
     app.run()
 
 
-def show_workflow_context_screen(title: str, data: Dict, run_new_loop=True):
+def show_workflow_context_screen(title: str, data: Dict):
     """
     Show a workflow context screen that displays all context types.
 
@@ -69,26 +69,15 @@ def show_workflow_context_screen(title: str, data: Dict, run_new_loop=True):
         title: Title of the screen
         data: Workflow context data to display
     """
-    _show_screen(ScreenType.WORKFLOW_CONTEXT, title, data, run_new_loop)
+    _show_screen(ScreenType.WORKFLOW_CONTEXT, title, data)
 
 
-def _show_screen(screen_type: ScreenType, title: str, data: Dict, inject_callback=None, run_new_loop=True):
+def _show_screen(screen_type: ScreenType, title: str, data: Dict, inject_callback=None):
     app = ContextApp(screen_type=screen_type, title=title, data=data, inject_callback=inject_callback)
-    if run_new_loop:
-        # Rich already runs in a separate loop, so we need to create a new one
-        import asyncio
-
-        try:
-            event_loop = asyncio.get_event_loop()
-        except RuntimeError:
-            event_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(event_loop)
-        app.run(loop=event_loop)
-    else:
-        app.run()
+    app.run()
 
 
-def show_catalog_screen(title: str, data: Dict, inject_callback=None, run_new_loop=True):
+def show_catalog_screen(title: str, data: Dict, inject_callback=None):
     """
     Show a catalogs screen.
 
@@ -96,4 +85,4 @@ def show_catalog_screen(title: str, data: Dict, inject_callback=None, run_new_lo
         title: Title of the screen
         data: Catalogs data to display
     """
-    _show_screen(ScreenType.CATALOGS, title, data, inject_callback=inject_callback, run_new_loop=run_new_loop)
+    _show_screen(ScreenType.CATALOGS, title, data, inject_callback=inject_callback)

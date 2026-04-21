@@ -76,7 +76,7 @@ By default, Datus points MetricFlow at the current project's semantic model dire
 
 ### Selection Rules
 
-- The key under `services.semantic_layer` is the adapter type, for example `metricflow`.
+- The key under `services.semantic_layer` **must equal the adapter type** (for example `metricflow`). If a `type:` field is present, it must match the key; otherwise Datus raises a configuration error at startup. Comparison is case-insensitive and trims surrounding whitespace, so `MetricFlow` and ` metricflow ` also match.
 - Semantic nodes choose the adapter with `semantic_adapter`.
 - If `semantic_adapter` is omitted and only one semantic layer is configured, Datus uses that adapter automatically.
 - If multiple semantic layers are configured, set `semantic_adapter` explicitly.

@@ -15,7 +15,7 @@
 
 **Enhancements**
 
-- **Session Resume/Rewind** - Added `.resume`, `.rewind`, and `.interrupt` commands with interactive arrow-key selector for navigating conversation history. [#438](https://github.com/Datus-ai/Datus-agent/pull/438) [#470](https://github.com/Datus-ai/Datus-agent/pull/470) [docs](https://docs.datus.ai/cli/chat_command/)
+- **Session Resume/Rewind** - Added `/resume`, `/rewind`, and `.interrupt` commands with interactive arrow-key selector for navigating conversation history. [#438](https://github.com/Datus-ai/Datus-agent/pull/438) [#470](https://github.com/Datus-ai/Datus-agent/pull/470) [docs](https://docs.datus.ai/cli/chat_command/)
 - **Scoped Context Filter** - Filter-based scoped context for more precise knowledge retrieval during SQL generation. [#441](https://github.com/Datus-ai/Datus-agent/pull/441)
 - **Direct Subagent Web Access** - New `--subagent` CLI parameter for launching subagents directly via the web interface. [#447](https://github.com/Datus-ai/Datus-agent/pull/447)
 - **CLI Interaction UX** - Improved multiline input support and ellipsis truncation for better readability. [#468](https://github.com/Datus-ai/Datus-agent/pull/468)
@@ -53,7 +53,7 @@
 - **Action-Based User Interaction Model** - Redesigned the CLI interaction layer to use a unified action-based model for execution, generation, and planning.
 - **Reference SQL Parallelization & Date Support** - Parallelized reference SQL initialization for faster bootstrap, and enhanced date expression parsing. [docs](https://docs.datus.ai/knowledge_base/reference_sql/)
 - **Bootstrap Markdown Summary** - Displays a formatted Markdown summary after bootstrap completion for quick review of generated results. [docs](https://docs.datus.ai/getting_started/dashboard_copilot/)
-- **Subject Entry Deletion** - Added the ability to delete semantic models, metrics, and SQL summaries directly from the `@subject` screen. [docs](https://docs.datus.ai/cli/context_command/#subject)
+- **Subject Entry Deletion** - Added the ability to delete semantic models, metrics, and SQL summaries directly from the `/subject` screen. [docs](https://docs.datus.ai/cli/context_command/#subject)
 
 **Bug Fixes**
 
@@ -135,7 +135,7 @@ skipped
 
 - **Web Chatbot Upgrade** - Added feedback collection, issue reporting, stream output, and `&hide_sidebar=true` parameter for embedding. [docs](https://docs.datus.ai/web_chatbot/introduction/)
 - **Context Generation Commands** - New `/gen_semantic_model`, `/gen_metrics`, and `/gen_sql_summary` commands in subagents for dynamic knowledge base enrichment. [#192](https://github.com/Datus-ai/Datus-agent/issues/192) [docs](https://docs.datus.ai/subagent/builtin_subagents/)
-- **Interactive Context Editing** - Visual editing support for `@catalog` and `@subject` commands to modify semantic models, metrics, and SQL summaries. [#219](https://github.com/Datus-ai/Datus-agent/issues/219) [#199](https://github.com/Datus-ai/Datus-agent/issues/199) [#175](https://github.com/Datus-ai/Datus-agent/issues/175) [docs](https://docs.datus.ai/cli/context_command/#subject)
+- **Interactive Context Editing** - Visual editing support for `/catalog` and `/subject` commands to modify semantic models, metrics, and SQL summaries. [#219](https://github.com/Datus-ai/Datus-agent/issues/219) [#199](https://github.com/Datus-ai/Datus-agent/issues/199) [#175](https://github.com/Datus-ai/Datus-agent/issues/175) [docs](https://docs.datus.ai/cli/context_command/#subject)
 - **Scoped Knowledge Base** - Subagents now support scoped KB initialization for better context isolation and management. [#217](https://github.com/Datus-ai/Datus-agent/issues/217)
 
 **Enhancements**
@@ -156,8 +156,8 @@ skipped
 
 - Advanced multi-turn conversations for seamless interactions. [#91](https://github.com/Datus-ai/Datus-agent/issues/91)
 - Agentic execution of database tools, file system operations, and automatic to-do list generation.
-- Support for both automatic and manual compaction (.compact). [#125](https://github.com/Datus-ai/Datus-agent/issues/125)
-- Session management with .resume and .clear commands.
+- Support for both automatic and manual compaction (/compact). [#125](https://github.com/Datus-ai/Datus-agent/issues/125)
+- Session management with /resume and /clear commands.
 - Provide dedicated context by introducing it with the `@table`, `@file`, `@metrics`, `@sql_history` commands. [#134](https://github.com/Datus-ai/Datus-agent/issues/134) [#152](https://github.com/Datus-ai/Datus-agent/issues/152)
 - Token consumption tracking and estimation for better resource visibility. [#119](https://github.com/Datus-ai/Datus-agent/issues/119)
 - Write-capability confirmations before executing sensitive tool actions.
@@ -171,7 +171,7 @@ skipped
 
 **MCP Extension**
 
-- New .mcp commands to add, remove, list, and call MCP servers and tools. [#54](https://github.com/Datus-ai/Datus-agent/issues/54)
+- New /mcp commands to add, remove, list, and call MCP servers and tools. [#54](https://github.com/Datus-ai/Datus-agent/issues/54)
 
 **Flexible Workflow Configuration**
 
@@ -181,8 +181,8 @@ skipped
 
 **Context Exploration**
 
-- Improve `@catalog` to display all databases, schemas, and tables across multiple databases.
-- New @subject to show all metrics built with MetricFlow. [#165](https://github.com/Datus-ai/Datus-agent/issues/165)
+- Improve `/catalog` to display all databases, schemas, and tables across multiple databases.
+- New /subject to show all metrics built with MetricFlow. [#165](https://github.com/Datus-ai/Datus-agent/issues/165)
 - Context search tools integration to enhance recall of metadata and metrics. [#138](https://github.com/Datus-ai/Datus-agent/issues/138)
 
 **User Behavior Logging**

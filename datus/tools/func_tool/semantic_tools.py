@@ -18,7 +18,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.storage.metric.store import MetricRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.func_tool.attribution_utils import DimensionAttributionUtil
-from datus.tools.func_tool.base import FuncToolResult, normalize_null, trans_to_function_tool
+from datus.tools.func_tool.base import FuncToolListResult, FuncToolResult, normalize_null, trans_to_function_tool
 from datus.tools.semantic_tools.base import BaseSemanticAdapter
 from datus.tools.semantic_tools.models import AnomalyContext
 from datus.tools.semantic_tools.registry import semantic_adapter_registry
@@ -26,6 +26,30 @@ from datus.utils.compress_utils import DataCompressor
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+
+def _normalize_dimension_rows(raw) -> list:
+    """Normalize dimension payload into ``List[Dict[str, Any]]`` for the envelope.
+
+    Adapters (MetricFlow) return pydantic ``DimensionInfo`` objects with a
+    full schema; storage may hold bare strings (dimension name only) or
+    dicts. FuncToolListResult.items must be ``List[Dict]`` either way, so
+    wrap naked strings into ``{"name": str}`` and leave structured rows
+    untouched.
+    """
+    if not raw:
+        return []
+    normalized = []
+    for d in raw:
+        if hasattr(d, "model_dump"):
+            normalized.append(d.model_dump())
+        elif isinstance(d, dict):
+            normalized.append(d)
+        elif isinstance(d, str):
+            normalized.append({"name": d})
+        else:
+            normalized.append({"name": str(d)})
+    return normalized
 
 
 def _run_async(coro):
@@ -235,8 +259,17 @@ class SemanticTools:
             offset: Number of metrics to skip
 
         Returns:
-            FuncToolResult with list of metric dicts, each containing:
-                - name, description, type, dimensions, measures, unit, format, path
+            FuncToolResult with result as FuncToolListResult:
+              - items (List[Dict]): metric rows, each with name, description, type,
+                dimensions, measures, unit, format, path
+              - total (int | None): full metric count before pagination
+              - has_more (bool | None): True when offset + len(items) < total
+              - extra (dict | None): {"next_offset": int} when has_more is True
+
+            Pagination: call again with offset=extra.next_offset until
+            has_more is False. Default limit=100; override if you need bigger
+            pages. list_metrics never compresses — use the limit to control
+            response size.
         """
         # Normalize null values from LLM
         path = normalize_null(path)
@@ -253,7 +286,6 @@ class SemanticTools:
             paginated_metrics = all_metrics[offset : offset + limit]
 
             if paginated_metrics:
-                # Format storage results
                 formatted_metrics = [
                     {
                         "name": m.get("name"),
@@ -267,21 +299,16 @@ class SemanticTools:
                     }
                     for m in paginated_metrics
                 ]
-                return FuncToolResult(
-                    success=1,
-                    result=self.compressor.compress(formatted_metrics),
-                )
+                return self._build_metrics_envelope(formatted_metrics, total=len(all_metrics), offset=offset)
 
-            # Fallback to adapter if storage is empty
+            # Empty storage AND no adapter → empty envelope (total still reflects
+            # the filtered all_metrics, which may be >0 if offset overshot).
             if not self.adapter:
-                return FuncToolResult(
-                    success=1,
-                    result=self.compressor.compress([]),
-                )
+                return self._build_metrics_envelope([], total=len(all_metrics), offset=offset)
 
             logger.info("Storage empty, falling back to adapter")
             async_result = _run_async(self.adapter.list_metrics(path=path, limit=limit, offset=offset))
-            paginated_metrics = [
+            adapter_metrics = [
                 {
                     "name": m.name,
                     "description": m.description,
@@ -294,11 +321,9 @@ class SemanticTools:
                 }
                 for m in async_result
             ]
-
-            return FuncToolResult(
-                success=1,
-                result=self.compressor.compress(paginated_metrics),
-            )
+            # Adapter path has no upstream total — leave it None so consumers
+            # know to use has_more / len(items) < limit as the pagination hint.
+            return self._build_metrics_envelope(adapter_metrics, total=None, offset=offset, limit=limit)
 
         except Exception as e:
             logger.error(f"Error listing metrics: {e}")
@@ -306,6 +331,33 @@ class SemanticTools:
                 success=0,
                 error=f"Failed to list metrics: {str(e)}",
             )
+
+    @staticmethod
+    def _build_metrics_envelope(
+        items: List[dict],
+        *,
+        total: Optional[int],
+        offset: int,
+        limit: Optional[int] = None,
+    ) -> FuncToolResult:
+        """Wrap paginated metric rows into a FuncToolListResult.
+
+        When ``total`` is known (storage path) ``has_more`` is exact. When
+        ``total`` is None (adapter path) ``has_more`` falls back to
+        ``len(items) == limit`` — a heuristic, but good enough for the LLM
+        to decide whether to fetch another page.
+        """
+        if total is not None:
+            has_more: Optional[bool] = offset + len(items) < total
+        elif limit is not None:
+            has_more = len(items) == limit
+        else:
+            has_more = None
+        extra = {"next_offset": offset + len(items)} if has_more else None
+        return FuncToolResult(
+            success=1,
+            result=FuncToolListResult(items=items, total=total, has_more=has_more, extra=extra).model_dump(),
+        )
 
     def get_dimensions(
         self,
@@ -322,7 +374,13 @@ class SemanticTools:
             path: Optional subject tree path (e.g., ["Finance", "Revenue"])
 
         Returns:
-            FuncToolResult with list of dimensions (names or objects depending on source)
+            FuncToolResult with result as FuncToolListResult:
+              - items (List[Dict]): dimension rows. Adapter dimensions expose
+                their full schema (name, type, expr, ...); storage dimensions
+                fall back to a minimal {"name": ...} shape when only names are
+                stored.
+              - total, has_more, extra: dimensions isn't paginated, so total
+                equals len(items) and has_more is False.
         """
         # Normalize null values from LLM
         path = normalize_null(path)
@@ -331,9 +389,10 @@ class SemanticTools:
             # Get dimensions from adapter (MetricFlow) to ensure consistency with query execution
             if self.adapter:
                 dimensions = _run_async(self.adapter.get_dimensions(metric_name=metric_name, path=path))
+                items = _normalize_dimension_rows(dimensions)
                 return FuncToolResult(
                     success=1,
-                    result=dimensions,
+                    result=FuncToolListResult(items=items, total=len(items), has_more=False).model_dump(),
                 )
 
             # Fallback to storage if no adapter configured
@@ -351,16 +410,17 @@ class SemanticTools:
                     metric_details = matching[0]
 
             if metric_details:
-                dimensions = metric_details.get("dimensions", [])
+                raw = metric_details.get("dimensions", [])
+                items = _normalize_dimension_rows(raw)
                 return FuncToolResult(
                     success=1,
-                    result=dimensions,
+                    result=FuncToolListResult(items=items, total=len(items), has_more=False).model_dump(),
                 )
 
             return FuncToolResult(
                 success=0,
                 error=f"Metric '{metric_name}' not found and no adapter configured",
-                result=[],
+                result=FuncToolListResult(items=[], total=0, has_more=False).model_dump(),
             )
 
         except Exception as e:

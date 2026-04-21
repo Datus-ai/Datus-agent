@@ -22,7 +22,8 @@ Send a chat message and stream the response as Server-Sent Events.
 | `catalog`/`database`/`db_schema` | string? | Database context |
 | `table_paths`/`metric_paths`/`sql_paths`/`knowledge_paths` | string[]? | `@`-reference paths |
 | `max_turns`      | int      | Default `30` |
-| `prompt_language`| string   | `en` (default) or `zh` |
+| `prompt_language`| string   | `en` (default) or `zh` — selects the prompt template variant |
+| `language`       | string?  | Optional response language override (e.g. `en`, `zh`, `ja`). Falls back to `agent.language` from yaml; when neither is set, no language directive is injected and the model chooses its own response language. Controls the natural language every agentic node uses for replies, file comments, sub-agent prompts, and `ask_user` questions. Code/SQL/identifiers stay in their original form. |
 | `stream_response`| bool?   | Stream thinking deltas token-by-token; `null` defers to server `--stream` flag (default `false`) |
 
 **Response**: `text/event-stream`. See [Streaming format](#streaming-format) below.

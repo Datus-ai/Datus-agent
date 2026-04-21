@@ -112,7 +112,7 @@ agent:
     semantic_layer:
       metricflow: {}
 
-    bi_tools:
+    bi_platforms:
       superset:
         type: superset
         api_url: http://127.0.0.1:8088
@@ -253,7 +253,7 @@ SELECT COUNT(*) FROM marts.lever__recruitment_analytics_dashboard;
 write_query -> create_dataset -> create_chart -> create_dashboard -> add_chart_to_dashboard
 ```
 
-因为 `bi_tools.superset.dataset_db` 已经指向本地 Superset 所用的 PostgreSQL，Datus 会把查询结果物化进去，并自动注册成 Superset dataset。
+因为 `bi_platforms.superset.dataset_db` 已经指向本地 Superset 所用的 PostgreSQL，Datus 会把查询结果物化进去，并自动注册成 Superset dataset。
 
 ## 步骤 10：验证端到端结果
 

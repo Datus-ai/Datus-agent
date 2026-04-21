@@ -14,12 +14,12 @@ import platform
 import re
 import subprocess
 import sys
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.syntax import Syntax
-from rich.table import Table
 
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
 from datus.cli._cli_utils import select_choice
@@ -28,7 +28,20 @@ from datus.cli.execution_state import ExecutionInterrupted, auto_submit_interact
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
 from datus.utils.loggings import get_logger
-from datus.utils.terminal_utils import interrupt_on_escape
+from datus.utils.terminal_utils import EscapeGuard, interrupt_on_escape
+
+
+@contextmanager
+def _noop_escape_guard():
+    """Context manager that yields an inert :class:`EscapeGuard`.
+
+    Used in TUI mode where prompt_toolkit owns stdin and installing the
+    termios-based ESC listener would conflict. The inert guard's
+    ``paused()`` is a no-op so callers written against the termios path
+    (e.g. ``_make_input_collector``) continue to work unchanged.
+    """
+    yield EscapeGuard()
+
 
 if TYPE_CHECKING:
     from datus.cli.repl import DatusCLI
@@ -82,6 +95,10 @@ class ChatCommands:
         self.last_actions = []
         self.all_turn_actions: List[Tuple[str, List[ActionHistory]]] = []
         self._trace_verbose = False  # toggle state for post-run Ctrl+O
+        # Live handle to the active streaming context, consumed by the TUI
+        # to route ESC (interrupt) and Ctrl+O (verbose toggle) key bindings
+        # to the currently running agent loop. ``None`` when idle.
+        self.current_streaming_ctx = None
 
     def update_chat_node_tools(self):
         """Update current node tools when namespace changes."""
@@ -355,21 +372,40 @@ class ChatCommands:
                     current_user_message=message,
                     interaction_broker=current_node.interaction_broker,
                 )
-                with (
-                    interrupt_on_escape(
+                # Reprint the CLI banner at the top after Ctrl+O clears the screen.
+                banner_callback = getattr(self.cli, "_print_welcome", None)
+                if banner_callback is not None:
+                    streaming_ctx.set_clear_header_callback(banner_callback)
+
+                # In TUI mode the persistent prompt_toolkit Application owns
+                # stdin, so the termios-based ``interrupt_on_escape`` listener
+                # would fight the main input loop. Skip it and rely on
+                # dedicated ESC / Ctrl+O key bindings registered on the TUI
+                # (see ``DatusCLI._init_tui_app``), which consult this
+                # streaming_ctx and the node's interrupt_controller directly.
+                if getattr(self.cli, "_use_tui", False):
+                    esc_cm = _noop_escape_guard()
+                else:
+                    esc_cm = interrupt_on_escape(
                         current_node.interrupt_controller,
                         key_callbacks={b"\x0f": streaming_ctx.toggle_verbose},
-                    ) as esc_guard,
-                    streaming_ctx,
-                ):
-                    streaming_ctx.set_input_collector(self._make_input_collector(esc_guard))
-                    try:
-                        asyncio.run(run_chat_stream())
-                    except KeyboardInterrupt:
-                        current_node.interrupt_controller.interrupt()
-                        logger.info("KeyboardInterrupt caught, execution interrupted gracefully")
-                    except ExecutionInterrupted:
-                        logger.info("ExecutionInterrupted caught, execution stopped gracefully")
+                    )
+
+                # Publish the streaming context so the TUI Ctrl+O / ESC
+                # bindings can locate it while the agent runs.
+                self.current_streaming_ctx = streaming_ctx
+                try:
+                    with esc_cm as esc_guard, streaming_ctx:
+                        streaming_ctx.set_input_collector(self._make_input_collector(esc_guard))
+                        try:
+                            asyncio.run(run_chat_stream())
+                        except KeyboardInterrupt:
+                            current_node.interrupt_controller.interrupt()
+                            logger.info("KeyboardInterrupt caught, execution interrupted gracefully")
+                        except ExecutionInterrupted:
+                            logger.info("ExecutionInterrupted caught, execution stopped gracefully")
+                finally:
+                    self.current_streaming_ctx = None
             else:
 
                 async def run_stream():
@@ -1017,6 +1053,9 @@ class ChatCommands:
         self.console.clear()
         sys.stdout.write("\033[3J")
         sys.stdout.flush()
+        banner_callback = getattr(self.cli, "_print_welcome", None)
+        if banner_callback is not None:
+            banner_callback()
         self.console.print(f"[bold bright_black]  ⎯ switched to {mode_label} mode ⎯[/]")
         action_display = ActionHistoryDisplay(self.console)
 
@@ -1137,79 +1176,6 @@ class ChatCommands:
 
             if last_assistant_actions:
                 self.last_actions = last_assistant_actions
-
-    def cmd_list_sessions(self, args: str):
-        """List chat sessions for the active agent."""
-        try:
-            # Create a session manager directly (don't rely on chat_node)
-            from datus.models.session_manager import SessionManager, session_matches_agent
-
-            session_manager = SessionManager(self.cli.agent_config.session_dir, scope=self.cli.scope)
-            sessions = session_manager.list_sessions()
-            sessions = [s for s in sessions if session_matches_agent(s, self.current_subagent_name)]
-
-            agent_label = self.current_subagent_name or "chat"
-            if not sessions:
-                self.console.print(f"[yellow]No chat sessions found for agent '{agent_label}'.[/]")
-                return
-
-            # Get current session ID for highlighting (if current_node exists)
-            current_session_id = None
-            if self.current_node and hasattr(self.current_node, "session_id"):
-                current_session_id = self.current_node.session_id
-
-            # Get session info for all sessions first to enable sorting
-            sessions_with_info = []
-            for session_id in sessions:
-                session_data = {"session_id": session_id}
-                try:
-                    info = session_manager.get_session_info(session_id)
-                    if info.get("exists"):
-                        session_data["created_at"] = info.get("created_at") or ""
-                        session_data["last_updated"] = info.get("updated_at") or info.get("latest_message_at") or ""
-                        session_data["total_turns"] = info.get("message_count", 0)
-                    if self.current_node and hasattr(self.current_node, "_get_session_details"):
-                        detailed_info = self.current_node._get_session_details(session_id)
-                        session_data.update(detailed_info)
-                except Exception as e:
-                    logger.debug(f"Could not get detailed info for session {session_id}: {e}")
-                sessions_with_info.append(session_data)
-
-            # Sort by last_updated (most recent first)
-            sessions_with_info.sort(
-                key=lambda x: x.get("last_updated", x.get("created_at", "")),
-                reverse=True,
-            )
-
-            # Create a table to display sessions
-            table = Table(title="Chat Sessions", show_header=True, header_style="bold blue")
-            table.add_column("Session ID", style="cyan", no_wrap=True)
-            table.add_column("Created", style="green")
-            table.add_column("Last Updated", style="yellow")
-            table.add_column("Conversations", justify="right", style="magenta")
-            table.add_column("SQL Queries", justify="right", style="blue")
-
-            for session in sessions_with_info:
-                session_id = session["session_id"]
-                created = session.get("created_at", "Unknown")[:19]  # Trim to datetime
-                updated = session.get("last_updated", "Unknown")[:19]
-                conversations = session.get("total_turns", 0)
-                sql_count = len(session.get("last_sql_queries", []))
-
-                # Highlight current session
-                if session_id == current_session_id:
-                    session_id = f"→ {session_id}"
-
-                table.add_row(session_id, created, updated, str(conversations), str(sql_count))
-
-            self.console.print(table)
-
-            if current_session_id:
-                self.console.print("\n[dim]→ indicates current active session[/]")
-
-        except Exception as e:
-            logger.error(f"Error listing sessions: {e}")
-            self.console.print(f"[bold red]Error:[/] {str(e)}")
 
     @staticmethod
     def _extract_node_type_from_session_id(session_id: str) -> str:

@@ -363,7 +363,7 @@ datus skill logout --marketplace http://datus-marketplace:9000
 
 In the REPL:
 ```
-datus> .skill login http://datus-marketplace:9000
+datus> /skill login http://datus-marketplace:9000
 Email: user@example.com
 Password: ****
 Login successful! Token saved for http://datus-marketplace:9000
@@ -534,13 +534,13 @@ datus skill remove sql-optimization
 The same skill operations are available inside the interactive REPL session:
 
 ```
-datus> .skill list                          # List local skills
-datus> .skill search sql                    # Search marketplace
-datus> .skill install sql-optimization      # Install from marketplace
-datus> .skill publish ./skills/my-skill     # Publish to marketplace
-datus> .skill info sql-optimization         # Show skill details
-datus> .skill update                        # Update marketplace skills
-datus> .skill remove sql-optimization       # Remove local skill
+datus> /skill list                          # List local skills
+datus> /skill search sql                    # Search marketplace
+datus> /skill install sql-optimization      # Install from marketplace
+datus> /skill publish ./skills/my-skill     # Publish to marketplace
+datus> /skill info sql-optimization         # Show skill details
+datus> /skill update                        # Update marketplace skills
+datus> /skill remove sql-optimization       # Remove local skill
 ```
 
 ### End-to-End Workflow Example

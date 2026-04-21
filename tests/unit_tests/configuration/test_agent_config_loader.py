@@ -352,7 +352,7 @@ class TestLoadNodeConfig:
 
 class TestLoadAgentConfigResolution:
     """Cover the post-override resolution that guarantees ``current_database``
-    is populated for every entry point (REPL, datus-api, datus-claw, SDK),
+    is populated for every entry point (REPL, datus-api, datus-gateway, SDK),
     regardless of whether ``override_by_args`` ran for the CLI ``action``.
     """
 

@@ -79,7 +79,7 @@ class FilesystemFuncTool(BaseTool):
             strict: When ``True``, ``EXTERNAL`` paths (anything outside the
                 project root and its whitelist) are rejected at the tool layer
                 with the same "not found" semantics as ``HIDDEN``. This is the
-                mode the API / claw surfaces run in — the agent has no
+                mode the API / gateway surfaces run in — the agent has no
                 interactive broker to confirm external access, so we fail
                 closed instead of ever touching the host filesystem.
                 ``False`` (the CLI default) lets ``PermissionHooks`` prompt
@@ -139,7 +139,7 @@ class FilesystemFuncTool(BaseTool):
         Unlike ``_not_found``, this is explicit: the caller **asked** for a
         path outside the workspace, so hiding the rejection would be
         confusing. The error message names the path so the LLM can fix it
-        on the next turn. Used by the API / claw surfaces that have no
+        on the next turn. Used by the API / gateway surfaces that have no
         interactive broker to prompt the user.
         """
         return FuncToolResult(

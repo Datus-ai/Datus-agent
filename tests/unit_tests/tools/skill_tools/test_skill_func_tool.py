@@ -78,6 +78,23 @@ description: An internal skill
 """
     )
 
+    # Create a skill scoped to the ``gen_table`` subagent — used to exercise
+    # the ``authoring_mode`` bypass and ``node_class`` alias matching.
+    scoped_dir = skills_dir / "scoped-table"
+    scoped_dir.mkdir()
+    (scoped_dir / "SKILL.md").write_text(
+        """---
+name: scoped-table
+description: Only usable by the gen_table subagent
+allowed_agents:
+  - gen_table
+---
+
+# Scoped Table Skill
+Body.
+"""
+    )
+
     return skills_dir
 
 
@@ -152,6 +169,53 @@ class TestSkillFuncToolLoadSkill:
         assert result.success == 0
         assert result.error is not None
         assert "not available" in result.error.lower()
+
+    def test_aliased_authoring_tool_can_load_scoped_skill(self, skill_manager):
+        """End-to-end: an aliased ``gen_skill`` subagent (e.g.
+        ``my_skill_editor`` with ``node_class: gen_skill``) instantiates
+        ``SkillFuncTool`` with ``node_class="gen_skill"`` and
+        ``authoring_mode=True``. It must then be able to ``load_skill`` a
+        scoped skill (``allowed_agents: [gen_table]``) — proving that the
+        alias-aware scope check and the authoring bypass are wired through
+        the whole ``SkillFuncTool -> SkillManager -> registry`` chain.
+        """
+        tool = SkillFuncTool(
+            manager=skill_manager,
+            node_name="my_skill_editor",
+            node_class="gen_skill",
+            authoring_mode=True,
+        )
+        result = tool.load_skill("scoped-table")
+
+        assert result.success == 1
+        assert result.result is not None
+        assert "Scoped Table Skill" in result.result
+
+    def test_non_authoring_tool_is_still_blocked_by_scope(self, skill_manager):
+        """Chat (no authoring mode) cannot bypass ``allowed_agents``."""
+        tool = SkillFuncTool(
+            manager=skill_manager,
+            node_name="chat",
+            node_class="chat",
+        )
+        result = tool.load_skill("scoped-table")
+
+        assert result.success == 0
+        assert result.error is not None
+        assert "not available" in result.error.lower()
+
+    def test_aliased_non_authoring_tool_passes_via_node_class(self, skill_manager):
+        """An alias whose ``node_class`` matches the whitelist loads even
+        without ``authoring_mode`` — scope check honours the class name."""
+        tool = SkillFuncTool(
+            manager=skill_manager,
+            node_name="my_tables",
+            node_class="gen_table",
+        )
+        result = tool.load_skill("scoped-table")
+
+        assert result.success == 1
+        assert result.result is not None
 
     def test_load_skill_with_scripts(self, skill_func_tool):
         """Test loading a skill with scripts creates bash tool."""

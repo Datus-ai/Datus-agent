@@ -22,7 +22,8 @@ Chat 相关接口驱动 Agent 的对话循环。流式接口以 Server-Sent Even
 | `catalog`/`database`/`db_schema` | string? | 数据库上下文 |
 | `table_paths`/`metric_paths`/`sql_paths`/`knowledge_paths` | string[]? | `@` 引用路径 |
 | `max_turns`      | int      | 默认 `30` |
-| `prompt_language`| string   | `en`(默认)或 `zh` |
+| `prompt_language`| string   | `en`(默认)或 `zh`——选择 prompt 模板变体 |
+| `language`       | string?  | 响应语言覆盖（如 `en`、`zh`、`ja`）。留空时回退到 yaml 中的 `agent.language`；若 yaml 也未设置，则不向 system prompt 注入语言指令，由模型自行选择回答语言。控制所有 agentic 节点的回答文本、写入文件的注释、调用子 agent 的 prompt 及 `ask_user` 问题所使用的自然语言；代码、SQL、标识符保持原样。 |
 | `stream_response`| bool?   | 是否逐 token 流式下发 thinking 内容;`null` 时使用服务端 `--stream` 启动参数(默认 `false`) |
 
 **响应**:`text/event-stream`,格式见下文 [流式格式](#streaming-format)。

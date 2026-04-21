@@ -39,6 +39,33 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+_LANGUAGE_NAME_MAP: Dict[str, str] = {
+    "en": "English",
+    "zh": "Chinese",
+    "zh-cn": "Chinese",
+    "zh-tw": "Traditional Chinese",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "es": "Spanish",
+    "fr": "French",
+    "de": "German",
+    "pt": "Portuguese",
+    "ru": "Russian",
+    "it": "Italian",
+}
+
+
+def _resolve_language_name(code: str) -> str:
+    """Map a language code (e.g. ``"zh"``) to a human-readable name.
+
+    Unknown codes are returned as-is so operators can plug in custom values
+    without a code change.
+    """
+    if not code:
+        return "English"
+    return _LANGUAGE_NAME_MAP.get(code.strip().lower(), code)
+
+
 class AgenticNode(Node):
     """
     Base agentic node that provides session-based, streaming interactions
@@ -46,6 +73,12 @@ class AgenticNode(Node):
     """
 
     DEFAULT_SUBAGENTS = "explore"
+
+    # When True, this node's ``SkillFuncTool`` loads skills in *authoring* mode:
+    # ``allowed_agents`` scoping on ``load_skill`` is bypassed so the agent can
+    # read any skill by name (used by ``gen_skill`` for edit/optimize flows).
+    # Visibility in ``<available_skills>`` is still filtered normally.
+    SKILL_AUTHORING_MODE: bool = False
 
     def __init__(
         self,
@@ -172,6 +205,34 @@ class AgenticNode(Node):
 
         return template_name.lower()
 
+    def get_node_class_name(self) -> str:
+        """Canonical identifier for this node's underlying class.
+
+        ``get_node_name()`` may return a per-instance alias when a subagent is
+        registered under a custom id (e.g. ``my_dashboard`` backed by
+        ``GenDashboardAgenticNode``). Scoping mechanisms like
+        ``SkillMetadata.allowed_agents`` need a stable class-level identifier so
+        a whitelist written against the canonical class (``gen_dashboard``)
+        still applies to all aliases of that class.
+
+        Resolution order:
+        1. ``type(self).NODE_NAME`` if the subclass declares it — the
+           recommended form, used by ``gen_dashboard``, ``gen_table``,
+           ``scheduler``, ``gen_skill`` etc.
+        2. Otherwise derive from the class name via the *base*
+           ``AgenticNode.get_node_name`` (e.g. ``ExploreAgenticNode`` →
+           ``explore``). This is the safety net for alias-capable subclasses
+           that haven't added ``NODE_NAME``: we must NOT fall back to
+           ``self.get_node_name()``, since overrides there return the alias.
+
+        Returns:
+            A stable class-level identifier independent of any alias.
+        """
+        node_class = getattr(type(self), "NODE_NAME", None)
+        if node_class:
+            return node_class
+        return AgenticNode.get_node_name(self)
+
     def _get_system_prompt(
         self, conversation_summary: Optional[str] = None, prompt_version: Optional[str] = None
     ) -> str:
@@ -261,6 +322,36 @@ class AgenticNode(Node):
         # Inject memory context for eligible nodes.
         base_prompt = self._inject_memory_context(base_prompt, override_node_name=memory_node_name_override)
 
+        # Inject response language policy so every agentic node — including
+        # sub-agents invoked via ``task`` — honors the configured output language.
+        base_prompt = self._inject_response_language(base_prompt)
+
+        return base_prompt
+
+    def _inject_response_language(self, base_prompt: str) -> str:
+        """Append a language directive driven by ``agent_config.language``.
+
+        When ``language`` is unset (``None`` or empty), this is a no-op so the
+        model decides the response language on its own. Setting a code (e.g.
+        ``"en"``/``"zh"``) in yaml or via the Chat API pins every AgenticNode
+        to that output language through a single append hook.
+        """
+        language_raw = getattr(self.agent_config, "language", None)
+        if not language_raw or not str(language_raw).strip():
+            return base_prompt
+        language_code = str(language_raw).strip()
+        try:
+            language_section = get_prompt_manager(agent_config=self.agent_config).render_template(
+                template_name="response_language",
+                version=None,
+                language_code=language_code,
+                language_name=_resolve_language_name(language_code),
+            )
+        except Exception as e:
+            logger.warning(f"Failed to render response_language template: {e}")
+            return base_prompt
+        if language_section and language_section.strip():
+            base_prompt = base_prompt + "\n\n" + language_section
         return base_prompt
 
     def _inject_memory_context(self, base_prompt: str, override_node_name: Optional[str] = None) -> str:
@@ -729,6 +820,8 @@ class AgenticNode(Node):
             self.skill_func_tool = SkillFuncTool(
                 manager=self.skill_manager,
                 node_name=self.get_node_name(),
+                node_class=self.get_node_class_name(),
+                authoring_mode=self.SKILL_AUTHORING_MODE,
             )
             logger.info(
                 f"Skill func tools activated for node '{self.get_node_name()}' with pattern '{skill_patterns_str}'"
@@ -858,6 +951,7 @@ class AgenticNode(Node):
         return self.skill_manager.generate_available_skills_xml(
             node_name=self.get_node_name(),
             patterns=skill_patterns,
+            node_class=self.get_node_class_name(),
         )
 
     def _get_tool_category(self, tool_name: str) -> str:
@@ -1241,7 +1335,7 @@ class AgenticNode(Node):
         """Resolve the ``strict`` flag for this node's filesystem tool.
 
         Reads ``self.agent_config.filesystem_strict`` (process-wide default set
-        by API / claw bootstraps, or by ``agent.filesystem.strict`` / the
+        by API / gateway bootstraps, or by ``agent.filesystem.strict`` / the
         ``--filesystem-strict`` CLI flag). CLI leaves it unset so EXTERNAL
         access falls back to broker-prompt behavior.
         """
@@ -1257,7 +1351,7 @@ class AgenticNode(Node):
         ``get_node_name()`` — the two inputs the path policy module expects to
         classify ``.datus/memory/{current_node}/**`` as a whitelist subtree
         for this node only. The ``strict`` flag is resolved from
-        ``agent_config.filesystem_strict`` so API / claw can opt out of
+        ``agent_config.filesystem_strict`` so API / gateway can opt out of
         interactive EXTERNAL prompts.
         """
         from datus.tools.func_tool import FilesystemFuncTool

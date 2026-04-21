@@ -90,6 +90,8 @@ class SkillMetadata(BaseModel):
           - "sh:*.sh"
         disable_model_invocation: false
         user_invocable: true
+        allowed_agents:
+          - gen_dashboard
         context: fork
         agent: Explore
         ---
@@ -103,6 +105,9 @@ class SkillMetadata(BaseModel):
         allowed_commands: Patterns for allowed script execution (Claude Code compatible)
         disable_model_invocation: If true, only user can invoke via /skill-name
         user_invocable: If false, hidden from menu, only model invokes
+        allowed_agents: Node names (from ``AgenticNode.get_node_name()``) allowed
+            to see and load this skill. Empty list means no restriction — every
+            agent can see it.
         context: "fork" to run in isolated subagent
         agent: Subagent type when context=fork (Explore, Plan, general-purpose)
         content: Full SKILL.md content (lazy loaded)
@@ -123,6 +128,11 @@ class SkillMetadata(BaseModel):
     # Invocation control
     disable_model_invocation: bool = Field(default=False, description="If true, only user can invoke via /skill-name")
     user_invocable: bool = Field(default=True, description="If false, hidden from menu, only model invokes")
+    # Agent scoping: empty list == no restriction; non-empty == whitelist of node names
+    allowed_agents: List[str] = Field(
+        default_factory=list,
+        description="Agent node names allowed to see/load this skill; empty = unrestricted",
+    )
     # Subagent execution
     context: Optional[str] = Field(default=None, description="'fork' to run in isolated subagent")
     agent: Optional[str] = Field(default=None, description="Subagent type when context=fork")
@@ -170,6 +180,7 @@ class SkillMetadata(BaseModel):
             allowed_commands=frontmatter.get("allowed_commands", []),
             disable_model_invocation=frontmatter.get("disable_model_invocation", False),
             user_invocable=frontmatter.get("user_invocable", True),
+            allowed_agents=frontmatter.get("allowed_agents", []),
             context=frontmatter.get("context"),
             agent=frontmatter.get("agent"),
             license=frontmatter.get("license"),
@@ -200,6 +211,28 @@ class SkillMetadata(BaseModel):
         """
         return self.context == "fork"
 
+    def is_allowed_for(self, *node_names: Optional[str]) -> bool:
+        """Check whether an agent is allowed to see this skill.
+
+        Empty ``allowed_agents`` means no restriction. A non-empty list is a
+        whitelist matched against *any* of the supplied identifiers — callers
+        typically pass both the node alias (``get_node_name()``) and the
+        canonical class name (``get_node_class_name()``) so that a custom
+        subagent alias (e.g. ``my_dashboard`` with ``node_class: gen_dashboard``)
+        still matches a whitelist written in terms of the class name.
+
+        Args:
+            *node_names: One or more identifiers to test against. ``None`` /
+                empty values are ignored.
+
+        Returns:
+            True if the skill has no scoping or any provided identifier is
+            whitelisted.
+        """
+        if not self.allowed_agents:
+            return True
+        return any(name in self.allowed_agents for name in node_names if name)
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization.
 
@@ -215,6 +248,7 @@ class SkillMetadata(BaseModel):
             "allowed_commands": self.allowed_commands,
             "disable_model_invocation": self.disable_model_invocation,
             "user_invocable": self.user_invocable,
+            "allowed_agents": self.allowed_agents,
             "context": self.context,
             "agent": self.agent,
             "license": self.license,

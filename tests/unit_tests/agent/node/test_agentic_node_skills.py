@@ -155,6 +155,7 @@ class TestFinalizeSystemPrompt:
         )
         node.skill_func_tool = None
         monkeypatch.setattr(node, "_inject_memory_context", lambda p, override_node_name=None: p)
+        monkeypatch.setattr(node, "_inject_response_language", lambda p: p)
 
         base_prompt = "This is the base system prompt."
         result = node._finalize_system_prompt(base_prompt)
@@ -198,6 +199,7 @@ class TestFinalizeSystemPrompt:
         node.skill_manager = skill_manager
         node.skill_func_tool = SkillFuncTool(manager=skill_manager, node_name="test_node")
         monkeypatch.setattr(node, "_inject_memory_context", lambda p, override_node_name=None: p)
+        monkeypatch.setattr(node, "_inject_response_language", lambda p: p)
 
         base_prompt = "This is the base system prompt."
         result = node._finalize_system_prompt(base_prompt)
@@ -550,6 +552,169 @@ class TestSkillManagerSetup:
         assert node.skill_manager is not None
         assert isinstance(node.skill_manager, SkillManager)
         assert node.skill_manager.get_skill_count() > 0
+
+
+@pytest.fixture
+def scoped_skill_manager(tmp_path, permission_manager):
+    """A SkillManager whose directory contains skills with allowed_agents scoping."""
+    skills_dir = tmp_path / "scoped_skills"
+    skills_dir.mkdir()
+
+    # Skill only for the "gen_dashboard" subagent.
+    scoped = skills_dir / "scoped-dashboard"
+    scoped.mkdir()
+    (scoped / "SKILL.md").write_text(
+        """---
+name: scoped-dashboard
+description: Scoped dashboard workflow
+allowed_agents:
+  - gen_dashboard
+---
+
+# Scoped Dashboard
+Body for the subagent only.
+"""
+    )
+
+    # Skill unrestricted (no allowed_agents), visible to every agent.
+    shared = skills_dir / "shared-helper"
+    shared.mkdir()
+    (shared / "SKILL.md").write_text(
+        """---
+name: shared-helper
+description: Shared across agents
+---
+
+# Shared Helper
+Body visible to everyone.
+"""
+    )
+
+    config = SkillConfig(directories=[str(skills_dir)])
+    return SkillManager(config=config, permission_manager=permission_manager)
+
+
+class TestAllowedAgentsInAgenticNode:
+    """Agent-scoped skills must be filtered out of a node's <available_skills> XML."""
+
+    def test_disallowed_agent_hides_scoped_skill(self, mock_agent_config, scoped_skill_manager):
+        mock_agent_config.agentic_nodes = {"test_node": {"skills": "*"}}
+
+        node = MinimalAgenticNode(
+            node_id="scoped1",
+            description="Test node",
+            node_type="chat",
+            agent_config=mock_agent_config,
+        )
+        node.skill_manager = scoped_skill_manager
+
+        xml = node._get_available_skills_context()
+        # test_node is not in any skill's allowed_agents → scoped-dashboard hidden.
+        assert "scoped-dashboard" not in xml
+        # Unrestricted skill still visible.
+        assert "shared-helper" in xml
+
+    def test_allowed_agent_sees_scoped_skill(self, mock_agent_config, scoped_skill_manager):
+        mock_agent_config.agentic_nodes = {"gen_dashboard": {"skills": "*"}}
+
+        class DashboardNode(MinimalAgenticNode):
+            def get_node_name(self) -> str:
+                return "gen_dashboard"
+
+        node = DashboardNode(
+            node_id="scoped2",
+            description="Dashboard node",
+            node_type="chat",
+            agent_config=mock_agent_config,
+        )
+        node.skill_manager = scoped_skill_manager
+
+        xml = node._get_available_skills_context()
+        assert "scoped-dashboard" in xml
+        assert "shared-helper" in xml
+
+    def test_alias_capable_subclass_without_NODE_NAME_resolves_via_base(
+        self, mock_agent_config, tmp_path, permission_manager
+    ):
+        """Regression guard for CodeRabbit review: an alias-capable subclass
+        that overrides ``get_node_name()`` but hasn't declared ``NODE_NAME``
+        must still resolve ``get_node_class_name()`` to a stable class-level
+        identifier (derived via the base ``AgenticNode.get_node_name``), not
+        the alias. Mirrors the real ``ExploreAgenticNode`` shape prior to the
+        fix (override returns alias, no class constant)."""
+        skills_dir = tmp_path / "explore_skills"
+        skills_dir.mkdir()
+        scoped = skills_dir / "explore-guide"
+        scoped.mkdir()
+        # The class below is ``MockedExploreAgenticNode``; the base
+        # ``AgenticNode.get_node_name`` strips the ``AgenticNode`` suffix and
+        # lowercases, yielding ``"mockedexplore"`` as the canonical class id.
+        (scoped / "SKILL.md").write_text(
+            """---
+name: explore-guide
+description: Scoped to the explore subagent
+allowed_agents:
+  - mockedexplore
+---
+
+# Explore Guide
+"""
+        )
+
+        from datus.tools.skill_tools.skill_config import SkillConfig as _Cfg
+
+        manager = SkillManager(config=_Cfg(directories=[str(skills_dir)]), permission_manager=permission_manager)
+
+        mock_agent_config.agentic_nodes = {"my_explorer": {"skills": "*"}}
+
+        class MockedExploreAgenticNode(MinimalAgenticNode):
+            """No NODE_NAME; ``get_node_name`` returns the alias — same shape
+            as pre-fix ExploreAgenticNode. ``AgenticNode.get_node_name``
+            strips the ``AgenticNode`` suffix and lowercases, yielding
+            ``"mockedexplore"`` as the class-derived identifier."""
+
+            def get_node_name(self) -> str:  # returns the alias
+                return "my_explorer"
+
+        node = MockedExploreAgenticNode(
+            node_id="alias_no_nodename",
+            description="alias-capable no NODE_NAME",
+            node_type="chat",
+            agent_config=mock_agent_config,
+        )
+        node.skill_manager = manager
+
+        # get_node_class_name must ignore the override and return the stable
+        # class-derived name.
+        assert node.get_node_class_name() == "mockedexplore"
+
+        # ``allowed_agents: [mockedexplore]`` matches via class name even
+        # though the alias ``my_explorer`` is not whitelisted.
+        xml = node._get_available_skills_context()
+        assert "explore-guide" in xml
+
+    def test_custom_alias_with_matching_class_sees_scoped_skill(self, mock_agent_config, scoped_skill_manager):
+        """A subagent registered under a custom alias should still match a
+        class-scoped ``allowed_agents`` whitelist via its ``NODE_NAME``."""
+        mock_agent_config.agentic_nodes = {"my_dashboard": {"skills": "*"}}
+
+        class AliasedDashboardNode(MinimalAgenticNode):
+            NODE_NAME = "gen_dashboard"
+
+            def get_node_name(self) -> str:
+                return "my_dashboard"
+
+        node = AliasedDashboardNode(
+            node_id="scoped3",
+            description="Aliased dashboard node",
+            node_type="chat",
+            agent_config=mock_agent_config,
+        )
+        node.skill_manager = scoped_skill_manager
+
+        xml = node._get_available_skills_context()
+        assert "scoped-dashboard" in xml, "alias should inherit class-level scope"
+        assert "shared-helper" in xml
 
 
 class TestSkillIntegrationEdgeCases:

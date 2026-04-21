@@ -53,11 +53,11 @@ class BenchmarkTutorial:
             config_manager = configuration_manager(config_path=self.config_path, reload=True)
             services_config = config_manager.data.get(
                 "services",
-                {"databases": {}, "semantic_layer": {}, "bi_tools": {}, "schedulers": {}},
+                {"databases": {}, "semantic_layer": {}, "bi_platforms": {}, "schedulers": {}},
             )
             services_config.setdefault("databases", {})
             services_config.setdefault("semantic_layer", {})
-            services_config.setdefault("bi_tools", {})
+            services_config.setdefault("bi_platforms", {})
             services_config.setdefault("schedulers", {})
             services_config["databases"]["california_schools"] = {
                 "type": "sqlite",

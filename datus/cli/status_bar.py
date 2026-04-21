@@ -58,6 +58,7 @@ class StatusBarState:
     context_used: int = 0
     context_total: int = 0
     plan_mode: bool = False
+    agent_running: bool = False
 
     def context_display(self) -> str:
         if self.context_total > 0:
@@ -107,9 +108,15 @@ class StatusBarState:
                 ("class:status-bar.tokens", self.tokens_display()),
                 sep,
                 ("class:status-bar.ctx", self.context_display()),
-                pad,
             ]
         )
+        if self.agent_running:
+            # Trailing indicator signals that the REPL is busy. It is only
+            # surfaced by the TUI path, which sets ``agent_running`` via
+            # ``StatusBarProvider.current_state``; the legacy PromptSession
+            # never exposes a truthy value so its rendering is unchanged.
+            tokens.extend([sep, ("class:status-bar.running", "● running")])
+        tokens.append(pad)
         return tokens
 
 
@@ -121,6 +128,13 @@ class StatusBarProvider:
 
     def current_state(self) -> StatusBarState:
         cumulative, cached = self._resolve_session_totals()
+        tui_app = getattr(self._cli, "tui_app", None)
+        agent_running = False
+        if tui_app is not None:
+            try:
+                agent_running = tui_app.agent_running.is_set()
+            except Exception as e:  # pragma: no cover - defensive
+                logger.debug(f"status_bar: failed to read agent_running: {e}")
         return StatusBarState(
             agent=self._resolve_agent(),
             model=self._resolve_model(),
@@ -130,6 +144,7 @@ class StatusBarProvider:
             context_used=self._resolve_context_used(),
             context_total=self._resolve_context_total(),
             plan_mode=bool(getattr(self._cli, "plan_mode_active", False)),
+            agent_running=agent_running,
         )
 
     def _current_node(self):

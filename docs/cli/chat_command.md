@@ -66,16 +66,16 @@ Press **Ctrl+O** while the agent is running to toggle the trace display mode bet
 
 ### Session Commands
 
-- `.clear`: Clear the current session context and start fresh
-- `.compact`: Compress previous turns to reduce memory usage while preserving context
-  - Auto-trigger: `.compact` will run automatically when the model context usage exceeds 90%, so you can continue chatting without hitting limits
-- `.chat_info`: Show the current active context (messages, tables, metrics)
-- `.resume [session_id]`: Resume a previous chat session
+- `/clear`: Clear the current session context and start fresh
+- `/compact`: Compress previous turns to reduce memory usage while preserving context
+  - Auto-trigger: `/compact` will run automatically when the model context usage exceeds 90%, so you can continue chatting without hitting limits
+- `/chat_info`: Show the current active context (messages, tables, metrics)
+- `/resume [session_id]`: Resume a previous chat session
   - Without arguments: displays a table of all available sessions (sorted by last modified time), then prompts you to pick one by number
   - With a session ID: directly resumes that specific session
   - After resuming, the full conversation history is replayed so you can see what was discussed, and you can continue chatting from where you left off
-  - If the session has high token usage (>50k tokens), a hint is shown suggesting `.compact` to reduce context size
-- `.rewind [turn_number]`: Rewind the current session to a specific user turn, creating a new branched session
+  - If the session has high token usage (>50k tokens), a hint is shown suggesting `/compact` to reduce context size
+- `/rewind [turn_number]`: Rewind the current session to a specific user turn, creating a new branched session
   - Displays a numbered table of all user turns in the current session
   - You select a turn number — the session is cloned up to (and including) that turn's assistant response, producing a new session
   - The original session is preserved; the rewound copy becomes your active session

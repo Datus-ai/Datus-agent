@@ -4,6 +4,8 @@ description: Optimize and improve existing Datus skills. Use when users want to 
 tags: [skill, optimization, improvement]
 version: "1.0.0"
 user_invocable: false
+allowed_agents:
+  - gen_skill
 ---
 
 # Optimize Skill

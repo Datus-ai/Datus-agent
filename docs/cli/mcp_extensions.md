@@ -4,7 +4,7 @@
 
 MCP (Model Context Protocol) is how Datus-CLI connects to external tool servers — enabling your agent to gain new capabilities beyond what's built in.
 
-With `.mcp`, you can:
+With `/mcp`, you can:
 
 - Add local or remote MCP servers (stdio, HTTP, SSE)
 - List all available servers and their status
@@ -18,21 +18,21 @@ This makes Datus-CLI infinitely extensible: you can plug in SQLite, Snowflake, M
 ### Add a New MCP Server
 
 ```bash
-.mcp add <name> <command> [args...]
+/mcp add <name> <command> [args...]
 ```
 
 **Examples:**
 
 ```bash
 # Local stdio-based server
-.mcp add --transport stdio sqlite /Users/me/bin/uv -- -m mcp_sqlite_server
+/mcp add --transport stdio sqlite /Users/me/bin/uv -- -m mcp_sqlite_server
 
 # SSE server with authentication header
-.mcp add --transport sse api-server https://api.example.com/mcp/sse \
+/mcp add --transport sse api-server https://api.example.com/mcp/sse \
   --header "Authorization: Bearer token" --timeout 30.0
 
 # HTTP stream server
-.mcp add --transport http metricflow https://localhost:9000/mcp
+/mcp add --transport http metricflow https://localhost:9000/mcp
 ```
 
 ---
@@ -40,7 +40,7 @@ This makes Datus-CLI infinitely extensible: you can plug in SQLite, Snowflake, M
 ### List Existing Servers
 
 ```bash
-.mcp list
+/mcp list
 ```
 
 Shows all configured MCP servers and their status:
@@ -60,7 +60,7 @@ You can press Enter to view server details, such as command, args, environment, 
 ### Check a Specific Server
 
 ```bash
-.mcp check <mcp_name>
+/mcp check <mcp_name>
 ```
 
 Verifies connectivity and prints available tools from that server.
@@ -70,14 +70,14 @@ Verifies connectivity and prints available tools from that server.
 ### Call a Tool from a Server
 
 ```bash
-.mcp call <mcp_name>.<tool_name> <args>
+/mcp call <mcp_name>.<tool_name> <args>
 ```
 
 **Examples:**
 
 ```bash
-.mcp call sqlite.list_tables
-.mcp call metricflow.query_metrics '{"metrics": "revenue"}'
+/mcp call sqlite.list_tables
+/mcp call metricflow.query_metrics '{"metrics": "revenue"}'
 ```
 
 ---
@@ -85,7 +85,7 @@ Verifies connectivity and prints available tools from that server.
 ### Remove a Server
 
 ```bash
-.mcp remove <name>
+/mcp remove <name>
 ```
 
 Removes an existing MCP server configuration from your `~/.datus/conf/.mcp.json`.
@@ -98,16 +98,16 @@ Allows you to explicitly include or exclude specific tools exposed by a server.
 
 ```bash
 # Allow only specific tools
-.mcp filter set <mcp_name> include read_query,list_tables
+/mcp filter set <mcp_name> include read_query,list_tables
 
 # Reject specific tools (all others allowed)
-.mcp filter set <mcp_name> exclude write_query,drop_table
+/mcp filter set <mcp_name> exclude write_query,drop_table
 
 # Check current filters
-.mcp filter get <mcp_name>
+/mcp filter get <mcp_name>
 
 # Remove all filters for a server
-.mcp filter remove <mcp_name>
+/mcp filter remove <mcp_name>
 ```
 
 ---
@@ -189,31 +189,31 @@ MCP configurations support environment variable expansion:
 
 ```bash
 # Add SQLite server for local development
-.mcp add sqlite uvx mcp-server-sqlite --db-path ./data/sample.db
+/mcp add sqlite uvx mcp-server-sqlite --db-path ./data/sample.db
 
 # Query tables through MCP
-.mcp call sqlite.list_tables
-.mcp call sqlite.read_query "SELECT * FROM customers LIMIT 5"
+/mcp call sqlite.list_tables
+/mcp call sqlite.read_query "SELECT * FROM customers LIMIT 5"
 ```
 
 ### MetricFlow Integration
 
 ```bash
 # Add MetricFlow server for semantic layer
-.mcp add metricflow python -m mcp_metricflow_server
+/mcp add metricflow python -m mcp_metricflow_server
 
 # Access business metrics
-.mcp call metricflow.list_metrics
-.mcp call metricflow.query_metrics '{"metrics": ["revenue"], "dimensions": ["customer_segment"]}'
+/mcp call metricflow.list_metrics
+/mcp call metricflow.query_metrics '{"metrics": ["revenue"], "dimensions": ["customer_segment"]}'
 ```
 
 ### Filesystem Integration
 
 ```bash
 # Add filesystem server for file operations
-.mcp add filesystem python -m mcp_filesystem_server --base-path /project/data
+/mcp add filesystem python -m mcp_filesystem_server --base-path /project/data
 
 # File operations through MCP
-.mcp call filesystem.list_directory /reports
-.mcp call filesystem.read_file /reports/summary.md
+/mcp call filesystem.list_directory /reports
+/mcp call filesystem.read_file /reports/summary.md
 ```

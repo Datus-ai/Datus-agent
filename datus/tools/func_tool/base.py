@@ -5,7 +5,7 @@
 # -*- coding: utf-8 -*-
 import inspect
 import json
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from agents import FunctionTool, function_tool
 from pydantic import BaseModel, Field
@@ -36,6 +36,59 @@ class FuncToolResult(BaseModel):
         default=None, description="Error message: field is not empty when success=0", init=True
     )
     result: Optional[Any] = Field(default=None, description="Result of the execution", init=True)
+
+
+class FuncToolListResult(BaseModel):
+    """Canonical envelope for list-shaped FuncTool results.
+
+    Put ``FuncToolListResult(...).model_dump()`` inside ``FuncToolResult.result``
+    whenever a tool method conceptually returns "a list of records" (BI
+    ``list_dashboards``, scheduler ``list_scheduler_jobs``, semantic
+    ``list_metrics``, ...). Separating row data (``items``) from pagination
+    signals (``total`` / ``has_more``) and tool-specific metadata (``extra``)
+    lets CLI / LLM / agent consumers share one shape instead of each inventing
+    their own heuristic.
+
+    Field rules:
+      * ``items`` is the single source of truth for row data. Always
+        ``List[Dict]``; empty is ``[]``, never ``None``. Never carries an
+        alternative encoding (CSV blob, scalars).
+      * ``total`` is the upstream full count when known. ``None`` means the
+        source doesn't expose a total — consumers should fall back to
+        ``has_more`` or ``len(items) < limit`` for pagination decisions.
+        Do not set ``total = len(items)`` as a placeholder; it makes
+        consumers wrongly conclude there is no next page.
+      * ``has_more`` is the explicit "another page exists" hint. ``None``
+        when the source gives no signal.
+      * ``extra`` holds tool-specific side-channel data — most commonly
+        ``{"next_offset": <int>}`` so the LLM can copy the value instead
+        of computing the next offset itself. Never holds an alternative
+        encoding of ``items``; never holds error state (that belongs in
+        ``FuncToolResult.error``).
+    """
+
+    items: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="The rows. Always a list of dicts; never None; empty is [].",
+    )
+    total: Optional[int] = Field(
+        default=None,
+        description=(
+            "Upstream full row count. May exceed len(items) when paginated. "
+            "None when the source doesn't expose a total."
+        ),
+    )
+    has_more: Optional[bool] = Field(
+        default=None,
+        description="Explicit 'next page exists' hint. None when unknown.",
+    )
+    extra: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Tool-specific side channel. Typically contains 'next_offset' "
+            "when has_more is True. Consumers ignore unknown keys."
+        ),
+    )
 
 
 def trans_to_function_tool(bound_method: Callable) -> FunctionTool:

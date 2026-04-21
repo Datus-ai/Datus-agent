@@ -48,7 +48,7 @@ We model **Data Engineering Context (Long-Term Memory)** as **two trees**:
 
 ![Context Tree Structure](../assets/context_tree.png)
 
-- In [Datus CLI](../cli/introduction.md), you can browse and edit them via `@catalog` and `@subject`
+- In [Datus CLI](../cli/introduction.md), you can browse and edit them via `/catalog` and `/subject`
 - Use `datus-agent bootstrap-kb` to batch-initialize and cold-start the knowledge base
 - With subagents, you can define a **scoped context** — a curated subset of the global store that enables precise, domain-aware delivery
 
@@ -60,7 +60,7 @@ LLMs draft semantic models and metrics from tables and reference SQL, while engi
 
 **Command-driven iteration**
 
-Commands like `/gen_semantic_model`, `/gen_metrics`, and `/gen_sql_summary` create and update assets. The `@catalog` and `@subject` screens support in-place edits.
+Commands like `/gen_semantic_model`, `/gen_metrics`, and `/gen_sql_summary` create and update assets. The `/catalog` and `/subject` screens support in-place edits.
 
 **Feedback drives continuous improvement**
 
@@ -145,7 +145,7 @@ Capture proven patterns and edge-case handling. Promote high-value snippets into
 
 **Human-in-the-loop curation**
 
-Refine domain → layer_1 → layer_2 descriptions, align naming conventions, and edit [metadata](../knowledge_base/metadata.md) directly in `@catalog` / `@subject`.
+Refine domain → layer_1 → layer_2 descriptions, align naming conventions, and edit [metadata](../knowledge_base/metadata.md) directly in `/catalog` / `/subject`.
 
 **Example:**
 
@@ -158,7 +158,7 @@ Refine domain → layer_1 → layer_2 descriptions, align naming conventions, an
 
 **Define a domain-aware chatbot**
 
-Use `.subagent add <name>` for a specific scenario (e.g., "commercialization analytics").
+Use `/subagent add <name>` for a specific scenario (e.g., "commercialization analytics").
 
 **Package the essentials**
 
@@ -171,7 +171,7 @@ Limit to selected catalogs/tables and enable only relevant tools/MCPs (DB tools,
 **Example:**
 
 ```bash
-.subagent add california_schools
+/subagent add california_schools
 ```
 
 ### Delivering and Iterating

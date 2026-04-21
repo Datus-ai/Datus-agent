@@ -47,14 +47,15 @@ class SubAgentCommands:
                     self.cli_instance.available_subagents.update(
                         name for name in self.cli_instance.agent_config.agentic_nodes.keys() if name != "chat"
                     )
-            # Refresh the SubagentCompleter so autocomplete reflects the change
-            if hasattr(self.cli_instance, "subagent_completer"):
-                self.cli_instance.subagent_completer.refresh()
+            # The slash completer is driven by the static slash_registry and
+            # does not expose agent names directly, so no refresh is needed.
+            # ``available_subagents`` above is the state that the ``/agent``
+            # selector reads.
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("Failed to refresh in-memory agent config: %s", exc)
 
     def cmd(self, args: str):
-        """Main entry point for .subagent commands."""
+        """Main entry point for the /subagent command."""
         parts = args.strip().split()
         if not parts:
             self._show_help()
@@ -85,14 +86,14 @@ class SubAgentCommands:
             self._show_help()
 
     def _show_help(self):
-        self.cli_instance.console.print("Usage: .subagent [add|list|remove|update] [args]", style="bold cyan")
+        self.cli_instance.console.print("Usage: /subagent [add|list|remove|update] [args]", style="bold cyan")
         self.cli_instance.console.print(" - [bold]add[/]: Launch the interactive wizard to add a new agent.")
         self.cli_instance.console.print(" - [bold]list[/]: List all configured sub-agents.")
         self.cli_instance.console.print(" - [bold]remove <agent_name>[/]: Remove a configured sub-agent.")
         self.cli_instance.console.print(" - [bold]update <agent_name>[/]: Update an existing sub-agent.")
 
     def _cmd_add_agent(self):
-        """Handles the .subagent add command by launching the wizard."""
+        """Handles the /subagent add command by launching the wizard."""
         self._do_update_agent()
 
     def _cmd_update_agent(self, sub_agent_name):

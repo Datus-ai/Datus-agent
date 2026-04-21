@@ -56,12 +56,10 @@ dependencies = [
     "json-repair>=0.47.6",
     "fastapi>=0.104.0,<1.0",
     "uvicorn>=0.24.0",
-    "google-generativeai>=0.8.0",
     "pyperclip==1.9.0",
     "wcmatch>=10.0",
     "fastembed==0.4.2",
     # Optional: install torch manually to enable reranker models.
-    "plotly>=6.5.0",
     "charset-normalizer>=3.4.2",
     "defusedxml>=0.7.1",
     # Platform documentation tools
@@ -87,7 +85,7 @@ datus-cli = "datus.cli.main:main"
 datus = "datus.cli.main:main"
 datus-api = "datus.api.main:main"
 datus-mcp = "datus.mcp_server:main"
-datus-claw = "datus.claw.main:main"
+datus-gateway = "datus.gateway.main:main"
 
 [build-system]
 requires = ["setuptools>=80.9.0", "wheel"]

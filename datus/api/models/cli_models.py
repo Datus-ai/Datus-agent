@@ -270,6 +270,13 @@ class StreamChatInput(ChatInput):
     subagent_id: Optional[str] = Field(default=None, description="Subagent ID (builtin name or DB SubAgent id)")
     prompt_version: Optional[str] = Field(default=None, description="Prompt version")
     prompt_language: str = Field(default="en", description="Prompt language")
+    language: Optional[str] = Field(
+        default=None,
+        description=(
+            "Response language override for all agentic node outputs (e.g. 'en', 'zh'). "
+            "Falls back to agent.language from yaml when unset."
+        ),
+    )
     source_session_id: Optional[str] = Field(
         default=None,
         description="Source session to seed the agent with (currently used by feedback agent to copy history).",

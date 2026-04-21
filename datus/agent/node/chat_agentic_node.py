@@ -220,6 +220,8 @@ class ChatAgenticNode(AgenticNode):
             self.skill_func_tool = SkillFuncTool(
                 manager=self.skill_manager,
                 node_name="chat",
+                node_class=self.get_node_class_name(),
+                authoring_mode=self.SKILL_AUTHORING_MODE,
             )
             logger.debug(f"Setup skill tools: {self.skill_manager.get_skill_count()} skills discovered")
         except Exception as e:

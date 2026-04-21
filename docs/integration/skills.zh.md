@@ -364,7 +364,7 @@ datus skill logout --marketplace http://datus-marketplace:9000
 
 在 REPL 中：
 ```
-datus> .skill login http://datus-marketplace:9000
+datus> /skill login http://datus-marketplace:9000
 Email: user@example.com
 Password: ****
 Login successful! Token saved for http://datus-marketplace:9000
@@ -535,13 +535,13 @@ datus skill remove sql-optimization
 在交互式 REPL 会话中也可以使用相同的技能操作：
 
 ```
-datus> .skill list                          # 列出本地技能
-datus> .skill search sql                    # 搜索市场
-datus> .skill install sql-optimization      # 从市场安装
-datus> .skill publish ./skills/my-skill     # 发布到市场
-datus> .skill info sql-optimization         # 显示技能详情
-datus> .skill update                        # 更新市场技能
-datus> .skill remove sql-optimization       # 移除本地技能
+datus> /skill list                          # 列出本地技能
+datus> /skill search sql                    # 搜索市场
+datus> /skill install sql-optimization      # 从市场安装
+datus> /skill publish ./skills/my-skill     # 发布到市场
+datus> /skill info sql-optimization         # 显示技能详情
+datus> /skill update                        # 更新市场技能
+datus> /skill remove sql-optimization       # 移除本地技能
 ```
 
 ### 端到端工作流示例

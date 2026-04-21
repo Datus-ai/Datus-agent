@@ -49,54 +49,6 @@ def _truncate_middle(text: str, max_len: int) -> str:
     return text[:keep] + " ... " + text[-keep:]
 
 
-_COMPRESSOR_ENVELOPE_KEYS = frozenset(
-    {
-        "original_rows",
-        "original_columns",
-        "is_compressed",
-        "compressed_data",
-        "compression_type",
-    }
-)
-
-
-def unwrap_compressor_envelope(payload: Any) -> Optional[List[dict]]:
-    """Detect the ``datus.utils.compress_utils.DataCompressor.compress()``
-    envelope and return the rows it wraps.
-
-    The compressor serialises row data into a CSV string for LLM
-    consumption (token-efficient), with ``original_rows`` /
-    ``original_columns`` / ``compression_type`` metadata. Service methods
-    like ``SemanticTools.list_metrics`` use it for that reason. For CLI
-    display the envelope is pure noise — the user wants to see the rows,
-    not the metadata — so we parse the CSV back into dicts.
-
-    Returns ``None`` when the payload isn't the envelope shape, so the
-    caller leaves normal rendering untouched.
-    """
-    if not isinstance(payload, dict):
-        return None
-    if not _COMPRESSOR_ENVELOPE_KEYS.issubset(payload.keys()):
-        return None
-    data = payload.get("compressed_data")
-    if not isinstance(data, str) or not data.strip():
-        return []
-
-    import csv
-    import io
-
-    try:
-        reader = csv.DictReader(io.StringIO(data))
-        rows = [dict(r) for r in reader]
-    except Exception:
-        return None
-    # The compressor writes an index column ("") as row-number; drop it so
-    # users see the actual business fields.
-    for row in rows:
-        row.pop("", None)
-    return rows
-
-
 def build_row_table(
     payload: Any,
     *,

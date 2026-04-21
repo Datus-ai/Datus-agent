@@ -157,11 +157,11 @@ Agent process:
 
 ## Integration with Context Search
 
-Semantic models are searchable via `@subject` context command:
+Semantic models are searchable via `/subject` context command:
 
 ```bash
 # In CLI chat mode
-@subject <domain>/<layer1>/<layer2>
+/subject <domain>/<layer1>/<layer2>
 
 # Search for semantic objects
 search_semantic_objects(query="customer revenue", kinds=["table", "column"])

@@ -66,6 +66,47 @@ class TestGetAvailableSkills:
         skills = manager.get_available_skills("test-node")
         assert len(skills) == 0
 
+    def test_allowed_agents_hides_from_other_agent(self):
+        registry = MagicMock()
+        registry.get_skill_count.return_value = 1
+        registry.list_skills.return_value = [_make_skill(allowed_agents=["gen_dashboard"])]
+        manager = SkillManager(registry=registry)
+        assert manager.get_available_skills("chat") == []
+
+    def test_allowed_agents_exposes_to_listed_agent(self):
+        registry = MagicMock()
+        registry.get_skill_count.return_value = 1
+        registry.list_skills.return_value = [_make_skill(allowed_agents=["gen_dashboard"])]
+        manager = SkillManager(registry=registry)
+        skills = manager.get_available_skills("gen_dashboard")
+        assert len(skills) == 1
+        assert skills[0].name == "test-skill"
+
+    def test_empty_allowed_agents_visible_to_everyone(self):
+        registry = MagicMock()
+        registry.get_skill_count.return_value = 1
+        registry.list_skills.return_value = [_make_skill(allowed_agents=[])]
+        manager = SkillManager(registry=registry)
+        assert len(manager.get_available_skills("chat")) == 1
+        assert len(manager.get_available_skills("gen_dashboard")) == 1
+
+    def test_allowed_agents_matches_via_node_class(self):
+        """Alias mismatch should still pass when the canonical class matches."""
+        registry = MagicMock()
+        registry.get_skill_count.return_value = 1
+        registry.list_skills.return_value = [_make_skill(allowed_agents=["gen_dashboard"])]
+        manager = SkillManager(registry=registry)
+        skills = manager.get_available_skills("my_dashboard", node_class="gen_dashboard")
+        assert len(skills) == 1
+
+    def test_allowed_agents_hidden_when_both_identifiers_miss(self):
+        registry = MagicMock()
+        registry.get_skill_count.return_value = 1
+        registry.list_skills.return_value = [_make_skill(allowed_agents=["gen_dashboard"])]
+        manager = SkillManager(registry=registry)
+        skills = manager.get_available_skills("my_table", node_class="gen_table")
+        assert skills == []
+
 
 class TestLoadSkill:
     def test_load_success(self):
@@ -121,6 +162,74 @@ class TestLoadSkill:
         ok, msg, content = manager.load_skill("test-skill", "node")
         assert ok is False
         assert msg == "ASK_PERMISSION"
+
+    def test_load_rejected_for_disallowed_agent(self):
+        """Default load enforces ``allowed_agents`` as a hard reject."""
+        registry = MagicMock()
+        registry.get_skill_count.return_value = 1
+        registry.get_skill.return_value = _make_skill(allowed_agents=["gen_table"])
+        manager = SkillManager(registry=registry)
+        ok, msg, content = manager.load_skill("test-skill", "chat")
+        assert ok is False
+        assert content is None
+        assert "chat" in msg
+        registry.load_skill_content.assert_not_called()
+
+    def test_load_scope_check_honours_node_class(self):
+        """Alias mismatch with whitelisted class should still pass."""
+        registry = MagicMock()
+        registry.get_skill_count.return_value = 1
+        registry.get_skill.return_value = _make_skill(allowed_agents=["gen_dashboard"])
+        registry.load_skill_content.return_value = "# OK"
+        manager = SkillManager(registry=registry)
+        ok, _msg, content = manager.load_skill(
+            "test-skill",
+            "my_dashboard",
+            node_class="gen_dashboard",
+        )
+        assert ok is True
+        assert content == "# OK"
+
+    def test_load_scope_bypass_for_authoring_agent(self):
+        """``check_scope=False`` bypasses the hard reject (skill-editing workflow)."""
+        registry = MagicMock()
+        registry.get_skill_count.return_value = 1
+        registry.get_skill.return_value = _make_skill(allowed_agents=["gen_table"])
+        registry.load_skill_content.return_value = "# Scoped"
+        manager = SkillManager(registry=registry)
+        ok, _msg, content = manager.load_skill(
+            "test-skill",
+            "gen_skill",
+            check_scope=False,
+        )
+        assert ok is True
+        assert content == "# Scoped"
+
+    def test_load_scope_rejection_runs_before_permission_check(self):
+        """Scope reject must fire before the permission manager is consulted."""
+        from datus.tools.permission.permission_config import PermissionLevel
+
+        registry = MagicMock()
+        registry.get_skill_count.return_value = 1
+        registry.get_skill.return_value = _make_skill(allowed_agents=["gen_table"])
+        perm_mgr = MagicMock()
+        perm_mgr.check_permission.return_value = PermissionLevel.ALLOW
+        manager = SkillManager(registry=registry, permission_manager=perm_mgr)
+
+        ok, _msg, content = manager.load_skill("test-skill", "chat")
+        assert ok is False
+        assert content is None
+        perm_mgr.check_permission.assert_not_called()
+
+    def test_load_allowed_agent_succeeds(self):
+        registry = MagicMock()
+        registry.get_skill_count.return_value = 1
+        registry.get_skill.return_value = _make_skill(allowed_agents=["gen_table"])
+        registry.load_skill_content.return_value = "# Content"
+        manager = SkillManager(registry=registry)
+        ok, msg, content = manager.load_skill("test-skill", "gen_table")
+        assert ok is True
+        assert content == "# Content"
 
 
 class TestGenerateSkillsXml:

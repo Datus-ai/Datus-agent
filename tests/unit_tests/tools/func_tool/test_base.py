@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.tools.func_tool.base import FuncToolListResult, FuncToolResult, trans_to_function_tool
 
 
 class TestTransToFunctionTool:
@@ -100,3 +100,54 @@ class TestTransToFunctionTool:
 
         assert result["success"] == 1
         assert result["result"] == "test"
+
+
+class TestFuncToolListResult:
+    """Tests for the canonical list-shaped envelope."""
+
+    def test_defaults_empty_items_and_none_pagination(self):
+        env = FuncToolListResult()
+        assert env.items == []
+        assert env.total is None
+        assert env.has_more is None
+        assert env.extra is None
+
+    def test_serialization_round_trips_through_funcresult(self):
+        env = FuncToolListResult(
+            items=[{"id": "1", "name": "foo"}, {"id": "2", "name": "bar"}],
+            total=137,
+            has_more=True,
+            extra={"next_offset": 20},
+        )
+        outer = FuncToolResult(result=env.model_dump())
+        dumped = outer.model_dump(mode="json")
+
+        assert dumped["success"] == 1
+        assert dumped["error"] is None
+        assert dumped["result"] == {
+            "items": [{"id": "1", "name": "foo"}, {"id": "2", "name": "bar"}],
+            "total": 137,
+            "has_more": True,
+            "extra": {"next_offset": 20},
+        }
+
+    def test_items_stay_a_list_when_none_passed(self):
+        # Pydantic rejects items=None (default_factory returns []), so the
+        # "always a list" invariant is enforced at construction time.
+        with pytest.raises(ValueError):
+            FuncToolListResult(items=None)
+
+    def test_extra_accepts_arbitrary_tool_metadata(self):
+        env = FuncToolListResult(
+            items=[{"k": "v"}],
+            extra={"next_offset": 5, "cursor": "abc", "filters_applied": ["x"]},
+        )
+        assert env.extra["cursor"] == "abc"
+        assert env.extra["filters_applied"] == ["x"]
+
+    def test_empty_items_is_empty_list_not_missing(self):
+        env = FuncToolListResult(items=[], total=0, has_more=False)
+        dumped = env.model_dump()
+        assert dumped["items"] == []
+        assert dumped["total"] == 0
+        assert dumped["has_more"] is False

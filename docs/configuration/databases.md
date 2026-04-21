@@ -4,7 +4,7 @@ Configure database connections under `agent.services.databases`.
 
 ## Overview
 
-The runtime services in Datus Agent live under `agent.services` in `agent.yml`. This page focuses on database connections in `services.databases`. Semantic adapters, BI tools, and schedulers are documented on their sibling pages.
+The runtime services in Datus Agent live under `agent.services` in `agent.yml`. This page focuses on database connections in `services.databases`. Semantic adapters, BI platforms, and schedulers are documented on their sibling pages.
 
 Key features:
 
@@ -38,7 +38,7 @@ agent:
     semantic_layer:
       metricflow: {}
 
-    bi_tools:
+    bi_platforms:
       superset:
         type: superset
         api_url: http://localhost:8088
@@ -60,7 +60,7 @@ agent:
 |---------|---------|----------|
 | `services.databases` | Database connections used by SQL and KB operations | `--database` / current database / default database |
 | `services.semantic_layer` | Semantic adapter configuration such as MetricFlow | `semantic_adapter` |
-| `services.bi_tools` | BI platform credentials and dataset materialization config | `bi_platform` |
+| `services.bi_platforms` | BI platform credentials and dataset materialization config | `bi_platform` |
 | `services.schedulers` | Scheduler service instances such as Airflow | `scheduler_service` |
 
 ## Supported Database Types
@@ -240,6 +240,6 @@ password: "actual_password"
 
 - [Database Adapters](../adapters/db_adapters.md) - Install plugin adapters for MySQL, Snowflake, StarRocks, and more
 - [Semantic Layer Configuration](semantic_layer.md) - Configure semantic adapters
-- [BI Tools Configuration](bi_tools.md) - Configure Superset or Grafana
+- [BI Platforms Configuration](bi_platforms.md) - Configure Superset or Grafana
 - [Scheduler Configuration](schedulers.md) - Configure Airflow services
 - [CLI Commands](../cli-commands.md) - Full CLI reference including configure, init, and service commands

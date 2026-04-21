@@ -158,7 +158,7 @@ class ServicesConfig:
 
     databases: Dict[str, DbConfig] = field(default_factory=dict)
     semantic_layer: Dict[str, Dict[str, Any]] = field(default_factory=dict)
-    bi_tools: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    bi_platforms: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     schedulers: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     @property
@@ -174,10 +174,20 @@ class ServicesConfig:
     @classmethod
     def from_dict(cls, raw: Dict[str, Any]) -> "ServicesConfig":
         """Parse services config from agent.yml 'services' section."""
+        bi_platforms_raw = raw.get("bi_platforms")
+        if bi_platforms_raw is None and "bi_tools" in raw:
+            import warnings
+
+            warnings.warn(
+                "services.bi_tools is deprecated; rename to services.bi_platforms in agent.yml.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            bi_platforms_raw = raw["bi_tools"]
         return cls(
             databases={},  # populated by AgentConfig._init_services_config()
             semantic_layer=raw.get("semantic_layer", {}),
-            bi_tools=raw.get("bi_tools", {}),
+            bi_platforms=bi_platforms_raw or {},
             schedulers=raw.get("schedulers", {}),
         )
 
@@ -220,7 +230,7 @@ class ServicesConfig:
                 databases[ns_name] = ns_cfg
             else:
                 databases[ns_name] = ns_cfg
-        return {"databases": databases, "semantic_layer": {}, "bi_tools": {}, "schedulers": {}}
+        return {"databases": databases, "semantic_layer": {}, "bi_platforms": {}, "schedulers": {}}
 
 
 @dataclass
@@ -456,7 +466,7 @@ class AgentConfig:
         # ``FilesystemFuncTool`` fail-closed for EXTERNAL paths (outside the
         # project root) instead of prompting the broker. Set via
         # ``agent.filesystem.strict`` in YAML, ``--filesystem-strict`` on the
-        # CLI, or direct assignment from API/claw bootstraps.
+        # CLI, or direct assignment from API/gateway bootstraps.
         filesystem_raw = kwargs.get("filesystem") or {}
         self._filesystem_strict = bool(filesystem_raw.get("strict", False))
         self._current_database = ""
@@ -482,6 +492,11 @@ class AgentConfig:
         self.benchmark_configs: Dict[str, BenchmarkConfig] = {}
         self.schema_linking_rate = kwargs.get("schema_linking_rate", "fast")
         self.search_metrics_rate = kwargs.get("search_metrics_rate", "fast")
+        # Response language for model outputs (user-facing text). ``None`` (the
+        # default) means the model picks its own language per turn; set a code
+        # like "en"/"zh" in agent.yml or via ``StreamChatInput.language`` to pin
+        # every AgenticNode to a specific output language.
+        self.language = kwargs.get("language")
         self.db_type = ""
 
         # Benchmark paths are now fixed at {agent.home}/benchmark/{name}
@@ -513,7 +528,7 @@ class AgentConfig:
         self.services = ServicesConfig.from_dict(services_raw)
         self._init_services_config(services_raw.get("databases", {}))
         self.init_semantic_layer(self.services.semantic_layer)
-        self.init_dashboard(self.services.bi_tools)
+        self.init_dashboard(self.services.bi_platforms)
         self.init_scheduler_services(self.services.schedulers)
 
         # SaaS mode: skip _init_dirs() because callers want only derived paths here,
@@ -559,7 +574,7 @@ class AgentConfig:
         # Initialize skills configuration
         self.skills_config = self._init_skills_config(kwargs.get("skills", {}))
 
-        # Initialize channels configuration for Claw IM gateway
+        # Initialize channels configuration for Datus Gateway IM gateway
         self.channels_config: Dict[str, Any] = kwargs.get("channels", {})
 
         # Platform documentation fetch configs (namespace-independent)
@@ -589,7 +604,7 @@ class AgentConfig:
 
         ``True``: fail-closed — the tool returns a "not allowed in strict mode"
         error for any path outside the project root / whitelist. Used by the
-        API and claw surfaces, which have no interactive broker to confirm
+        API and gateway surfaces, which have no interactive broker to confirm
         out-of-workspace access.
 
         ``False`` (default): ``PermissionHooks`` prompts the user via the

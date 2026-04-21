@@ -206,6 +206,25 @@ class TestSkillRegistryDiscoveryExtended:
         assert skill.disable_model_invocation is True
         assert skill.is_model_invocable() is False
 
+    def test_discover_skill_with_allowed_agents(self, tmp_path):
+        skill_dir = tmp_path / "skills" / "scoped-skill"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\n"
+            "name: scoped-skill\n"
+            "description: Scoped to subagents only\n"
+            "allowed_agents:\n"
+            "  - gen_dashboard\n"
+            "  - gen_table\n"
+            "---\n\n# Scoped\n"
+        )
+        config = SkillConfig(directories=[str(tmp_path / "skills")])
+        registry = SkillRegistry(config=config)
+        registry.scan_directories()
+        skill = registry.get_skill("scoped-skill")
+        assert skill is not None
+        assert skill.allowed_agents == ["gen_dashboard", "gen_table"]
+
     def test_skill_location_is_path(self, tmp_path):
         from pathlib import Path
 

@@ -546,7 +546,7 @@ class TestFilesystemZoneBranch:
     async def test_strict_external_delegates_to_tool_without_broker(self, mock_broker, tmp_path):
         """Strict policy → EXTERNAL is delegated to the tool layer (which
         returns FuncToolResult(success=0)) instead of raising. The broker is
-        still never touched. Regression guard for API/claw flows: they must
+        still never touched. Regression guard for API/gateway flows: they must
         fail fast with a readable tool-failure payload, not hang and not
         raise."""
         hooks, _, _ = self._build(mock_broker, tmp_path, strict=True)

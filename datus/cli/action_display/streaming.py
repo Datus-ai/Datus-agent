@@ -73,6 +73,7 @@ class InlineStreamingContext:
         self._broker = interaction_broker
         self._input_collector: Optional[Callable[[ActionHistory, Console], Optional[str]]] = None
         self._event_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._clear_header_callback: Optional[Callable[[], None]] = None
 
     @property
     def live(self) -> Optional[Live]:
@@ -106,6 +107,14 @@ class InlineStreamingContext:
         The collector returns the user's choice string, or None if the interaction was aborted.
         """
         self._input_collector = collector
+
+    def set_clear_header_callback(self, callback: Optional[Callable[[], None]]) -> None:
+        """Register a callback invoked at the top of the screen after Ctrl+O clears it.
+
+        Used to reprint the CLI banner so it remains the first thing on screen
+        after a verbose-mode toggle redraw.
+        """
+        self._clear_header_callback = callback
 
     # -- sync mode entry point ---------------------------------------------
 
@@ -264,6 +273,15 @@ class InlineStreamingContext:
                         self.display.console.clear()
                         sys.stdout.write("\033[3J")
                         sys.stdout.flush()
+                        if self._clear_header_callback is not None:
+                            try:
+                                self._clear_header_callback()
+                            except Exception as exc:
+                                logger.debug(
+                                    "clear_header_callback raised in verbose toggle: %s",
+                                    exc,
+                                    exc_info=True,
+                                )
                         self.display.console.print(
                             "[bold bright_black]  \u23af switched to verbose mode (frozen) \u23af[/]"
                         )
@@ -278,6 +296,15 @@ class InlineStreamingContext:
                         self.display.console.clear()
                         sys.stdout.write("\033[3J")
                         sys.stdout.flush()
+                        if self._clear_header_callback is not None:
+                            try:
+                                self._clear_header_callback()
+                            except Exception as exc:
+                                logger.debug(
+                                    "clear_header_callback raised in compact toggle: %s",
+                                    exc,
+                                    exc_info=True,
+                                )
                         self.display.console.print("[bold bright_black]  \u23af switched to compact mode \u23af[/]")
                     self._reprint_history(verbose=self._verbose)
                     # Restart Live for any remaining active subagent groups
@@ -613,7 +640,21 @@ class InlineStreamingContext:
         """Start or update the Live display showing all active subagent groups."""
         renderable = self._build_subagent_groups_renderable()
         if self._subagent_live is None:
-            self._subagent_live = Live(renderable, console=self.display.console, refresh_per_second=4, transient=True)
+            # ``redirect_stdout`` / ``redirect_stderr`` are set to ``False`` so
+            # Rich does not install its own stdout wrapper. When the REPL runs
+            # under the TUI, stdout is already patched by prompt_toolkit's
+            # ``patch_stdout(raw=True)`` — double-patching would fight the
+            # pinned status-bar + input. Outside the TUI the behavior is
+            # unchanged: Rich writes ANSI directly to the real stdout.
+            self._subagent_live = Live(
+                renderable,
+                console=self.display.console,
+                refresh_per_second=4,
+                transient=True,
+                redirect_stdout=False,
+                redirect_stderr=False,
+                screen=False,
+            )
             self._subagent_live.start()
         else:
             self._subagent_live.update(renderable)
@@ -680,7 +721,18 @@ class InlineStreamingContext:
 
         with self._print_lock:
             if self._live is None:
-                self._live = Live(renderable, console=self.display.console, refresh_per_second=4, transient=True)
+                # See the comment in ``_update_subagent_groups_live``: Live
+                # must not install its own stdout wrapper when the TUI is
+                # active, and the flags are safe for non-TUI callers too.
+                self._live = Live(
+                    renderable,
+                    console=self.display.console,
+                    refresh_per_second=4,
+                    transient=True,
+                    redirect_stdout=False,
+                    redirect_stderr=False,
+                    screen=False,
+                )
                 self._live.start()
             else:
                 self._live.update(renderable)

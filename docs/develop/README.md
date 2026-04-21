@@ -178,7 +178,7 @@ Datus> select * from tree;
 └───────────┴─────────────┴────────────┴────────┘
 Returned 15 rows in 0.03 seconds
 
-Datus> .help
+Datus> /help
 ```
 
 ---

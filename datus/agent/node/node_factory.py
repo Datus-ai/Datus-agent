@@ -315,7 +315,7 @@ def create_node_input(
         from datus.schemas.feedback_agentic_node_models import FeedbackNodeInput
 
         # CLI path leaves source_session_id=None because _copy_session_for_switch
-        # seeds the feedback node's session directly. API/Claw paths pass a
+        # seeds the feedback node's session directly. API/Gateway paths pass a
         # real source_session_id so the node copies the source session itself.
         return FeedbackNodeInput(
             user_message=user_message,

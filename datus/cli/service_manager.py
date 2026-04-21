@@ -116,10 +116,10 @@ class ServiceManager:
             for name, cfg in semantic_layer.items():
                 console.print(f"  {name}: {cfg}")
 
-        bi_tools = self.agent_config.services.bi_tools
-        if bi_tools:
-            console.print("\n[bold yellow]BI Tools:[/bold yellow]")
-            for name, cfg in bi_tools.items():
+        bi_platforms = self.agent_config.services.bi_platforms
+        if bi_platforms:
+            console.print("\n[bold yellow]BI Platforms:[/bold yellow]")
+            for name, cfg in bi_platforms.items():
                 console.print(f"  {name}: {cfg}")
 
         schedulers = self.agent_config.services.schedulers
@@ -302,7 +302,7 @@ class ServiceManager:
             services_section = {
                 "databases": databases_section,
                 "semantic_layer": dict(self.agent_config.services.semantic_layer),
-                "bi_tools": dict(self.agent_config.services.bi_tools),
+                "bi_platforms": dict(self.agent_config.services.bi_platforms),
                 "schedulers": dict(self.agent_config.services.schedulers),
             }
 

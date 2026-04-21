@@ -16,7 +16,7 @@ def _make_agent_config(databases=None):
     services.databases = db_map
     services.default_database = next(iter(db_map), None)
     services.semantic_layer = {}
-    services.bi_tools = {}
+    services.bi_platforms = {}
     services.schedulers = {}
     agent_config = MagicMock()
     agent_config.services = services
@@ -179,11 +179,11 @@ class TestServiceManagerList:
             calls = [str(c) for c in mock_console.print.call_args_list]
             assert any("No databases" in c for c in calls)
 
-    def test_list_shows_bi_tools_when_present(self):
-        """list() prints BI tools section when bi_tools are configured."""
+    def test_list_shows_bi_platforms_when_present(self):
+        """list() prints BI platforms section when bi_platforms are configured."""
         db_cfg = _make_db_config()
         mock_config = _make_agent_config({"my_db": db_cfg})
-        mock_config.services.bi_tools = {"tableau": {"url": "http://tableau"}}
+        mock_config.services.bi_platforms = {"tableau": {"url": "http://tableau"}}
 
         with (
             patch("datus.cli.service_manager.load_agent_config", return_value=mock_config),

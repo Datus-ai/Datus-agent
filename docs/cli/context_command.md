@@ -6,8 +6,8 @@ The Context Command `@` allows you to inject rich contextual knowledge directly 
 
 Context items are organized into three separate trees:
 
-- `@catalog` — your physical data structure (databases, schemas, tables)
-- `@subject` — your semantic/business layer (domains, layers, semantic models, metrics)
+- `/catalog` — your physical data structure (databases, schemas, tables)
+- `/subject` — your semantic/business layer (domains, layers, semantic models, metrics)
 
 By combining these, you give Datus the same mental model you have — so it can reason with your data instead of guessing.
 
@@ -17,7 +17,7 @@ By combining these, you give Datus the same mental model you have — so it can 
 
 You can summon the context browser by typing `@` and pressing Tab. Depending on which command you choose, you'll see a tree view you can drill down:
 
-### @catalog
+### /catalog
 ```text
 catalog
   └── database
@@ -31,7 +31,7 @@ When your focus is on the panel where the **semantic model** is located and modi
 
 ![Catalog Screen_Edit_Semantic](../assets/catalog_screen_edit_semantic.png)
 
-### @subject
+### /subject
 ```text
 domain
   └── layer1
@@ -67,7 +67,7 @@ For the initialization of the context tree, you can refer to the Knowledge Base 
 There are two ways to inject context in chat commands:
 
 #### Browse Mode
-Type `@` (or `@catalog`, `@subject`, `@sql`) and press Tab to open the tree browser, navigating node by node until you reach the desired table, metric, or SQL.
+Type `@` (or `/catalog`, `/subject`, `@sql`) and press Tab to open the tree browser, navigating node by node until you reach the desired table, metric, or SQL.
 
 #### Fuzzy Search Mode
 Type `@` (or `@any_text`) followed by any text, then press Tab. Datus will fuzzy search across all context trees and suggest the best matches, so you don't need to remember exact paths. Recent tables, metrics, and SQL searched in the [!execution command](execution_command.md) will appear at the top of the results.
@@ -76,7 +76,7 @@ Type `@` (or `@any_text`) followed by any text, then press Tab. Datus will fuzzy
 
 ```bash
 # Browse mode - navigate step by step
-/ pay attention to @catalog <Tab>
+/ pay attention to /catalog <Tab>
 # Select catalog > my_database > public > customers step by step
 
 # Fuzzy search mode - quick keyword search
@@ -86,13 +86,13 @@ Type `@` (or `@any_text`) followed by any text, then press Tab. Datus will fuzzy
 
 ### Context Types
 
-#### Physical Data (`@catalog`)
+#### Physical Data (`/catalog`)
 - Databases and schemas
 - Table structures and column definitions
 - Data types and constraints
 - Foreign key relationships
 
-#### Business Context (`@subject`)
+#### Business Context (`/subject`)
 - Business domains and data layers
 - Semantic models and business logic
 - Calculated metrics and KPIs
@@ -105,7 +105,7 @@ Type `@` (or `@any_text`) followed by any text, then press Tab. Datus will fuzzy
 - Optimization examples
 
 ### Inline Context Injection
-In addition to the standalone UI commands (`@catalog` and `@subject`), you can explicitly reference entities *inline* within a chat command simply by typing `@` followed by the entity type or name. The autocomplete (`AtReferenceCompleter`) will help you inject:
+In addition to the standalone UI commands (`/catalog` and `/subject`), you can explicitly reference entities *inline* within a chat command simply by typing `@` followed by the entity type or name. The autocomplete (`AtReferenceCompleter`) will help you inject:
 - `@Table`
 - `@Metrics`
 - `@Sql`

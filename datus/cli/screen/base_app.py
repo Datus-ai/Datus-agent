@@ -33,6 +33,38 @@ class BaseApp(App):
         self._app_ready = False
         self._error_console = Console(stderr=True, force_terminal=True)
 
+    def run(self, *args, **kwargs):  # type: ignore[override]
+        """Run the Textual App, suspending any active prompt_toolkit TUI first.
+
+        The Datus REPL's persistent TUI owns the normal screen + stdin; a
+        Textual app needs to take over the same terminal for its own
+        fullscreen rendering. Slash commands are dispatched to a worker
+        thread, so we schedule ``run_async`` on the pt loop (which is the
+        main thread's loop) via ``run_coroutine_threadsafe`` and block on
+        the resulting ``concurrent.futures.Future`` from the worker. Using
+        ``run_async`` avoids a nested ``asyncio.run`` and keeps the Textual
+        driver on the main thread so its ``signal.signal`` calls succeed.
+        ``in_terminal`` suspends pt's pinned layout for the duration. When
+        no pt Application is active the call path is unchanged.
+        """
+        import asyncio
+
+        from prompt_toolkit.application import get_app_or_none
+
+        pt_app = get_app_or_none()
+        pt_loop = getattr(pt_app, "loop", None) if pt_app is not None else None
+        if pt_loop is None or not pt_loop.is_running():
+            return super().run(*args, **kwargs)
+
+        from prompt_toolkit.application.run_in_terminal import in_terminal
+
+        async def _scheduled():
+            async with in_terminal():
+                return await self.run_async(*args, **kwargs)
+
+        cf_future = asyncio.run_coroutine_threadsafe(_scheduled(), pt_loop)
+        return cf_future.result()
+
     def on_mount(self) -> None:
         """App mount handler"""
         self._app_ready = True

@@ -36,7 +36,7 @@ agent:
         uri: ./data.duckdb
         default: true
     semantic_layer: {}
-    bi_tools: {}
+    bi_platforms: {}
     schedulers: {}
   project_root: ~/.datus/workspace
 ```
@@ -78,7 +78,7 @@ datus init
 
 ### `datus service list`
 
-Show all configured databases, semantic adapters, BI tools, and schedulers.
+Show all configured databases, semantic adapters, BI platforms, and schedulers.
 
 ```bash
 datus service list

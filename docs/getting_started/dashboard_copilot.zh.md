@@ -141,7 +141,7 @@ agent:
         database: examples
     semantic_layer:
       metricflow: {}
-    bi_tools:
+    bi_platforms:
       superset:
         type: superset
         api_url: http://localhost:8088
@@ -154,7 +154,7 @@ agent:
 !!! note "配置说明"
     - **services.databases**：定义用于 SQL 执行的数据库连接
     - **services.semantic_layer**：注册 metric 与 semantic model 工作流使用的语义适配器
-    - **services.bi_tools**：定义用于仪表盘访问的 BI 平台凭据
+    - **services.bi_platforms**：定义用于仪表盘访问的 BI 平台凭据
 
 ## 步骤 3：从仪表盘 Bootstrap
 

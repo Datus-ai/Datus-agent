@@ -314,13 +314,19 @@ class TestClearSession:
         assert node._session is None
 
     def test_clear_session_no_model(self):
+        """Non-ephemeral clear with ``model=None`` is a no-op: ``_session`` and
+        ``session_id`` must survive untouched so the caller can reuse the node
+        after reattaching a model later.
+        """
         node = _make_node()
         node.ephemeral = False
         node.model = None
         node.session_id = "some_id"
-        node._session = MagicMock()
-        # Should not raise
+        sentinel_session = MagicMock()
+        node._session = sentinel_session
         node.clear_session()
+        assert node._session is sentinel_session
+        assert node.session_id == "some_id"
 
 
 # ---------------------------------------------------------------------------
@@ -1007,11 +1013,15 @@ class TestSessionManagement:
         assert node._session is None
 
     def test_clear_session_no_model(self):
+        """No-op path: without a model, clear_session leaves session state
+        alone so the node is reusable once a model is later assigned."""
         node = _make_simple_node()
-        node._session = MagicMock()
+        sentinel_session = MagicMock()
+        node._session = sentinel_session
         node.session_id = "sess_3"
-        # no model - should not raise
         node.clear_session()
+        assert node._session is sentinel_session
+        assert node.session_id == "sess_3"
 
     def test_delete_session_ephemeral(self):
         node = _make_simple_node(ephemeral=True, session_id="sess_4")
@@ -1518,3 +1528,103 @@ class TestGetLastTurnUsage:
         result = asyncio.run(node.get_last_turn_usage())
         assert result is not None
         assert result.context_length == 0
+
+
+# ---------------------------------------------------------------------------
+# TestResolveLanguageName + TestInjectResponseLanguage
+# ---------------------------------------------------------------------------
+
+
+class TestResolveLanguageName:
+    def test_known_codes_return_human_names(self):
+        from datus.agent.node.agentic_node import _resolve_language_name
+
+        assert _resolve_language_name("en") == "English"
+        assert _resolve_language_name("zh") == "Chinese"
+        assert _resolve_language_name("ja") == "Japanese"
+
+    def test_case_insensitive(self):
+        from datus.agent.node.agentic_node import _resolve_language_name
+
+        assert _resolve_language_name("EN") == "English"
+        assert _resolve_language_name("ZH-CN") == "Chinese"
+
+    def test_unknown_code_returned_as_is(self):
+        from datus.agent.node.agentic_node import _resolve_language_name
+
+        assert _resolve_language_name("xx-yy") == "xx-yy"
+
+    def test_empty_falls_back_to_english(self):
+        from datus.agent.node.agentic_node import _resolve_language_name
+
+        assert _resolve_language_name("") == "English"
+        assert _resolve_language_name(None) == "English"
+
+
+class TestInjectResponseLanguage:
+    """``_inject_response_language`` appends a single language-policy block
+    driven by ``agent_config.language`` and is invoked from
+    ``_finalize_system_prompt`` for every AgenticNode subclass.
+    """
+
+    class _Cfg:
+        """Lightweight stand-in for AgentConfig. Using a MagicMock would let
+        ``getattr(cfg, "prompt_manager")`` return a MagicMock and short-circuit
+        ``get_prompt_manager``, defeating the real Jinja render under test.
+        """
+
+        def __init__(self, language):
+            self.language = language
+            self.prompt_manager = None
+            self.path_manager = None
+
+    def _agent_config(self, language="en"):
+        return self._Cfg(language)
+
+    def test_explicit_english_appends_english_block(self):
+        """Explicit ``language: en`` still pins output to English — the policy
+        is only skipped when the setting is unset entirely."""
+        node = _make_node(agent_config=self._agent_config("en"))
+        result = node._inject_response_language("BASE")
+        assert "Response Language" in result
+        assert "English (en)" in result
+        assert result.startswith("BASE")
+
+    def test_chinese_override_uses_chinese_name(self):
+        node = _make_node(agent_config=self._agent_config("zh"))
+        result = node._inject_response_language("BASE")
+        assert "Chinese (zh)" in result
+
+    def test_unknown_code_uses_raw_value(self):
+        node = _make_node(agent_config=self._agent_config("xx"))
+        result = node._inject_response_language("BASE")
+        assert "xx (xx)" in result
+
+    def test_none_language_skips_injection(self):
+        """``language=None`` means "let the model decide" — no directive."""
+        node = _make_node(agent_config=self._agent_config(None))
+        result = node._inject_response_language("BASE")
+        assert result == "BASE"
+
+    def test_empty_language_skips_injection(self):
+        """Whitespace-only/empty language is treated as unset."""
+        node = _make_node(agent_config=self._agent_config(""))
+        assert node._inject_response_language("BASE") == "BASE"
+        node2 = _make_node(agent_config=self._agent_config("   "))
+        assert node2._inject_response_language("BASE") == "BASE"
+
+    def test_missing_attribute_skips_injection(self):
+        """agent_config without ``language`` attribute is a no-op."""
+
+        class _Bare:
+            pass
+
+        node = _make_node(agent_config=_Bare())
+        assert node._inject_response_language("BASE") == "BASE"
+
+    def test_render_failure_returns_base_unchanged(self):
+        node = _make_node(agent_config=self._agent_config("zh"))
+        with patch("datus.agent.node.agentic_node.get_prompt_manager") as mgr:
+            mgr.return_value.render_template.side_effect = RuntimeError("boom")
+            result = node._inject_response_language("BASE")
+        assert result == "BASE"

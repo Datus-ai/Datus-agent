@@ -181,7 +181,7 @@ def real_agent_config(tmp_path, reset_global_singletons):
                 },
             },
             "semantic_layer": {},
-            "bi_tools": {},
+            "bi_platforms": {},
             "schedulers": {},
         },
         "project_root": str(tmp_path / "workspace"),

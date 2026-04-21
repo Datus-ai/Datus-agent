@@ -236,7 +236,6 @@ class Application:
         # flips databases[*].default before AgentConfig is built.
         default_db = config.services.default_database
         if default_db:
-            console.print(f"[dim]Using default database: {default_db}[/dim]")
             return default_db
 
         # Multiple databases, no default — show list and ask user to specify
