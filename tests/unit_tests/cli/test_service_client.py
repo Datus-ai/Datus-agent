@@ -411,6 +411,22 @@ class TestAdapterProbes:
         with patch.dict("sys.modules", {"datus_bi_core": stub_module}):
             assert _probe_bi_adapter(None, "superset") is True
 
+    def test_bi_probe_uses_adapter_type_from_dashboard_config(self):
+        """Multi-instance: alias ``superset_prod`` with ``type: superset``
+        must probe the ``superset`` adapter — not the alias."""
+        from datus.cli.service_client import _probe_bi_adapter
+
+        stub_module = MagicMock()
+        stub_module.adapter_registry.get.return_value = object()
+        stub_module.adapter_registry.discover_adapters = MagicMock()
+
+        dash_cfg = SimpleNamespace(adapter_type="superset")
+        agent_config = SimpleNamespace(dashboard_config={"superset_prod": dash_cfg})
+
+        with patch.dict("sys.modules", {"datus_bi_core": stub_module}):
+            assert _probe_bi_adapter(agent_config, "superset_prod") is True
+            stub_module.adapter_registry.get.assert_called_with("superset")
+
     def test_bi_probe_returns_false_when_platform_unknown(self):
         from datus.cli.service_client import _probe_bi_adapter
 
@@ -423,7 +439,14 @@ class TestAdapterProbes:
     def test_scheduler_probe_needs_core_package_importable(self):
         from datus.cli.service_client import _probe_scheduler_adapter
 
-        with patch.dict("sys.modules", {"datus_scheduler_core": None}):
+        # Force ImportError on the ``datus_scheduler_core.registry`` submodule
+        # import used by the probe. Zeroing both entries is defensive — other
+        # tests in the suite may have registered mock modules under either
+        # path, and sys.modules entries survive until patch.dict restores.
+        with patch.dict(
+            "sys.modules",
+            {"datus_scheduler_core": None, "datus_scheduler_core.registry": None},
+        ):
             assert _probe_scheduler_adapter(None, "airflow") is False
 
     def test_scheduler_probe_checks_platform_registration(self):

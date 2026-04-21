@@ -212,7 +212,18 @@ def _probe_bi_adapter(agent_config: "AgentConfig", service_name: str) -> bool:
         return False
     try:
         adapter_registry.discover_adapters()
-        return adapter_registry.get(service_name) is not None
+        # Resolve the actual adapter kind — ``DashboardConfig.adapter_type``
+        # is set from the ``type`` field in agent.yml (falls back to the
+        # service alias when omitted). This matches what BIFuncTool uses at
+        # invocation time, so the probe and the real lookup agree on what
+        # "installed" means.
+        adapter_type = service_name
+        dashboards = getattr(agent_config, "dashboard_config", None) if agent_config else None
+        if isinstance(dashboards, dict):
+            dash_cfg = dashboards.get(service_name)
+            if dash_cfg is not None:
+                adapter_type = getattr(dash_cfg, "adapter_type", "") or service_name
+        return adapter_registry.get(adapter_type) is not None
     except Exception as exc:
         logger.debug(f"BI adapter probe failed for '{service_name}': {exc}")
         return False

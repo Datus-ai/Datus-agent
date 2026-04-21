@@ -142,6 +142,18 @@ class TestMethodNameCompletion:
         texts = [c.text for c in _completions(completer, ".superset.")]
         assert texts == [".superset.list_dashboards "]
 
+    def test_missing_adapter_hides_methods(self):
+        """When the adapter package isn't installed, completing
+        ``.<service>.`` must not offer method names that would only fail
+        on Enter — tab complete should stay honest with what's
+        executable."""
+        completer, registry = _make_completer()
+        registry._clients = {}
+        registry._adapter_available = {"superset": False}
+        texts = [c.text for c in _completions(completer, ".superset.")]
+        # No method completions — only a single informational placeholder.
+        assert not any(t.startswith(".superset.") for t in texts)
+
 
 class TestArgFlagCompletion:
     def test_double_dash_suggests_help_and_params(self):

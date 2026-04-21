@@ -1209,6 +1209,22 @@ class ServiceCommandCompleter(Completer):
         client = registry.get(service_name)
         if client is None:
             return
+        # Skip method enumeration when the adapter package is not installed.
+        # Without this check, ``ServiceClient._exposed()`` falls back to the
+        # static allow-list (because ``available_tools()`` raises), and we
+        # would offer methods that ``dispatch`` will immediately reject with
+        # "adapter not installed" on Enter — surprising to the user.
+        if not registry.adapter_available(service_name):
+            from datus.cli.service_client import service_type_label
+
+            label = service_type_label(client.service_type)
+            yield Completion(
+                "",
+                start_position=0,
+                display=f"[{label} '{client.service_name}' missing adapter — run `.{client.service_name}` for the install hint]",
+                style="class:keyword",
+            )
+            return
         prefix = f".{service_name}."
         for name, doc in client.list_methods():
             if not name.lower().startswith(method_partial.lower()) and method_partial:
@@ -1232,6 +1248,9 @@ class ServiceCommandCompleter(Completer):
         service_name, _, method_name = body.partition(".")
         client = registry.get(service_name)
         if client is None:
+            return
+        # No adapter → suppress flag completion; the command can't run anyway.
+        if not registry.adapter_available(service_name):
             return
         tool = client.get_tool(method_name)
         if tool is None:

@@ -116,6 +116,15 @@ class BIFuncTool:
 
         Encapsulates the logic previously inline in
         ``gen_dashboard_agentic_node._setup_bi_tools``.
+
+        The adapter is looked up by ``DashboardConfig.adapter_type`` — not
+        by the service alias — so a multi-instance deployment like
+        ``services.bi_tools.superset_prod: { type: superset, ... }`` targets
+        the registered ``superset`` adapter while the service still appears
+        under its unique alias for CLI / dashboard addressing. When
+        ``adapter_type`` is empty (legacy single-instance configs that
+        omitted ``type``) it falls back to the service alias, preserving
+        existing behaviour.
         """
         platform = self._resolved_platform()
         dash_cfg = self._resolved_dash_cfg
@@ -128,14 +137,16 @@ class BIFuncTool:
                 ),
             )
 
+        adapter_type = getattr(dash_cfg, "adapter_type", "") or platform
+
         from datus_bi_core import AuthParam, adapter_registry
 
         adapter_registry.discover_adapters()
-        adapter_cls = adapter_registry.get(platform)
+        adapter_cls = adapter_registry.get(adapter_type)
         if not adapter_cls:
             raise DatusException(
                 ErrorCode.COMMON_CONFIG_ERROR,
-                message=f"No BI adapter registered for platform '{platform}'",
+                message=(f"No BI adapter registered for type '{adapter_type}' (service alias: '{platform}')"),
             )
 
         # Derive dialect from dataset_db config (explicit > inferred from URI).

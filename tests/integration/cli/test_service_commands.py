@@ -438,6 +438,64 @@ class TestWriteBlockedAndUnknown:
         assert "Unknown method" in out or "no_such" in out
 
 
+class TestMultiInstanceSamePlatform:
+    """Two BI services pointing at the same adapter (``superset``) with
+    distinct CLI aliases.
+
+    Before the ``adapter_type`` split, ``init_dashboard`` required the
+    YAML key to equal the ``type`` field — which meant two entries
+    named ``superset_a`` / ``superset_b`` with ``type: superset`` were
+    rejected at config load, and omitting ``type`` made the adapter
+    lookup use the alias (``superset_a``) and fail. This test pins the
+    now-supported multi-instance shape end-to-end.
+    """
+
+    @pytest.fixture
+    def cli_with_two_supersets(self, tmp_path, bi_core_stub):
+        agent_config = _build_agent_config(
+            tmp_path,
+            bi_tools={
+                "superset_prod": {
+                    "api_url": "http://prod.test/api",
+                    "username": "admin",
+                    "password": "admin",
+                    "type": "superset",
+                },
+                "superset_staging": {
+                    "api_url": "http://staging.test/api",
+                    "username": "admin",
+                    "password": "admin",
+                    "type": "superset",
+                },
+            },
+        )
+        return _FakeCLI(agent_config)
+
+    def test_services_lists_both_with_configured_status(self, cli_with_two_supersets):
+        cmd = ServiceCommands(cli_with_two_supersets)
+        cmd.cmd_services("")
+        out = _output(cli_with_two_supersets)
+        assert "superset_prod" in out
+        assert "superset_staging" in out
+        # Both should show as "configured" — adapter is the same registered
+        # "superset" class, which the stub declares available.
+        assert "missing adapter" not in out
+
+    def test_both_aliases_route_to_same_adapter_class(self, cli_with_two_supersets):
+        cmd = ServiceCommands(cli_with_two_supersets)
+
+        cmd.dispatch(".superset_prod.list_dashboards", "")
+        out = _output(cli_with_two_supersets)
+        assert "Finance Overview" in out
+
+        cli_with_two_supersets.console.file.seek(0)
+        cli_with_two_supersets.console.file.truncate()
+
+        cmd.dispatch(".superset_staging.list_dashboards", "")
+        out = _output(cli_with_two_supersets)
+        assert "Finance Overview" in out  # same stub data, no crosstalk error
+
+
 class TestMissingAdapterEndToEnd:
     """Service configured in agent.yml, but the adapter package isn't installed.
 
