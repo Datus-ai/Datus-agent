@@ -39,12 +39,12 @@ class TestFillDatabaseContext:
         assert real_agent_config.current_namespace == original_ns
 
     def test_known_database_updates_namespace_and_db(self, real_agent_config):
-        """Known database in namespaces updates current_namespace and current_database."""
+        """Known database in namespaces updates current_namespace and current_datasource."""
         # real_agent_config has "california_schools" in services.datasources
         # After the namespace→services.datasources refactor, each DB is its own namespace key
         _fill_database_context(real_agent_config, database="california_schools")
         assert real_agent_config.current_namespace == "california_schools"
-        assert real_agent_config.current_database == "california_schools"
+        assert real_agent_config.current_datasource == "california_schools"
 
     def test_database_as_namespace_name(self, real_agent_config):
         """Database matching a namespace name falls back to namespace lookup."""
@@ -274,7 +274,7 @@ class TestStartChat:
         request = StreamChatInput(message="hello", database="california_schools")
         task = await manager.start_chat(real_agent_config, request)
         assert task is not None
-        assert real_agent_config.current_database == "california_schools"
+        assert real_agent_config.current_datasource == "california_schools"
         await manager.shutdown()
 
     async def test_stop_running_task_with_node(self, real_agent_config, mock_llm_create):

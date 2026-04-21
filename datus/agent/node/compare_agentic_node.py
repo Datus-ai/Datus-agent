@@ -87,10 +87,10 @@ class CompareAgenticNode(AgenticNode):
             return
 
         try:
-            namespace = self.agent_config.current_database
+            namespace = self.agent_config.current_datasource
 
             db_manager = db_manager_instance(self.agent_config.namespaces)
-            database = getattr(self.agent_config, "current_database", "")
+            database = getattr(self.agent_config, "current_datasource", "")
             try:
                 connector = db_manager.get_conn(namespace, database)
             except Exception:

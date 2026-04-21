@@ -612,7 +612,7 @@ class TestGetConnectorRouting:
 
         mock_config = Mock()
         mock_config.active_model.return_value.model = "gpt-5.4"
-        mock_config.current_database = "duckdb"
+        mock_config.current_datasource = "duckdb"
         # Must have >1 database so DBFuncTool enters true multi-connector mode
         mock_config.current_db_configs.return_value = {"duckdb": Mock(), "greenplum": Mock()}
 
@@ -653,7 +653,7 @@ class TestGetConnectorRouting:
 
         mock_config = Mock()
         mock_config.active_model.return_value.model = "gpt-5.4"
-        mock_config.current_database = "duckdb"
+        mock_config.current_datasource = "duckdb"
         mock_config.current_db_configs.return_value = {"duckdb": Mock(), "greenplum": Mock()}
 
         with (
@@ -687,7 +687,7 @@ class TestGetConnectorRouting:
 
         mock_config = Mock()
         mock_config.active_model.return_value.model = "gpt-5.4"
-        mock_config.current_database = "default_db"
+        mock_config.current_datasource = "default_db"
         mock_config.current_db_configs.return_value = {"default_db": Mock(), "other_db": Mock()}
 
         with (
@@ -716,7 +716,7 @@ class TestGetConnectorRouting:
 
         mock_config = Mock()
         mock_config.active_model.return_value.model = "gpt-5.4"
-        mock_config.current_database = "default_db"
+        mock_config.current_datasource = "default_db"
         mock_config.current_db_configs.return_value = {"default_db": Mock(), "other_db": Mock()}
 
         with (
@@ -752,7 +752,7 @@ class TestGetConnectorRouting:
 
         mock_config = Mock()
         mock_config.active_model.return_value.model = "gpt-5.4"
-        mock_config.current_database = "source_db"
+        mock_config.current_datasource = "source_db"
         databases = {"source_db": Mock(), "broken_db": Mock()}
         mock_config.current_db_configs.return_value = databases
 

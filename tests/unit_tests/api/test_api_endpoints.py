@@ -34,7 +34,7 @@ from datus.api.legacy_models import (
 @pytest.fixture
 def mock_agent_config():
     config = MagicMock()
-    config.current_database = "test_ns"
+    config.current_datasource = "test_ns"
     config.rag_base_path = "/tmp/test_rag"
     config.api_config = {}
     return config

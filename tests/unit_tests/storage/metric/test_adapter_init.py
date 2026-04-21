@@ -20,7 +20,7 @@ def _make_agent_config(namespace="test_ns", adapter_type_config=None):
     """Create a mock AgentConfig."""
     config = MagicMock()
     config.namespace = namespace
-    config.current_database = namespace
+    config.current_datasource = namespace
     config.resolve_semantic_adapter.side_effect = lambda adapter_type=None: (
         adapter_type.lower().strip() if adapter_type else None
     )
@@ -198,9 +198,9 @@ class TestInitFromAdapter:
 
         # agent_config must NOT have metricflow_config so code falls through
         # to the metadata.config_class branch. Use spec to restrict attributes.
-        config = MagicMock(spec=["namespace", "current_database", "namespaces", "path_manager"])
+        config = MagicMock(spec=["namespace", "current_datasource", "namespaces", "path_manager"])
         config.namespace = "ns1"
-        config.current_database = "ns1"
+        config.current_datasource = "ns1"
         config.namespaces = {}
         config.path_manager.semantic_models_dir = "/tmp/project/subject/semantic_models"
 
@@ -237,8 +237,8 @@ class TestInitFromAdapter:
     @pytest.mark.asyncio
     @patch("datus.storage.metric.adapter_init.SemanticStorageManager")
     @patch("datus.storage.metric.adapter_init.semantic_adapter_registry")
-    async def test_namespace_from_current_database_fallback(self, mock_registry, MockStorageManager):
-        """Should use current_database when namespace attr is None."""
+    async def test_namespace_from_current_datasource_fallback(self, mock_registry, MockStorageManager):
+        """Should use current_datasource when namespace attr is None."""
         from datus.storage.metric.adapter_init import init_from_adapter
 
         mock_metadata = MagicMock()
@@ -251,9 +251,9 @@ class TestInitFromAdapter:
         MockStorageManager.return_value = mock_manager
 
         # Use spec to prevent auto-generated attributes like dbt_config
-        config = MagicMock(spec=["namespace", "current_database", "namespaces", "path_manager"])
+        config = MagicMock(spec=["namespace", "current_datasource", "namespaces", "path_manager"])
         config.namespace = None
-        config.current_database = "fallback_ns"
+        config.current_datasource = "fallback_ns"
         config.namespaces = {}
         config.path_manager.semantic_models_dir = "/tmp/project/subject/semantic_models"
 
@@ -296,9 +296,9 @@ class TestInitFromAdapter:
             "logic_name": "ignore_me_too",
         }
 
-        config = MagicMock(spec=["namespace", "current_database", "namespaces", "path_manager"])
+        config = MagicMock(spec=["namespace", "current_datasource", "namespaces", "path_manager"])
         config.namespace = "ns1"
-        config.current_database = "ns1"
+        config.current_datasource = "ns1"
         config.namespaces = {"ns1": {"default": mock_db_config}}
         config.path_manager.semantic_models_dir = "/tmp/project/subject/semantic_models"
 

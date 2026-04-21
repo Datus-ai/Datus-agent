@@ -306,7 +306,7 @@ class TestSchedulerRegistration:
             result = tool._build_node_input(node, "List all jobs")
             assert isinstance(result, SchedulerNodeInput)
             assert result.user_message == "List all jobs"
-            assert result.database == real_agent_config.current_database
+            assert result.database == real_agent_config.current_datasource
 
     def test_node_factory_with_input_data(self, real_agent_config, mock_llm_create):
         """Node.new_instance with input_data should set node.input."""

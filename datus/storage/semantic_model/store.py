@@ -271,7 +271,7 @@ class SemanticModelRAG:
         from datus.storage.rag_scope import _build_sub_agent_filter
         from datus.storage.registry import get_storage
 
-        self.datasource_id = datasource_id or agent_config.current_database or ""
+        self.datasource_id = datasource_id or agent_config.current_datasource or ""
         self.storage: SemanticModelStorage = get_storage(
             SemanticModelStorage, "semantic_model", project=agent_config.project_name
         )

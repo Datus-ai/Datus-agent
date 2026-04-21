@@ -23,7 +23,7 @@ from datus.utils.constants import SYS_SUB_AGENTS
 def mock_agent_config():
     config = Mock(spec=AgentConfig)
     config.db_type = "sqlite"
-    config.current_database = "test_db"
+    config.current_datasource = "test_db"
     config.agentic_nodes = {
         "chat": {"model": "default"},
         "gen_sql": {"model": "default", "system_prompt": "gen_sql", "node_class": "gen_sql"},
@@ -96,7 +96,7 @@ class TestGetAvailableTypes:
     def test_includes_agent_without_node_class(self):
         """Subagent without node_class should still be discovered (defaults to gen_sql)."""
         config = Mock(spec=AgentConfig)
-        config.current_database = "default"
+        config.current_datasource = "default"
         config.agentic_nodes = {
             "chat": {"model": "default"},
             "custom": {"model": "default"},  # no node_class
@@ -109,7 +109,7 @@ class TestGetAvailableTypes:
     def test_excludes_scoped_agent_wrong_namespace(self):
         """Subagent with scoped_context bound to a different namespace should be excluded."""
         config = Mock(spec=AgentConfig)
-        config.current_database = "default"
+        config.current_datasource = "default"
         config.agentic_nodes = {
             "chat": {"model": "default"},
             "scoped_agent": {
@@ -125,7 +125,7 @@ class TestGetAvailableTypes:
     def test_includes_scoped_agent_matching_namespace(self):
         """Subagent with scoped_context matching current namespace should be included."""
         config = Mock(spec=AgentConfig)
-        config.current_database = "sales"
+        config.current_datasource = "sales"
         config.agentic_nodes = {
             "chat": {"model": "default"},
             "scoped_agent": {
@@ -141,7 +141,7 @@ class TestGetAvailableTypes:
     def test_includes_agent_without_scoped_context(self):
         """Subagent without scoped_context should not be filtered by namespace."""
         config = Mock(spec=AgentConfig)
-        config.current_database = "default"
+        config.current_datasource = "default"
         config.agentic_nodes = {
             "chat": {"model": "default"},
             "global_agent": {
@@ -157,7 +157,7 @@ class TestGetAvailableTypes:
     def test_explicit_list_filters_out_unknown_types(self, caplog):
         """Unknown types in explicit allowed_subagents are skipped with a warning."""
         config = Mock(spec=AgentConfig)
-        config.current_database = "default"
+        config.current_datasource = "default"
         config.agentic_nodes = {"chat": {"model": "default"}}
         tool = SubAgentTaskTool(
             agent_config=config,
@@ -178,7 +178,7 @@ class TestGetAvailableTypes:
     def test_explicit_list_excludes_self(self):
         """The parent node name is excluded even if listed in allowed_subagents."""
         config = Mock(spec=AgentConfig)
-        config.current_database = "default"
+        config.current_datasource = "default"
         config.agentic_nodes = {"chat": {"model": "default"}}
         tool = SubAgentTaskTool(
             agent_config=config,

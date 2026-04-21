@@ -50,7 +50,7 @@ class TestBirdDevOutput:
         assert test_data, "test fixture produced no benchmarks"
         for benchmark, data in test_data.items():
             logger.info("switch benchmark to %s", benchmark)
-            global_config.current_database = data["namespace"]
+            global_config.current_datasource = data["namespace"]
             self._do_execute(benchmark, data, global_config, llm_model)
 
     def _do_execute(

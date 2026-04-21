@@ -112,7 +112,7 @@ class DatabaseInfo(BaseModel):
 
     version: str = Field(..., description="Database version")
     databases: List[str] = Field(..., description="Available databases")
-    current_database: str = Field(..., description="Current database name")
+    current_datasource: str = Field(..., description="Current database name")
     catalogs: Optional[List[str]] = Field(None, description="Available catalogs (if supported)")
 
 

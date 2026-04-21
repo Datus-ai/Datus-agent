@@ -8,7 +8,7 @@ A small, strict overlay on the base ``agent.yml`` that lets every project
 pin three values without copying the full config:
 
 - ``target``: which LLM to use (must match a key under ``agent.models``)
-- ``default_database``: which datasource to connect to on startup (must
+- ``default_datasource``: which datasource to connect to on startup (must
   match a key under ``agent.services.datasources``)
 - ``project_name``: shard name for ``~/.datus/sessions/{project_name}/``
   and ``~/.datus/data/{project_name}/`` (optional)
@@ -29,7 +29,7 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 PROJECT_CONFIG_REL = ".datus/config.yml"
-ALLOWED_KEYS = frozenset({"target", "default_database", "project_name"})
+ALLOWED_KEYS = frozenset({"target", "default_datasource", "project_name"})
 
 
 @dataclass
@@ -40,11 +40,11 @@ class ProjectOverride:
     """
 
     target: Optional[str] = None
-    default_database: Optional[str] = None
+    default_datasource: Optional[str] = None
     project_name: Optional[str] = None
 
     def is_empty(self) -> bool:
-        return self.target is None and self.default_database is None and self.project_name is None
+        return self.target is None and self.default_datasource is None and self.project_name is None
 
 
 def project_config_path(cwd: Optional[str] = None) -> Path:
@@ -80,7 +80,7 @@ def load_project_override(cwd: Optional[str] = None) -> Optional[ProjectOverride
         logger.warning(f"Ignoring unknown keys in {path}: {sorted(unknown)}. Only {sorted(ALLOWED_KEYS)} are accepted.")
     return ProjectOverride(
         target=raw.get("target"),
-        default_database=raw.get("default_database"),
+        default_datasource=raw.get("default_datasource"),
         project_name=raw.get("project_name"),
     )
 
@@ -98,7 +98,7 @@ def save_project_override(override: ProjectOverride, cwd: Optional[str] = None) 
         k: v
         for k, v in {
             "target": override.target,
-            "default_database": override.default_database,
+            "default_datasource": override.default_datasource,
             "project_name": override.project_name,
         }.items()
         if v is not None

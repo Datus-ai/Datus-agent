@@ -1235,10 +1235,10 @@ HTTP Client Usage:
     )
 
     parser.add_argument(
-        "--database",
+        "--datasource",
         "-d",
         default=None,
-        help="Run in static mode with specified database name",
+        help="Run in static mode with specified datasource name",
     )
 
     parser.add_argument(
@@ -1310,7 +1310,7 @@ HTTP Client Usage:
         server = create_server(
             namespace=args.namespace,
             sub_agent=args.sub_agent,
-            database_name=args.database,
+            database_name=args.datasource,
             config_path=args.config,
         )
         server.run(transport=args.transport, host=args.host, port=args.port)

@@ -34,39 +34,39 @@ class TestArgumentParser:
         assert args.db_type == "sqlite"
         assert args.debug is False
         assert args.no_color is False
-        assert args.database == ""
+        assert args.datasource == ""
         assert args.print_mode is None
         assert args.web is False
         assert args.resume is None
 
     def test_parse_args_debug_flag(self):
         ap = ArgumentParser()
-        with patch.object(sys, "argv", ["datus", "--debug", "--database", "ns1"]):
+        with patch.object(sys, "argv", ["datus", "--debug", "--datasource", "ns1"]):
             args = ap.parse_args()
         assert args.debug is True
-        assert args.database == "ns1"
+        assert args.datasource == "ns1"
 
     def test_parse_args_print(self):
         ap = ArgumentParser()
-        with patch.object(sys, "argv", ["datus", "--database", "ns1", "--print", "hello"]):
+        with patch.object(sys, "argv", ["datus", "--datasource", "ns1", "--print", "hello"]):
             args = ap.parse_args()
         assert args.print_mode == "hello"
 
     def test_parse_args_print_short(self):
         ap = ArgumentParser()
-        with patch.object(sys, "argv", ["datus", "--database", "ns1", "-p", "hello"]):
+        with patch.object(sys, "argv", ["datus", "--datasource", "ns1", "-p", "hello"]):
             args = ap.parse_args()
         assert args.print_mode == "hello"
 
     def test_parse_args_resume(self):
         ap = ArgumentParser()
-        with patch.object(sys, "argv", ["datus", "--database", "ns1", "--print", "hello", "--resume", "sess_123"]):
+        with patch.object(sys, "argv", ["datus", "--datasource", "ns1", "--print", "hello", "--resume", "sess_123"]):
             args = ap.parse_args()
         assert args.resume == "sess_123"
 
     def test_parse_args_web(self):
         ap = ArgumentParser()
-        with patch.object(sys, "argv", ["datus", "--database", "ns1", "--web"]):
+        with patch.object(sys, "argv", ["datus", "--datasource", "ns1", "--web"]):
             args = ap.parse_args()
         assert args.web is True
 
@@ -84,29 +84,29 @@ class TestArgumentParser:
 
 class TestApplicationRun:
     def test_run_no_namespace_prints_help(self):
-        """When no database is set and _resolve_default_database fails, help is printed."""
+        """When no database is set and _resolve_default_datasource fails, help is printed."""
         app = Application()
         mock_args = SimpleNamespace(
-            debug=False, database="", print_mode=None, web=False, resume=None, proxy_tools=None, config=None
+            debug=False, datasource="", print_mode=None, web=False, resume=None, proxy_tools=None, config=None
         )
         with (
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
             patch("datus.cli.main.configure_logging"),
             patch.object(app, "_ensure_project_config"),
-            patch.object(app, "_resolve_default_database", return_value=""),
+            patch.object(app, "_resolve_default_datasource", return_value=""),
             patch.object(app.arg_parser.parser, "print_help") as mock_help,
         ):
             app.run()
-        # _resolve_default_database returning "" should cause early return without
+        # _resolve_default_datasource returning "" should cause early return without
         # reaching the REPL; no test asserts print_help here because the real
-        # print_help is triggered inside _resolve_default_database (which we mocked).
+        # print_help is triggered inside _resolve_default_datasource (which we mocked).
         # Just verify the run returned cleanly.
         mock_help.assert_not_called()
 
     def test_resume_without_print_mode_errors(self):
         app = Application()
         mock_args = SimpleNamespace(
-            debug=False, database="ns1", print_mode=None, web=False, resume="sess_123", proxy_tools=None, config=None
+            debug=False, datasource="ns1", print_mode=None, web=False, resume="sess_123", proxy_tools=None, config=None
         )
         with (
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
@@ -120,7 +120,7 @@ class TestApplicationRun:
         """Verify that --proxy_tools without --print raises SystemExit."""
         app = Application()
         mock_args = SimpleNamespace(
-            debug=False, database="ns1", print_mode=None, web=False, resume=None, proxy_tools="*", config=None
+            debug=False, datasource="ns1", print_mode=None, web=False, resume=None, proxy_tools="*", config=None
         )
         with (
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
@@ -134,7 +134,7 @@ class TestApplicationRun:
         app = Application()
         mock_args = SimpleNamespace(
             debug=False,
-            database="ns1",
+            datasource="ns1",
             print_mode="hello world",
             web=False,
             resume=None,
@@ -157,7 +157,7 @@ class TestApplicationRun:
     def test_run_interactive_mode(self):
         app = Application()
         mock_args = SimpleNamespace(
-            debug=False, database="ns1", print_mode=None, web=False, resume=None, proxy_tools=None, config=None
+            debug=False, datasource="ns1", print_mode=None, web=False, resume=None, proxy_tools=None, config=None
         )
         mock_cli = MagicMock()
         with (
@@ -174,7 +174,7 @@ class TestApplicationRun:
     def test_run_web_mode(self):
         app = Application()
         mock_args = SimpleNamespace(
-            debug=False, database="ns1", print_mode=None, web=True, resume=None, proxy_tools=None, config=None
+            debug=False, datasource="ns1", print_mode=None, web=True, resume=None, proxy_tools=None, config=None
         )
         with (
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
@@ -278,7 +278,7 @@ class TestRepairProjectOverrides:
 
         app = Application()
         args = SimpleNamespace(config=None)
-        override = ProjectOverride(target="claude", default_database="bench")
+        override = ProjectOverride(target="claude", default_datasource="bench")
         raw = self._raw_agent(["claude", "deepseek"], {"bench": "sqlite"})
         with (
             patch("datus.configuration.project_config.load_project_override", return_value=override),
@@ -299,7 +299,7 @@ class TestRepairProjectOverrides:
 
         app = Application()
         args = SimpleNamespace(config=None)
-        override = ProjectOverride(target="claude-sonnet", default_database="bench")
+        override = ProjectOverride(target="claude-sonnet", default_datasource="bench")
         raw = self._raw_agent(["claude", "deepseek"], {"bench": "sqlite"})
         with (
             patch("datus.configuration.project_config.load_project_override", return_value=override),
@@ -318,15 +318,15 @@ class TestRepairProjectOverrides:
         mock_save.assert_called_once()
         (saved_override,) = mock_save.call_args.args
         assert saved_override.target == "deepseek"
-        assert saved_override.default_database == "bench"
+        assert saved_override.default_datasource == "bench"
 
-    def test_repairs_stale_default_database(self):
-        """Stale default_database → prompt only for db; keep valid target."""
+    def test_repairs_stale_default_datasource(self):
+        """Stale default_datasource → prompt only for db; keep valid target."""
         from datus.configuration.project_config import ProjectOverride
 
         app = Application()
         args = SimpleNamespace(config=None)
-        override = ProjectOverride(target="claude", default_database="benchmark1")
+        override = ProjectOverride(target="claude", default_datasource="benchmark1")
         raw = self._raw_agent(["claude", "deepseek"], {"bench": "sqlite"})
         with (
             patch("datus.configuration.project_config.load_project_override", return_value=override),
@@ -344,7 +344,7 @@ class TestRepairProjectOverrides:
         mock_save.assert_called_once()
         (saved_override,) = mock_save.call_args.args
         assert saved_override.target == "claude"
-        assert saved_override.default_database == "bench"
+        assert saved_override.default_datasource == "bench"
 
     def test_repairs_both_fields(self):
         """Both values stale → two prompts, saved override uses both picks."""
@@ -352,7 +352,7 @@ class TestRepairProjectOverrides:
 
         app = Application()
         args = SimpleNamespace(config=None)
-        override = ProjectOverride(target="claude1", default_database="benchmark1")
+        override = ProjectOverride(target="claude1", default_datasource="benchmark1")
         raw = self._raw_agent(["claude", "deepseek"], {"bench": "sqlite"})
         with (
             patch("datus.configuration.project_config.load_project_override", return_value=override),
@@ -373,7 +373,7 @@ class TestRepairProjectOverrides:
         mock_save.assert_called_once()
         (saved_override,) = mock_save.call_args.args
         assert saved_override.target == "claude"
-        assert saved_override.default_database == "bench"
+        assert saved_override.default_datasource == "bench"
 
     def test_raises_when_base_has_no_models(self):
         """Base config empty on the same key we need to repair → nothing to
@@ -384,7 +384,7 @@ class TestRepairProjectOverrides:
 
         app = Application()
         args = SimpleNamespace(config=None)
-        override = ProjectOverride(target="claude-sonnet", default_database=None)
+        override = ProjectOverride(target="claude-sonnet", default_datasource=None)
         raw = self._raw_agent([], {"bench": "sqlite"})
         with (
             patch("datus.configuration.project_config.load_project_override", return_value=override),
@@ -412,7 +412,7 @@ class TestRepairProjectOverrides:
 
         app = Application()
         args = SimpleNamespace(config=None)
-        override = ProjectOverride(target="claude-sonnet", default_database=None)
+        override = ProjectOverride(target="claude-sonnet", default_datasource=None)
         raw = self._raw_agent(["claude", "deepseek"], {"bench": "sqlite"})
         with (
             patch("datus.configuration.project_config.load_project_override", return_value=override),
@@ -437,12 +437,12 @@ class TestResolveDefaultDatabase:
     def _make_config(self, datasources: dict, default: str = ""):
         cfg = MagicMock()
         cfg.services.datasources = datasources
-        cfg.services.default_database = default
+        cfg.services.default_datasource = default
         return cfg
 
-    def test_returns_service_default_database(self):
-        """_resolve_default_database is now a thin wrapper over
-        config.services.default_database — the overlay is applied upstream by
+    def test_returns_service_default_datasource(self):
+        """_resolve_default_datasource is now a thin wrapper over
+        config.services.default_datasource — the overlay is applied upstream by
         _apply_project_override, so this function just reads the resolved
         value. We verify the resolved value wins regardless of the base
         agent.yml: the mock returns "b" directly."""
@@ -450,7 +450,7 @@ class TestResolveDefaultDatabase:
         args = SimpleNamespace(config=None)
         config = self._make_config({"a": MagicMock(type="sqlite"), "b": MagicMock(type="duckdb")}, default="b")
         with patch("datus.configuration.agent_config_loader.load_agent_config", return_value=config):
-            result = app._resolve_default_database(args)
+            result = app._resolve_default_datasource(args)
         assert result == "b"
 
     def test_falls_through_to_base_default(self):
@@ -458,7 +458,7 @@ class TestResolveDefaultDatabase:
         args = SimpleNamespace(config=None)
         config = self._make_config({"a": MagicMock(type="sqlite")}, default="a")
         with patch("datus.configuration.agent_config_loader.load_agent_config", return_value=config):
-            result = app._resolve_default_database(args)
+            result = app._resolve_default_datasource(args)
         assert result == "a"
 
     def test_no_databases_returns_empty(self):
@@ -468,7 +468,7 @@ class TestResolveDefaultDatabase:
         with (
             patch("datus.configuration.agent_config_loader.load_agent_config", return_value=config),
         ):
-            result = app._resolve_default_database(args)
+            result = app._resolve_default_datasource(args)
         assert result == ""
 
 
@@ -480,7 +480,7 @@ class TestResolveDefaultDatabase:
 class TestRunWebInterface:
     def test_delegates_to_run_web_interface(self):
         app = Application()
-        mock_args = SimpleNamespace(database="ns1")
+        mock_args = SimpleNamespace(datasource="ns1")
         with patch("datus.cli.web.run_web_interface") as mock_web:
             with patch.dict("sys.modules", {"datus.cli.web": MagicMock(run_web_interface=mock_web)}):
                 app._run_web_interface(mock_args)

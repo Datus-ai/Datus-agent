@@ -18,7 +18,7 @@ from datus.schemas.schema_linking_node_models import SchemaLinkingResult
 def make_mock_agent_config():
     cfg = MagicMock()
     cfg.namespaces = {}
-    cfg.current_database = "test"
+    cfg.current_datasource = "test"
     cfg.nodes = {}
     cfg.custom_workflows = {}
     return cfg

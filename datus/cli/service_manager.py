@@ -95,7 +95,7 @@ class ServiceManager:
         table.add_column("Connection")
         table.add_column("Default")
 
-        default_db = self.agent_config.services.default_database
+        default_db = self.agent_config.services.default_datasource
         for db_name, db_config in databases.items():
             connection = ""
             if db_config.uri:

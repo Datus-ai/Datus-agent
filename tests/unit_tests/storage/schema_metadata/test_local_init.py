@@ -394,7 +394,7 @@ pytestmark = pytest.mark.ci
 
 def _make_agent_config(namespace="test_ns", db_type=DBType.SQLITE, db_name="mydb"):
     config = MagicMock()
-    config.current_database = namespace
+    config.current_datasource = namespace
     db_config = MagicMock()
     db_config.type = db_type
     db_config.database = db_name
@@ -773,7 +773,7 @@ class TestInitLocalSchema:
 
         db_config = DbConfig(type=db_type, database=db_name)
         agent_config = MagicMock()
-        agent_config.current_database = "test_ns"
+        agent_config.current_datasource = "test_ns"
         agent_config.namespaces = {"test_ns": {db_name: db_config}}
         return agent_config, db_config
 
@@ -821,7 +821,7 @@ class TestInitLocalSchema:
 
         mock_store = MagicMock()
         agent_config = MagicMock()
-        agent_config.current_database = "test_ns"
+        agent_config.current_datasource = "test_ns"
 
         db_config_a = MagicMock()
         db_config_a.type = DBType.SQLITE
@@ -848,7 +848,7 @@ class TestInitLocalSchema:
 
         mock_store = MagicMock()
         agent_config = MagicMock()
-        agent_config.current_database = "test_ns"
+        agent_config.current_datasource = "test_ns"
 
         db_config_a = MagicMock()
         db_config_a.type = DBType.SQLITE
@@ -874,7 +874,7 @@ class TestInitLocalSchema:
 
         mock_store = MagicMock()
         agent_config = MagicMock()
-        agent_config.current_database = "test_ns"
+        agent_config.current_datasource = "test_ns"
         agent_config.namespaces = {"test_ns": {}}  # empty
         db_manager = MagicMock()
 
@@ -888,7 +888,7 @@ class TestInitLocalSchema:
 
         mock_store = MagicMock()
         agent_config = MagicMock()
-        agent_config.current_database = "test_ns"
+        agent_config.current_datasource = "test_ns"
 
         db_config = MagicMock()
         db_config.type = "oracle"  # not SQLITE or DUCKDB in multi-db mode

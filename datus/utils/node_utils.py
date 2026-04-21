@@ -23,7 +23,7 @@ def resolve_database_name_for_prompt(connector: Any, connection_name: str = "") 
 
     Args:
         connector: Database connector instance (BaseSqlConnector or similar).
-        connection_name: Connection name from user_input.database or agent_config.current_database.
+        connection_name: Connection name from user_input.database or agent_config.current_datasource.
 
     Returns:
         The most appropriate database name for the LLM prompt.

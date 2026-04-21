@@ -137,7 +137,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
         """Setup database tools."""
         try:
             db_manager = db_manager_instance(self.agent_config.namespaces)
-            conn = db_manager.get_conn(self.agent_config.current_database, self.agent_config.current_database)
+            conn = db_manager.get_conn(self.agent_config.current_datasource, self.agent_config.current_datasource)
             self.db_func_tool = DBFuncTool(
                 conn,
                 agent_config=self.agent_config,
@@ -260,7 +260,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
         # Filesystem tool is now rooted at project_root (not subject/), so the
         # LLM must pass the full ``subject/<kind>/…`` relative path.
         context["kind_subdir"] = "subject/semantic_models"
-        context["current_database"] = self.agent_config.current_database
+        context["current_datasource"] = self.agent_config.current_datasource
         context["has_ask_user_tool"] = self.ask_user_tool is not None
 
         logger.debug(f"Prepared template context: {context}")

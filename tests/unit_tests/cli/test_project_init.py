@@ -17,14 +17,14 @@ from datus.configuration.project_config import load_project_override
 from datus.utils.exceptions import DatusException
 
 
-def _make_base_config(models, datasources, target="", default_database=""):
+def _make_base_config(models, datasources, target="", default_datasource=""):
     """Build a minimal AgentConfig stand-in with the attributes the wizard reads."""
     cfg = MagicMock()
     cfg.models = models
     cfg.target = target
     cfg.services = SimpleNamespace(
         datasources={name: SimpleNamespace(type=t) for name, t in datasources.items()},
-        default_database=default_database,
+        default_datasource=default_datasource,
     )
     return cfg
 
@@ -35,7 +35,7 @@ class TestRunProjectInit:
             models={"openai": {}, "deepseek": {}},
             datasources={"db1": "sqlite", "db2": "duckdb"},
             target="openai",
-            default_database="db1",
+            default_datasource="db1",
         )
         with (
             patch("datus.cli.project_init.select_choice", side_effect=["deepseek", "db2"]),
@@ -43,12 +43,12 @@ class TestRunProjectInit:
         ):
             override = run_project_init(base, cwd=str(tmp_path))
         assert override.target == "deepseek"
-        assert override.default_database == "db2"
+        assert override.default_datasource == "db2"
         assert override.project_name == "my_proj"
         # File persisted with those values
         reloaded = load_project_override(str(tmp_path))
         assert reloaded.target == "deepseek"
-        assert reloaded.default_database == "db2"
+        assert reloaded.default_datasource == "db2"
         assert reloaded.project_name == "my_proj"
 
     def test_uses_base_target_as_default(self, tmp_path):
@@ -56,7 +56,7 @@ class TestRunProjectInit:
             models={"openai": {}, "deepseek": {}},
             datasources={"db1": "sqlite"},
             target="deepseek",
-            default_database="db1",
+            default_datasource="db1",
         )
         # select_choice returning empty string simulates Ctrl+C → fall back to default
         with (
@@ -65,7 +65,7 @@ class TestRunProjectInit:
         ):
             override = run_project_init(base, cwd=str(tmp_path))
         assert override.target == "deepseek"
-        assert override.default_database == "db1"
+        assert override.default_datasource == "db1"
 
     def test_no_models_raises(self, tmp_path):
         base = _make_base_config(
@@ -90,7 +90,7 @@ class TestRunProjectInit:
             models={"openai": {}},
             datasources={"db1": "sqlite"},
             target="openai",
-            default_database="db1",
+            default_datasource="db1",
         )
         with (
             patch("datus.cli.project_init.select_choice", side_effect=["openai", "db1"]),
@@ -107,7 +107,7 @@ class TestRunProjectInit:
             models={"openai": {}},
             datasources={"db1": "sqlite"},
             target="openai",
-            default_database="db1",
+            default_datasource="db1",
         )
         from datus.configuration.agent_config import _normalize_project_name
 

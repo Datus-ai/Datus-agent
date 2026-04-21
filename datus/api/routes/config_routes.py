@@ -143,7 +143,7 @@ async def get_agent_config_endpoint(
         data={
             "target": config.target,
             "models": config.models,
-            "current_database": config.current_namespace,
+            "current_datasource": config.current_namespace,
             "datasources": flat_datasources,
             "home": config.home,
         },

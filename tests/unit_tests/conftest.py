@@ -241,7 +241,7 @@ def real_agent_config(tmp_path, reset_global_singletons):
     agent_config = AgentConfig(nodes=nodes, **config_kwargs)
 
     # Set current database (was: current_namespace = "test_ns")
-    agent_config.current_database = "california_schools"
+    agent_config.current_datasource = "california_schools"
 
     yield agent_config
     # tmp_path is pytest-managed; storage backends here use

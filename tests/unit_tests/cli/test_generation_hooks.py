@@ -53,7 +53,7 @@ def agent_config(tmp_path):
     (subject_dir / "ext_knowledge").mkdir(parents=True, exist_ok=True)
     cfg = MagicMock()
     cfg.home = str(tmp_path)
-    cfg.current_database = "test_ns"
+    cfg.current_datasource = "test_ns"
     cfg.current_namespace = "test_ns"
     cfg.db_type = "sqlite"
     cfg.path_manager = MagicMock()

@@ -159,7 +159,7 @@ class Agent:
     def check_db(self):
         """Validate database connectivity."""
         logger.info("Checking database connectivity")
-        namespace = self.global_config.current_database
+        namespace = self.global_config.current_datasource
         if namespace in self.global_config.namespaces:
             connections = self.db_manager.get_connections(namespace)
             if not connections:
@@ -411,7 +411,7 @@ class Agent:
                     init_dev_schema(
                         self.metadata_store,
                         self.db_manager,
-                        self.global_config.current_database,
+                        self.global_config.current_datasource,
                         benchmark_path,
                         kb_update_strategy,
                         pool_size=pool_size,
@@ -687,7 +687,7 @@ class Agent:
         self, benchmark_platform: str, target_task_ids: Optional[Set[str]] = None, run_id: Optional[str] = None
     ):
         _, conn = db_manager_instance(self.global_config.namespaces).first_conn_with_name(
-            self.global_config.current_database
+            self.global_config.current_datasource
         )
         self.check_db()
 
@@ -823,11 +823,11 @@ class Agent:
 
     def _cleanup_benchmark_output_paths(self, benchmark_path: str):
         """Clean up previous benchmark execution results to avoid interference."""
-        current_database = self.global_config.current_database
+        current_datasource = self.global_config.current_datasource
 
         # Clean up namespace directory in output directory
         output_dir = self.global_config.output_dir
-        namespace_dir = os.path.join(output_dir, current_database)
+        namespace_dir = os.path.join(output_dir, current_datasource)
         if os.path.exists(namespace_dir):
             logger.info(f"Cleaning up namespace directory: {namespace_dir}")
             try:

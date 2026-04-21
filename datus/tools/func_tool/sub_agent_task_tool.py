@@ -678,13 +678,13 @@ class SubAgentTaskTool:
         if isinstance(node, ExploreAgenticNode):
             return ExploreNodeInput(
                 user_message=prompt,
-                database=self.agent_config.current_database,
+                database=self.agent_config.current_datasource,
             )
 
         if isinstance(node, GenSQLAgenticNode):
             return GenSQLNodeInput(
                 user_message=prompt,
-                database=self.agent_config.current_database,
+                database=self.agent_config.current_datasource,
             )
 
         # Built-in system subagent input types
@@ -701,7 +701,7 @@ class SubAgentTaskTool:
 
             return SemanticNodeInput(
                 user_message=prompt,
-                database=self.agent_config.current_database,
+                database=self.agent_config.current_datasource,
             )
 
         if isinstance(node, (GenSemanticModelAgenticNode, GenMetricsAgenticNode)):
@@ -709,7 +709,7 @@ class SubAgentTaskTool:
 
             return SemanticNodeInput(
                 user_message=prompt,
-                database=self.agent_config.current_database,
+                database=self.agent_config.current_datasource,
             )
 
         if isinstance(node, SqlSummaryAgenticNode):
@@ -717,7 +717,7 @@ class SubAgentTaskTool:
 
             return SqlSummaryNodeInput(
                 user_message=prompt,
-                database=self.agent_config.current_database,
+                database=self.agent_config.current_datasource,
             )
 
         if isinstance(node, GenExtKnowledgeAgenticNode):
@@ -732,7 +732,7 @@ class SubAgentTaskTool:
 
             return GenDashboardNodeInput(
                 user_message=prompt,
-                database=self.agent_config.current_database,
+                database=self.agent_config.current_datasource,
             )
 
         from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
@@ -742,7 +742,7 @@ class SubAgentTaskTool:
 
             return SchedulerNodeInput(
                 user_message=prompt,
-                database=self.agent_config.current_database,
+                database=self.agent_config.current_datasource,
             )
 
         from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
@@ -752,7 +752,7 @@ class SubAgentTaskTool:
 
             return GenReportNodeInput(
                 user_message=prompt,
-                database=self.agent_config.current_database,
+                database=self.agent_config.current_datasource,
             )
 
         from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
@@ -1005,7 +1005,7 @@ class SubAgentTaskTool:
         types.extend(sorted(name for name in SYS_SUB_AGENTS if name != "feedback"))
 
         if self.agent_config and hasattr(self.agent_config, "agentic_nodes"):
-            current_database = self.agent_config.current_database
+            current_datasource = self.agent_config.current_datasource
 
             for name, config in self.agent_config.agentic_nodes.items():
                 if name in ("chat", "explore", "feedback") or name in SYS_SUB_AGENTS:
@@ -1014,7 +1014,7 @@ class SubAgentTaskTool:
                 # If scoped_context is configured, namespace must match current namespace
                 try:
                     sub_config = SubAgentConfig.model_validate(config)
-                    if sub_config.has_scoped_context() and not sub_config.is_in_namespace(current_database):
+                    if sub_config.has_scoped_context() and not sub_config.is_in_namespace(current_datasource):
                         continue
                 except Exception as e:
                     logger.debug(f"Skipping invalid subagent config '{name}': {e}")

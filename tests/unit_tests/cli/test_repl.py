@@ -309,8 +309,8 @@ class TestCmdListNamespaces:
         # Should have printed something (the table)
         assert len(output) > 0
 
-    def test_current_database_highlighted(self, cli):
-        cli.agent_config.current_database = "california_schools"
+    def test_current_datasource_highlighted(self, cli):
+        cli.agent_config.current_datasource = "california_schools"
         cli._cmd_list_namespaces()
         output = cli.console.file.getvalue()
         # Each database is listed as its own namespace entry
@@ -329,7 +329,7 @@ class TestCmdSwitchNamespace:
         mock_list.assert_called_once()
 
     def test_same_namespace_prints_message(self, cli):
-        current_ns = cli.agent_config.current_database
+        current_ns = cli.agent_config.current_datasource
         with patch.object(cli, "_cmd_list_namespaces"):
             cli._cmd_switch_namespace(current_ns)
         output = cli.console.file.getvalue()
@@ -715,11 +715,11 @@ class TestCmdSwitchNamespaceExtended:
         mock_conn.schema_name = ""
         cli.db_manager.first_conn_with_name.return_value = ("test_ns", mock_conn)
 
-        # Patch current_database property to return a different value so the
+        # Patch current_datasource property to return a different value so the
         # "already on this namespace" branch is NOT taken; setter is a no-op.
         with patch.object(
             type(cli.agent_config),
-            "current_database",
+            "current_datasource",
             new_callable=lambda: property(
                 lambda self: "other_ns",
                 lambda self, v: None,
@@ -733,7 +733,7 @@ class TestCmdSwitchNamespaceExtended:
         assert "Namespace changed" in output
 
     def test_same_namespace_both_listed_and_message(self, cli):
-        current = cli.agent_config.current_database
+        current = cli.agent_config.current_datasource
 
         with patch.object(cli, "_cmd_list_namespaces") as mock_list:
             cli._cmd_switch_namespace(current)
@@ -802,37 +802,37 @@ class TestPrintWelcome:
         cli._print_welcome()
         return cli.console.file.getvalue()
 
-    def test_database_from_args_database(self, real_agent_config):
-        """args.database takes highest priority."""
+    def test_database_from_args_datasource(self, real_agent_config):
+        """args.datasource takes highest priority."""
         cli = _make_cli(real_agent_config)
-        cli.args = MagicMock(database="my_db", namespace="my_ns")
-        real_agent_config._current_database = "config_db"
+        cli.args = MagicMock(datasource="my_db", namespace="my_ns")
+        real_agent_config._current_datasource = "config_db"
         output = self._get_output(cli)
         assert "my_db" in output
         assert "my_ns" not in output
         assert "config_db" not in output
 
     def test_database_fallback_to_args_namespace(self, real_agent_config):
-        """Falls back to args.namespace when args.database is empty."""
+        """Falls back to args.namespace when args.datasource is empty."""
         cli = _make_cli(real_agent_config)
-        cli.args = MagicMock(database="", namespace="my_ns")
-        real_agent_config._current_database = ""
+        cli.args = MagicMock(datasource="", namespace="my_ns")
+        real_agent_config._current_datasource = ""
         output = self._get_output(cli)
         assert "my_ns" in output
 
     def test_database_fallback_to_agent_config(self, real_agent_config):
-        """Falls back to agent_config.current_database when args are empty."""
+        """Falls back to agent_config.current_datasource when args are empty."""
         cli = _make_cli(real_agent_config)
-        cli.args = MagicMock(database="", namespace="")
-        real_agent_config._current_database = "config_db"
+        cli.args = MagicMock(datasource="", namespace="")
+        real_agent_config._current_datasource = "config_db"
         output = self._get_output(cli)
         assert "config_db" in output
 
     def test_no_database_warning(self, real_agent_config):
         """Shows 'not selected' hint when no database is available."""
         cli = _make_cli(real_agent_config)
-        cli.args = MagicMock(database="", namespace="")
-        real_agent_config._current_database = ""
+        cli.args = MagicMock(datasource="", namespace="")
+        real_agent_config._current_datasource = ""
         output = self._get_output(cli)
         assert "not selected" in output
 
@@ -850,21 +850,21 @@ class TestBuildBannerPanel:
 
         cli = _make_cli(real_agent_config)
         cli.args = MagicMock(database="benchmark", namespace="")
-        real_agent_config._current_database = ""
+        real_agent_config._current_datasource = ""
         output = self._render(cli)
         assert f"v{__version__}" in output
 
     def test_contains_subtitle(self, real_agent_config):
         cli = _make_cli(real_agent_config)
         cli.args = MagicMock(database="benchmark", namespace="")
-        real_agent_config._current_database = ""
+        real_agent_config._current_datasource = ""
         output = self._render(cli)
         assert "AI-powered SQL command-line interface" in output
 
     def test_contains_ascii_art_on_wide_terminal(self, real_agent_config):
         cli = _make_cli(real_agent_config)
         cli.args = MagicMock(database="benchmark", namespace="")
-        real_agent_config._current_database = ""
+        real_agent_config._current_datasource = ""
         output = self._render(cli, width=100)
         assert "██████╗" in output
 
@@ -873,7 +873,7 @@ class TestBuildBannerPanel:
 
         cli = _make_cli(real_agent_config)
         cli.args = MagicMock(database="benchmark", namespace="")
-        real_agent_config._current_database = ""
+        real_agent_config._current_datasource = ""
         output = self._render(cli, width=40)
         assert f"DATUS v{__version__}" in output
         assert "██████╗" not in output
@@ -882,7 +882,7 @@ class TestBuildBannerPanel:
         """Banner must not include an AI status row."""
         cli = _make_cli(real_agent_config)
         cli.args = MagicMock(database="benchmark", namespace="")
-        real_agent_config._current_database = ""
+        real_agent_config._current_datasource = ""
         cli.agent_ready = True
         cli.agent_initializing = False
         output = self._render(cli)
@@ -895,7 +895,7 @@ class TestBuildBannerPanel:
     def test_not_connected_label(self, real_agent_config):
         cli = _make_cli(real_agent_config)
         cli.args = MagicMock(database="benchmark", namespace="")
-        real_agent_config._current_database = ""
+        real_agent_config._current_datasource = ""
         cli.db_connector = None
         output = self._render(cli)
         assert "not connected" in output
@@ -904,7 +904,7 @@ class TestBuildBannerPanel:
         """Banner must not include the '/ . @ !' command prefix cheatsheet row."""
         cli = _make_cli(real_agent_config)
         cli.args = MagicMock(database="benchmark", namespace="")
-        real_agent_config._current_database = ""
+        real_agent_config._current_datasource = ""
         output = self._render(cli)
         assert "! @ ." not in output
         assert "Commands:" not in output
@@ -913,7 +913,7 @@ class TestBuildBannerPanel:
         """Database line appends 'using <name>' when current_db_name != configured db."""
         cli = _make_cli(real_agent_config)
         cli.args = MagicMock(database="benchmark", namespace="")
-        real_agent_config._current_database = ""
+        real_agent_config._current_datasource = ""
         cli.cli_context.current_db_name = "other_db"
         output = self._render(cli)
         assert "using other_db" in output
@@ -922,7 +922,7 @@ class TestBuildBannerPanel:
         """Context row appears when cli_context has a non-empty summary."""
         cli = _make_cli(real_agent_config)
         cli.args = MagicMock(database="benchmark", namespace="")
-        real_agent_config._current_database = ""
+        real_agent_config._current_datasource = ""
         cli.cli_context.current_db_name = "benchmark"
         output = self._render(cli)
         assert "Context" in output

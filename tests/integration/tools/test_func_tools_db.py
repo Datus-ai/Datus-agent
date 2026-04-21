@@ -327,7 +327,7 @@ class TestScopedTables:
         return DBFuncTool(
             db_manager,
             agent_config=ssb_config,
-            default_database=ssb_config.current_database,
+            default_database=ssb_config.current_datasource,
             scoped_tables=["customer", "lineorder"],
         )
 
@@ -350,7 +350,7 @@ class TestScopedTables:
         scoped_tool = DBFuncTool(
             db_manager,
             agent_config=ssb_config,
-            default_database=ssb_config.current_database,
+            default_database=ssb_config.current_datasource,
             scoped_tables=["customer"],
         )
 

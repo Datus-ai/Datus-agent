@@ -23,11 +23,11 @@ from datus.api.routes.config_routes import (
 from datus.utils.exceptions import DatusException
 
 
-def _mock_svc(databases, *, target="deepseek", current_database="starrocks", models=None, home="~/.datus"):
+def _mock_svc(databases, *, target="deepseek", current_datasource="starrocks", models=None, home="~/.datus"):
     svc = MagicMock()
     svc.agent_config.target = target
     svc.agent_config.models = models if models is not None else {}
-    svc.agent_config.current_namespace = current_database
+    svc.agent_config.current_namespace = current_datasource
     svc.agent_config.namespaces = databases
     svc.agent_config.home = home
     return svc
@@ -53,7 +53,7 @@ async def test_get_agent_config_flattens_matching_inner_key():
         "starrocks22": starrocks22_cfg,
     }
     assert result.data["target"] == "deepseek"
-    assert result.data["current_database"] == "starrocks"
+    assert result.data["current_datasource"] == "starrocks"
     assert result.data["home"] == "~/.datus"
 
 

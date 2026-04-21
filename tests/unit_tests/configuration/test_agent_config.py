@@ -406,7 +406,7 @@ class TestAgentConfigServiceSelectors:
         cfg = self._make(
             tmp_path,
             services={
-                "databases": {},
+                "datasources": {},
             },
         )
         assert cfg.resolve_semantic_adapter() == "metricflow"
@@ -415,7 +415,7 @@ class TestAgentConfigServiceSelectors:
         cfg = self._make(
             tmp_path,
             services={
-                "databases": {},
+                "datasources": {},
             },
         )
 

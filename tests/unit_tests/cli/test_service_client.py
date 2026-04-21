@@ -295,7 +295,7 @@ class TestServiceClientRegistry:
         """
         cfg = SimpleNamespace(
             services=SimpleNamespace(bi_platforms={"superset": {}}, schedulers={}, semantic_layer={}),
-            current_database="namespace_a",
+            current_datasource="namespace_a",
         )
         factory = MagicMock(side_effect=lambda *_: _FakeBITool())
         with (
@@ -311,8 +311,8 @@ class TestServiceClientRegistry:
             assert registry.get("superset") is c1
             factory.assert_called_once()
 
-            # User runs ``.database namespace_b`` — current_database mutates.
-            cfg.current_database = "namespace_b"
+            # User runs ``.database namespace_b`` — current_datasource mutates.
+            cfg.current_datasource = "namespace_b"
             c2 = registry.get("superset")
             assert c2 is not c1
             assert factory.call_count == 2
@@ -321,11 +321,11 @@ class TestServiceClientRegistry:
             assert statuses["superset"] == "active"
 
     def test_namespace_field_also_triggers_invalidation(self):
-        """Not every install uses ``current_database`` — the ``namespace``
+        """Not every install uses ``current_datasource`` — the ``namespace``
         attribute is also part of the fingerprint."""
         cfg = SimpleNamespace(
             services=SimpleNamespace(bi_platforms={"superset": {}}, schedulers={}, semantic_layer={}),
-            current_database="shared",
+            current_datasource="shared",
             namespace="tenant_a",
         )
         factory = MagicMock(side_effect=lambda *_: _FakeBITool())
@@ -342,7 +342,7 @@ class TestServiceClientRegistry:
     def test_list_services_drops_to_configured_after_invalidation(self):
         cfg = SimpleNamespace(
             services=SimpleNamespace(bi_platforms={"superset": {}}, schedulers={}, semantic_layer={}),
-            current_database="a",
+            current_datasource="a",
         )
         with (
             patch.dict(
@@ -357,7 +357,7 @@ class TestServiceClientRegistry:
 
             # Namespace switch without a follow-up get() — status drops back to
             # "configured" (adapter still available, client cache cleared).
-            cfg.current_database = "b"
+            cfg.current_datasource = "b"
             # list_services itself triggers invalidation.
             assert registry.list_services()[0][2] == "configured"
 
@@ -393,7 +393,7 @@ class TestServiceClientRegistry:
     def test_adapter_available_is_cached_until_fingerprint_change(self):
         cfg = SimpleNamespace(
             services=SimpleNamespace(bi_platforms={"superset": {}}, schedulers={}, semantic_layer={}),
-            current_database="a",
+            current_datasource="a",
         )
         probe = MagicMock(return_value=True)
         with patch.dict("datus.cli.service_client._PROBES", {"bi_platforms": probe}):
@@ -404,7 +404,7 @@ class TestServiceClientRegistry:
             assert probe.call_count == 1
 
             # Namespace switch → cache dropped → probe runs again.
-            cfg.current_database = "b"
+            cfg.current_datasource = "b"
             assert registry.adapter_available("superset") is True
             assert probe.call_count == 2
 

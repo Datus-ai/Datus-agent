@@ -69,7 +69,7 @@ def create_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     init_parser.add_argument(
-        "--database", "--namespace", type=str, default="", help="Database to probe for schema info in AGENTS.md"
+        "--datasource", "--namespace", type=str, default="", help="Datasource to probe for schema info in AGENTS.md"
     )
 
     # service command (was: namespace)
@@ -106,7 +106,9 @@ def create_parser() -> argparse.ArgumentParser:
         parents=[global_parser],
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    check_db_parser.add_argument("--database", "--namespace", type=str, required=True, help="Database name to check")
+    check_db_parser.add_argument(
+        "--datasource", "--namespace", type=str, required=True, help="Datasource name to check"
+    )
 
     # bootstrap-kb command
     bootstrap_parser = subparsers.add_parser(
@@ -142,7 +144,7 @@ def create_parser() -> argparse.ArgumentParser:
     bootstrap_parser.add_argument(
         "--benchmark", type=str, choices=["spider2", "bird_dev", "bird_critic"], help="Benchmark dataset to use"
     )
-    bootstrap_parser.add_argument("--database", "--namespace", type=str, required=True, help="Database name")
+    bootstrap_parser.add_argument("--datasource", "--namespace", type=str, required=True, help="Datasource name")
     bootstrap_parser.add_argument(
         "--schema_linking_type",
         type=str,
@@ -318,7 +320,7 @@ def create_parser() -> argparse.ArgumentParser:
     benchmark_parser.add_argument(
         "--benchmark_task_ids", type=str, nargs="+", help="Specific benchmark task IDs to run"
     )
-    benchmark_parser.add_argument("--database", "--namespace", type=str, required=True, help="Database name")
+    benchmark_parser.add_argument("--datasource", "--namespace", type=str, required=True, help="Datasource name")
     benchmark_parser.add_argument("--task_db_name", type=str, help="Database name for the task")
     benchmark_parser.add_argument("--task_schema", type=str, help="Schema name for the task")
     benchmark_parser.add_argument("--subject_path", type=str, help="Subject path for the task")
@@ -384,7 +386,7 @@ def create_parser() -> argparse.ArgumentParser:
         parents=[global_parser],
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    run_parser.add_argument("--database", "--namespace", type=str, required=True, help="Database name")
+    run_parser.add_argument("--datasource", "--namespace", type=str, required=True, help="Datasource name")
     run_parser.add_argument("--task", type=str, required=True, help="Natural language task description")
     run_parser.add_argument(
         "--task_id",
@@ -423,7 +425,7 @@ def create_parser() -> argparse.ArgumentParser:
         parents=[global_parser],
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    evaluation_parser.add_argument("--database", "--namespace", type=str, required=True, help="Database name")
+    evaluation_parser.add_argument("--datasource", "--namespace", type=str, required=True, help="Datasource name")
     evaluation_parser.add_argument(
         "--benchmark",
         type=str,
@@ -449,7 +451,7 @@ def create_parser() -> argparse.ArgumentParser:
         parents=[global_parser],
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    bi_subparser.add_argument("--database", "--namespace", type=str, required=True, help="Database name")
+    bi_subparser.add_argument("--datasource", "--namespace", type=str, required=True, help="Datasource name")
 
     multi_benchmark_parser = subparsers.add_parser(
         "multi-round-benchmark", parents=[global_parser], help="Multi-round benchmarking"

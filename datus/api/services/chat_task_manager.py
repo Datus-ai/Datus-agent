@@ -151,13 +151,13 @@ def _fill_database_context(
     database: Optional[str] = None,
     schema: Optional[str] = None,  # noqa: ARG001 — reserved for future use
 ) -> None:
-    """Set agent_config's current_namespace and current_database based on request context.
+    """Set agent_config's current_namespace and current_datasource based on request context.
 
     If database is provided, searches for it in agent_config.namespaces and updates both
-    current_namespace and current_database. Otherwise, falls back to treating database
+    current_namespace and current_datasource. Otherwise, falls back to treating database
     as a namespace name if it exists in agent_config.namespaces.
     """
-    # agent_config.current_database is resolved at bootstrap by load_agent_config;
+    # agent_config.current_datasource is resolved at bootstrap by load_agent_config;
     # leave it in place when the request does not override the database.
     if not database:
         return
@@ -165,7 +165,7 @@ def _fill_database_context(
         if database in ns_dbs:
             if agent_config.current_namespace != ns_name:
                 agent_config.current_namespace = ns_name
-            agent_config.current_database = database
+            agent_config.current_datasource = database
             return
     # Fallback: database itself is a namespace name
     if database in agent_config.namespaces:
