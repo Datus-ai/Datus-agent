@@ -440,6 +440,88 @@ class TestRenderHelpers:
         msg = str(cli.console.print.call_args_list[0])
         assert "boom" in msg and "Error" in msg
 
+    def test_render_list_of_dict_as_table(self):
+        """Row-shaped payloads should render via Rich Table, not JSON."""
+        from rich.table import Table
+
+        cli = _fake_cli()
+        cmd = ServiceCommands(cli)
+        cmd._render_result(
+            {
+                "success": 1,
+                "result": [
+                    {"id": 1, "name": "Finance"},
+                    {"id": 2, "name": "Sales"},
+                ],
+            }
+        )
+        # Single print call, argument is a Rich Table.
+        assert cli.console.print.call_count == 1
+        assert isinstance(cli.console.print.call_args_list[0].args[0], Table)
+
+    def test_render_list_takes_union_of_keys(self):
+        """Sparse rows still share a consistent column set."""
+        from rich.table import Table
+
+        cli = _fake_cli()
+        cmd = ServiceCommands(cli)
+        cmd._render_result(
+            {
+                "success": 1,
+                "result": [
+                    {"id": 1, "name": "a"},
+                    {"id": 2, "name": "b", "extra": "x"},
+                ],
+            }
+        )
+        arg = cli.console.print.call_args_list[0].args[0]
+        assert isinstance(arg, Table)
+        column_labels = [str(c.header) for c in arg.columns]
+        assert column_labels == ["id", "name", "extra"]
+
+    def test_render_falls_back_to_json_for_single_dict(self):
+        """Single-object payloads stay as JSON — a key/value table would
+        just rotate the JSON without saving space."""
+        cli = _fake_cli()
+        cmd = ServiceCommands(cli)
+        cmd._render_result({"success": 1, "result": {"id": 42, "name": "solo"}})
+        msg = str(cli.console.print.call_args_list[0])
+        assert '"id": 42' in msg
+        assert '"name": "solo"' in msg
+
+    def test_render_nested_values_serialised_inline(self):
+        """Cells for dict / list values show compact JSON, not a repr."""
+        from rich.table import Table
+
+        cli = _fake_cli()
+        cmd = ServiceCommands(cli)
+        cmd._render_result(
+            {
+                "success": 1,
+                "result": [{"id": 1, "chart_ids": [], "extra": {"k": "v"}}],
+            }
+        )
+        arg = cli.console.print.call_args_list[0].args[0]
+        assert isinstance(arg, Table)
+        # Pull cell contents out of Rich internals — the column whose
+        # header is "extra" should contain the JSON-stringified dict.
+        headers = [str(c.header) for c in arg.columns]
+        extra_idx = headers.index("extra")
+        cells = list(arg.columns[extra_idx].cells)
+        assert cells == ['{"k": "v"}']
+
+    def test_render_heterogeneous_list_falls_back_to_json(self):
+        from rich.table import Table
+
+        cli = _fake_cli()
+        cmd = ServiceCommands(cli)
+        cmd._render_result({"success": 1, "result": [1, 2, "three"]})
+        arg = cli.console.print.call_args_list[0].args[0]
+        # Heterogeneous list → JSON string, not a Table.
+        assert not isinstance(arg, Table)
+        assert isinstance(arg, str)
+        assert "1" in arg and "three" in arg
+
 
 class TestAsyncExecution:
     def test_run_async_without_bg_loop_uses_asyncio_run(self):

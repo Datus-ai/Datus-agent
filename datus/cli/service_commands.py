@@ -186,7 +186,13 @@ class ServiceCommands:
         self.cli.console.print(table)
 
     def _render_result(self, result: Any) -> None:
-        """Render a ``FuncToolResult``-shaped dict or a bare payload."""
+        """Render a ``FuncToolResult``-shaped dict or a bare payload.
+
+        List-of-dict payloads (the common shape from ``list_dashboards`` /
+        ``list_charts`` / ``list_metrics`` / ``list_scheduler_jobs``) render
+        as a Rich table so the output is scannable. Everything else falls
+        back to indented JSON.
+        """
         if isinstance(result, dict) and "success" in result:
             if result.get("success") == 0:
                 self.cli.console.print(f"[red]Error:[/] {result.get('error', 'unknown error')}")
@@ -194,8 +200,51 @@ class ServiceCommands:
             payload = result.get("result")
         else:
             payload = result
+        if self._render_payload_as_table(payload):
+            return
         rendered = json.dumps(payload, indent=2, ensure_ascii=False, default=str)
         self.cli.console.print(rendered)
+
+    def _render_payload_as_table(self, payload: Any) -> bool:
+        """Render ``payload`` as a Rich table if it looks like rows.
+
+        Returns ``True`` when a table was printed so the caller skips the
+        JSON fallback. Uses the union of keys seen across rows (in first
+        appearance order) for column order — tolerates rows with sparse or
+        extra fields without dropping data.
+        """
+        if not isinstance(payload, list) or not payload:
+            return False
+        if not all(isinstance(item, dict) for item in payload):
+            return False
+
+        columns: List[str] = []
+        seen = set()
+        for item in payload:
+            for k in item.keys():
+                if k not in seen:
+                    seen.add(k)
+                    columns.append(k)
+        if not columns:
+            return False
+
+        table = Table(show_header=True, header_style="bold green")
+        for col in columns:
+            table.add_column(str(col))
+        for item in payload:
+            table.add_row(*(self._format_cell(item.get(col)) for col in columns))
+        self.cli.console.print(table)
+        return True
+
+    @staticmethod
+    def _format_cell(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False, default=str)
+        return str(value)
 
     # ------------------------------------------------------------------ #
     # Invocation
