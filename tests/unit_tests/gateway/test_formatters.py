@@ -213,7 +213,7 @@ class TestTruncate:
         call = {"callToolId": "t1", "toolName": "generic", "toolParams": {"data": long_val}}
         res = {"callToolId": "t1", "toolName": "generic", "duration": 0.1, "result": {"big": long_val}}
         result = formatter.format_tool_complete(call, res, Verbose.FULL)
-        # Ensure no single value exceeds limit + some margin for formatting
-        for line in result.split("\n"):
-            if line.startswith("> "):
-                assert len(line) < 2200
+
+        quoted_lines = [line for line in result.split("\n") if line.startswith("> ")]
+        assert quoted_lines, "formatter should emit at least one quoted value line"
+        assert all(len(line) < 2200 for line in quoted_lines)

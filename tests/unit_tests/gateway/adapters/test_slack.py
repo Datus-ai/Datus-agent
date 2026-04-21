@@ -249,14 +249,21 @@ class TestSlackReactions:
     async def test_add_reaction_no_client(self):
         adapter = _make_slack_adapter()
         adapter._web_client = None
-        # Should not raise
-        await adapter.add_reaction("C456", "1111.2222", "thumbsup")
+
+        result = await adapter.add_reaction("C456", "1111.2222", "thumbsup")
+
+        assert result is None
+        assert adapter._web_client is None
 
     @pytest.mark.asyncio
     async def test_remove_reaction_no_client(self):
         adapter = _make_slack_adapter()
         adapter._web_client = None
-        await adapter.remove_reaction("C456", "1111.2222", "thumbsup")
+
+        result = await adapter.remove_reaction("C456", "1111.2222", "thumbsup")
+
+        assert result is None
+        assert adapter._web_client is None
 
     @pytest.mark.asyncio
     async def test_add_reaction_api_error_does_not_raise(self):
@@ -265,8 +272,10 @@ class TestSlackReactions:
         mock_web.reactions_add = AsyncMock(side_effect=Exception("rate_limited"))
         adapter._web_client = mock_web
 
-        # Should not propagate
-        await adapter.add_reaction("C456", "1111.2222", "thumbsup")
+        result = await adapter.add_reaction("C456", "1111.2222", "thumbsup")
+
+        assert result is None
+        mock_web.reactions_add.assert_called_once_with(channel="C456", name="thumbsup", timestamp="1111.2222")
 
 
 # ---------------------------------------------------------------------------
@@ -309,8 +318,11 @@ class TestSlackStop:
         adapter._web_client = None
         adapter._listen_task = None
 
-        # Should not raise
         await adapter.stop()
+
+        assert adapter._socket_client is None
+        assert adapter._web_client is None
+        assert adapter._listen_task is None
 
 
 # ---------------------------------------------------------------------------
