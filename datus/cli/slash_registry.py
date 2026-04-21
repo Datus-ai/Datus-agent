@@ -58,8 +58,7 @@ SLASH_COMMANDS: tuple[SlashSpec, ...] = (
     SlashSpec("clear", "Clear console and chat session", "session"),
     SlashSpec("chat_info", "Show current chat session information", "session"),
     SlashSpec("compact", "Compact chat session by summarizing history", "session"),
-    SlashSpec("sessions", "List all stored chat sessions", "session"),
-    SlashSpec("resume", "Resume a previous chat session", "session"),
+    SlashSpec("resume", "List and resume a previous chat session", "session"),
     SlashSpec("rewind", "Rewind current session to a specific turn", "session"),
     # metadata
     SlashSpec("databases", "List all databases", "metadata"),

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
-import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
@@ -95,7 +94,6 @@ _LEGACY_PREFIX_HINTS: dict[str, str] = {
     ".clear": "/clear",
     ".chat_info": "/chat_info",
     ".compact": "/compact",
-    ".sessions": "/sessions",
     ".resume": "/resume",
     ".rewind": "/rewind",
     ".databases": "/databases",
@@ -275,7 +273,6 @@ class DatusCLI:
             "clear": self.chat_commands.cmd_clear_chat,
             "chat_info": self.chat_commands.cmd_chat_info,
             "compact": self.chat_commands.cmd_compact,
-            "sessions": self.chat_commands.cmd_list_sessions,
             "resume": self.chat_commands.cmd_resume,
             "rewind": self.chat_commands.cmd_rewind,
             # metadata
@@ -680,7 +677,7 @@ class DatusCLI:
             elif cmd_type == CommandType.TOOL:
                 self._execute_tool_command(cmd, args)
             elif cmd_type == CommandType.SLASH:
-                self._execute_slash_command(cmd, args)
+                slash_result = self._execute_slash_command(cmd, args)
                 # ``/rewind`` sets ``_prefill_input`` from inside the handler.
                 # In TUI mode the buffer was already drained before dispatch,
                 # so push the rewound message back into the live input area
@@ -689,6 +686,8 @@ class DatusCLI:
                 if self._use_tui and self.tui_app is not None and self._prefill_input:
                     self.tui_app.set_input_text(self._prefill_input)
                     self._prefill_input = None
+                if slash_result == EXIT_SENTINEL:
+                    return EXIT_SENTINEL
             elif cmd_type == CommandType.CHAT:
                 self._execute_chat_command(args, subagent_name=cmd)
             elif cmd_type == CommandType.UNKNOWN:
@@ -1114,8 +1113,8 @@ class DatusCLI:
             spec = lookup(token) if token else None
             if spec is not None:
                 # ``/exit`` / ``/quit`` flow through SLASH dispatch so
-                # ``_cmd_exit`` gets to close the DB connector before
-                # ``sys.exit(0)`` (mirrors the pre-refactor ``.exit`` path).
+                # ``_cmd_exit`` gets to close the DB connector before the
+                # handler returns ``EXIT_SENTINEL`` to the outer loop.
                 return CommandType.SLASH, f"/{spec.name}", args
             return CommandType.UNKNOWN, f"/{token}", ""
 
@@ -1322,16 +1321,24 @@ class DatusCLI:
         self.chat_commands.execute_chat_command(message, plan_mode=self.plan_mode_active, subagent_name=subagent_name)
 
     def _execute_slash_command(self, cmd: str, args: str):
-        """Execute a slash command resolved via ``SLASH_COMMANDS`` registry."""
+        """Execute a slash command resolved via ``SLASH_COMMANDS`` registry.
+
+        Returns ``EXIT_SENTINEL`` when the handler requested shutdown (``/exit``
+        / ``/quit``) so the dispatcher can forward it to the outer loop.
+        """
         logger.debug(f"Executing slash command: '{cmd}' with args: '{args}'")
         handler = self.commands.get(cmd)
         if handler is None:
             self.console.print(f"[bold red]Unknown command:[/] {cmd}. Type /help.")
-            return
+            return None
         result = handler(args)
         # ``/rewind`` returns a user message to prefill in the input buffer.
         if cmd == "/rewind" and result is not None:
             self._prefill_input = result
+            return None
+        if result == EXIT_SENTINEL:
+            return EXIT_SENTINEL
+        return None
 
     def _render_unknown_command(self, token: str, hint: str):
         """Report an unrecognised slash or renamed legacy prefix to the user."""
@@ -1442,15 +1449,23 @@ class DatusCLI:
 
         self.console.print("\n".join(lines).rstrip())
 
-    def _cmd_exit(self, args: str):
-        """Exit the CLI."""
+    def _cmd_exit(self, args: str) -> str:
+        """Exit the CLI.
+
+        Closes the DB connector and returns ``EXIT_SENTINEL`` so the dispatcher
+        can signal both the PromptSession loop and the TUI application to shut
+        down cleanly. Returning the sentinel (rather than calling
+        ``sys.exit(0)``) matters in TUI mode where ``_cmd_exit`` runs on a
+        worker thread — ``sys.exit`` would only kill the worker while the main
+        prompt_toolkit Application kept running.
+        """
         if self.db_connector:
             try:
                 # Close the connection
                 self.db_connector.close()
             except Exception as e:
                 logger.warning(f"Database connection closed failed, reason:{e}")
-        sys.exit(0)
+        return EXIT_SENTINEL
 
     def catalogs_callback(self, selected_path: str = "", selected_data: Optional[Dict[str, Any]] = None):
         if not selected_path:

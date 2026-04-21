@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING, List, Optional, Tuple
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.syntax import Syntax
-from rich.table import Table
 
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
 from datus.cli._cli_utils import select_choice
@@ -1177,79 +1176,6 @@ class ChatCommands:
 
             if last_assistant_actions:
                 self.last_actions = last_assistant_actions
-
-    def cmd_list_sessions(self, args: str):
-        """List chat sessions for the active agent."""
-        try:
-            # Create a session manager directly (don't rely on chat_node)
-            from datus.models.session_manager import SessionManager, session_matches_agent
-
-            session_manager = SessionManager(self.cli.agent_config.session_dir, scope=self.cli.scope)
-            sessions = session_manager.list_sessions()
-            sessions = [s for s in sessions if session_matches_agent(s, self.current_subagent_name)]
-
-            agent_label = self.current_subagent_name or "chat"
-            if not sessions:
-                self.console.print(f"[yellow]No chat sessions found for agent '{agent_label}'.[/]")
-                return
-
-            # Get current session ID for highlighting (if current_node exists)
-            current_session_id = None
-            if self.current_node and hasattr(self.current_node, "session_id"):
-                current_session_id = self.current_node.session_id
-
-            # Get session info for all sessions first to enable sorting
-            sessions_with_info = []
-            for session_id in sessions:
-                session_data = {"session_id": session_id}
-                try:
-                    info = session_manager.get_session_info(session_id)
-                    if info.get("exists"):
-                        session_data["created_at"] = info.get("created_at") or ""
-                        session_data["last_updated"] = info.get("updated_at") or info.get("latest_message_at") or ""
-                        session_data["total_turns"] = info.get("message_count", 0)
-                    if self.current_node and hasattr(self.current_node, "_get_session_details"):
-                        detailed_info = self.current_node._get_session_details(session_id)
-                        session_data.update(detailed_info)
-                except Exception as e:
-                    logger.debug(f"Could not get detailed info for session {session_id}: {e}")
-                sessions_with_info.append(session_data)
-
-            # Sort by last_updated (most recent first)
-            sessions_with_info.sort(
-                key=lambda x: x.get("last_updated", x.get("created_at", "")),
-                reverse=True,
-            )
-
-            # Create a table to display sessions
-            table = Table(title="Chat Sessions", show_header=True, header_style="bold blue")
-            table.add_column("Session ID", style="cyan", no_wrap=True)
-            table.add_column("Created", style="green")
-            table.add_column("Last Updated", style="yellow")
-            table.add_column("Conversations", justify="right", style="magenta")
-            table.add_column("SQL Queries", justify="right", style="blue")
-
-            for session in sessions_with_info:
-                session_id = session["session_id"]
-                created = session.get("created_at", "Unknown")[:19]  # Trim to datetime
-                updated = session.get("last_updated", "Unknown")[:19]
-                conversations = session.get("total_turns", 0)
-                sql_count = len(session.get("last_sql_queries", []))
-
-                # Highlight current session
-                if session_id == current_session_id:
-                    session_id = f"→ {session_id}"
-
-                table.add_row(session_id, created, updated, str(conversations), str(sql_count))
-
-            self.console.print(table)
-
-            if current_session_id:
-                self.console.print("\n[dim]→ indicates current active session[/]")
-
-        except Exception as e:
-            logger.error(f"Error listing sessions: {e}")
-            self.console.print(f"[bold red]Error:[/] {str(e)}")
 
     @staticmethod
     def _extract_node_type_from_session_id(session_id: str) -> str:

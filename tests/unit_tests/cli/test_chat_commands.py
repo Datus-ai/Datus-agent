@@ -1457,26 +1457,6 @@ class TestCmdCompact:
 
 
 # ===========================================================================
-# TestCmdListSessions
-# ===========================================================================
-
-
-class TestCmdListSessions:
-    """Tests for cmd_list_sessions."""
-
-    def test_list_sessions_no_sessions(self, real_agent_config, mock_llm_create):
-        """No sessions prints warning."""
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
-
-        cmds.cmd_list_sessions("")
-
-        output = _get_console_output(console)
-        # Either shows "No chat sessions found" or shows table
-        assert len(output) > 0
-
-
-# ===========================================================================
 # TestDisplayExceptionPaths
 # ===========================================================================
 
@@ -2134,33 +2114,6 @@ class TestCmdCompactWithSession:
 
 
 # ===========================================================================
-# TestCmdListSessionsWithData — cmd_list_sessions 有 session 数据
-# ===========================================================================
-
-
-class TestCmdListSessionsWithData:
-    """Tests for cmd_list_sessions when sessions exist."""
-
-    def test_list_sessions_after_execute(self, real_agent_config, mock_llm_create):
-        """cmd_list_sessions shows sessions after creating one via execute."""
-        from tests.unit_tests.mock_llm_model import build_simple_response
-
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
-
-        mock_llm_create.reset(responses=[build_simple_response("Response")])
-        cmds.execute_chat_command("Create session")
-
-        console.file = io.StringIO()
-        cmds.cmd_list_sessions("")
-
-        output = _get_console_output(console)
-        assert len(output) > 0
-        # Either shows sessions table or "No chat sessions found"
-        assert "Session" in output or "No chat sessions" in output
-
-
-# ===========================================================================
 # TestTriggerCompactWithSession — _trigger_compact 带活跃 session
 # ===========================================================================
 
@@ -2632,62 +2585,6 @@ class TestCmdRewindWithSession:
 
         output = _get_console_output(console)
         assert "no messages" in output.lower() or "no user turns" in output.lower() or "error" in output.lower()
-
-
-# ===========================================================================
-# TestCmdListSessionsTableRendering — cmd_list_sessions with disk sessions
-# ===========================================================================
-
-
-class TestCmdListSessionsTableRendering:
-    """Tests for cmd_list_sessions table rendering when sessions exist (lines 929-974)."""
-
-    def test_list_sessions_no_sessions(self, real_agent_config, mock_llm_create):
-        """cmd_list_sessions with no sessions shows 'No chat sessions found'."""
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
-
-        cmds.cmd_list_sessions("")
-
-        output = _get_console_output(console)
-        assert "no chat sessions" in output.lower() or len(output) > 0
-
-    def test_list_sessions_with_disk_session(self, real_agent_config, mock_llm_create):
-        """cmd_list_sessions with disk sessions exercises the listing path."""
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
-
-        # Create disk sessions
-        _create_session_on_disk("chat_session_list01", [("user", "Hello"), ("assistant", "Hi")])
-
-        cmds.cmd_list_sessions("")
-
-        output = _get_console_output(console)
-        assert len(output) > 0
-        # list_sessions() returns list[str] but cmd_list_sessions tries dict access,
-        # so it will hit the error path or handle it gracefully
-        assert "session" in output.lower() or "error" in output.lower()
-
-    def test_list_sessions_with_active_session(self, real_agent_config, mock_llm_create):
-        """cmd_list_sessions when current_node has session_id exercises highlight path."""
-        from tests.unit_tests.mock_llm_model import build_simple_response
-
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
-
-        # Create a node first
-        mock_llm_create.reset(responses=[build_simple_response("Reply")])
-        cmds.execute_chat_command("Hello")
-        assert cmds.current_node is not None
-
-        # Create a disk session matching the node's session_id
-        _create_session_on_disk(cmds.current_node.session_id)
-
-        console.file = io.StringIO()
-        cmds.cmd_list_sessions("")
-
-        output = _get_console_output(console)
-        assert len(output) > 0
 
 
 # ===========================================================================
@@ -3918,62 +3815,12 @@ class TestDropIfMatchesFinal:
 
 
 # ===========================================================================
-# TestSessionFilterByAgent — cmd_list_sessions/cmd_resume filter by active agent
+# TestSessionFilterByAgent — cmd_resume filters by active agent
 # ===========================================================================
 
 
 class TestSessionFilterByAgent:
-    """cmd_list_sessions and cmd_resume only surface sessions for the active agent."""
-
-    def _seed_mixed_sessions(self):
-        """Seed disk with sessions for chat, gensql, gen_metrics, plus a legacy id."""
-        _create_session_on_disk("chat_session_a", [("user", "hi")])
-        _create_session_on_disk("gensql_session_a", [("user", "gen sql")])
-        _create_session_on_disk("gen_metrics_session_a", [("user", "metrics")])
-        _create_session_on_disk("legacy-session-1", [("user", "legacy")])
-
-    def test_list_sessions_chat_hides_subagent_ids(self, real_agent_config, mock_llm_create):
-        """Chat agent sees chat-prefixed and legacy ids, not subagent sessions."""
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
-        cmds.current_subagent_name = None
-
-        self._seed_mixed_sessions()
-        cmds.cmd_list_sessions("")
-
-        output = _get_console_output(console)
-        assert "chat_session_a" in output
-        assert "legacy-session-1" in output
-        assert "gensql_session_a" not in output
-        assert "gen_metrics_session_a" not in output
-
-    def test_list_sessions_subagent_scope(self, real_agent_config, mock_llm_create):
-        """gen_metrics agent only sees its own sessions."""
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
-        cmds.current_subagent_name = "gen_metrics"
-
-        self._seed_mixed_sessions()
-        cmds.cmd_list_sessions("")
-
-        output = _get_console_output(console)
-        assert "gen_metrics_session_a" in output
-        assert "chat_session_a" not in output
-        assert "gensql_session_a" not in output
-        assert "legacy-session-1" not in output
-
-    def test_list_sessions_agent_with_no_sessions(self, real_agent_config, mock_llm_create):
-        """Empty message references the current agent label."""
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
-        cmds.current_subagent_name = "gen_metrics"
-
-        _create_session_on_disk("chat_session_a", [("user", "hi")])
-        cmds.cmd_list_sessions("")
-
-        output = _get_console_output(console)
-        assert "gen_metrics" in output
-        assert "no chat sessions found" in output.lower()
+    """cmd_resume only surfaces sessions for the active agent."""
 
     def test_resume_interactive_empty_when_agent_has_no_sessions(self, real_agent_config, mock_llm_create):
         """cmd_resume with no args filters by current agent; empty result message mentions agent."""

@@ -539,6 +539,15 @@ class TestExecuteSlashCommand:
         cli._execute_slash_command("/rewind", "2")
         assert cli._prefill_input == "previous user message"
 
+    def test_slash_exit_propagates_exit_sentinel(self, cli):
+        """``/exit`` returns EXIT_SENTINEL so the TUI loop can shut down
+        cleanly even when dispatch runs on a worker thread."""
+        from datus.cli.tui.app import EXIT_SENTINEL
+
+        cli.commands["/exit"] = MagicMock(return_value=EXIT_SENTINEL)
+        result = cli._execute_slash_command("/exit", "")
+        assert result == EXIT_SENTINEL
+
 
 class TestRenderUnknownCommand:
     def test_legacy_prefix_hint_rendered(self, cli):
