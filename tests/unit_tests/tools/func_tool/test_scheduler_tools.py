@@ -121,11 +121,15 @@ class TestGetAdapter:
                 adapter = tools._get_adapter()
         assert adapter is mock_adapter
 
-    def test_airflow_injects_project_name_from_agent_config(self):
-        """For Airflow, _get_adapter must auto-inject agent.project_name into the
-        scheduler config so each Datus instance lands in its own DAG subdirectory
-        and gets its own dag_id prefix — without users having to repeat the value
-        in agent.yml's scheduler section."""
+    def test_airflow_does_not_auto_inject_datus_project_name(self):
+        """Datus's ``agent.project_name`` (cwd-derived workspace identifier)
+        is a different concept from Airflow's ``project_name`` (multi-tenant
+        DAG folder / ``dag_id_prefix`` knob). Auto-injecting the former as
+        the latter silently filters out every DAG the user actually owns
+        on the Airflow account but that wasn't created by this Datus
+        instance in this cwd. ``_get_adapter`` must leave the scheduler
+        config alone when the user hasn't asked for namespacing.
+        """
         agent_cfg = _make_agent_config(
             scheduler_config={
                 "name": "airflow_local",
@@ -134,10 +138,10 @@ class TestGetAdapter:
                 "username": "admin",
                 "password": "admin",
                 "dags_folder_root": "/opt/airflow/dags",
-                # Note: no project_name here — adapter expects the tool to inject it
+                # Deliberately no ``project_name`` — user wants unfiltered reads.
             }
         )
-        agent_cfg.project_name = "reports-team"
+        agent_cfg.project_name = "reports-team"  # Datus-side workspace name, not Airflow's
         tools = SchedulerTools(agent_cfg)
 
         mock_registry = MagicMock()
@@ -148,10 +152,10 @@ class TestGetAdapter:
         ):
             tools._get_adapter()
 
-        # Verify the injected project_name reached create_adapter
+        # Datus must NOT leak its workspace name into the adapter config.
         call_kwargs = mock_registry.create_adapter.call_args.kwargs
         assert call_kwargs["platform"] == "airflow"
-        assert call_kwargs["config"]["project_name"] == "reports-team"
+        assert "project_name" not in call_kwargs["config"]
 
     def test_airflow_explicit_project_name_takes_precedence(self):
         """setdefault semantics: if user writes project_name in agent.yml, Datus

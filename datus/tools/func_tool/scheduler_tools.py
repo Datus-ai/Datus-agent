@@ -49,13 +49,21 @@ class SchedulerTools(BaseTool):
         config = self._selected_scheduler_config()
         platform = config.get("type", "airflow")
 
-        # Multi-tenant Airflow: auto-inject agent.project_name so users don't
-        # have to restate it in the scheduler section of agent.yml. Each Datus
-        # instance gets its own DAG subdirectory and dag_id prefix, preventing
-        # collisions when many instances share one Airflow cluster. Users can
-        # still override explicitly in agent.yml (setdefault preserves it).
-        if platform == "airflow":
-            config.setdefault("project_name", self.agent_config.project_name)
+        # Datus's ``agent.project_name`` (a cwd-derived workspace identifier
+        # used for ``~/.datus/sessions/<project>/`` etc.) is NOT the same
+        # concept as Airflow's ``project_name`` (a multi-tenant knob that
+        # controls the DAG folder layout and, crucially, ``dag_id_prefix``
+        # client-side filtering). Airflow itself has no project concept at
+        # all: silently piping the Datus workspace into the adapter config
+        # used to make ``.airflow.list_scheduler_jobs`` and friends hide
+        # every DAG that wasn't created by *this* Datus instance in *this*
+        # cwd — including DAGs the user owns on the same Airflow account.
+        #
+        # The multi-tenant isolation is still available, just explicit: the
+        # user sets ``project_name`` / ``dag_id_prefix`` under
+        # ``services.schedulers.<name>`` in agent.yml when they want it.
+        # Without those, reads return the full set of DAGs the account can
+        # see, and submits run against the default DAG folder.
 
         return SchedulerAdapterRegistry.create_adapter(platform=platform, config=config)
 
