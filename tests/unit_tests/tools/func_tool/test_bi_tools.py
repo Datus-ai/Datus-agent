@@ -48,6 +48,19 @@ class _ChartDataResult:
         return self.__dict__
 
 
+class _PaginatedResult:
+    """Tiny stand-in for ``datus_bi_core.models.PaginatedResult[T]``.
+
+    Real adapters return ``PaginatedResult`` (items + optional total); the
+    stub mirrors that surface so BIFuncTool's envelope builder reads the
+    same attributes either way.
+    """
+
+    def __init__(self, items, total=None):
+        self.items = items
+        self.total = total
+
+
 class MockDashboardWriteMixin:
     def create_dashboard(self, spec):
         return _DashboardInfo(id=10, name=spec.title)
@@ -89,17 +102,17 @@ class FullMockAdapter(MockDashboardWriteMixin, MockChartWriteMixin, MockDatasetW
 
     supports_chart_data = True
 
-    def list_dashboards(self, search="", page_size=20):
-        return [_DashboardInfo(id=1, name="Test Dashboard")]
+    def list_dashboards(self, search="", limit=50, offset=0):
+        return _PaginatedResult(items=[_DashboardInfo(id=1, name="Test Dashboard")], total=1)
 
     def get_dashboard_info(self, dashboard_id):
         return _DashboardInfo(id=dashboard_id, name="Test", description="", chart_ids=[])
 
-    def list_charts(self, dashboard_id):
-        return [_ChartInfo(id=1, name="Chart 1", chart_type="bar")]
+    def list_charts(self, dashboard_id, limit=50, offset=0):
+        return _PaginatedResult(items=[_ChartInfo(id=1, name="Chart 1", chart_type="bar")], total=1)
 
-    def list_datasets(self, dashboard_id=""):
-        return [_DatasetInfo(id=1, name="orders", dialect="postgresql")]
+    def list_datasets(self, dashboard_id="", limit=50, offset=0):
+        return _PaginatedResult(items=[_DatasetInfo(id=1, name="orders", dialect="postgresql")], total=1)
 
     def get_chart(self, chart_id, dashboard_id=None):
         return _ChartInfo(id=chart_id, name="Test Chart", chart_type="bar")
@@ -126,33 +139,33 @@ class ReadOnlyMockAdapter:
 
     supports_chart_data = False
 
-    def list_dashboards(self, search="", page_size=20):
-        return []
+    def list_dashboards(self, search="", limit=50, offset=0):
+        return _PaginatedResult(items=[], total=0)
 
     def get_dashboard_info(self, dashboard_id):
         return _DashboardInfo(id=dashboard_id, name="Read Only Dashboard")
 
-    def list_charts(self, dashboard_id):
-        return []
+    def list_charts(self, dashboard_id, limit=50, offset=0):
+        return _PaginatedResult(items=[], total=0)
 
     def get_chart(self, chart_id, dashboard_id=None):
         return None
 
-    def list_datasets(self, dashboard_id=""):
-        return []
+    def list_datasets(self, dashboard_id="", limit=50, offset=0):
+        return _PaginatedResult(items=[], total=0)
 
 
 class MethodOnlyChartDataAdapter:
     """Mock adapter that implements get_chart_data without any support flag."""
 
-    def list_dashboards(self, search="", page_size=20):
-        return [_DashboardInfo(id=1, name="Test Dashboard")]
+    def list_dashboards(self, search="", limit=50, offset=0):
+        return _PaginatedResult(items=[_DashboardInfo(id=1, name="Test Dashboard")], total=1)
 
     def get_dashboard_info(self, dashboard_id):
         return _DashboardInfo(id=dashboard_id, name="Test")
 
-    def list_charts(self, dashboard_id):
-        return []
+    def list_charts(self, dashboard_id, limit=50, offset=0):
+        return _PaginatedResult(items=[], total=0)
 
     def get_chart(self, chart_id, dashboard_id=None):
         return _ChartInfo(id=chart_id, name="Test Chart", chart_type="bar")
@@ -167,8 +180,8 @@ class MethodOnlyChartDataAdapter:
             extra={},
         )
 
-    def list_datasets(self, dashboard_id=""):
-        return []
+    def list_datasets(self, dashboard_id="", limit=50, offset=0):
+        return _PaginatedResult(items=[], total=0)
 
 
 # ---- Build a mock datus_bi_core module ----
@@ -266,7 +279,11 @@ class TestBIFuncToolReadOps:
         tool = self._make_tool()
         result = tool.list_dashboards(search="Test")
         assert result.success == 1
-        assert len(result.result) == 1
+        envelope = result.result
+        assert envelope["items"] == [{"id": 1, "name": "Test Dashboard"}]
+        assert envelope["total"] == 1
+        assert envelope["has_more"] is False
+        assert envelope["extra"] is None
 
     def test_get_dashboard_success(self):
         tool = self._make_tool()
@@ -278,7 +295,10 @@ class TestBIFuncToolReadOps:
         tool = self._make_tool()
         result = tool.list_charts("1")
         assert result.success == 1
-        assert len(result.result) == 1
+        envelope = result.result
+        assert envelope["items"] == [{"id": 1, "name": "Chart 1", "chart_type": "bar"}]
+        assert envelope["total"] == 1
+        assert envelope["has_more"] is False
 
     def test_get_chart_success(self):
         tool = self._make_tool()
@@ -427,7 +447,10 @@ class TestBIFuncToolWriteOps:
         tool = self._make_tool()
         result = tool.list_datasets()
         assert result.success == 1
-        assert len(result.result) == 1
+        envelope = result.result
+        assert envelope["items"] == [{"id": 1, "name": "orders", "dialect": "postgresql"}]
+        assert envelope["total"] == 1
+        assert envelope["has_more"] is False
 
     def test_update_dashboard_success(self):
         tool = self._make_tool()
@@ -458,14 +481,21 @@ class TestBIFuncToolWriteOps:
         assert result.result["name"] == "my_ds"
 
     def test_list_dashboards_read_only_adapter(self):
-        """list_dashboards is now in BIAdapterBase and always available."""
+        """list_dashboards is now in BIAdapterBase and always available.
+
+        The read-only adapter returns an empty page — exercises the
+        envelope's empty-items / total=0 / has_more=False branch.
+        """
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
             from datus.tools.func_tool.bi_tools import BIFuncTool
 
             tool = BIFuncTool(ReadOnlyMockAdapter())
         result = tool.list_dashboards()
         assert result.success == 1
-        assert isinstance(result.result, list)
+        envelope = result.result
+        assert envelope["items"] == []
+        assert envelope["total"] == 0
+        assert envelope["has_more"] is False
 
     def test_get_dashboard_not_found(self):
         tool = self._make_tool()

@@ -11,7 +11,7 @@ from typing import Any, List
 
 from agents import Tool
 
-from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.tools.func_tool.base import FuncToolListResult, FuncToolResult, trans_to_function_tool
 from datus.utils.loggings import get_logger
 
 _VALID_TABLE_NAME = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]{0,62}$")
@@ -54,13 +54,25 @@ class BIFuncTool:
     # Read operations (available on all adapters)
     # ------------------------------------------------------------------ #
 
-    def list_dashboards(self, search: str = "") -> FuncToolResult:
-        """List dashboards in the BI platform. Optionally filter by search keyword."""
-        try:
-            if hasattr(self.adapter, "list_dashboards"):
-                results = self.adapter.list_dashboards(search=search)
-                return FuncToolResult(result=[r.model_dump() for r in results])
+    def list_dashboards(self, search: str = "", limit: int = 50, offset: int = 0) -> FuncToolResult:
+        """List dashboards in the BI platform. Optionally filter by search keyword.
+
+        Returns:
+            FuncToolResult with result as FuncToolListResult:
+              - items (List[Dict]): dashboard rows
+              - total (int | None): upstream full count (Superset exposes it;
+                Grafana /api/search doesn't → None)
+              - has_more (bool | None): next-page hint
+              - extra (dict | None): {"next_offset": int} when has_more is True
+
+            Pagination: call again with offset=extra.next_offset until
+            has_more is False.
+        """
+        if not hasattr(self.adapter, "list_dashboards"):
             return FuncToolResult(success=0, error="This adapter does not support list_dashboards")
+        try:
+            page = self.adapter.list_dashboards(search=search, limit=limit, offset=offset)
+            return self._build_list_envelope(page, offset=offset, limit=limit)
         except Exception as exc:
             logger.warning(f"list_dashboards failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
@@ -76,11 +88,14 @@ class BIFuncTool:
             logger.warning(f"get_dashboard failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
-    def list_charts(self, dashboard_id: str) -> FuncToolResult:
-        """List all charts/panels in a dashboard."""
+    def list_charts(self, dashboard_id: str, limit: int = 50, offset: int = 0) -> FuncToolResult:
+        """List all charts/panels in a dashboard.
+
+        Returns a FuncToolListResult envelope; see list_dashboards for details.
+        """
         try:
-            results = self.adapter.list_charts(dashboard_id)
-            return FuncToolResult(result=[r.model_dump() for r in results])
+            page = self.adapter.list_charts(dashboard_id, limit=limit, offset=offset)
+            return self._build_list_envelope(page, offset=offset, limit=limit)
         except Exception as exc:
             logger.warning(f"list_charts failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
@@ -132,14 +147,47 @@ class BIFuncTool:
             logger.warning(f"get_chart_data failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
-    def list_datasets(self, dashboard_id: str = "") -> FuncToolResult:
-        """List datasets available in the BI platform. For Superset, pass dashboard_id to scope results."""
+    def list_datasets(self, dashboard_id: str = "", limit: int = 50, offset: int = 0) -> FuncToolResult:
+        """List datasets available in the BI platform.
+
+        For Superset, pass dashboard_id to scope results. Returns a
+        FuncToolListResult envelope; see list_dashboards for details.
+        """
         try:
-            results = self.adapter.list_datasets(dashboard_id)
-            return FuncToolResult(result=[r.model_dump() for r in results])
+            page = self.adapter.list_datasets(dashboard_id, limit=limit, offset=offset)
+            return self._build_list_envelope(page, offset=offset, limit=limit)
         except Exception as exc:
             logger.warning(f"list_datasets failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
+
+    @staticmethod
+    def _build_list_envelope(page: Any, *, offset: int, limit: int) -> FuncToolResult:
+        """Translate an adapter ``PaginatedResult[T]`` into ``FuncToolListResult``.
+
+        * ``items`` = rows serialised via ``.model_dump()`` so the LLM / CLI
+          sees plain dicts.
+        * ``total`` comes from the adapter when the upstream reports it
+          (Superset ``count``). ``None`` on platforms that don't
+          (Grafana ``/api/search``).
+        * ``has_more`` is exact when ``total`` is known; otherwise falls
+          back to ``len(items) == limit`` as the "looks like another page"
+          heuristic.
+        * ``extra.next_offset`` is provided only when ``has_more`` is True,
+          so consumers can paste it back verbatim.
+        """
+        rows = [r.model_dump() for r in page.items]
+        total = page.total
+        if total is not None:
+            has_more: bool | None = offset + len(rows) < total
+        elif limit > 0:
+            has_more = len(rows) == limit
+        else:
+            has_more = None
+        extra = {"next_offset": offset + len(rows)} if has_more else None
+        return FuncToolResult(
+            success=1,
+            result=FuncToolListResult(items=rows, total=total, has_more=has_more, extra=extra).model_dump(),
+        )
 
     # ------------------------------------------------------------------ #
     # Dashboard write operations (DashboardWriteMixin)

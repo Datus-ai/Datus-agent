@@ -74,6 +74,17 @@ def _make_agent_config(scheduler_config=None):
     return cfg
 
 
+class _SchedulerPage:
+    """Minimal stand-in for ``PaginatedScheduledResult`` / ``ListJobsResult`` /
+    ``ListRunsResult``. The SchedulerTools envelope builder only looks at
+    ``.items`` and ``.total``, so mirroring those two attributes is enough.
+    """
+
+    def __init__(self, items, total=None):
+        self.items = list(items)
+        self.total = total
+
+
 def _make_scheduled_job(job_id="spark_pi_test"):
     job = MagicMock()
     job.job_id = job_id
@@ -242,11 +253,21 @@ class TestAdapterCloseError:
                 {},
                 lambda a: setattr(a, "get_job", MagicMock(return_value=_make_scheduled_job())),
             ),
-            ("list_scheduler_jobs", (), {}, lambda a: setattr(a, "list_jobs", MagicMock(return_value=[]))),
+            (
+                "list_scheduler_jobs",
+                (),
+                {},
+                lambda a: setattr(a, "list_jobs", MagicMock(return_value=_SchedulerPage(items=[], total=0))),
+            ),
             ("pause_job", ("dag_1",), {}, None),
             ("resume_job", ("dag_1",), {}, None),
             ("delete_job", ("dag_1",), {}, None),
-            ("list_job_runs", ("dag_1",), {}, lambda a: setattr(a, "list_job_runs", MagicMock(return_value=[]))),
+            (
+                "list_job_runs",
+                ("dag_1",),
+                {},
+                lambda a: setattr(a, "list_job_runs", MagicMock(return_value=_SchedulerPage(items=[], total=0))),
+            ),
             (
                 "get_run_log",
                 ("dag_1", "run_1"),
@@ -498,9 +519,12 @@ class TestGetSchedulerJob:
 
 class TestListSchedulerJobs:
     def test_list_jobs(self):
-        """list_scheduler_jobs returns a list of job summaries."""
+        """list_scheduler_jobs returns the canonical FuncToolListResult envelope."""
         mock_adapter = MagicMock()
-        mock_adapter.list_jobs.return_value = [_make_scheduled_job("dag_a"), _make_scheduled_job("dag_b")]
+        mock_adapter.list_jobs.return_value = _SchedulerPage(
+            items=[_make_scheduled_job("dag_a"), _make_scheduled_job("dag_b")],
+            total=2,
+        )
 
         tools = SchedulerTools(_make_agent_config())
 
@@ -508,8 +532,13 @@ class TestListSchedulerJobs:
             result = tools.list_scheduler_jobs(limit=10)
 
         assert result.success == 1
-        assert result.result["total"] == 2
-        assert result.result["jobs"][0]["job_id"] == "dag_a"
+        envelope = result.result
+        assert envelope["total"] == 2
+        assert len(envelope["items"]) == 2
+        assert envelope["items"][0]["job_id"] == "dag_a"
+        # 2 items with total=2 and offset=0 → last page, no next_offset.
+        assert envelope["has_more"] is False
+        assert envelope["extra"] is None
 
 
 # ── adapter.py: submit_job with job_type=spark ───────────────────────────
@@ -993,7 +1022,7 @@ class TestListJobRuns:
         mock_run.ended_at = datetime(2025, 1, 1, 8, 5, 0, tzinfo=timezone.utc)
 
         mock_adapter = MagicMock()
-        mock_adapter.list_job_runs.return_value = [mock_run]
+        mock_adapter.list_job_runs.return_value = _SchedulerPage(items=[mock_run], total=1)
 
         tools = SchedulerTools(_make_agent_config())
 
@@ -1001,11 +1030,14 @@ class TestListJobRuns:
             result = tools.list_job_runs("my_dag", limit=5)
 
         assert result.success == 1
-        assert result.result["total"] == 1
-        run = result.result["runs"][0]
+        envelope = result.result
+        assert envelope["total"] == 1
+        assert len(envelope["items"]) == 1
+        run = envelope["items"][0]
         assert run["run_id"] == "run_001"
         assert run["started_at"] == "2025-01-01T08:00:00+00:00"
         assert run["ended_at"] == "2025-01-01T08:05:00+00:00"
+        assert envelope["has_more"] is False
 
     def test_list_runs_string_timestamps(self):
         """Runs with string timestamps should pass through as-is."""
@@ -1016,7 +1048,7 @@ class TestListJobRuns:
         mock_run.ended_at = None
 
         mock_adapter = MagicMock()
-        mock_adapter.list_job_runs.return_value = [mock_run]
+        mock_adapter.list_job_runs.return_value = _SchedulerPage(items=[mock_run], total=None)
 
         tools = SchedulerTools(_make_agent_config())
 
@@ -1024,7 +1056,7 @@ class TestListJobRuns:
             result = tools.list_job_runs("my_dag")
 
         assert result.success == 1
-        run = result.result["runs"][0]
+        run = result.result["items"][0]
         assert run["started_at"] == "2025-01-01T08:00:00Z"
         assert run["ended_at"] is None
 

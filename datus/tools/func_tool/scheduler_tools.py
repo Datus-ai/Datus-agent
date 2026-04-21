@@ -11,7 +11,7 @@ from agents import Tool
 
 from datus.configuration.agent_config import AgentConfig
 from datus.tools import BaseTool
-from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.tools.func_tool.base import FuncToolListResult, FuncToolResult, trans_to_function_tool
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -290,14 +290,25 @@ class SchedulerTools(BaseTool):
     def list_scheduler_jobs(
         self,
         limit: int = 20,
+        offset: int = 0,
     ) -> FuncToolResult:
         """List all scheduled jobs on the configured scheduler.
 
         Args:
             limit: Maximum number of jobs to return (default 20).
+            offset: Pagination offset (default 0).
 
         Returns:
-            FuncToolResult with result containing a list of job summaries.
+            FuncToolResult with result as FuncToolListResult:
+              - items (List[Dict]): job summary rows
+              - total (int | None): upstream total when the platform reports
+                it; None in multi-tenant modes where the server's count
+                would be misleading
+              - has_more (bool | None): next-page hint
+              - extra (dict | None): {"next_offset": int} when has_more=True
+
+            Pagination: call again with offset=extra.next_offset until
+            has_more is False.
         """
         try:
             adapter = self._get_adapter()
@@ -305,22 +316,17 @@ class SchedulerTools(BaseTool):
             return FuncToolResult(success=0, error=str(exc))
 
         try:
-            jobs = adapter.list_jobs(limit=limit)
-            return FuncToolResult(
-                success=1,
-                result={
-                    "total": len(jobs),
-                    "jobs": [
-                        {
-                            "job_id": j.job_id,
-                            "job_name": j.job_name,
-                            "status": j.status.value,
-                            "schedule": j.schedule,
-                        }
-                        for j in jobs
-                    ],
-                },
-            )
+            page = adapter.list_jobs(limit=limit, offset=offset)
+            rows = [
+                {
+                    "job_id": j.job_id,
+                    "job_name": j.job_name,
+                    "status": j.status.value,
+                    "schedule": j.schedule,
+                }
+                for j in page.items
+            ]
+            return self._build_scheduler_envelope(rows, total=page.total, offset=offset, limit=limit)
         except Exception as exc:
             logger.error("list_scheduler_jobs failed: %s", exc)
             return FuncToolResult(success=0, error=str(exc))
@@ -329,6 +335,32 @@ class SchedulerTools(BaseTool):
                 adapter.close()
             except Exception as close_exc:
                 logger.debug("adapter.close() failed: %s", close_exc)
+
+    @staticmethod
+    def _build_scheduler_envelope(
+        rows: list,
+        *,
+        total: "int | None",
+        offset: int,
+        limit: int,
+    ) -> FuncToolResult:
+        """Wrap adapter ListJobsResult / ListRunsResult rows into FuncToolListResult.
+
+        When ``total`` is known, ``has_more`` is exact. When it's ``None``
+        (multi-tenant Airflow or status-filtered runs), fall back to
+        ``len(rows) == limit`` as the "looks like another page" heuristic.
+        """
+        if total is not None:
+            has_more: "bool | None" = offset + len(rows) < total
+        elif limit > 0:
+            has_more = len(rows) == limit
+        else:
+            has_more = None
+        extra = {"next_offset": offset + len(rows)} if has_more else None
+        return FuncToolResult(
+            success=1,
+            result=FuncToolListResult(items=rows, total=total, has_more=has_more, extra=extra).model_dump(),
+        )
 
     def pause_job(
         self,
@@ -525,15 +557,18 @@ class SchedulerTools(BaseTool):
         self,
         job_id: str,
         limit: int = 10,
+        offset: int = 0,
     ) -> FuncToolResult:
         """List recent runs of a scheduled job, showing status and timing.
 
         Args:
             job_id: The job/DAG identifier to query.
-            limit:          Maximum number of runs to return (default 10).
+            limit: Maximum number of runs to return (default 10).
+            offset: Pagination offset (default 0).
 
         Returns:
-            FuncToolResult with result containing a list of run summaries.
+            FuncToolResult with result as FuncToolListResult. See
+            ``list_scheduler_jobs`` for field semantics.
         """
         try:
             adapter = self._get_adapter()
@@ -541,25 +576,17 @@ class SchedulerTools(BaseTool):
             return FuncToolResult(success=0, error=str(exc))
 
         try:
-            runs = adapter.list_job_runs(job_id, limit=limit)
-            return FuncToolResult(
-                success=1,
-                result={
-                    "job_id": job_id,
-                    "total": len(runs),
-                    "runs": [
-                        {
-                            "run_id": r.run_id,
-                            "status": r.status.value,
-                            "started_at": r.started_at.isoformat()
-                            if hasattr(r.started_at, "isoformat")
-                            else r.started_at,
-                            "ended_at": r.ended_at.isoformat() if hasattr(r.ended_at, "isoformat") else r.ended_at,
-                        }
-                        for r in runs
-                    ],
-                },
-            )
+            page = adapter.list_job_runs(job_id, limit=limit, offset=offset)
+            rows = [
+                {
+                    "run_id": r.run_id,
+                    "status": r.status.value,
+                    "started_at": r.started_at.isoformat() if hasattr(r.started_at, "isoformat") else r.started_at,
+                    "ended_at": r.ended_at.isoformat() if hasattr(r.ended_at, "isoformat") else r.ended_at,
+                }
+                for r in page.items
+            ]
+            return self._build_scheduler_envelope(rows, total=page.total, offset=offset, limit=limit)
         except Exception as exc:
             logger.error("list_job_runs failed: %s", exc)
             return FuncToolResult(success=0, error=str(exc))
