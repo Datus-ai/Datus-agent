@@ -1117,6 +1117,29 @@ class TestBuildSimpleAction:
         tc = _build_simple_action(a, verbose=False, success_label="Done")
         assert tc.output_preview == ""
 
+    def test_compact_func_tool_result_success_zero_flips_icon(self):
+        """A FuncToolResult(success=0) payload must flip the icon to ✗ even though
+        ``action.status`` is still SUCCESS — the tool call didn't raise, but the
+        tool itself reported failure."""
+        a = _make(
+            input_data={"function_name": "test"},
+            output_data={"raw_output": '{"success": 0, "error": "something bad"}'},
+        )
+        tc = _build_simple_action(a, verbose=False, success_label="Done")
+        assert "Done" not in tc.compact_result
+        assert "something bad" in tc.compact_result
+        assert tc.status_mark == "✗"
+
+    def test_compact_success_zero_without_error_falls_back_to_Failed(self):
+        """success=0 without an error string falls back to a generic 'Failed'."""
+        a = _make(
+            input_data={"function_name": "test"},
+            output_data={"raw_output": '{"success": 0}'},
+        )
+        tc = _build_simple_action(a, verbose=False, success_label="Done")
+        assert tc.compact_result == "Failed"
+        assert tc.status_mark == "✗"
+
 
 @pytest.mark.ci
 class TestBuildDocSearchResult:
@@ -1689,6 +1712,32 @@ class TestBuildLoadSkill:
         )
         tc = _build_load_skill(a, verbose=False)
         assert "Skill loaded" in tc.compact_result
+
+    def test_compact_tool_level_failure_flips_icon_and_shows_error(self):
+        """Tool returned FuncToolResult(success=0, error=...) while action.status is
+        SUCCESS (no exception). The builder must surface the error, not "Skill loaded"."""
+        a = _make(
+            input_data={"function_name": "load_skill"},
+            output_data={
+                "raw_output": '{"success": 0, "error": "Skill \'gen_metrics\' not found"}',
+            },
+        )
+        tc = _build_load_skill(a, verbose=False)
+        assert "Skill loaded" not in tc.compact_result
+        assert "not found" in tc.compact_result
+        assert tc.status_mark == "✗"
+
+    def test_compact_scope_rejection_surfaced(self):
+        """Scope hard-reject (``allowed_agents``) is a success=0 payload; must show ✗."""
+        a = _make(
+            input_data={"function_name": "load_skill"},
+            output_data={
+                "raw_output": ('{"success": 0, "error": "Skill \'gen-metrics\' is not available for agent \'chat\'"}'),
+            },
+        )
+        tc = _build_load_skill(a, verbose=False)
+        assert "not available" in tc.compact_result
+        assert tc.status_mark == "✗"
 
 
 class TestBuildAskUser:

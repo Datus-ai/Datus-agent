@@ -206,19 +206,35 @@ class SkillManager:
         """
         skills = self.get_available_skills(node_name, patterns, node_class=node_class)
 
-        if not skills:
-            return ""
-
         lines = ["<available_skills>"]
-        for skill in skills:
-            lines.append(f'<skill name="{skill.name}">')
-            lines.append(f"  <description>{skill.description}</description>")
-            if skill.tags:
-                lines.append(f"  <tags>{', '.join(skill.tags)}</tags>")
-            lines.append("</skill>")
+        if not skills:
+            # Emit an explicit empty block instead of returning "" so the LLM
+            # has a definitive signal that no skills are available. Without
+            # this, an LLM asked "what skills can I use?" tends to hallucinate
+            # names from adjacent tool schemas — most commonly the subagent
+            # types enumerated by the ``task()`` tool — and then calls
+            # ``load_skill()`` with a subagent name.
+            lines.append("  (none)")
+        else:
+            for skill in skills:
+                lines.append(f'<skill name="{skill.name}">')
+                lines.append(f"  <description>{skill.description}</description>")
+                if skill.tags:
+                    lines.append(f"  <tags>{', '.join(skill.tags)}</tags>")
+                lines.append("</skill>")
         lines.append("</available_skills>")
         lines.append("")
-        lines.append('To use a skill, call: load_skill(skill_name="<skill_name>")')
+        if skills:
+            lines.append('To use a skill, call: load_skill(skill_name="<skill_name>")')
+            lines.append(
+                "The list above is exhaustive. Only load names that appear in it. "
+                "Subagent names from the `task()` tool are NOT skill names."
+            )
+        else:
+            lines.append(
+                "No skills are available to this agent. Do not call load_skill(). "
+                "Subagent names from the `task()` tool are NOT skill names."
+            )
 
         return "\n".join(lines)
 

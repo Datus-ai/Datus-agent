@@ -183,10 +183,13 @@ class TestFinalizeSystemPrompt:
         assert "<available_skills>" in result
         assert "sql-analysis" in result
 
-    def test_with_skill_func_tool_empty_xml_returns_prompt_unchanged(
+    def test_with_skill_func_tool_empty_xml_appends_explicit_none_block(
         self, mock_agent_config, skill_manager, monkeypatch
     ):
-        """When skills context returns empty string, prompt unchanged (memory injection mocked out)."""
+        """With skill tools active but no visible skills, the prompt must still
+        contain an explicit ``<available_skills>`` block stating that none are
+        available — prevents the LLM from hallucinating skill names (e.g. from
+        subagent types listed in the ``task()`` tool schema)."""
         # Configure node with pattern that matches no skills
         mock_agent_config.agentic_nodes = {"test_node": {"skills": "nonexistent-*"}}
 
@@ -204,9 +207,11 @@ class TestFinalizeSystemPrompt:
         base_prompt = "This is the base system prompt."
         result = node._finalize_system_prompt(base_prompt)
 
-        # When no skills match, XML generation returns empty string
-        # So result should just be base_prompt
-        assert result == base_prompt
+        assert result.startswith(base_prompt)
+        assert "<available_skills>" in result
+        # Explicitly marked as empty, with anti-hallucination guidance.
+        assert "(none)" in result or "no skills" in result.lower()
+        assert "subagent" in result.lower()
 
     def test_calls_ensure_skill_tools(self, mock_agent_config, skill_manager):
         """Verify _ensure_skill_tools_in_tools() is called."""

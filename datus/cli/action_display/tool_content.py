@@ -1232,19 +1232,37 @@ def _build_get_detail(action: ActionHistory, verbose: bool) -> ToolCallContent:
 
 
 def _build_simple_action(action: ActionHistory, verbose: bool, success_label: str) -> ToolCallContent:
-    """Shared builder for tools with simple success/fail output."""
+    """Shared builder for tools with simple success/fail output.
+
+    Handles two kinds of failure:
+    - ``action.status == FAILED``: the tool call raised (e.g. hook blocked it).
+    - ``FuncToolResult(success=0, error=...)``: the tool returned normally but
+      reports a tool-level failure. ``action.status`` is still ``SUCCESS`` here
+      because no exception was raised, but the user-visible icon must be ✗
+      and the error payload must be surfaced instead of the generic success
+      label.
+    """
     tc = make_base_content(action)
+    data = parse_output_data(action.output)
+    tool_error: Optional[str] = None
+    if data is not None and data.get("success") == 0:
+        err = data.get("error")
+        if err:
+            tool_error = str(err)
+        else:
+            tool_error = "Failed"
+        tc.status_mark = "✗"
     if verbose:
         tc.args_lines = extract_args_markup(action)
         if action.output:
             tc.output_lines = _format_result_only_markup(action.output)
     else:
-        data = parse_output_data(action.output)
-        if data:
-            if action.status == ActionStatus.FAILED:
-                tc.compact_result = f"{action.output if isinstance(action.output, str) else 'Failed'}"
-            else:
-                tc.compact_result = f"{success_label}"
+        if action.status == ActionStatus.FAILED:
+            tc.compact_result = f"{action.output if isinstance(action.output, str) else 'Failed'}"
+        elif tool_error is not None:
+            tc.compact_result = tool_error
+        elif data:
+            tc.compact_result = f"{success_label}"
     return tc
 
 

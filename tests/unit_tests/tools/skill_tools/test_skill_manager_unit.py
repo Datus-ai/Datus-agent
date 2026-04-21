@@ -242,13 +242,34 @@ class TestGenerateSkillsXml:
         assert "<available_skills>" in xml
         assert "test-skill" in xml
 
-    def test_generate_xml_empty(self):
+    def test_generate_xml_empty_is_explicit(self):
+        """With no visible skills, the XML must still be emitted and state the
+        agent has nothing to load. This prevents the LLM from hallucinating
+        skill names from other sources (e.g. subagent types in the ``task()``
+        tool schema) when it asks 'what skills can I use?'."""
         registry = MagicMock()
         registry.get_skill_count.return_value = 0
         registry.list_skills.return_value = []
         manager = SkillManager(registry=registry)
+        xml = manager.generate_available_skills_xml("chat")
+        assert xml != ""
+        assert "<available_skills>" in xml
+        assert "</available_skills>" in xml
+        # Must explicitly mark the block as empty.
+        assert "(none)" in xml or "no skills" in xml.lower()
+        # Must warn that subagent names are NOT skill names.
+        assert "subagent" in xml.lower() and "not" in xml.lower()
+
+    def test_generate_xml_non_empty_adds_exhaustive_warning(self):
+        """When skills are listed, the block must also warn that the list is
+        exhaustive — nothing outside it may be loaded by name."""
+        registry = MagicMock()
+        registry.get_skill_count.return_value = 1
+        registry.list_skills.return_value = [_make_skill("sql-opt")]
+        manager = SkillManager(registry=registry)
         xml = manager.generate_available_skills_xml("node")
-        assert xml == ""
+        assert "sql-opt" in xml
+        assert "exhaustive" in xml.lower() or "only load" in xml.lower()
 
 
 class TestMarketplaceOperations:
