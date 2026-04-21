@@ -23,7 +23,7 @@ curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install-d
 curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install-dev.sh | DATUS_REF=feature/foo sh
 ```
 
-Both scripts bootstrap `uv`, create a dedicated venv at `~/.datus/venv` (Python 3.12 is downloaded automatically if missing), and write `datus`, `datus-cli`, `datus-api`, `datus-mcp`, `datus-agent`, `datus-claw`, and `datus-pip` shims into `~/.local/bin`. Open a new shell (or `source ~/.zshrc`) so the new PATH takes effect.
+Both scripts bootstrap `uv`, create a dedicated venv at `~/.datus/venv` (Python 3.12 is downloaded automatically if missing), and write `datus`, `datus-cli`, `datus-api`, `datus-mcp`, `datus-agent`, `datus-gateway`, and `datus-pip` shims into `~/.local/bin`. Open a new shell (or `source ~/.zshrc`) so the new PATH takes effect.
 
 To install additional Python packages into the global venv later, use:
 

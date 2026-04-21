@@ -20,7 +20,7 @@ set -eu
 
 PYPI_PACKAGE="datus-agent"
 # Console scripts declared in pyproject.toml [project.scripts].
-CONSOLE_SCRIPTS="datus datus-agent datus-cli datus-api datus-mcp datus-claw"
+CONSOLE_SCRIPTS="datus datus-agent datus-cli datus-api datus-mcp datus-gateway"
 
 DATUS_HOME="${DATUS_HOME:-$HOME/.datus}"
 DATUS_BIN_DIR="${DATUS_BIN_DIR:-$HOME/.local/bin}"
