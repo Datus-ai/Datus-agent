@@ -38,28 +38,32 @@ class BaseApp(App):
 
         The Datus REPL's persistent TUI owns the normal screen + stdin; a
         Textual app needs to take over the same terminal for its own
-        fullscreen rendering. Scheduling the Textual ``run`` via
-        ``run_in_terminal`` tells prompt_toolkit to relinquish control,
-        execute the callable, and reinstall its pinned layout when the
-        callable returns. When no TUI is active this is a no-op and the
-        call path is unchanged.
+        fullscreen rendering. Slash commands are dispatched to a worker
+        thread, so we schedule ``run_async`` on the pt loop (which is the
+        main thread's loop) via ``run_coroutine_threadsafe`` and block on
+        the resulting ``concurrent.futures.Future`` from the worker. Using
+        ``run_async`` avoids a nested ``asyncio.run`` and keeps the Textual
+        driver on the main thread so its ``signal.signal`` calls succeed.
+        ``in_terminal`` suspends pt's pinned layout for the duration. When
+        no pt Application is active the call path is unchanged.
         """
+        import asyncio
+
         from prompt_toolkit.application import get_app_or_none
 
         pt_app = get_app_or_none()
-        if pt_app is None:
+        pt_loop = getattr(pt_app, "loop", None) if pt_app is not None else None
+        if pt_loop is None or not pt_loop.is_running():
             return super().run(*args, **kwargs)
 
-        from prompt_toolkit.application.run_in_terminal import run_in_terminal
+        from prompt_toolkit.application.run_in_terminal import in_terminal
 
-        result_box: dict = {}
+        async def _scheduled():
+            async with in_terminal():
+                return await self.run_async(*args, **kwargs)
 
-        def _invoke() -> None:
-            result_box["value"] = super(BaseApp, self).run(*args, **kwargs)
-
-        future = run_in_terminal(_invoke)
-        future.result()
-        return result_box.get("value")
+        cf_future = asyncio.run_coroutine_threadsafe(_scheduled(), pt_loop)
+        return cf_future.result()
 
     def on_mount(self) -> None:
         """App mount handler"""
