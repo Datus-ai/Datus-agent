@@ -1123,13 +1123,14 @@ class DatusCLI:
                 # ``_cmd_exit`` gets to close the DB connector before the
                 # handler returns ``EXIT_SENTINEL`` to the outer loop.
                 return CommandType.SLASH, f"/{spec.name}", args
-            # ``/<service>.<method>`` dynamic routes are resolved in
+            # Dynamic service routes (``/<service>`` for method listing or
+            # ``/<service>.<method>`` for invocation) are resolved in
             # ``_execute_slash_command`` via ``ServiceCommands.dispatch``.
-            # Use the raw token (not lowercased) because service / method
-            # names are case-sensitive in the registry.
-            if "." in raw_token:
+            # Preserve the raw token's casing because service / method
+            # registry lookups respect the user's configured names.
+            if raw_token:
                 return CommandType.SLASH, f"/{raw_token}", args
-            return CommandType.UNKNOWN, f"/{token}", ""
+            return CommandType.UNKNOWN, "/", ""
 
         # Legacy prefix hints: ``.xxx`` / ``@catalog`` / ``@subject`` used to
         # be live commands. Surface a rename hint instead of running them so

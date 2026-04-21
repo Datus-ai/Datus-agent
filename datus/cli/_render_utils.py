@@ -42,11 +42,21 @@ def format_cell(value: Any, *, max_width: Optional[int] = None) -> str:
 
 
 def _truncate_middle(text: str, max_len: int) -> str:
-    """Truncate the middle of ``text`` once it exceeds ``max_len``."""
+    """Truncate the middle of ``text`` once it exceeds ``max_len``.
+
+    Guarantees ``len(result) <= max_len`` even for small caps — for
+    ``max_len <= 5`` there is no room for the ``" ... "`` separator, so
+    the head is plainly trimmed.
+    """
     if max_len <= 0 or len(text) <= max_len:
         return text
-    keep = max(1, (max_len - 5) // 2)
-    return text[:keep] + " ... " + text[-keep:]
+    if max_len <= 5:
+        return text[:max_len]
+    separator = " ... "
+    remaining = max_len - len(separator)
+    head = (remaining + 1) // 2
+    tail = remaining - head
+    return text[:head] + separator + text[-tail:]
 
 
 def build_row_table(

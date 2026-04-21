@@ -215,9 +215,13 @@ class BIFuncTool:
             try:
                 from datus.tools.db_tools.db_manager import db_manager_instance
 
-                db_manager = db_manager_instance(getattr(self.agent_config, "namespaces", {}) or {})
+                db_manager = db_manager_instance(self.agent_config.namespaces)
                 current_db = getattr(self.agent_config, "current_database", "") or ""
-                self._read_connector = db_manager.get_conn(current_db, current_db)
+                # Pick whichever connector the namespace carries rather than
+                # assuming ``namespace == logic_db``. In the post-services
+                # migration they happen to match, but ``first_conn_with_name``
+                # stays correct if a namespace ever bundles multiple DBs again.
+                _, self._read_connector = db_manager.first_conn_with_name(current_db)
             except Exception as exc:
                 logger.warning(f"No source DB connector for write_query: {exc}")
                 self._read_connector = None

@@ -807,3 +807,4 @@ class TestAsyncExecution:
             bg_loop.call_soon_threadsafe = original  # type: ignore[assignment]
             original(bg_loop.stop)
             thread.join(timeout=2)
+            bg_loop.close()

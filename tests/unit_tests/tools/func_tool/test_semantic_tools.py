@@ -196,7 +196,7 @@ class TestQueryMetricsCompression:
         assert result.result["metadata"] == {"sql": "SELECT ...", "row_count": 1}
 
     def test_query_metrics_drops_non_serializable_metadata(self, semantic_tools):
-        """Test that non-JSON-serializable metadata values are converted to strings."""
+        """Test that non-JSON-serializable metadata values are dropped."""
 
         class FakePlan:
             def __str__(self):

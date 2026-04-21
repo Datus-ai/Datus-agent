@@ -186,11 +186,17 @@ class TestParseCommand:
         assert cmd == "/help"
 
     def test_unknown_slash_is_not_chat(self, cli):
-        """Typos such as ``/halp`` must fail loudly, never flow to chat."""
+        """Typos such as ``/halp`` must fail loudly, never flow to chat.
+
+        Parser classifies every non-empty ``/<token>`` as SLASH so the
+        dynamic service dispatcher (``/<service>[.<method>]``) gets a
+        chance to claim it; unknown tokens then surface as
+        ``Unknown command`` at dispatch time.
+        """
         cmd_type, cmd, args = cli._parse_command("/halp me please")
-        assert cmd_type == CommandType.UNKNOWN
+        assert cmd_type == CommandType.SLASH
         assert cmd == "/halp"
-        assert args == ""
+        assert args == "me please"
 
     def test_legacy_dot_prefix_hints_rename(self, cli):
         cmd_type, cmd, args = cli._parse_command(".tables")
@@ -988,12 +994,13 @@ class TestParseCommandDefaultAgent:
     """
 
     def test_slash_unknown_prefix_is_not_chat(self, cli):
-        """``/show revenue`` is no longer chat — it's an unknown command."""
+        """``/show revenue`` is no longer chat — it's a slash token the
+        dispatcher will reject as unknown."""
         cli.default_agent = "gen_sql"
         cmd_type, cmd, args = cli._parse_command("/show revenue")
-        assert cmd_type == CommandType.UNKNOWN
+        assert cmd_type == CommandType.SLASH
         assert cmd == "/show"
-        assert args == ""
+        assert args == "revenue"
 
     def test_bare_text_uses_default_agent(self, cli):
         """Bare natural language text uses ``default_agent``."""

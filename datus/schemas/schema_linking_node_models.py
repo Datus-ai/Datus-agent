@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import List, Literal, Optional
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from datus.schemas.base import TABLE_TYPE, BaseInput, BaseResult
 from datus.schemas.node_models import SQLContext, SqlTask, TableSchema, TableValue
@@ -82,21 +82,13 @@ class SchemaLinkingResult(BaseResult):
     table_values: List[TableValue] = Field(default_factory=list, description="List of related table values")
     value_count: int = Field(..., description="Number of table values found")
 
-    @field_validator("schema_count")
-    def validate_schema_count(cls, v, info):
-        # info.data is None when pydantic invokes the validator outside the
-        # normal field-by-field pipeline (e.g. some model_validate_json paths).
-        data = info.data or {}
-        if "table_schemas" in data and len(data["table_schemas"]) != v:
+    @model_validator(mode="after")
+    def _validate_counts(self) -> "SchemaLinkingResult":
+        if len(self.table_schemas) != self.schema_count:
             raise ValueError("'schema_count' must match the length of 'table_schemas'")
-        return v
-
-    @field_validator("value_count")
-    def validate_value_count(cls, v, info):
-        data = info.data or {}
-        if "table_values" in data and len(data["table_values"]) != v:
+        if len(self.table_values) != self.value_count:
             raise ValueError("'value_count' must match the length of 'table_values'")
-        return v
+        return self
 
     def compact_result(self) -> str:
         """Return a compact string representation of schema linking results"""

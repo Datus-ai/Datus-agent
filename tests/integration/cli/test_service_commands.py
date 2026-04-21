@@ -82,6 +82,14 @@ class _Model:
         return {k: v for k, v in self.__dict__.items()}
 
 
+class _Page:
+    """Mimics ``datus_bi_core.models.PaginatedResult``: ``.items`` + ``.total``."""
+
+    def __init__(self, items, total=None):
+        self.items = items
+        self.total = len(items) if total is None else total
+
+
 class _FullStubSupersetAdapter(_MockDashboardWriteMixin, _MockChartWriteMixin, _MockDatasetWriteMixin):
     """Stub that implements every capability — full feature surface."""
 
@@ -90,30 +98,32 @@ class _FullStubSupersetAdapter(_MockDashboardWriteMixin, _MockChartWriteMixin, _
         self.auth_params = auth_params
         self.dialect = dialect
 
-    def list_dashboards(self, search="", page_size=20):
+    def list_dashboards(self, search="", limit=50, offset=0):
         items = [
             _Model(id=1, name="Finance Overview"),
             _Model(id=2, name="Sales Overview"),
         ]
         if search:
             items = [i for i in items if search.lower() in i.name.lower()]
-        return items
+        return _Page(items[offset : offset + limit], total=len(items))
 
     def get_dashboard_info(self, dashboard_id):
         if dashboard_id == "missing":
             return None
         return _Model(id=dashboard_id, name="Finance Overview", description="", chart_ids=[1, 2])
 
-    def list_charts(self, dashboard_id):
-        return [_Model(id=1, name="Revenue Trend", chart_type="line")]
+    def list_charts(self, dashboard_id, limit=50, offset=0):
+        items = [_Model(id=1, name="Revenue Trend", chart_type="line")]
+        return _Page(items[offset : offset + limit], total=len(items))
 
     def get_chart(self, chart_id, dashboard_id=None):
         if chart_id == "missing":
             return None
         return _Model(id=chart_id, name="Revenue Trend", chart_type="line")
 
-    def list_datasets(self, dashboard_id=""):
-        return [_Model(id=1, name="orders", dialect="postgresql")]
+    def list_datasets(self, dashboard_id="", limit=50, offset=0):
+        items = [_Model(id=1, name="orders", dialect="postgresql")]
+        return _Page(items[offset : offset + limit], total=len(items))
 
     def get_chart_data(self, chart_id, dashboard_id=None, limit=None):
         rows = [{"month": "2024-01", "revenue": 1000}, {"month": "2024-02", "revenue": 1500}]
@@ -137,20 +147,21 @@ class _ReadOnlyStubAdapter:
         self.auth_params = auth_params
         self.dialect = dialect
 
-    def list_dashboards(self, search="", page_size=20):
-        return [_Model(id=1, name="Read Only")]
+    def list_dashboards(self, search="", limit=50, offset=0):
+        items = [_Model(id=1, name="Read Only")]
+        return _Page(items[offset : offset + limit], total=len(items))
 
     def get_dashboard_info(self, dashboard_id):
         return _Model(id=dashboard_id, name="Read Only", description="", chart_ids=[])
 
-    def list_charts(self, dashboard_id):
-        return []
+    def list_charts(self, dashboard_id, limit=50, offset=0):
+        return _Page([], total=0)
 
     def get_chart(self, chart_id, dashboard_id=None):
         return None
 
-    def list_datasets(self, dashboard_id=""):
-        return []
+    def list_datasets(self, dashboard_id="", limit=50, offset=0):
+        return _Page([], total=0)
 
 
 def _build_bi_core_mock(full_platform="superset", readonly_platform="grafana_ro") -> MagicMock:

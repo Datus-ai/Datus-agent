@@ -102,15 +102,29 @@ class ServiceCommands:
         if not head:
             return False
 
-        client = self.registry.get(head)
-        if client is None:
+        # Only claim the command when the service is actually configured;
+        # otherwise fall back to the caller's "Unknown command" path so
+        # typoed slash tokens still fail loudly.
+        if not self.registry.has(head):
             return False
 
-        if not tail:
-            if not self.registry.adapter_available(client.service_name):
+        # Adapter missing → surface the install hint instead of letting the
+        # factory's ImportError drop the route into "Unknown command".
+        if not self.registry.adapter_available(head):
+            client = self.registry.get(head)
+            if client is not None:
                 self._print_missing_adapter_hint(client)
             else:
-                self._print_methods(client)
+                self.cli.console.print(f"[red]Service '{head}' is configured but its adapter is not installed.[/]")
+            return True
+
+        client = self.registry.get(head)
+        if client is None:
+            self.cli.console.print(f"[red]Service '{head}' could not be loaded.[/]")
+            return True
+
+        if not tail:
+            self._print_methods(client)
             return True
 
         self._invoke(client, tail, args)
