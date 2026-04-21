@@ -23,9 +23,10 @@ that method does not belong in the CLI allow-list.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import shlex
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from rich.table import Table
 
@@ -199,7 +200,8 @@ class ServiceCommands:
             self._print_schema(tool, hint="Could not parse arguments. Expected schema:")
             return
 
-        missing = self._missing_required(tool.params_json_schema or {}, parsed)
+        bound_method = getattr(client.tool_instance, method_name, None)
+        missing = self._missing_required(bound_method, parsed)
         if missing:
             self.cli.console.print(f"[red]Missing required argument(s):[/] {', '.join(missing)}")
             self._print_schema(tool)
@@ -274,9 +276,9 @@ class ServiceCommands:
 
         return parsed
 
-    @staticmethod
-    def _coerce(raw: str, prop_schema: Dict[str, Any]) -> Any:
-        t = (prop_schema.get("type") if isinstance(prop_schema, dict) else None) or ""
+    @classmethod
+    def _coerce(cls, raw: str, prop_schema: Dict[str, Any]) -> Any:
+        t = cls._primary_type(prop_schema)
         if t == "integer":
             try:
                 return int(raw)
@@ -302,26 +304,63 @@ class ServiceCommands:
         return raw
 
     @staticmethod
-    def _missing_required(schema: Dict[str, Any], parsed: Dict[str, Any]) -> List[str]:
-        """Return the list of required-and-unsupplied parameter names.
+    def _primary_type(prop_schema: Dict[str, Any]) -> str:
+        """Return the primary JSON-schema type, flattening ``anyOf`` / ``oneOf``.
 
-        A parameter listed in ``required`` but whose schema property carries a
-        ``default`` is treated as effectively optional — Pydantic / the Agents
-        SDK tend to include every signature parameter in the OpenAI-style
-        ``required`` array even when the Python signature provides a default.
+        ``Optional[X]`` is represented by the Agents SDK as
+        ``{"anyOf": [{"type": X}, {"type": "null"}]}`` with no top-level
+        ``type``. Naively reading ``schema["type"]`` would yield ``""`` and
+        cause ``_coerce`` to skip its conversion logic, so e.g. an
+        ``Optional[List[str]]`` parameter would receive a raw CSV string
+        instead of a list.
         """
-        if not isinstance(schema, dict):
+        if not isinstance(prop_schema, dict):
+            return ""
+        t = prop_schema.get("type")
+        if isinstance(t, str):
+            return t
+        if isinstance(t, list):
+            for candidate in t:
+                if isinstance(candidate, str) and candidate != "null":
+                    return candidate
+        for key in ("anyOf", "oneOf"):
+            variants = prop_schema.get(key)
+            if not isinstance(variants, list):
+                continue
+            for variant in variants:
+                if not isinstance(variant, dict):
+                    continue
+                vt = variant.get("type")
+                if isinstance(vt, str) and vt != "null":
+                    return vt
+        return ""
+
+    @staticmethod
+    def _missing_required(method: Optional[Callable], parsed: Dict[str, Any]) -> List[str]:
+        """Return names of parameters that are truly required but not supplied.
+
+        Uses the Python signature of the bound method as the source of truth —
+        Pydantic / the Agents SDK regularly list parameters with
+        ``Optional[...] = None`` defaults in the OpenAI-style ``required``
+        array, but those are semantically optional and we should not block
+        invocation on them.
+        """
+        if method is None or not callable(method):
             return []
-        required = schema.get("required", []) or []
-        props = schema.get("properties", {}) or {}
-        missing = []
-        for key in required:
-            if key in parsed:
+        try:
+            sig = inspect.signature(method)
+        except (TypeError, ValueError):
+            return []
+        missing: List[str] = []
+        for name, param in sig.parameters.items():
+            if name == "self":
                 continue
-            prop = props.get(key) or {}
-            if isinstance(prop, dict) and "default" in prop:
+            if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
                 continue
-            missing.append(key)
+            if name in parsed:
+                continue
+            if param.default is inspect.Parameter.empty:
+                missing.append(name)
         return missing
 
     # ------------------------------------------------------------------ #

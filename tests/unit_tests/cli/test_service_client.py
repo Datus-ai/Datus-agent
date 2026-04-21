@@ -102,6 +102,84 @@ class TestServiceClient:
         assert client.has_method("get_dashboard") is True
 
 
+class _AvailableToolsFilteredTool:
+    """Stub that mimics BIFuncTool's capability-gated ``available_tools()``."""
+
+    def __init__(self, advertised):
+        self._advertised = advertised
+
+    def list_dashboards(self):
+        """List."""
+
+    def get_dashboard(self):
+        """Get."""
+
+    def get_chart_data(self):
+        """Chart data — may be hidden."""
+
+    def list_bi_databases(self):
+        """Databases — may be hidden."""
+
+    def available_tools(self):
+        return [SimpleNamespace(name=n) for n in self._advertised]
+
+
+class TestServiceClientAvailableToolsFilter:
+    """Even when a method is both allow-listed and present on the instance,
+    it must also be advertised via ``available_tools()`` to appear."""
+
+    def test_advertised_subset_exposes_only_intersection(self):
+        tool = _AvailableToolsFilteredTool(advertised={"list_dashboards", "get_dashboard"})
+        client = ServiceClient(
+            service_type="bi_tools",
+            service_name="superset_ro",
+            tool_instance=tool,
+            method_names=READ_METHODS["bi_tools"],
+        )
+        names = [m[0] for m in client.list_methods()]
+        assert names == ["get_dashboard", "list_dashboards"]
+        # get_chart_data / list_bi_databases exist on the instance but aren't
+        # advertised (read-only BI adapter) → must not be callable.
+        assert client.has_method("get_chart_data") is False
+        assert client.get_tool("get_chart_data") is None
+        assert client.get_tool("list_bi_databases") is None
+
+    def test_fallback_when_no_available_tools(self):
+        """Tools without ``available_tools`` fall back to allow-list ∩ hasattr."""
+
+        class _Plain:
+            def list_dashboards(self):
+                """."""
+
+        client = ServiceClient(
+            service_type="bi_tools",
+            service_name="plain",
+            tool_instance=_Plain(),
+            method_names=READ_METHODS["bi_tools"],
+        )
+        names = [m[0] for m in client.list_methods()]
+        assert names == ["list_dashboards"]
+        assert client.get_tool("list_dashboards") is not None
+
+    def test_available_tools_exception_falls_back(self):
+        class _Broken:
+            def list_dashboards(self):
+                """."""
+
+            def available_tools(self):
+                raise RuntimeError("bootstrap failure")
+
+        client = ServiceClient(
+            service_type="bi_tools",
+            service_name="broken",
+            tool_instance=_Broken(),
+            method_names=READ_METHODS["bi_tools"],
+        )
+        names = [m[0] for m in client.list_methods()]
+        # Falls back to allow-list ∩ hasattr — list_dashboards is present.
+        assert names == ["list_dashboards"]
+
+
 class _FakeSchedulerTool:
     def list_scheduler_jobs(self):
         """List scheduled jobs."""

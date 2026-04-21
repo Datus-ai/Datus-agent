@@ -186,6 +186,38 @@ class TestArgParser:
         parsed = cmd._parse_args("--items=a,b,c", schema)
         assert parsed == {"items": ["a", "b", "c"]}
 
+    def test_parse_optional_array_via_anyof(self):
+        """``Optional[List[str]] = None`` uses anyOf with no top-level type."""
+        cmd = ServiceCommands(_fake_cli())
+        schema = {
+            "properties": {
+                "items": {
+                    "anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "null"}],
+                    "default": None,
+                },
+            },
+        }
+        parsed = cmd._parse_args("--items=a,b", schema)
+        assert parsed == {"items": ["a", "b"]}
+
+    def test_parse_optional_int_via_anyof(self):
+        cmd = ServiceCommands(_fake_cli())
+        schema = {
+            "properties": {
+                "limit": {"anyOf": [{"type": "integer"}, {"type": "null"}], "default": None},
+            },
+        }
+        parsed = cmd._parse_args("--limit=42", schema)
+        assert parsed == {"limit": 42}
+
+    def test_primary_type_helper(self):
+        assert ServiceCommands._primary_type({"type": "integer"}) == "integer"
+        assert ServiceCommands._primary_type({"type": ["string", "null"]}) == "string"
+        assert ServiceCommands._primary_type({"anyOf": [{"type": "null"}, {"type": "array"}]}) == "array"
+        assert ServiceCommands._primary_type({"oneOf": [{"type": "integer"}]}) == "integer"
+        assert ServiceCommands._primary_type({}) == ""
+        assert ServiceCommands._primary_type(None) == ""
+
     def test_parse_array_json(self):
         cmd = ServiceCommands(_fake_cli())
         schema = {"properties": {"items": {"type": "array"}}}
@@ -211,9 +243,41 @@ class TestArgParser:
 
     def test_missing_required_reports_all(self):
         cmd = ServiceCommands(_fake_cli())
-        schema = {"properties": {"a": {}, "b": {}}, "required": ["a", "b"]}
-        missing = cmd._missing_required(schema, {"a": 1})
+
+        def target(a, b):
+            return (a, b)
+
+        missing = cmd._missing_required(target, {"a": 1})
         assert missing == ["b"]
+
+    def test_missing_required_skips_optional_with_none_default(self):
+        """Optional[...] = None in Python signature is truly optional."""
+        from typing import List, Optional
+
+        cmd = ServiceCommands(_fake_cli())
+
+        def target(metrics: List[str], path: Optional[List[str]] = None, limit: Optional[int] = None):
+            return (metrics, path, limit)
+
+        missing = cmd._missing_required(target, {"metrics": ["sales"]})
+        # path and limit have defaults → not required.
+        assert missing == []
+
+    def test_missing_required_keeps_truly_required(self):
+        from typing import List, Optional
+
+        cmd = ServiceCommands(_fake_cli())
+
+        def target(metrics: List[str], path: Optional[List[str]] = None):
+            return (metrics, path)
+
+        missing = cmd._missing_required(target, {})
+        assert missing == ["metrics"]
+
+    def test_missing_required_handles_none_method(self):
+        cmd = ServiceCommands(_fake_cli())
+        # Safety: no callable → no blockage.
+        assert cmd._missing_required(None, {}) == []
 
 
 class TestRenderHelpers:

@@ -60,7 +60,21 @@ READ_METHODS: Dict[str, Set[str]] = {
 
 
 class ServiceClient:
-    """A single configured service, with its read-only methods filter-exposed."""
+    """A single configured service, with its read-only methods filter-exposed.
+
+    Exposed methods are the intersection of:
+
+    1. The per-service-type ``READ_METHODS`` allow-list (blocks writes).
+    2. The service's own ``available_tools()`` output — adapters like
+       ``BIFuncTool`` and ``SemanticTools`` dynamically omit capability-less
+       methods (e.g. read-only BI adapter hides ``get_chart_data``; semantic
+       tool with no adapter hides ``validate_semantic`` /
+       ``attribution_analyze``). Relying on this prevents the CLI from
+       advertising commands that would always fail at runtime.
+
+    If the tool instance does not expose ``available_tools`` (rare), the
+    allow-list is treated as authoritative.
+    """
 
     def __init__(
         self,
@@ -74,11 +88,33 @@ class ServiceClient:
         self.tool_instance = tool_instance
         self._method_names = method_names
         self._tool_cache: Dict[str, "FunctionTool"] = {}
+        self._exposed_cache: Optional[Set[str]] = None
+
+    def _exposed(self) -> Set[str]:
+        """Intersect the allow-list with the tool's ``available_tools()`` names."""
+        if self._exposed_cache is not None:
+            return self._exposed_cache
+        available_fn = getattr(self.tool_instance, "available_tools", None)
+        if not callable(available_fn):
+            # No capability gating on this tool — trust the allow-list.
+            self._exposed_cache = {m for m in self._method_names if hasattr(self.tool_instance, m)}
+            return self._exposed_cache
+        try:
+            tools = available_fn()
+        except Exception as exc:
+            logger.warning(
+                f"available_tools() failed on '{self.service_name}': {exc}. Falling back to static allow-list."
+            )
+            self._exposed_cache = {m for m in self._method_names if hasattr(self.tool_instance, m)}
+            return self._exposed_cache
+        advertised = {getattr(t, "name", "") for t in (tools or [])}
+        self._exposed_cache = self._method_names & advertised
+        return self._exposed_cache
 
     def list_methods(self) -> List[Tuple[str, str]]:
         """Return ``[(method_name, first_line_of_docstring), ...]`` sorted by name."""
         out: List[Tuple[str, str]] = []
-        for name in sorted(self._method_names):
+        for name in sorted(self._exposed()):
             method = getattr(self.tool_instance, name, None)
             if method is None:
                 continue
@@ -87,11 +123,11 @@ class ServiceClient:
         return out
 
     def has_method(self, method_name: str) -> bool:
-        return method_name in self._method_names and hasattr(self.tool_instance, method_name)
+        return method_name in self._exposed()
 
     def get_tool(self, method_name: str) -> Optional["FunctionTool"]:
         """Return the ``FunctionTool`` wrapper, or ``None`` if the method is blocked."""
-        if method_name not in self._method_names:
+        if method_name not in self._exposed():
             return None
         cached = self._tool_cache.get(method_name)
         if cached is not None:
