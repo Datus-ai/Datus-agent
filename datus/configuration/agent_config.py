@@ -859,6 +859,14 @@ class AgentConfig:
             ),
         )
 
+    def default_semantic_adapter(self) -> Optional[str]:
+        if len(self.semantic_layer_configs) == 1:
+            return next(iter(self.semantic_layer_configs))
+        if not self.semantic_layer_configs:
+            # MetricFlow is currently the built-in default semantic adapter.
+            return "metricflow"
+        return None
+
     def resolve_semantic_adapter(self, adapter_type: Optional[str] = None) -> Optional[str]:
         normalized = str(adapter_type or "").lower().strip()
         if normalized:
@@ -874,10 +882,9 @@ class AgentConfig:
                 ),
             )
 
-        if not self.semantic_layer_configs:
-            return None
-        if len(self.semantic_layer_configs) == 1:
-            return next(iter(self.semantic_layer_configs))
+        default_adapter = self.default_semantic_adapter()
+        if default_adapter:
+            return default_adapter
         raise DatusException(
             ErrorCode.COMMON_CONFIG_ERROR,
             message=(

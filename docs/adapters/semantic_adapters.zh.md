@@ -50,6 +50,8 @@ pip install -e ../datus-semantic-adapter/datus-semantic-metricflow
 
 在 `agent.yml` 的 `agent.services.semantic_layer` 中配置语义层适配器：
 
+如果你使用的是 MetricFlow 的默认配置，整个 `semantic_layer` 段也可以省略；此时 Datus 会自动默认使用 `metricflow`。
+
 ### MetricFlow
 
 ```yaml
@@ -78,6 +80,7 @@ agent:
 
 - `services.semantic_layer` 下的 key **必须等于 adapter type**（例如 `metricflow`）。如果同时写了 `type:` 字段，其值必须与 key 一致，否则 Datus 会在启动时抛出配置错误。比较时会先对 key 与 `type` 做 lowercase + trim 处理，因此 `MetricFlow` 或 ` metricflow ` 也会被视为与 `metricflow` 匹配。
 - 语义相关节点通过 `semantic_adapter` 选择适配器。
+- 如果 `services.semantic_layer` 和 `semantic_adapter` 都省略，Datus 会默认使用 `metricflow`。
 - 如果只配置了一个 semantic layer，省略 `semantic_adapter` 时会自动使用它。
 - 如果配置了多个 semantic layer，则必须显式填写 `semantic_adapter`。
 

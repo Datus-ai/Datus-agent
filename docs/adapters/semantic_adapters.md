@@ -50,6 +50,8 @@ Once installed, Datus Agent will automatically detect and load the adapter.
 
 Configure semantic adapters under `agent.services.semantic_layer` in `agent.yml`:
 
+The entire `semantic_layer` block is optional when you use MetricFlow with default settings. In that case Datus defaults to `metricflow` automatically.
+
 ### MetricFlow
 
 ```yaml
@@ -78,6 +80,7 @@ By default, Datus points MetricFlow at the current project's semantic model dire
 
 - The key under `services.semantic_layer` **must equal the adapter type** (for example `metricflow`). If a `type:` field is present, it must match the key; otherwise Datus raises a configuration error at startup. Comparison is case-insensitive and trims surrounding whitespace, so `MetricFlow` and ` metricflow ` also match.
 - Semantic nodes choose the adapter with `semantic_adapter`.
+- If both `services.semantic_layer` and `semantic_adapter` are omitted, Datus defaults to `metricflow`.
 - If `semantic_adapter` is omitted and only one semantic layer is configured, Datus uses that adapter automatically.
 - If multiple semantic layers are configured, set `semantic_adapter` explicitly.
 

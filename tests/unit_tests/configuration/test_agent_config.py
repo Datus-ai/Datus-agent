@@ -402,6 +402,29 @@ class TestAgentConfigServiceSelectors:
         )
         assert cfg.resolve_semantic_adapter() == "metricflow"
 
+    def test_resolve_semantic_adapter_defaults_to_metricflow_without_service_config(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            services={
+                "databases": {},
+            },
+        )
+        assert cfg.resolve_semantic_adapter() == "metricflow"
+
+    def test_build_semantic_adapter_config_defaults_to_metricflow_without_service_config(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            services={
+                "databases": {},
+            },
+        )
+
+        config = cfg.build_semantic_adapter_config()
+
+        assert config["type"] == "metricflow"
+        assert config["agent_home"] == str(tmp_path / "h")
+        assert config["semantic_models_path"].endswith("subject/semantic_models")
+
     def test_resolve_semantic_adapter_requires_explicit_choice_for_multiple_entries(self, tmp_path):
         cfg = self._make(
             tmp_path,
