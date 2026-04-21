@@ -314,13 +314,19 @@ class TestClearSession:
         assert node._session is None
 
     def test_clear_session_no_model(self):
+        """Non-ephemeral clear with ``model=None`` is a no-op: ``_session`` and
+        ``session_id`` must survive untouched so the caller can reuse the node
+        after reattaching a model later.
+        """
         node = _make_node()
         node.ephemeral = False
         node.model = None
         node.session_id = "some_id"
-        node._session = MagicMock()
-        # Should not raise
+        sentinel_session = MagicMock()
+        node._session = sentinel_session
         node.clear_session()
+        assert node._session is sentinel_session
+        assert node.session_id == "some_id"
 
 
 # ---------------------------------------------------------------------------
@@ -1007,11 +1013,15 @@ class TestSessionManagement:
         assert node._session is None
 
     def test_clear_session_no_model(self):
+        """No-op path: without a model, clear_session leaves session state
+        alone so the node is reusable once a model is later assigned."""
         node = _make_simple_node()
-        node._session = MagicMock()
+        sentinel_session = MagicMock()
+        node._session = sentinel_session
         node.session_id = "sess_3"
-        # no model - should not raise
         node.clear_session()
+        assert node._session is sentinel_session
+        assert node.session_id == "sess_3"
 
     def test_delete_session_ephemeral(self):
         node = _make_simple_node(ephemeral=True, session_id="sess_4")
