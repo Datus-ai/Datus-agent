@@ -119,10 +119,14 @@ class ServiceCommands:
     # Rendering helpers
     # ------------------------------------------------------------------ #
 
+    # ``datus-*-core`` is the framework (registry + base classes); the
+    # platform/type-specific package is what registers the concrete adapter.
+    # Either being missing will surface as "missing adapter" here, so the
+    # hint lists both.
     _ADAPTER_PACKAGE_HINTS = {
-        "bi_tools": "datus-bi-<platform>  (e.g. datus-bi-superset, datus-bi-grafana)",
-        "schedulers": "datus-scheduler-core",
-        "semantic_layer": "datus-semantic-<type>  (e.g. datus-semantic-metricflow)",
+        "bi_tools": "datus-bi-core + datus-bi-<platform>  (e.g. datus-bi-superset, datus-bi-grafana)",
+        "schedulers": "datus-scheduler-core + datus-scheduler-<platform>  (e.g. datus-scheduler-airflow)",
+        "semantic_layer": "datus-semantic-core + datus-semantic-<type>  (e.g. datus-semantic-metricflow)",
     }
 
     def _print_missing_adapter_hint(self, client: ServiceClient) -> None:

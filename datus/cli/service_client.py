@@ -217,14 +217,46 @@ def _probe_semantic_adapter(agent_config: "AgentConfig", service_name: str) -> b
 
 
 def _probe_scheduler_adapter(agent_config: "AgentConfig", service_name: str) -> bool:
-    # datus-scheduler-core does not expose a registry-only getter distinct
-    # from ``create_adapter``; importability is the closest zero-cost signal.
-    # Actual adapter-type registration is verified at invocation time.
+    """True when both ``datus-scheduler-core`` and the platform adapter
+    package are importable / registered.
+
+    A scheduler service entry has a ``type`` field (e.g. ``airflow``)
+    that points at a platform-specific adapter. Checking only that
+    ``datus_scheduler_core`` imports is not enough — core is the base
+    framework; the per-platform adapter (``datus-scheduler-airflow`` /
+    ``datus-scheduler-dolphinscheduler`` / ...) is what actually
+    registers ``SchedulerAdapterRegistry`` entries.
+    """
     try:
-        import datus_scheduler_core  # noqa: F401
-        import datus_scheduler_core.registry  # noqa: F401
+        from datus_scheduler_core.registry import SchedulerAdapterRegistry
     except ImportError:
         return False
+
+    # Read the platform from the service's config.
+    platform = "airflow"
+    try:
+        cfg_fn = getattr(agent_config, "get_scheduler_config", None)
+        if callable(cfg_fn):
+            scheduler_cfg = cfg_fn(service_name) or {}
+            platform = scheduler_cfg.get("type", platform) or platform
+    except Exception as exc:
+        logger.debug(f"Could not resolve scheduler platform for '{service_name}': {exc}")
+
+    # Registry may expose one of several getter names depending on
+    # ``datus-scheduler-core`` version. Try them in order before giving up.
+    for attr in ("get_adapter_class", "has_adapter", "get"):
+        getter = getattr(SchedulerAdapterRegistry, attr, None)
+        if not callable(getter):
+            continue
+        try:
+            result = getter(platform)
+        except Exception:
+            continue
+        return bool(result)
+
+    # Fallback: core is importable but neither getter API is present.
+    # Assume the platform adapter may or may not be there; surface as
+    # available so invocation isn't preemptively blocked.
     return True
 
 
