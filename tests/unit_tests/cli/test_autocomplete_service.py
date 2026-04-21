@@ -97,7 +97,8 @@ class TestServiceNameCompletion:
         completer, _ = _make_completer()
         completions = _completions(completer, ".sup")
         displays = [str(c.display) for c in completions]
-        assert any("bi_tools" in d for d in displays)
+        # Completions show the human-readable label (not the raw agent.yml key).
+        assert any("BI platform" in d for d in displays)
 
     def test_missing_adapter_annotated_in_display(self):
         """Completions for services whose adapter isn't installed show a

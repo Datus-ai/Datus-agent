@@ -1180,13 +1180,16 @@ class ServiceCommandCompleter(Completer):
         body = cmd_part[1:]  # drop leading '.'
         if "." not in body:
             # Completing ``.service`` or ``.services``.
+            from datus.cli.service_client import service_type_label
+
             for name, service_type, status in registry.list_services():
                 dotted = f".{name}"
                 if dotted.lower().startswith(cmd_part.lower()):
+                    label = service_type_label(service_type)
                     if status == "missing adapter":
-                        display = f"{dotted}  ({service_type}, missing adapter)"
+                        display = f"{dotted}  ({label}, missing adapter)"
                     else:
-                        display = f"{dotted}  ({service_type})"
+                        display = f"{dotted}  ({label})"
                     yield Completion(
                         dotted,
                         start_position=-len(cmd_part),

@@ -325,7 +325,8 @@ class TestServicesListing:
         cmd.cmd_services("")
         out = _output(cli_with_superset)
         assert "superset" in out
-        assert "bi_tools" in out
+        # Type column shows the human-readable label, not the raw agent.yml key.
+        assert "BI platform" in out
 
     def test_multi_service_both_listed(self, cli_with_two_bi_services):
         cmd = ServiceCommands(cli_with_two_bi_services)

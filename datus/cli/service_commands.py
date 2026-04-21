@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from rich.table import Table
 
-from datus.cli.service_client import ServiceClient, ServiceClientRegistry
+from datus.cli.service_client import ServiceClient, ServiceClientRegistry, service_type_label
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
@@ -83,7 +83,7 @@ class ServiceCommands:
         table.add_column("Type")
         table.add_column("Status")
         for name, section, status in rows:
-            table.add_row(name, section, status)
+            table.add_row(name, service_type_label(section), status)
         self.cli.console.print(table)
 
     def dispatch(self, cmd: str, args: str) -> bool:
@@ -119,21 +119,22 @@ class ServiceCommands:
     # Rendering helpers
     # ------------------------------------------------------------------ #
 
-    # ``datus-*-core`` is the framework (registry + base classes); the
-    # platform/type-specific package is what registers the concrete adapter.
-    # Either being missing will surface as "missing adapter" here, so the
-    # hint lists both.
+    # Only the platform-specific package needs to be installed — the
+    # corresponding ``datus-*-core`` framework is a transitive dependency
+    # and pip pulls it in automatically. Listing core here used to confuse
+    # users into thinking they had to install two separate packages.
     _ADAPTER_PACKAGE_HINTS = {
-        "bi_tools": "datus-bi-core + datus-bi-<platform>  (e.g. datus-bi-superset, datus-bi-grafana)",
-        "schedulers": "datus-scheduler-core + datus-scheduler-<platform>  (e.g. datus-scheduler-airflow)",
-        "semantic_layer": "datus-semantic-core + datus-semantic-<type>  (e.g. datus-semantic-metricflow)",
+        "bi_tools": "datus-bi-<platform>  (e.g. datus-bi-superset, datus-bi-grafana)",
+        "schedulers": "datus-scheduler-<platform>  (e.g. datus-scheduler-airflow)",
+        "semantic_layer": "datus-semantic-<type>  (e.g. datus-semantic-metricflow)",
     }
 
     def _print_missing_adapter_hint(self, client: ServiceClient) -> None:
         """Explain that the service is configured but its adapter isn't installed."""
         pkg_hint = self._ADAPTER_PACKAGE_HINTS.get(client.service_type, "the matching adapter package")
+        label = service_type_label(client.service_type)
         self.cli.console.print(
-            f"[red]Service '{client.service_name}' ({client.service_type}) is configured "
+            f"[red]Service '{client.service_name}' ({label}) is configured "
             f"but the adapter is not installed.[/]\n"
             f"[dim]Install {pkg_hint} and restart the CLI, "
             f"then re-run `.services` to confirm.[/]"
@@ -143,7 +144,7 @@ class ServiceCommands:
         methods = client.list_methods()
         if not methods:
             self.cli.console.print(
-                f"[yellow]Service '{client.service_name}' ({client.service_type}) "
+                f"[yellow]Service '{client.service_name}' ({service_type_label(client.service_type)}) "
                 f"has no read-only methods exposed to the CLI.[/]"
             )
             return

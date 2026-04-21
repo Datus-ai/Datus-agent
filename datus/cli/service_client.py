@@ -188,6 +188,20 @@ _FACTORIES: Dict[str, _FactoryFn] = {
 # ---------------------------------------------------------------------------
 
 
+# Human-readable label for the YAML section name. The section key remains
+# the source of truth for config lookups; this mapping is display-only.
+TYPE_LABELS: Dict[str, str] = {
+    "bi_tools": "BI platform",
+    "schedulers": "scheduler",
+    "semantic_layer": "semantic layer",
+}
+
+
+def service_type_label(service_type: str) -> str:
+    """Return a user-facing label for an ``agent.yml`` services section key."""
+    return TYPE_LABELS.get(service_type, service_type)
+
+
 _ProbeFn = Callable[["AgentConfig", str], bool]
 
 
