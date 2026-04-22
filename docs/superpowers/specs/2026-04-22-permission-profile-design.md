@@ -159,11 +159,10 @@ SQL 层面的 destructive 检测（比如 `execute_ddl` 里的 `DROP TABLE`）�
 ### 5.2 `/profile` 命令
 
 ```
-/profile         → 弹出选择框
-/profile list    → 列出 profile 及说明；不切换
+/profile         → 弹出选择框（当前 profile + 全部可选项 + cancel）
 ```
 
-选择框通过 `broker.request(choices=[...])` 呈现：
+选择框通过 `broker.request(choices=[...])` 呈现，同时承担"查看当前 profile"和"切换 profile"两个功能：
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -221,8 +220,7 @@ Effective rules: 0 base + 2 from agent.yml = 2 active
 | 非交互模式（API / gateway）下执行 `/profile` | 返回 `Requires interactive session` 错误 |
 | broker 抛 `InteractionCancelled`（Ctrl+C） | 保留原 profile |
 | `agent.yml` 的 profile 值非法 | 启动时打 warning，fallback 到 `normal` |
-| `/profile <name>` 的 `name` 已是当前 profile | no-op 并提示 `Already on <name>` |
-| `/profile list` | 打印表格；不改状态 |
+| 选择框中选到的 profile 已是当前 profile | no-op 并提示 `Already on <name>` |
 
 ## 6. 受影响文件
 
@@ -264,8 +262,7 @@ Effective rules: 0 base + 2 from agent.yml = 2 active
 - `permissions.rules` 合并到 profile base 之上
 
 **`tests/test_cli_commands.py`**
-- `/profile` 无参数时弹选择框
-- `/profile list` 打印表格但不切换
+- `/profile` 弹选择框，展示当前 profile、全部可选项和 cancel
 - 选中 `dangerous` 触发二次确认
 - 取消二次确认保留原 profile
 - 每次 session 切入 Dangerous 都触发二次确认
