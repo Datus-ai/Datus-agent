@@ -192,8 +192,8 @@ class GenMetricsAgenticNode(AgenticNode):
         try:
             from datus.tools.func_tool import DBFuncTool
 
-            self.db_func_tool = DBFuncTool.create_dynamic(
-                self.agent_config,
+            self.db_func_tool = DBFuncTool(
+                agent_config=self.agent_config,
                 sub_agent_name=self.NODE_NAME,
             )
             self.tools.extend(self.db_func_tool.available_tools())

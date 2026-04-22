@@ -106,8 +106,8 @@ class GenJobAgenticNode(AgenticNode):
     def _setup_db_tools(self):
         """Setup database tools including DDL, DML, transfer, and migration-target helpers."""
         try:
-            self.db_func_tool = DBFuncTool.create_dynamic(
-                self.agent_config,
+            self.db_func_tool = DBFuncTool(
+                agent_config=self.agent_config,
                 sub_agent_name=self.NODE_NAME,
             )
             # Standard read-only tools (list_tables, describe_table, read_query, etc.)

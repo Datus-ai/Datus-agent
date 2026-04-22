@@ -85,17 +85,8 @@ class DBFuncTool:
 
     @classmethod
     def create_dynamic(cls, agent_config: AgentConfig, sub_agent_name: Optional[str] = None) -> "DBFuncTool":
-        """
-        Create DBFuncTool instance for dynamic mode (multi-connector).
-
-        Args:
-            agent_config: Agent configuration
-            sub_agent_name: Optional sub-agent name
-
-        Returns:
-            DBFuncTool instance using DBManager for multi-connector support
-        """
-        return db_function_tool_instance_multi(agent_config, sub_agent_name=sub_agent_name)
+        """Create DBFuncTool instance (required by mcp_tool_class contract)."""
+        return cls(agent_config=agent_config, sub_agent_name=sub_agent_name)
 
     @classmethod
     def create_static(
@@ -104,22 +95,8 @@ class DBFuncTool:
         sub_agent_name: Optional[str] = None,
         database_name: Optional[str] = None,
     ) -> "DBFuncTool":
-        """
-        Create DBFuncTool instance for static mode (single connector).
-
-        Args:
-            agent_config: Agent configuration
-            sub_agent_name: Optional sub-agent name
-            database_name: Optional database name
-
-        Returns:
-            DBFuncTool instance using single connector
-        """
-        return db_function_tool_instance(
-            agent_config,
-            database_name=database_name or "",
-            sub_agent_name=sub_agent_name,
-        )
+        """Create DBFuncTool instance with optional datasource override (required by mcp_tool_class contract)."""
+        return cls(agent_config=agent_config, default_datasource=database_name or None, sub_agent_name=sub_agent_name)
 
     def __init__(
         self,
@@ -153,7 +130,6 @@ class DBFuncTool:
             if not agent_config:
                 raise ValueError("agent_config is required when using DBManager mode")
             self._db_manager = connector_or_manager
-            self._datasource = agent_config.current_datasource
             self._default_datasource = default_datasource or (agent_config.current_datasource if agent_config else "")
             self._datasources = list(agent_config.current_db_configs().keys()) if agent_config else []
             self._connector_cache: OrderedDict[str, BaseSqlConnector] = OrderedDict()
@@ -179,7 +155,6 @@ class DBFuncTool:
     def _init_single_db_connector(self, connector: BaseSqlConnector):
         # Legacy single connector mode
         self._db_manager = None
-        self._datasource = None
         self._default_datasource = ""
         self._connector_cache = OrderedDict()
         self._connector_cache_size = 0
@@ -762,7 +737,9 @@ class DBFuncTool:
             db_configs = self.agent_config.current_db_configs() if self.agent_config else {}
             db_list = []
             if datasource and datasource not in self._datasources:
-                return FuncToolResult(success=0, error=f"Datasource '{datasource}' not found. Available: {list(self._datasources)}")
+                return FuncToolResult(
+                    success=0, error=f"Datasource '{datasource}' not found. Available: {list(self._datasources)}"
+                )
             sources = [datasource] if datasource else self._datasources
             for name in sources:
                 if not self._database_matches_scope(catalog, name):
@@ -1698,16 +1675,10 @@ class DBFuncTool:
 def db_function_tool_instance(
     agent_config: AgentConfig, database_name: str = "", sub_agent_name: Optional[str] = None
 ) -> DBFuncTool:
-    """
-    Create a DBFuncTool instance in single connector mode (legacy).
-
-    For multi-connector mode (e.g., BIRD_DEV with multiple SQLite databases),
-    use db_function_tool_instance_multi instead.
-    """
-    db_manager = db_manager_instance(agent_config.datasource_configs)
+    """Create a DBFuncTool instance. Auto-creates DBManager from agent_config."""
     return DBFuncTool(
-        db_manager.get_conn(agent_config.current_datasource, database_name or agent_config.current_datasource),
         agent_config=agent_config,
+        default_datasource=database_name or None,
         sub_agent_name=sub_agent_name,
     )
 
@@ -1717,26 +1688,9 @@ def db_function_tool_instance_multi(
     sub_agent_name: Optional[str] = None,
     connector_cache_size: int = DBFuncTool.DEFAULT_CONNECTOR_CACHE_SIZE,
 ) -> DBFuncTool:
-    """
-    Create a DBFuncTool instance in multi-connector mode.
-
-    This mode supports dynamic connector switching for datasources with multiple
-    databases (e.g., BIRD_DEV with multiple SQLite files). Connectors are cached
-    with LRU eviction to limit memory usage.
-
-    Args:
-        agent_config: Agent configuration
-        sub_agent_name: Optional sub-agent name for scoped context
-        connector_cache_size: Max connectors to cache (LRU eviction), default 8
-
-    Returns:
-        DBFuncTool instance in multi-connector mode
-    """
-    db_manager = db_manager_instance(agent_config.datasource_configs)
+    """Create a DBFuncTool instance (kept for backward compatibility)."""
     return DBFuncTool(
-        db_manager,
         agent_config=agent_config,
-        default_datasource=agent_config.current_datasource,
         sub_agent_name=sub_agent_name,
         connector_cache_size=connector_cache_size,
     )
@@ -1746,8 +1700,3 @@ def db_function_tools(
     agent_config: AgentConfig, database_name: str = "", sub_agent_name: Optional[str] = None
 ) -> List[Tool]:
     return db_function_tool_instance(agent_config, database_name, sub_agent_name).available_tools()
-
-
-def db_function_tools_multi(agent_config: AgentConfig, sub_agent_name: Optional[str] = None) -> List[Tool]:
-    """Get database function tools in multi-connector mode."""
-    return db_function_tool_instance_multi(agent_config, sub_agent_name).available_tools()

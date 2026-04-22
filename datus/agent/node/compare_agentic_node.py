@@ -8,7 +8,6 @@ from datus.configuration.agent_config import AgentConfig
 from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.compare_node_models import CompareInput, CompareResult
-from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import DBFuncTool
 from datus.utils.json_utils import llm_result2json
 from datus.utils.loggings import get_logger

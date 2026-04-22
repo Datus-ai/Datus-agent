@@ -24,7 +24,6 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager, Ac
 from datus.schemas.compare_node_models import CompareInput
 from datus.schemas.ext_knowledge_agentic_node_models import ExtKnowledgeNodeInput, ExtKnowledgeNodeResult
 from datus.schemas.node_models import SQLContext, SqlTask
-from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import DBFuncTool
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.context_search import ContextSearchTools
@@ -215,7 +214,7 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
         from datus.utils.exceptions import DatusException, ErrorCode
 
         try:
-            result = self.conn.execute_query(gold_sql, result_format="pandas")
+            result = self.db_func_tool.connector.execute_query(gold_sql, result_format="pandas")
         except Exception as e:
             raise DatusException(
                 code=ErrorCode.NODE_EXT_KNOWLEDGE_GOLD_SQL_INVALID,
@@ -280,7 +279,7 @@ Do NOT give up. Continue iterating until verify_sql returns success=1.
         if not hasattr(self, "_gold_sql") or not self._gold_sql:
             return VerifyResult(success=True, match_rate=1.0)
 
-        connector = self.conn
+        connector = self.db_func_tool.connector
 
         # Execute user SQL
         try:

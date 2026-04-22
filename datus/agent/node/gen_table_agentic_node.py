@@ -100,8 +100,8 @@ class GenTableAgenticNode(AgenticNode):
     def _setup_db_tools(self):
         """Setup database tools including DDL execution."""
         try:
-            self.db_func_tool = DBFuncTool.create_dynamic(
-                self.agent_config,
+            self.db_func_tool = DBFuncTool(
+                agent_config=self.agent_config,
                 sub_agent_name=self._configured_node_name,
             )
             # Standard read-only tools (list_tables, describe_table, read_query, etc.)

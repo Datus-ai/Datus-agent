@@ -20,7 +20,6 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager, Ac
 from datus.schemas.agent_models import SubAgentConfig
 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput, GenSQLNodeResult
 from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
-from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool, PlatformDocSearchTool
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
@@ -279,21 +278,8 @@ class GenSQLAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup platform_doc_search tools: {e}")
 
-    def _needs_multi_connector(self) -> bool:
-        """Check if the current node config requires multi-connector mode.
-
-        Multi-connector mode is needed when the node uses tools that access
-        multiple databases (e.g. transfer_query_result for cross-db migration).
-        """
-        tools_str = self.node_config.get("tools", "")
-        return "transfer_query_result" in tools_str
-
     def _setup_db_tools(self):
-        """Setup database tools.
-
-        Uses multi-connector mode (DBManager) when the node needs cross-database
-        access (e.g. migration subagent), otherwise single-connector mode.
-        """
+        """Setup database tools."""
         try:
             self.db_func_tool = DBFuncTool(
                 agent_config=self.agent_config,
