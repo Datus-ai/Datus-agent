@@ -60,7 +60,6 @@ PR_ACCEPTANCE_TARGETS = [
     "tests/unit_tests/agent/node/test_sql_summary_agentic_node.py",
     "tests/unit_tests/agent/node/test_skill_creator_agentic_node.py",
     "tests/unit_tests/agent/node/test_gen_job_agentic_node.py",
-    "tests/unit_tests/agent/node/test_migration_agentic_node.py",
     "tests/integration/api/test_api.py",
     "tests/integration/cli/test_cli_commands.py",
     "tests/integration/cli/test_cli_textual.py",

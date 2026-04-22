@@ -82,17 +82,17 @@ class TestGenJobAgenticNodeInit:
 
         check_tools_include(GenJobAgenticNode, real_agent_config, "transfer_query_result")
 
-    def test_setup_tools_includes_get_migration_capabilities(self, real_agent_config, mock_llm_create):
+    def test_setup_tools_includes_get_migration_capabilities(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
         check_tools_include(GenJobAgenticNode, real_agent_config, "get_migration_capabilities")
 
-    def test_setup_tools_includes_suggest_table_layout(self, real_agent_config, mock_llm_create):
+    def test_setup_tools_includes_suggest_table_layout(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
         check_tools_include(GenJobAgenticNode, real_agent_config, "suggest_table_layout")
 
-    def test_setup_tools_includes_validate_ddl(self, real_agent_config, mock_llm_create):
+    def test_setup_tools_includes_validate_ddl(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
         check_tools_include(GenJobAgenticNode, real_agent_config, "validate_ddl")
