@@ -20,7 +20,7 @@ Before asking the user anything, gather context silently:
 
 - If creating a data-related skill, **explore the database first**: use `list_tables`, `describe_table`, `read_query` (with LIMIT) to understand available tables, columns, data types, sample data, and time ranges.
 - If the conversation already contains a workflow the user wants to capture (e.g., "turn this into a skill"), extract the key steps, tools used, and patterns from the conversation history.
-- Check existing skills via `skill_glob` to avoid duplicates.
+- Check existing skills via `glob` (e.g. `.datus/skills/*/SKILL.md`, `~/.datus/skills/*/SKILL.md`) to avoid duplicates.
 
 This research informs your questions and your SKILL.md — it is NOT skill output.
 
@@ -29,7 +29,7 @@ This research informs your questions and your SKILL.md — it is NOT skill outpu
 After you have context, call `ask_user` **exactly once** with all questions in a single call. You MUST include these questions (the first two are required, others are optional):
 
 1. **[Required]** Skill name — suggest a default based on your research (e.g., "bitcoin-analysis"), let user confirm or change
-2. **[Required]** Storage location — offer choices: project-level (`./skills/`) or user-level (`~/.datus/skills/`)
+2. **[Required]** Storage location — offer choices: project-level (`./.datus/skills/`) or user-level (`~/.datus/skills/`)
 3. What should this skill enable the agent to do? (propose based on your findings)
 4. What's the expected output format?
 
@@ -96,15 +96,15 @@ skill-name/
 
 ## Scaffold the Directory
 
-Use `skill_*` tools (paths relative to skills directory root):
+Use `write_file` from the filesystem tools. Paths must start with `.datus/skills/` (project-level) or `~/.datus/skills/` (user-level) — see Critical Rule #2:
 
 ```
-skill_write_file(path="<skill-name>/SKILL.md", content=...)
+write_file(path=".datus/skills/<skill-name>/SKILL.md", content=...)
 ```
 
 If the user explicitly requested scripts, also create scripts/:
 ```
-skill_write_file(path="<skill-name>/scripts/<script>.py", content=...)
+write_file(path=".datus/skills/<skill-name>/scripts/<script>.py", content=...)
 ```
 
 **Default behavior**: Only create the SKILL.md file. Do NOT generate scripts or references unless the user specifically asks for them.
@@ -118,7 +118,7 @@ skill-name/
 
 ## Validate and Finish
 
-Immediately after `skill_write_file`, do these two steps and STOP:
+Immediately after `write_file`, do these two steps and STOP:
 
 1. Call `validate_skill` with the absolute path from the write_file result
 2. Report to the user: skill name, path, files created, how to use (`load_skill("<name>")` or `.skill list`)
@@ -128,7 +128,7 @@ Do NOT continue exploring, writing more files, or asking more questions. The ski
 ## Storage Location
 
 Ask user where to save:
-- **Project-level** (`./skills/`): version-controlled, project-specific
+- **Project-level** (`./.datus/skills/`): version-controlled, project-specific
 - **User-level** (`~/.datus/skills/`): shared across projects
 
 ## Principle of Lack of Surprise

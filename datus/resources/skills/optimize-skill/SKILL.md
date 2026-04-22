@@ -60,7 +60,7 @@ Generate the improved SKILL.md:
 
 1. Show a summary of proposed changes to the user
 2. Use `ask_user` to confirm the changes
-3. Write the updated file via `skill_write_file`
+3. Write the updated file via `write_file` (keep the same path returned by `load_skill`; must stay under `.datus/skills/...` or `~/.datus/skills/...`)
 4. Call `validate_skill` to verify
 5. Show a before/after comparison of key changes
 
