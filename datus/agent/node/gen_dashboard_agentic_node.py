@@ -36,6 +36,11 @@ class GenDashboardAgenticNode(AgenticNode):
 
     NODE_NAME = "gen_dashboard"
 
+    # Dashboard skills are injected dynamically by ``_setup_dashboard_skills``
+    # based on the configured BI platform (only {platform}-dashboard is added,
+    # not every platform). Leave ``DEFAULT_SKILLS`` empty so the base-class
+    # fallback does not over-expose unrelated platforms.
+
     def __init__(
         self,
         agent_config: AgentConfig,

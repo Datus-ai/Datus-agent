@@ -41,6 +41,9 @@ class GenMetricsAgenticNode(AgenticNode):
 
     NODE_NAME = "gen_metrics"
 
+    # Define-metric workflow scoped to ``gen_metrics`` via SKILL.md allowed_agents.
+    DEFAULT_SKILLS = "gen-metrics"
+
     def __init__(
         self,
         agent_config: AgentConfig,

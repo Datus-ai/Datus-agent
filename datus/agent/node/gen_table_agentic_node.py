@@ -41,6 +41,10 @@ class GenTableAgenticNode(AgenticNode):
 
     NODE_NAME = "gen_table"
 
+    # gen-table workflow + post-write validation. These two skills are both
+    # scoped to ``gen_table`` via their SKILL.md ``allowed_agents``.
+    DEFAULT_SKILLS = "gen-table, table-validation"
+
     def __init__(
         self,
         agent_config: AgentConfig,

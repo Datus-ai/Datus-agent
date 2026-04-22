@@ -74,6 +74,13 @@ class AgenticNode(Node):
 
     DEFAULT_SUBAGENTS = "explore"
 
+    # Default skill patterns injected into ``<available_skills>`` when the user's
+    # ``agent.yml`` does not override ``skills:`` for this node. Subclasses declare
+    # the skills their workflow expects so every built-in subagent works out of
+    # the box without forcing users to wire each skill manually. Set to an explicit
+    # empty string in yml to opt out of the defaults.
+    DEFAULT_SKILLS: Optional[str] = None
+
     # When True, this node's ``SkillFuncTool`` loads skills in *authoring* mode:
     # ``allowed_agents`` scoping on ``load_skill`` is bypassed so the agent can
     # read any skill by name (used by ``gen_skill`` for edit/optimize flows).
@@ -867,6 +874,14 @@ class AgenticNode(Node):
         setup_tools() resets self.tools = [] after __init__ completes.
         """
         skill_patterns_str = self.node_config.get("skills")
+        if skill_patterns_str is None:
+            # Fall back to the subclass-declared defaults so built-in subagents
+            # work out of the box. An explicit empty string in yml opts out.
+            skill_patterns_str = type(self).DEFAULT_SKILLS
+            if skill_patterns_str:
+                # Persist the resolved pattern so <available_skills> filtering
+                # and any downstream reader sees the same value.
+                self.node_config["skills"] = skill_patterns_str
         if not skill_patterns_str:
             return
 

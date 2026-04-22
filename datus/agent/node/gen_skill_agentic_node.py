@@ -46,6 +46,10 @@ class SkillCreatorAgenticNode(AgenticNode):
     # optimize/edit workflow can read any skill by name.
     SKILL_AUTHORING_MODE = True
 
+    # Skill-authoring workflow (create new skills, optimize existing ones). Both
+    # skills list ``gen_skill`` in their SKILL.md ``allowed_agents``.
+    DEFAULT_SKILLS = "create-skill, optimize-skill"
+
     def __init__(
         self,
         node_id: str = "skill_creator",

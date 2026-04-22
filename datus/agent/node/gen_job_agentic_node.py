@@ -50,6 +50,10 @@ class GenJobAgenticNode(AgenticNode):
 
     NODE_NAME = "gen_job"
 
+    # gen_job runs gen-table workflows for intra-DB builds, table-validation for
+    # post-write checks, and data-migration for cross-DB transfer/reconciliation.
+    DEFAULT_SKILLS = "gen-table, table-validation, data-migration"
+
     def __init__(
         self,
         agent_config: AgentConfig,

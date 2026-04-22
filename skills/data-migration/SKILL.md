@@ -1,6 +1,6 @@
 ---
 name: data-migration
-description: Activate when the gen_job agent detects that the source and target databases differ. Covers cross-database migration lifecycle: type mapping via adapter Mixin hints, DDL generation, data transfer via transfer_query_result, and mandatory reconciliation.
+description: "Activate when the gen_job agent detects that the source and target databases differ. Covers cross-database migration lifecycle - type mapping via adapter Mixin hints, DDL generation, data transfer via transfer_query_result, and mandatory reconciliation."
 tags:
   - data-engineering
   - migration

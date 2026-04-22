@@ -790,3 +790,140 @@ class TestSkillIntegrationEdgeCases:
 
             # Should handle exception gracefully
             assert node.skill_func_tool is None
+
+
+class _DefaultSkillsNode(MinimalAgenticNode):
+    """Subclass that declares a class-level DEFAULT_SKILLS pattern."""
+
+    DEFAULT_SKILLS = "data-*"
+
+
+class TestDefaultSkillsFallback:
+    """``DEFAULT_SKILLS`` activates skill loading when yml omits ``skills:``."""
+
+    def test_default_skills_used_when_node_config_missing(self, mock_agent_config, skill_manager):
+        mock_agent_config.agentic_nodes = {}  # node missing entirely
+        mock_agent_config.skills_config = skill_manager.config
+        mock_agent_config.permissions_config = PermissionConfig(default_permission=PermissionLevel.ALLOW)
+
+        node = _DefaultSkillsNode(
+            node_id="default_skills_1",
+            description="Test node",
+            node_type="chat",
+            agent_config=mock_agent_config,
+        )
+
+        assert isinstance(node.skill_func_tool, SkillFuncTool)
+        assert node.node_config["skills"] == "data-*"
+
+    def test_default_skills_used_when_skills_key_omitted(self, mock_agent_config, skill_manager):
+        mock_agent_config.agentic_nodes = {"test_node": {"max_turns": 10}}
+        mock_agent_config.skills_config = skill_manager.config
+        mock_agent_config.permissions_config = PermissionConfig(default_permission=PermissionLevel.ALLOW)
+
+        node = _DefaultSkillsNode(
+            node_id="default_skills_2",
+            description="Test node",
+            node_type="chat",
+            agent_config=mock_agent_config,
+        )
+
+        assert isinstance(node.skill_func_tool, SkillFuncTool)
+        assert node.node_config["skills"] == "data-*"
+
+    def test_yml_override_wins_over_default(self, mock_agent_config, skill_manager):
+        mock_agent_config.agentic_nodes = {"test_node": {"skills": "report-*"}}
+        mock_agent_config.skills_config = skill_manager.config
+        mock_agent_config.permissions_config = PermissionConfig(default_permission=PermissionLevel.ALLOW)
+
+        node = _DefaultSkillsNode(
+            node_id="default_skills_3",
+            description="Test node",
+            node_type="chat",
+            agent_config=mock_agent_config,
+        )
+
+        assert isinstance(node.skill_func_tool, SkillFuncTool)
+        assert node.node_config["skills"] == "report-*"
+
+    def test_explicit_empty_string_disables_default(self, mock_agent_config):
+        mock_agent_config.agentic_nodes = {"test_node": {"skills": ""}}
+
+        node = _DefaultSkillsNode(
+            node_id="default_skills_4",
+            description="Test node",
+            node_type="chat",
+            agent_config=mock_agent_config,
+        )
+
+        assert node.skill_func_tool is None
+
+
+class TestBuiltinNodeDefaultSkills:
+    """Built-in subagents declare DEFAULT_SKILLS that match their SKILL.md scope."""
+
+    def test_gen_job_defaults(self):
+        from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
+
+        assert GenJobAgenticNode.DEFAULT_SKILLS == "gen-table, table-validation, data-migration"
+
+    def test_gen_table_defaults(self):
+        from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
+
+        assert GenTableAgenticNode.DEFAULT_SKILLS == "gen-table, table-validation"
+
+    def test_gen_metrics_defaults(self):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+
+        assert GenMetricsAgenticNode.DEFAULT_SKILLS == "gen-metrics"
+
+    def test_gen_dashboard_leaves_defaults_unset(self):
+        """gen_dashboard injects {platform}-dashboard dynamically in setup, not via DEFAULT_SKILLS."""
+        from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
+
+        assert GenDashboardAgenticNode.DEFAULT_SKILLS is None
+
+    def test_gen_skill_defaults(self):
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
+
+        assert SkillCreatorAgenticNode.DEFAULT_SKILLS == "create-skill, optimize-skill"
+
+
+class TestSkillAllowedAgentsConsistency:
+    """Every skill referenced by a built-in node must whitelist that node.
+
+    The node may expose the skill via ``DEFAULT_SKILLS`` (static) or inject it
+    at runtime (e.g. ``gen_dashboard`` picks ``{platform}-dashboard``). In both
+    cases, ``SKILL.md``'s ``allowed_agents`` is the authoritative permission
+    gate — a mismatch here means ``load_skill`` gets denied.
+    """
+
+    @staticmethod
+    def _read_skill_frontmatter(name: str) -> dict:
+        import pathlib
+
+        import yaml
+
+        project_root = pathlib.Path(__file__).resolve().parents[4]
+        skill_path = project_root / "skills" / name / "SKILL.md"
+        content = skill_path.read_text()
+        assert content.startswith("---\n"), f"skill {name} missing frontmatter"
+        _, fm, _ = content.split("---", 2)
+        return yaml.safe_load(fm)
+
+    @pytest.mark.parametrize(
+        "node_name,skills",
+        [
+            ("gen_job", ["gen-table", "table-validation", "data-migration"]),
+            ("gen_table", ["gen-table", "table-validation"]),
+            ("gen_metrics", ["gen-metrics"]),
+            ("gen_dashboard", ["bi-validation", "grafana-dashboard", "superset-dashboard"]),
+            ("gen_skill", ["create-skill", "optimize-skill"]),
+            ("scheduler", ["airflow-workflow", "scheduler-validation"]),
+        ],
+    )
+    def test_skill_frontmatter_whitelists_expected_node(self, node_name, skills):
+        for skill in skills:
+            fm = self._read_skill_frontmatter(skill)
+            allowed = fm.get("allowed_agents") or []
+            assert node_name in allowed, f"Skill '{skill}' must list '{node_name}' in allowed_agents — got {allowed}"

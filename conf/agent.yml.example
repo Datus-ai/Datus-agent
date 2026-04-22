@@ -336,13 +336,17 @@ agent:
       - ./skills
 
   agentic_nodes:
+    # Built-in subagents ship with a ``DEFAULT_SKILLS`` class attribute so every
+    # node loads its canonical skills out of the box. Override ``skills:`` here
+    # only when you want to narrow or broaden the pattern; omit the key to keep
+    # the defaults. Set ``skills: ""`` to explicitly disable skill loading.
     gen_semantic_model:
       model: anthropic
 
     gen_metrics:
       model: anthropic
       max_turns: 40
-      skills: "gen-metrics"
+      # Default: "gen-metrics"
 
     gen_sql_summary:
       model: deepseek_v3
@@ -351,7 +355,20 @@ agent:
     gen_table:
       model: anthropic
       max_turns: 20
-      skills: "gen-table"
+      # Default: "gen-table, table-validation"
+
+    gen_job:
+      model: anthropic
+      max_turns: 40
+      # Default: "gen-table, table-validation, data-migration"
+
+    gen_dashboard:
+      model: anthropic
+      # Default: "bi-validation, grafana-dashboard, superset-dashboard"
+
+    gen_skill:
+      model: anthropic
+      # Default: "create-skill, optimize-skill"
   # Platform documentation (namespace-independent, stored at {home}/data/document/{platform}/)
   # Each key under 'document' is either a reserved global setting (e.g. tavily_api_key)
   #
