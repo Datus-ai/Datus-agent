@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 from datus_db_core import BaseSqlConnector
 
 from datus import __version__
-from datus.cli._cli_utils import prompt_input, select_choice
+from datus.cli._cli_utils import prompt_input
 from datus.cli.agent_commands import AgentCommands
 from datus.cli.autocomplete import (
     AtReferenceCompleter,
@@ -1070,11 +1070,10 @@ class DatusCLI:
 
         if not args:
             current_default = self.default_agent or "chat"
-            choices = {name: name for name in sorted(visible_subagents)}
-            self.console.print("[bold]Select default agent:[/] (Up/Down to navigate, Enter to confirm)")
-            selected = select_choice(self.console, choices, default=current_default)
-            if selected == current_default:
-                self.console.print(f"[dim]Default agent unchanged: {current_default}[/]")
+            selected = self._run_agent_picker(sorted(visible_subagents), current_default)
+            if selected is None or selected == current_default:
+                if selected == current_default:
+                    self.console.print(f"[dim]Default agent unchanged: {current_default}[/]")
                 return
             args = selected
 
@@ -1089,6 +1088,24 @@ class DatusCLI:
         else:
             self.default_agent = args
             self.console.print(f"[bold green]Default agent set to: {args}[/]")
+
+    def _run_agent_picker(self, agents: List[str], current: str) -> Optional[str]:
+        """Run the standalone ``AgentPickerApp`` and return the user's choice.
+
+        Wraps ``app.run()`` in :meth:`DatusApp.suspend_input` when the outer
+        TUI is active so the nested Application can own ``stdin`` without
+        fighting the persistent TUI Application. Mirrors the helper used
+        by ``/model`` and ``/language`` so all three pickers handle stdin
+        the same way.
+        """
+        from datus.cli.agent_picker_app import AgentPickerApp
+
+        app = AgentPickerApp(console=self.console, agents=agents, current=current)
+        tui_app = getattr(self, "tui_app", None)
+        if tui_app is not None:
+            with tui_app.suspend_input():
+                return app.run()
+        return app.run()
 
     def _cmd_switch_namespace(self, args: str):
         if args.strip() == "":

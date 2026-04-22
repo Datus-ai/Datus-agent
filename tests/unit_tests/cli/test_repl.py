@@ -962,23 +962,34 @@ class TestCmdAgent:
         assert "Unknown agent" in output
 
     def test_cmd_agent_no_args_interactive(self, cli):
-        """'.agent' (no args) calls select_choice for interactive selection."""
+        """``/agent`` with no args runs the standalone ``AgentPickerApp``."""
         cli.available_subagents = {"chat", "gen_sql"}
         cli.default_agent = ""
-        with patch("datus.cli.repl.select_choice", return_value="gen_sql") as mock_select:
+        with patch.object(cli, "_run_agent_picker", return_value="gen_sql") as mock_picker:
             cli._cmd_agent("")
-        mock_select.assert_called_once()
+        mock_picker.assert_called_once()
         assert cli.default_agent == "gen_sql"
 
     def test_cmd_agent_interactive_no_change(self, cli):
         """Interactive selection of same agent prints 'unchanged'."""
         cli.available_subagents = {"chat", "gen_sql"}
         cli.default_agent = ""
-        with patch("datus.cli.repl.select_choice", return_value="chat"):
+        with patch.object(cli, "_run_agent_picker", return_value="chat"):
             cli._cmd_agent("")
         assert cli.default_agent == ""
         output = cli.console.file.getvalue()
         assert "unchanged" in output
+
+    def test_cmd_agent_interactive_cancel(self, cli):
+        """Escape / Ctrl-C during interactive pick is a no-op."""
+        cli.available_subagents = {"chat", "gen_sql"}
+        cli.default_agent = ""
+        with patch.object(cli, "_run_agent_picker", return_value=None):
+            cli._cmd_agent("")
+        assert cli.default_agent == ""
+        output = cli.console.file.getvalue()
+        assert "Default agent set to" not in output
+        assert "Default agent reset to" not in output
 
 
 # ---------------------------------------------------------------------------
