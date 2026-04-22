@@ -31,11 +31,12 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import xml.etree.ElementTree as XMLTree
 
 import defusedxml.ElementTree as ET
 
-OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)))
+OUT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_JUNIT_XML = os.path.join(OUT_DIR, "test-results.xml")
 DEFAULT_COVERAGE_XML = os.path.join(OUT_DIR, "coverage.xml")
 DEFAULT_COVERAGE_HTML = os.path.join(OUT_DIR, "htmlcov")
@@ -85,6 +86,7 @@ def log(msg):
 TEST_CMD_TIMEOUT = int(os.environ.get("TEST_CMD_TIMEOUT", "1800"))
 GIT_CMD_TIMEOUT = int(os.environ.get("GIT_CMD_TIMEOUT", "60"))
 DIFF_COVER_TIMEOUT = int(os.environ.get("DIFF_COVER_TIMEOUT", "300"))
+_COMPARE_BRANCH_CACHE = {}
 
 
 def _run_cmd(cmd, timeout, **kwargs):
@@ -94,6 +96,15 @@ def _run_cmd(cmd, timeout, **kwargs):
     except subprocess.TimeoutExpired:
         log(f"Command timed out after {timeout}s: {' '.join(cmd)}")
         return None
+
+
+def _stream_process_output(proc, log_file):
+    """Stream process output to stdout and the log file until EOF."""
+    if not proc.stdout:
+        return
+    for line in proc.stdout:
+        sys.stdout.write(line)
+        log_file.write(line)
 
 
 def _normalize_path(path):
@@ -200,25 +211,21 @@ def _run_pytest_suite(targets, junit_xml, log_file, *, suite_name, mark_expr=Non
         text=True,
         env=env,
     )
-    if proc.stdout:
-        for line in proc.stdout:
-            sys.stdout.write(line)
-            log_file.write(line)
+    reader = threading.Thread(target=_stream_process_output, args=(proc, log_file), daemon=True)
+    reader.start()
 
     try:
         exit_code = proc.wait(timeout=TEST_CMD_TIMEOUT)
     except subprocess.TimeoutExpired:
         log(f"{suite_name} timed out after {TEST_CMD_TIMEOUT}s, killing process")
         proc.kill()
-        if proc.stdout:
-            for line in proc.stdout:
-                sys.stdout.write(line)
-                log_file.write(line)
         proc.wait()
         timeout_msg = f"\n[ci] TIMEOUT: {suite_name} killed after {TEST_CMD_TIMEOUT}s\n"
         sys.stdout.write(timeout_msg)
         log_file.write(timeout_msg)
         exit_code = 1
+    finally:
+        reader.join()
 
     log(f"{suite_name} exited with code {exit_code}")
     return exit_code
@@ -249,9 +256,14 @@ def select_impacted_unit_tests(changed_files):
 
 def find_compare_branch(base_ref):
     """Determine the compare branch for diff-cover."""
+    if base_ref in _COMPARE_BRANCH_CACHE:
+        return _COMPARE_BRANCH_CACHE[base_ref]
+
     if base_ref:
         log(f"Using explicit base_ref: origin/{base_ref}")
-        return f"origin/{base_ref}"
+        resolved_ref = f"origin/{base_ref}"
+        _COMPARE_BRANCH_CACHE[base_ref] = resolved_ref
+        return resolved_ref
 
     log("No base_ref provided, auto-detecting compare branch...")
 
@@ -272,6 +284,7 @@ def find_compare_branch(base_ref):
     )
     if not result or result.returncode != 0:
         log("Failed to list remote branches")
+        _COMPARE_BRANCH_CACHE[base_ref] = None
         return None
 
     branches = [
@@ -333,6 +346,7 @@ def find_compare_branch(base_ref):
     else:
         log("No suitable merge-base found")
 
+    _COMPARE_BRANCH_CACHE[base_ref] = best_commit
     return best_commit
 
 
@@ -377,7 +391,7 @@ def run_tests(base_ref=""):
     junit_xml_paths = []
     exit_codes = []
 
-    with open(DEFAULT_PYTEST_LOG, "w") as log_file:
+    with open(DEFAULT_PYTEST_LOG, "w", encoding="utf-8") as log_file:
         acceptance_xml = os.path.join(OUT_DIR, "test-results-acceptance.xml")
         exit_codes.append(
             _run_pytest_suite(
@@ -553,7 +567,7 @@ def write_test_report(test_results, output_path=None):
 
     report = "".join(lines)
     try:
-        with open(output_path, "w") as fh:
+        with open(output_path, "w", encoding="utf-8") as fh:
             fh.write(report)
         log(f"Wrote test report to {output_path}")
     except Exception as e:
@@ -607,7 +621,7 @@ def extract_coverage(base_ref):
         log("Skipping diff-cover (no compare branch)")
 
     try:
-        with open(diff_json) as f:
+        with open(diff_json, encoding="utf-8") as f:
             diff_pct = json.load(f).get("total_percent_covered", 0)
         log(f"Diff coverage: {diff_pct:.2f}%")
     except Exception as e:
@@ -651,7 +665,7 @@ def main():
 
     github_output = os.environ.get("GITHUB_OUTPUT", "")
     if github_output:
-        with open(github_output, "a") as f:
+        with open(github_output, "a", encoding="utf-8") as f:
             for key, val in outputs.items():
                 f.write(f"{key}={val}\n")
         log(f"Wrote outputs to GITHUB_OUTPUT: {outputs}")

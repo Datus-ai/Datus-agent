@@ -33,4 +33,4 @@ def import_required(module_name: str, *, reason: str):
     except ImportError as exc:
         if _strict_nightly_enabled():
             raise RuntimeError(reason) from exc
-        pytest.importorskip(module_name, reason=reason)
+        pytest.skip(reason, allow_module_level=True)

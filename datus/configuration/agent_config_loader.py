@@ -111,7 +111,7 @@ def configuration_manager(config_path: str = "", reload: bool = False) -> Config
     should_reload = reload or not CONFIGURATION_MANAGER
     if not should_reload and config_path:
         requested_path = parse_config_path(config_path)
-        should_reload = CONFIGURATION_MANAGER.config_path != requested_path
+        should_reload = CONFIGURATION_MANAGER.config_path.resolve() != requested_path.resolve()
     if should_reload:
         CONFIGURATION_MANAGER = ConfigurationManager(config_path)
     return CONFIGURATION_MANAGER
@@ -142,7 +142,7 @@ def parse_config_path(config_file: str = "") -> Path:
     if config_file:
         config_path = Path(config_file).expanduser()
         if config_path.exists():
-            return config_path
+            return config_path.resolve()
         elif config_file != "conf/agent.yml":
             raise DatusException(
                 code=ErrorCode.COMMON_FILE_NOT_FOUND, message=f"Agent configuration file not found: {config_path}"
@@ -151,14 +151,14 @@ def parse_config_path(config_file: str = "") -> Path:
     # 2. Check current directory
     local_config = Path("conf/agent.yml")
     if local_config.exists():
-        return local_config
+        return local_config.resolve()
 
     # 3. Check default home directory (~/.datus/conf/agent.yml)
     # Note: This path is fixed because we need to read the config file
     # to determine agent.home location for other directories
     home_config = Path.home() / ".datus" / "conf" / "agent.yml"
     if home_config.exists():
-        return home_config
+        return home_config.resolve()
 
     raise DatusException(
         code=ErrorCode.COMMON_FILE_NOT_FOUND,

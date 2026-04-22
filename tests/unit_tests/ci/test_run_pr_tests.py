@@ -78,7 +78,7 @@ def test_merge_and_parse_junit_results_across_multiple_suites(tmp_path):
     )
 
     run_pr_tests.merge_junit_results([str(suite_a), str(suite_b)], output_path=str(merged))
-    parsed = run_pr_tests.parse_test_results([str(suite_a), str(suite_b)])
+    parsed = run_pr_tests.parse_test_results([str(merged)])
 
     merged_root = ET.parse(merged).getroot()
 

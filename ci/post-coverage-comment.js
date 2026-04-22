@@ -56,7 +56,10 @@ module.exports = async ({ github, context, core }) => {
     owner: context.repo.owner, repo: context.repo.repo,
     issue_number: prNumber,
   });
-  const existing = comments.find(c => c.body?.includes('PR Test Coverage Report'));
+  const existing = comments.find(c =>
+    c.body?.includes('PR Test Coverage Report') ||
+    c.body?.includes('Unit Test Coverage Report')
+  );
   const params = { owner: context.repo.owner, repo: context.repo.repo, body };
   if (existing) {
     await github.rest.issues.updateComment({ ...params, comment_id: existing.id });

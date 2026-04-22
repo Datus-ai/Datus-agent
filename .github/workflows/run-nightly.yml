@@ -256,6 +256,7 @@ jobs:
             echo -e "\n=== Starting ${group_name} Services ===" | tee -a "$LOG_FILE"
             compose_down "$compose_file"
             if ! compose_up "$compose_file"; then
+              compose_down "$compose_file"
               return 0
             fi
 
@@ -280,7 +281,7 @@ jobs:
           # serially, each with its own docker compose lifecycle.
 
           # Group 0: full unit-test suite
-          run_logged "Full Unit Tests" uv run pytest tests/unit_tests/ --tb=short --verbose --timeout=300 --dist=loadscope -n auto
+          run_logged "Full Unit Tests" uv run pytest tests/unit_tests/ -m "not nightly" --tb=short --verbose --timeout=300 --dist=loadscope -n auto
 
           # Group 1: MCP server tests (event loop sensitive, no xdist)
           run_logged "MCP Server Tests" uv run pytest -m nightly tests/integration/tools/test_mcp_server.py --tb=short --verbose --timeout=60
