@@ -75,17 +75,22 @@ class SkillCommands:
 
     def cmd_skill_login(self, args: str = ""):
         """Authenticate with the Town Marketplace: /skill login [marketplace_url]"""
-        import getpass
-
         import httpx
 
+        from datus.cli._cli_utils import prompt_input
         from datus.tools.skill_tools.marketplace_auth import save_token
 
         manager = self._get_skill_manager()
         marketplace_url = args.strip() if args.strip() else manager.config.marketplace_url
 
-        email = input("Email: ")
-        password = getpass.getpass("Password: ")
+        email = prompt_input(self.console, "Email")
+        if not email:
+            print_warning(self.console, "Login cancelled.")
+            return
+        password = prompt_input(self.console, "Password", is_password=True)
+        if not password:
+            print_warning(self.console, "Login cancelled.")
+            return
 
         login_url = f"{marketplace_url.rstrip('/')}/api/auth/login"
         try:
@@ -320,13 +325,11 @@ class SkillCommands:
             print_warning(self.console, f"Skill '{name}' not found locally.")
             return
 
-        # Confirm deletion (skip prompt in non-interactive contexts)
-        import sys
+        from datus.cli._cli_utils import confirm_prompt
 
         skill_path = skill.location
-        if skill_path and skill_path.exists() and sys.stdin.isatty():
-            confirm = input(f"Delete skill files at {skill_path}? [y/N] ").strip().lower()
-            if confirm != "y":
+        if skill_path and skill_path.exists():
+            if not confirm_prompt(self.console, f"Delete skill files at {skill_path}?"):
                 print_warning(self.console, "Cancelled.")
                 return
 

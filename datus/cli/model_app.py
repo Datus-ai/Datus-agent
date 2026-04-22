@@ -21,6 +21,7 @@ Application itself never blocks on I/O.
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
@@ -54,6 +55,8 @@ _CODING_PLAN_PROVIDERS = frozenset({"alibaba_coding", "glm_coding", "minimax_cod
 # Codex OAuth path. Keeping them out of the main Providers tab reduces noise
 # and groups the "bring-your-own-plan" options together.
 _PLAN_PROVIDERS = frozenset({"claude_subscription", "codex"}) | _CODING_PLAN_PROVIDERS
+
+_MASKED_KEY_PLACEHOLDER = "••••••••"
 
 # Display-name overrides shown in the UI. The internal key (used as the
 # ``agent.providers`` map key and in ``providers.yml``) stays unchanged so
@@ -184,6 +187,10 @@ class ModelApp:
         # ``d`` on once. A second press confirms deletion; any other key
         # clears the pending state.
         self._pending_delete_custom: Optional[str] = None
+
+        # tab strip(1) + 2 separators(2) + error bar(1) + footer(1) + scroll indicator(1) = 6 lines chrome
+        term_height = shutil.get_terminal_size((120, 40)).lines
+        self._max_visible: int = max(3, term_height - 6)
 
         self._app = self._build_application()
 
@@ -378,7 +385,7 @@ class ModelApp:
         return Application(
             layout=Layout(root, focused_element=None),
             key_bindings=self._build_key_bindings(),
-            full_screen=False,
+            full_screen=True,
             mouse_support=False,
             erase_when_done=True,
         )
@@ -566,8 +573,7 @@ class ModelApp:
             self._list_cursor = 0
 
     def _visible_slice(self, total: int) -> Tuple[int, int]:
-        # Show up to 15 entries; enough for menus of typical size.
-        max_visible = 15
+        max_visible = self._max_visible
         if total <= max_visible:
             self._list_offset = 0
             return 0, total
@@ -626,9 +632,8 @@ class ModelApp:
         meta = self._provider_meta.get(provider) or {}
         user_cfg = (getattr(self._cfg, "providers", None) or {}).get(provider)
         self._active_provider = provider
-        # API key is never prefilled — treat it as a secret the user must
-        # re-enter when they explicitly choose to edit credentials.
-        self._cred_api_key.text = ""
+        has_saved_key = user_cfg is not None and bool(getattr(user_cfg, "api_key", None))
+        self._cred_api_key.text = _MASKED_KEY_PLACEHOLDER if has_saved_key else ""
         saved_base = getattr(user_cfg, "base_url", None) if user_cfg is not None else None
         self._cred_base_url.text = str(saved_base or meta.get("base_url", ""))
         self._view = _View.PROVIDER_CRED_FORM
@@ -780,8 +785,9 @@ class ModelApp:
 
     def _submit_cred_form(self) -> None:
         provider = self._active_provider or ""
-        api_key = self._cred_api_key.text.strip() or None
-        base_url = self._cred_base_url.text.strip() or None
+        raw_key = self._cred_api_key.text.strip()
+        api_key: str | None = None if raw_key == _MASKED_KEY_PLACEHOLDER else raw_key
+        base_url = self._cred_base_url.text.strip()
         try:
             self._cfg.set_provider_config(
                 provider=provider,

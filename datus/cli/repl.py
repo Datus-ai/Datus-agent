@@ -49,6 +49,7 @@ from datus.cli.bi_dashboard import BiDashboardCommands
 from datus.cli.chat_commands import ChatCommands
 from datus.cli.context_commands import ContextCommands
 from datus.cli.language_commands import LanguageCommands
+from datus.cli.list_selector_app import ListItem, ListSelectorApp
 from datus.cli.metadata_commands import MetadataCommands
 from datus.cli.model_commands import ModelCommands
 from datus.cli.service_commands import ServiceCommands
@@ -763,28 +764,7 @@ class DatusCLI:
                 self.console.print(f"[red]Error:[/] {str(e)}")
 
     def _pin_tui_to_bottom(self) -> None:
-        """Push the cursor to the last terminal row before the banner prints.
-
-        prompt_toolkit's ``Application`` in ``full_screen=False`` mode renders
-        its layout anchored to the cursor's position. If the cursor sits in
-        the middle of a tall terminal when the slash completion menu
-        expands, the menu scrolls new rows upward and the input + status bar
-        no longer slide back to the bottom once the menu collapses. Filling
-        the terminal with blank rows at startup ensures every render cycle
-        begins at the very last row, which matches the behaviour hermes-agent
-        relies on (``cli.py:8188``). The banner is printed *after* this call
-        so it ends up in the bottom portion of the visible area rather than
-        scrolled into history.
-        """
-
-        import shutil
-
-        try:
-            term_lines = shutil.get_terminal_size().lines
-        except (OSError, ValueError):  # pragma: no cover - non-tty fallback
-            return
-        if term_lines > 2:
-            print("\n" * (term_lines - 1), end="", flush=True)
+        """No-op kept for subclass compatibility."""
 
     def _run_tui(self):
         """Persistent TUI main loop.
@@ -1068,42 +1048,35 @@ class DatusCLI:
 
         if not args:
             current_default = self.default_agent or "chat"
-            selected = self._run_agent_picker(sorted(visible_subagents), current_default)
-            if selected is None or selected == current_default:
-                if selected == current_default:
-                    self.console.print(f"[dim]Default agent unchanged: {current_default}[/]")
+            items = [
+                ListItem(key=name, primary=name, is_current=(name == current_default))
+                for name in sorted(visible_subagents)
+            ]
+            app = ListSelectorApp(title="Select default agent", items=items)
+            tui_app = getattr(self, "tui_app", None)
+            if tui_app is not None:
+                with tui_app.suspend_input():
+                    selection = app.run()
+            else:
+                selection = app.run()
+            if selection is None:
+                self.console.print("[dim]Default agent unchanged.[/]")
                 return
-            args = selected
+            if selection.key == current_default:
+                self.console.print(f"[dim]Default agent unchanged: {current_default}[/]")
+                return
+            args = selection.key
 
         if args not in visible_subagents:
             self.console.print(f"[red]Error:[/] Unknown agent '{args}'. Run '/agent' to see available agents.")
             return
 
-        # "chat" resets to empty string (the chat node)
         if args == "chat":
             self.default_agent = ""
             self.console.print("[green]Default agent reset to: chat[/]")
         else:
             self.default_agent = args
             self.console.print(f"[green]Default agent set to: {args}[/]")
-
-    def _run_agent_picker(self, agents: List[str], current: str) -> Optional[str]:
-        """Run the standalone ``AgentPickerApp`` and return the user's choice.
-
-        Wraps ``app.run()`` in :meth:`DatusApp.suspend_input` when the outer
-        TUI is active so the nested Application can own ``stdin`` without
-        fighting the persistent TUI Application. Mirrors the helper used
-        by ``/model`` and ``/language`` so all three pickers handle stdin
-        the same way.
-        """
-        from datus.cli.agent_picker_app import AgentPickerApp
-
-        app = AgentPickerApp(console=self.console, agents=agents, current=current)
-        tui_app = getattr(self, "tui_app", None)
-        if tui_app is not None:
-            with tui_app.suspend_input():
-                return app.run()
-        return app.run()
 
     def _cmd_switch_namespace(self, args: str):
         if args.strip() == "":

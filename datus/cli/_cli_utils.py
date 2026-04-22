@@ -1,6 +1,6 @@
 import shutil
 import unicodedata
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from prompt_toolkit.styles import Style
 from rich.console import Console
@@ -12,6 +12,69 @@ logger = get_logger(__name__)
 
 
 _FREE_TEXT_SENTINEL = "__free_text__"
+
+
+def _run_prompt_in_terminal(fn: Any) -> Any:
+    """Run a blocking prompt function, suspending the outer TUI if active.
+
+    Unlike :func:`_run_sub_application` which wraps a prompt_toolkit
+    ``Application``, this helper wraps an arbitrary callable (typically
+    ``prompt_toolkit.prompt()``) that internally creates its own
+    Application.  It uses the same ``in_terminal()`` mechanism to
+    release stdin from the outer TUI while the callable runs.
+    """
+    import asyncio
+
+    from prompt_toolkit.application import get_app_or_none
+
+    pt_app = get_app_or_none()
+    pt_loop = getattr(pt_app, "loop", None) if pt_app is not None else None
+    if pt_loop is None or not pt_loop.is_running():
+        return fn()
+
+    from prompt_toolkit.application.run_in_terminal import in_terminal
+
+    async def _scheduled():
+        async with in_terminal():
+            return await asyncio.get_running_loop().run_in_executor(None, fn)
+
+    future = asyncio.run_coroutine_threadsafe(_scheduled(), pt_loop)
+    return future.result()
+
+
+def _run_sub_application(app: Any) -> Any:
+    """Run a prompt_toolkit Application, suspending the outer TUI if active.
+
+    When the Datus REPL is running in TUI mode, a persistent
+    :class:`~prompt_toolkit.application.Application` owns stdin on the
+    main thread.  Spawning a nested Application from the worker thread
+    without releasing stdin causes freezes and display corruption.
+
+    This helper detects the outer Application via
+    :func:`get_app_or_none`, schedules the nested run inside
+    ``in_terminal()`` on the main loop (which temporarily detaches the
+    outer app's input reader), and blocks the worker until it finishes.
+
+    In non-TUI mode (no outer Application running) the nested app is
+    executed directly with ``app.run()``.
+    """
+    import asyncio
+
+    from prompt_toolkit.application import get_app_or_none
+
+    pt_app = get_app_or_none()
+    pt_loop = getattr(pt_app, "loop", None) if pt_app is not None else None
+    if pt_loop is None or not pt_loop.is_running():
+        return app.run()
+
+    from prompt_toolkit.application.run_in_terminal import in_terminal
+
+    async def _scheduled():
+        async with in_terminal():
+            return await app.run_async()
+
+    future = asyncio.run_coroutine_threadsafe(_scheduled(), pt_loop)
+    return future.result()
 
 
 def select_choice(
@@ -160,7 +223,7 @@ def select_choice(
             full_screen=False,
         )
 
-        result = app.run()
+        result = _run_sub_application(app)
         if allow_free_text and result == _FREE_TEXT_SENTINEL:
             console.print()
             console.print("[dim](Paste supported. Enter to submit)[/]")
@@ -317,7 +380,7 @@ def select_multi_choice(
             full_screen=False,
         )
 
-        result = app.run()
+        result = _run_sub_application(app)
 
         if allow_free_text and result == [_FREE_TEXT_SENTINEL]:
             console.print()
@@ -477,7 +540,7 @@ def select_list(
             full_screen=False,
         )
 
-        return app.run()
+        return _run_sub_application(app)
 
     except (KeyboardInterrupt, EOFError):
         print_warning(console, "\nSelection cancelled.")
@@ -561,16 +624,19 @@ def prompt_input(
             def _submit(event):
                 event.current_buffer.validate_and_handle()
 
-        result = prompt(
-            HTML(f"<ansigreen><b>{prompt_text}</b></ansigreen>"),
-            default=default,
-            validator=validator,
-            multiline=multiline,
-            key_bindings=key_bindings,
-            history=InMemoryHistory(),  # Separate history for sub-prompts
-            style=style,  # Use same style as main session
-            is_password=is_password and not multiline,
-        )
+        def _do_prompt():
+            return prompt(
+                HTML(f"<ansigreen><b>{prompt_text}</b></ansigreen>"),
+                default=default,
+                validator=validator,
+                multiline=multiline,
+                key_bindings=key_bindings,
+                history=InMemoryHistory(),
+                style=style,
+                is_password=is_password and not multiline,
+            )
+
+        result = _run_prompt_in_terminal(_do_prompt)
 
         return result if multiline else result.strip()
 

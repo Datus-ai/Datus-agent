@@ -170,8 +170,9 @@ class TestEditCredentialsShortcut:
         with patch.object(app._app.layout, "focus"):
             app._on_edit_credentials()
         assert app._cred_base_url.text == "https://saved.example"
-        # API key is NEVER prefilled — it's treated as a secret.
-        assert app._cred_api_key.text == ""
+        from datus.cli.model_app import _MASKED_KEY_PLACEHOLDER
+
+        assert app._cred_api_key.text == _MASKED_KEY_PLACEHOLDER
 
     def test_edit_on_subscription_opens_token_form_without_auto_detect(self):
         app = _build()
@@ -328,6 +329,71 @@ class TestCredentialForm:
             auth_type="api_key",
         )
         assert app._view == _View.PROVIDER_MODELS
+
+    def test_masked_placeholder_keeps_existing_key(self):
+        from datus.cli.model_app import _MASKED_KEY_PLACEHOLDER
+
+        cfg = _stub_agent_config()
+        saved = MagicMock(api_key="sk-old", base_url=None, auth_type="api_key")
+        cfg.providers = {"openai": saved}
+        app = ModelApp(cfg, Console(file=io.StringIO(), no_color=True))
+        app._active_provider = "openai"
+        with patch.object(app._app.layout, "focus"):
+            app._enter_cred_form("openai")
+        assert app._cred_api_key.text == _MASKED_KEY_PLACEHOLDER
+        app._submit_cred_form()
+        cfg.set_provider_config.assert_called_once_with(
+            provider="openai",
+            api_key=None,
+            base_url="https://api.openai.com/v1",
+            auth_type="api_key",
+        )
+
+    def test_empty_key_clears_existing_key(self):
+        cfg = _stub_agent_config()
+        saved = MagicMock(api_key="sk-old", base_url=None, auth_type="api_key")
+        cfg.providers = {"openai": saved}
+        app = ModelApp(cfg, Console(file=io.StringIO(), no_color=True))
+        app._active_provider = "openai"
+        with patch.object(app._app.layout, "focus"):
+            app._enter_cred_form("openai")
+        app._cred_api_key.text = ""
+        cfg.provider_available.side_effect = lambda name: name == "openai"
+        app._submit_cred_form()
+        cfg.set_provider_config.assert_called_once_with(
+            provider="openai",
+            api_key="",
+            base_url="https://api.openai.com/v1",
+            auth_type="api_key",
+        )
+
+    def test_new_key_replaces_existing_key(self):
+        cfg = _stub_agent_config()
+        saved = MagicMock(api_key="sk-old", base_url=None, auth_type="api_key")
+        cfg.providers = {"openai": saved}
+        app = ModelApp(cfg, Console(file=io.StringIO(), no_color=True))
+        app._active_provider = "openai"
+        with patch.object(app._app.layout, "focus"):
+            app._enter_cred_form("openai")
+        app._cred_api_key.text = "sk-new"
+        cfg.provider_available.side_effect = lambda name: name == "openai"
+        app._submit_cred_form()
+        cfg.set_provider_config.assert_called_once_with(
+            provider="openai",
+            api_key="sk-new",
+            base_url="https://api.openai.com/v1",
+            auth_type="api_key",
+        )
+
+    def test_no_saved_key_leaves_field_empty(self):
+        cfg = _stub_agent_config()
+        cfg.providers = {}
+        cfg.provider_available = MagicMock(return_value=False)
+        app = ModelApp(cfg, Console(file=io.StringIO(), no_color=True))
+        app._active_provider = "openai"
+        with patch.object(app._app.layout, "focus"):
+            app._enter_cred_form("openai")
+        assert app._cred_api_key.text == ""
 
 
 class TestTokenForm:
@@ -513,7 +579,7 @@ class TestCursor:
         app._list_cursor = 20
         start, end = app._visible_slice(total)
         assert start <= app._list_cursor < end
-        assert end - start <= 15
+        assert end - start <= app._max_visible
 
     def test_visible_slice_returns_full_range_when_total_fits(self):
         app = _build()

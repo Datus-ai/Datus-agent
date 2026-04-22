@@ -2416,10 +2416,16 @@ class TestCmdRewindWithSession:
             [("user", "Question"), ("assistant", "Reply")],
         )
 
-        # Patch select_list to return None (simulating Esc/cancel in picker)
-        import datus.cli._cli_utils as cli_utils_mod
+        import datus.cli.chat_commands as chat_mod
 
-        monkeypatch.setattr(cli_utils_mod, "select_list", lambda *args, **kwargs: None)
+        class FakeCancelApp:
+            def __init__(self, **kwargs):
+                pass
+
+            def run(self):
+                return None
+
+        monkeypatch.setattr(chat_mod, "ListSelectorApp", FakeCancelApp)
 
         console.file = io.StringIO()
         result = cmds.cmd_rewind("")
@@ -2849,31 +2855,35 @@ class TestResumeInteractiveWithSessions:
 
     def test_resume_interactive_valid_selection(self, real_agent_config, mock_llm_create, monkeypatch):
         """cmd_resume interactive: user selects session #1 from the list."""
+        from datus.cli.list_selector_app import ListSelection
+
         console = Console(file=io.StringIO(), no_color=True)
         cmds = _make_chat_commands(real_agent_config, console=console)
 
-        # Create two sessions so we can verify index→session mapping
         _create_session_on_disk("chat_session_pick01", [("user", "First Q"), ("assistant", "First A")])
         _create_session_on_disk("chat_session_pick01b", [("user", "Second Q"), ("assistant", "Second A")])
 
-        # Monkeypatch select_list to return index 0 (select first/newest session)
-        import datus.cli._cli_utils as cli_utils_mod
-
         captured = {}
 
-        def fake_select(*args, **kwargs):
-            captured["items"] = args[1] if len(args) > 1 else kwargs.get("items")
-            return 0
+        import datus.cli.chat_commands as chat_mod
 
-        monkeypatch.setattr(cli_utils_mod, "select_list", fake_select)
+        class FakeListSelectorApp:
+            def __init__(self, **kwargs):
+                captured["items"] = kwargs.get("items", [])
+
+            def run(self):
+                if captured["items"]:
+                    return ListSelection(key=captured["items"][0].key)
+                return None
+
+        monkeypatch.setattr(chat_mod, "ListSelectorApp", FakeListSelectorApp)
 
         cmds.cmd_resume("")
 
         output = _get_console_output(console)
         assert cmds.current_node is not None
         assert "session" in output.lower()
-        # Verify items were passed to select_list
-        assert "items" in captured and len(captured["items"]) >= 2
+        assert len(captured["items"]) >= 2
 
     def test_resume_interactive_cancel(self, real_agent_config, mock_llm_create, monkeypatch):
         """cmd_resume interactive: user cancels selection."""
@@ -2882,9 +2892,16 @@ class TestResumeInteractiveWithSessions:
 
         _create_session_on_disk("chat_session_pick02", [("user", "Q"), ("assistant", "A")])
 
-        import datus.cli._cli_utils as cli_utils_mod
+        import datus.cli.chat_commands as chat_mod
 
-        monkeypatch.setattr(cli_utils_mod, "select_list", lambda *args, **kwargs: None)
+        class FakeCancelApp:
+            def __init__(self, **kwargs):
+                pass
+
+            def run(self):
+                return None
+
+        monkeypatch.setattr(chat_mod, "ListSelectorApp", FakeCancelApp)
 
         cmds.cmd_resume("")
 
@@ -2999,61 +3016,60 @@ class TestResumeListingTruncation:
     """Tests for cmd_resume listing truncation of session_id and first_user_message."""
 
     def test_long_first_message_is_truncated(self, real_agent_config, mock_llm_create, monkeypatch):
-        """Session with session_id > 24 chars is truncated with '...' in listing."""
-        # Use a wide console so Rich Table does not re-truncate our "..." with its own ellipsis
+        """Session with long first message passes full text to ListSelectorApp items."""
         console = Console(file=io.StringIO(), no_color=True, width=160)
         cmds = _make_chat_commands(real_agent_config, console=console)
 
-        # Use a session ID longer than 24 characters so sid truncation adds "..."
         long_sid = "chat_truncate_test_01_abcdefghijklmnop"
         long_msg = "This is a very long message that should definitely be truncated in the display listing table"
         _create_session_on_disk(long_sid, [("user", long_msg), ("assistant", "OK")])
 
-        import datus.cli._cli_utils as cli_utils_mod
+        import datus.cli.chat_commands as chat_mod
 
-        # Capture items passed to select_list, then cancel
         captured = {}
 
-        def fake_select(*args, **kwargs):
-            captured["items"] = args[1] if len(args) > 1 else kwargs.get("items")
-            return None
+        class FakeCaptureApp:
+            def __init__(self, **kwargs):
+                captured["items"] = kwargs.get("items", [])
 
-        monkeypatch.setattr(cli_utils_mod, "select_list", fake_select)
+            def run(self):
+                return None
+
+        monkeypatch.setattr(chat_mod, "ListSelectorApp", FakeCaptureApp)
 
         console.file = io.StringIO()
         cmds.cmd_resume("")
         output = _get_console_output(console)
         assert "cancelled" in output.lower()
-        # Verify items were passed to select_list with the long message
-        assert "items" in captured and len(captured["items"]) > 0
-        first_item_text = captured["items"][0][0]  # primary line text
-        # The full message is passed to select_list (clipping is done internally by the renderer)
-        assert long_msg.replace("\n", " ") in first_item_text or first_item_text in long_msg
+        assert len(captured["items"]) > 0
+        first_item = captured["items"][0]
+        assert long_msg.replace("\n", " ") in first_item.primary or first_item.primary in long_msg
 
     def test_short_session_id_not_truncated(self, real_agent_config, mock_llm_create, monkeypatch):
-        """Session with session_id <= 24 chars should appear in select_list items without truncation."""
+        """Session with short session_id appears in ListSelectorApp items without truncation."""
         console = Console(file=io.StringIO(), no_color=True, width=160)
         cmds = _make_chat_commands(real_agent_config, console=console)
 
         short_sid = "chat_short_sid_01"
         _create_session_on_disk(short_sid, [("user", "Hi"), ("assistant", "Hello")])
 
-        import datus.cli._cli_utils as cli_utils_mod
+        import datus.cli.chat_commands as chat_mod
 
         captured = {}
 
-        def fake_select(*args, **kwargs):
-            captured["items"] = args[1] if len(args) > 1 else kwargs.get("items")
-            return None
+        class FakeCaptureApp:
+            def __init__(self, **kwargs):
+                captured["items"] = kwargs.get("items", [])
 
-        monkeypatch.setattr(cli_utils_mod, "select_list", fake_select)
+            def run(self):
+                return None
+
+        monkeypatch.setattr(chat_mod, "ListSelectorApp", FakeCaptureApp)
 
         console.file = io.StringIO()
         cmds.cmd_resume("")
-        # Verify items were passed to select_list with the short sid
-        assert "items" in captured and len(captured["items"]) > 0
-        # The session ID appears in secondary info columns (not truncated)
-        all_text = " ".join(str(col) for item in captured["items"] for col in item)
+        assert len(captured["items"]) > 0
+        all_text = " ".join(f"{item.primary} {item.secondary}" for item in captured["items"])
         assert short_sid in all_text
 
 

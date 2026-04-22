@@ -25,6 +25,7 @@ from datus.agent.node.chat_agentic_node import ChatAgenticNode
 from datus.cli._cli_utils import select_choice
 from datus.cli.action_display.display import ActionHistoryDisplay
 from datus.cli.execution_state import ExecutionInterrupted, auto_submit_interaction
+from datus.cli.list_selector_app import ListItem, ListSelectorApp
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
 from datus.utils.loggings import get_logger
@@ -1208,7 +1209,6 @@ class ChatCommands:
 
     def cmd_resume(self, args: str):
         """Resume a previous chat session for the active agent."""
-        from datus.cli._cli_utils import select_list
         from datus.models.session_manager import SessionManager, session_matches_agent
 
         try:
@@ -1243,10 +1243,7 @@ class ChatCommands:
                     reverse=True,
                 )
 
-                # Build items for interactive list selector (two-line per item)
-                # Line 1: first user message (no newlines, clip to screen width)
-                # Line 2: session_id, updated time, message count
-                list_items = []
+                items = []
                 for info in session_infos:
                     sid = info["session_id"]
                     raw_first_msg = info.get("first_user_message", "") or ""
@@ -1257,14 +1254,22 @@ class ChatCommands:
                         first_msg = "(empty)"
                     updated = (info.get("updated_at") or info.get("latest_message_at") or "N/A")[:19]
                     msg_count = str(info.get("message_count", 0))
-                    list_items.append([first_msg, sid, f"Updated: {updated}", f"Msgs: {msg_count}"])
+                    items.append(
+                        ListItem(key=sid, primary=first_msg, secondary=f"{sid}  Updated: {updated}  Msgs: {msg_count}")
+                    )
 
-                idx = select_list(self.console, list_items)
-                if idx is None:
+                app = ListSelectorApp(title=f"Resume session ({agent_label})", items=items)
+                tui_app = getattr(self.cli, "tui_app", None)
+                if tui_app is not None:
+                    with tui_app.suspend_input():
+                        selection = app.run()
+                else:
+                    selection = app.run()
+                if selection is None:
                     self.console.print("[dim]Cancelled.[/]")
                     return
 
-                target_session_id = session_infos[idx]["session_id"]
+                target_session_id = selection.key
 
             # Validate the session exists
             if not session_manager.session_exists(target_session_id):
@@ -1346,7 +1351,6 @@ class ChatCommands:
         Returns:
             The selected user message text, or None if cancelled/error.
         """
-        from datus.cli._cli_utils import select_list
         from datus.models.session_manager import SessionManager
 
         try:
@@ -1390,22 +1394,25 @@ class ChatCommands:
                     self.console.print(f"[red]Invalid turn number. Must be between 1 and {len(user_turns)}.[/]")
                     return
             else:
-                # Interactive list selector (two-line per item)
-                # Line 1: user message (no newlines, clip to screen width)
-                # Line 2: turn number, timestamp
-                list_items = []
+                items = []
                 for idx, turn_msg in enumerate(user_turns, 1):
                     content = (turn_msg.get("content", "") or "").replace("\n", " ").replace("\r", " ")
                     if not content:
                         content = "(empty)"
                     timestamp = (turn_msg.get("created_at") or "")[:19]
-                    list_items.append([content, f"Turn: {idx}", timestamp])
+                    items.append(ListItem(key=str(idx), primary=content, secondary=f"Turn: {idx}  {timestamp}"))
 
-                selected = select_list(self.console, list_items)
-                if selected is None:
+                app = ListSelectorApp(title="Rewind to before turn", items=items)
+                tui_app = getattr(self.cli, "tui_app", None)
+                if tui_app is not None:
+                    with tui_app.suspend_input():
+                        selection = app.run()
+                else:
+                    selection = app.run()
+                if selection is None:
                     self.console.print("[dim]Cancelled.[/]")
                     return
-                turn_num = selected + 1
+                turn_num = int(selection.key)
 
             # Get the selected user message to return for input prefill
             rewind_user_message = user_turns[turn_num - 1].get("content", "")

@@ -17,6 +17,7 @@ separator lines, and a footer hint row.
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional, Tuple
@@ -95,6 +96,12 @@ class LanguageApp:
         self._scope_keys: List[str] = list(SCOPE_CHOICES.keys())
         self._lang_idx: int = self._default_lang_index()
         self._scope_idx: int = 0
+        self._lang_offset: int = 0
+        self._scope_offset: int = 0
+
+        # header(2) + 2 separators + footer = 5 lines of chrome
+        term_height = shutil.get_terminal_size((120, 40)).lines
+        self._max_visible: int = max(3, min(15, term_height - 5))
 
         if scope_only is not None:
             self._phase = _Phase.SCOPE
@@ -102,6 +109,12 @@ class LanguageApp:
         else:
             self._phase = _Phase.LANGUAGE
             self._selected_code = ""
+
+        if self._lang_idx >= self._max_visible:
+            self._lang_offset = min(
+                max(0, self._lang_idx - self._max_visible // 2),
+                max(0, len(self._lang_keys) - self._max_visible),
+            )
 
         self._app = self._build_app()
 
@@ -120,28 +133,60 @@ class LanguageApp:
             return self._lang_keys.index(self._current)
         return 0
 
+    def _ensure_visible(self, idx: int, offset: int, total: int) -> int:
+        if idx < offset:
+            return idx
+        if idx >= offset + self._max_visible:
+            return idx - self._max_visible + 1
+        return offset
+
     def _build_app(self) -> Application:
         kb = KeyBindings()
 
         @kb.add("up")
         def _up(event):
             if self._phase == _Phase.LANGUAGE:
-                self._lang_idx = max(0, self._lang_idx - 1)
+                total = len(self._lang_keys)
+                self._lang_idx = (self._lang_idx - 1) % total
+                if self._lang_idx == total - 1:
+                    self._lang_offset = max(0, total - self._max_visible)
+                else:
+                    self._lang_offset = self._ensure_visible(self._lang_idx, self._lang_offset, total)
             else:
                 self._scope_idx = max(0, self._scope_idx - 1)
 
         @kb.add("down")
         def _down(event):
             if self._phase == _Phase.LANGUAGE:
-                self._lang_idx = min(len(self._lang_keys) - 1, self._lang_idx + 1)
+                total = len(self._lang_keys)
+                self._lang_idx = (self._lang_idx + 1) % total
+                if self._lang_idx == 0:
+                    self._lang_offset = 0
+                else:
+                    self._lang_offset = self._ensure_visible(self._lang_idx, self._lang_offset, total)
             else:
                 self._scope_idx = min(len(self._scope_keys) - 1, self._scope_idx + 1)
+
+        @kb.add("pageup")
+        def _page_up(event):
+            if self._phase == _Phase.LANGUAGE:
+                self._lang_idx = max(0, self._lang_idx - self._max_visible)
+                self._lang_offset = self._ensure_visible(self._lang_idx, self._lang_offset, len(self._lang_keys))
+
+        @kb.add("pagedown")
+        def _page_down(event):
+            if self._phase == _Phase.LANGUAGE:
+                total = len(self._lang_keys)
+                self._lang_idx = min(total - 1, self._lang_idx + self._max_visible)
+                self._lang_offset = self._ensure_visible(self._lang_idx, self._lang_offset, total)
 
         @kb.add("enter")
         def _enter(event):
             if self._phase == _Phase.LANGUAGE:
                 self._selected_code = self._lang_keys[self._lang_idx]
                 self._phase = _Phase.SCOPE
+                self._scope_idx = 0
+                self._scope_offset = 0
             else:
                 scope = self._scope_keys[self._scope_idx]
                 event.app.exit(LanguageSelection(code=self._selected_code, scope=scope))
@@ -204,7 +249,12 @@ class LanguageApp:
     def _render_list(self) -> List[Tuple[str, str]]:
         lines: List[Tuple[str, str]] = []
         if self._phase == _Phase.LANGUAGE:
-            for i, key in enumerate(self._lang_keys):
+            total = len(self._lang_keys)
+            end = min(self._lang_offset + self._max_visible, total)
+            if total > self._max_visible:
+                lines.append(("ansiyellow", f"  ({self._lang_offset + 1}-{end} of {total})\n"))
+            for i in range(self._lang_offset, end):
+                key = self._lang_keys[i]
                 label = f"{key:<6} {LANGUAGE_CHOICES[key]}"
                 is_current = key == self._current
                 if is_current:

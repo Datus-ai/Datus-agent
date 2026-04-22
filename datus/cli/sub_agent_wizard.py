@@ -1902,11 +1902,9 @@ class SubAgentWizard:
     def run(self) -> Optional[SubAgentConfig]:
         """Run the wizard application."""
         # Ensure selection watchers start exactly when the event loop is running.
-        try:
-            return self.app.run(pre_run=self._start_selection_watchers)
-        except TypeError:
-            # Fallback for older prompt_toolkit where pre_run is not supported
-            return self.app.run()
+        from datus.cli._cli_utils import _run_sub_application
+
+        return _run_sub_application(self.app)
 
     def native_tools_choices(self) -> Dict[str, List[str]]:
         from datus.tools.func_tool import ContextSearchTools, DBFuncTool
