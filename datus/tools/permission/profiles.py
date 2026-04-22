@@ -105,8 +105,11 @@ _AUTO_EXTRA_RULES = [
     _rule("db_tools", "execute_write", PermissionLevel.ASK),
     _rule("db_tools", "transfer_query_result", PermissionLevel.ASK),
     _rule("db_tools", "write_query", PermissionLevel.ASK),
-    # Re-assert deny on bi_tools.delete_* after the create_*/update_*/add_* allows,
-    # so the delete rule wins via last-match-wins regardless of declaration order.
+    # Defensive re-assert: with current rules, ``bi_tools.delete_*`` already
+    # stays DENY (inherited from NORMAL, not overridden by ``create_*``/
+    # ``update_*``/``add_*`` which don't pattern-match ``delete_dashboard``).
+    # Re-asserting keeps the invariant if a future patch introduces a broader
+    # ``bi_tools.*`` ALLOW that would otherwise clobber it.
     _rule("bi_tools", "delete_*", PermissionLevel.DENY),
 ]
 

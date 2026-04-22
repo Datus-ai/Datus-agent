@@ -112,19 +112,13 @@ class TestDangerousProfile:
 
 
 def _resolve(config: PermissionConfig, category: str, pattern: str) -> PermissionLevel:
-    """Walk the rules last-match-wins, returning the final PermissionLevel."""
+    """Walk the rules last-match-wins, returning the final PermissionLevel.
+
+    Uses the production ``PermissionRule.matches()`` so a future change to
+    the matcher (e.g., glob semantics) automatically reflects in tests.
+    """
     result = config.default_permission
     for rule in config.rules:
-        if _matches(rule, category, pattern):
+        if rule.matches(category, pattern):
             result = PermissionLevel(rule.permission) if isinstance(rule.permission, str) else rule.permission
     return result
-
-
-def _matches(rule, category, pattern):
-    import fnmatch
-
-    if rule.tool != "*" and not fnmatch.fnmatch(category, rule.tool):
-        return False
-    if rule.pattern != "*" and not fnmatch.fnmatch(pattern, rule.pattern):
-        return False
-    return True
