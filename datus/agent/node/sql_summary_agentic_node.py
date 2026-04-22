@@ -237,6 +237,8 @@ class SqlSummaryAgenticNode(AgenticNode):
         Returns:
             Dictionary of template variables
         """
+        from datus.utils.node_utils import build_datasource_prompt_context
+
         context = {}
 
         context["native_tools"] = ", ".join([tool.name for tool in self.tools]) if self.tools else "None"
@@ -246,6 +248,7 @@ class SqlSummaryAgenticNode(AgenticNode):
         context["kind_subdir"] = "subject/sql_summaries"
         context["current_datasource"] = self.agent_config.current_datasource
         context["has_ask_user_tool"] = self.ask_user_tool is not None
+        context.update(build_datasource_prompt_context(self.agent_config))
 
         # Handle subject_tree context based on whether predefined or query from storage
         if self.subject_tree:

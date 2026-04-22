@@ -249,6 +249,8 @@ class GenMetricsAgenticNode(AgenticNode):
         Returns:
             Dictionary of template variables
         """
+        from datus.utils.node_utils import build_datasource_prompt_context
+
         context = {}
 
         # Tool name lists for template display
@@ -260,6 +262,7 @@ class GenMetricsAgenticNode(AgenticNode):
         context["kind_subdir"] = "subject/semantic_models"
         context["current_datasource"] = self.agent_config.current_datasource
         context["has_ask_user_tool"] = self.ask_user_tool is not None
+        context.update(build_datasource_prompt_context(self.agent_config))
 
         # Handle subject_tree context based on whether predefined or query from storage
         if self.subject_tree:

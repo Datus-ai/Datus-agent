@@ -149,10 +149,13 @@ class GenJobAgenticNode(AgenticNode):
             logger.error(f"Failed to setup filesystem tools: {e}")
 
     def _prepare_template_context(self, user_input: SemanticNodeInput) -> dict:
+        from datus.utils.node_utils import build_datasource_prompt_context
+
         context = {}
         context["native_tools"] = ", ".join([tool.name for tool in self.tools]) if self.tools else "None"
         context["mcp_tools"] = ", ".join(list(self.mcp_servers.keys())) if self.mcp_servers else "None"
         context["has_ask_user_tool"] = self.ask_user_tool is not None
+        context.update(build_datasource_prompt_context(self.agent_config))
         logger.debug(f"Prepared template context: {context}")
         return context
 

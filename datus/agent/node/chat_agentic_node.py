@@ -19,7 +19,6 @@ from datus.cli.execution_state import ExecutionInterrupted
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
-from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool, PlatformDocSearchTool
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
@@ -140,9 +139,7 @@ class ChatAgenticNode(AgenticNode):
 
     def setup_tools(self):
         """Initialize all tools with default database connection."""
-        db_manager = db_manager_instance(self.agent_config.datasource_configs)
-        conn = db_manager.get_conn(self.agent_config.current_datasource, self.agent_config.current_datasource)
-        self.db_func_tool = DBFuncTool(conn, agent_config=self.agent_config)
+        self.db_func_tool = DBFuncTool(agent_config=self.agent_config)
         self.context_search_tools = ContextSearchTools(self.agent_config)
         self.reference_template_tools = ReferenceTemplateTools(self.agent_config, db_func_tool=self.db_func_tool)
         self._setup_date_parsing_tools()
@@ -292,9 +289,7 @@ class ChatAgenticNode(AgenticNode):
 
     def _update_database_connection(self, database_name: str):
         """Update database connection to a different database."""
-        db_manager = db_manager_instance(self.agent_config.datasource_configs)
-        conn = db_manager.get_conn(self.agent_config.current_datasource, database_name)
-        self.db_func_tool = DBFuncTool(conn, agent_config=self.agent_config)
+        self.db_func_tool = DBFuncTool(agent_config=self.agent_config, default_datasource=database_name)
         self._rebuild_tools()
 
     # ── Permission Helpers ──────────────────────────────────────────────

@@ -4,7 +4,7 @@
 
 """Shared utility functions for agentic nodes."""
 
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 
 def resolve_database_name_for_prompt(connector: Any, connection_name: str = "") -> str:
@@ -60,3 +60,29 @@ def build_database_context(
     if schema:
         context_parts.append(f"**Schema**: {schema}")
     return f"Database Context: \n\n{', '.join(context_parts)}"
+
+
+def build_datasource_prompt_context(agent_config: Any) -> Dict[str, Any]:
+    """Build datasource context variables for system prompt templates.
+
+    Returns a dict with keys consumed by Jinja2 templates:
+    - datasource: current datasource config key
+    - current_datasource_dialect: dialect type of current datasource (e.g. "snowflake")
+    - available_datasources: {name: type} dict of all configured datasources
+    """
+    if not agent_config:
+        return {}
+
+    current_ds = getattr(agent_config, "current_datasource", None)
+    services = getattr(agent_config, "services", None)
+    if not services:
+        return {"datasource": current_ds}
+
+    all_datasources = {ds_name: ds_config.type for ds_name, ds_config in services.datasources.items()}
+    current_dialect = all_datasources.get(current_ds) if current_ds else None
+
+    return {
+        "datasource": current_ds,
+        "current_datasource_dialect": current_dialect,
+        "available_datasources": all_datasources,
+    }

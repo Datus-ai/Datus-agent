@@ -12,6 +12,7 @@ Single entry point for both the ``datus-api`` console script and
 """
 
 import argparse
+import asyncio
 import atexit
 import multiprocessing
 import os
@@ -191,7 +192,7 @@ def _run_server(args: argparse.Namespace, agent_args: argparse.Namespace) -> Non
         return
 
     app = create_app(agent_args)
-    uvicorn.run(
+    config = uvicorn.Config(
         app,
         host=args.host,
         port=args.port,
@@ -199,6 +200,8 @@ def _run_server(args: argparse.Namespace, agent_args: argparse.Namespace) -> Non
         log_level=args.log_level.lower(),
         access_log=True,
     )
+    server = uvicorn.Server(config)
+    asyncio.run(server.serve())
 
 
 def _build_parser() -> argparse.ArgumentParser:

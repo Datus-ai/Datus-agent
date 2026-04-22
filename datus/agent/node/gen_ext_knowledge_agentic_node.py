@@ -160,9 +160,7 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
         # Hardcoded tool configuration: specific methods from generation_tools and filesystem_tools
         # filesystem_tools: read_file, write_file, edit_file
         # Chat node uses all available tools by default
-        db_manager = db_manager_instance(self.agent_config.datasource_configs)
-        self.conn = db_manager.get_conn(self.agent_config.current_datasource, self.agent_config.current_datasource)
-        self.db_func_tool = DBFuncTool(self.conn, agent_config=self.agent_config)
+        self.db_func_tool = DBFuncTool(agent_config=self.agent_config)
         self.context_search_tools = ContextSearchTools(self.agent_config)
         if self.db_func_tool:
             self.tools.extend(self.db_func_tool.available_tools())
@@ -536,6 +534,8 @@ Do NOT give up. Continue iterating until verify_sql returns success=1.
         Returns:
             Dictionary of template variables
         """
+        from datus.utils.node_utils import build_datasource_prompt_context
+
         context = {}
 
         context["native_tools"] = ", ".join([tool.name for tool in self.tools]) if self.tools else "None"
@@ -544,6 +544,7 @@ Do NOT give up. Continue iterating until verify_sql returns success=1.
         # Filesystem tool is rooted at project_root; full path required.
         context["kind_subdir"] = "subject/ext_knowledge"
         context["current_datasource"] = self.agent_config.current_datasource
+        context.update(build_datasource_prompt_context(self.agent_config))
         context["has_filesystem_tools"] = bool(self.filesystem_func_tool)
         context["has_ask_user_tool"] = self.ask_user_tool is not None
         context["has_gold_sql"] = bool(gold_sql)

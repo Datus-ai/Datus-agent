@@ -205,10 +205,7 @@ class GenReportAgenticNode(AgenticNode):
     def _setup_db_tools(self):
         """Setup database tools."""
         try:
-            db_manager = db_manager_instance(self.agent_config.datasource_configs)
-            conn = db_manager.get_conn(self.agent_config.current_datasource, self.agent_config.current_datasource)
             self.db_func_tool = DBFuncTool(
-                conn,
                 agent_config=self.agent_config,
                 sub_agent_name=self.node_config.get("system_prompt"),
             )
@@ -266,12 +263,7 @@ class GenReportAgenticNode(AgenticNode):
                 tool_instance = self.semantic_tools
             elif tool_type == "db_tools":
                 if not self.db_func_tool:
-                    db_manager = db_manager_instance(self.agent_config.datasource_configs)
-                    conn = db_manager.get_conn(
-                        self.agent_config.current_datasource, self.agent_config.current_datasource
-                    )
                     self.db_func_tool = DBFuncTool(
-                        conn,
                         agent_config=self.agent_config,
                         sub_agent_name=self.node_config.get("system_prompt"),
                     )
@@ -333,8 +325,10 @@ class GenReportAgenticNode(AgenticNode):
 
         # Add datasource info
         if self.agent_config:
-            context["datasource"] = getattr(self.agent_config, "current_datasource", None)
-            context["db_name"] = getattr(self.agent_config, "current_datasource", None)
+            from datus.utils.node_utils import build_datasource_prompt_context
+
+            context.update(build_datasource_prompt_context(self.agent_config))
+            context["db_name"] = context.get("datasource")
 
         from datus.utils.time_utils import get_default_current_date
 

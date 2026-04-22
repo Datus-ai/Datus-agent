@@ -70,10 +70,16 @@ Your final response MUST be a valid JSON object:
 - Current date: {{ current_date }}
 {% endif -%}
 {% if datasource -%}
-- Database datasource: {{ datasource }}
+{% if current_datasource_dialect -%}
+- Current datasource: {{ datasource }} ({{ current_datasource_dialect }})
+{% else -%}
+- Current datasource: {{ datasource }}
 {% endif -%}
-{% if db_name -%}
-- Database: {{ db_name }}
+{% if available_datasources and available_datasources|length > 1 -%}
+- Available datasources: {% for ds_name, ds_type in available_datasources.items() %}{{ ds_name }} ({{ ds_type }}){% if not loop.last %}, {% endif %}{% endfor %}
+
+- Unless the user explicitly requests a different datasource, use ONLY the current datasource for all operations.
+{% endif -%}
 {% endif -%}
 {% if conversation_summary %}
 Previous conversation summary:

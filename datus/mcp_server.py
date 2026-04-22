@@ -1003,7 +1003,9 @@ class DatusMCPServer:
         print(f"  Endpoint:  http://{host}:{port}{path}")
         print(f"{'=' * 60}\n")
 
-        uvicorn.run(app, host=host, port=port, log_level="info")
+        config = uvicorn.Config(app, host=host, port=port, log_level="info")
+        server = uvicorn.Server(config)
+        asyncio.run(server.serve())
 
     def get_sse_app(self):
         """
@@ -1142,12 +1144,14 @@ def run_dynamic_server(
     print(f"  Info: http://{host}:{port}/")
     print(f"{'=' * 60}\n")
 
-    uvicorn.run(
+    config = uvicorn.Config(
         app,
         host=host,
         port=port,
         log_level="debug" if debug else "info",
     )
+    server = uvicorn.Server(config)
+    asyncio.run(server.serve())
 
 
 def main():

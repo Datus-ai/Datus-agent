@@ -214,11 +214,9 @@ class GenSQLAgenticNode(AgenticNode):
         Args:
             database_name: The name of the database to connect to
         """
-        db_manager = db_manager_instance(self.agent_config.datasource_configs)
-        conn = db_manager.get_conn(self.agent_config.current_datasource, database_name)
         self.db_func_tool = DBFuncTool(
-            conn,
             agent_config=self.agent_config,
+            default_datasource=database_name,
             sub_agent_name=self.node_config.get("system_prompt"),
         )
         self._rebuild_tools()
@@ -297,19 +295,10 @@ class GenSQLAgenticNode(AgenticNode):
         access (e.g. migration subagent), otherwise single-connector mode.
         """
         try:
-            if self._needs_multi_connector():
-                self.db_func_tool = DBFuncTool.create_dynamic(
-                    self.agent_config,
-                    sub_agent_name=self.node_config.get("system_prompt"),
-                )
-            else:
-                db_manager = db_manager_instance(self.agent_config.datasource_configs)
-                conn = db_manager.get_conn(self.agent_config.current_datasource, self.agent_config.current_datasource)
-                self.db_func_tool = DBFuncTool(
-                    conn,
-                    agent_config=self.agent_config,
-                    sub_agent_name=self.node_config.get("system_prompt"),
-                )
+            self.db_func_tool = DBFuncTool(
+                agent_config=self.agent_config,
+                sub_agent_name=self.node_config.get("system_prompt"),
+            )
             self.tools.extend(self.db_func_tool.available_tools())
         except Exception as e:
             logger.error(f"Failed to setup database tools: {e}")
@@ -334,10 +323,7 @@ class GenSQLAgenticNode(AgenticNode):
         try:
             db_tool = self.db_func_tool
             if not db_tool:
-                db_manager = db_manager_instance(self.agent_config.datasource_configs)
-                conn = db_manager.get_conn(self.agent_config.current_datasource, self.agent_config.current_datasource)
                 db_tool = DBFuncTool(
-                    conn,
                     agent_config=self.agent_config,
                     sub_agent_name=self.node_config.get("system_prompt"),
                 )
@@ -446,21 +432,10 @@ class GenSQLAgenticNode(AgenticNode):
                 tool_instance = self.context_search_tools
             elif tool_type == "db_tools":
                 if not self.db_func_tool:
-                    if self._needs_multi_connector():
-                        self.db_func_tool = DBFuncTool.create_dynamic(
-                            self.agent_config,
-                            sub_agent_name=self.node_config.get("system_prompt"),
-                        )
-                    else:
-                        db_manager = db_manager_instance(self.agent_config.datasource_configs)
-                        conn = db_manager.get_conn(
-                            self.agent_config.current_datasource, self.agent_config.current_datasource
-                        )
-                        self.db_func_tool = DBFuncTool(
-                            conn,
-                            agent_config=self.agent_config,
-                            sub_agent_name=self.node_config.get("system_prompt"),
-                        )
+                    self.db_func_tool = DBFuncTool(
+                        agent_config=self.agent_config,
+                        sub_agent_name=self.node_config.get("system_prompt"),
+                    )
                 tool_instance = self.db_func_tool
             elif tool_type == "date_parsing_tools":
                 if not self.date_parsing_tools:
@@ -478,12 +453,7 @@ class GenSQLAgenticNode(AgenticNode):
                 if not self.reference_template_tools:
                     db_tool = self.db_func_tool
                     if not db_tool:
-                        _db_manager = db_manager_instance(self.agent_config.datasource_configs)
-                        _conn = _db_manager.get_conn(
-                            self.agent_config.current_datasource, self.agent_config.current_datasource
-                        )
                         db_tool = DBFuncTool(
-                            _conn,
                             agent_config=self.agent_config,
                             sub_agent_name=self.node_config.get("system_prompt"),
                         )
@@ -1254,8 +1224,10 @@ def prepare_template_context(
     # Add datasource and workspace info
     if agent_config:
         context["agent_config"] = agent_config
-        context["datasource"] = getattr(agent_config, "current_datasource", None)
-        context["db_name"] = getattr(agent_config, "current_datasource", None)
+        from datus.utils.node_utils import build_datasource_prompt_context
+
+        context.update(build_datasource_prompt_context(agent_config))
+        context["db_name"] = context.get("datasource")
         context["workspace_root"] = workspace_root or getattr(agent_config, "project_root", None)
     logger.debug(f"Prepared template context: {context}")
     return context

@@ -123,7 +123,7 @@ class DBFuncTool:
 
     def __init__(
         self,
-        connector_or_manager: Union[BaseSqlConnector, DBManager],
+        connector_or_manager: Union[BaseSqlConnector, DBManager, None] = None,
         agent_config: Optional[AgentConfig] = None,
         *,
         default_datasource: Optional[str] = None,
@@ -135,30 +135,31 @@ class DBFuncTool:
         Initialize DBFuncTool.
 
         Args:
-            connector_or_manager: Either a single BaseSqlConnector (legacy mode)
-                                  or a DBManager (multi-connector mode)
-            agent_config: Optional agent configuration
+            connector_or_manager: A single BaseSqlConnector (legacy mode), a DBManager (multi-connector mode),
+                                  or None to auto-create a DBManager from agent_config.
+            agent_config: Agent configuration (required when connector_or_manager is None or DBManager)
             default_datasource: Default datasource for multi-datasource scenarios
             sub_agent_name: Optional sub-agent name for scoped context
             scoped_tables: Optional explicit table scope patterns
             connector_cache_size: Max connectors to cache (LRU eviction), default 8
         """
+        if connector_or_manager is None:
+            if not agent_config:
+                raise ValueError("agent_config is required when connector_or_manager is not provided")
+            connector_or_manager = db_manager_instance(agent_config.datasource_configs)
+
         # Determine mode based on input type
         if isinstance(connector_or_manager, DBManager):
             if not agent_config:
-                raise ValueError("AgentConfiguration is required when using DBManager mode")
+                raise ValueError("agent_config is required when using DBManager mode")
             self._db_manager = connector_or_manager
             self._datasource = agent_config.current_datasource
             self._default_datasource = default_datasource or (agent_config.current_datasource if agent_config else "")
-            if len(agent_config.current_db_configs()) == 1:
-                self._init_single_db_connector(self._db_manager.first_conn(self._datasource))
-            else:
-                self._datasources = list(agent_config.current_db_configs().keys()) if agent_config else []
-                self._connector_cache: OrderedDict[str, BaseSqlConnector] = OrderedDict()
-                self._connector_cache_size = connector_cache_size
-                # Get first connector for dialect detection
-                self._primary_connector = self._db_manager.first_conn(self._datasource)
-                self._is_multi_connector = True
+            self._datasources = list(agent_config.current_db_configs().keys()) if agent_config else []
+            self._connector_cache: OrderedDict[str, BaseSqlConnector] = OrderedDict()
+            self._connector_cache_size = connector_cache_size
+            self._primary_connector = self._db_manager.first_conn(self._default_datasource)
+            self._is_multi_connector = True
         else:
             self._init_single_db_connector(connector_or_manager)
 
@@ -222,15 +223,11 @@ class DBFuncTool:
         try:
             connector = self._db_manager.get_conn(db_name, db_name)
         except (KeyError, ValueError) as e:
-            if datasource:
-                raise DatusException(
-                    ErrorCode.COMMON_VALIDATION_FAILED,
-                    message=f"Datasource '{datasource}' is not configured. "
-                    f"Available datasources: {', '.join(self._datasources)}.",
-                ) from e
-            # Fallback to current datasource only for the default database (backward compatibility)
-            logger.debug(f"Falling back to datasource lookup for '{db_name}': {e}")
-            connector = self._db_manager.get_conn(self._datasource, db_name)
+            raise DatusException(
+                ErrorCode.COMMON_VALIDATION_FAILED,
+                message=f"Datasource '{db_name}' is not configured. "
+                f"Available datasources: {', '.join(self._datasources)}.",
+            ) from e
 
         # Ensure connector is connected
         if hasattr(connector, "connect"):
@@ -764,7 +761,10 @@ class DBFuncTool:
             # Only databases with installed adapters and working connections are marked available.
             db_configs = self.agent_config.current_db_configs() if self.agent_config else {}
             db_list = []
-            for name in self._datasources:
+            if datasource and datasource not in self._datasources:
+                return FuncToolResult(success=0, error=f"Datasource '{datasource}' not found. Available: {list(self._datasources)}")
+            sources = [datasource] if datasource else self._datasources
+            for name in sources:
                 if not self._database_matches_scope(catalog, name):
                     continue
                 db_type = db_configs[name].type if name in db_configs else "unknown"
