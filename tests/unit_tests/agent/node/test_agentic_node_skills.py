@@ -889,6 +889,35 @@ class TestBuiltinNodeDefaultSkills:
         assert SkillCreatorAgenticNode.DEFAULT_SKILLS == "create-skill, optimize-skill"
 
 
+class TestMergeSkillPatterns:
+    """``_merge_skill_patterns`` (base class helper for dynamic injection)."""
+
+    def test_string_plus_list_merges_with_order_preserved(self):
+        result = AgenticNode._merge_skill_patterns("tenant-*, custom-skill", ["platform-workflow", "shared-validation"])
+        assert result == "tenant-*, custom-skill, platform-workflow, shared-validation"
+
+    def test_list_plus_list_merges(self):
+        result = AgenticNode._merge_skill_patterns(["a", "b"], ["c"])
+        assert result == "a, b, c"
+
+    def test_none_existing_returns_injected_only(self):
+        result = AgenticNode._merge_skill_patterns(None, ["a", "b"])
+        assert result == "a, b"
+
+    def test_duplicates_dropped_preserving_first_occurrence(self):
+        result = AgenticNode._merge_skill_patterns("a, b", ["b", "c"])
+        assert result == "a, b, c"
+
+    def test_whitespace_and_empty_entries_stripped(self):
+        result = AgenticNode._merge_skill_patterns("  a  ,, b ", ["c"])
+        assert result == "a, b, c"
+
+    def test_non_string_list_entries_ignored(self):
+        # Existing config could be a list from yaml; filter out non-string items.
+        result = AgenticNode._merge_skill_patterns(["a", 42, None, "b"], ["c"])
+        assert result == "a, b, c"
+
+
 class TestSkillAllowedAgentsConsistency:
     """Every skill referenced by a built-in node must whitelist that node.
 

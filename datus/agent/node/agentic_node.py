@@ -913,6 +913,40 @@ class AgenticNode(Node):
         except Exception as e:
             logger.error(f"Failed to setup skill func tools: {e}")
 
+    @staticmethod
+    def _merge_skill_patterns(existing_skills: Any, injected_skills: List[str]) -> str:
+        """Merge runtime-injected skill patterns into the user's configured list.
+
+        Platform-aware subagents (``scheduler``, ``gen_dashboard``, etc.) need to
+        append a ``{platform}-*`` skill based on config without overriding the
+        user's ``skills:`` yml entry. This helper merges the two sources,
+        deduplicates, and returns the canonical comma-separated string that
+        ``_setup_skill_func_tools`` expects.
+
+        Args:
+            existing_skills: Value of ``node_config["skills"]`` — either a
+                comma-separated string, a list of patterns, or ``None``.
+            injected_skills: Skill names the subclass wants to guarantee.
+
+        Returns:
+            Comma-separated pattern string with injected skills appended after
+            the user's patterns and duplicates removed (first occurrence wins).
+        """
+        merged_patterns: List[str] = []
+
+        if isinstance(existing_skills, str):
+            merged_patterns.extend([pattern.strip() for pattern in existing_skills.split(",") if pattern.strip()])
+        elif isinstance(existing_skills, list):
+            merged_patterns.extend(
+                [pattern.strip() for pattern in existing_skills if isinstance(pattern, str) and pattern.strip()]
+            )
+
+        for skill in injected_skills:
+            if skill not in merged_patterns:
+                merged_patterns.append(skill)
+
+        return ", ".join(merged_patterns)
+
     def _setup_ask_user_tool(self):
         """Setup ask-user tool so the agent can ask clarifying questions.
 
