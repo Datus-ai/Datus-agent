@@ -236,13 +236,31 @@ class SkillManager:
         if skills:
             lines.append('To use a skill, call: load_skill(skill_name="<skill_name>")')
             lines.append(
-                "The list above is exhaustive. Only load names that appear in it. "
-                "Subagent names from the `task()` tool are NOT skill names."
+                "HARD RULES for skill references:\n"
+                "  1. The list above is EXHAUSTIVE. Only names appearing inside "
+                "``<available_skills>`` are real.\n"
+                "  2. Never invent, guess, extrapolate, or infer skill names from "
+                "naming patterns (e.g. do NOT assume ``<domain>-creation`` / "
+                "``<domain>-validation`` sibling skills exist just because one does).\n"
+                "  3. Subagent names (from the ``task()`` tool) are NOT skill names.\n"
+                "  4. Do not mention, propose, or ask the user about skill names that "
+                "are not in the list — not in ``ask_user`` prompts, not in plans, not "
+                "in explanations. If the needed skill is absent, delegate to a "
+                "subagent via ``sub_agent_tools.task(type=<subagent>, ...)`` and let "
+                "the subagent load its own skills."
             )
         else:
             lines.append(
-                "No skills are available to this agent. Do not call load_skill(). "
-                "Subagent names from the `task()` tool are NOT skill names."
+                "HARD RULES — no skills are available to this agent:\n"
+                "  1. Do NOT call ``load_skill()``. There is nothing to load.\n"
+                "  2. Do NOT mention, propose, or ask the user about any skill name "
+                "(including made-up names like ``bi-creation``, ``bi-update``, etc.) "
+                "in ``ask_user`` prompts, plans, or explanations.\n"
+                "  3. Subagent names from the ``task()`` tool are NOT skill names.\n"
+                "  4. For tasks that typically use a skill (dashboards, table "
+                "generation, migrations, metrics, etc.), delegate via "
+                "``sub_agent_tools.task(type=<subagent>, ...)``. The subagent will "
+                "load whichever skill it needs — that decision is NOT yours to make."
             )
 
         return "\n".join(lines)
