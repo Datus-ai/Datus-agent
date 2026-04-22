@@ -22,6 +22,9 @@
 /tests/semantic_models
 sql_processing_errors.log
 /conf/agent.yml
+# DuckDB runtime artifacts
+*.duckdb.wal
+*.duckdb.tmp
 /save
 uv.lock
 uv.toml
