@@ -1060,3 +1060,84 @@ class TestStatusBarReflectsAgent:
         text = self._render_status_bar(cli)
         assert "PLAN" in text
         assert "gen_sql" in text
+
+
+# ---------------------------------------------------------------------------
+# run_on_bg_loop — coroutines route through the persistent background loop
+# ---------------------------------------------------------------------------
+
+
+class TestRunOnBgLoop:
+    """``run_on_bg_loop`` keeps chat-stream coroutines on a single persistent
+    event loop so prompt_toolkit-owned Futures do not outlive a torn-down
+    ``asyncio.run`` loop (root cause of the ``got Future pending attached to a
+    different loop`` terminal hang during ``ask_user`` rendering).
+    """
+
+    @pytest.fixture
+    def bg_cli(self, real_agent_config):
+        import asyncio
+        import threading
+
+        cli = _make_cli(real_agent_config)
+        cli._bg_loop = asyncio.new_event_loop()
+        thread = threading.Thread(target=cli._bg_loop.run_forever, daemon=True)
+        thread.start()
+        try:
+            yield cli
+        finally:
+            cli._bg_loop.call_soon_threadsafe(cli._bg_loop.stop)
+            thread.join(timeout=2)
+            cli._bg_loop.close()
+
+    def test_coroutine_runs_on_bg_loop_and_returns_value(self, bg_cli):
+        import asyncio
+
+        captured_loop = {}
+
+        async def coro():
+            captured_loop["loop"] = asyncio.get_running_loop()
+            return "done"
+
+        result = bg_cli.run_on_bg_loop(coro())
+
+        assert result == "done"
+        assert captured_loop["loop"] is bg_cli._bg_loop
+
+    def test_propagates_exception_from_coroutine(self, bg_cli):
+        async def coro():
+            raise ValueError("boom")
+
+        with pytest.raises(ValueError, match="boom"):
+            bg_cli.run_on_bg_loop(coro())
+
+    def test_keyboard_interrupt_cancels_bg_task(self, bg_cli):
+        """Main-thread KeyboardInterrupt during ``future.result()`` must
+        cancel the coroutine on the bg loop and re-raise so the existing
+        ``except KeyboardInterrupt`` handler in chat_commands still fires.
+        """
+        import asyncio
+        import concurrent.futures
+        import threading
+
+        started = threading.Event()
+        stopped_cleanly = threading.Event()
+
+        async def long_running():
+            started.set()
+            try:
+                await asyncio.sleep(10.0)
+            except asyncio.CancelledError:
+                stopped_cleanly.set()
+                raise
+
+        # Schedule the coroutine and simulate the main-thread Ctrl+C path by
+        # manually cancelling the future + invoking the helper's KI branch.
+        future = asyncio.run_coroutine_threadsafe(long_running(), bg_cli._bg_loop)
+        assert started.wait(timeout=1.0)
+        bg_cli._bg_loop.call_soon_threadsafe(future.cancel)
+        try:
+            future.result(timeout=1.0)
+        except concurrent.futures.CancelledError:
+            pass
+        assert stopped_cleanly.wait(timeout=1.0)

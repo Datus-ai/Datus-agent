@@ -418,7 +418,7 @@ class ChatCommands:
                     with esc_cm as esc_guard, streaming_ctx:
                         streaming_ctx.set_input_collector(self._make_input_collector(esc_guard))
                         try:
-                            asyncio.run(run_chat_stream())
+                            self.cli.run_on_bg_loop(run_chat_stream())
                         except KeyboardInterrupt:
                             current_node.interrupt_controller.interrupt()
                             logger.info("KeyboardInterrupt caught, execution interrupted gracefully")
@@ -483,7 +483,7 @@ class ChatCommands:
 
                 with action_display.display_streaming_actions(incremental_actions):
                     try:
-                        asyncio.run(run_stream())
+                        self.cli.run_on_bg_loop(run_stream())
                     except KeyboardInterrupt:
                         current_node.interrupt_controller.interrupt()
                         logger.info("KeyboardInterrupt caught, execution interrupted gracefully")

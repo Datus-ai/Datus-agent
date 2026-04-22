@@ -75,6 +75,17 @@ class MinimalCLI:
     def _print_welcome(self):
         """No-op stand-in for the real banner printer."""
 
+    def run_on_bg_loop(self, coro):
+        """Simple synchronous stand-in for ``DatusCLI.run_on_bg_loop``.
+
+        The real implementation routes through a persistent background loop to
+        keep prompt_toolkit Futures alive across chat turns; tests don't need
+        that machinery, so we just drive the coroutine to completion.
+        """
+        import asyncio
+
+        return asyncio.run(coro)
+
 
 # ===========================================================================
 # Shared helper to capture console output
@@ -3206,6 +3217,11 @@ class MinimalCLIExtended:
 
     def prompt_input(self, message="", multiline=False, default="", **kw):
         return default
+
+    def run_on_bg_loop(self, coro):
+        import asyncio
+
+        return asyncio.run(coro)
 
 
 # ---------------------------------------------------------------------------
