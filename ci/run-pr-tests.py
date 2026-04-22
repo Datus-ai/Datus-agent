@@ -75,6 +75,8 @@ IMPACTED_TEST_MAPPING = [
     ("datus/tools/", "tests/unit_tests/tools/"),
     ("datus/utils/", "tests/unit_tests/utils/"),
     ("ci/", "tests/unit_tests/ci/"),
+    # Catch top-level datus/ changes (for example __init__.py or future shared modules)
+    # with the full unit suite as a safety net when no narrower prefix applies.
     ("datus/", "tests/unit_tests/"),
 ]
 
@@ -228,6 +230,13 @@ def _run_pytest_suite(targets, junit_xml, log_file, *, suite_name, mark_expr=Non
         reader.join()
 
     log(f"{suite_name} exited with code {exit_code}")
+    return exit_code
+
+
+def _normalize_suite_exit_code(exit_code, *, suite_name, allow_empty_collection=False):
+    if exit_code == 5 and allow_empty_collection:
+        log(f"{suite_name} collected no tests (pytest rc=5); treating as success")
+        return 0
     return exit_code
 
 
@@ -393,29 +402,33 @@ def run_tests(base_ref=""):
 
     with open(DEFAULT_PYTEST_LOG, "w", encoding="utf-8") as log_file:
         acceptance_xml = os.path.join(OUT_DIR, "test-results-acceptance.xml")
-        exit_codes.append(
-            _run_pytest_suite(
-                PR_ACCEPTANCE_TARGETS,
-                acceptance_xml,
-                log_file,
-                suite_name="acceptance",
-                mark_expr="acceptance",
-                emit_reports=not impacted_targets,
-            )
+        acceptance_rc = _run_pytest_suite(
+            PR_ACCEPTANCE_TARGETS,
+            acceptance_xml,
+            log_file,
+            suite_name="acceptance",
+            mark_expr="acceptance",
+            emit_reports=not impacted_targets,
         )
+        exit_codes.append(acceptance_rc)
         junit_xml_paths.append(acceptance_xml)
 
         if impacted_targets:
             impacted_xml = os.path.join(OUT_DIR, "test-results-impacted-unit.xml")
+            impacted_rc = _run_pytest_suite(
+                impacted_targets,
+                impacted_xml,
+                log_file,
+                suite_name="impacted unit tests",
+                mark_expr="not acceptance and not nightly",
+                append=True,
+                emit_reports=True,
+            )
             exit_codes.append(
-                _run_pytest_suite(
-                    impacted_targets,
-                    impacted_xml,
-                    log_file,
+                _normalize_suite_exit_code(
+                    impacted_rc,
                     suite_name="impacted unit tests",
-                    mark_expr="not acceptance and not nightly",
-                    append=True,
-                    emit_reports=True,
+                    allow_empty_collection=True,
                 )
             )
             junit_xml_paths.append(impacted_xml)

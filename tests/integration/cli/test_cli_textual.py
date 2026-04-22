@@ -1,3 +1,4 @@
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -24,17 +25,46 @@ def db_manager(agent_config: AgentConfig) -> DBManager:
     return db_manager_instance(agent_config.namespaces)
 
 
+@pytest.fixture
+def catalog_agent_config(agent_config: AgentConfig, tmp_path: Path) -> AgentConfig:
+    db_path = tmp_path / "california_schools.sqlite"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE schools (
+                CDSCode INTEGER PRIMARY KEY,
+                School TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO schools (CDSCode, School)
+            VALUES (1, 'Alpha High School')
+            """
+        )
+        conn.commit()
+
+    agent_config.services.datasources["bird_school"].uri = str(db_path)
+    return agent_config
+
+
+@pytest.fixture
+def catalog_db_manager(catalog_agent_config: AgentConfig) -> DBManager:
+    return DBManager(catalog_agent_config.namespaces)
+
+
 @pytest.mark.acceptance
 @pytest.mark.asyncio
-async def test_catalog_command(agent_config: AgentConfig, db_manager: DBManager):
+async def test_catalog_command(catalog_agent_config: AgentConfig, catalog_db_manager: DBManager):
     app = ContextApp(
         screen_type=ScreenType.CATALOGS,
         title="Database Catalogs",
         data={
             "db_type": DBType.SQLITE,
             "database_name": "california_schools",
-            "db_connector": db_manager.get_conn("bird_school", "california_schools"),
-            "agent_config": agent_config,
+            "db_connector": catalog_db_manager.get_conn("bird_school", "california_schools"),
+            "agent_config": catalog_agent_config,
         },
     )
     async with app.run_test() as pilot:

@@ -92,3 +92,27 @@ def test_merge_and_parse_junit_results_across_multiple_suites(tmp_path):
     assert parsed["errors"] == 1
     assert parsed["skipped"] == 1
     assert [failure["name"] for failure in parsed["failures"]] == ["test_fail", "test_error"]
+
+
+def test_run_tests_treats_empty_impacted_collection_as_success(tmp_path, monkeypatch):
+    monkeypatch.setattr(run_pr_tests, "_reset_report_outputs", lambda: None)
+    monkeypatch.setattr(run_pr_tests, "DEFAULT_PYTEST_LOG", str(tmp_path / "pytest-coverage.txt"))
+    monkeypatch.setattr(run_pr_tests, "OUT_DIR", str(tmp_path))
+    monkeypatch.setattr(run_pr_tests, "DEFAULT_COVERAGE_DB", str(tmp_path / ".coverage"))
+    monkeypatch.setattr(run_pr_tests, "resolve_impacted_unit_tests", lambda base_ref: ["tests/unit_tests/"])
+    monkeypatch.setattr(run_pr_tests, "merge_junit_results", lambda junit_xml_paths: None)
+
+    exit_codes = iter([0, 5])
+    monkeypatch.setattr(
+        run_pr_tests,
+        "_run_pytest_suite",
+        lambda *args, **kwargs: next(exit_codes),
+    )
+
+    exit_code, junit_paths = run_pr_tests.run_tests(base_ref="main")
+
+    assert exit_code == 0
+    assert junit_paths == [
+        str(tmp_path / "test-results-acceptance.xml"),
+        str(tmp_path / "test-results-impacted-unit.xml"),
+    ]
