@@ -1571,7 +1571,7 @@ class DatusCLI:
         from datus.tools.permission.permission_config import PermissionConfig
         from datus.tools.permission.profiles import PROFILE_NAMES, get_profile
 
-        current = self.active_profile
+        current = getattr(self.agent_config, "active_profile_name", self.active_profile)
         try:
             choice = _ask_profile_choice(current)
         except Exception as e:  # pragma: no cover - dialog render errors
@@ -1604,6 +1604,7 @@ class DatusCLI:
 
         # Rebuild the user rules (exclude the profile key) and preserve the
         # new profile's default unless the user explicitly set one.
+        # Mirrors build_effective_config in profiles.py. If you change one, change both.
         raw_permissions = getattr(self.agent_config, "_raw_permissions", {}) or {}
         raw_user = {k: v for k, v in raw_permissions.items() if k != "profile"}
         user_rules_cfg: Optional[PermissionConfig] = None
@@ -1615,7 +1616,14 @@ class DatusCLI:
                     **raw_user,
                     "default_permission": dp.value if hasattr(dp, "value") else dp,
                 }
-            user_rules_cfg = PermissionConfig.from_dict(raw_user)
+            try:
+                user_rules_cfg = PermissionConfig.from_dict(raw_user)
+            except Exception as e:
+                logger.warning(
+                    f"Failed to parse user permission rules for profile {choice!r}: {e}. "
+                    f"Falling back to profile base only."
+                )
+                user_rules_cfg = None
 
         new_effective = new_base.merge_with(user_rules_cfg) if user_rules_cfg else new_base
         self.agent_config.permissions_config = new_effective

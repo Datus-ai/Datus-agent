@@ -760,8 +760,7 @@ class AgentConfig:
             PermissionConfig instance. A profile is always applied, so the
             return is never ``None``.
         """
-        from datus.tools.permission.permission_config import PermissionConfig
-        from datus.tools.permission.profiles import get_profile
+        from datus.tools.permission.profiles import build_effective_config, get_profile
 
         permissions_raw = permissions_raw or {}
         # Stash a copy so /profile can rebuild effective config on switch
@@ -770,34 +769,23 @@ class AgentConfig:
         requested_profile = permissions_raw.get("profile", "normal")
 
         try:
-            base = get_profile(requested_profile)
+            get_profile(requested_profile)  # validate only; result used below
             self.active_profile_name = requested_profile
         except ValueError as e:
             logger.warning(f"Invalid profile {requested_profile!r} in agent.yml: {e}. Falling back to 'normal'.")
-            base = get_profile("normal")
             self.active_profile_name = "normal"
 
-        # Remove the ``profile`` key so PermissionConfig.from_dict only
-        # consumes ``default`` and ``rules`` as before.
+        # Remove the ``profile`` key so the helper only sees user overrides.
         user_raw = {k: v for k, v in permissions_raw.items() if k != "profile"}
-
-        user_cfg = None
-        if user_raw:
-            # Users who write ``rules:`` without a ``default`` key expect
-            # the profile's safety posture to stay intact. ``from_dict``
-            # otherwise defaults the missing key to ``allow``, and
-            # ``merge_with`` unconditionally adopts the override's
-            # default — together that silently clobbers the profile base.
-            # Inject the base default so the explicit "I want to change
-            # default" opt-in (writing ``default: <level>``) remains the
-            # only way to override.
-            if "default" not in user_raw and "default_permission" not in user_raw:
-                # base.default_permission is a plain str due to use_enum_values = True
-                dp = base.default_permission
-                user_raw = {**user_raw, "default_permission": dp.value if hasattr(dp, "value") else dp}
-            user_cfg = PermissionConfig.from_dict(user_raw)
-
-        return base.merge_with(user_cfg) if user_cfg else base
+        try:
+            return build_effective_config(self.active_profile_name, user_raw)
+        except Exception as e:
+            # Malformed user rules (bad glob, bad permission literal, etc.)
+            # previously returned None silently — now we log and fall back
+            # to the profile base, matching the invalid-profile behavior
+            # above instead of crashing the CLI on startup.
+            logger.warning(f"Invalid permissions.rules in agent.yml: {e}. Falling back to profile base only.")
+            return get_profile(self.active_profile_name)
 
     def _init_skills_config(self, skills_raw: Dict[str, Any]):
         """Initialize skills configuration.

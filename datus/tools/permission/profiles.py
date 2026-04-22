@@ -20,6 +20,8 @@ The three profiles embody three security postures:
   to the rule engine.
 """
 
+from typing import Optional
+
 from datus.tools.permission.permission_config import (
     PermissionConfig,
     PermissionLevel,
@@ -146,3 +148,44 @@ def get_profile(name: str) -> PermissionConfig:
         return _PROFILES[name]
     except KeyError as e:
         raise ValueError(f"Unknown profile {name!r}. Valid options: {', '.join(PROFILE_NAMES)}") from e
+
+
+def build_effective_config(
+    profile_name: str,
+    user_raw: Optional[dict] = None,
+) -> PermissionConfig:
+    """Build the effective permission config for a profile + user overrides.
+
+    Used by both startup config loading (``AgentConfig._init_permissions_config``)
+    and runtime profile switching (CLI ``/profile`` handler) so the
+    default-preservation invariant lives in one place.
+
+    If ``user_raw`` has no explicit ``default`` / ``default_permission``
+    key, the profile base's default is injected before ``from_dict`` parses
+    it — this prevents ``merge_with`` from silently clobbering the profile's
+    safety posture with ``PermissionConfig.from_dict``'s built-in
+    ``"allow"`` default (see spec decision #3).
+
+    Args:
+        profile_name: One of ``PROFILE_NAMES``. Raises ``ValueError`` on
+            unknown names.
+        user_raw: The raw user permissions dict (without the ``profile``
+            key). ``None`` or ``{}`` yields the bare profile base.
+
+    Returns:
+        The merged ``PermissionConfig`` ready to install on
+        ``AgentConfig.permissions_config`` and ``PermissionManager.global_config``.
+    """
+    base = get_profile(profile_name)
+    if not user_raw:
+        return base
+
+    if "default" not in user_raw and "default_permission" not in user_raw:
+        dp = base.default_permission
+        user_raw = {
+            **user_raw,
+            "default_permission": dp.value if hasattr(dp, "value") else dp,
+        }
+
+    user_cfg = PermissionConfig.from_dict(user_raw)
+    return base.merge_with(user_cfg)

@@ -137,3 +137,25 @@ def test_user_explicit_default_permission_key_also_wins():
         }
     )
     assert cfg.permissions_config.default_permission == PermissionLevel.DENY
+
+
+def test_malformed_user_rules_falls_back_to_base(caplog):
+    """Malformed permissions.rules should not crash startup — fall back
+    to profile base with a warning."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="datus.configuration.agent_config"):
+        cfg = _make_config(
+            {
+                "profile": "normal",
+                "rules": [{"tool": "db_tools", "pattern": "x", "permission": "not_a_valid_level"}],
+            }
+        )
+    # Fell back to base normal — default still ASK, rules match normal's count
+    from datus.tools.permission.profiles import NORMAL
+
+    assert cfg.permissions_config.default_permission == PermissionLevel.ASK
+    assert len(cfg.permissions_config.rules) == len(NORMAL.rules)
+    assert any(
+        "Invalid permissions.rules" in rec.message or "permissions.rules" in rec.message for rec in caplog.records
+    )

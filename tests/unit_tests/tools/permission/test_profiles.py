@@ -122,3 +122,49 @@ def _resolve(config: PermissionConfig, category: str, pattern: str) -> Permissio
         if rule.matches(category, pattern):
             result = PermissionLevel(rule.permission) if isinstance(rule.permission, str) else rule.permission
     return result
+
+
+class TestBuildEffectiveConfig:
+    def test_no_user_raw_returns_profile_base(self):
+        from datus.tools.permission.profiles import AUTO, build_effective_config
+
+        effective = build_effective_config("auto", None)
+        # Merging with None should return the base itself (identity via merge_with)
+        assert effective is AUTO or (
+            effective.default_permission == AUTO.default_permission and len(effective.rules) == len(AUTO.rules)
+        )
+
+    def test_empty_user_raw_returns_profile_base(self):
+        from datus.tools.permission.profiles import AUTO, build_effective_config
+
+        effective = build_effective_config("auto", {})
+        assert effective.default_permission == AUTO.default_permission
+
+    def test_user_rules_preserve_profile_default(self):
+        from datus.tools.permission.permission_config import PermissionLevel
+        from datus.tools.permission.profiles import build_effective_config
+
+        effective = build_effective_config(
+            "auto",
+            {"rules": [{"tool": "db_tools", "pattern": "execute_ddl", "permission": "deny"}]},
+        )
+        # Auto's default is ASK; user didn't set default, so it stays ASK
+        assert effective.default_permission == PermissionLevel.ASK
+
+    def test_user_explicit_default_wins(self):
+        from datus.tools.permission.permission_config import PermissionLevel
+        from datus.tools.permission.profiles import build_effective_config
+
+        effective = build_effective_config(
+            "normal",
+            {"default": "allow", "rules": []},
+        )
+        assert effective.default_permission == PermissionLevel.ALLOW
+
+    def test_unknown_profile_raises(self):
+        import pytest
+
+        from datus.tools.permission.profiles import build_effective_config
+
+        with pytest.raises(ValueError, match="Unknown profile"):
+            build_effective_config("yolo", {})

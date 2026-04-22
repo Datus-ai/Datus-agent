@@ -206,6 +206,7 @@ class ChatAgenticNode(AgenticNode):
             self.permission_manager = PermissionManager(
                 global_config=base_config,
                 node_overrides=self._get_node_permission_overrides(),
+                active_profile=getattr(self.agent_config, "active_profile_name", "normal"),
             )
             self.permission_manager.set_permission_callback(self._handle_permission_ask)
 

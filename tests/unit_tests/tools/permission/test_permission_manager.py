@@ -33,6 +33,12 @@ class TestPermissionManagerBasic:
         manager = PermissionManager(global_config=config, node_overrides=overrides)
         assert "chatbot" in manager.node_overrides
 
+    def test_constructor_active_profile_param_works(self):
+        from datus.tools.permission.permission_manager import PermissionManager
+
+        mgr = PermissionManager(active_profile="dangerous")
+        assert mgr.active_profile == "dangerous"
+
 
 class TestPermissionManagerCheckPermission:
     """Tests for PermissionManager.check_permission()."""
