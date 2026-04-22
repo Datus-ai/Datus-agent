@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 from rich.syntax import Syntax
 from rich.table import Table
 
+from datus.cli.cli_styles import TABLE_HEADER_STYLE, print_error, print_success, print_usage, print_warning
 from datus.cli.sub_agent_wizard import run_wizard
 from datus.schemas.agent_models import SubAgentConfig
 from datus.utils.constants import SYS_SUB_AGENTS
@@ -70,23 +71,19 @@ class SubAgentCommands:
             self._list_agents()
         elif command == "remove":
             if not cmd_args:
-                self.cli_instance.console.print(
-                    "[bold red]Error:[/] Agent name is required for remove.", style="bold red"
-                )
+                print_error(self.cli_instance.console, "Agent name is required for remove.")
                 return
             self._remove_agent(cmd_args[0])
         elif command == "update":
             if not cmd_args:
-                self.cli_instance.console.print(
-                    "[bold red]Error:[/] Agent name is required for update.", style="bold red"
-                )
+                print_error(self.cli_instance.console, "Agent name is required for update.")
                 return
             self._cmd_update_agent(cmd_args[0])
         else:
             self._show_help()
 
     def _show_help(self):
-        self.cli_instance.console.print("Usage: /subagent [add|list|remove|update] [args]", style="bold cyan")
+        print_usage(self.cli_instance.console, "/subagent [add|list|remove|update] [args]")
         self.cli_instance.console.print(" - [bold]add[/]: Launch the interactive wizard to add a new agent.")
         self.cli_instance.console.print(" - [bold]list[/]: List all configured sub-agents.")
         self.cli_instance.console.print(" - [bold]remove <agent_name>[/]: Remove a configured sub-agent.")
@@ -98,13 +95,11 @@ class SubAgentCommands:
 
     def _cmd_update_agent(self, sub_agent_name):
         if sub_agent_name in SYS_SUB_AGENTS:
-            self.cli_instance.console.print(
-                f"[bold red]Error:[/] System sub-agent '[cyan]{sub_agent_name}[/]' cannot be modified."
-            )
+            print_error(self.cli_instance.console, f"System sub-agent '{sub_agent_name}' cannot be modified.")
             return
         existing = self.sub_agent_manager.get_agent(sub_agent_name)
         if existing is None:
-            self.cli_instance.console.print("[bold red]Error:[/] Agent not found.")
+            print_error(self.cli_instance.console, "Agent not found.")
             return
         self._do_update_agent(existing, original_name=sub_agent_name)
 
@@ -112,7 +107,7 @@ class SubAgentCommands:
         """Lists all configured sub-agents from agent.yml."""
         agents = self.sub_agent_manager.list_agents()
         if not agents:
-            self.cli_instance.console.print("No sub-agents configured.", style="yellow")
+            print_warning(self.cli_instance.console, "No sub-agents configured.")
             return
         show_agents: List[SubAgentConfig] = []
         # filter by namespace
@@ -124,7 +119,7 @@ class SubAgentCommands:
             ):
                 show_agents.append(agent)
 
-        table = Table(title="Configured Sub-Agents")
+        table = Table(title="Configured Sub-Agents", header_style=TABLE_HEADER_STYLE)
         table.add_column("Name", style="cyan", no_wrap=True)
         table.add_column("Scoped Context", style="cyan", min_width=20, max_width=60)
         table.add_column("Scoped KB", style="green", min_width=20, max_width=80)
@@ -173,43 +168,35 @@ class SubAgentCommands:
     def _remove_agent(self, agent_name: str):
         """Removes a sub-agent's configuration from agent.yml."""
         if agent_name in SYS_SUB_AGENTS:
-            self.cli_instance.console.print(
-                f"[bold red]Error:[/] System sub-agent '[cyan]{agent_name}[/]' cannot be removed."
-            )
+            print_error(self.cli_instance.console, f"System sub-agent '{agent_name}' cannot be removed.")
             return
         removed = False
         try:
             removed = self.sub_agent_manager.remove_agent(agent_name)
         except Exception as exc:
-            self.cli_instance.console.print(f"[bold red]Error removing agent:[/] {exc}")
+            print_error(self.cli_instance.console, f"Error removing agent: {exc}", prefix=False)
             logger.error("Failed to remove agent '%s': %s", agent_name, exc)
             return
         if not removed:
-            self.cli_instance.console.print(
-                f"[bold red]Error:[/] Agent '[bold cyan]{agent_name}[/]' not found.", style="bold red"
-            )
+            print_error(self.cli_instance.console, f"Agent '{agent_name}' not found.")
             return
-        self.cli_instance.console.print(f"- Removed agent '[bold green]{agent_name}[/]' from configuration.")
+        print_success(self.cli_instance.console, f"- Removed agent '{agent_name}' from configuration.")
         self._refresh_agent_config()
 
     def _do_update_agent(
         self, data: Optional[Union[SubAgentConfig, Dict[str, Any]]] = None, original_name: Optional[str] = None
     ):
         if original_name and original_name in SYS_SUB_AGENTS:
-            self.cli_instance.console.print(
-                f"[bold red]Error:[/] System sub-agent '[cyan]{original_name}[/]' cannot be modified."
-            )
+            print_error(self.cli_instance.console, f"System sub-agent '{original_name}' cannot be modified.")
             return
         try:
             result = run_wizard(self.cli_instance, data)
         except Exception as e:
-            self.cli_instance.console.print(f"[bold red]An error occurred while running the wizard:[/] {e}")
+            print_error(self.cli_instance.console, f"An error occurred while running the wizard: {e}", prefix=False)
             logger.error(f"Sub-agent wizard failed: {e}")
             return
         if result is None:
-            self.cli_instance.console.print(
-                f"Agent cancelled {'creation' if not data else 'modification'}.", style="yellow"
-            )
+            print_warning(self.cli_instance.console, f"Agent cancelled {'creation' if not data else 'modification'}.")
             return
         if original_name is None and data is not None:
             if isinstance(data, SubAgentConfig):
@@ -218,21 +205,22 @@ class SubAgentCommands:
                 original_name = data.get("system_prompt")
         agent_name = result.system_prompt
         if agent_name in SYS_SUB_AGENTS:
-            self.cli_instance.console.print(
-                f"[bold red]Error:[/] '{agent_name}' is reserved for built-in sub-agents and cannot be used."
+            print_error(
+                self.cli_instance.console,
+                f"'{agent_name}' is reserved for built-in sub-agents and cannot be used.",
             )
             return
         try:
             save_result = self.sub_agent_manager.save_agent(result, previous_name=original_name)
         except Exception as exc:
-            self.cli_instance.console.print(f"[bold red]Failed to persist sub-agent:[/] {exc}")
+            print_error(self.cli_instance.console, f"Failed to persist sub-agent: {exc}", prefix=False)
             logger.error("Failed to persist sub-agent '%s': %s", agent_name, exc)
             return
         changed = save_result.get("changed", True)
         kb_action = save_result.get("kb_action")
 
         if not changed:
-            self.cli_instance.console.print("[yellow]No changes detected; skipping save.[/]")
+            print_warning(self.cli_instance.console, "No changes detected; skipping save.")
             return
 
         self._refresh_agent_config()
@@ -244,10 +232,9 @@ class SubAgentCommands:
         if prompt_path:
             self.cli_instance.console.print(f"- Created prompt template: [cyan]{prompt_path}[/]")
         if kb_action == "cleared":
-            self.cli_instance.console.print(
-                "- Cleared scoped knowledge base for previous configuration.", style="yellow"
-            )
+            print_warning(self.cli_instance.console, "- Cleared scoped knowledge base for previous configuration.")
 
-        self.cli_instance.console.print(
-            f"[bold green]Sub-agent {agent_name} {'created' if not data else 'modified'} successfully.[/]"
+        print_success(
+            self.cli_instance.console,
+            f"Sub-agent {agent_name} {'created' if not data else 'modified'} successfully.",
         )

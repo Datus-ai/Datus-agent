@@ -12,6 +12,16 @@ from typing import TYPE_CHECKING, Any, Dict, List
 
 from rich.table import Table
 
+from datus.cli.cli_styles import (
+    TABLE_HEADER_STYLE,
+    print_empty_set,
+    print_error,
+    print_info,
+    print_status,
+    print_success,
+    print_usage,
+    print_warning,
+)
 from datus.cli.screen.mcp_screen import MCPServerApp
 from datus.tools.mcp_tools import MCPTool, parse_command_string
 from datus.utils.loggings import get_logger
@@ -45,28 +55,28 @@ class MCPCommands:
         elif args.startswith("filter"):
             self.cmd_mcp_filter(args[6:].strip())
         else:
-            self.console.print("[red]Invalid MCP command[/red]")
+            print_error(self.console, "Invalid MCP command", prefix=False)
 
     def cmd_mcp_list(self):
         mcp_servers = self.mcp_tool.list_servers()
         if not mcp_servers.success:
-            self.console.print(f"[bold red]Error listing MCP servers:[/] {mcp_servers.message}")
+            print_error(self.console, f"Error listing MCP servers: {mcp_servers.message}")
             return
         if not mcp_servers.result:
-            self.console.print("[bold yellow]No MCP servers found[/]")
+            print_empty_set(self.console, "No MCP servers found")
             return
         servers = mcp_servers.result["servers"]
         try:
             screen = MCPServerApp(servers, self.mcp_tool)
             screen.run()
         except Exception as e:
-            self.console.print(f"[yellow]Interactive mode error: {str(e)}[/yellow]")
-            self.console.print("[dim]Falling back to table display mode...[/dim]")
+            print_warning(self.console, f"Interactive mode error: {str(e)}")
+            print_info(self.console, "Falling back to table display mode...")
             self._display_servers_table(servers)
 
     def _display_servers_table(self, servers: List[Dict[str, Any]]):
         """Display servers in a formatted table."""
-        table = Table(title="MCP Servers")
+        table = Table(title="MCP Servers", header_style=TABLE_HEADER_STYLE)
         table.add_column("Name", style="cyan")
         table.add_column("Status", style="cyan")
         table.add_column("Type", style="magenta")
@@ -96,31 +106,31 @@ class MCPCommands:
             result = self.mcp_tool.add_server(name=server_name, type=transport_type, **config_params)
 
             if result.success:
-                self.console.print(f"[bold green]Successfully added MCP server: {server_name}[/]")
+                print_success(self.console, f"Successfully added MCP server: {server_name}", symbol=True)
                 self.console.print(f"Type: {transport_type}")
             else:
-                self.console.print(f"[bold red]Error adding MCP server: {result.message}[/]")
+                print_error(self.console, f"Error adding MCP server: {result.message}")
 
         except Exception as e:
             logger.error(f"Error in cmd_mcp_add: {e}")
-            self.console.print(f"[red]Error: {str(e)}[/red]")
+            print_error(self.console, str(e))
 
     def cmd_mcp_remove(self, args: str):
         """Remove an MCP configuration."""
         server_name = args.strip()
         if not server_name:
-            self.console.print("[red]Please specify the name of the MCP server to remove[/red]")
+            print_error(self.console, "Please specify the name of the MCP server to remove", prefix=False)
             return
         remove_result = self.mcp_tool.remove_server(server_name)
         if remove_result.success:
-            self.console.print(f"[bold green]Successfully removed MCP server: {server_name}[/]")
+            print_success(self.console, f"Successfully removed MCP server: {server_name}", symbol=True)
         else:
-            self.console.print(f"[bold red]Error removing MCP server: {remove_result.message}[/]")
+            print_error(self.console, f"Error removing MCP server: {remove_result.message}")
 
     def cmd_mcp_check(self, args: str):
         server_name = args.strip()
         if not server_name:
-            self.console.print("[red]Please specify the name of the MCP server to check[/red]")
+            print_error(self.console, "Please specify the name of the MCP server to check", prefix=False)
             return
 
         result = self.mcp_tool.check_connectivity(server_name)
@@ -130,23 +140,23 @@ class MCPCommands:
             details = result.result.get("details", {})
 
             if connectivity:
-                self.console.print(f"[green]✓ Server '{server_name}' is reachable[/green]")
+                print_status(self.console, f"Server '{server_name}' is reachable", ok=True)
                 self.console.print(f"  Type: {details.get('type', 'unknown')}")
                 if "tools_count" in details:
                     self.console.print(f"  Available tools: {details['tools_count']}")
             else:
-                self.console.print(f"[red]✗ Server '{server_name}' is not reachable[/red]")
+                print_status(self.console, f"Server '{server_name}' is not reachable", ok=False)
                 if "error" in details:
                     self.console.print(f"  Error: {details['error']}")
         else:
-            self.console.print(f"[red]✗ Error: {result.message}[/red]")
+            print_status(self.console, f"Error: {result.message}", ok=False)
 
     def cmd_call_tool(self, args: str):
         """Call a tool on a MCP server."""
         params = args.strip().split()
         server_tool = params[0].split(".")
         if len(server_tool) != 2:
-            self.console.print("[bold red]Invalid server.tool format[/]")
+            print_error(self.console, "Invalid server.tool format")
             return
         server_name, tool_name = server_tool
         tool_params = None
@@ -156,17 +166,15 @@ class MCPCommands:
                 try:
                     tool_params = json.loads(arguments)
                 except Exception as e:
-                    self.console.print(
-                        f"[bold red]The parameters for calling the tool should be in json format: {e}[/]"
-                    )
+                    print_error(self.console, f"The parameters for calling the tool should be in json format: {e}")
                     return
         # parse arguments to dict
         result = self.mcp_tool.call_tool(server_name, tool_name, tool_params)
         if not result.success:
-            self.console.print(f"[bold red]Error calling tool: {result.message}[/]")
+            print_error(self.console, f"Error calling tool: {result.message}")
             return
         if not (result := result.result["result"]):
-            self.console.print("[bold yellow]No result returned[/]")
+            print_empty_set(self.console, "No result returned")
             return
         if isinstance(result, str):
             try:
@@ -178,7 +186,7 @@ class MCPCommands:
             self.console.print(result)
             return
         if result.get("isError") or False:
-            self.console.print("[bold red]Call Tool Error:[/]", result["content"])
+            print_error(self.console, f"Call Tool Error: {result['content']}")
             return
 
         self.console.print(result)
@@ -192,15 +200,15 @@ class MCPCommands:
         elif args.startswith("remove"):
             self.cmd_mcp_filter_remove(args[6:].strip())
         else:
-            self.console.print("[red]Invalid filter command. Use: set, get, or remove[/red]")
+            print_error(self.console, "Invalid filter command. Use: set, get, or remove", prefix=False)
 
     def cmd_mcp_filter_set(self, args: str):
         """Set tool filter for a server."""
         params = args.strip().split()
         if len(params) < 2:
-            self.console.print(
-                "[red]Usage: /mcp filter set <server_name> [--allowed tool1,tool2] "
-                "[--blocked tool3,tool4] [--enabled true/false][/red]"
+            print_usage(
+                self.console,
+                "/mcp filter set <server_name> [--allowed tool1,tool2] [--blocked tool3,tool4] [--enabled true/false]",
             )
             return
 
@@ -228,20 +236,20 @@ class MCPCommands:
         )
 
         if result.success:
-            self.console.print(f"[green]✓ Tool filter set for server '{server_name}'[/green]")
+            print_status(self.console, f"Tool filter set for server '{server_name}'", ok=True)
             if allowed_tools:
                 self.console.print(f"  Allowed tools: {', '.join(allowed_tools)}")
             if blocked_tools:
                 self.console.print(f"  Blocked tools: {', '.join(blocked_tools)}")
             self.console.print(f"  Filter enabled: {enabled}")
         else:
-            self.console.print(f"[red]✗ Error setting tool filter: {result.message}[/red]")
+            print_status(self.console, f"Error setting tool filter: {result.message}", ok=False)
 
     def cmd_mcp_filter_get(self, args: str):
         """Get tool filter configuration for a server."""
         server_name = args.strip()
         if not server_name:
-            self.console.print("[red]Please specify the name of the MCP server[/red]")
+            print_error(self.console, "Please specify the name of the MCP server", prefix=False)
             return
 
         result = self.mcp_tool.get_tool_filter(server_name)
@@ -263,20 +271,20 @@ class MCPCommands:
                 if not allowed and not blocked:
                     self.console.print("  No specific tools configured")
             else:
-                self.console.print(f"[yellow]No tool filter configured for server '{server_name}'[/yellow]")
+                print_warning(self.console, f"No tool filter configured for server '{server_name}'")
         else:
-            self.console.print(f"[red]✗ Error getting tool filter: {result.message}[/red]")
+            print_status(self.console, f"Error getting tool filter: {result.message}", ok=False)
 
     def cmd_mcp_filter_remove(self, args: str):
         """Remove tool filter for a server."""
         server_name = args.strip()
         if not server_name:
-            self.console.print("[red]Please specify the name of the MCP server[/red]")
+            print_error(self.console, "Please specify the name of the MCP server", prefix=False)
             return
 
         result = self.mcp_tool.remove_tool_filter(server_name)
 
         if result.success:
-            self.console.print(f"[green]✓ Tool filter removed for server '{server_name}'[/green]")
+            print_status(self.console, f"Tool filter removed for server '{server_name}'", ok=True)
         else:
-            self.console.print(f"[red]✗ Error removing tool filter: {result.message}[/red]")
+            print_status(self.console, f"Error removing tool filter: {result.message}", ok=False)

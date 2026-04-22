@@ -40,6 +40,7 @@ from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.widgets import TextArea
 from rich.console import Console
 
+from datus.cli.cli_styles import CLR_CURRENT, CLR_CURSOR, SYM_ARROW
 from datus.configuration.agent_config import AgentConfig, ProviderConfig
 from datus.utils.loggings import get_logger
 
@@ -425,7 +426,7 @@ class ModelApp:
         for i in range(start, end):
             label, style = items[i]
             if i == self._list_cursor:
-                lines.append((f"{style} reverse" if style else "reverse", f"  \u2192 {label}\n"))
+                lines.append((CLR_CURSOR, f"  {SYM_ARROW} {label}\n"))
             else:
                 lines.append((style, f"    {label}\n"))
         return lines
@@ -513,9 +514,15 @@ class ModelApp:
             # "configured" pairs better with dim styling for unconfigured.
             status = "\u2713" if self._availability.get(name) else "[needs setup]"
             label = f"{_display_name(name)}{suffix}  {status}"
-            if name == self._current_provider:
+            is_current = name == self._current_provider
+            if is_current:
                 label += "  \u2190 current"
-            style = "" if self._availability.get(name) else "class:model-app.dim"
+            if not self._availability.get(name):
+                style = "class:model-app.dim"
+            elif is_current:
+                style = CLR_CURRENT
+            else:
+                style = ""
             out.append((label, style))
         return out
 
@@ -524,9 +531,10 @@ class ModelApp:
         out: List[Tuple[str, str]] = []
         for model in self._provider_models:
             label = model
-            if provider == self._current_provider and model == self._current_model:
+            is_current = provider == self._current_provider and model == self._current_model
+            if is_current:
                 label += "  \u2190 current"
-            out.append((label, ""))
+            out.append((label, CLR_CURRENT if is_current else ""))
         return out
 
     def _custom_items(self) -> List[Tuple[str, str]]:
@@ -536,9 +544,10 @@ class ModelApp:
             cfg = models_map.get(name)
             desc = f"  [{cfg.type}/{cfg.model}]" if cfg is not None else ""
             label = f"{name}{desc}"
-            if name == self._current_custom:
+            is_current = name == self._current_custom
+            if is_current:
                 label += "  \u2190 current"
-            out.append((label, ""))
+            out.append((label, CLR_CURRENT if is_current else ""))
         out.append(("+ Add model\u2026", "class:model-app.accent"))
         return out
 

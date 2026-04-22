@@ -99,12 +99,14 @@ class TestRenderList:
         for code in LANGUAGE_CHOICES:
             assert code in text
 
-    def test_selected_item_uses_reverse_style(self):
+    def test_selected_item_uses_cursor_style(self):
+        from datus.cli.cli_styles import CLR_CURSOR
+
         app = LanguageApp(console=None)
         app._lang_idx = 1
         lines = app._render_list()
         styles = [style for style, _content in lines]
-        assert "reverse" in styles[1]
+        assert styles[1] == CLR_CURSOR
 
     def test_current_language_shows_arrow_marker(self):
         app = LanguageApp(console=None, current_language="zh")

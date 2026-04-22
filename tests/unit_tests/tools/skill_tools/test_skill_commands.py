@@ -217,7 +217,7 @@ class TestSkillCommandsInstall:
             cmds.cmd_skill_install("test-skill")
             mock_mgr.return_value.install_from_marketplace.assert_called_once_with("test-skill", "latest")
             printed_text = str(cli.console.print.call_args_list)
-            assert "Success" in printed_text, "Successful install should print success message"
+            assert "Installed ok" in printed_text, "Successful install should print success message"
 
     def test_install_failure(self):
         from datus.cli.skill_commands import SkillCommands
@@ -263,7 +263,7 @@ class TestSkillCommandsPublish:
             cmds.cmd_skill_publish("/some/path")
             mock_mgr.return_value.publish_to_marketplace.assert_called_once_with("/some/path", owner="")
             printed_text = str(cli.console.print.call_args_list)
-            assert "Success" in printed_text, "Successful publish should print success message"
+            assert "Published" in printed_text, "Successful publish should print success message"
 
     def test_publish_with_owner(self):
         from datus.cli.skill_commands import SkillCommands

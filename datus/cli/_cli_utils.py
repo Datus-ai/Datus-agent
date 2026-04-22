@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 from prompt_toolkit.styles import Style
 from rich.console import Console
 
+from datus.cli.cli_styles import CLR_CURRENT, CLR_CURSOR, SYM_ARROW, print_error, print_warning
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -18,6 +19,7 @@ def select_choice(
     choices: Dict[str, str],
     default: str = "",
     allow_free_text: bool = False,
+    current: str = "",
 ) -> str:
     """Interactive choice selector with arrow-key navigation.
 
@@ -35,6 +37,8 @@ def select_choice(
                  e.g. {"y": "Allow (once)", "a": "Always allow (session)", "n": "Deny"}
         default: Default choice key (pre-selected on start)
         allow_free_text: When True, append a free-text option and allow ``/`` shortcut.
+        current: Key of the currently active value. Highlighted with ``CLR_CURRENT``
+                 and suffixed with ``(current)``.
 
     Returns:
         Selected choice key string, or the user's free-text input.
@@ -131,14 +135,19 @@ def select_choice(
             for i in range(offset[0], visible_end):
                 key, display = items[i]
                 is_sel = i == selected[0]
+                is_current = key == current and key != _FREE_TEXT_SENTINEL
                 if key == _FREE_TEXT_SENTINEL:
                     label = f"  [/] {display}"
                 elif key == display:
-                    label = f"  {display}"
+                    suffix = " (current)" if is_current else ""
+                    label = f"  {display}{suffix}"
                 else:
-                    label = f"  [{key}] {display}"
+                    suffix = " (current)" if is_current else ""
+                    label = f"  [{key}] {display}{suffix}"
                 if is_sel:
-                    lines.append(("ansicyan bold", f"  \u2192{label}\n"))
+                    lines.append((CLR_CURSOR, f"  {SYM_ARROW}{label}\n"))
+                elif is_current:
+                    lines.append((CLR_CURRENT, f"    {label}\n"))
                 else:
                     lines.append(("", f"    {label}\n"))
             return lines
@@ -159,11 +168,11 @@ def select_choice(
         return result
 
     except (KeyboardInterrupt, EOFError):
-        console.print("\n[yellow]Input cancelled[/]")
+        print_warning(console, "\nInput cancelled")
         return default
     except Exception as e:
         logger.error(f"Interactive select error: {e}")
-        console.print(f"[bold red]Selection error:[/] {str(e)}")
+        print_error(console, f"Selection error: {str(e)}")
         return default
 
 
@@ -290,17 +299,13 @@ def select_multi_choice(
                 is_cur = i == cursor[0]
                 if key == _FREE_TEXT_SENTINEL:
                     label = f"  [/] {display}"
-                    if is_cur:
-                        lines.append(("ansicyan bold", f"  \u2192{label}\n"))
-                    else:
-                        lines.append(("", f"    {label}\n"))
                 else:
                     mark = "\u2713" if key in checked else " "
                     label = f"  [{mark}] {display}"
-                    if is_cur:
-                        lines.append(("ansicyan bold", f"  \u2192{label}\n"))
-                    else:
-                        lines.append(("", f"    {label}\n"))
+                if is_cur:
+                    lines.append((CLR_CURSOR, f"    {label}\n"))
+                else:
+                    lines.append(("", f"    {label}\n"))
             lines.append(("ansibrightblack", "  [Space] toggle  [a] all  [Enter] confirm\n"))
             return lines
 
@@ -323,11 +328,11 @@ def select_multi_choice(
         return result
 
     except (KeyboardInterrupt, EOFError):
-        console.print("\n[yellow]Input cancelled[/]")
+        print_warning(console, "\nInput cancelled")
         return []
     except Exception as e:
         logger.error(f"Interactive multi-select error: {e}")
-        console.print(f"[bold red]Multi-select error:[/] {str(e)}")
+        print_error(console, f"Multi-select error: {str(e)}")
         return []
 
 
@@ -454,8 +459,8 @@ def select_list(
 
                 is_sel = i == selected[0]
                 if is_sel:
-                    lines.append(("ansicyan bold", f"  \u2192 {primary}\n"))
-                    lines.append(("ansicyan", f"      {secondary}\n"))
+                    lines.append((CLR_CURSOR, f"  {SYM_ARROW} {primary}\n"))
+                    lines.append((CLR_CURSOR, f"      {secondary}\n"))
                 else:
                     lines.append(("", f"    {primary}\n"))
                     lines.append(("ansibrightblack", f"      {secondary}\n"))
@@ -475,11 +480,11 @@ def select_list(
         return app.run()
 
     except (KeyboardInterrupt, EOFError):
-        console.print("\n[yellow]Selection cancelled.[/]")
+        print_warning(console, "\nSelection cancelled.")
         return None
     except Exception as e:
         logger.error(f"Interactive list error: {e}")
-        console.print(f"[bold red]List selection error:[/] {str(e)}")
+        print_error(console, f"List selection error: {str(e)}")
         return None
 
 
@@ -573,11 +578,11 @@ def prompt_input(
         if allow_interrupt:
             raise
         # Handle Ctrl+C or Ctrl+D gracefully
-        console.print("\n[yellow]Input cancelled[/]")
+        print_warning(console, "\nInput cancelled")
         return default
     except Exception as e:
         logger.error(f"Input prompt error: {e}")
-        console.print(f"[bold red]Input error:[/] {str(e)}")
+        print_error(console, f"Input error: {str(e)}")
         return default
 
 

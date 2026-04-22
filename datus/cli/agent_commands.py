@@ -70,7 +70,7 @@ class AgentCommands:
             if not sql_task:
                 return None
         except ValueError as e:
-            self.console.print(f"[bold red]Error:[/] {str(e)}")
+            self.console.print(f"[red]Error:[/] {str(e)}")
             return None
 
         if node_type == NodeType.TYPE_SCHEMA_LINKING:
@@ -110,7 +110,7 @@ class AgentCommands:
         elif node_type == NodeType.TYPE_FIX:
             last_sql = self.cli_context.get_last_sql()
             if not last_sql:
-                self.console.print("[bold red]Error:[/] No recent SQL to fix")
+                self.console.print("[red]Error:[/] No recent SQL to fix")
                 return None
             fix_description = self.cli.prompt_input("Describe the issue to fix", default="")
             return ExecuteSQLInput(
@@ -131,7 +131,7 @@ class AgentCommands:
         elif node_type == NodeType.TYPE_COMPARE:
             expectation = self.cli.prompt_input("Enter expectation (SQL query or expected data format)", default="")
             if not expectation.strip():
-                self.console.print("[bold red]Error:[/] Expectation cannot be empty")
+                self.console.print("[red]Error:[/] Expectation cannot be empty")
                 return None
             return CompareInput(
                 sql_context=self.cli_context.get_last_sql_context(), expectation=expectation, sql_task=sql_task
@@ -168,7 +168,7 @@ class AgentCommands:
             return result
 
         except Exception as e:
-            self.console.print(f"[bold red]Error running {node_type} node:[/] {str(e)}")
+            self.console.print(f"[red]Error running {node_type} node:[/] {str(e)}")
             logger.error(f"Error in standalone node execution: {e}")
             return None
 
@@ -190,13 +190,13 @@ class AgentCommands:
                 self.agent_thread.join(timeout=1)
                 if self.agent_thread.is_alive():
                     self.console.print(
-                        "[bold red]Warning: preious Agent thread is still running, attempting to terminate...[/]"
+                        "[red]Warning: preious Agent thread is still running, attempting to terminate...[/]"
                     )
                     self.agent_thread._stop()
                 self.agent_thread = None
 
             if not self.cli.check_agent_available():
-                self.console.print("[bold red]Error:[/] Agent not available")
+                self.console.print("[red]Error:[/] Agent not available")
                 return
             runner = self.cli.workflow_runner
 
@@ -225,7 +225,7 @@ class AgentCommands:
                 time.sleep(1)
 
             if not runner.workflow_ready or not runner.workflow:
-                self.console.print("[bold red]Failed to initialize workflow[/]")
+                self.console.print("[red]Failed to initialize workflow[/]")
                 self.darun_is_running = False
                 return
 
@@ -238,11 +238,11 @@ class AgentCommands:
             if agent_done.is_set():
                 self.darun_is_running = False
                 if runner.is_complete():
-                    self.console.print("[bold green]Query Result:[/]")
+                    self.console.print("[green]Query Result:[/]")
                     final_result = result_holder["result"] or runner.workflow.get_final_result()
                     self.console.print(final_result)
                 else:
-                    self.console.print(f"[bold red]Query is not complete: {runner.workflow.status}[/]")
+                    self.console.print(f"[red]Query is not complete: {runner.workflow.status}[/]")
             else:
                 self.console.print("[bold yellow]Agent is still running...[/]")
                 # thread.join()
@@ -250,7 +250,7 @@ class AgentCommands:
 
         except Exception as e:
             logger.error(f"Agent query error: {str(e)}")
-            self.console.print(f"[bold red]Error:[/] {str(e)}")
+            self.console.print(f"[red]Error:[/] {str(e)}")
 
     def _gen_sql_task(self, args: str, use_existing: bool = True):
         """Generate a SQL task from the user input, optionally reusing existing task."""
@@ -283,7 +283,7 @@ class AgentCommands:
                 default_task = self.cli_context.current_sql_task.task if self.cli_context.current_sql_task else ""
                 task_description = self.cli.prompt_input("Enter task description", default=default_task)
                 if not task_description.strip():
-                    self.console.print("[bold red]Error:[/] Task description is required")
+                    self.console.print("[red]Error:[/] Task description is required")
                     return
 
                 # Database name - use CLI context as default
@@ -294,7 +294,7 @@ class AgentCommands:
                 )
                 database_name = self.cli.prompt_input("Enter database name", default=default_db)
                 if not database_name.strip():
-                    self.console.print("[bold red]Error:[/] Database name is required")
+                    self.console.print("[red]Error:[/] Database name is required")
                     return
 
                 # Output directory - use agent config
@@ -325,7 +325,7 @@ class AgentCommands:
             return sql_task
         except Exception as e:
             logger.error(f"Failed to create SQL task: {str(e)}")
-            self.console.print(f"[bold red]Error:[/] {str(e)}")
+            self.console.print(f"[red]Error:[/] {str(e)}")
             return None
 
     def cmd_dastart(self, args: str = ""):
@@ -350,19 +350,19 @@ class AgentCommands:
             )
 
             if not workflow:
-                self.console.print("[bold red]Error:[/] Failed to create workflow")
+                self.console.print("[red]Error:[/] Failed to create workflow")
                 return
 
             # 3. Setup basic context
             workflow.task = sql_task
             workflow.status = "running"
 
-            self.console.print(f"[bold green]Started new agent session (ID: {sql_task.id})[/]")
+            self.console.print(f"[green]Started new agent session (ID: {sql_task.id})[/]")
             # self.console.print(f"[dim]Next node: {workflow.get_current_node().type}[/]")
 
         except Exception as e:
             logger.error(f"Failed to start agent session: {str(e)}")
-            self.console.print(f"[bold red]Error:[/] {str(e)}")
+            self.console.print(f"[red]Error:[/] {str(e)}")
 
     def cmd_schema_linking(self, args: str):
         """
@@ -371,7 +371,7 @@ class AgentCommands:
         self.console.print("[bold blue]Schema Linking[/]")
         input_text = args.strip() or self.cli.prompt_input("Enter search text for tables")
         if not input_text:
-            self.console.print("[bold red]Error:[/] Input text cannot be empty.")
+            self.console.print("[red]Error:[/] Input text cannot be empty.")
             return
 
         catalog_name, database_name, schema_name = self._prompt_db_layers()
@@ -381,7 +381,7 @@ class AgentCommands:
         # The PDF mentions table_type, but the tool implementation has it fixed to "full".
         # I will omit prompting for it as it won't be used.
 
-        with self.console.status("[bold green]Searching for relevant tables...[/]"):
+        with self.console.status("[green]Searching for relevant tables...[/]"):
             from datus.storage.schema_metadata import SchemaWithValueRAG
 
             schema_rag = SchemaWithValueRAG(self.cli.agent_config)
@@ -395,7 +395,7 @@ class AgentCommands:
 
         if metadata.num_rows > 0 or sample_data.num_rows > 0:
             self.console.print(
-                f"Found [bold green]{len(metadata)}[/] relevant tables and [bold blue]{len(sample_data)}[/] sample rows"
+                f"Found [green]{len(metadata)}[/] relevant tables and [bold blue]{len(sample_data)}[/] sample rows"
             )
 
             if metadata.num_rows > 0:
@@ -461,12 +461,12 @@ class AgentCommands:
         self.console.print("[bold blue]Search Metrics[/]")
         input_text = args.strip() or self.cli.prompt_input("Enter search text for metrics")
         if not input_text:
-            self.console.print("[bold red]Error:[/] Input text cannot be empty.")
+            self.console.print("[red]Error:[/] Input text cannot be empty.")
             return
         subject_path = self._prompt_subject_path()
         top_n = self.cli.prompt_input("Enter top_n to match", default="5")
 
-        with self.console.status("[bold green]Searching for metrics...[/]"):
+        with self.console.status("[green]Searching for metrics...[/]"):
             result = self.context_search_tools.search_metrics(
                 query_text=input_text,
                 subject_path=subject_path,
@@ -474,7 +474,7 @@ class AgentCommands:
             )
         if result.success and result.result:
             metrics = result.result
-            self.console.print(f"[bold green]Found {len(metrics)} metrics.[/]")
+            self.console.print(f"[green]Found {len(metrics)} metrics.[/]")
             table = Table(
                 title="Metrics Search Results",
                 show_header=True,
@@ -492,7 +492,7 @@ class AgentCommands:
                 )
             self.console.print(table)
         elif not result.success:
-            self.console.print(f"[bold red]Error searching metrics:[/] {result.error}")
+            self.console.print(f"[red]Error searching metrics:[/] {result.error}")
         else:
             self.console.print("[yellow]No metrics found.[/]")
 
@@ -516,12 +516,12 @@ class AgentCommands:
         self.console.print("[bold blue]Search Reference SQL[/]")
         input_text = args.strip() or self.cli.prompt_input("Enter search text for reference SQL")
         if not input_text:
-            self.console.print("[bold red]Error:[/] Input text cannot be empty.")
+            self.console.print("[red]Error:[/] Input text cannot be empty.")
             return
 
         subject_path = self._prompt_subject_path()
         top_n = self.cli.prompt_input("Enter top_n to match", default="5")
-        with self.console.status("[bold green]Searching reference SQL...[/]"):
+        with self.console.status("[green]Searching reference SQL...[/]"):
             result = self.context_search_tools.search_reference_sql(
                 query_text=input_text, subject_path=subject_path, top_n=int(top_n.strip())
             )
@@ -560,7 +560,7 @@ class AgentCommands:
                 )
             self.console.print(table)
         elif not result.success:
-            self.console.print(f"[bold red]Error searching reference SQL:[/] {result.error}")
+            self.console.print(f"[red]Error searching reference SQL:[/] {result.error}")
         else:
             self.console.print("[yellow]No reference SQL queries found.[/]")
 
@@ -572,7 +572,7 @@ class AgentCommands:
 
         platform = self.cli.prompt_input("Enter platform name (e.g., snowflake, duckdb, postgresql)")
         if not platform or not platform.strip():
-            self.console.print("[bold red]Error:[/] Platform name is required.")
+            self.console.print("[red]Error:[/] Platform name is required.")
             return
         platform = platform.strip()
 
@@ -581,7 +581,7 @@ class AgentCommands:
 
         keywords_input = args.strip() or self.cli.prompt_input("Enter search keywords (comma-separated)")
         if not keywords_input or not keywords_input.strip():
-            self.console.print("[bold red]Error:[/] Keywords cannot be empty.")
+            self.console.print("[red]Error:[/] Keywords cannot be empty.")
             return
         keywords = [k.strip() for k in keywords_input.split(",") if k.strip()]
 
@@ -589,10 +589,10 @@ class AgentCommands:
         try:
             top_n_value = int(top_n.strip())
         except ValueError:
-            self.console.print("[bold red]Error:[/] top_n must be an integer.")
+            self.console.print("[red]Error:[/] top_n must be an integer.")
             return
 
-        with self.console.status("[bold green]Searching documentation...[/]"):
+        with self.console.status("[green]Searching documentation...[/]"):
             from datus.tools.search_tools.search_tool import SearchTool
 
             search_tool = SearchTool(agent_config=self.cli.agent_config)
@@ -604,7 +604,7 @@ class AgentCommands:
             )
 
         if result.success and result.doc_count > 0:
-            self.console.print(f"[bold green]Found {result.doc_count} document chunks.[/]")
+            self.console.print(f"[green]Found {result.doc_count} document chunks.[/]")
             for keyword, chunks in result.docs.items():
                 if not chunks:
                     continue
@@ -640,7 +640,7 @@ class AgentCommands:
                     )
                 self.console.print(table)
         elif not result.success:
-            self.console.print(f"[bold red]Error searching documents:[/] {result.error}")
+            self.console.print(f"[red]Error searching documents:[/] {result.error}")
         else:
             self.console.print("[yellow]No documents found.[/]")
 
@@ -651,7 +651,7 @@ class AgentCommands:
         self.console.print("[bold blue]Save Output[/]")
         last_sql = self.cli.cli_context.get_last_sql_context()
         if not last_sql:
-            self.console.print("[bold red]Error:[/] No previous result to save.")
+            self.console.print("[red]Error:[/] No previous result to save.")
             return
 
         file_type = self.cli.prompt_input(
@@ -664,7 +664,7 @@ class AgentCommands:
 
         file_name = self.cli.prompt_input("Enter file name(optional)", default=datetime.now().strftime("%Y%m%d%H%M%S"))
         try:
-            with self.console.status("[bold green]Saving SQL...[/]"):
+            with self.console.status("[green]Saving SQL...[/]"):
                 if not self.output_tool:
                     self.output_tool = OutputTool(agent_config=self.cli.agent_config)
                 result = self.output_tool.execute(
@@ -686,7 +686,7 @@ class AgentCommands:
             self.console.print(f"[green]SQL query saved to {result.output}[/]")
 
         except Exception as e:
-            self.console.print(f"[bold red]Error saving file:[/] {e}")
+            self.console.print(f"[red]Error saving file:[/] {e}")
 
     def _modify_input(self, input: BaseInput):
         if isinstance(input, SchemaLinkingInput):
@@ -720,15 +720,15 @@ class AgentCommands:
                 try:
                     context_id = int(sql_context_id.strip())
                     if context_id < 1 or context_id > len(workflow.context.sql_contexts):
-                        self.console.print("[bold red]Error:[/] Invalid SQL context ID")
+                        self.console.print("[red]Error:[/] Invalid SQL context ID")
                         return
                     input.sql_result = workflow.context.sql_contexts[context_id - 1].sql_return
                     input.row_count = workflow.context.sql_contexts[context_id - 1].row_count
                 except ValueError:
-                    self.console.print("[bold red]Error:[/] Invalid SQL context ID")
+                    self.console.print("[red]Error:[/] Invalid SQL context ID")
                     return
             else:
-                self.console.print("[bold red]Error:[/] No SQL context available")
+                self.console.print("[red]Error:[/] No SQL context available")
 
             # Interactive prompts for metadata (now using sql_task fields)
             self.console.print("[bold blue]Semantic Model Metadata:[/]")
@@ -780,7 +780,7 @@ class AgentCommands:
             else:
                 self.console.print("[green]SQL generation completed[/]")
         else:
-            self.console.print("[bold red]SQL generation failed[/]")
+            self.console.print("[red]SQL generation failed[/]")
 
     def cmd_fix(self, args: str):
         """Fix the last SQL query."""
@@ -801,7 +801,7 @@ class AgentCommands:
             else:
                 self.console.print("[green]SQL fix completed[/]")
         else:
-            self.console.print("[bold red]SQL fix failed[/]")
+            self.console.print("[red]SQL fix failed[/]")
 
     def cmd_reason(self, args: str):
         """Run the full reasoning node."""
@@ -819,7 +819,7 @@ class AgentCommands:
             if hasattr(result, "explanation") and result.explanation:
                 self.console.print(f"[blue]Explanation:[/] {result.explanation}")
         else:
-            self.console.print("[bold red]SQL reasoning failed[/]")
+            self.console.print("[red]SQL reasoning failed[/]")
 
     def cmd_reason_stream(self, args: str):
         """Run SQL reasoning with streaming output and action history."""
@@ -848,16 +848,16 @@ class AgentCommands:
             Dict containing the result of the node execution
         """
         if not self.agent:
-            self.console.print("[bold red]Error:[/] Agent not available")
+            self.console.print("[red]Error:[/] Agent not available")
             return {"success": False, "error": "Agent not available"}
 
         if not self.cli.workflow_runner:
-            self.console.print("[bold red]Error:[/] No active workflow")
+            self.console.print("[red]Error:[/] No active workflow")
             return {"success": False, "error": "No active workflow"}
 
         try:
             if not self.cli.workflow_runner.workflow_ready:
-                self.console.print("[bold red]Error:[/] Workflow not initialized")
+                self.console.print("[red]Error:[/] Workflow not initialized")
                 return {"success": False, "error": "Workflow not initialized"}
             workflow = self.cli.workflow_runner.workflow
 
@@ -879,7 +879,7 @@ class AgentCommands:
 
             if not setup_result.get("success", False):
                 self.console.print(
-                    f"[bold red]Error:[/] Failed to setup node input: {setup_result.get('message', 'Unknown error')}"
+                    f"[red]Error:[/] Failed to setup node input: {setup_result.get('message', 'Unknown error')}"
                 )
                 return {
                     "success": False,
@@ -912,7 +912,7 @@ class AgentCommands:
                         return
 
             # 4. Run the node
-            self.console.print(f"[bold green]Executing {node_type} node...[/]")
+            self.console.print(f"[green]Executing {node_type} node...[/]")
             next_node.run()
             # Check if the node execution was successful
             if next_node.status == "failed":
@@ -923,11 +923,11 @@ class AgentCommands:
                     error_msg = next_node.result.get("error")
                 elif hasattr(next_node, "error") and next_node.error:
                     error_msg = next_node.error
-                self.console.print(f"[bold red]Node execution failed:[/] {error_msg}")
+                self.console.print(f"[red]Node execution failed:[/] {error_msg}")
                 return {"success": False, "error": f"Node execution failed: {error_msg}"}
 
             # 5. Display the result
-            self.console.print("[bold green]Node Result:[/]")
+            self.console.print("[green]Node Result:[/]")
 
             # Check if result is from a generate SQL task for SQL syntax highlighting
             if next_node.type in [NodeType.TYPE_GENERATE_SQL, NodeType.TYPE_FIX]:
@@ -937,10 +937,10 @@ class AgentCommands:
                 # Display SQL separately without tree structure for easy copying
                 if sql_query:
                     # Display title separately
-                    self.console.print("[bold green]📋 SQL Query[/]")
+                    self.console.print("[green]📋 SQL Query[/]")
 
                     # Display SQL without panel border
-                    sql_syntax = Syntax(sql_query, "sql", theme="light", line_numbers=False, word_wrap=True)
+                    sql_syntax = Syntax(sql_query, "sql", theme="monokai", line_numbers=False, word_wrap=True)
                     self.console.print(sql_syntax)
 
                     # Create a copy of result_dict without sql_query for tree display
@@ -966,11 +966,11 @@ class AgentCommands:
 
             if not update_result.get("success", False):
                 self.console.print(
-                    "[bold red]Warning:[/] Failed to update workflow context: "
+                    "[red]Warning:[/] Failed to update workflow context: "
                     f"{update_result.get('message', 'Unknown error')}"
                 )
             else:
-                self.console.print("[bold green]Context updated successfully[/]")
+                self.console.print("[green]Context updated successfully[/]")
 
             # Save relevant results to CLI history
             if hasattr(next_node.result, "sql_query"):
@@ -983,7 +983,7 @@ class AgentCommands:
 
         except Exception as e:
             logger.error(f"Node execution error: {str(e)}")
-            self.console.print(f"[bold red]Error:[/] {str(e)}")
+            self.console.print(f"[red]Error:[/] {str(e)}")
             return {"success": False, "error": str(e)}
 
     def cmd_compare(self, args: str):
@@ -1002,7 +1002,7 @@ class AgentCommands:
             if hasattr(result, "comparison_result") and result.comparison_result:
                 self.console.print(f"[blue]Comparison result:[/] {result.comparison_result}")
         else:
-            self.console.print("[bold red]SQL comparison failed[/]")
+            self.console.print("[red]SQL comparison failed[/]")
 
     def cmd_compare_stream(self, args: str):
         """Compare SQL with streaming output and action history."""

@@ -33,6 +33,7 @@ import shlex
 from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
+from datus.cli.cli_styles import print_error, print_success, print_warning
 from datus.cli.model_app import ModelApp, ModelSelection, _display_name
 from datus.utils.loggings import get_logger
 
@@ -130,7 +131,7 @@ class ModelCommands:
         """
         meta = self._provider_meta(provider)
         if not meta:
-            self.console.print(f"[red]Unknown provider: {provider}[/red]")
+            print_error(self.console, f"Unknown provider: {provider}")
             return False
         from datus.cli.provider_auth_flows import configure_codex_oauth
 
@@ -149,7 +150,7 @@ class ModelCommands:
                 auth_type="oauth",
             )
         except Exception as exc:
-            self.console.print(f"[red]Failed to persist OAuth credentials: {exc}[/red]")
+            print_error(self.console, f"Failed to persist OAuth credentials: {exc}")
             return False
         return True
 
@@ -158,7 +159,7 @@ class ModelCommands:
     def _persist_custom_model(self, name: str, payload: Dict[str, Any]) -> bool:
         """Register a new ``agent.models[<name>]`` entry in memory and on disk."""
         if not name or not payload:
-            self.console.print("[red]Refusing to persist empty custom model[/red]")
+            print_error(self.console, "Refusing to persist empty custom model")
             return False
         try:
             from datus.configuration.agent_config import load_model_config
@@ -168,9 +169,9 @@ class ModelCommands:
             mgr.update_item("models", {name: dict(payload)}, delete_old_key=False, save=True)
             self.agent_config.models[name] = load_model_config(dict(payload))
         except Exception as exc:
-            self.console.print(f"[red]Failed to save custom model `{name}`: {exc}[/red]")
+            print_error(self.console, f"Failed to save custom model `{name}`: {exc}")
             return False
-        self.console.print(f"[green]Saved custom model `{name}`[/green]")
+        print_success(self.console, f"Saved custom model `{name}`")
         return True
 
     def _delete_custom_model(self, name: str) -> bool:
@@ -185,7 +186,7 @@ class ModelCommands:
             return False
         models_map = self.agent_config.models or {}
         if name not in models_map:
-            self.console.print(f"[yellow]Custom model `{name}` not found[/yellow]")
+            print_warning(self.console, f"Custom model `{name}` not found")
             return False
         try:
             from datus.configuration.agent_config_loader import configuration_manager
@@ -198,9 +199,9 @@ class ModelCommands:
             if getattr(self.agent_config, "target", "") == name:
                 self.agent_config.target = ""
         except Exception as exc:
-            self.console.print(f"[red]Failed to delete custom model `{name}`: {exc}[/red]")
+            print_error(self.console, f"Failed to delete custom model `{name}`: {exc}")
             return False
-        self.console.print(f"[green]Deleted custom model `{name}`[/green]")
+        print_success(self.console, f"Deleted custom model `{name}`")
         return True
 
     # ── Switch (no agent rebuild) ───────────────────────────────────────
@@ -209,17 +210,17 @@ class ModelCommands:
         try:
             self.agent_config.set_active_provider_model(provider, model)
         except Exception as e:
-            self.console.print(f"[red]Failed to switch: {e}[/red]")
+            print_error(self.console, f"Failed to switch: {e}")
             return
-        self.console.print(f"[green]Switched to {_display_name(provider)}/{model}[/green]")
+        print_success(self.console, f"Switched to {_display_name(provider)}/{model}")
 
     def _switch_to_custom(self, name: str) -> None:
         try:
             self.agent_config.set_active_custom(name)
         except Exception as e:
-            self.console.print(f"[red]Failed to switch: {e}[/red]")
+            print_error(self.console, f"Failed to switch: {e}")
             return
-        self.console.print(f"[green]Switched to custom:{name}[/green]")
+        print_success(self.console, f"Switched to custom:{name}")
 
     # ── Helpers ─────────────────────────────────────────────────────────
 

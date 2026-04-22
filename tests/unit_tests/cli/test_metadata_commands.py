@@ -164,12 +164,14 @@ class TestCmdTables:
         cli.db_connector = None
         meta = MetadataCommands(cli)
         meta.cmd_tables("")
-        cli.console.print.assert_called_with("[bold red]Error:[/] No database connection.")
+        calls = [str(c) for c in cli.console.print.call_args_list]
+        assert any("No database connection" in c for c in calls)
 
     def test_empty_result(self, meta):
         meta.cli.db_connector.get_tables.return_value = []
         meta.cmd_tables("")
-        meta.cli.console.print.assert_called_with("[yellow]Empty set.[/]")
+        calls = [str(c) for c in meta.cli.console.print.call_args_list]
+        assert any("Empty set" in c for c in calls)
 
     def test_with_tables(self, meta):
         meta.cli.db_connector.get_tables.return_value = ["users", "orders"]
@@ -210,7 +212,8 @@ class TestCmdSchemas:
             cli.db_connector.get_schemas.return_value = []
             meta = MetadataCommands(cli)
             meta.cmd_schemas("")
-        cli.console.print.assert_called_with("[yellow]Empty set.[/]")
+        calls = [str(c) for c in cli.console.print.call_args_list]
+        assert any("Empty set" in c for c in calls)
 
     def test_with_schemas(self):
         cli = _make_cli(db_type="snowflake")
@@ -269,7 +272,8 @@ class TestCmdTableSchema:
         cli.db_connector = None
         meta = MetadataCommands(cli)
         meta.cmd_table_schema("users")
-        cli.console.print.assert_called_with("[bold red]Error:[/] No database connection.")
+        calls = [str(c) for c in cli.console.print.call_args_list]
+        assert any("No database connection" in c for c in calls)
 
     def test_specific_table(self, meta):
         meta.cli.db_connector.get_schema.return_value = [
@@ -298,14 +302,15 @@ class TestCmdTableSchema:
 class TestCmdIndexes:
     def test_no_table_name(self, meta):
         meta.cmd_indexes("")
-        meta.cli.console.print.assert_called_with("[bold red]Error:[/] Table name required")
+        calls = [str(c) for c in meta.cli.console.print.call_args_list]
+        assert any("Table name required" in c for c in calls)
 
     def test_no_connector(self):
         cli = _make_cli()
         cli.db_connector = None
         meta = MetadataCommands(cli)
         meta.cmd_indexes("users")
-        cli.console.print.assert_called_with("[bold red]Error:[/] No database connection.")
+        cli.console.print.assert_called_with("[red]Error:[/] No database connection.")
 
     def test_non_sqlite_not_supported(self, meta):
         meta.cli.db_connector.get_type.return_value = "snowflake"

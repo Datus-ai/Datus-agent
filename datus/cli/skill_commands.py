@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from rich.table import Table
 
+from datus.cli.cli_styles import TABLE_HEADER_STYLE, print_error, print_info, print_success, print_warning
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
@@ -69,7 +70,7 @@ class SkillCommands:
         elif args.startswith("remove"):
             self.cmd_skill_remove(args[6:].strip())
         else:
-            self.console.print(f"[red]Unknown skill command: {args}[/red]")
+            print_error(self.console, f"Unknown skill command: {args}", prefix=False)
             self._show_usage()
 
     def cmd_skill_login(self, args: str = ""):
@@ -95,7 +96,7 @@ class SkillCommands:
                         detail = resp.json().get("detail", resp.text)
                     except Exception:
                         detail = resp.text
-                    self.console.print(f"[red]Login failed ({resp.status_code}): {detail}[/]")
+                    print_error(self.console, f"Login failed ({resp.status_code}): {detail}", prefix=False)
                     return
 
                 token = resp.cookies.get("town_token")
@@ -103,15 +104,15 @@ class SkillCommands:
                     body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
                     token = body.get("access_token") or body.get("token")
                 if not token:
-                    self.console.print("[red]Login succeeded but no token was returned.[/]")
+                    print_error(self.console, "Login succeeded but no token was returned.", prefix=False)
                     return
 
                 save_token(token, marketplace_url, email)
-                self.console.print(f"[green]Login successful![/] Token saved for {marketplace_url}")
+                print_success(self.console, f"Login successful! Token saved for {marketplace_url}")
         except httpx.ConnectError:
-            self.console.print(f"[red]Cannot connect to {login_url}[/]")
+            print_error(self.console, f"Cannot connect to {login_url}", prefix=False)
         except Exception as exc:
-            self.console.print(f"[red]Login error: {exc}[/]")
+            print_error(self.console, f"Login error: {exc}", prefix=False)
 
     def cmd_skill_logout(self):
         """Clear saved marketplace credentials: /skill logout"""
@@ -121,9 +122,9 @@ class SkillCommands:
         marketplace_url = manager.config.marketplace_url
 
         if clear_token(marketplace_url):
-            self.console.print(f"[green]Logged out from {marketplace_url}[/]")
+            print_success(self.console, f"Logged out from {marketplace_url}")
         else:
-            self.console.print(f"[yellow]No saved credentials for {marketplace_url}[/]")
+            print_warning(self.console, f"No saved credentials for {marketplace_url}")
 
     def cmd_skill_list(self):
         """List locally installed skills in a Rich table."""
@@ -131,10 +132,10 @@ class SkillCommands:
         skills = manager.list_all_skills()
 
         if not skills:
-            self.console.print("[yellow]No skills installed locally.[/]")
+            print_warning(self.console, "No skills installed locally.")
             return
 
-        table = Table(title="Installed Skills", show_header=True, header_style="bold green")
+        table = Table(title="Installed Skills", show_header=True, header_style=TABLE_HEADER_STYLE)
         table.add_column("Name", style="cyan")
         table.add_column("Version")
         table.add_column("Source")
@@ -161,19 +162,19 @@ class SkillCommands:
     def cmd_skill_search(self, query: str):
         """Search marketplace for skills."""
         if not query:
-            self.console.print("[yellow]Usage: /skill search <query>[/]")
+            print_warning(self.console, "Usage: /skill search <query>")
             return
 
         manager = self._get_skill_manager()
-        self.console.print(f"[dim]Searching marketplace for '{query}'...[/]")
+        print_info(self.console, f"Searching marketplace for '{query}'...")
 
         results = manager.search_marketplace(query=query)
 
         if not results:
-            self.console.print("[yellow]No skills found.[/]")
+            print_warning(self.console, "No skills found.")
             return
 
-        table = Table(title=f"Marketplace Results for '{query}'", show_header=True, header_style="bold green")
+        table = Table(title=f"Marketplace Results for '{query}'", show_header=True, header_style=TABLE_HEADER_STYLE)
         table.add_column("Name", style="cyan")
         table.add_column("Version")
         table.add_column("Owner")
@@ -197,26 +198,26 @@ class SkillCommands:
         """Install skill from marketplace: /skill install <name> [version]"""
         parts = args.strip().split()
         if not parts:
-            self.console.print("[yellow]Usage: /skill install <name> [version][/]")
+            print_warning(self.console, "Usage: /skill install <name> [version]")
             return
 
         name = parts[0]
         version = parts[1] if len(parts) > 1 else "latest"
 
         manager = self._get_skill_manager()
-        self.console.print(f"[dim]Installing {name}@{version} from marketplace...[/]")
+        print_info(self.console, f"Installing {name}@{version} from marketplace...")
 
         ok, msg = manager.install_from_marketplace(name, version)
         if ok:
-            self.console.print(f"[bold green]Success:[/] {msg}")
+            print_success(self.console, msg)
         else:
-            self.console.print(f"[bold red]Error:[/] {msg}")
+            print_error(self.console, msg)
 
     def cmd_skill_publish(self, args: str):
         """Publish local skill to marketplace: /skill publish <path> [--owner <name>]"""
         parts = args.strip().split()
         if not parts:
-            self.console.print("[yellow]Usage: /skill publish <path> [--owner <name>][/]")
+            print_warning(self.console, "Usage: /skill publish <path> [--owner <name>]")
             return
 
         skill_dir = parts[0]
@@ -227,18 +228,18 @@ class SkillCommands:
                 owner = parts[idx + 1]
 
         manager = self._get_skill_manager()
-        self.console.print(f"[dim]Publishing skill from {skill_dir}...[/]")
+        print_info(self.console, f"Publishing skill from {skill_dir}...")
 
         ok, msg = manager.publish_to_marketplace(skill_dir, owner=owner)
         if ok:
-            self.console.print(f"[bold green]Success:[/] {msg}")
+            print_success(self.console, msg)
         else:
-            self.console.print(f"[bold red]Error:[/] {msg}")
+            print_error(self.console, msg)
 
     def cmd_skill_info(self, name: str):
         """Show skill details (local + remote)."""
         if not name:
-            self.console.print("[yellow]Usage: /skill info <name>[/]")
+            print_warning(self.console, "Usage: /skill info <name>")
             return
 
         manager = self._get_skill_manager()
@@ -255,7 +256,7 @@ class SkillCommands:
             if local_skill.license:
                 self.console.print(f"  License: {local_skill.license}")
         else:
-            self.console.print("[dim]Not installed locally. Checking marketplace...[/]")
+            print_info(self.console, "Not installed locally. Checking marketplace...")
 
         # Remote info
         try:
@@ -271,9 +272,9 @@ class SkillCommands:
                 self.console.print(f"  Versions: {', '.join(v.get('version', '?') for v in versions)}")
         except Exception as e:
             if not local_skill:
-                self.console.print(f"[yellow]Skill '{name}' not found locally or in marketplace.[/]")
+                print_warning(self.console, f"Skill '{name}' not found locally or in marketplace.")
             else:
-                self.console.print(f"[dim]Marketplace lookup failed: {e}[/]")
+                print_info(self.console, f"Marketplace lookup failed: {e}")
 
     def cmd_skill_update(self):
         """Update all marketplace-installed skills to latest."""
@@ -282,12 +283,12 @@ class SkillCommands:
         marketplace_skills = [s for s in skills if s.source == "marketplace"]
 
         if not marketplace_skills:
-            self.console.print("[yellow]No marketplace-installed skills to update.[/]")
+            print_warning(self.console, "No marketplace-installed skills to update.")
             return
 
         updated = 0
         for skill in marketplace_skills:
-            self.console.print(f"[dim]Checking {skill.name}...[/]")
+            print_info(self.console, f"Checking {skill.name}...")
             try:
                 client = manager._get_marketplace_client()
                 remote = client.get_skill_info(skill.name)
@@ -295,28 +296,28 @@ class SkillCommands:
                 if remote_version and remote_version != skill.version:
                     ok, msg = manager.install_from_marketplace(skill.name, remote_version)
                     if ok:
-                        self.console.print(f"  [green]Updated {skill.name} to {remote_version}[/]")
+                        print_success(self.console, f"  Updated {skill.name} to {remote_version}")
                         updated += 1
                     else:
-                        self.console.print(f"  [red]Failed: {msg}[/]")
+                        print_error(self.console, f"  Failed: {msg}", prefix=False)
                 else:
-                    self.console.print("  [dim]Already up to date[/]")
+                    print_info(self.console, "  Already up to date")
             except Exception as e:
-                self.console.print(f"  [red]Error checking {skill.name}: {e}[/]")
+                print_error(self.console, f"  Error checking {skill.name}: {e}", prefix=False)
 
         self.console.print(f"\n[bold]{updated} skill(s) updated.[/]")
 
     def cmd_skill_remove(self, name: str):
         """Remove a locally installed skill."""
         if not name:
-            self.console.print("[yellow]Usage: /skill remove <name>[/]")
+            print_warning(self.console, "Usage: /skill remove <name>")
             return
 
         manager = self._get_skill_manager()
         skill = manager.get_skill(name)
 
         if not skill:
-            self.console.print(f"[yellow]Skill '{name}' not found locally.[/]")
+            print_warning(self.console, f"Skill '{name}' not found locally.")
             return
 
         # Confirm deletion (skip prompt in non-interactive contexts)
@@ -326,7 +327,7 @@ class SkillCommands:
         if skill_path and skill_path.exists() and sys.stdin.isatty():
             confirm = input(f"Delete skill files at {skill_path}? [y/N] ").strip().lower()
             if confirm != "y":
-                self.console.print("[yellow]Cancelled.[/]")
+                print_warning(self.console, "Cancelled.")
                 return
 
         # Remove from registry
@@ -335,10 +336,10 @@ class SkillCommands:
             # Delete skill files from disk
             if skill_path and skill_path.exists():
                 shutil.rmtree(str(skill_path), ignore_errors=True)
-                self.console.print(f"[dim]Deleted files at {skill_path}[/]")
-            self.console.print(f"[bold green]Removed skill '{name}'[/]")
+                print_info(self.console, f"Deleted files at {skill_path}")
+            print_success(self.console, f"Removed skill '{name}'")
         else:
-            self.console.print(f"[bold red]Failed to remove skill '{name}'[/]")
+            print_error(self.console, f"Failed to remove skill '{name}'", prefix=False)
 
     def _show_usage(self):
         """Show /skill command usage."""

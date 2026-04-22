@@ -11,7 +11,7 @@ Two-step flow:
 
 Runs inside one Application so the outer TUI only needs to release
 ``stdin`` once via :meth:`DatusApp.suspend_input`.  Visual style mirrors
-:class:`datus.cli.model_app.ModelApp`: ``reverse`` highlight, ``→`` cursor,
+:class:`datus.cli.model_app.ModelApp`: ``CLR_CURSOR`` highlight, ``→`` cursor,
 separator lines, and a footer hint row.
 """
 
@@ -29,6 +29,7 @@ from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
 from rich.console import Console
 
+from datus.cli.cli_styles import CLR_CURRENT, CLR_CURSOR, SYM_ARROW
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -205,17 +206,20 @@ class LanguageApp:
         if self._phase == _Phase.LANGUAGE:
             for i, key in enumerate(self._lang_keys):
                 label = f"{key:<6} {LANGUAGE_CHOICES[key]}"
-                if key == self._current:
+                is_current = key == self._current
+                if is_current:
                     label += "  \u2190 current"
                 if i == self._lang_idx:
-                    lines.append(("reverse", f"  \u2192 {label}\n"))
+                    lines.append((CLR_CURSOR, f"  {SYM_ARROW} {label}\n"))
+                elif is_current:
+                    lines.append((CLR_CURRENT, f"    {label}\n"))
                 else:
                     lines.append(("", f"    {label}\n"))
         else:
             for i, key in enumerate(self._scope_keys):
                 label = f"{key:<10} {SCOPE_CHOICES[key]}"
                 if i == self._scope_idx:
-                    lines.append(("reverse", f"  \u2192 {label}\n"))
+                    lines.append((CLR_CURSOR, f"  {SYM_ARROW} {label}\n"))
                 else:
                     lines.append(("", f"    {label}\n"))
         return lines

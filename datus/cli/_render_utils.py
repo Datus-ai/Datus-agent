@@ -17,6 +17,8 @@ from typing import Any, Iterable, List, Optional, Sequence, Tuple
 
 from rich.table import Table
 
+from datus.cli.cli_styles import TABLE_HEADER_STYLE
+
 
 def format_cell(value: Any, *, max_width: Optional[int] = None) -> str:
     """Convert a cell value to the string shown in a Rich Table cell.
@@ -64,7 +66,7 @@ def build_row_table(
     *,
     title: Optional[str] = None,
     columns: Optional[Sequence[Tuple[str, str]]] = None,
-    header_style: str = "bold green",
+    header_style: str = TABLE_HEADER_STYLE,
     hide_empty_columns: Optional[bool] = None,
     max_cell_width: Optional[int] = None,
 ) -> Optional[Table]:
@@ -127,7 +129,7 @@ def build_kv_table(
     *,
     title: Optional[str] = None,
     max_cell_width: Optional[int] = None,
-    header_style: str = "bold green",
+    header_style: str = TABLE_HEADER_STYLE,
 ) -> Optional[Table]:
     """Render a single ``dict`` as a two-column Field/Value table.
 

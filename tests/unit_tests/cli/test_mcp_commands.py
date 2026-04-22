@@ -91,7 +91,7 @@ class TestCmdMcpRouting:
 
     def test_unknown_command_prints_error(self, cmd):
         cmd.cmd_mcp("unknown_xyz")
-        cmd.console.print.assert_called_with("[red]Invalid MCP command[/red]")
+        cmd.console.print.assert_called_with("[red]Invalid MCP command[/]")
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +169,7 @@ class TestCmdMcpAdd:
 class TestCmdMcpRemove:
     def test_remove_no_name(self, cmd):
         cmd.cmd_mcp_remove("")
-        cmd.console.print.assert_called_with("[red]Please specify the name of the MCP server to remove[/red]")
+        cmd.console.print.assert_called_with("[red]Please specify the name of the MCP server to remove[/]")
 
     def test_remove_success(self, cmd):
         cmd.mcp_tool.remove_server.return_value = _ok()
@@ -192,7 +192,7 @@ class TestCmdMcpRemove:
 class TestCmdMcpCheck:
     def test_check_no_name(self, cmd):
         cmd.cmd_mcp_check("")
-        cmd.console.print.assert_called_with("[red]Please specify the name of the MCP server to check[/red]")
+        cmd.console.print.assert_called_with("[red]Please specify the name of the MCP server to check[/]")
 
     def test_check_success_reachable(self, cmd):
         cmd.mcp_tool.check_connectivity.return_value = _ok(
@@ -223,7 +223,7 @@ class TestCmdMcpCheck:
 class TestCmdCallTool:
     def test_invalid_format(self, cmd):
         cmd.cmd_call_tool("justserver")
-        cmd.console.print.assert_called_with("[bold red]Invalid server.tool format[/]")
+        cmd.console.print.assert_called_with("[red]Error:[/] Invalid server.tool format")
 
     def test_call_success_string_result(self, cmd):
         r = _ok({"result": "plain text"})
@@ -241,7 +241,7 @@ class TestCmdCallTool:
         r = _ok({"result": None})
         cmd.mcp_tool.call_tool.return_value = r
         cmd.cmd_call_tool("server.tool")
-        cmd.console.print.assert_called_with("[bold yellow]No result returned[/]")
+        cmd.console.print.assert_called_with("[yellow]No result returned[/]")
 
     def test_call_failure(self, cmd):
         cmd.mcp_tool.call_tool.return_value = _err("tool error")
@@ -291,7 +291,7 @@ class TestCmdMcpFilter:
 
     def test_filter_unknown(self, cmd):
         cmd.cmd_mcp_filter("unknown xyz")
-        cmd.console.print.assert_called_with("[red]Invalid filter command. Use: set, get, or remove[/red]")
+        cmd.console.print.assert_called_with("[red]Invalid filter command. Use: set, get, or remove[/]")
 
 
 # ---------------------------------------------------------------------------
@@ -329,7 +329,7 @@ class TestCmdMcpFilterSet:
 class TestCmdMcpFilterGet:
     def test_get_no_name(self, cmd):
         cmd.cmd_mcp_filter_get("")
-        cmd.console.print.assert_called_with("[red]Please specify the name of the MCP server[/red]")
+        cmd.console.print.assert_called_with("[red]Please specify the name of the MCP server[/]")
 
     def test_get_with_filter(self, cmd):
         cmd.mcp_tool.get_tool_filter.return_value = _ok(
@@ -366,7 +366,7 @@ class TestCmdMcpFilterGet:
 class TestCmdMcpFilterRemove:
     def test_remove_no_name(self, cmd):
         cmd.cmd_mcp_filter_remove("")
-        cmd.console.print.assert_called_with("[red]Please specify the name of the MCP server[/red]")
+        cmd.console.print.assert_called_with("[red]Please specify the name of the MCP server[/]")
 
     def test_remove_success(self, cmd):
         cmd.mcp_tool.remove_tool_filter.return_value = _ok()

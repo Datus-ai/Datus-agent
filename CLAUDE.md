@@ -28,6 +28,42 @@ bash build_scripts/build_test_data.sh       # Build test knowledge base
 - **Imports**: ruff isort rules, group order: stdlib → third-party → `datus.*`
 - **Type hints**: use throughout; Pydantic models for data structures
 
+### CLI UI Styling
+
+All CLI output colours, symbols, and message formats are centralised in
+`datus/cli/cli_styles.py`.  Changing a constant there propagates globally.
+
+**Message helpers** — use instead of inline Rich markup:
+
+| Helper | Output | When |
+|--------|--------|------|
+| `print_error(console, msg)` | `[red]Error:[/] msg` | Operation failures, invalid input |
+| `print_success(console, msg)` | `[green]msg[/]` | Mode switches, saves, confirmations |
+| `print_success(…, symbol=True)` | `[green]✓ msg[/]` | Operational checks (compact, connectivity) |
+| `print_warning(console, msg)` | `[yellow]msg[/]` | Empty sets, non-critical issues |
+| `print_info(console, msg)` | `[dim]msg[/]` | Progress, hints, secondary info |
+| `print_status(…, ok=True/False)` | `[green]✓[/]` / `[red]✗[/]` | Connectivity / health checks |
+| `print_usage(console, syntax)` | `[cyan]Usage:[/] syntax` | Command help blocks |
+| `print_empty_set(console)` | `[yellow]Empty set.[/]` | No data to display |
+
+**Rules:**
+
+- Colours never use `bold`; `bold` is reserved for structural elements (section headers, prompt labels)
+- Tables: `header_style=TABLE_HEADER_STYLE` (defaults to `"green"`); prefer `build_row_table()` from `_render_utils.py`
+- Code theme: `CODE_THEME` (`"monokai"`) for all `Syntax()` calls
+- Symbols: Unicode `✓`/`✗` only; no emoji (`✅`/`❌`) in new code
+- Closing tags: always short form `[/]`, not `[/red]` or `[/green]`
+- Interactive selectors (`_cli_utils.py`): import `CLR_CURSOR` / `CLR_CURRENT` from `cli_styles`
+- Run `uv run python cli_style_demo.py` to preview the full visual spec
+
+**Interactive component patterns** (for new commands needing exclusive stdin):
+
+- Reference implementation: `ModelApp` (`model_app.py`)
+- Wrap `app.run()` in `tui_app.suspend_input()` when TUI is active
+- Never nest `asyncio.run()` inside an Application
+- Use `DynamicContainer` for view switching; `Condition` guards for key bindings
+- Exit via `app.exit(result=Selection(...))`, return `None` on cancel / error
+
 ### Async
 
 - Mark async tests with `@pytest.mark.asyncio`

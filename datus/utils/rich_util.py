@@ -30,7 +30,7 @@ def dict_to_tree(data: Dict[str, Any], tree: Optional[Tree] = None, console=None
     screen_width = console.size.width if console else 100
     max_length = screen_width * 3
     # get theme from console
-    theme = "light"  # "monokai"
+    theme = "monokai"
 
     for key, value in data.items():
         if isinstance(value, dict) and value:

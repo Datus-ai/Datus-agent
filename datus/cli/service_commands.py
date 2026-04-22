@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 from rich.table import Table
 
 from datus.cli._render_utils import build_kv_table, build_row_table
+from datus.cli.cli_styles import TABLE_HEADER_STYLE, print_error, print_info, print_warning
 from datus.cli.service_client import ServiceClient, ServiceClientRegistry, service_type_label
 from datus.utils.loggings import get_logger
 
@@ -73,13 +74,14 @@ class ServiceCommands:
         """Handler for the ``/services`` command."""
         rows = self.registry.list_services()
         if not rows:
-            self.cli.console.print(
-                "[yellow]No services configured. Add entries under "
+            print_warning(
+                self.cli.console,
+                "No services configured. Add entries under "
                 "`services.bi_platforms`, `services.schedulers`, or "
-                "`services.semantic_layer` in agent.yml.[/]"
+                "`services.semantic_layer` in agent.yml.",
             )
             return
-        table = Table(title="Configured services", show_header=True, header_style="bold green")
+        table = Table(title="Configured services", show_header=True, header_style=TABLE_HEADER_STYLE)
         table.add_column("Service")
         table.add_column("Type")
         table.add_column("Status")
@@ -115,12 +117,14 @@ class ServiceCommands:
             if client is not None:
                 self._print_missing_adapter_hint(client)
             else:
-                self.cli.console.print(f"[red]Service '{head}' is configured but its adapter is not installed.[/]")
+                print_error(
+                    self.cli.console, f"Service '{head}' is configured but its adapter is not installed.", prefix=False
+                )
             return True
 
         client = self.registry.get(head)
         if client is None:
-            self.cli.console.print(f"[red]Service '{head}' could not be loaded.[/]")
+            print_error(self.cli.console, f"Service '{head}' could not be loaded.", prefix=False)
             return True
 
         if not tail:
@@ -148,25 +152,29 @@ class ServiceCommands:
         """Explain that the service is configured but its adapter isn't installed."""
         pkg_hint = self._ADAPTER_PACKAGE_HINTS.get(client.service_type, "the matching adapter package")
         label = service_type_label(client.service_type)
-        self.cli.console.print(
-            f"[red]Service '{client.service_name}' ({label}) is configured "
-            f"but the adapter is not installed.[/]\n"
-            f"[dim]Install {pkg_hint} and restart the CLI, "
-            f"then re-run `/services` to confirm.[/]"
+        print_error(
+            self.cli.console,
+            f"Service '{client.service_name}' ({label}) is configured but the adapter is not installed.",
+            prefix=False,
+        )
+        print_info(
+            self.cli.console,
+            f"Install {pkg_hint} and restart the CLI, then re-run `/services` to confirm.",
         )
 
     def _print_methods(self, client: ServiceClient) -> None:
         methods = client.list_methods()
         if not methods:
-            self.cli.console.print(
-                f"[yellow]Service '{client.service_name}' ({service_type_label(client.service_type)}) "
-                f"has no read-only methods exposed to the CLI.[/]"
+            print_warning(
+                self.cli.console,
+                f"Service '{client.service_name}' ({service_type_label(client.service_type)}) "
+                f"has no read-only methods exposed to the CLI.",
             )
             return
         table = Table(
             title=f"{client.service_name} — read methods",
             show_header=True,
-            header_style="bold green",
+            header_style=TABLE_HEADER_STYLE,
         )
         table.add_column("Method")
         table.add_column("Description")
@@ -179,11 +187,11 @@ class ServiceCommands:
         props = schema.get("properties") or {}
         required = set(schema.get("required", []) or [])
         if hint:
-            self.cli.console.print(f"[yellow]{hint}[/]")
+            print_warning(self.cli.console, hint)
         table = Table(
             title=f"{tool.name} — parameters",
             show_header=True,
-            header_style="bold green",
+            header_style=TABLE_HEADER_STYLE,
         )
         table.add_column("Name")
         table.add_column("Type")
@@ -218,7 +226,7 @@ class ServiceCommands:
         """
         if isinstance(result, dict) and "success" in result:
             if result.get("success") == 0:
-                self.cli.console.print(f"[red]Error:[/] {result.get('error', 'unknown error')}")
+                print_error(self.cli.console, result.get("error", "unknown error"))
                 return
             payload = result.get("result")
         else:
@@ -274,7 +282,7 @@ class ServiceCommands:
             # swallowing the payload.
             self.cli.console.print(compressed)
         else:
-            self.cli.console.print("[yellow]Empty set.[/]")
+            print_warning(self.cli.console, "Empty set.")
 
         removed = data.get("removed_columns") or []
         total = data.get("original_rows")
@@ -284,11 +292,11 @@ class ServiceCommands:
         if removed:
             hint_parts.append(f"Omitted columns: {', '.join(removed)}.")
         if hint_parts:
-            self.cli.console.print(f"[dim]{' '.join(hint_parts)}[/]")
+            print_info(self.cli.console, " ".join(hint_parts))
 
         metadata = payload.get("metadata")
         if isinstance(metadata, dict) and metadata:
-            self.cli.console.print(f"[dim]metadata: {json.dumps(metadata, ensure_ascii=False, default=str)}[/]")
+            print_info(self.cli.console, f"metadata: {json.dumps(metadata, ensure_ascii=False, default=str)}")
         return True
 
     @staticmethod
@@ -332,7 +340,7 @@ class ServiceCommands:
             else:
                 self.cli.console.print(json.dumps(items, indent=2, ensure_ascii=False, default=str))
         else:
-            self.cli.console.print("[yellow]Empty set.[/]")
+            print_warning(self.cli.console, "Empty set.")
 
         # Pagination hint — only when meaningful (another page is reachable).
         next_offset = extra.get("next_offset")
@@ -344,7 +352,7 @@ class ServiceCommands:
             method=method,
         )
         if hint:
-            self.cli.console.print(hint)
+            print_info(self.cli.console, hint)
         return True
 
     @staticmethod
@@ -373,7 +381,7 @@ class ServiceCommands:
         cmd_hint = ""
         if service and method:
             cmd_hint = f" Next: /{service}.{method} --offset={next_offset}"
-        return f"[dim]{prefix}{cmd_hint}[/]"
+        return f"{prefix}{cmd_hint}"
 
     def _render_payload_as_table(self, payload: Any) -> bool:
         """Render a list-of-dict payload as a Rich table.
@@ -417,15 +425,24 @@ class ServiceCommands:
         if tool is None:
             if hasattr(client.tool_instance, method_name):
                 # Method exists but is not in the read-only allow-list.
-                self.cli.console.print(
-                    f"[red]Method '{method_name}' is a write or privileged operation.[/] "
-                    f"[dim]The CLI only exposes read-only service methods. "
-                    f"Use agent mode to invoke writes.[/]"
+                print_error(
+                    self.cli.console,
+                    f"Method '{method_name}' is a write or privileged operation.",
+                    prefix=False,
+                )
+                print_info(
+                    self.cli.console,
+                    "The CLI only exposes read-only service methods. Use agent mode to invoke writes.",
                 )
             else:
-                self.cli.console.print(
-                    f"[red]Unknown method '{method_name}' on service '{client.service_name}'.[/] "
-                    f"[dim]Run `/{client.service_name}` to list available methods.[/]"
+                print_error(
+                    self.cli.console,
+                    f"Unknown method '{method_name}' on service '{client.service_name}'.",
+                    prefix=False,
+                )
+                print_info(
+                    self.cli.console,
+                    f"Run `/{client.service_name}` to list available methods.",
                 )
             return
 
@@ -442,7 +459,7 @@ class ServiceCommands:
         bound_method = getattr(client.tool_instance, method_name, None)
         missing = self._missing_required(bound_method, parsed)
         if missing:
-            self.cli.console.print(f"[red]Missing required argument(s):[/] {', '.join(missing)}")
+            print_error(self.cli.console, f"Missing required argument(s): {', '.join(missing)}")
             self._print_schema(tool)
             return
 
@@ -451,7 +468,7 @@ class ServiceCommands:
             result = self._run_async(tool.on_invoke_tool(None, args_json))
         except Exception as exc:
             logger.exception(f"Service tool invocation failed for {client.service_name}.{method_name}")
-            self.cli.console.print(f"[red]Invocation failed:[/] {exc}")
+            print_error(self.cli.console, f"Invocation failed: {exc}", prefix=False)
             return
 
         self._render_result(result, service=client.service_name, method=method_name)

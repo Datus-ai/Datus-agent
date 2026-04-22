@@ -542,7 +542,7 @@ class ChatCommands:
 
         except Exception as e:
             logger.error(f"Chat error: {str(e)}")
-            self.console.print(f"[bold red]Error:[/] {str(e)}")
+            self.console.print(f"[red]Error:[/] {str(e)}")
             if _is_model_config_error(e):
                 self.console.print("[yellow]Hint: Use /model to configure or switch your model.[/]")
 
@@ -739,12 +739,12 @@ class ChatCommands:
         """
         try:
             self.console.print()
-            self.console.print(f"[bold green]External Knowledge File:[/] [cyan]{ext_knowledge_file}[/]")
+            self.console.print(f"[green]External Knowledge File:[/] [cyan]{ext_knowledge_file}[/]")
 
         except Exception as e:
             logger.error(f"Error displaying external knowledge file: {e}")
             # Fallback to simple display
-            self.console.print(f"\n[bold green]External Knowledge File:[/] {ext_knowledge_file}")
+            self.console.print(f"\n[green]External Knowledge File:[/] {ext_knowledge_file}")
 
     def _make_input_collector(self, esc_guard):
         """Create a synchronous input collector callback for INTERACTION actions.
@@ -1026,7 +1026,7 @@ class ChatCommands:
                 # Determine node type for display
                 node_type = "Chat" if isinstance(self.current_node, ChatAgenticNode) else "Subagent"
 
-                self.console.print(f"[bold green]{node_type} Session Info:[/]")
+                self.console.print(f"[green]{node_type} Session Info:[/]")
                 self.console.print(f"  Session ID: {session_info['session_id']}")
                 self.console.print(f"  Action Count: {session_info['action_count']}")
                 self.console.print(f"  Total Conversations: {len(self.chat_history)}")
@@ -1135,11 +1135,11 @@ class ChatCommands:
                 self._reload_state_from_session()
             else:
                 error_msg = result.get("error", "Unknown error occurred")
-                self.console.print(f"[bold red]✗ Failed to compact session:[/] {error_msg}")
+                self.console.print(f"[red]✗ Failed to compact session:[/] {error_msg}")
 
         except Exception as e:
             logger.error(f"Error during manual compact: {e}")
-            self.console.print(f"[bold red]Error:[/] {str(e)}")
+            self.console.print(f"[red]Error:[/] {str(e)}")
 
     def _reload_state_from_session(self):
         """Reload in-memory state from the current session after compaction.
@@ -1268,7 +1268,7 @@ class ChatCommands:
 
             # Validate the session exists
             if not session_manager.session_exists(target_session_id):
-                self.console.print(f"[bold red]Session not found:[/] {target_session_id}")
+                self.console.print(f"[red]Session not found:[/] {target_session_id}")
                 return
 
             # Extract node type and create the appropriate node
@@ -1290,7 +1290,7 @@ class ChatCommands:
 
             messages = session_manager.get_session_messages(target_session_id)
             if messages:
-                self.console.print(f"\n[bold green]Session resumed![/] Showing {len(messages)} message(s):\n")
+                self.console.print(f"\n[green]Session resumed![/] Showing {len(messages)} message(s):\n")
                 action_display = ActionHistoryDisplay(self.console)
                 last_assistant_actions = []
                 for msg in messages:
@@ -1334,7 +1334,7 @@ class ChatCommands:
 
         except Exception as e:
             logger.error(f"Error resuming session: {e}")
-            self.console.print(f"[bold red]Error:[/] {str(e)}")
+            self.console.print(f"[red]Error:[/] {str(e)}")
 
     def cmd_rewind(self, args: str) -> Optional[str]:
         """Rewind the current session to before a specific user turn.
@@ -1384,10 +1384,10 @@ class ChatCommands:
                 try:
                     turn_num = int(turn_str)
                 except ValueError:
-                    self.console.print("[bold red]Invalid input. Please enter a number.[/]")
+                    self.console.print("[red]Invalid input. Please enter a number.[/]")
                     return
                 if turn_num < 1 or turn_num > len(user_turns):
-                    self.console.print(f"[bold red]Invalid turn number. Must be between 1 and {len(user_turns)}.[/]")
+                    self.console.print(f"[red]Invalid turn number. Must be between 1 and {len(user_turns)}.[/]")
                     return
             else:
                 # Interactive list selector (two-line per item)
@@ -1422,7 +1422,7 @@ class ChatCommands:
                 self.all_turn_actions = []
                 self.last_actions = []
                 self.console.print(
-                    f"\n[bold green]Rewound to before turn 1.[/] New session: [cyan]{new_node.session_id}[/]\n"
+                    f"\n[green]Rewound to before turn 1.[/] New session: [cyan]{new_node.session_id}[/]\n"
                 )
                 self.console.print("[green]Selected message placed in input buffer.[/]")
                 return rewind_user_message
@@ -1448,7 +1448,7 @@ class ChatCommands:
             new_messages = session_manager.get_session_messages(new_session_id)
             if new_messages:
                 self.console.print(
-                    f"\n[bold green]Rewound to before turn {turn_num}.[/] "
+                    f"\n[green]Rewound to before turn {turn_num}.[/] "
                     f"New session: [cyan]{new_session_id}[/] ({len(new_messages)} messages)\n"
                 )
                 action_display = ActionHistoryDisplay(self.console)
@@ -1490,7 +1490,7 @@ class ChatCommands:
 
         except Exception as e:
             logger.error(f"Error rewinding session: {e}")
-            self.console.print(f"[bold red]Error:[/] {str(e)}")
+            self.console.print(f"[red]Error:[/] {str(e)}")
         return None
 
     def add_in_sql_context(self, sql: str, explanation: str, incremental_actions: List[ActionHistory]):
