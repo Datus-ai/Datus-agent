@@ -7,9 +7,13 @@ Unit tests for GenJobAgenticNode.
 
 Tests cover:
 - Node creation in workflow and interactive modes
-- Tools setup (DBFuncTool + execute_ddl + execute_write, no transfer_query_result)
+- Tools setup (DBFuncTool + execute_ddl + execute_write + transfer_query_result
+  + get_migration_capabilities + suggest_table_layout + validate_ddl)
 - Max turns configuration
 - Node type registration and factory creation
+
+Since migration subagent was merged into gen_job, this node now covers both
+single-database ETL and cross-database migration. Tests reflect both paths.
 
 Design principle: NO mock except LLM.
 - Real AgentConfig (from conftest `real_agent_config`)
@@ -36,7 +40,6 @@ from tests.unit_tests.agent.node._builtin_node_test_helpers import (
     check_node_type_constant,
     check_node_type_in_action_types,
     check_standard_db_tools,
-    check_tools_exclude,
     check_tools_include,
 )
 
@@ -73,11 +76,26 @@ class TestGenJobAgenticNodeInit:
 
         check_tools_include(GenJobAgenticNode, real_agent_config, "execute_write")
 
-    def test_setup_tools_excludes_transfer_query_result(self, real_agent_config, mock_llm_create):  # audit-noqa
-        """gen_job is single-database ETL — transfer_query_result belongs to migration subagent."""
+    def test_setup_tools_includes_transfer_query_result(self, real_agent_config, mock_llm_create):  # audit-noqa
+        """gen_job absorbed migration — transfer_query_result is required for cross-DB flows."""
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
-        check_tools_exclude(GenJobAgenticNode, real_agent_config, "transfer_query_result")
+        check_tools_include(GenJobAgenticNode, real_agent_config, "transfer_query_result")
+
+    def test_setup_tools_includes_get_migration_capabilities(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
+
+        check_tools_include(GenJobAgenticNode, real_agent_config, "get_migration_capabilities")
+
+    def test_setup_tools_includes_suggest_table_layout(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
+
+        check_tools_include(GenJobAgenticNode, real_agent_config, "suggest_table_layout")
+
+    def test_setup_tools_includes_validate_ddl(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
+
+        check_tools_include(GenJobAgenticNode, real_agent_config, "validate_ddl")
 
     def test_setup_tools_includes_standard_db_tools(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
@@ -92,7 +110,8 @@ class TestGenJobAgenticNodeInit:
     def test_default_max_turns(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
-        check_max_turns(GenJobAgenticNode, real_agent_config, 30)
+        # 40 turns (absorbed from migration subagent) — cross-DB flows need more turns.
+        check_max_turns(GenJobAgenticNode, real_agent_config, 40)
 
     def test_uses_dynamic_db_func_tool(self, real_agent_config, mock_llm_create):  # audit-noqa
         """gen_job should use create_dynamic for multi-connector support."""

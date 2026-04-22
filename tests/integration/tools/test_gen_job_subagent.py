@@ -1,8 +1,8 @@
 """
-Integration test: MigrationAgenticNode tool chain for DuckDB → Greenplum migration.
+Integration test: GenJobAgenticNode tool chain for DuckDB → Greenplum migration.
 
 Verifies that the gen_job subagent's tools are correctly wired and can perform
-a real end-to-end migration using the node's DBFuncTool instance.
+a real end-to-end cross-database migration using the node's DBFuncTool instance.
 
 Requires: Greenplum Docker running on port 15432.
 """
@@ -47,7 +47,7 @@ def duckdb_path():
 
 @pytest.fixture(scope="module")
 def migration_node(duckdb_path):
-    """Create a MigrationAgenticNode with DuckDB + Greenplum configured."""
+    """Create a GenJobAgenticNode with DuckDB + Greenplum configured for cross-DB migration."""
     from unittest.mock import patch
 
     from datus.configuration.agent_config_loader import load_agent_config
@@ -94,10 +94,10 @@ agent:
     # External-service availability is handled by per-test TEST_GP_ENABLED gating.
     agent_config = load_agent_config(config=config_path, namespace="source_duckdb", reload=True, force=True)
 
-    from datus.agent.node.migration_agentic_node import MigrationAgenticNode
+    from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
     with patch("datus.models.base.LLMBaseModel.create_model"):
-        node = MigrationAgenticNode(agent_config=agent_config, execution_mode="workflow")
+        node = GenJobAgenticNode(agent_config=agent_config, execution_mode="workflow")
 
     yield node
 

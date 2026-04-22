@@ -14,11 +14,10 @@
 6. **[gen_sql](#gen_sql)** — 具备深度专业知识的专用 SQL 生成
 7. **[gen_report](#gen_report)** — 灵活的报告生成，支持可配置工具
 8. **[gen_table](gen_table.zh.md)** — 数据库建表（CTAS 或自然语言描述）
-9. **[gen_job](gen_job.zh.md)** — 单库 ETL 作业执行
-10. **[migration](migration.zh.md)** — 跨库迁移与对数校验
-11. **[gen_skill](#gen_skill)** — skill 创建与优化
-12. **[gen_dashboard](#gen_dashboard)** — Superset 和 Grafana 的 BI 仪表盘 CRUD
-13. **[scheduler](#scheduler)** — Airflow 作业生命周期管理
+9. **[gen_job](gen_job.zh.md)** — 数据管道执行（单库 ETL 和跨库迁移，含对数校验）
+10. **[gen_skill](#gen_skill)** — skill 创建与优化
+11. **[gen_dashboard](#gen_dashboard)** — Superset 和 Grafana 的 BI 仪表盘 CRUD
+12. **[scheduler](#scheduler)** — Airflow 作业生命周期管理
 
 ## 配置
 
@@ -1209,8 +1208,7 @@ agent:
 | `gen_sql` | 生成优化 SQL | SQL 查询 / SQL 文件 | N/A | 深度 SQL 专长、自动验证、支持文件输出 |
 | `gen_report` | 灵活报告生成 | 结构化报告 | N/A | 工具可配置、可扩展、自定义报告 subagent |
 | `gen_table` | 交互式建表 | DDL + 执行结果 | 数据库 | DDL 确认、CTAS 或自然语言建表 |
-| `gen_job` | 构建单库 ETL 作业 | 作业结果 | 数据库 | 包含 DDL/DML 的 ETL 流程 |
-| `migration` | 执行跨库迁移 | 迁移结果 | 目标数据库 | 类型映射、数据传输、强制对数校验 |
+| `gen_job` | 数据管道作业（单库 ETL + 跨库迁移） | 作业 / 迁移结果 | 源库 + 目标库 | DDL/DML 执行、通过 MigrationTargetMixin 做跨方言类型映射、`transfer_query_result`、源目标不同库时强制对数校验 |
 | `gen_skill` | 创建或优化 skill | skill 路径 | skills 目录 | 交互式编写、校验、加载现有 skill |
 | `gen_dashboard` | BI 仪表盘 CRUD（Superset、Grafana） | 仪表盘结果 | BI 平台 | 动态工具暴露、数据物化、多平台支持 |
 | `scheduler` | Airflow 作业生命周期管理 | 调度结果 | Airflow | 提交、监控、更新和排障 |

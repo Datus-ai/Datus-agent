@@ -69,11 +69,6 @@ def create_interactive_node(
 
             return GenJobAgenticNode(agent_config=agent_config, execution_mode="interactive")
 
-        elif subagent_name == "migration":
-            from datus.agent.node.migration_agentic_node import MigrationAgenticNode
-
-            return MigrationAgenticNode(agent_config=agent_config, execution_mode="interactive")
-
         elif subagent_name == "gen_report" or node_class_type == "gen_report":
             from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
 
@@ -216,7 +211,6 @@ def create_node_input(
     from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
     from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
     from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
-    from datus.agent.node.migration_agentic_node import MigrationAgenticNode
     from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
 
     if isinstance(
@@ -226,7 +220,6 @@ def create_node_input(
             GenMetricsAgenticNode,
             GenTableAgenticNode,
             GenJobAgenticNode,
-            MigrationAgenticNode,
         ),
     ):
         from datus.schemas.semantic_agentic_node_models import SemanticNodeInput

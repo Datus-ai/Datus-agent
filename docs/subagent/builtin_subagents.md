@@ -14,11 +14,10 @@ This document covers thirteen core subagents:
 6. **[gen_sql](#gen_sql)** — Specialized SQL generation with deep expertise
 7. **[gen_report](#gen_report)** — Flexible report generation with configurable tools
 8. **[gen_table](gen_table.md)** — Database table creation via CTAS or natural language
-9. **[gen_job](gen_job.md)** — Single-database ETL job execution
-10. **[migration](migration.md)** — Cross-database migration with reconciliation
-11. **[gen_skill](#gen_skill)** — Skill creation and optimization
-12. **[gen_dashboard](#gen_dashboard)** — BI dashboard CRUD for Superset and Grafana
-13. **[scheduler](#scheduler)** — Airflow job lifecycle management
+9. **[gen_job](gen_job.md)** — Data pipeline execution (single-database ETL AND cross-database migration with reconciliation)
+10. **[gen_skill](#gen_skill)** — Skill creation and optimization
+11. **[gen_dashboard](#gen_dashboard)** — BI dashboard CRUD for Superset and Grafana
+12. **[scheduler](#scheduler)** — Airflow job lifecycle management
 
 ## Configuration
 
@@ -1211,8 +1210,7 @@ agent:
 | `gen_sql` | Generate optimized SQL | SQL query / SQL file | N/A | Deep SQL expertise, auto-validation, file-based output |
 | `gen_report` | Flexible report generation | Structured report | N/A | Configurable tools, extensible, custom report subagents |
 | `gen_table` | Create tables interactively | DDL + execution result | Database | DDL confirmation, CTAS or natural-language schema creation |
-| `gen_job` | Build single-database ETL jobs | Job result | Database | ETL flow with DDL/DML execution |
-| `migration` | Run cross-database migrations | Migration result | Target database | Type mapping, transfer, mandatory reconciliation |
+| `gen_job` | Data pipeline jobs (intra-DB ETL + cross-DB migration) | Job / migration result | Source + target databases | DDL/DML execution, cross-dialect type mapping via MigrationTargetMixin, `transfer_query_result`, mandatory reconciliation when source ≠ target |
 | `gen_skill` | Create or optimize skills | Skill path | Skills directory | Interactive authoring, validation, skill loading |
 | `gen_dashboard` | BI dashboard CRUD (Superset, Grafana) | Dashboard result | BI platform | Dynamic tool exposure, data materialization, multi-platform |
 | `scheduler` | Airflow job lifecycle management | Scheduler result | Airflow | Submit, monitor, update, and troubleshoot jobs |

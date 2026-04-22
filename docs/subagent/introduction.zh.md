@@ -31,11 +31,10 @@ Subagent 可以是：
 6. `gen_sql_summary`：SQL 摘要生成
 7. `gen_ext_knowledge`：业务知识提取
 8. `gen_table`：交互式建表
-9. `gen_job`：单库 ETL 作业执行
-10. `migration`：跨库迁移
-11. `gen_skill`：skill 创建与优化
-12. `gen_dashboard`：BI 仪表盘创建与管理
-13. `scheduler`：Airflow 作业生命周期管理
+9. `gen_job`：数据管道作业（单库 ETL 和跨库迁移）
+10. `gen_skill`：skill 创建与优化
+11. `gen_dashboard`：BI 仪表盘创建与管理
+12. `scheduler`：Airflow 作业生命周期管理
 
 详细说明见 [内置 subagent](./builtin_subagents.zh.md)。
 
@@ -147,8 +146,7 @@ graph LR
 | `gen_sql_summary` | 把 SQL 总结为可复用知识 |
 | `gen_ext_knowledge` | 从问题-SQL 对中提取业务知识 |
 | `gen_table` | 交互式创建表 |
-| `gen_job` | 构建单库 ETL 作业 |
-| `migration` | 执行跨库迁移流程 |
+| `gen_job` | 构建数据管道作业（单库 ETL 或跨库迁移） |
 | `gen_skill` | 创建或优化 skill |
 | `gen_dashboard` | 创建或管理 BI 仪表盘 |
 | `scheduler` | 提交或操作 Airflow 作业 |

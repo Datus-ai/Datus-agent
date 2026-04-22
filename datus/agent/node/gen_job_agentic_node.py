@@ -8,7 +8,14 @@ GenJobAgenticNode implementation for ETL and cross-database migration jobs.
 This module provides a specialized implementation of AgenticNode focused on
 building target tables from source tables (single-database ETL) and migrating
 data across database engines (cross-database migration). It includes DB tools
-with DDL, DML, and transfer capabilities, filesystem tools, and ask_user.
+with DDL, DML, transfer, and migration-target capabilities (MigrationTargetMixin
+wrappers), filesystem tools, and ask_user.
+
+Since this node absorbs the previous ``migration`` subagent, it registers
+``transfer_query_result`` plus the three migration-target wrappers
+(``get_migration_capabilities`` / ``suggest_table_layout`` / ``validate_ddl``)
+out of the box. When the target adapter does not implement ``MigrationTargetMixin``,
+the wrappers fall back to safe defaults so the LLM can still proceed.
 """
 
 from typing import AsyncGenerator, Literal, Optional
@@ -51,11 +58,13 @@ class GenJobAgenticNode(AgenticNode):
     ):
         self.execution_mode = execution_mode
 
-        self.max_turns = 30
+        # Default 40 turns (absorbed from migration subagent) — cross-DB flows
+        # need more turns for inspect → DDL → transfer → reconcile.
+        self.max_turns = 40
         if agent_config and hasattr(agent_config, "agentic_nodes") and self.NODE_NAME in agent_config.agentic_nodes:
             agentic_node_config = agent_config.agentic_nodes[self.NODE_NAME]
             if isinstance(agentic_node_config, dict):
-                self.max_turns = agentic_node_config.get("max_turns", 30)
+                self.max_turns = agentic_node_config.get("max_turns", 40)
 
         from datus.configuration.node_type import NodeType
 
@@ -91,7 +100,7 @@ class GenJobAgenticNode(AgenticNode):
         logger.debug(f"Setup {len(self.tools)} tools for {self.NODE_NAME}: {[tool.name for tool in self.tools]}")
 
     def _setup_db_tools(self):
-        """Setup database tools including DDL, DML, and transfer capabilities."""
+        """Setup database tools including DDL, DML, transfer, and migration-target helpers."""
         try:
             self.db_func_tool = DBFuncTool.create_dynamic(
                 self.agent_config,
@@ -105,7 +114,20 @@ class GenJobAgenticNode(AgenticNode):
             # DML tool for INSERT/UPDATE/DELETE
             if hasattr(self.db_func_tool, "execute_write"):
                 self.tools.append(trans_to_function_tool(self.db_func_tool.execute_write))
-            logger.debug("Added database tools + execute_ddl + execute_write from DBFuncTool")
+            # Cross-database transfer tool (for cross-DB migration flows)
+            if hasattr(self.db_func_tool, "transfer_query_result"):
+                self.tools.append(trans_to_function_tool(self.db_func_tool.transfer_query_result))
+            # Migration-target Mixin wrappers (degrade gracefully when adapter lacks Mixin)
+            if hasattr(self.db_func_tool, "get_migration_capabilities"):
+                self.tools.append(trans_to_function_tool(self.db_func_tool.get_migration_capabilities))
+            if hasattr(self.db_func_tool, "suggest_table_layout"):
+                self.tools.append(trans_to_function_tool(self.db_func_tool.suggest_table_layout))
+            if hasattr(self.db_func_tool, "validate_ddl"):
+                self.tools.append(trans_to_function_tool(self.db_func_tool.validate_ddl))
+            logger.debug(
+                "Added database tools + execute_ddl + execute_write + transfer_query_result "
+                "+ migration Mixin wrappers from DBFuncTool"
+            )
         except Exception as e:
             logger.exception("Failed to setup database tools")
             raise DatusException(

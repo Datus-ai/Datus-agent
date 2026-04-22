@@ -1,10 +1,10 @@
-# ETL Job (gen_job)
+# Data Pipeline (gen_job)
 
 ## Overview
 
-The `gen_job` subagent is a built-in data engineering agent for single-database ETL. It builds target tables from source tables within the same database using SQL (CREATE TABLE AS SELECT, INSERT from SELECT, etc.).
+The `gen_job` subagent is a built-in data engineering agent that covers BOTH single-database ETL and cross-database migration. It builds or updates target tables from one or more source tables, transferring data across database engines when the source and target differ, and validates the result.
 
-For cross-database migration, use the [migration](migration.md) subagent instead.
+The agent auto-detects the path based on the user's prompt: if the source and target are the same database, it runs intra-DB ETL (CREATE TABLE AS SELECT / INSERT from SELECT). If they differ, it runs cross-DB migration (via `transfer_query_result`) and activates the `data-migration` skill for mandatory reconciliation.
 
 ## Quick Start
 
@@ -75,6 +75,9 @@ gen_job comes with a comprehensive tool set:
 | `execute_ddl` | Execute DDL (CREATE/ALTER/DROP TABLE/SCHEMA) |
 | `execute_write` | Execute DML (INSERT/UPDATE/DELETE) |
 | `transfer_query_result` | Transfer data between databases |
+| `get_migration_capabilities` | Read target dialect's requires/forbids/type_hints from adapter's `MigrationTargetMixin` (see Cross-DB section) |
+| `suggest_table_layout` | Ask target adapter to suggest distribution/partition/order keys based on source columns |
+| `validate_ddl` | Run target-dialect static validation (and optionally dry-run CREATE+DROP) before executing DDL |
 | `read_file` / `write_file` | Read/write SQL artifact files |
 | `ask_user` | Interactive confirmation (interactive mode only) |
 
@@ -95,10 +98,12 @@ Phase 4: Summarize
 
 ```
 Phase 1: Discover databases (list_databases) and inspect source
-Phase 2: Generate target DDL with cross-database type mapping
-Phase 3: Transfer data (transfer_query_result)
-Phase 4: Reconcile source vs target (7 checks)
-Phase 5: Summarize with reconciliation report
+Phase 2: Call get_migration_capabilities() on target for dialect hints
+         + suggest_table_layout() for OLAP targets
+Phase 3: Draft target DDL → validate_ddl() → execute_ddl()
+Phase 4: Transfer data (transfer_query_result)
+Phase 5: Reconcile source vs target (7 checks)
+Phase 6: Summarize with reconciliation report
 ```
 
 ## Cross-database Migration Details
@@ -115,24 +120,17 @@ The agent first calls `list_databases()` to discover available databases:
 ]
 ```
 
-### Type Mapping
+### Dialect Hints (adapter-driven)
 
-Types are automatically mapped between dialects:
+Type mapping and DDL requirements are NOT hardcoded in the agent. Each target adapter implements `MigrationTargetMixin` in `datus-db-core` to declare its own dialect's contract. The agent consumes this via three wrapper tools:
 
-| DuckDB | Greenplum | StarRocks |
-|--------|-----------|-----------|
-| VARCHAR | VARCHAR | VARCHAR(65533) |
-| VARCHAR(n) | VARCHAR(n) | VARCHAR(n) |
-| TEXT | TEXT | STRING |
-| INTEGER | INTEGER | INT |
-| BIGINT | BIGINT | BIGINT |
-| DOUBLE | DOUBLE PRECISION | DOUBLE |
-| DECIMAL(p,s) | NUMERIC(p,s) | DECIMAL(p,s) |
-| BOOLEAN | BOOLEAN | BOOLEAN |
-| DATE | DATE | DATE |
-| TIMESTAMP | TIMESTAMP | DATETIME |
+- **`get_migration_capabilities(database=target)`** — returns the target's `dialect_family`, `requires` (clauses the DDL MUST include), `forbids` (patterns the DDL MUST NOT include), `type_hints` (preferred mappings), and a reference `example_ddl`.
+- **`suggest_table_layout(database=target, columns_json=...)`** — returns OLAP-specific hints (e.g. `{duplicate_key, distributed_by, buckets}` for StarRocks, `{engine, order_by}` for ClickHouse, `{partitioned_by}` for Hive via Trino).
+- **`validate_ddl(database=target, ddl=..., target_table=...)`** — runs structural validation (e.g. StarRocks must have `DUPLICATE KEY` + `DISTRIBUTED BY`; ClickHouse must have `ENGINE` + `ORDER BY`); optionally runs `dry_run_ddl` (CREATE + DROP to a temp table).
 
-Unsupported types (LIST, STRUCT, MAP, BLOB, etc.) are reported as errors.
+Adapters that implement the Mixin (as of this release): StarRocks, Greenplum, PostgreSQL, MySQL, ClickHouse, Trino. Other adapters fall back to pure-LLM mode — `get_migration_capabilities` returns `{"supported": false, "warning": ...}` and the LLM relies on its own knowledge of the target dialect.
+
+To add hints for a new target dialect, implement `MigrationTargetMixin` in the adapter — no changes to the agent are required.
 
 ### Data Transfer
 
@@ -173,7 +171,7 @@ gen_job works out of the box. You can optionally customize it in `agent.yml`:
 agent:
   agentic_nodes:
     gen_job:
-      max_turns: 30       # Default: 30
+      max_turns: 40       # Default: 40 (cross-DB flows need more turns)
 ```
 
 ## Skills Used
@@ -207,11 +205,32 @@ User: Migrate the users table from local_duckdb to greenplum,
       target table public.users_copy
 
 gen_job:
-  1. Calls list_databases() -> discovers local_duckdb (duckdb) and greenplum (greenplum)
-  2. Calls describe_table("users", database="local_duckdb") -> gets 6 columns
-  3. Maps types: INTEGER->INTEGER, VARCHAR->VARCHAR, DECIMAL->NUMERIC, etc.
-  4. Executes CREATE TABLE on greenplum
-  5. Calls transfer_query_result(source_database="local_duckdb", target_database="greenplum")
-  6. Runs 7 reconciliation checks comparing both databases
-  7. Returns migration report with pass/fail status
+  1. Calls list_databases() -> local_duckdb (duckdb) and greenplum (greenplum)
+  2. Calls describe_table("users", database="local_duckdb") -> 6 columns
+  3. Calls get_migration_capabilities(database="greenplum")
+     -> dialect_family="postgres-like", DISTRIBUTED BY recommended
+  4. Drafts CREATE TABLE public.users_copy (...) DISTRIBUTED BY (id)
+  5. Calls validate_ddl(database="greenplum", ddl=..., target_table="users_copy")
+     -> errors=[], proceeds
+  6. Executes DDL via execute_ddl(database="greenplum")
+  7. Calls transfer_query_result(source_database="local_duckdb",
+     target_database="greenplum", mode="replace")
+  8. Activates data-migration skill; runs 7 reconciliation checks
+  9. Returns migration report with pass/fail status
+```
+
+### Example 3: Migrate MySQL to StarRocks
+
+```
+User: Migrate orders from mysql_prod to starrocks, target test.orders_copy
+
+gen_job:
+  1. Calls get_migration_capabilities(database="starrocks")
+     -> requires DUPLICATE KEY + DISTRIBUTED BY HASH + BUCKETS
+  2. Calls suggest_table_layout(database="starrocks", columns_json=...)
+     -> {"duplicate_key": ["order_id"], "distributed_by": ["order_id"], "buckets": 10}
+  3. Drafts CREATE TABLE with the suggested layout + type_hints
+  4. validate_ddl() catches a missing NOT NULL on the key column -> LLM fixes it
+  5. Executes DDL on starrocks
+  6. transfer_query_result + 7-point reconciliation
 ```

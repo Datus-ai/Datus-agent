@@ -1,22 +1,24 @@
 ---
 name: data-migration
-description: Migrate a table from a source database to a target database with type mapping, DDL generation, data transfer, and reconciliation
+description: Activate when the gen_job agent detects that the source and target databases differ. Covers cross-database migration lifecycle: type mapping via adapter Mixin hints, DDL generation, data transfer via transfer_query_result, and mandatory reconciliation.
 tags:
   - data-engineering
   - migration
   - cross-database
   - etl
   - reconciliation
-version: "1.0.0"
+version: "1.1.0"
 user_invocable: false
 disable_model_invocation: false
 allowed_agents:
-  - migration
+  - gen_job
 ---
 
 # Data Migration
 
-Use this skill when migrating data between different database engines (e.g., DuckDB to Greenplum or StarRocks). This skill covers the full lifecycle: source inspection, target DDL generation, data transfer, and post-migration reconciliation.
+Use this skill when the `gen_job` agent is asked to move data between DIFFERENT database engines (any source → any target: e.g., DuckDB ↔ Greenplum, MySQL ↔ StarRocks, Postgres ↔ ClickHouse, Hive → Iceberg). For intra-database ETL (source == target), this skill does not apply — follow the `gen-table` skill instead.
+
+This skill covers the full lifecycle: source inspection, target DDL generation (using adapter Mixin hints), data transfer, and post-migration reconciliation.
 
 ## When to use this skill
 
@@ -48,12 +50,15 @@ Activate when you need to:
 - If target table already exists, use `describe_table(database=target)` to compare
 - Determine whether to create new or replace existing
 
-### Phase 3: Build Target DDL
+### Phase 3: Build Target DDL (dialect-neutral)
 
-- Map source column types to target dialect (DuckDB types to Greenplum/StarRocks types)
-- For StarRocks: determine DUPLICATE KEY columns and DISTRIBUTED BY HASH strategy
-- Generate CREATE TABLE DDL appropriate for target database
-- Execute DDL with `execute_ddl(sql, database=target)`
+- Call `get_migration_capabilities(database=target)` to read the target dialect's hard requirements, forbids, type_hints, and a reference example_ddl.
+  - If the result reports `supported == false`, the target adapter has not implemented migration hints. Proceed in pure-LLM mode, relying on your own knowledge of that dialect.
+- For OLAP-like targets (dialect_family indicates OLAP) call `suggest_table_layout(database=target, columns_json=...)` to get distribution / partition / order-by hints.
+- Map source types → target types guided by `type_hints`. When ambiguous, prefer widening over narrowing.
+- Draft the CREATE TABLE DDL.
+- Call `validate_ddl(database=target, ddl=<draft>, target_table=<name>)`. Iterate until `errors == []`.
+- Execute the DDL with `execute_ddl(sql, database=target)`.
 
 ### Phase 4: Transfer Data
 

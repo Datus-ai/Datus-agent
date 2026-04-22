@@ -53,7 +53,6 @@ SYS_SUB_AGENTS = {
     "gen_report",
     "gen_table",
     "gen_job",
-    "migration",
     "gen_skill",
     "gen_dashboard",
     "scheduler",

@@ -233,7 +233,6 @@ class TestResolveNodeType:
             "explore": NodeType.TYPE_EXPLORE,
             "gen_table": NodeType.TYPE_GEN_TABLE,
             "gen_job": NodeType.TYPE_GEN_JOB,
-            "migration": NodeType.TYPE_MIGRATION,
             "gen_skill": NodeType.TYPE_GEN_SKILL,
             "gen_dashboard": NodeType.TYPE_GEN_DASHBOARD,
             "scheduler": NodeType.TYPE_SCHEDULER,
@@ -280,6 +279,21 @@ class TestBuildTaskDescription:
         desc = task_tool._build_task_description()
         assert "PARALLEL" in desc
         assert "direction-specific prompt" in desc
+
+    def test_migration_subagent_removed(self, task_tool):
+        """Migration has been merged into gen_job — it should no longer be a standalone type."""
+        desc = task_tool._build_task_description()
+        # The literal subagent name 'migration' should not appear as a bullet entry
+        assert "- migration:" not in desc
+
+    def test_gen_job_description_mentions_cross_database_migration(self, task_tool):
+        """Parent ChatAgenticNode routes to gen_job for migration — description must carry the signal."""
+        desc = task_tool._build_task_description()
+        # We need the routing LLM to match on migration-related user intents
+        haystack = desc.lower()
+        assert "gen_job" in haystack
+        assert "migration" in haystack or "migrate" in haystack
+        assert "cross-database" in haystack or "cross database" in haystack or "different database" in haystack
 
 
 # ── node creation (fresh per invocation) ──────────────────────────
@@ -1000,15 +1014,6 @@ class TestCreateBuiltinNode:
     @patch("datus.agent.node.gen_job_agentic_node.GenJobAgenticNode.__init__", return_value=None)
     def test_gen_job(self, mock_init, task_tool):
         task_tool._create_builtin_node("gen_job")
-        mock_init.assert_called_once_with(
-            agent_config=task_tool.agent_config,
-            execution_mode="interactive",
-            is_subagent=True,
-        )
-
-    @patch("datus.agent.node.migration_agentic_node.MigrationAgenticNode.__init__", return_value=None)
-    def test_migration(self, mock_init, task_tool):
-        task_tool._create_builtin_node("migration")
         mock_init.assert_called_once_with(
             agent_config=task_tool.agent_config,
             execution_mode="interactive",

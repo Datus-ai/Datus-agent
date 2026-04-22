@@ -104,8 +104,8 @@ agent:
 | 建表 (CTAS) | 支持 | 支持 |
 | 建表 (DDL) | 支持 | 支持 |
 | 数据写入 (INSERT/UPDATE/DELETE) | 不支持 | 支持 |
-| 跨库迁移 | 不支持 | 不支持（使用 [migration](migration.zh.md)） |
+| 跨库迁移 | 不支持 | 支持 |
 | 用户确认 (ask_user) | 必须 | 可选 |
-| 默认 max_turns | 20 | 30 |
+| 默认 max_turns | 20 | 40 |
 
-需要交互式建表时用 **gen_table**，需要单库 ETL 流水线时用 **gen_job**。跨库迁移请使用 [migration](migration.zh.md)。
+需要交互式建表时用 **gen_table**，单库 ETL 或跨库迁移都用 **gen_job**（gen_job 已覆盖两者）。

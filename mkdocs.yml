@@ -31,8 +31,7 @@ nav:
       - Scheduler: subagent/scheduler.md
       - Generate SQL Summary: subagent/gen_sql_summary.md
       - Table Generation: subagent/gen_table.md
-      - ETL Job: subagent/gen_job.md
-      - Migration: subagent/migration.md
+      - Data Pipeline (ETL + Migration): subagent/gen_job.md
     - Chatbot: web_chatbot/introduction.md
     - IM Gateway:
       - Introduction: gateway/introduction.md

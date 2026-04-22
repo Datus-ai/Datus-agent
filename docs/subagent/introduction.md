@@ -31,11 +31,10 @@ The current built-in set comes from `SYS_SUB_AGENTS` in code:
 6. `gen_sql_summary`: SQL summary generation
 7. `gen_ext_knowledge`: business knowledge extraction
 8. `gen_table`: interactive table creation
-9. `gen_job`: single-database ETL job execution
-10. `migration`: cross-database migration
-11. `gen_skill`: skill creation and optimization
-12. `gen_dashboard`: BI dashboard creation and management
-13. `scheduler`: Airflow job lifecycle management
+9. `gen_job`: data pipeline jobs (single-database ETL AND cross-database migration)
+10. `gen_skill`: skill creation and optimization
+11. `gen_dashboard`: BI dashboard creation and management
+12. `scheduler`: Airflow job lifecycle management
 
 See [Built-in subagents](./builtin_subagents.md) for details.
 
@@ -147,8 +146,7 @@ Important behavior:
 | `gen_sql_summary` | Summarize SQL into reusable knowledge |
 | `gen_ext_knowledge` | Extract business knowledge from question-SQL pairs |
 | `gen_table` | Create tables interactively |
-| `gen_job` | Build single-database ETL jobs |
-| `migration` | Run cross-database migration workflows |
+| `gen_job` | Build data pipeline jobs (single-database ETL or cross-database migration) |
 | `gen_skill` | Create or optimize skills |
 | `gen_dashboard` | Create or manage BI dashboards |
 | `scheduler` | Submit or operate Airflow jobs |

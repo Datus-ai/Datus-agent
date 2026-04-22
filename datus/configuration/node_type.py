@@ -61,8 +61,7 @@ class NodeType:
     TYPE_EXT_KNOWLEDGE = "ext_knowledge"  # For external knowledge generation
     TYPE_EXPLORE = "explore"  # For read-only data exploration and context gathering
     TYPE_GEN_TABLE = "gen_table"  # For wide table generation from JOIN SQL
-    TYPE_GEN_JOB = "gen_job"  # For single-database ETL jobs
-    TYPE_MIGRATION = "migration"  # For cross-database migration
+    TYPE_GEN_JOB = "gen_job"  # For data pipeline jobs: single-database ETL AND cross-database migration
     TYPE_GEN_SKILL = "gen_skill"  # For interactive skill creation and optimization
     TYPE_GEN_DASHBOARD = "gen_dashboard"  # For BI dashboard creation and management
     TYPE_SCHEDULER = "scheduler"  # For job scheduler management and monitoring
@@ -88,7 +87,6 @@ class NodeType:
         TYPE_EXPLORE,
         TYPE_GEN_TABLE,
         TYPE_GEN_JOB,
-        TYPE_MIGRATION,
         TYPE_GEN_SKILL,
         TYPE_GEN_DASHBOARD,
         TYPE_SCHEDULER,
@@ -120,8 +118,10 @@ class NodeType:
         TYPE_EXT_KNOWLEDGE: "External knowledge generation with conversational AI",
         TYPE_EXPLORE: "Read-only data exploration and context gathering",
         TYPE_GEN_TABLE: "Wide table generation from JOIN SQL with CTAS",
-        TYPE_GEN_JOB: "Single-database ETL job execution",
-        TYPE_MIGRATION: "Cross-database migration with type mapping and reconciliation",
+        TYPE_GEN_JOB: (
+            "Data pipeline job execution: single-database ETL and cross-database migration "
+            "(with type mapping, DDL validation, and reconciliation)"
+        ),
         TYPE_GEN_SKILL: "Interactive skill creation and optimization",
         TYPE_GEN_DASHBOARD: "BI dashboard creation and management",
         TYPE_SCHEDULER: "Job scheduler management and monitoring",
@@ -180,8 +180,6 @@ class NodeType:
         elif node_type == NodeType.TYPE_GEN_TABLE:
             input_data_cls = SemanticNodeInput
         elif node_type == NodeType.TYPE_GEN_JOB:
-            input_data_cls = SemanticNodeInput
-        elif node_type == NodeType.TYPE_MIGRATION:
             input_data_cls = SemanticNodeInput
         elif node_type == NodeType.TYPE_GEN_SKILL:
             input_data_cls = SkillCreatorNodeInput

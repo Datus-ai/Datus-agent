@@ -3,6 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 # -*- coding: utf-8 -*-
+import json
 import os
 import re
 from collections import OrderedDict
@@ -1554,6 +1555,151 @@ class DBFuncTool:
                 "batch_size": batch_size,
             }
         )
+
+    # ==================== Migration Target Wrappers ====================
+    #
+    # Thin wrappers over ``MigrationTargetMixin`` methods on the underlying
+    # connector. Uses duck typing so any datus-db-core >= the version that
+    # introduced the Mixin is supported. When the connector does not expose
+    # these methods, we return safe fallback values so the migration agent
+    # can continue in pure-LLM mode.
+
+    def get_migration_capabilities(self, database: Optional[str] = "") -> FuncToolResult:
+        """
+        Get migration target hints (dialect_family, requires, forbids, type_hints,
+        example_ddl) for the specified target database.
+
+        Args:
+            database: Target database name. Uses the default database if empty.
+
+        Returns:
+            When the adapter implements ``MigrationTargetMixin``:
+              success=1, result = the capability dict.
+            Otherwise:
+              success=1, result = {"supported": False, "warning": "..."}.
+        """
+        try:
+            connector = self._get_connector(database)
+        except DatusException as e:
+            return FuncToolResult(success=0, error=str(e))
+
+        if not hasattr(connector, "describe_migration_capabilities"):
+            return FuncToolResult(
+                result={
+                    "supported": False,
+                    "dialect_family": getattr(connector, "dialect", "unknown"),
+                    "warning": (
+                        "Adapter does not expose migration hints (MigrationTargetMixin not implemented); "
+                        "falling back to pure LLM mode. DDL generation will rely on the LLM's own "
+                        "knowledge of this dialect."
+                    ),
+                }
+            )
+
+        try:
+            capabilities = connector.describe_migration_capabilities()
+        except Exception as e:
+            logger.warning(f"describe_migration_capabilities failed on {database}: {e}")
+            return FuncToolResult(
+                result={
+                    "supported": False,
+                    "warning": f"Adapter raised while describing capabilities: {e}",
+                }
+            )
+        return FuncToolResult(result=capabilities)
+
+    def suggest_table_layout(self, database: str = "", columns_json: str = "[]") -> FuncToolResult:
+        """
+        Suggest dialect-specific table layout (distribution/partition/order) for
+        the target database, given the source columns.
+
+        Args:
+            database: Target database name.
+            columns_json: JSON array of source column defs. Each element must
+                be an object with keys ``name`` (str), ``type`` (str), and
+                ``nullable`` (bool). Example::
+
+                    [{"name": "id", "type": "BIGINT", "nullable": false}]
+
+        Returns:
+            When the adapter implements the Mixin: result = suggestion dict
+            (possibly empty for OLTP). Otherwise: result = {}.
+        """
+        try:
+            columns = json.loads(columns_json) if columns_json else []
+        except json.JSONDecodeError as e:
+            return FuncToolResult(success=0, error=f"Invalid columns_json: {e}")
+        if not isinstance(columns, list):
+            return FuncToolResult(success=0, error="columns_json must be a JSON array")
+
+        try:
+            connector = self._get_connector(database)
+        except DatusException as e:
+            return FuncToolResult(success=0, error=str(e))
+
+        if not hasattr(connector, "suggest_table_layout"):
+            return FuncToolResult(result={})
+
+        try:
+            suggestion = connector.suggest_table_layout(columns)
+        except Exception as e:
+            logger.warning(f"suggest_table_layout failed on {database}: {e}")
+            return FuncToolResult(result={})
+        return FuncToolResult(result=suggestion)
+
+    def validate_ddl(
+        self, database: Optional[str] = "", ddl: str = "", target_table: Optional[str] = None
+    ) -> FuncToolResult:
+        """
+        Statically validate a CREATE TABLE DDL against the target dialect's rules.
+        Optionally runs ``dry_run_ddl`` (actual CREATE + DROP to a temp table)
+        when ``target_table`` is provided and the adapter supports it.
+
+        Args:
+            database: Target database name.
+            ddl: The CREATE TABLE DDL to validate.
+            target_table: If provided, attempt dry-run using this table name.
+
+        Returns:
+            result = {"errors": [...], "validated": true|false}. Empty errors
+            with validated=True means static checks passed.
+            When the adapter has no Mixin, returns validated=False with no errors
+            (the LLM is solely responsible for correctness).
+        """
+        if not ddl or not ddl.strip():
+            return FuncToolResult(success=0, error="Empty DDL statement")
+
+        try:
+            connector = self._get_connector(database)
+        except DatusException as e:
+            return FuncToolResult(success=0, error=str(e))
+
+        if not hasattr(connector, "validate_ddl"):
+            return FuncToolResult(result={"errors": [], "validated": False})
+
+        errors: List[str] = []
+        try:
+            static_errors = connector.validate_ddl(ddl)
+            if static_errors:
+                errors.extend(static_errors)
+        except Exception as e:
+            logger.warning(f"validate_ddl static check failed on {database}: {e}")
+            errors.append(f"Static check raised unexpectedly: {e}")
+
+        # If static errors were found, skip dry_run — DDL is already invalid.
+        if target_table and not errors and hasattr(connector, "dry_run_ddl"):
+            try:
+                dry_errors = connector.dry_run_ddl(ddl, target_table)
+                if dry_errors:
+                    errors.extend(dry_errors)
+            except NotImplementedError:
+                # Adapter chose not to implement dry-run — static check is the ceiling.
+                pass
+            except Exception as e:
+                logger.warning(f"dry_run_ddl failed on {database}: {e}")
+                errors.append(f"Dry-run raised unexpectedly: {e}")
+
+        return FuncToolResult(result={"errors": errors, "validated": True})
 
 
 def db_function_tool_instance(

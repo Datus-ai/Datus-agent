@@ -52,7 +52,6 @@ NODE_CLASS_MAP = {
     "explore": NodeType.TYPE_EXPLORE,
     "gen_table": NodeType.TYPE_GEN_TABLE,
     "gen_job": NodeType.TYPE_GEN_JOB,
-    "migration": NodeType.TYPE_MIGRATION,
     "gen_skill": NodeType.TYPE_GEN_SKILL,
     "gen_dashboard": NodeType.TYPE_GEN_DASHBOARD,
     "scheduler": NodeType.TYPE_SCHEDULER,
@@ -140,19 +139,17 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "use gen_semantic_model separately. Returns JSON with {response, tokens_used}."
     ),
     "gen_job": (
-        "Execute single-database ETL jobs: build a target table from source tables using SQL "
-        "(CREATE TABLE AS SELECT, INSERT from SELECT, etc.). "
-        "Inspects source and target schemas, generates DDL, writes data, and validates the result. "
-        "Use for data transformations within the SAME database. "
-        "For cross-database migration, use the 'migration' subagent instead. "
-        "Returns JSON with {response, tokens_used}."
-    ),
-    "migration": (
-        "Migrate a table from one database to another (e.g., DuckDB to Greenplum or StarRocks). "
-        "Handles cross-database type mapping, target DDL generation, data transfer via transfer_query_result, "
-        "and mandatory post-migration reconciliation (row count, null ratio, min/max, aggregates). "
-        "Prompt: specify source database/table and target database/table. "
-        "Returns JSON with {response, tokens_used}."
+        "Execute data pipeline jobs — BOTH intra-database ETL AND cross-database migration. "
+        "For intra-database ETL: builds a target table from source tables using SQL "
+        "(CREATE TABLE AS SELECT, INSERT from SELECT, etc.) within the SAME database. "
+        "For cross-database migration: transfers data between different database engines "
+        "(e.g., DuckDB to Greenplum, MySQL to StarRocks, Postgres to ClickHouse). "
+        "Handles cross-dialect type mapping, target DDL generation, data transfer via "
+        "transfer_query_result, and mandatory post-migration reconciliation "
+        "(row count, null ratio, min/max, aggregates) when source and target differ. "
+        "Inspects source and target schemas, generates DDL, writes data, validates results. "
+        "Prompt: describe what you want to build or migrate; specify source/target databases "
+        "and tables. Returns JSON with {response, tokens_used}."
     ),
     "gen_dashboard": (
         "Create, update, and manage BI dashboards (Superset, Grafana). "
@@ -396,14 +393,6 @@ class SubAgentTaskTool:
                 execution_mode=self._resolve_execution_mode(),
                 is_subagent=True,
             )
-        elif subagent_type == "migration":
-            from datus.agent.node.migration_agentic_node import MigrationAgenticNode
-
-            return MigrationAgenticNode(
-                agent_config=self.agent_config,
-                execution_mode=self._resolve_execution_mode(),
-                is_subagent=True,
-            )
         elif subagent_type == "gen_skill":
             from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
@@ -471,7 +460,6 @@ class SubAgentTaskTool:
             "gen_ext_knowledge": (NodeType.TYPE_EXT_KNOWLEDGE, "gen_ext_knowledge"),
             "gen_table": (NodeType.TYPE_GEN_TABLE, "gen_table"),
             "gen_job": (NodeType.TYPE_GEN_JOB, "gen_job"),
-            "migration": (NodeType.TYPE_MIGRATION, "migration"),
             "gen_dashboard": (NodeType.TYPE_GEN_DASHBOARD, "gen_dashboard"),
             "scheduler": (NodeType.TYPE_SCHEDULER, "scheduler"),
         }
@@ -693,10 +681,9 @@ class SubAgentTaskTool:
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
         from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
         from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
-        from datus.agent.node.migration_agentic_node import MigrationAgenticNode
         from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
 
-        if isinstance(node, (GenTableAgenticNode, GenJobAgenticNode, MigrationAgenticNode)):
+        if isinstance(node, (GenTableAgenticNode, GenJobAgenticNode)):
             from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 
             return SemanticNodeInput(
