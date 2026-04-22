@@ -146,30 +146,13 @@ def _merge_delta_run(run: list[SSEEvent]) -> SSEEvent:
 
 
 def _fill_database_context(
-    agent_config: AgentConfig,
+    agent_config: AgentConfig,  # noqa: ARG001
     catalog: Optional[str] = None,  # noqa: ARG001 — reserved for future use
-    database: Optional[str] = None,
+    database: Optional[str] = None,  # noqa: ARG001 — reserved for future use
     schema: Optional[str] = None,  # noqa: ARG001 — reserved for future use
 ) -> None:
-    """Set agent_config's current_namespace and current_database based on request context.
-
-    If database is provided, searches for it in agent_config.namespaces and updates both
-    current_namespace and current_database. Otherwise, falls back to treating database
-    as a namespace name if it exists in agent_config.namespaces.
-    """
-    # agent_config.current_database is resolved at bootstrap by load_agent_config;
-    # leave it in place when the request does not override the database.
-    if not database:
-        return
-    for ns_name, ns_dbs in agent_config.namespaces.items():
-        if database in ns_dbs:
-            if agent_config.current_namespace != ns_name:
-                agent_config.current_namespace = ns_name
-            agent_config.current_database = database
-            return
-    # Fallback: database itself is a namespace name
-    if database in agent_config.namespaces:
-        agent_config.current_namespace = database
+    """No-op: current_datasource is resolved at bootstrap; per-request database
+    selection is a logical-DB concern handled downstream, not a datasource override."""
 
 
 class ChatTask:

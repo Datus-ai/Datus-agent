@@ -84,7 +84,7 @@ class TestKnowledgeBaseHomeE2E:
                 "Use get_table_ddl to get the schema, then write the YAML file and "
                 "call end_semantic_model_generation."
             ),
-            database=nightly_agent_config.current_namespace,
+            database=nightly_agent_config.current_datasource,
         )
 
         action_manager = ActionHistoryManager()

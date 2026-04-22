@@ -143,7 +143,7 @@ class SkillCreatorAgenticNode(AgenticNode):
         """Setup database tools (optional, for understanding schema when creating data-related skills)."""
         try:
             db_manager = db_manager_instance(self.agent_config.namespaces)
-            conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
+            conn = db_manager.get_conn(self.agent_config.current_datasource, self.agent_config.current_datasource)
             self.db_func_tool = DBFuncTool(
                 conn,
                 agent_config=self.agent_config,

@@ -101,8 +101,8 @@ class BiDashboardCommands:
         self._force = force
         self.db_manager = db_manager_instance(self.agent_config.namespaces)
 
-    def current_database_context(self) -> Tuple[str, str, str]:
-        current_con = self.db_manager.get_conn(self.agent_config.current_database)
+    def current_datasource_context(self) -> Tuple[str, str, str]:
+        current_con = self.db_manager.get_conn(self.agent_config.current_datasource)
         return (
             getattr(current_con, "catalog_name", ""),
             getattr(current_con, "database_name", ""),
@@ -350,7 +350,7 @@ class BiDashboardCommands:
 
         if not (catalog and database and schema):
             try:
-                db_config = self.agent_config.current_db_config(self.agent_config.current_database)
+                db_config = self.agent_config.current_db_config(self.agent_config.current_datasource)
             except Exception:
                 db_config = None
             if db_config:
@@ -483,7 +483,7 @@ class BiDashboardCommands:
         dashboard: DashboardInfo,
         result: DashboardAssemblyResult,
     ) -> None:
-        if not getattr(self.agent_config, "current_database", ""):
+        if not getattr(self.agent_config, "current_datasource", ""):
             self.console.print("[yellow]No namespace set. Skipping sub-agent save.[/]")
             return
 
@@ -535,7 +535,7 @@ class BiDashboardCommands:
 
         manager = SubAgentManager(
             configuration_manager=self._configuration_manager or configuration_manager(),
-            namespace=self.agent_config.current_database,
+            namespace=self.agent_config.current_datasource,
             agent_config=self.agent_config,
         )
         self._do_save_sub_agent(
@@ -653,7 +653,7 @@ class BiDashboardCommands:
         database, schema) from the live connection, then rebuilds via
         ``metadata_identifier`` so the bootstrap's right-alignment matches.
         """
-        catalog, database, schema = self.current_database_context()
+        catalog, database, schema = self.current_datasource_context()
         dialect = self.agent_config.db_type or ""
         qualified: List[str] = []
         for name in table_names:

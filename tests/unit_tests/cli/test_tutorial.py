@@ -29,7 +29,7 @@ class DummyAgentConfig:
 
     def __init__(self):
         self.db_type = "sqlite"
-        self.current_database = "test_namespace"
+        self.current_datasource = "test_namespace"
         self._db_config = SimpleNamespace(catalog="catalog", database="database", schema="schema")
 
     def current_db_config(self):
@@ -449,7 +449,7 @@ class TestBenchmarkTutorialInitMetrics:
         config_file.write_text("agent: {}")
 
         mock_agent_config = MagicMock()
-        mock_agent_config.current_database = "california_schools"
+        mock_agent_config.current_datasource = "california_schools"
         mock_agent_config.rag_storage_path.return_value = str(tmp_path / "storage")
 
         monkeypatch.setattr(tutorial_module, "load_agent_config", lambda reload, config: mock_agent_config)
@@ -485,7 +485,7 @@ class TestBenchmarkTutorialInitMetrics:
         config_file.write_text("agent: {}")
 
         mock_agent_config = MagicMock()
-        mock_agent_config.current_database = "california_schools"
+        mock_agent_config.current_datasource = "california_schools"
         mock_agent_config.rag_storage_path.return_value = str(tmp_path / "storage")
 
         monkeypatch.setattr(tutorial_module, "load_agent_config", lambda reload, config: mock_agent_config)
@@ -542,7 +542,7 @@ class TestBenchmarkTutorialInitMetrics:
         config_file.write_text("agent: {}")
 
         mock_agent_config = MagicMock()
-        mock_agent_config.current_database = "california_schools"
+        mock_agent_config.current_datasource = "california_schools"
 
         monkeypatch.setattr(tutorial_module, "load_agent_config", lambda reload, config: mock_agent_config)
 

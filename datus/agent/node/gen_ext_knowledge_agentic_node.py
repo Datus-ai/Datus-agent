@@ -161,7 +161,7 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
         # filesystem_tools: read_file, write_file, edit_file
         # Chat node uses all available tools by default
         db_manager = db_manager_instance(self.agent_config.namespaces)
-        self.conn = db_manager.get_conn(self.agent_config.current_database, self.agent_config.current_database)
+        self.conn = db_manager.get_conn(self.agent_config.current_datasource, self.agent_config.current_datasource)
         self.db_func_tool = DBFuncTool(self.conn, agent_config=self.agent_config)
         self.context_search_tools = ContextSearchTools(self.agent_config)
         if self.db_func_tool:
@@ -446,7 +446,7 @@ Do NOT give up. Continue iterating until verify_sql returns success=1.
             sql_task = SqlTask(
                 database_type=self.agent_config.database_type if hasattr(self.agent_config, "database_type") else "",
                 database_name=(
-                    self.agent_config.current_database if hasattr(self.agent_config, "current_database") else ""
+                    self.agent_config.current_datasource if hasattr(self.agent_config, "current_datasource") else ""
                 ),
                 task=getattr(self, "_current_question", "SQL verification task"),
                 external_knowledge=str(generated_knowledge) if generated_knowledge else "",
@@ -543,7 +543,7 @@ Do NOT give up. Continue iterating until verify_sql returns success=1.
         context["knowledge_base_dir"] = self.knowledge_base_dir
         # Filesystem tool is rooted at project_root; full path required.
         context["kind_subdir"] = "subject/ext_knowledge"
-        context["current_database"] = self.agent_config.current_database
+        context["current_datasource"] = self.agent_config.current_datasource
         context["has_filesystem_tools"] = bool(self.filesystem_func_tool)
         context["has_ask_user_tool"] = self.ask_user_tool is not None
         context["has_gold_sql"] = bool(gold_sql)

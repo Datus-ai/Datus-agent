@@ -169,10 +169,10 @@ def _apply_project_override(agent_raw: Dict[str, Any]) -> None:
     """Merge ``./.datus/config.yml`` overlay into the raw agent config dict.
 
     Only three keys are honored: ``target``, ``project_name``, and
-    ``default_database``. All three are written back into ``agent_raw``
+    ``default_datasource``. All three are written back into ``agent_raw``
     so ``AgentConfig.__init__`` picks them up naturally. For
-    ``default_database`` this means flipping ``datasources[*].default``
-    flags, since ``AgentConfig.services.default_database`` is derived
+    ``default_datasource`` this means flipping ``datasources[*].default``
+    flags, since ``AgentConfig.services.default_datasource`` is derived
     from those flags — this keeps the overlay effective for every
     entry point that calls ``load_agent_config`` (REPL, print mode,
     web, ``datus-api``, SDK), not just the CLI layer.
@@ -192,20 +192,20 @@ def _apply_project_override(agent_raw: Dict[str, Any]) -> None:
                 },
             )
         agent_raw["target"] = override.target
-    if override.default_database is not None:
+    if override.default_datasource is not None:
         datasources = (agent_raw.get("services", {}) or {}).get("datasources", {}) or {}
-        if override.default_database not in datasources:
+        if override.default_datasource not in datasources:
             raise DatusException(
                 code=ErrorCode.COMMON_FIELD_INVALID,
                 message_args={
-                    "field_name": "default_database (from .datus/config.yml)",
+                    "field_name": "default_datasource (from .datus/config.yml)",
                     "except_values": sorted(datasources.keys()),
-                    "your_value": override.default_database,
+                    "your_value": override.default_datasource,
                 },
             )
         for db_name, db_cfg in datasources.items():
             if isinstance(db_cfg, dict):
-                db_cfg["default"] = db_name == override.default_database
+                db_cfg["default"] = db_name == override.default_datasource
     if override.project_name is not None:
         agent_raw["project_name"] = override.project_name
 
@@ -262,15 +262,15 @@ def load_agent_config(reload: bool = False, **kwargs) -> AgentConfig:
 
         if override_kwargs:
             agent_config.override_by_args(**override_kwargs)
-    # Resolve current_database when an unambiguous default exists. Priority
+    # Resolve current_datasource when an unambiguous default exists. Priority
     # already applied upstream:
-    #   1. ``./.datus/config.yml::default_database`` (via _apply_project_override)
+    #   1. ``./.datus/config.yml::default_datasource`` (via _apply_project_override)
     #   2. ``services.datasources[*].default: true`` flag in base agent.yml
-    #   3. single-entry auto-select (ServiceConfig.default_database)
-    if not agent_config.current_database and agent_config.services.datasources:
-        default_db = agent_config.services.default_database
+    #   3. single-entry auto-select (ServiceConfig.default_datasource)
+    if not agent_config.current_datasource and agent_config.services.datasources:
+        default_db = agent_config.services.default_datasource
         if default_db:
-            agent_config.current_namespace = default_db
+            agent_config.current_datasource = default_db
         elif kwargs.get("action"):
             raise DatusException(
                 code=ErrorCode.COMMON_CONFIG_ERROR,
@@ -281,18 +281,18 @@ def load_agent_config(reload: bool = False, **kwargs) -> AgentConfig:
                         "datasources without any marked as `default: true`. Run "
                         "`datus` in this project directory first to launch the "
                         "init wizard (which writes ./.datus/config.yml with your "
-                        "preferred default_database and target), or set "
+                        "preferred default_datasource and target), or set "
                         "`default: true` on one entry under "
                         "`services.datasources` in agent.yml."
                     )
                 },
             )
     # Auto-select default datasource for file-based DBs if not already set
-    if agent_config.db_type in {DBType.SQLITE, DBType.DUCKDB} and not agent_config.current_database:
+    if agent_config.db_type in {DBType.SQLITE, DBType.DUCKDB} and not agent_config.current_datasource:
         datasources = agent_config.services.datasources
         if datasources:
             first_key = next(iter(datasources))
-            agent_config.current_database = first_key
+            agent_config.current_datasource = first_key
 
     return agent_config
 

@@ -29,7 +29,7 @@ class SubAgentCommands:
         if self._sub_agent_manager is None:
             self._sub_agent_manager = SubAgentManager(
                 configuration_manager=self.cli_instance.configuration_manager,
-                namespace=self.cli_instance.agent_config.current_database,
+                namespace=self.cli_instance.agent_config.current_datasource,
                 agent_config=self.cli_instance.agent_config,
             )
         return self._sub_agent_manager
@@ -120,7 +120,7 @@ class SubAgentCommands:
             agent = SubAgentConfig.model_validate(agent)
             if (
                 not agent.has_scoped_context()
-                or agent.scoped_context.namespace == self.cli_instance.agent_config.current_database
+                or agent.scoped_context.namespace == self.cli_instance.agent_config.current_datasource
             ):
                 show_agents.append(agent)
 

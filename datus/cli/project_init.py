@@ -70,7 +70,7 @@ def run_project_init(base_config: AgentConfig, cwd: Optional[str] = None) -> Pro
     console.print("[bold cyan]First-run project setup[/]")
     console.print(f"[dim]Writing project-level overrides to {project_config_path(cwd)}[/]")
     console.print(
-        "[dim]This file pins target / default_database / project_name for this project; "
+        "[dim]This file pins target / default_datasource / project_name for this project; "
         "everything else comes from the shared agent.yml.[/]"
     )
     console.print()
@@ -85,10 +85,14 @@ def run_project_init(base_config: AgentConfig, cwd: Optional[str] = None) -> Pro
     console.print()
     console.print("[bold]- Select default datasource (from agent.yml):[/]")
     db_choices = {name: f"{name}  ({cfg.type})" for name, cfg in base_config.services.datasources.items()}
-    db_default = base_config.services.default_database or next(iter(db_choices))
-    default_database = select_choice(console, db_choices, default=db_default)
-    if not default_database:
-        default_database = db_default
+    db_default = (
+        base_config.services.default_datasource
+        if base_config.services.default_datasource in db_choices
+        else next(iter(db_choices))
+    )
+    default_datasource = select_choice(console, db_choices, default=db_default)
+    if not default_datasource:
+        default_datasource = db_default
 
     console.print()
     project_name_default = _normalize_project_name(cwd or os.getcwd())
@@ -108,12 +112,12 @@ def run_project_init(base_config: AgentConfig, cwd: Optional[str] = None) -> Pro
 
     override = ProjectOverride(
         target=target,
-        default_database=default_database,
+        default_datasource=default_datasource,
         project_name=project_name if project_name != project_name_default else None,
     )
     written = save_project_override(override, cwd=cwd)
     console.print()
     console.print(f"[green]Saved project config:[/] {written}")
-    console.print(f"[dim]  target={target}  default_database={default_database}  project_name={project_name}[/]")
+    console.print(f"[dim]  target={target}  default_datasource={default_datasource}  project_name={project_name}[/]")
     console.print()
     return override

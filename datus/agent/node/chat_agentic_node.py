@@ -130,7 +130,7 @@ class ChatAgenticNode(AgenticNode):
         # Setup tools
         self.setup_tools()
         logger.debug(f"ChatAgenticNode tools: {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
-        logger.debug(f"ChatAgenticNode initialized: {self.agent_config.current_database}")
+        logger.debug(f"ChatAgenticNode initialized: {self.agent_config.current_datasource}")
 
     def get_node_name(self) -> str:
         """Get the configured node name."""
@@ -141,7 +141,7 @@ class ChatAgenticNode(AgenticNode):
     def setup_tools(self):
         """Initialize all tools with default database connection."""
         db_manager = db_manager_instance(self.agent_config.namespaces)
-        conn = db_manager.get_conn(self.agent_config.current_database, self.agent_config.current_database)
+        conn = db_manager.get_conn(self.agent_config.current_datasource, self.agent_config.current_datasource)
         self.db_func_tool = DBFuncTool(conn, agent_config=self.agent_config)
         self.context_search_tools = ContextSearchTools(self.agent_config)
         self.reference_template_tools = ReferenceTemplateTools(self.agent_config, db_func_tool=self.db_func_tool)
@@ -293,7 +293,7 @@ class ChatAgenticNode(AgenticNode):
     def _update_database_connection(self, database_name: str):
         """Update database connection to a different database."""
         db_manager = db_manager_instance(self.agent_config.namespaces)
-        conn = db_manager.get_conn(self.agent_config.current_database, database_name)
+        conn = db_manager.get_conn(self.agent_config.current_datasource, database_name)
         self.db_func_tool = DBFuncTool(conn, agent_config=self.agent_config)
         self._rebuild_tools()
 
@@ -357,7 +357,7 @@ class ChatAgenticNode(AgenticNode):
                     if server:
                         mcp_servers["metricflow_mcp"] = server
                         logger.info(
-                            f"Setup metricflow_mcp MCP server for database: {self.agent_config.current_database}"
+                            f"Setup metricflow_mcp MCP server for database: {self.agent_config.current_datasource}"
                         )
                     continue
 
@@ -381,7 +381,7 @@ class ChatAgenticNode(AgenticNode):
             if not db_config:
                 return None
 
-            metricflow_server = MCPServer.get_metricflow_mcp_server(namespace=self.agent_config.current_database)
+            metricflow_server = MCPServer.get_metricflow_mcp_server(namespace=self.agent_config.current_datasource)
             if metricflow_server:
                 logger.info(f"Added metricflow_mcp MCP server for database: {db_config.database}")
                 return metricflow_server

@@ -1293,7 +1293,7 @@ class TestDBFuncToolMultiConnector:
     def mock_agent_config(self):
         """Create a mock AgentConfig for multi-connector tests."""
         config = Mock()
-        config.current_database = "db1"
+        config.current_datasource = "db1"
         # Return multiple databases to trigger multi-connector mode
         config.current_db_configs.return_value = {"db1": {}, "db2": {}}
         return config
@@ -1302,7 +1302,7 @@ class TestDBFuncToolMultiConnector:
     def mock_single_db_agent_config(self):
         """Create a mock AgentConfig with single database."""
         config = Mock()
-        config.current_database = "db1"
+        config.current_datasource = "db1"
         # Return single database to trigger single connector mode
         config.current_db_configs.return_value = {"db1": {}}
         return config

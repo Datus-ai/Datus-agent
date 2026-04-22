@@ -21,9 +21,9 @@ class TestDatabaseServiceInit:
         assert svc.current_database is not None
 
     def test_init_sets_namespace(self, real_agent_config):
-        """Init stores current_namespace from config."""
+        """Init stores current_datasource from config."""
         svc = DatabaseService(agent_config=real_agent_config)
-        assert svc.current_namespace == real_agent_config.current_namespace
+        assert svc.current_datasource == real_agent_config.current_datasource
 
     def test_db_manager_created(self, real_agent_config):
         """Init creates DBManager."""

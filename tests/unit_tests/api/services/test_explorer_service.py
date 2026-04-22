@@ -22,7 +22,7 @@ class TestExplorerServiceInit:
         svc = ExplorerService(agent_config=real_agent_config)
         assert svc is not None
         assert svc.agent_config is real_agent_config
-        assert svc.datasource_id == real_agent_config.current_namespace
+        assert svc.datasource_id == real_agent_config.current_datasource
 
     def test_init_creates_rag_stores(self, real_agent_config):
         """ExplorerService creates metric, ref_sql, and knowledge RAG stores."""
@@ -631,9 +631,9 @@ class TestExplorerServiceCreateMetric:
         # May fail on deep validation (no data_source in model) — that's expected.
         # The important thing is it exercises the full path: parse → check existence → validate
         assert result is not None
-        if not result.success:
-            # Should be a validation error, not a crash
-            assert "validation" in result.errorMessage.lower() or "not defined" in result.errorMessage.lower()
+        assert result.success or (
+            "validation" in result.errorMessage.lower() or "not defined" in result.errorMessage.lower()
+        )
 
     async def test_create_metric_duplicate_file_fails(self, real_agent_config):
         """create_metric rejects when file already exists on disk."""

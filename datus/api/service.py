@@ -93,7 +93,7 @@ class DatusAPIService:
             if not self.agent_config:
                 raise HTTPException(status_code=500, detail="Agent configuration not available")
 
-            self.agent_config.current_database = namespace
+            self.agent_config.current_datasource = namespace
             # Create agent instance
             self.agents[namespace] = Agent(self.args, self.agent_config)
             logger.info(f"Created new agent for namespace: {namespace}")
@@ -295,7 +295,7 @@ class DatusAPIService:
 
                 # Check database connectivity
                 db_check = temp_agent.check_db()
-                database_status[self.agent_config.current_database] = db_check.get("status", "unknown")
+                database_status[self.agent_config.current_datasource] = db_check.get("status", "unknown")
 
                 # Check LLM connectivity
                 llm_check = temp_agent.probe_llm()

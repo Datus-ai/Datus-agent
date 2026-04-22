@@ -195,7 +195,7 @@ class ReferenceTemplateRAG:
         from datus.storage.rag_scope import _build_sub_agent_filter
         from datus.storage.registry import get_storage
 
-        self.datasource_id = datasource_id or agent_config.current_database or ""
+        self.datasource_id = datasource_id or agent_config.current_datasource or ""
         self.reference_template_storage = get_storage(
             ReferenceTemplateStorage, "reference_template", project=agent_config.project_name
         )

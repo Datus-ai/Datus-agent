@@ -209,7 +209,7 @@ class BenchmarkTutorial:
         logger.info(f"Semantic model initialization with {self.benchmark_path}/{self.namespace_name}/success_story.csv")
         try:
             agent_config = load_agent_config(reload=True, config=self.config_path)
-            agent_config.current_database = self.namespace_name
+            agent_config.current_datasource = self.namespace_name
 
             successful, result = init_semantic_model(
                 success_path=success_path,
@@ -232,7 +232,7 @@ class BenchmarkTutorial:
         logger.info(f"Metrics initialization with {self.benchmark_path}/{self.namespace_name}/success_story.csv")
         try:
             agent_config = load_agent_config(reload=True, config=self.config_path)
-            agent_config.current_database = self.namespace_name
+            agent_config.current_datasource = self.namespace_name
             subject_tree = parse_subject_tree(
                 "california_schools/Continuation_School/Free_Rate,california_schools/Charter/Education_Location"
             )

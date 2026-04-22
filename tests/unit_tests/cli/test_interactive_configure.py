@@ -2021,8 +2021,8 @@ class TestSave:
 class TestDisplayCompletion:
     """Tests for InteractiveConfigure._display_completion()."""
 
-    def test_shows_default_database_in_message(self, tmp_path):
-        """_display_completion() includes the default database name in the output."""
+    def test_shows_default_datasource_in_message(self, tmp_path):
+        """_display_completion() includes the default datasource name in the output."""
         cfg = _make_configure(tmp_path)
         cfg.datasources = {
             "main_db": {"type": "duckdb", "default": True},

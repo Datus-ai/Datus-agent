@@ -262,7 +262,7 @@ def _make_args(**kwargs):
 
 def _make_agent_config(namespace="test_ns"):
     cfg = MagicMock()
-    cfg.current_database = namespace
+    cfg.current_datasource = namespace
     cfg.namespaces = {namespace: {"type": "sqlite", "dbs": []}}
     cfg.workflow_plan = "reflection"
     cfg.get_trajectory_run_dir.return_value = "/tmp/traj"
@@ -552,7 +552,7 @@ def _make_args_ext(**kwargs):
 
 def _make_agent_config_ext(namespace="test_ns"):
     cfg = MagicMock()
-    cfg.current_database = namespace
+    cfg.current_datasource = namespace
     cfg.namespaces = {namespace: {"type": "sqlite", "dbs": []}}
     cfg.workflow_plan = "reflection"
     cfg.get_trajectory_run_dir.return_value = "/tmp/traj"
@@ -757,8 +757,8 @@ class TestEmitReferenceSqlEvent:
         agent = _make_agent_ext()
         evt = self._event(BatchStage.ITEM_FAILED, error=None)
         agent._emit_reference_sql_event(evt)
-        # Should not raise, empty output is fine
-        capsys.readouterr()
+        out = capsys.readouterr().out
+        assert "error" not in out.lower() or out == ""
 
 
 # ---------------------------------------------------------------------------
@@ -822,7 +822,8 @@ class TestEmitReferenceTemplateEvent:
         agent = _make_agent_ext()
         evt = self._event(BatchStage.ITEM_FAILED, error=None)
         agent._emit_reference_template_event(evt)
-        capsys.readouterr()
+        out = capsys.readouterr().out
+        assert "error" not in out.lower() or out == ""
 
     def test_reset_stream_state(self):
         agent = _make_agent_ext()
@@ -856,11 +857,14 @@ class TestEmitMetricsEvent:
     def test_task_started_logs(self, capsys):
         agent = _make_agent_ext()
         agent._emit_metrics_event(self._event(BatchStage.TASK_STARTED))
-        # No output expected, just no exception
+        captured = capsys.readouterr()
+        assert captured.err == ""
 
     def test_task_completed_logs(self, capsys):
         agent = _make_agent_ext()
         agent._emit_metrics_event(self._event(BatchStage.TASK_COMPLETED))
+        captured = capsys.readouterr()
+        assert captured.err == ""
 
     def test_item_processing_prints_action_name_once(self, capsys):
         agent = _make_agent_ext()
@@ -899,6 +903,8 @@ class TestEmitMetricsEvent:
     def test_item_completed_logs(self, capsys):
         agent = _make_agent_ext()
         agent._emit_metrics_event(self._event(BatchStage.ITEM_COMPLETED))
+        captured = capsys.readouterr()
+        assert captured.err == ""
 
 
 # ---------------------------------------------------------------------------
@@ -1243,31 +1249,29 @@ class TestBenchmarkHelpers:
         f = tmp_path / "tasks.csv"
         f.write_text("question,sql\n")
         agent = _make_agent_ext()
-        # Should not raise
-        agent._check_benchmark_file(str(f))
+        result = agent._check_benchmark_file(str(f))
+        assert result is None
 
     def test_cleanup_benchmark_output_paths_removes_namespace_dir(self, tmp_path):
         agent = _make_agent_ext()
         namespace_dir = tmp_path / "test_ns"
         namespace_dir.mkdir()
         agent.global_config.output_dir = str(tmp_path)
-        agent.global_config.current_database = "test_ns"
+        agent.global_config.current_datasource = "test_ns"
 
-        with patch("datus.agent.agent.safe_rmtree", return_value=True):
+        with patch("shutil.rmtree") as mock_rmtree:
             agent._cleanup_benchmark_output_paths(str(tmp_path / "bm"))
 
-        # Namespace dir should have been removed
-
-        # The actual rmtree is shutil.rmtree, not safe_rmtree in this branch
-        # Just verify it doesn't raise
+        mock_rmtree.assert_called_once_with(str(namespace_dir))
 
     def test_cleanup_benchmark_output_paths_gold_not_present(self, tmp_path):
         agent = _make_agent_ext()
         agent.global_config.output_dir = str(tmp_path)
-        agent.global_config.current_database = "test_ns"
+        agent.global_config.current_datasource = "test_ns"
 
-        # No gold dir, no error
+        # No gold dir — should not raise
         agent._cleanup_benchmark_output_paths(str(tmp_path / "bm"))
+        assert not (tmp_path / "bm").exists()
 
 
 # ---------------------------------------------------------------------------

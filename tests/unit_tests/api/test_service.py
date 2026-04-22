@@ -91,7 +91,10 @@ class TestDatusAPIServiceInitialize:
 
         with patch("datus.api.service.load_agent_config", return_value=mock_cfg):
             with patch("datus.api.service.TaskStore", return_value=mock_task_store):
-                await service.initialize()  # should not raise
+                await service.initialize()
+
+        mock_task_store.cleanup_old_tasks.assert_called_once()
+        assert service.agent_config is mock_cfg
 
 
 # ---------------------------------------------------------------------------
@@ -469,7 +472,7 @@ class TestHealthCheck:
     async def test_healthy_when_agent_config_available(self):
         service = _make_service()
         service.agent_config = MagicMock()
-        service.agent_config.current_database = "ns"
+        service.agent_config.current_datasource = "ns"
 
         mock_agent = MagicMock()
         mock_agent.check_db.return_value = {"status": "success"}

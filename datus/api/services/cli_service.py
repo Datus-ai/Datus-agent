@@ -52,10 +52,10 @@ class CLIService:
         # Initialize database manager and namespace only if agent_config is provided
         if self.agent_config:
             self.db_manager = DBManager(self.agent_config.namespaces)
-            self.current_namespace = self.agent_config.current_namespace
+            self.current_datasource = self.agent_config.current_datasource
         else:
             self.db_manager = None
-            self.current_namespace = None
+            self.current_datasource = None
 
         # Initialize CLI context first (before _initialize_connection)
         from datus.cli.cli_context import CliContext
@@ -78,9 +78,9 @@ class CLIService:
 
     def _initialize_connection(self):
         """Initialize the current database connection."""
-        if self.db_manager and self.current_namespace:
+        if self.db_manager and self.current_datasource:
             try:
-                db_name, connector = self.db_manager.first_conn_with_name(self.current_namespace)
+                db_name, connector = self.db_manager.first_conn_with_name(self.current_datasource)
                 self.current_db_connector = connector
                 self.current_db_name = db_name
 
@@ -400,7 +400,7 @@ class CLIService:
                     db_info = {"connection_status": "disconnected"}
 
                 result_data.context_info = {
-                    "current_namespace": self.current_namespace,
+                    "current_datasource": self.current_datasource,
                     "current_database": self.current_db_name,
                     "current_catalog": getattr(self.cli_context, "current_catalog", None) if self.cli_context else None,
                     "current_schema": getattr(self.cli_context, "current_schema", None) if self.cli_context else None,
@@ -556,7 +556,7 @@ class CLIService:
 
             elif command in ["databases", "database"]:
                 if self.db_manager:
-                    connections = self.db_manager.get_connections(self.current_namespace)
+                    connections = self.db_manager.get_connections(self.current_datasource)
                     # Handle both single connector and dict of connectors
                     if isinstance(connections, dict):
                         db_list = list(connections.keys())

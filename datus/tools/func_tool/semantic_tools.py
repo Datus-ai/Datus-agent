@@ -153,7 +153,7 @@ class SemanticTools:
                 builder = getattr(self.agent_config, "build_semantic_adapter_config", None)
                 adapter_config = builder(resolved_adapter) if callable(builder) else None
                 if adapter_config is None:
-                    namespace = getattr(self.agent_config, "namespace", None) or self.agent_config.current_database
+                    namespace = getattr(self.agent_config, "namespace", None) or self.agent_config.current_datasource
                     db_config = self._extract_db_config(namespace)
                     semantic_models_path = str(self.agent_config.path_manager.semantic_models_dir)
 

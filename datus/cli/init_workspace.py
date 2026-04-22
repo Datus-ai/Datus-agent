@@ -148,9 +148,9 @@ class InitWorkspace:
             # Build services section from config
             services_section = _build_services_section(agent_config.services.datasources)
 
-            # Probe database schema if --database specified
+            # Probe database schema if --datasource specified
             db_schema_info = ""
-            db_name = getattr(self.args, "database", "")
+            db_name = getattr(self.args, "datasource", "")
             if db_name:
                 db_schema_info = self._probe_database(agent_config, db_name)
 

@@ -60,10 +60,10 @@ class ArgumentParser:
         # storage_path parameter deprecated - data path is now fixed at {agent.home}/data
 
         self.parser.add_argument(
-            "--database",
+            "--datasource",
             "--namespace",
             type=str,
-            help="Database name to connect (use --database, --namespace is deprecated)",
+            help="Datasource name to connect (use --datasource, --namespace is deprecated)",
             default="",
         )
 
@@ -185,15 +185,15 @@ class Application:
         configure_logging(args.debug, console_output=False)
 
         # REPL-only: ensure ./.datus/config.yml exists before anything touches
-        # agent config. Must run before _resolve_default_database so the
-        # project-level default_database can win over the base agent.yml's.
+        # agent config. Must run before _resolve_default_datasource so the
+        # project-level default_datasource can win over the base agent.yml's.
         if args.print_mode is None and not args.web:
             self._ensure_project_config(args)
 
-        if not args.database:
-            # Try to auto-select: default database or single database
-            args.database = self._resolve_default_database(args)
-            if not args.database:
+        if not args.datasource:
+            # Try to auto-select: default datasource or single datasource
+            args.datasource = self._resolve_default_datasource(args)
+            if not args.datasource:
                 return
 
         if args.resume and args.print_mode is None:
@@ -212,8 +212,8 @@ class Application:
             cli = DatusCLI(args)
             cli.run()
 
-    def _resolve_default_database(self, args) -> str:
-        """Auto-select database when --database is not specified."""
+    def _resolve_default_datasource(self, args) -> str:
+        """Auto-select datasource when --datasource is not specified."""
         from rich.console import Console
         from rich.table import Table
 
@@ -231,15 +231,15 @@ class Application:
             console.print("[yellow]No datasources configured. Run 'datus configure' first.[/yellow]")
             return ""
 
-        # default_database reflects the project-level overlay when present — it
+        # default_datasource reflects the project-level overlay when present — it
         # is applied inside load_agent_config via _apply_project_override which
         # flips datasources[*].default before AgentConfig is built.
-        default_db = config.services.default_database
+        default_db = config.services.default_datasource
         if default_db:
             return default_db
 
         # Multiple datasources, no default — show list and ask user to specify
-        console.print("[yellow]Multiple datasources configured. Please specify --database <name>[/yellow]\n")
+        console.print("[yellow]Multiple datasources configured. Please specify --datasource <name>[/yellow]\n")
         table = Table(show_header=True, header_style="bold")
         table.add_column("Name", style="cyan")
         table.add_column("Type")
@@ -279,7 +279,7 @@ class Application:
 
     def _repair_project_overrides(self, args) -> None:
         """Re-prompt the user when ``./.datus/config.yml`` references a
-        ``target`` or ``default_database`` that no longer exists in the base
+        ``target`` or ``default_datasource`` that no longer exists in the base
         agent.yml, and persist the corrected values.
 
         Reads the raw agent.yml directly via ``configuration_manager`` to
@@ -317,7 +317,7 @@ class Application:
         db_names = list(((raw.get("services") or {}).get("datasources") or {}).keys())
 
         target_invalid = override.target is not None and override.target not in model_names
-        db_invalid = override.default_database is not None and override.default_database not in db_names
+        db_invalid = override.default_datasource is not None and override.default_datasource not in db_names
         if not (target_invalid or db_invalid):
             return
 
@@ -326,7 +326,7 @@ class Application:
             if target_invalid:
                 stale.append(f"target={override.target!r}")
             if db_invalid:
-                stale.append(f"default_database={override.default_database!r}")
+                stale.append(f"default_datasource={override.default_datasource!r}")
             raise DatusException(
                 code=ErrorCode.COMMON_CONFIG_ERROR,
                 message_args={
@@ -369,23 +369,23 @@ class Application:
                     message_args={
                         "config_error": (
                             "Base agent.yml has no 'agent.services.datasources' defined; cannot repair "
-                            f"default_database={override.default_database!r} in .datus/config.yml."
+                            f"default_datasource={override.default_datasource!r} in .datus/config.yml."
                         )
                     },
                 )
             console.print(
-                f"  [red]default_database[/] = {override.default_database!r} not found in agent.yml "
+                f"  [red]default_datasource[/] = {override.default_datasource!r} not found in agent.yml "
                 f"services.datasources ({sorted(db_names)}). Please pick a replacement:"
             )
             db_types = (raw.get("services") or {}).get("datasources") or {}
             choices = {name: f"{name}  ({(db_types.get(name) or {}).get('type', 'unknown')})" for name in db_names}
             picked = select_choice(console, choices, default=db_names[0])
-            override.default_database = picked or db_names[0]
+            override.default_datasource = picked or db_names[0]
 
         written = save_project_override(override)
         console.print(
             f"[green]Updated project config:[/] {written} "
-            f"(target={override.target}, default_database={override.default_database})"
+            f"(target={override.target}, default_datasource={override.default_datasource})"
         )
 
     def _run_web_interface(self, args):

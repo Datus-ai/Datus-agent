@@ -890,7 +890,7 @@ class DatusCLI:
         table = Table(show_header=True, header_style="bold green")
         table.add_column("Namespace")
         for namespace in self.agent_config.namespaces.keys():
-            if self.agent_config.current_database == namespace:
+            if self.agent_config.current_datasource == namespace:
                 table.add_row(f"[bold green]{namespace}[/]")
             else:
                 table.add_row(namespace)
@@ -1007,7 +1007,7 @@ class DatusCLI:
 
         visible = {name for name in self.available_subagents if name not in HIDDEN_SYS_SUB_AGENTS}
         if hasattr(self.agent_config, "agentic_nodes") and self.agent_config.agentic_nodes:
-            current_db = getattr(self.agent_config, "current_database", None)
+            current_db = getattr(self.agent_config, "current_datasource", None)
             for name, sub_config in self.agent_config.agentic_nodes.items():
                 scoped_ns = (sub_config or {}).get("scoped_context", {}).get("namespace")
                 if scoped_ns and scoped_ns != current_db:
@@ -1048,20 +1048,22 @@ class DatusCLI:
     def _cmd_switch_namespace(self, args: str):
         if args.strip() == "":
             self._cmd_list_namespaces()
-        elif self.agent_config.current_database == args.strip():
+        elif self.agent_config.current_datasource == args.strip():
             self.console.print(
                 (
-                    f"[yellow]It's now under the namespace [bold]{self.agent_config.current_database}[/]"
+                    f"[yellow]It's now under the namespace [bold]{self.agent_config.current_datasource}[/]"
                     " and doesn't need to be switched[/]"
                 )
             )
             self._cmd_list_namespaces()
             return
         else:
-            self.agent_config.current_database = args.strip()
-            name, self.db_connector = self.db_manager.first_conn_with_name(self.agent_config.current_database)
+            next_datasource = args.strip()
+            name, connector = self.db_manager.first_conn_with_name(next_datasource)
+            self.agent_config.current_datasource = next_datasource
+            self.db_connector = connector
             db_name = self.db_connector.database_name
-            db_logic_name = name or self.agent_config.current_database
+            db_logic_name = name or self.agent_config.current_datasource
             self.cli_context.update_database_context(
                 catalog=self.db_connector.catalog_name,
                 db_name=db_name,
@@ -1070,7 +1072,7 @@ class DatusCLI:
             )
             self.reset_session()
             self.chat_commands.update_chat_node_tools()
-            self.console.print(f"[bold green]Namespace changed to: {self.agent_config.current_database}[/]")
+            self.console.print(f"[bold green]Namespace changed to: {self.agent_config.current_datasource}[/]")
 
     def _parse_command(self, text: str) -> Tuple[CommandType, str, str]:
         """Classify raw user input into a ``CommandType`` + canonical cmd + args.
@@ -1496,9 +1498,9 @@ class DatusCLI:
     def _build_banner_panel(self) -> Panel:
         """Build the unified startup banner as a Rich Panel."""
         database = (
-            getattr(self.args, "database", "")
+            getattr(self.args, "datasource", "")
             or getattr(self.args, "namespace", "")
-            or getattr(self.agent_config, "current_database", "")
+            or getattr(self.agent_config, "current_datasource", "")
         )
         db_type = getattr(self.agent_config, "db_type", "") or ""
 
@@ -1577,15 +1579,15 @@ class DatusCLI:
         Args:
             timeout_seconds: Maximum time to wait for connection (default: 30 seconds)
         """
-        current_database = self.agent_config.current_database
+        current_datasource = self.agent_config.current_datasource
 
         def _do_init_connection():
             """Inner function to perform connection initialization."""
             if not self.cli_context.current_db_name:
-                db_name, connector = self.db_manager.first_conn_with_name(current_database)
+                db_name, connector = self.db_manager.first_conn_with_name(current_datasource)
                 return db_name, connector
             else:
-                connector = self.db_manager.get_conn(current_database, self.cli_context.current_db_name)
+                connector = self.db_manager.get_conn(current_datasource, self.cli_context.current_db_name)
                 return self.cli_context.current_db_name, connector
 
         try:
@@ -1597,10 +1599,10 @@ class DatusCLI:
                 except FuturesTimeoutError:
                     self.console.print(
                         f"[bold red]Error:[/] Database connection timed out after {timeout_seconds} seconds. "
-                        f"Please check if the database server for namespace '{current_database}' is running "
+                        f"Please check if the database server for namespace '{current_datasource}' is running "
                         "and accessible."
                     )
-                    logger.error(f"Database connection timeout for namespace: {current_database}")
+                    logger.error(f"Database connection timeout for namespace: {current_datasource}")
                     self.db_connector = None
                     return
 
@@ -1615,7 +1617,7 @@ class DatusCLI:
                 self.cli_context.update_database_context(
                     catalog=self.db_connector.catalog_name,
                     db_name=self.db_connector.database_name,
-                    db_logic_name=db_name or self.db_connector.database_name or current_database,
+                    db_logic_name=db_name or self.db_connector.database_name or current_datasource,
                 )
 
             # Test the connection with timeout
@@ -1627,14 +1629,14 @@ class DatusCLI:
                 except FuturesTimeoutError:
                     self.console.print(
                         f"[bold red]Error:[/] Connection test timed out after {timeout_seconds} seconds. "
-                        f"The database server for namespace '{current_database}' may be unresponsive."
+                        f"The database server for namespace '{current_datasource}' may be unresponsive."
                     )
-                    logger.error(f"Connection test timeout for namespace: {current_database}")
+                    logger.error(f"Connection test timeout for namespace: {current_datasource}")
                     self.db_connector = None
 
         except Exception as e:
             self.console.print(f"[bold red]Error:[/] Failed to connect to database: {str(e)}")
-            logger.error(f"Database connection failed for namespace {current_database}: {e}")
+            logger.error(f"Database connection failed for namespace {current_datasource}: {e}")
             self.db_connector = None
 
     def _create_workflow_runner(self) -> WorkflowRunner:

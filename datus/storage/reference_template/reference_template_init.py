@@ -72,7 +72,7 @@ def _enrich_dimension_sample_values(params: list, agent_config: AgentConfig) -> 
 
     try:
         db_manager = db_manager_instance(agent_config.namespaces)
-        conn = db_manager.get_conn(agent_config.current_namespace, agent_config.current_database)
+        conn = db_manager.get_conn(agent_config.current_datasource, agent_config.current_datasource)
         db_tool = DBFuncTool(conn, agent_config=agent_config)
     except Exception as e:
         logger.debug(f"Cannot create DB connection for parameter value enrichment: {e}")

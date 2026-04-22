@@ -627,7 +627,7 @@ class InteractiveInit:
         from datus.configuration.agent_config_loader import load_agent_config
 
         agent_config = load_agent_config(reload=True)
-        agent_config.current_database = self.namespace_name
+        agent_config.current_datasource = self.namespace_name
 
         return Agent(args, agent_config)
 
@@ -673,7 +673,7 @@ def create_agent(namespace_name: str, components: list, config_path: str, **kwar
 
     agent_config = load_agent_config(reload=True, config=config_path, **vars(args))
 
-    agent_config.current_database = namespace_name
+    agent_config.current_datasource = namespace_name
 
     return Agent(args, agent_config)
 
@@ -784,7 +784,7 @@ def init_metadata_and_log_result(namespace_name: str, config_path: str, console:
     from datus.tools.db_tools.db_manager import db_manager_instance
 
     agent_config = load_agent_config(reload=True, config=config_path)
-    agent_config.current_database = namespace_name
+    agent_config.current_datasource = namespace_name
     kb_update_strategy = "overwrite"
     storage_path = agent_config.rag_storage_path()
 
@@ -843,7 +843,7 @@ def overwrite_sql_and_log_result(
 
     try:
         agent_config = load_agent_config(reload=True, config=config_path)
-        agent_config.current_database = namespace_name
+        agent_config.current_datasource = namespace_name
         do_init_sql_and_log_result(agent_config, sql_dir, subject_tree, console, force=force)
     except Exception as e:
         print_rich_exception(console, e, "Reference SQL initialization failed", logger)
@@ -898,7 +898,9 @@ def do_init_sql_and_log_result(
         else:
             agent_config.check_init_storage_config("reference_sql")
 
-        console.print(f"Reference SQL initialization for {agent_config.current_database} (dir: {escape(str(sql_dir))})")
+        console.print(
+            f"Reference SQL initialization for {agent_config.current_datasource} (dir: {escape(str(sql_dir))})"
+        )
 
         # Create StreamOutputManager
         output_mgr = StreamOutputManager(

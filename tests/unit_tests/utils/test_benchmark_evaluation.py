@@ -332,7 +332,7 @@ def test_evaluate_benchmark_and_report_with_csv_manifest(agent_config: AgentConf
     _write_sql(result_dir / "task-456.sql", "SELECT name, total FROM other_table;")
 
     # Arrange trajectories (must be under {trajectory_dir}/{namespace}/)
-    trajectory_dir = Path(agent_config.trajectory_dir) / agent_config.current_database
+    trajectory_dir = Path(agent_config.trajectory_dir) / agent_config.current_datasource
     _write_trajectory(trajectory_dir / "task-123_1.yaml", "task-123", _match_tool_actions())
     _write_trajectory(trajectory_dir / "task-456_1.yaml", "task-456", _mismatch_tool_actions())
 
@@ -343,6 +343,7 @@ def test_evaluate_benchmark_and_report_with_csv_manifest(agent_config: AgentConf
         agent_config=agent_config,
         benchmark_platform=benchmark_name,
     )
+    assert report["status"] == "success"
     _assert_report_structure(report)
 
 
@@ -410,7 +411,7 @@ def test_evaluate_benchmark_and_report_with_jsonl_manifest(agent_config: AgentCo
     )
     _write_sql(result_dir / "task-456.sql", "SELECT name, total FROM other_table;")
 
-    trajectory_dir = Path(agent_config.trajectory_dir) / agent_config.current_database
+    trajectory_dir = Path(agent_config.trajectory_dir) / agent_config.current_datasource
     _write_trajectory(trajectory_dir / "task-123_1.yaml", "task-123", _match_tool_actions())
     _write_trajectory(trajectory_dir / "task-456_1.yaml", "task-456", _mismatch_tool_actions())
 
@@ -419,4 +420,5 @@ def test_evaluate_benchmark_and_report_with_jsonl_manifest(agent_config: AgentCo
         agent_config=agent_config,
         benchmark_platform=benchmark_name,
     )
+    assert report["status"] == "success"
     _assert_report_structure(report)

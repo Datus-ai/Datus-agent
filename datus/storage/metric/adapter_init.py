@@ -47,7 +47,7 @@ async def init_from_adapter(
         if callable(resolver):
             adapter_type = resolver(adapter_type) or adapter_type
 
-        namespace = getattr(agent_config, "namespace", None) or agent_config.current_database
+        namespace = getattr(agent_config, "namespace", None) or agent_config.current_datasource
 
         # Get the registered config class for this adapter type
         metadata = semantic_adapter_registry.get_metadata(adapter_type)

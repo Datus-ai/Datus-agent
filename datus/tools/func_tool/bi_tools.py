@@ -216,7 +216,7 @@ class BIFuncTool:
                 from datus.tools.db_tools.db_manager import db_manager_instance
 
                 db_manager = db_manager_instance(self.agent_config.namespaces)
-                current_db = getattr(self.agent_config, "current_database", "") or ""
+                current_db = getattr(self.agent_config, "current_datasource", "") or ""
                 # Pick whichever connector the namespace carries rather than
                 # assuming ``namespace == logic_db``. In the post-services
                 # migration they happen to match, but ``first_conn_with_name``

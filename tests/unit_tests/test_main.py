@@ -42,7 +42,7 @@ class TestCreateParser:
             ]
         )
         assert args.action == "run"
-        assert args.database == "myns"
+        assert args.datasource == "myns"
         assert args.task == "count rows"
         assert args.task_db_name == "mydb"
 
@@ -81,7 +81,7 @@ class TestCreateParser:
             ]
         )
         assert args.action == "check-db"
-        assert args.database == "testns"
+        assert args.datasource == "testns"
 
     def test_probe_llm_action_parsed(self):
         parser = create_parser()

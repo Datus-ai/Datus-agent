@@ -165,7 +165,7 @@ class FeedbackAgenticNode(AgenticNode):
                 "has_task_tool": bool(self.sub_agent_task_tool),
                 "has_ask_user_tool": self.ask_user_tool is not None,
                 "knowledge_base_dir": str(self.agent_config.path_manager.subject_dir),
-                "current_database": self.agent_config.current_database,
+                "current_datasource": self.agent_config.current_datasource,
                 "workspace_root": self._resolve_workspace_root(),
             }
 

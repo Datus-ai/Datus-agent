@@ -206,7 +206,7 @@ class GenReportAgenticNode(AgenticNode):
         """Setup database tools."""
         try:
             db_manager = db_manager_instance(self.agent_config.namespaces)
-            conn = db_manager.get_conn(self.agent_config.current_database, self.agent_config.current_database)
+            conn = db_manager.get_conn(self.agent_config.current_datasource, self.agent_config.current_datasource)
             self.db_func_tool = DBFuncTool(
                 conn,
                 agent_config=self.agent_config,
@@ -267,7 +267,9 @@ class GenReportAgenticNode(AgenticNode):
             elif tool_type == "db_tools":
                 if not self.db_func_tool:
                     db_manager = db_manager_instance(self.agent_config.namespaces)
-                    conn = db_manager.get_conn(self.agent_config.current_database, self.agent_config.current_database)
+                    conn = db_manager.get_conn(
+                        self.agent_config.current_datasource, self.agent_config.current_datasource
+                    )
                     self.db_func_tool = DBFuncTool(
                         conn,
                         agent_config=self.agent_config,
@@ -331,8 +333,8 @@ class GenReportAgenticNode(AgenticNode):
 
         # Add namespace info
         if self.agent_config:
-            context["namespace"] = getattr(self.agent_config, "current_database", None)
-            context["db_name"] = getattr(self.agent_config, "current_database", None)
+            context["namespace"] = getattr(self.agent_config, "current_datasource", None)
+            context["db_name"] = getattr(self.agent_config, "current_datasource", None)
 
         from datus.utils.time_utils import get_default_current_date
 

@@ -253,7 +253,7 @@ def _build_tool(
     mock_cfg = MagicMock()
     mock_cfg.dashboard_config = {bi_service: dash_cfg}
     mock_cfg.namespaces = {}
-    mock_cfg.current_database = ""
+    mock_cfg.current_datasource = ""
 
     return BIFuncTool(mock_cfg, bi_service=bi_service, adapter=adapter)
 

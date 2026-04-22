@@ -31,10 +31,10 @@ def test_config_exception(tmp_path):
     agent_config = load_agent_config(config=str(TEST_CONF_DIR / "agent.yml"), home=str(tmp_path), reload=True)
 
     with pytest.raises(DatusException, match="Unsupported value `abc` for field `benchmark`"):
-        agent_config.override_by_args(database="snowflake", benchmark="abc")
+        agent_config.override_by_args(datasource="snowflake", benchmark="abc")
 
-    with pytest.raises(DatusException, match="Unsupported value `abc` for field `database`"):
-        agent_config.override_by_args(database="abc")
+    with pytest.raises(DatusException, match="Unsupported value `abc` for field `datasource`"):
+        agent_config.override_by_args(datasource="abc")
 
 
 def test_service_config_structure(agent_config: AgentConfig):
@@ -61,7 +61,7 @@ def test_configuration_load(database: str, agent_config: AgentConfig):
     agent_config.override_by_args(
         **{
             "schema_linking_rate": "slow",
-            "database": database,
+            "datasource": database,
         }
     )
 
@@ -73,12 +73,12 @@ def test_configuration_load(database: str, agent_config: AgentConfig):
     assert storage_path.endswith("datus_db")
     assert f"/data/{agent_config.project_name}/datus_db" in storage_path.replace(os.sep, "/")
 
-    with pytest.raises(DatusException, match="Missing required field: database"):
-        agent_config.current_namespace = ""
+    with pytest.raises(DatusException, match="Missing required field: datasource"):
+        agent_config.current_datasource = ""
 
     error_db = "abc"
-    with pytest.raises(DatusException, match=f"Unsupported value `{error_db}` for field `database`"):
-        agent_config.current_namespace = error_db
+    with pytest.raises(DatusException, match=f"Unsupported value `{error_db}` for field `datasource`"):
+        agent_config.current_datasource = error_db
 
     error_benchmark = "abc"
     with pytest.raises(DatusException, match=f"Unsupported value `{error_benchmark}` for field `benchmark`"):
@@ -93,7 +93,7 @@ def test_benchmark_db_check(agent_config: AgentConfig):
         agent_config.override_by_args(
             **{
                 "benchmark": "spider2",
-                "database": db_name,
+                "datasource": db_name,
             }
         )
 
@@ -105,7 +105,7 @@ def test_benchmark_db_check(agent_config: AgentConfig):
 def test_benchmark_config(database: str, benchmark: str, agent_config: AgentConfig):
     agent_config.override_by_args(
         **{
-            "database": database,
+            "datasource": database,
             "benchmark": benchmark,
         }
     )

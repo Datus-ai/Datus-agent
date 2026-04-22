@@ -14,7 +14,7 @@ def _make_agent_config(datasources=None):
     db_map = datasources if datasources is not None else {}
     services = MagicMock()
     services.datasources = db_map
-    services.default_database = next(iter(db_map), None)
+    services.default_datasource = next(iter(db_map), None)
     services.semantic_layer = {}
     services.bi_platforms = {}
     services.schedulers = {}
@@ -244,12 +244,12 @@ class TestServiceManagerList:
             calls = [str(c) for c in mock_console.print.call_args_list]
             assert any("Schedulers" in c or "airflow" in c for c in calls)
 
-    def test_list_marks_default_database(self):
+    def test_list_marks_default_datasource(self):
         """list() marks the default database with '*' in the Default column."""
         db_cfg_default = _make_db_config(default=True)
         db_cfg_other = _make_db_config(default=False)
         mock_config = _make_agent_config({"default_db": db_cfg_default, "other_db": db_cfg_other})
-        mock_config.services.default_database = "default_db"
+        mock_config.services.default_datasource = "default_db"
 
         with (
             patch("datus.cli.service_manager.load_agent_config", return_value=mock_config),

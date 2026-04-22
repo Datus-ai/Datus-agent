@@ -168,7 +168,7 @@ class TestInitWorkspaceRun:
 
         args = MagicMock()
         args.config = str(tmp_path / "missing.yml")
-        args.database = ""
+        args.datasource = ""
 
         with patch("datus.configuration.agent_config_loader.load_agent_config", side_effect=Exception("not found")):
             iw = InitWorkspace(args)
@@ -188,7 +188,7 @@ class TestInitWorkspaceRun:
 
         args = MagicMock()
         args.config = ""
-        args.database = ""
+        args.datasource = ""
 
         mock_config = MagicMock()
         mock_config.services.datasources = {}
@@ -618,7 +618,7 @@ class TestInitWorkspaceRunFullFlow:
 
         args = MagicMock()
         args.config = ""
-        args.database = database
+        args.datasource = database
 
         iw = InitWorkspace(args)
         iw.project_dir = str(tmp_path)
@@ -664,7 +664,7 @@ class TestInitWorkspaceRunFullFlow:
         assert "## Architecture" in content
 
     def test_run_probes_database_when_database_arg_set(self, tmp_path):
-        """run() calls _probe_database when args.database is non-empty."""
+        """run() calls _probe_database when args.datasource is non-empty."""
         iw = self._setup_iw(tmp_path, database="mydb")
 
         mock_config = MagicMock()

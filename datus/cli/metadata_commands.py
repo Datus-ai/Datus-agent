@@ -35,7 +35,7 @@ class MetadataCommands:
         """List all databases in the current connection."""
         try:
             # For SQLite, this is simply the current database file
-            namespace = self.cli.agent_config.current_database
+            namespace = self.cli.agent_config.current_datasource
             database_config_dict = self.cli.agent_config.namespaces[namespace]
             result = []
             show_uri = False
@@ -126,23 +126,21 @@ class MetadataCommands:
             )
             return
 
-        self.cli.agent_config.current_database = new_db
+        current_datasource = self.cli.agent_config.current_datasource
         self.cli.cli_context.current_logic_db_name = new_db
         if self.cli.agent_config.db_type in (DBType.SQLITE, DBType.DUCKDB):
             if new_db not in self.cli.agent_config.current_db_configs():
                 self.cli.console.print(f"[bold yellow]No corresponding database was found: {new_db}[/]")
                 return
             # Logic database name
-            self.cli.db_connector = self.cli.db_manager.get_conn(self.cli.agent_config.current_database, new_db)
+            self.cli.db_connector = self.cli.db_manager.get_conn(current_datasource, new_db)
             # use real database name
             self.cli.cli_context.update_database_context(
                 db_name=self.cli.db_connector.database_name, db_logic_name=new_db
             )
-            self.cli.agent_config.current_database = new_db
             self.cli.reset_session()
         else:
             self.cli.db_connector.switch_context(database_name=new_db)
-            self.cli.agent_config.current_database = new_db
             self.cli.cli_context.update_database_context(db_name=new_db)
 
         if self.cli.agent_config.db_type in (DBType.SQLITE, DBType.DUCKDB):

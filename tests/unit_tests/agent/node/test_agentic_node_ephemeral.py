@@ -45,8 +45,8 @@ def mock_agent_config():
     """Minimal AgentConfig mock for testing."""
     config = Mock(spec=AgentConfig)
     config.db_type = "sqlite"
-    config.current_database = "test_db"
-    config.current_database = "default"
+    config.current_datasource = "test_db"
+    config.default_datasource = "default"
     config.agentic_nodes = {
         "chat": {"model": "default"},
         "gen_sql": {"model": "default", "system_prompt": "gen_sql", "node_class": "gen_sql"},

@@ -119,12 +119,12 @@ def search_metrics_input() -> List[Dict[str, Any]]:
 def agent_config() -> AgentConfig:
     # Post-refactor (PR #542) legacy `namespace:` configs with `path_pattern` expand into
     # one database per matched file (keyed by logic name). The old "bird_sqlite" key is no
-    # longer valid, so the loader drops it; individual tests override `current_database` as
+    # longer valid, so the loader drops it; individual tests override `current_datasource` as
     # needed. Seed a valid default here so fixtures that touch the DB (e.g. `function_tools`)
     # can initialize.
     agent_config = load_acceptance_config(namespace="bird_sqlite")
-    if not agent_config.current_database and agent_config.services.datasources:
-        agent_config.current_database = "california_schools"
+    if not agent_config.current_datasource and agent_config.services.datasources:
+        agent_config.current_datasource = "california_schools"
     Path(agent_config.rag_storage_path()).mkdir(parents=True, exist_ok=True)
     return agent_config
 
@@ -235,7 +235,7 @@ class TestNode:
         for inputs in schema_linking_input:
             test_case = inputs["input"]
             if "namespace" in test_case:
-                agent_config.current_database = test_case["namespace"]
+                agent_config.current_datasource = test_case["namespace"]
                 del test_case["namespace"]
             node = Node.new_instance(
                 node_id="schema_link",
@@ -279,7 +279,7 @@ class TestNode:
             ]
         )
 
-        agent_config.current_database = "california_schools"
+        agent_config.current_datasource = "california_schools"
         agent_config.rag_base_path = "/tmp/test_data"
         node = Node.new_instance(
             node_id="schema_link",
@@ -451,7 +451,7 @@ class TestNode:
                 ]
             )
 
-            agent_config.current_database = "ssb_sqlite"
+            agent_config.current_datasource = "ssb_sqlite"
 
             # Create simple ReasoningInput with revenue calculation task
             input_data = ReasoningInput(
@@ -571,9 +571,9 @@ class TestNode:
                 input_data = ExecuteSQLInput(**exec_input)
                 # Use the database_name from the input to set the current database
                 if exec_input.get("database_name") and exec_input["database_name"] in agent_config.services.datasources:
-                    agent_config.current_database = exec_input["database_name"]
+                    agent_config.current_datasource = exec_input["database_name"]
                 else:
-                    agent_config.current_database = "california_schools"
+                    agent_config.current_datasource = "california_schools"
 
                 # Create node instance for testing
                 node = Node.new_instance(
@@ -634,7 +634,7 @@ class TestNode:
     def test_search_metrics_node(self, search_metrics_input, agent_config: AgentConfig):
         """Test schema linking node"""
         # Take first test case from the list
-        _current_database = agent_config.current_database
+        _current_datasource = agent_config.current_datasource
         try:
             for case in search_metrics_input:
                 input_data = SearchMetricsInput(**case["input"])

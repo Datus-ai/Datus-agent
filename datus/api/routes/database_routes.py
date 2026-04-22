@@ -17,7 +17,7 @@ from datus.api.models.database_models import (
 router = APIRouter(prefix="/api/v1", tags=["databases"])
 
 # Pre-configured parameters to avoid definition-time evaluation in defaults
-DATASOURCE_QUERY = Query("", description="Namespace to list databases from")
+DATASOURCE_QUERY = Query("", description="Datasource to list databases from")
 DATABASE_NAME_QUERY = Query("", description="Database name")
 SCHEMA_NAME_QUERY = Query("", description="Schema name")
 CATALOG_NAME_QUERY = Query("", description="Catalog name")
@@ -40,7 +40,7 @@ async def list_catalogs(
 ) -> Result[DatabasesData]:
     """List available databases."""
     request = ListDatabasesInput(
-        datasource_id=datasource_id or svc.database.current_namespace,
+        datasource_id=datasource_id or svc.database.current_datasource,
         catalog_name=catalog_name,
         database_name=database_name,
         schema_name=schema_name,

@@ -2077,7 +2077,7 @@ def _build_gold_result_provider(
         )
 
     db_manager = db_manager_instance(agent_config.namespaces)
-    connections = db_manager.get_connections(agent_config.current_database)
+    connections = db_manager.get_connections(agent_config.current_datasource)
 
     return SingleFileGoldProvider(
         result_file=str(result_file),
@@ -2096,7 +2096,7 @@ def evaluate_benchmark(
     target_task_ids: Optional[Iterable[str]] = None,
     run_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    namespace = agent_config.current_database
+    namespace = agent_config.current_datasource
     trajectory_directory = Path(agent_config.trajectory_dir)
 
     try:

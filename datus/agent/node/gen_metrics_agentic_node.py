@@ -252,7 +252,7 @@ class GenMetricsAgenticNode(AgenticNode):
         context["knowledge_base_dir"] = self.knowledge_base_dir
         # Filesystem tool is rooted at project_root; full path required.
         context["kind_subdir"] = "subject/semantic_models"
-        context["current_database"] = self.agent_config.current_database
+        context["current_datasource"] = self.agent_config.current_datasource
         context["has_ask_user_tool"] = self.ask_user_tool is not None
 
         # Handle subject_tree context based on whether predefined or query from storage

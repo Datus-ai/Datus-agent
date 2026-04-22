@@ -351,10 +351,10 @@ class ServiceClientRegistry:
     def _namespace_fingerprint(self) -> Tuple[Any, ...]:
         """Capture the agent_config state that affects built tool instances.
 
-        ``SemanticTools`` bakes ``current_database`` into ``MetricRAG`` /
+        ``SemanticTools`` bakes ``current_datasource`` into ``MetricRAG`` /
         ``SemanticModelRAG`` at init time and resolves the adapter against
         the active namespace. ``BIFuncTool.read_connector`` is similarly
-        pulled via ``db_manager.get_conn(current_database, current_database)``
+        pulled via ``db_manager.get_conn(current_datasource, current_datasource)``
         on first use. If any of those change, cached instances must be
         rebuilt — a session-scoped cache would otherwise keep executing
         queries against the pre-switch namespace after ``.database ...`` /
@@ -362,7 +362,7 @@ class ServiceClientRegistry:
         """
         cfg = self._agent_config
         return (
-            getattr(cfg, "current_database", None),
+            getattr(cfg, "current_datasource", None),
             getattr(cfg, "namespace", None),
         )
 

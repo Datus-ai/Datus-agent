@@ -561,7 +561,6 @@ class TableCompleter(DynamicAtReferenceCompleter):
         storage = SchemaWithValueRAG(self.agent_config, sub_agent_name=self.sub_agent_name or None)
         try:
             schema_table = storage.search_all_schemas(
-                # database_name=self.agent_config.current_database,
                 select_fields=[
                     "catalog_name",
                     "database_name",
@@ -927,7 +926,7 @@ class AtReferenceCompleter(Completer):
         raw_config = self.agent_config.sub_agent_config(first_token)
         if raw_config:
             sub_config = SubAgentConfig.model_validate(raw_config)
-            if sub_config.has_scoped_context() and not sub_config.is_in_namespace(self.agent_config.current_database):
+            if sub_config.has_scoped_context() and not sub_config.is_in_namespace(self.agent_config.current_datasource):
                 return ""
         return first_token
 

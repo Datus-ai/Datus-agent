@@ -162,7 +162,7 @@ class ServicesConfig:
     schedulers: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     @property
-    def default_database(self) -> Optional[str]:
+    def default_datasource(self) -> Optional[str]:
         """Return the datasource entry marked as default, or the only one if just one exists."""
         defaults = [name for name, cfg in self.datasources.items() if cfg.default]
         if defaults:
@@ -436,7 +436,7 @@ class AgentConfig:
     search_metrics_rate: str
     _reflection_nodes: Dict[str, List[str]]
     _save_dir: str
-    _current_database: str
+    _current_datasource: str
     _project_name: str
     _trajectory_dir: str
     services: ServicesConfig
@@ -477,7 +477,7 @@ class AgentConfig:
         # CLI, or direct assignment from API/gateway bootstraps.
         filesystem_raw = kwargs.get("filesystem") or {}
         self._filesystem_strict = bool(filesystem_raw.get("strict", False))
-        self._current_database = ""
+        self._current_datasource = ""
         self.nodes = nodes
         self.export_config: Dict[str, Any] = kwargs.get("export", {})
         self.api_config: Dict[str, Any] = kwargs.get("api", {}) or {}
@@ -627,20 +627,25 @@ class AgentConfig:
         self._filesystem_strict = bool(value)
 
     @property
-    def current_database(self):
-        return self._current_database
+    def current_datasource(self):
+        return self._current_datasource
 
-    @current_database.setter
-    def current_database(self, value):
+    @current_datasource.setter
+    def current_datasource(self, value):
         """Set the current datasource name (must exist in services.datasources)."""
         if not value:
-            return
+            raise DatusException(
+                code=ErrorCode.COMMON_FIELD_REQUIRED,
+                message_args={"field_name": "datasource"},
+            )
         if value not in self.services.datasources:
             raise DatusException(
-                ErrorCode.COMMON_CONFIG_ERROR,
-                message=f"No datasource configuration named `{value}` found. Available: {list(self.services.datasources.keys())}",
+                code=ErrorCode.COMMON_UNSUPPORTED,
+                message_args={"field_name": "datasource", "your_value": value},
             )
-        self._current_database = value
+        if value == self._current_datasource:
+            return
+        self._current_datasource = value
         self.db_type = self.services.datasources[value].type
 
     @property
@@ -670,36 +675,8 @@ class AgentConfig:
         return str(self._project_root)
 
     @property
-    def current_namespace(self) -> str:
-        """Backward-compat: returns current_database as namespace key for DBManager compat."""
-        return self._current_database
-
-    @property
     def max_export_lines(self) -> int:
         return self.export_config.get("max_lines", 1000)
-
-    @current_namespace.setter
-    def current_namespace(self, value: str):
-        """Backward-compat: setting current_namespace now sets current_database.
-
-        Accepts a datasource name from services.datasources. Also accepts legacy namespace names
-        which are auto-migrated to datasource names.
-        """
-        if not value:
-            raise DatusException(
-                code=ErrorCode.COMMON_FIELD_REQUIRED,
-                message_args={"field_name": "database"},
-            )
-        if value not in self.services.datasources:
-            raise DatusException(
-                code=ErrorCode.COMMON_UNSUPPORTED,
-                message_args={"field_name": "database", "your_value": value},
-            )
-        if value == self._current_database:
-            return
-        self._current_database = value
-        db_config = self.services.datasources[value]
-        self.db_type = db_config.type
 
     @property
     def namespaces(self) -> Dict[str, Dict[str, DbConfig]]:
@@ -814,12 +791,12 @@ class AgentConfig:
         datasources = self.services.datasources
         if db_name and db_name in datasources:
             return datasources[db_name]
-        if self._current_database and self._current_database in datasources:
-            return datasources[self._current_database]
+        if self._current_datasource and self._current_datasource in datasources:
+            return datasources[self._current_datasource]
         if len(datasources) == 1:
             return list(datasources.values())[0]
         if not db_name:
-            default = self.services.default_database
+            default = self.services.default_datasource
             if default:
                 return datasources[default]
         raise DatusException(
@@ -929,7 +906,9 @@ class AgentConfig:
         config = self.get_semantic_layer_config(resolved_adapter)
         config.setdefault("type", resolved_adapter)
 
-        db_name = database_name or config.get("namespace") or self.current_database or self.services.default_database
+        db_name = (
+            database_name or config.get("namespace") or self.current_datasource or self.services.default_datasource
+        )
         if db_name:
             config.setdefault("namespace", db_name)
             db_config = _db_config_to_semantic_adapter_config(self.current_db_config(db_name))
@@ -942,10 +921,10 @@ class AgentConfig:
 
     @property
     def output_dir(self) -> str:
-        return f"{self._save_dir}/{self._current_database}"
+        return f"{self._save_dir}/{self._current_datasource}"
 
     def get_save_run_dir(self, run_id: Optional[str] = None) -> str:
-        return str(self.save_run_dir(self._current_database, run_id))
+        return str(self.save_run_dir(self._current_datasource, run_id))
 
     def save_run_dir(self, database: str, run_id: Optional[str] = None) -> Path:
         from datus.utils.path_manager import DatusPathManager
@@ -957,7 +936,7 @@ class AgentConfig:
         return self._trajectory_dir
 
     def get_trajectory_run_dir(self, run_id: Optional[str] = None) -> str:
-        return str(self.trajectory_run_dir(self._current_database, run_id))
+        return str(self.trajectory_run_dir(self._current_datasource, run_id))
 
     def trajectory_run_dir(self, database: str, run_id: Optional[str] = None) -> Path:
         from datus.utils.path_manager import DatusPathManager
@@ -1063,12 +1042,12 @@ class AgentConfig:
         if kwargs.get("plan", ""):
             self.workflow_plan = kwargs["plan"]
         if kwargs.get("action", "") not in ["probe-llm", "generate-dataset", "service", "platform-doc"]:
-            # Support both --database (new) and --namespace (legacy) CLI args
-            db_arg = kwargs.get("database", "") or kwargs.get("namespace", "")
+            # Support both --datasource (new) and --namespace (legacy) CLI args
+            db_arg = kwargs.get("datasource", "") or kwargs.get("namespace", "")
             if db_arg:
-                self.current_namespace = db_arg  # uses the compat setter
-            elif self.services.default_database:
-                self.current_namespace = self.services.default_database
+                self.current_datasource = db_arg
+            elif self.services.default_datasource:
+                self.current_datasource = self.services.default_datasource
         if kwargs.get("benchmark", ""):
             benchmark_platform = kwargs["benchmark"]
             # Validate benchmark is supported (will raise exception if not)
@@ -1135,10 +1114,10 @@ class AgentConfig:
 
     def _current_db_config(self) -> Dict[str, DbConfig]:
         """Backward-compat: returns all datasource configs."""
-        if not self._current_database and not self.services.datasources:
+        if not self._current_datasource and not self.services.datasources:
             raise DatusException(
                 code=ErrorCode.COMMON_FIELD_REQUIRED,
-                message="Database is required, please run with --database <database>",
+                message="Datasource is required, please run with --datasource <datasource>",
             )
         return self.services.datasources
 
@@ -1146,8 +1125,8 @@ class AgentConfig:
         datasources = self.services.datasources
         if db_name and db_name in datasources:
             return db_name, datasources[db_name].type
-        if self._current_database and self._current_database in datasources:
-            return self._current_database, datasources[self._current_database].type
+        if self._current_datasource and self._current_datasource in datasources:
+            return self._current_datasource, datasources[self._current_datasource].type
         if len(datasources) == 1:
             cfg = list(datasources.values())[0]
             return cfg.logic_name or db_name, cfg.type

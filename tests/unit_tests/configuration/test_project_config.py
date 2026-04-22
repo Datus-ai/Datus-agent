@@ -50,14 +50,14 @@ class TestLoadProjectOverride:
             yaml.safe_dump(
                 {
                     "target": "deepseek",
-                    "default_database": "my_db",
+                    "default_datasource": "my_db",
                     "project_name": "proj_a",
                 }
             )
         )
         result = load_project_override(str(tmp_path))
         assert result.target == "deepseek"
-        assert result.default_database == "my_db"
+        assert result.default_datasource == "my_db"
         assert result.project_name == "proj_a"
         assert not result.is_empty()
 
@@ -67,7 +67,7 @@ class TestLoadProjectOverride:
         path.write_text(yaml.safe_dump({"target": "deepseek"}))
         result = load_project_override(str(tmp_path))
         assert result.target == "deepseek"
-        assert result.default_database is None
+        assert result.default_datasource is None
         assert result.project_name is None
 
     def test_unknown_keys_warn_and_drop(self, tmp_path, caplog):
@@ -112,20 +112,20 @@ class TestLoadProjectOverride:
 
 class TestSaveProjectOverride:
     def test_writes_and_creates_parent_dir(self, tmp_path):
-        override = ProjectOverride(target="x", default_database="y", project_name="z")
+        override = ProjectOverride(target="x", default_datasource="y", project_name="z")
         written = save_project_override(override, cwd=str(tmp_path))
         assert written == tmp_path / PROJECT_CONFIG_REL
         assert written.exists()
         assert written.parent.name == ".datus"
 
     def test_none_fields_are_omitted(self, tmp_path):
-        override = ProjectOverride(target="x")  # default_database & project_name left as None
+        override = ProjectOverride(target="x")  # default_datasource & project_name left as None
         written = save_project_override(override, cwd=str(tmp_path))
         loaded = yaml.safe_load(written.read_text())
         assert loaded == {"target": "x"}
 
     def test_round_trip(self, tmp_path):
-        original = ProjectOverride(target="a", default_database="b", project_name="c")
+        original = ProjectOverride(target="a", default_datasource="b", project_name="c")
         save_project_override(original, cwd=str(tmp_path))
         loaded = load_project_override(str(tmp_path))
         assert loaded == original
@@ -139,7 +139,7 @@ class TestSaveProjectOverride:
 
 class TestAllowedKeys:
     def test_whitelist_contains_exactly_three_keys(self):
-        assert ALLOWED_KEYS == frozenset({"target", "default_database", "project_name"})
+        assert ALLOWED_KEYS == frozenset({"target", "default_datasource", "project_name"})
 
 
 class TestProjectOverrideDataclass:
@@ -150,7 +150,7 @@ class TestProjectOverrideDataclass:
         "field,value",
         [
             ("target", "x"),
-            ("default_database", "y"),
+            ("default_datasource", "y"),
             ("project_name", "z"),
         ],
     )

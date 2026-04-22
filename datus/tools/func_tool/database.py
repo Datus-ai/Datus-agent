@@ -148,8 +148,8 @@ class DBFuncTool:
             if not agent_config:
                 raise ValueError("AgentConfiguration is required when using DBManager mode")
             self._db_manager = connector_or_manager
-            self._namespace = agent_config.current_database
-            self._default_database = default_database or (agent_config.current_database if agent_config else "")
+            self._namespace = agent_config.current_datasource
+            self._default_database = default_database or (agent_config.current_datasource if agent_config else "")
             if len(agent_config.current_db_configs()) == 1:
                 self._init_single_db_connector(self._db_manager.first_conn(self._namespace))
             else:
@@ -1567,7 +1567,7 @@ def db_function_tool_instance(
     """
     db_manager = db_manager_instance(agent_config.namespaces)
     return DBFuncTool(
-        db_manager.get_conn(agent_config.current_database, database_name or agent_config.current_database),
+        db_manager.get_conn(agent_config.current_datasource, database_name or agent_config.current_datasource),
         agent_config=agent_config,
         sub_agent_name=sub_agent_name,
     )
@@ -1597,7 +1597,7 @@ def db_function_tool_instance_multi(
     return DBFuncTool(
         db_manager,
         agent_config=agent_config,
-        default_database=agent_config.current_database,
+        default_database=agent_config.current_datasource,
         sub_agent_name=sub_agent_name,
         connector_cache_size=connector_cache_size,
     )

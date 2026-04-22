@@ -256,46 +256,46 @@ class TestApplyProjectOverride:
             _apply_project_override(agent_raw)
         assert agent_raw["project_name"] == "my_proj"
 
-    def test_valid_default_database_flips_default_flags(self):
-        """default_database overlay is applied by flipping databases[*].default
-        so AgentConfig.services.default_database resolves to the override target
+    def test_valid_default_datasource_flips_default_flags(self):
+        """default_datasource overlay is applied by flipping databases[*].default
+        so AgentConfig.services.default_datasource resolves to the override target
         uniformly across every entry point (REPL, datus-api, SDK)."""
         agent_raw = self._base_raw()
         with patch(
             "datus.configuration.agent_config_loader.load_project_override",
-            return_value=ProjectOverride(default_database="db2"),
+            return_value=ProjectOverride(default_datasource="db2"),
         ):
             _apply_project_override(agent_raw)
         assert agent_raw["services"]["datasources"]["db2"]["default"] is True
         assert agent_raw["services"]["datasources"]["db1"]["default"] is False
 
-    def test_default_database_overlay_clears_prior_default(self):
+    def test_default_datasource_overlay_clears_prior_default(self):
         """A base config marking db1 as default must have that flag cleared
-        when the overlay points elsewhere, otherwise default_database would
+        when the overlay points elsewhere, otherwise default_datasource would
         return the first match (db1) and ignore the overlay."""
         agent_raw = self._base_raw()
         agent_raw["services"]["datasources"]["db1"]["default"] = True
         with patch(
             "datus.configuration.agent_config_loader.load_project_override",
-            return_value=ProjectOverride(default_database="db2"),
+            return_value=ProjectOverride(default_datasource="db2"),
         ):
             _apply_project_override(agent_raw)
         assert agent_raw["services"]["datasources"]["db1"]["default"] is False
         assert agent_raw["services"]["datasources"]["db2"]["default"] is True
 
-    def test_invalid_default_database_raises(self):
+    def test_invalid_default_datasource_raises(self):
         agent_raw = self._base_raw()
         with patch(
             "datus.configuration.agent_config_loader.load_project_override",
-            return_value=ProjectOverride(default_database="ghost_db"),
+            return_value=ProjectOverride(default_datasource="ghost_db"),
         ):
             with pytest.raises(DatusException) as exc:
                 _apply_project_override(agent_raw)
-        assert "default_database" in str(exc.value)
+        assert "default_datasource" in str(exc.value)
 
     def test_all_three_fields_merged(self):
         agent_raw = self._base_raw()
-        override = ProjectOverride(target="deepseek", default_database="db1", project_name="p")
+        override = ProjectOverride(target="deepseek", default_datasource="db1", project_name="p")
         with patch(
             "datus.configuration.agent_config_loader.load_project_override",
             return_value=override,
@@ -317,7 +317,7 @@ class TestApplyProjectOverride:
         agent_raw = {"models": {"openai": {}}}
         with patch(
             "datus.configuration.agent_config_loader.load_project_override",
-            return_value=ProjectOverride(default_database="db1"),
+            return_value=ProjectOverride(default_datasource="db1"),
         ):
             with pytest.raises(DatusException):
                 _apply_project_override(agent_raw)
@@ -351,7 +351,7 @@ class TestLoadNodeConfig:
 
 
 class TestLoadAgentConfigResolution:
-    """Cover the post-override resolution that guarantees ``current_database``
+    """Cover the post-override resolution that guarantees ``current_datasource``
     is populated for every entry point (REPL, datus-api, datus-gateway, SDK),
     regardless of whether ``override_by_args`` ran for the CLI ``action``.
     """
@@ -396,7 +396,7 @@ class TestLoadAgentConfigResolution:
             return_value=None,
         ):
             agent_config = load_agent_config(config=str(cfg), home=str(tmp_path), reload=True)
-        assert agent_config.current_database == "db_b"
+        assert agent_config.current_datasource == "db_b"
 
     def test_resolves_single_db_auto(self, tmp_path, reset_global_singletons):
         """base has a single DB and no explicit default → auto-selected."""
@@ -409,10 +409,10 @@ class TestLoadAgentConfigResolution:
             return_value=None,
         ):
             agent_config = load_agent_config(config=str(cfg), home=str(tmp_path), reload=True)
-        assert agent_config.current_database == "only_db"
+        assert agent_config.current_datasource == "only_db"
 
     def test_project_overlay_wins_over_base_default(self, tmp_path, reset_global_singletons):
-        """``.datus/config.yml::default_database`` overrides the base default flag."""
+        """``.datus/config.yml::default_datasource`` overrides the base default flag."""
         cfg = self._write_base_yaml(
             tmp_path,
             {
@@ -422,10 +422,10 @@ class TestLoadAgentConfigResolution:
         )
         with patch(
             "datus.configuration.agent_config_loader.load_project_override",
-            return_value=ProjectOverride(default_database="db_b", target="mock"),
+            return_value=ProjectOverride(default_datasource="db_b", target="mock"),
         ):
             agent_config = load_agent_config(config=str(cfg), home=str(tmp_path), reload=True)
-        assert agent_config.current_database == "db_b"
+        assert agent_config.current_datasource == "db_b"
         assert agent_config.target == "mock"
 
     def test_raises_when_ambiguous_default(self, tmp_path, reset_global_singletons):
@@ -469,15 +469,15 @@ class TestLoadAgentConfigResolution:
                 reload=True,
                 action="service",
             )
-        assert agent_config.current_database == "db_a"
+        assert agent_config.current_datasource == "db_a"
 
     def test_no_databases_is_tolerated(self, tmp_path, reset_global_singletons):
         """Deployments without any configured DB (pure KB / tool-only) must not
-        crash at bootstrap; ``current_database`` simply stays empty."""
+        crash at bootstrap; ``current_datasource`` simply stays empty."""
         cfg = self._write_base_yaml(tmp_path, {})
         with patch(
             "datus.configuration.agent_config_loader.load_project_override",
             return_value=None,
         ):
             agent_config = load_agent_config(config=str(cfg), home=str(tmp_path), reload=True)
-        assert agent_config.current_database == ""
+        assert agent_config.current_datasource == ""

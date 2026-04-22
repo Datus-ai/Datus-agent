@@ -364,7 +364,7 @@ class TestProcessTemplateItem:
 
         mock_config = MagicMock()
         mock_config.path_manager.sql_summary_path.return_value = summary_dir
-        mock_config.current_namespace = "test_ns"
+        mock_config.current_datasource = "test_ns"
 
         item = {
             "template": "SELECT * FROM t WHERE x = '{{val}}'",
@@ -446,7 +446,7 @@ class TestProcessTemplateItem:
 
         mock_config = MagicMock()
         mock_config.path_manager.sql_summary_path.return_value = summary_dir
-        mock_config.current_namespace = "test_ns"
+        mock_config.current_datasource = "test_ns"
 
         item = {"template": "SELECT 1", "filepath": "/tmp/test.j2", "comment": ""}
 
@@ -480,7 +480,7 @@ class TestProcessTemplateItem:
 
         mock_config = MagicMock()
         mock_config.path_manager.sql_summary_path.return_value = Path("/nonexistent/dir")
-        mock_config.current_namespace = "test_ns"
+        mock_config.current_datasource = "test_ns"
 
         item = {"template": "SELECT 1", "filepath": "/tmp/test.j2", "comment": ""}
 
@@ -554,7 +554,7 @@ class TestProcessTemplateItem:
 
         mock_config = MagicMock()
         mock_config.path_manager.sql_summary_path.return_value = summary_dir
-        mock_config.current_namespace = "test_ns"
+        mock_config.current_datasource = "test_ns"
 
         item = {"template": "SELECT 1", "filepath": "/tmp/test.j2", "comment": ""}
 
@@ -597,7 +597,7 @@ class TestProcessTemplateItem:
 
         mock_config = MagicMock()
         mock_config.path_manager.sql_summary_path.return_value = summary_dir
-        mock_config.current_namespace = "test_ns"
+        mock_config.current_datasource = "test_ns"
 
         mock_event_helper = MagicMock()
 

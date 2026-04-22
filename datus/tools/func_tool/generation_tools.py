@@ -190,7 +190,7 @@ class GenerationTools:
             metric_file: Path to the generated metric YAML file (required).
                 Relative paths (e.g. ``"metrics/orders_metrics.yml"``) are preferred
                 and resolved against the sub-agent's semantic-model workspace using
-                the live ``agent_config.current_namespace``. Absolute paths are also
+                the live ``agent_config.current_datasource``. Absolute paths are also
                 accepted and used as-is.
             semantic_model_file: Path to the primary semantic model file that defines
                 the measure(s) used by this metric. Optional — provide this if the

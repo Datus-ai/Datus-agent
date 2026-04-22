@@ -160,7 +160,7 @@ class TestReferenceTemplateRAG:
             mock_filter.return_value = filter_value
 
         config = MagicMock()
-        config.current_database = "test_ns"
+        config.current_datasource = "test_ns"
         return ReferenceTemplateRAG(config), mock_storage
 
     @patch("datus.storage.rag_scope._build_sub_agent_filter", return_value=None)
