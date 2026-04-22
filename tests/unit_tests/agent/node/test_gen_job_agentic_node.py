@@ -82,20 +82,16 @@ class TestGenJobAgenticNodeInit:
 
         check_tools_include(GenJobAgenticNode, real_agent_config, "transfer_query_result")
 
-    def test_setup_tools_includes_get_migration_capabilities(self, real_agent_config, mock_llm_create):  # audit-noqa
+    def test_setup_tools_registers_three_migration_target_wrappers(self, real_agent_config, mock_llm_create):
+        """gen_job absorbed migration — all three Mixin wrappers must be wired
+        as tools so the LLM can read dialect hints, pick layout, and validate
+        DDL end to end on the same turn.
+        """
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
-        check_tools_include(GenJobAgenticNode, real_agent_config, "get_migration_capabilities")
-
-    def test_setup_tools_includes_suggest_table_layout(self, real_agent_config, mock_llm_create):  # audit-noqa
-        from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
-
-        check_tools_include(GenJobAgenticNode, real_agent_config, "suggest_table_layout")
-
-    def test_setup_tools_includes_validate_ddl(self, real_agent_config, mock_llm_create):  # audit-noqa
-        from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
-
-        check_tools_include(GenJobAgenticNode, real_agent_config, "validate_ddl")
+        node = GenJobAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        tool_names = {tool.name for tool in node.tools}
+        assert {"get_migration_capabilities", "suggest_table_layout", "validate_ddl"} <= tool_names
 
     def test_setup_tools_includes_standard_db_tools(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode

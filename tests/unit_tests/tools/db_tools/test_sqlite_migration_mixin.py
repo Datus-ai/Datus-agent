@@ -31,10 +31,12 @@ class TestDescribeMigrationCapabilities:
         assert connector.describe_migration_capabilities()["requires"] == []
 
     def test_type_hints_mention_affinity(self, connector):
-        """SQLite uses type affinity (TEXT / NUMERIC / INTEGER / REAL / BLOB)."""
+        """SQLite uses type affinity — VARCHAR must be flagged as the affinity-driven case."""
         hints = connector.describe_migration_capabilities()["type_hints"]
-        hints_str = " ".join(hints.values()).upper()
-        assert "AFFINITY" in hints_str or "TEXT" in hints_str
+        # The VARCHAR hint is the canonical spot where affinity is documented —
+        # pin that specific mapping instead of scanning the whole dict.
+        assert "affinity" in hints["VARCHAR"].lower()
+        assert hints["VARCHAR"].startswith("TEXT")
 
 
 class TestValidateDdl:

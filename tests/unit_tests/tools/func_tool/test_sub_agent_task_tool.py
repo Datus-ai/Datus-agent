@@ -289,11 +289,12 @@ class TestBuildTaskDescription:
     def test_gen_job_description_mentions_cross_database_migration(self, task_tool):
         """Parent ChatAgenticNode routes to gen_job for migration — description must carry the signal."""
         desc = task_tool._build_task_description()
-        # We need the routing LLM to match on migration-related user intents
+        # Pin the exact routing keywords the description commits to so the
+        # parent agent's routing LLM has a deterministic match.
         haystack = desc.lower()
         assert "gen_job" in haystack
-        assert "migration" in haystack or "migrate" in haystack
-        assert "cross-database" in haystack or "cross database" in haystack or "different database" in haystack
+        assert "migration" in haystack
+        assert "cross-database migration" in haystack
 
 
 # ── node creation (fresh per invocation) ──────────────────────────

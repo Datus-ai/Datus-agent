@@ -32,10 +32,14 @@ class TestDescribeMigrationCapabilities:
         assert connector.describe_migration_capabilities()["requires"] == []
 
     def test_type_hints_mention_complex_types(self, connector):
+        """DuckDB's native LIST / STRUCT / MAP hints must all be documented."""
         hints = connector.describe_migration_capabilities()["type_hints"]
-        hints_str = " ".join(hints.values()).upper()
-        # DuckDB has native LIST/STRUCT/MAP
-        assert "LIST" in hints_str or "STRUCT" in hints_str or "MAP" in hints_str
+        # The source dict keys are the canonical place to pin these — checking
+        # every key independently makes the contract explicit rather than
+        # relying on substring scans across concatenated values.
+        assert "LIST<T>" in hints
+        assert "STRUCT" in hints
+        assert "MAP" in hints
 
     def test_example_ddl_has_create_table(self, connector):
         ddl = connector.describe_migration_capabilities()["example_ddl"].upper()

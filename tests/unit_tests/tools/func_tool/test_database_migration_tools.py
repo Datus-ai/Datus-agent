@@ -89,8 +89,9 @@ class TestGetMigrationCapabilities:
         result = tool.get_migration_capabilities(database="default")
         assert result.success == 1
         assert result.result["supported"] is False
-        assert "warning" in result.result
-        assert "LLM" in result.result["warning"] or "fallback" in result.result["warning"].lower()
+        # Pin the exact fallback-mode marker the production code emits so the
+        # prompt rendering stays stable when the LLM reads the warning.
+        assert "falling back to pure LLM mode" in result.result["warning"]
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +123,8 @@ class TestSuggestTableLayout:
         tool = _build_tool_with_connector(mixin_connector)
         result = tool.suggest_table_layout(database="default", columns_json="not valid json")
         assert result.success == 0
-        assert "columns_json" in result.error.lower() or "json" in result.error.lower()
+        # Pin the exact prefix the production code emits.
+        assert result.error.startswith("Invalid columns_json:")
 
     def test_non_array_json_is_rejected(self, mixin_connector):
         tool = _build_tool_with_connector(mixin_connector)
@@ -188,7 +190,7 @@ class TestValidateDdl:
         tool = _build_tool_with_connector(mixin_connector)
         result = tool.validate_ddl(database="default", ddl="")
         assert result.success == 0
-        assert "empty" in result.error.lower() or "ddl" in result.error.lower()
+        assert result.error == "Empty DDL statement"
 
     def test_whitespace_only_ddl_is_rejected(self, mixin_connector):
         tool = _build_tool_with_connector(mixin_connector)

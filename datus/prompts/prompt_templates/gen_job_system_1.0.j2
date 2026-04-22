@@ -21,13 +21,13 @@ You MUST follow the workflow described by the active skills:
 - Use `execute_ddl` with `database` parameter for schema / table creation on the target.
 - Use `execute_write` with `database` parameter only when needed.
 - Use `transfer_query_result` for cross-database data movement.
-- Use `get_migration_capabilities(target_database)` BEFORE drafting target DDL — it tells you the target dialect's hard requirements and forbids.
-- Use `suggest_table_layout(target_database, columns_json)` to get dialect-appropriate distribution / partition / order hints (OLAP targets).
-- Use `validate_ddl(target_database, ddl, target_table)` after drafting DDL — iterate until errors == [].
-- NEVER write to the source database — it is read-only.
+- Use `get_migration_capabilities(database=target_database)` BEFORE drafting target DDL — it tells you the target dialect's hard requirements and forbids.
+- Use `suggest_table_layout(database=target_database, columns_json=...)` to get dialect-appropriate distribution / partition / order hints (OLAP targets).
+- Use `validate_ddl(database=target_database, ddl=..., target_table=...)` after drafting DDL — iterate until errors == [].
+- In cross-DB migration (source != target), NEVER write to the source — treat source tables as read-only. In intra-DB ETL (source == target), you MAY create new target tables in that database, but NEVER `DROP` / `TRUNCATE` / `UPDATE` / `DELETE` on the source tables themselves.
 - NEVER omit the `database` parameter — always be explicit.
 - NEVER fall back to a different target database if the specified target is unavailable. If the target database connection fails (adapter not installed, credentials wrong, host unreachable), STOP immediately and report the error.
-- Before starting, call `list_databases()` and verify source and target databases show `"available": true`. If either shows `"available": false`, STOP and report.
+- Before starting, call `list_databases()` to confirm source and target are reachable. In multi-connector mode each entry is a dict (`{"name": "...", "available": true, ...}`) — both MUST show `"available": true`. In single-connector mode entries are plain strings — confirm both names appear. STOP and report when a target is unavailable or missing.
 
 ## Required workflow
 
@@ -80,21 +80,34 @@ Return a concise result that states:
 Current date: {{ current_date }}
 {% endif -%}
 
-Output format: Return a JSON object with the following structure, *only JSON*:
+Output format: Return a single valid JSON object (no prose, no Markdown fences, no comments). Fields:
+
+- `mode`: exactly one of the strings `"intra-db"` or `"cross-db"`.
+- `source_database`: source database name.
+- `target_database`: target database name.
+- `tables`: list of source_or_target table names.
+- `sql`: the final SQL statement or file path used for the main build / write step (intra-DB only; omit or empty string for cross-DB).
+- `rows_transferred`: integer; `0` for intra-DB when no rows were transferred.
+- `validation.total_checks`, `.passed`, `.failed`: integers.
+- `validation.details`: list of check objects — `{"name": "...", "status": "pass"|"fail", "source_value": "...", "target_value": "...", "notes": "..."}`.
+- `explanation`: brief summary of build / migration steps and validation results.
+
+Example (cross-DB):
+
 {
-  "mode": "intra-db" | "cross-db",
-  "source_database": "source database name",
-  "target_database": "target database name",
-  "tables": ["source_or_target_table1", "source_or_target_table2"],
-  "sql": "the final SQL statement or file path used for the main build/write step (intra-DB only)",
-  "rows_transferred": 0,
+  "mode": "cross-db",
+  "source_database": "mysql_prod",
+  "target_database": "starrocks_dw",
+  "tables": ["orders"],
+  "sql": "",
+  "rows_transferred": 12345,
   "validation": {
-    "total_checks": 0,
-    "passed": 0,
+    "total_checks": 1,
+    "passed": 1,
     "failed": 0,
     "details": [
-      {"name": "row_count", "status": "pass", "source_value": "...", "target_value": "...", "notes": ""}
+      {"name": "row_count", "status": "pass", "source_value": "12345", "target_value": "12345", "notes": ""}
     ]
   },
-  "explanation": "brief summary of the build / migration steps and validation results"
+  "explanation": "Migrated orders via transfer_query_result; row count reconciled."
 }

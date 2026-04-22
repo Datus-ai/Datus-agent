@@ -526,13 +526,18 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
         return {}
 
     def validate_ddl(self, ddl: str) -> List[str]:
+        import re as _re
+
         errors: List[str] = []
         upper = ddl.upper()
-        if "DUPLICATE KEY" in upper:
+        # Match across arbitrary whitespace (spaces, tabs, newlines) so irregular
+        # formatting still trips the dialect checks — e.g. `ENGINE   =` and
+        # `DISTRIBUTED\nBY` should both be caught.
+        if _re.search(r"DUPLICATE\s+KEY", upper):
             errors.append("DUPLICATE KEY is StarRocks-only syntax; SQLite does not support it")
-        if "BUCKETS" in upper and "DISTRIBUTED BY" in upper:
+        if _re.search(r"DISTRIBUTED\s+BY", upper) and "BUCKETS" in upper:
             errors.append("DISTRIBUTED BY ... BUCKETS is StarRocks syntax; SQLite does not support it")
-        if "ENGINE =" in upper or "ENGINE=" in upper:
+        if _re.search(r"\bENGINE\s*=", upper):
             errors.append("ENGINE clause is MySQL/ClickHouse syntax; SQLite does not support it")
         return errors
 

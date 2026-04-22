@@ -126,7 +126,7 @@ agent 首先调用 `list_databases()` 发现可用数据库：
 - **`suggest_table_layout(database=target, columns_json=...)`** — 返回 OLAP 相关建议（StarRocks 的 `{duplicate_key, distributed_by, buckets}`、ClickHouse 的 `{engine, order_by}`、Trino/Hive 的 `{partitioned_by}` 等）。
 - **`validate_ddl(database=target, ddl=..., target_table=...)`** — 做结构化校验（如 StarRocks 必须有 `DUPLICATE KEY` + `DISTRIBUTED BY`；ClickHouse 必须有 `ENGINE` + `ORDER BY`）；可选再跑 `dry_run_ddl`（在目标库 CREATE + DROP 临时表）。
 
-本版本已实现 Mixin 的 adapter：StarRocks、Greenplum、PostgreSQL、MySQL、ClickHouse、Trino。其他 adapter 回退到纯 LLM 模式——`get_migration_capabilities` 返回 `{"supported": false, "warning": ...}`，由 LLM 凭自身知识处理目标方言。
+本版本已实现 Mixin 的 adapter：StarRocks、Greenplum、PostgreSQL、MySQL、ClickHouse、Trino、Snowflake、Redshift、DuckDB、SQLite，以及基于 SQLAlchemy 基类的通用 OLTP fallback。其他未实装的 adapter（如 BigQuery、Hive、Spark、ClickZetta）回退到纯 LLM 模式——`get_migration_capabilities` 返回 `{"supported": false, "warning": ...}`，由 LLM 凭自身知识处理目标方言。
 
 要为新方言加提示：在对应 adapter 实现 `MigrationTargetMixin` 即可，agent 不需改动。
 
@@ -217,7 +217,7 @@ gen_job：
 
 ### 示例 3：MySQL 迁移到 StarRocks
 
-```
+```text
 用户：把 mysql_prod 的 orders 表迁移到 starrocks，目标 test.orders_copy
 
 gen_job：
