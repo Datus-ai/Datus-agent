@@ -5,7 +5,7 @@
 from typing import Any, Dict, List, Literal, Optional, Set, override
 
 import duckdb
-from datus_db_core import BaseSqlConnector, SchemaNamespaceMixin, list_to_in_str
+from datus_db_core import BaseSqlConnector, MigrationTargetMixin, SchemaNamespaceMixin, list_to_in_str
 from pydantic import BaseModel, Field
 
 from datus.schemas.base import TABLE_TYPE
@@ -42,7 +42,7 @@ def _metadata_names(_type: str) -> _DBMetadataNames:
     return METADATA_DICT[_type]
 
 
-class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin):
+class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMixin):
     """
     Connector for DuckDB databases with schema namespace support using native DuckDB SDK.
     """
@@ -678,3 +678,67 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin):
 
     def get_type(self) -> str:
         return DBType.DUCKDB
+
+    # ==================== MigrationTargetMixin ====================
+
+    def describe_migration_capabilities(self) -> Dict[str, Any]:
+        return {
+            "supported": True,
+            "dialect_family": "duckdb",
+            "requires": [],  # DuckDB is single-node; no distribution required
+            "forbids": [
+                "DUPLICATE KEY (StarRocks-only)",
+                "DISTRIBUTED BY HASH ... BUCKETS (StarRocks-only)",
+                "ENGINE = ... (MySQL/ClickHouse syntax)",
+            ],
+            "type_hints": {
+                "unbounded VARCHAR": "VARCHAR (no length limit)",
+                "TEXT": "VARCHAR",
+                "JSON": "JSON (native type)",
+                "JSONB": "JSON",
+                "VARIANT": "JSON (Snowflake VARIANT maps to native JSON)",
+                "HUGEINT": "HUGEINT (native 128-bit integer)",
+                "LARGEINT": "HUGEINT",
+                "LIST<T>": "T[] (DuckDB array syntax)",
+                "STRUCT": "STRUCT(field_name field_type, ...)",
+                "MAP": "MAP(key_type, value_type)",
+                "BOOLEAN": "BOOLEAN",
+                "TIMESTAMP WITH TIME ZONE": "TIMESTAMPTZ",
+            },
+            "example_ddl": (
+                "CREATE TABLE main.t (\n"
+                "  id BIGINT,\n"
+                "  name VARCHAR,\n"
+                "  tags VARCHAR[],\n"
+                "  payload JSON,\n"
+                "  created_at TIMESTAMP\n"
+                ")"
+            ),
+        }
+
+    def suggest_table_layout(self, columns: List[Dict[str, Any]]) -> Dict[str, Any]:
+        # DuckDB is embedded/single-node — no distribution keys or partition hints needed.
+        return {}
+
+    def validate_ddl(self, ddl: str) -> List[str]:
+        errors: List[str] = []
+        upper = ddl.upper()
+        if "DUPLICATE KEY" in upper:
+            errors.append("DUPLICATE KEY is StarRocks-only syntax; DuckDB does not support it")
+        if "BUCKETS" in upper and "DISTRIBUTED BY" in upper:
+            errors.append("DISTRIBUTED BY ... BUCKETS is StarRocks syntax; DuckDB does not support it")
+        if "ENGINE =" in upper or "ENGINE=" in upper:
+            errors.append("ENGINE clause is MySQL/ClickHouse syntax; DuckDB does not support it")
+        return errors
+
+    def map_source_type(self, source_dialect: str, source_type: str) -> Optional[str]:
+        import re as _re
+
+        base = _re.sub(r"\(.*\)", "", source_type.strip().upper()).strip()
+        overrides = {
+            "JSONB": "JSON",
+            "VARIANT": "JSON",
+            "SUPER": "JSON",  # Redshift SUPER → DuckDB JSON
+            "OBJECT": "JSON",  # Snowflake OBJECT → DuckDB JSON
+        }
+        return overrides.get(base)

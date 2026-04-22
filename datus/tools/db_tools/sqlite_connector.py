@@ -5,7 +5,7 @@
 import sqlite3
 from typing import Any, Dict, List, Literal, Optional, override
 
-from datus_db_core import BaseSqlConnector
+from datus_db_core import BaseSqlConnector, MigrationTargetMixin
 from pandas import DataFrame
 from pyarrow import Table
 
@@ -19,7 +19,7 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
-class SQLiteConnector(BaseSqlConnector):
+class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
     """
     Connector for SQLite databases using native sqlite3 SDK.
     """
@@ -488,3 +488,88 @@ class SQLiteConnector(BaseSqlConnector):
 
     def get_type(self) -> str:
         return DBType.SQLITE
+
+    # ==================== MigrationTargetMixin ====================
+
+    def describe_migration_capabilities(self) -> Dict[str, Any]:
+        return {
+            "supported": True,
+            "dialect_family": "sqlite",
+            "requires": [],  # SQLite is single-file, no distribution/partition
+            "forbids": [
+                "DUPLICATE KEY (StarRocks-only)",
+                "DISTRIBUTED BY HASH ... BUCKETS (StarRocks-only)",
+                "ENGINE = ... (MySQL/ClickHouse syntax)",
+            ],
+            "type_hints": {
+                "VARCHAR": "TEXT (SQLite uses type affinity; all strings -> TEXT)",
+                "TEXT": "TEXT",
+                "JSON": "TEXT (store JSON as text; use json_extract() to query)",
+                "DECIMAL(p,s)": "NUMERIC",
+                "DOUBLE": "REAL",
+                "FLOAT": "REAL",
+                "BOOLEAN": "INTEGER (SQLite stores bools as 0/1)",
+                "DATE": "TEXT (ISO-8601 format)",
+                "TIMESTAMP": "TEXT (ISO-8601 format)",
+                "BLOB": "BLOB",
+                "HUGEINT": "NUMERIC (SQLite INTEGER is max 64-bit)",
+                "LARGEINT": "NUMERIC",
+            },
+            "example_ddl": (
+                "CREATE TABLE t (\n  id INTEGER PRIMARY KEY,\n  name TEXT,\n  amount NUMERIC,\n  created_at TEXT\n)"
+            ),
+        }
+
+    def suggest_table_layout(self, columns: List[Dict[str, Any]]) -> Dict[str, Any]:
+        # SQLite is embedded single-file — no distribution hints.
+        return {}
+
+    def validate_ddl(self, ddl: str) -> List[str]:
+        errors: List[str] = []
+        upper = ddl.upper()
+        if "DUPLICATE KEY" in upper:
+            errors.append("DUPLICATE KEY is StarRocks-only syntax; SQLite does not support it")
+        if "BUCKETS" in upper and "DISTRIBUTED BY" in upper:
+            errors.append("DISTRIBUTED BY ... BUCKETS is StarRocks syntax; SQLite does not support it")
+        if "ENGINE =" in upper or "ENGINE=" in upper:
+            errors.append("ENGINE clause is MySQL/ClickHouse syntax; SQLite does not support it")
+        return errors
+
+    def map_source_type(self, source_dialect: str, source_type: str) -> Optional[str]:
+        """Map source types to SQLite's 5 affinity classes (TEXT/NUMERIC/INTEGER/REAL/BLOB).
+
+        INTEGER and TEXT pass through unchanged (return None → LLM keeps them).
+        """
+        import re as _re
+
+        base = _re.sub(r"\(.*\)", "", source_type.strip().upper()).strip()
+        overrides = {
+            # Strings → TEXT
+            "VARCHAR": "TEXT",
+            "CHAR": "TEXT",
+            "STRING": "TEXT",
+            "UUID": "TEXT",
+            "JSON": "TEXT",
+            "JSONB": "TEXT",
+            "VARIANT": "TEXT",
+            # Fixed-precision numbers → NUMERIC
+            "DECIMAL": "NUMERIC",
+            "NUMBER": "NUMERIC",
+            "HUGEINT": "NUMERIC",
+            "LARGEINT": "NUMERIC",
+            # Floating point → REAL
+            "DOUBLE": "REAL",
+            "FLOAT": "REAL",
+            "FLOAT4": "REAL",
+            "FLOAT8": "REAL",
+            # Boolean → INTEGER (0/1)
+            "BOOLEAN": "INTEGER",
+            "BOOL": "INTEGER",
+            # Dates → TEXT (ISO-8601 by convention)
+            "DATE": "TEXT",
+            "TIMESTAMP": "TEXT",
+            "TIMESTAMPTZ": "TEXT",
+            "DATETIME": "TEXT",
+            "TIME": "TEXT",
+        }
+        return overrides.get(base)
