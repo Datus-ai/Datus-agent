@@ -5,8 +5,8 @@
 """Tests for SQLite MigrationTargetMixin implementation."""
 
 import pytest
-from datus_db_core import MigrationTargetMixin
 
+from datus.tools.db_tools._migration_compat import MigrationTargetMixin
 from datus.tools.db_tools.sqlite_connector import SQLiteConnector
 
 

@@ -281,7 +281,11 @@ def _normalize_suite_exit_code(
 
 
 def select_impacted_unit_tests(changed_files: list[str]) -> list[str]:
-    """Map changed source files to the unit-test paths that should run."""
+    """Map changed source files to the unit-test paths that should run.
+
+    Skips paths that no longer exist on disk so deletions in the diff do not
+    fail pytest collection with "file or directory not found".
+    """
     impacted: list[str] = []
     for path in changed_files:
         normalized = _normalize_path(path)
@@ -290,15 +294,19 @@ def select_impacted_unit_tests(changed_files: list[str]) -> list[str]:
 
         if normalized.startswith("tests/unit_tests/"):
             if normalized.endswith(".py"):
-                impacted.append(normalized)
+                if os.path.exists(normalized):
+                    impacted.append(normalized)
             else:
                 parent = normalized.rstrip("/").rsplit("/", 1)[0]
-                impacted.append(f"{parent}/" if parent else "tests/unit_tests/")
+                candidate = f"{parent}/" if parent else "tests/unit_tests/"
+                if os.path.isdir(candidate):
+                    impacted.append(candidate)
             continue
 
         for prefix, test_target in IMPACTED_TEST_MAPPING:
             if normalized.startswith(prefix):
-                impacted.append(test_target)
+                if os.path.isdir(test_target) or (test_target.endswith(".py") and os.path.exists(test_target)):
+                    impacted.append(test_target)
                 break
 
     return _dedupe_preserve(impacted)
