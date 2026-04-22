@@ -84,9 +84,7 @@ class TestRenderHeader:
         assert "not set" in text
 
     def test_scope_phase_shows_selected_code(self):
-        app = LanguageApp(console=None)
-        app._phase = _Phase.SCOPE
-        app._selected_code = "zh"
+        app = LanguageApp(console=None, scope_only="zh")
         lines = app._render_header()
         text = "".join(content for _style, content in lines)
         assert "zh" in text
@@ -115,9 +113,7 @@ class TestRenderList:
         assert "\u2190 current" in text
 
     def test_scope_phase_shows_project_and_global(self):
-        app = LanguageApp(console=None, current_language="zh")
-        app._phase = _Phase.SCOPE
-        app._selected_code = "zh"
+        app = LanguageApp(console=None, current_language="zh", scope_only="zh")
         lines = app._render_list()
         text = "".join(content for _style, content in lines)
         assert "project" in text
@@ -134,11 +130,13 @@ class TestRenderFooterHint:
         assert "cancel" in text
 
 
-class TestGetFormattedText:
-    def test_combines_header_and_list(self):
-        app = LanguageApp(console=None, current_language="en", current_source="global")
-        lines = app._get_formatted_text()
-        text = "".join(content for _style, content in lines)
-        for code in LANGUAGE_CHOICES:
-            assert code in text
-        assert "Select" in text
+class TestScopeOnlyInit:
+    def test_scope_only_starts_in_scope_phase(self):
+        app = LanguageApp(console=None, scope_only="zh")
+        assert app._phase == _Phase.SCOPE
+        assert app._selected_code == "zh"
+
+    def test_scope_only_none_starts_in_language_phase(self):
+        app = LanguageApp(console=None)
+        assert app._phase == _Phase.LANGUAGE
+        assert app._selected_code == ""

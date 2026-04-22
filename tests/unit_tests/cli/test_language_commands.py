@@ -120,13 +120,43 @@ class TestClearFlag:
 
 
 class TestAutoCode:
-    def test_auto_clears_project(self, commands):
+    def test_auto_with_project_flag_clears_project(self, commands):
         cmds, cli = commands
         existing = ProjectOverride(language="zh")
         with patch(_PATCH_LOAD, return_value=existing), patch(_PATCH_SAVE) as mock_save:
+            cmds.cmd_language("auto --project")
+        saved = mock_save.call_args[0][0]
+        assert saved.language is None
+
+    def test_auto_with_global_flag_clears_global(self, commands):
+        cmds, cli = commands
+        with patch(_PATCH_LOAD, return_value=None):
+            cmds.cmd_language("auto --global")
+        cli.configuration_manager.update_item.assert_called_once_with("language", None)
+        assert cli.agent_config.language is None
+
+    def test_auto_without_flag_opens_scope_picker(self, commands):
+        cmds, cli = commands
+        existing = ProjectOverride(language="zh")
+        with (
+            patch(_PATCH_LOAD, return_value=existing),
+            patch(_PATCH_SAVE) as mock_save,
+            patch.object(cmds, "_run_scope_picker", return_value=LanguageSelection(code="auto", scope="project")),
+        ):
             cmds.cmd_language("auto")
         saved = mock_save.call_args[0][0]
         assert saved.language is None
+
+    def test_auto_scope_picker_cancel(self, commands):
+        cmds, cli = commands
+        with (
+            patch(_PATCH_LOAD, return_value=None),
+            patch(_PATCH_SAVE) as mock_save,
+            patch.object(cmds, "_run_scope_picker", return_value=None),
+        ):
+            cmds.cmd_language("auto")
+        mock_save.assert_not_called()
+        cli.configuration_manager.update_item.assert_not_called()
 
 
 class TestUnknownCode:
@@ -173,9 +203,9 @@ class TestInteractiveFlow:
         mock_save.assert_not_called()
         cli.configuration_manager.update_item.assert_not_called()
 
-    def test_interactive_auto_clears(self, commands):
+    def test_interactive_auto_clears_project(self, commands):
         cmds, cli = commands
-        selection = LanguageSelection(code="auto")
+        selection = LanguageSelection(code="auto", scope="project")
         existing = ProjectOverride(language="zh")
         with (
             patch(_PATCH_LOAD, return_value=existing),
@@ -185,6 +215,17 @@ class TestInteractiveFlow:
             cmds.cmd_language("")
         saved = mock_save.call_args[0][0]
         assert saved.language is None
+
+    def test_interactive_auto_clears_global(self, commands):
+        cmds, cli = commands
+        selection = LanguageSelection(code="auto", scope="global")
+        with (
+            patch(_PATCH_LOAD, return_value=None),
+            patch.object(cmds, "_run_app", return_value=selection),
+        ):
+            cmds.cmd_language("")
+        cli.configuration_manager.update_item.assert_called_once_with("language", None)
+        assert cli.agent_config.language is None
 
     def test_interactive_unchanged_skips(self):
         cli = _stub_cli(language="zh")

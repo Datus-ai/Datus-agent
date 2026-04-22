@@ -56,7 +56,7 @@ class LanguageCommands:
         project_lang = project_override.language if project_override else None
 
         if flag_clear:
-            self._clear_project(project_override, global_lang)
+            self._clear_language(project_override, global_lang, scope="project")
             return
 
         if not code and not flag_global and not flag_project:
@@ -64,7 +64,14 @@ class LanguageCommands:
             return
 
         if code == "auto":
-            self._clear_project(project_override, global_lang)
+            if flag_global:
+                self._clear_language(project_override, global_lang, scope="global")
+            elif flag_project:
+                self._clear_language(project_override, global_lang, scope="project")
+            else:
+                selection = self._run_scope_picker("auto")
+                if selection is not None:
+                    self._clear_language(project_override, global_lang, scope=selection.scope)
             return
 
         if code not in LANGUAGE_CHOICES:
@@ -100,7 +107,7 @@ class LanguageCommands:
         if selection is None:
             return
         if selection.code == "auto":
-            self._clear_project(project_override, global_lang)
+            self._clear_language(project_override, global_lang, scope=selection.scope)
             return
         if selection.code == current:
             self.console.print(f"[dim]Language unchanged: {current}[/]")
@@ -116,9 +123,8 @@ class LanguageCommands:
             console=self.console,
             current_language=code,
             current_source="",
+            scope_only=code,
         )
-        app._phase = app._phase.__class__("scope")
-        app._selected_code = code
         return self._run_app(app)
 
     def _run_app(self, app: LanguageApp) -> Optional[LanguageSelection]:
@@ -140,16 +146,21 @@ class LanguageCommands:
         path = save_project_override(override)
         self.console.print(f"[bold green]Language set to: {code} (saved to {path})[/]")
 
-    def _clear_project(self, project_override: Optional[ProjectOverride], global_lang: str) -> None:
-        if project_override and project_override.language is not None:
-            project_override.language = None
-            save_project_override(project_override)
-        self.agent_config.language = global_lang or None
-        if global_lang:
-            self.console.print(
-                f"[bold green]Project language override cleared. Falling back to global: {global_lang}[/]"
-            )
+    def _clear_language(self, project_override: Optional[ProjectOverride], global_lang: str, scope: str) -> None:
+        if scope == "global":
+            self.cli.configuration_manager.update_item("language", None)
+            self.agent_config.language = None
+            self.console.print("[bold green]Global language cleared. Language is now unset (model decides).[/]")
         else:
-            self.console.print(
-                "[bold green]Project language override cleared. Language is now unset (model decides).[/]"
-            )
+            if project_override and project_override.language is not None:
+                project_override.language = None
+                save_project_override(project_override)
+            self.agent_config.language = global_lang or None
+            if global_lang:
+                self.console.print(
+                    f"[bold green]Project language override cleared. Falling back to global: {global_lang}[/]"
+                )
+            else:
+                self.console.print(
+                    "[bold green]Project language override cleared. Language is now unset (model decides).[/]"
+                )

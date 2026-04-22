@@ -84,17 +84,23 @@ class LanguageApp:
         console: Console,
         current_language: str = "",
         current_source: str = "not set",
+        scope_only: Optional[str] = None,
     ):
         self._console = console
         self._current = current_language
         self._current_source = current_source
 
-        self._phase = _Phase.LANGUAGE
         self._lang_keys: List[str] = list(LANGUAGE_CHOICES.keys())
         self._scope_keys: List[str] = list(SCOPE_CHOICES.keys())
         self._lang_idx: int = self._default_lang_index()
         self._scope_idx: int = 0
-        self._selected_code: str = ""
+
+        if scope_only is not None:
+            self._phase = _Phase.SCOPE
+            self._selected_code = scope_only
+        else:
+            self._phase = _Phase.LANGUAGE
+            self._selected_code = ""
 
         self._app = self._build_app()
 
@@ -134,9 +140,6 @@ class LanguageApp:
         def _enter(event):
             if self._phase == _Phase.LANGUAGE:
                 self._selected_code = self._lang_keys[self._lang_idx]
-                if self._selected_code == "auto":
-                    event.app.exit(LanguageSelection(code="auto"))
-                    return
                 self._phase = _Phase.SCOPE
             else:
                 scope = self._scope_keys[self._scope_idx]
@@ -219,6 +222,3 @@ class LanguageApp:
 
     def _render_footer_hint(self) -> List[Tuple[str, str]]:
         return [("", "  \u2191\u2193 navigate   Enter select   Esc cancel")]
-
-    def _get_formatted_text(self):
-        return self._render_header() + [("", "\n")] + self._render_list()
