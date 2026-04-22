@@ -74,6 +74,29 @@ agent:
   # ``nodes.<name>.model`` refers to an entry in ``agent.models`` (custom models
   # only). Leave it empty or omit to inherit whichever provider/model is
   # active according to ``./.datus/config.yml`` + ``agent.providers``.
+
+  # ---------------------------------------------------------------------------
+  # Permission profile — pick a base security posture, layer user-defined
+  # rules on top via ``rules``. Override at runtime with ``/profile``.
+  #
+  # Profiles:
+  #   normal    — Read-only allowed; all writes prompt; named destructive deny
+  #   auto      — Normal + workspace writes auto; DB writes still prompt
+  #   dangerous — Nearly everything auto (writes outside workspace still prompt)
+  #
+  # User rules in ``rules:`` are evaluated after the profile base, so they
+  # override the profile via last-match-wins. See
+  # docs/superpowers/specs/2026-04-22-permission-profile-design.md
+  # for the full rule listing.
+  # ---------------------------------------------------------------------------
+  # permissions:
+  #   profile: normal
+  #   # rules:
+  #   #   - tool: db_tools
+  #   #     pattern: execute_ddl
+  #   #     permission: deny
+
+
   nodes:
     schema_linking:
       matching_rate: fast
