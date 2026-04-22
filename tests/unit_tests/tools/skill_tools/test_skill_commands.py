@@ -456,8 +456,8 @@ class TestSkillCommandsRemove:
             printed_text = str(cli.console.print.call_args_list)
             assert "Removed" in printed_text, "Should confirm successful skill removal"
 
-    @patch("builtins.input", return_value="y")
-    def test_remove_marketplace_skill_deletes_files(self, mock_input, tmp_path):
+    @patch("datus.cli._cli_utils.confirm_prompt", return_value=True)
+    def test_remove_marketplace_skill_deletes_files(self, mock_confirm, tmp_path):
         from datus.cli.skill_commands import SkillCommands
 
         cli = _make_cli_mock()
@@ -475,10 +475,9 @@ class TestSkillCommandsRemove:
 
 class TestSkillCommandsLogin:
     @patch("datus.tools.skill_tools.marketplace_auth.save_token")
-    @patch("builtins.input", return_value="test@test.com")
-    @patch("getpass.getpass", return_value="pass")
+    @patch("datus.cli._cli_utils.prompt_input", side_effect=["test@test.com", "pass"])
     @patch("httpx.Client")
-    def test_login_success(self, mock_client_cls, mock_getpass, mock_input, mock_save):
+    def test_login_success(self, mock_client_cls, mock_prompt, mock_save):
         from datus.cli.skill_commands import SkillCommands
 
         mock_resp = MagicMock()
@@ -497,10 +496,9 @@ class TestSkillCommandsLogin:
             cmds.cmd_skill_login()
         mock_save.assert_called_once()
 
-    @patch("builtins.input", return_value="test@test.com")
-    @patch("getpass.getpass", return_value="wrong")
+    @patch("datus.cli._cli_utils.prompt_input", side_effect=["test@test.com", "wrong"])
     @patch("httpx.Client")
-    def test_login_failure(self, mock_client_cls, mock_getpass, mock_input):
+    def test_login_failure(self, mock_client_cls, mock_prompt):
         from datus.cli.skill_commands import SkillCommands
 
         mock_resp = MagicMock()
@@ -523,10 +521,9 @@ class TestSkillCommandsLogin:
                 "Failed login should print error message with status code or failure reason"
             )
 
-    @patch("builtins.input", return_value="test@test.com")
-    @patch("getpass.getpass", return_value="pass")
+    @patch("datus.cli._cli_utils.prompt_input", side_effect=["test@test.com", "pass"])
     @patch("httpx.Client", side_effect=Exception("conn error"))
-    def test_login_connection_error(self, mock_client_cls, mock_getpass, mock_input):
+    def test_login_connection_error(self, mock_client_cls, mock_prompt):
         from datus.cli.skill_commands import SkillCommands
 
         cli = _make_cli_mock()
