@@ -447,6 +447,110 @@ class TestSelectList:
         assert any("1-3 of 10" in line[1] for line in lines)
 
 
+class TestPickerSignatures:
+    """Verify the new tui_app kwarg is present with default None on all pickers."""
+
+    @pytest.mark.ci
+    def test_select_choice_accepts_tui_app_kwarg(self):
+        import inspect
+
+        from datus.cli._cli_utils import select_choice
+
+        sig = inspect.signature(select_choice)
+        assert "tui_app" in sig.parameters
+        assert sig.parameters["tui_app"].default is None
+
+    @pytest.mark.ci
+    def test_select_multi_choice_accepts_tui_app_kwarg(self):
+        import inspect
+
+        from datus.cli._cli_utils import select_multi_choice
+
+        sig = inspect.signature(select_multi_choice)
+        assert "tui_app" in sig.parameters
+        assert sig.parameters["tui_app"].default is None
+
+    @pytest.mark.ci
+    def test_select_list_accepts_tui_app_kwarg(self):
+        import inspect
+
+        from datus.cli._cli_utils import select_list
+
+        sig = inspect.signature(select_list)
+        assert "tui_app" in sig.parameters
+        assert sig.parameters["tui_app"].default is None
+
+    @pytest.mark.ci
+    def test_confirm_prompt_accepts_tui_app_kwarg(self):
+        import inspect
+
+        from datus.cli._cli_utils import confirm_prompt
+
+        sig = inspect.signature(confirm_prompt)
+        assert "tui_app" in sig.parameters
+        assert sig.parameters["tui_app"].default is None
+
+    @pytest.mark.ci
+    @patch("prompt_toolkit.Application")
+    def test_select_choice_suspends_tui_app_when_provided(self, mock_app_cls):
+        """When tui_app is provided, suspend_input context manager is entered."""
+        mock_app_cls.return_value.run.return_value = "y"
+        tui_app = MagicMock()
+        tui_app.suspend_input.return_value.__enter__ = MagicMock(return_value=None)
+        tui_app.suspend_input.return_value.__exit__ = MagicMock(return_value=False)
+        select_choice(MagicMock(), {"y": "Yes", "n": "No"}, default="y", tui_app=tui_app)
+        tui_app.suspend_input.assert_called_once()
+
+    @pytest.mark.ci
+    @patch("prompt_toolkit.Application")
+    def test_select_choice_no_suspend_when_tui_app_none(self, mock_app_cls):
+        """When tui_app is None, suspend_input is never called."""
+        mock_app_cls.return_value.run.return_value = "y"
+        tui_app = MagicMock()
+        select_choice(MagicMock(), {"y": "Yes", "n": "No"}, default="y", tui_app=None)
+        tui_app.suspend_input.assert_not_called()
+
+    @pytest.mark.ci
+    @patch("prompt_toolkit.Application")
+    def test_select_multi_choice_suspends_tui_app_when_provided(self, mock_app_cls):
+        """When tui_app is provided, suspend_input context manager is entered."""
+        mock_app_cls.return_value.run.return_value = ["y"]
+        tui_app = MagicMock()
+        tui_app.suspend_input.return_value.__enter__ = MagicMock(return_value=None)
+        tui_app.suspend_input.return_value.__exit__ = MagicMock(return_value=False)
+        select_multi_choice(MagicMock(), {"y": "Yes", "n": "No"}, tui_app=tui_app)
+        tui_app.suspend_input.assert_called_once()
+
+    @pytest.mark.ci
+    @patch("prompt_toolkit.Application")
+    def test_select_list_suspends_tui_app_when_provided(self, mock_app_cls):
+        """When tui_app is provided, suspend_input context manager is entered."""
+        mock_app_cls.return_value.run.return_value = 0
+        tui_app = MagicMock()
+        tui_app.suspend_input.return_value.__enter__ = MagicMock(return_value=None)
+        tui_app.suspend_input.return_value.__exit__ = MagicMock(return_value=False)
+        select_list(MagicMock(), [["a"], ["b"]], tui_app=tui_app)
+        tui_app.suspend_input.assert_called_once()
+
+    @pytest.mark.ci
+    @patch("prompt_toolkit.Application")
+    def test_application_erase_when_done(self, mock_app_cls):
+        """Application is constructed with erase_when_done=True."""
+        mock_app_cls.return_value.run.return_value = "y"
+        select_choice(MagicMock(), {"y": "Yes", "n": "No"}, default="y")
+        _, kwargs = mock_app_cls.call_args
+        assert kwargs.get("erase_when_done") is True
+
+    @pytest.mark.ci
+    @patch("prompt_toolkit.Application")
+    def test_application_mouse_support_false(self, mock_app_cls):
+        """Application is constructed with mouse_support=False."""
+        mock_app_cls.return_value.run.return_value = "y"
+        select_choice(MagicMock(), {"y": "Yes", "n": "No"}, default="y")
+        _, kwargs = mock_app_cls.call_args
+        assert kwargs.get("mouse_support") is False
+
+
 class TestPromptInputMultilineKeyBindings:
     """Tests for prompt_input multiline Enter-to-submit (newlines only via paste)."""
 

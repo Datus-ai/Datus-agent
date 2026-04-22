@@ -371,7 +371,7 @@ class Application:
             )
             db_types = (raw.get("services") or {}).get("datasources") or {}
             choices = {name: f"{name}  ({(db_types.get(name) or {}).get('type', 'unknown')})" for name in db_names}
-            picked = select_choice(console, choices, default=db_names[0])
+            picked = select_choice(console, choices, default=db_names[0], tui_app=None)
             override.default_datasource = picked or db_names[0]
             changed = True
 
