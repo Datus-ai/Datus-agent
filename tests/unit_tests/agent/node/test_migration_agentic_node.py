@@ -37,52 +37,52 @@ from tests.unit_tests.agent.node._builtin_node_test_helpers import (
 class TestMigrationAgenticNodeInit:
     """Tests for MigrationAgenticNode initialization."""
 
-    def test_node_name(self, real_agent_config, mock_llm_create):
+    def test_node_name(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.migration_agentic_node import MigrationAgenticNode
 
         check_node_name(MigrationAgenticNode, real_agent_config, "migration")
 
-    def test_inherits_agentic_node(self, real_agent_config, mock_llm_create):
+    def test_inherits_agentic_node(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.migration_agentic_node import MigrationAgenticNode
 
         check_inherits_agentic_node(MigrationAgenticNode, real_agent_config)
 
-    def test_node_id(self, real_agent_config, mock_llm_create):
+    def test_node_id(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.migration_agentic_node import MigrationAgenticNode
 
         check_node_id(MigrationAgenticNode, real_agent_config, "migration_node")
 
-    def test_setup_tools_includes_ddl(self, real_agent_config, mock_llm_create):
+    def test_setup_tools_includes_ddl(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.migration_agentic_node import MigrationAgenticNode
 
         check_tools_include(MigrationAgenticNode, real_agent_config, "execute_ddl")
 
-    def test_setup_tools_includes_execute_write(self, real_agent_config, mock_llm_create):
+    def test_setup_tools_includes_execute_write(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.migration_agentic_node import MigrationAgenticNode
 
         check_tools_include(MigrationAgenticNode, real_agent_config, "execute_write")
 
-    def test_setup_tools_includes_transfer_query_result(self, real_agent_config, mock_llm_create):
+    def test_setup_tools_includes_transfer_query_result(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.migration_agentic_node import MigrationAgenticNode
 
         check_tools_include(MigrationAgenticNode, real_agent_config, "transfer_query_result")
 
-    def test_setup_tools_includes_standard_db_tools(self, real_agent_config, mock_llm_create):
+    def test_setup_tools_includes_standard_db_tools(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.migration_agentic_node import MigrationAgenticNode
 
         check_standard_db_tools(MigrationAgenticNode, real_agent_config)
 
-    def test_setup_tools_includes_filesystem_tools(self, real_agent_config, mock_llm_create):
+    def test_setup_tools_includes_filesystem_tools(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.migration_agentic_node import MigrationAgenticNode
 
         check_filesystem_tools(MigrationAgenticNode, real_agent_config)
 
-    def test_default_max_turns(self, real_agent_config, mock_llm_create):
+    def test_default_max_turns(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.migration_agentic_node import MigrationAgenticNode
 
         check_max_turns(MigrationAgenticNode, real_agent_config, 40)
 
-    def test_does_not_include_gen_job_only_tools(self, real_agent_config, mock_llm_create):
+    def test_does_not_include_gen_job_only_tools(self, real_agent_config, mock_llm_create):  # audit-noqa
         """migration should NOT be confused with gen_job — verify it has transfer_query_result."""
         from datus.agent.node.migration_agentic_node import MigrationAgenticNode
 
@@ -94,13 +94,13 @@ class TestMigrationExecution:
     """Test execute_stream error paths and basic workflow."""
 
     @pytest.mark.asyncio
-    async def test_execute_stream_raises_without_input(self, real_agent_config, mock_llm_create):
+    async def test_execute_stream_raises_without_input(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.migration_agentic_node import MigrationAgenticNode
 
         await check_execute_stream_raises_without_input(MigrationAgenticNode, real_agent_config)
 
     @pytest.mark.asyncio
-    async def test_execute_stream_basic_workflow(self, real_agent_config, mock_llm_create):
+    async def test_execute_stream_basic_workflow(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.migration_agentic_node import MigrationAgenticNode
 
         await check_execute_stream_basic_workflow(
@@ -111,7 +111,7 @@ class TestMigrationExecution:
         )
 
     @pytest.mark.asyncio
-    async def test_execute_stream_error_handling(self, real_agent_config, mock_llm_create):
+    async def test_execute_stream_error_handling(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.migration_agentic_node import MigrationAgenticNode
 
         await check_execute_stream_error_handling(
@@ -125,19 +125,19 @@ class TestMigrationExecution:
 class TestMigrationNodeType:
     """Tests for MigrationAgenticNode type registration."""
 
-    def test_node_type_constant_exists(self):
+    def test_node_type_constant_exists(self):  # audit-noqa
         check_node_type_constant("TYPE_MIGRATION", "migration")
 
-    def test_node_type_in_action_types(self):
+    def test_node_type_in_action_types(self):  # audit-noqa
         check_node_type_in_action_types("TYPE_MIGRATION")
 
-    def test_node_factory_creates_migration(self, real_agent_config, mock_llm_create):
+    def test_node_factory_creates_migration(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.migration_agentic_node import MigrationAgenticNode
         from datus.configuration.node_type import NodeType
 
         check_node_factory(MigrationAgenticNode, NodeType.TYPE_MIGRATION, real_agent_config)
 
-    def test_node_factory_with_input_data(self, real_agent_config, mock_llm_create):
+    def test_node_factory_with_input_data(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.migration_agentic_node import MigrationAgenticNode
         from datus.configuration.node_type import NodeType
 

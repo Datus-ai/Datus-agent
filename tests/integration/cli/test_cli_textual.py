@@ -93,7 +93,9 @@ async def test_subject_command(agent_config: AgentConfig):
         },
     )
     async with app.run_test() as pilot:
-        await exec_domains_textual(pilot, "#subject-tree")
+        entry = await exec_domains_textual(pilot, "#subject-tree")
+        assert entry["type"] == "subject_entry"
+        assert entry["entry_type"] in ("metric", "sql", "ext_knowledge")
         app.exit()
 
 
@@ -142,3 +144,4 @@ async def exec_domains_textual(pilot, tree_id: str):
     await pilot.pause()
     await pilot.press("enter")
     await pilot.pause(1)
+    return first_table_node

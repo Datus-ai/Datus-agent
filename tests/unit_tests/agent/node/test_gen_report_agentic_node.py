@@ -596,8 +596,9 @@ class TestExtractReportResult:
 class TestSetupToolPattern:
     def test_unknown_pattern_logs_warning(self, real_agent_config, mock_llm_create):
         node = _make_node(real_agent_config, mock_llm_create)
-        # Should not raise
-        node._setup_tool_pattern("unknown_tool_type.*")
+        with patch("datus.agent.node.gen_report_agentic_node.logger.warning") as mock_warning:
+            node._setup_tool_pattern("unknown_tool_type.*")
+        mock_warning.assert_called_once_with("Unknown tool type: unknown_tool_type")
 
     def test_specific_method_setup(self, real_agent_config, mock_llm_create):
         node = _make_node(real_agent_config, mock_llm_create)

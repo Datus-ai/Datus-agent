@@ -280,9 +280,9 @@ class TestSqlSummaryAgenticNodeExecution:
 
         # In interactive mode, the final result should have tokens_used > 0
         last_output = actions[-1].output
-        assert last_output is not None
-        if isinstance(last_output, dict) and "tokens_used" in last_output:
-            assert last_output["tokens_used"] > 0
+        assert isinstance(last_output, dict)
+        assert "tokens_used" in last_output
+        assert last_output["tokens_used"] > 0
 
 
 # ===========================================================================

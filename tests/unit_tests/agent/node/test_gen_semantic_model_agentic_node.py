@@ -24,7 +24,7 @@ Design principle: NO mock except LLM.
 """
 
 import json
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -310,9 +310,9 @@ class TestGenSemanticModelAgenticNodeExecution:
 
         # In interactive mode, the final result should have tokens_used > 0
         last_output = actions[-1].output
-        assert last_output is not None
-        if isinstance(last_output, dict) and "tokens_used" in last_output:
-            assert last_output["tokens_used"] > 0
+        assert isinstance(last_output, dict)
+        assert "tokens_used" in last_output
+        assert last_output["tokens_used"] > 0
 
     @pytest.mark.asyncio
     async def test_semantic_model_input_not_set_raises(self, real_agent_config, mock_llm_create):
@@ -568,20 +568,21 @@ class TestSaveToDb:
         node = _make_node(real_agent_config, mock_llm_create)
         node.semantic_model_dir = str(tmp_path)
 
-        # Should not raise even when file doesn't exist
-        node._save_to_db("nonexistent_model.yml")
+        with patch(
+            "datus.agent.node.gen_semantic_model_agentic_node.GenerationHooks._sync_semantic_to_db"
+        ) as sync_mock:
+            assert node._save_to_db("nonexistent_model.yml") is None
+        sync_mock.assert_not_called()
 
     def test_save_to_db_skips_empty_filename(self, real_agent_config, mock_llm_create, tmp_path):
         node = _make_node(real_agent_config, mock_llm_create)
         node.semantic_model_dir = str(tmp_path)
 
-        # Should not raise with empty filename
-        # Note: empty string would cause os.path.join to return tmp_path/""
-        # which might exist as tmp_path itself - just test it doesn't crash
-        try:
-            node._save_to_db("")
-        except Exception:
-            pass  # Any exception is acceptable for empty filename
+        with patch(
+            "datus.agent.node.gen_semantic_model_agentic_node.GenerationHooks._sync_semantic_to_db"
+        ) as sync_mock:
+            assert node._save_to_db("") is None
+        sync_mock.assert_not_called()
 
     def test_save_to_db_rejects_out_of_sandbox_absolute_path(self, real_agent_config, mock_llm_create, tmp_path):
         """A fabricated absolute path outside the semantic-model sandbox must

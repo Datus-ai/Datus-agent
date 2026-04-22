@@ -1438,10 +1438,10 @@ class TestEndToEndPlanModeHooksInteraction:
 
         # plan_hooks is reset to None in the finally block, so check via INTERACTION output
         success = [a for a in actions if a.role == ActionRole.INTERACTION and a.status == ActionStatus.SUCCESS]
-        if success:
-            output = success[0].output
-            if isinstance(output, dict):
-                assert output.get("user_choice") == "4"
+        assert success
+        output = success[0].output
+        assert isinstance(output, dict)
+        assert output.get("user_choice") == "4"
 
 
 # ===========================================================================
@@ -1600,10 +1600,11 @@ class TestEndToEndGenerationHooksInteraction:
         assert len(processing_interactions) >= 1
         # The interaction content should reference the YAML file
         interaction_input = processing_interactions[0].input
-        if isinstance(interaction_input, dict):
-            contents = interaction_input.get("contents", [])
-            content = contents[0] if contents else ""
-            assert "Sync to Knowledge Base" in content or "yaml" in content.lower()
+        assert isinstance(interaction_input, dict)
+        contents = interaction_input.get("contents", [])
+        assert contents
+        content = contents[0]
+        assert "Sync to Knowledge Base" in content or "yaml" in content.lower()
 
     @pytest.mark.asyncio
     async def test_e2e_generation_hooks_user_declines_sync(self, real_agent_config, mock_llm_create, tmp_path):
@@ -1707,15 +1708,14 @@ class TestEndToEndGenerationHooksInteraction:
         ]
         assert len(success_interactions) >= 1
         callback_output = success_interactions[0].output
-        if isinstance(callback_output, dict):
-            callback_content = callback_output.get("content", "")
-            # When user declines sync, the file is kept locally but not synced to KB
-            assert (
-                "rejected" in callback_content.lower()
-                or "deleted" in callback_content.lower()
-                or "saved to file" in callback_content.lower()
-                or "file only" in callback_content.lower()
-            )
+        assert isinstance(callback_output, dict)
+        callback_content = callback_output.get("content", "").lower()
+        assert (
+            "rejected" in callback_content
+            or "deleted" in callback_content
+            or "saved to file" in callback_content
+            or "file only" in callback_content
+        )
 
     @pytest.mark.asyncio
     async def test_e2e_generation_hooks_no_yaml_no_interaction(self, real_agent_config, mock_llm_create, tmp_path):
@@ -2277,8 +2277,9 @@ class TestSetupToolPatternGenSQL:
 
     def test_wildcard_unknown_type_logs_warning(self, real_agent_config, mock_llm_create):
         node = _make_node_extra2(real_agent_config, mock_llm_create)
-        # Should not raise
-        node._setup_tool_pattern("unknown_tool_type.*")
+        with patch("datus.agent.node.gen_sql_agentic_node.logger.warning") as mock_warning:
+            node._setup_tool_pattern("unknown_tool_type.*")
+        mock_warning.assert_called_once_with("Unknown tool type: unknown_tool_type")
 
     def test_exact_db_tools(self, real_agent_config, mock_llm_create):
         node = _make_node_extra2(real_agent_config, mock_llm_create)
@@ -2318,14 +2319,18 @@ class TestSetupToolPatternGenSQL:
 
     def test_unknown_pattern_no_raise(self, real_agent_config, mock_llm_create):
         node = _make_node_extra2(real_agent_config, mock_llm_create)
-        # Should not raise
-        node._setup_tool_pattern("some_random_pattern")
+        with patch("datus.agent.node.gen_sql_agentic_node.logger.warning") as mock_warning:
+            node._setup_tool_pattern("some_random_pattern")
+        mock_warning.assert_called_once_with("Unknown tool pattern: some_random_pattern")
 
     def test_exception_in_setup_is_caught(self, real_agent_config, mock_llm_create):
         node = _make_node_extra2(real_agent_config, mock_llm_create)
-        with patch.object(node, "_setup_db_tools", side_effect=RuntimeError("db error")):
-            # Should not raise - exception is caught internally
-            node._setup_tool_pattern("db_tools.*")
+        with (
+            patch.object(node, "_setup_db_tools", side_effect=RuntimeError("db error")),
+            patch("datus.agent.node.gen_sql_agentic_node.logger.error") as mock_error,
+        ):
+            assert node._setup_tool_pattern("db_tools.*") is None
+        mock_error.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

@@ -587,8 +587,7 @@ class TestGenExtKnowledgeValidateGoldSql:
 
     def test_validate_gold_sql_runnable_passes(self, real_agent_config, mock_llm_create):
         node = _create_node(real_agent_config)
-        # Should not raise on a SQL that executes cleanly.
-        node._validate_gold_sql("SELECT COUNT(*) FROM satscores")
+        assert node._validate_gold_sql("SELECT COUNT(*) FROM satscores") is None
 
     def test_validate_gold_sql_unrunnable_raises(self, real_agent_config, mock_llm_create):
         from datus.utils.exceptions import DatusException, ErrorCode
