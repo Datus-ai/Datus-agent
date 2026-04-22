@@ -934,7 +934,7 @@ class TestSkillAllowedAgentsConsistency:
         import yaml
 
         project_root = pathlib.Path(__file__).resolve().parents[4]
-        skill_path = project_root / "skills" / name / "SKILL.md"
+        skill_path = project_root / "datus" / "resources" / "skills" / name / "SKILL.md"
         content = skill_path.read_text()
         assert content.startswith("---\n"), f"skill {name} missing frontmatter"
         _, fm, _ = content.split("---", 2)
