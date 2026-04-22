@@ -97,3 +97,43 @@ def test_raw_permissions_stashed_for_runtime_switch():
     }
     cfg = _make_config(raw)
     assert cfg._raw_permissions == raw
+
+
+def test_user_rules_preserve_profile_default_when_no_explicit_default():
+    """User writing rules without ``default:`` must NOT clobber profile default.
+
+    Spec decision #3: user rules layer on top; changing default_permission
+    requires the user to opt in explicitly.
+    """
+    cfg = _make_config(
+        {
+            "profile": "auto",
+            "rules": [
+                {"tool": "db_tools", "pattern": "execute_ddl", "permission": "deny"},
+            ],
+        }
+    )
+    assert cfg.permissions_config.default_permission == PermissionLevel.ASK
+
+
+def test_user_explicit_default_wins_over_profile():
+    """If user writes ``default:`` explicitly, that's an opt-in override."""
+    cfg = _make_config(
+        {
+            "profile": "normal",
+            "default": "allow",
+            "rules": [],
+        }
+    )
+    assert cfg.permissions_config.default_permission == PermissionLevel.ALLOW
+
+
+def test_user_explicit_default_permission_key_also_wins():
+    """``default_permission`` alias must work same as ``default``."""
+    cfg = _make_config(
+        {
+            "profile": "normal",
+            "default_permission": "deny",
+        }
+    )
+    assert cfg.permissions_config.default_permission == PermissionLevel.DENY

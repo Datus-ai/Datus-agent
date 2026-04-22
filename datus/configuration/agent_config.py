@@ -780,7 +780,22 @@ class AgentConfig:
         # Remove the ``profile`` key so PermissionConfig.from_dict only
         # consumes ``default`` and ``rules`` as before.
         user_raw = {k: v for k, v in permissions_raw.items() if k != "profile"}
-        user_cfg = PermissionConfig.from_dict(user_raw) if user_raw else None
+
+        user_cfg = None
+        if user_raw:
+            # Users who write ``rules:`` without a ``default`` key expect
+            # the profile's safety posture to stay intact. ``from_dict``
+            # otherwise defaults the missing key to ``allow``, and
+            # ``merge_with`` unconditionally adopts the override's
+            # default — together that silently clobbers the profile base.
+            # Inject the base default so the explicit "I want to change
+            # default" opt-in (writing ``default: <level>``) remains the
+            # only way to override.
+            if "default" not in user_raw and "default_permission" not in user_raw:
+                # base.default_permission is a plain str due to use_enum_values = True
+                dp = base.default_permission
+                user_raw = {**user_raw, "default_permission": dp.value if hasattr(dp, "value") else dp}
+            user_cfg = PermissionConfig.from_dict(user_raw)
 
         return base.merge_with(user_cfg) if user_cfg else base
 
