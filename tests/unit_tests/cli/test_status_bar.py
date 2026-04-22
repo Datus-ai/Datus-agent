@@ -511,3 +511,46 @@ class TestStatusBarProviderConnector:
 def test_format_plain_context_percentage(used, total, expected_fragment):
     state = StatusBarState(context_used=used, context_total=total)
     assert expected_fragment in state.format_plain()
+
+
+class TestStatusBarProfile:
+    def test_profile_renders_in_plain_output(self):
+        from datus.cli.status_bar import StatusBarState
+
+        state = StatusBarState(profile="normal")
+        rendered = state.format_plain()
+        assert "normal" in rendered
+
+    def test_profile_default_is_normal(self):
+        from datus.cli.status_bar import StatusBarState
+
+        state = StatusBarState()
+        assert state.profile == "normal"
+
+    def test_profile_renders_with_dangerous_style_class(self):
+        from datus.cli.status_bar import StatusBarState
+
+        state = StatusBarState(profile="dangerous")
+        tokens = state.to_formatted_tokens()
+        styles = [style for style, _text in tokens]
+        assert "class:status-bar.profile.dangerous" in styles
+
+    def test_profile_auto_style_class(self):
+        from datus.cli.status_bar import StatusBarState
+
+        state = StatusBarState(profile="auto")
+        tokens = state.to_formatted_tokens()
+        styles = [style for style, _text in tokens]
+        assert "class:status-bar.profile.auto" in styles
+
+    def test_profile_normal_uses_generic_class(self):
+        """normal is the default; it should render with the neutral
+        ``status-bar.profile`` class (not a variant)."""
+        from datus.cli.status_bar import StatusBarState
+
+        state = StatusBarState(profile="normal")
+        tokens = state.to_formatted_tokens()
+        styles = [style for style, _text in tokens]
+        assert "class:status-bar.profile" in styles
+        assert "class:status-bar.profile.dangerous" not in styles
+        assert "class:status-bar.profile.auto" not in styles

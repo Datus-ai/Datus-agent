@@ -59,6 +59,7 @@ class StatusBarState:
     context_total: int = 0
     plan_mode: bool = False
     agent_running: bool = False
+    profile: str = "normal"
 
     def context_display(self) -> str:
         if self.context_total > 0:
@@ -80,6 +81,7 @@ class StatusBarState:
         segments.append(self.agent)
         if self.connector:
             segments.append(self.connector)
+        segments.append(self.profile)
         segments.extend(
             [
                 self.model,
@@ -100,6 +102,15 @@ class StatusBarState:
         tokens.extend([sep, ("class:status-bar.agent", self.agent)])
         if self.connector:
             tokens.extend([sep, ("class:status-bar.connector", self.connector)])
+        # Profile segment. Variant class (``status-bar.profile.auto`` /
+        # ``.dangerous``) lets repl.py render risky profiles with bold/red
+        # while leaving normal neutral.
+        profile_class = (
+            f"class:status-bar.profile.{self.profile}"
+            if self.profile in ("auto", "dangerous")
+            else "class:status-bar.profile"
+        )
+        tokens.extend([sep, (profile_class, self.profile)])
         tokens.extend(
             [
                 sep,
@@ -145,7 +156,18 @@ class StatusBarProvider:
             context_total=self._resolve_context_total(),
             plan_mode=bool(getattr(self._cli, "plan_mode_active", False)),
             agent_running=agent_running,
+            profile=self._resolve_profile(),
         )
+
+    def _resolve_profile(self) -> str:
+        """Return the active profile name from the CLI, defaulting to ``normal``.
+
+        The CLI owns the mutable ``active_profile`` string (initialized from
+        ``agent_config.active_profile_name`` and mutated by ``/profile``).
+        If the attribute is not yet wired (tests, early init, non-REPL paths),
+        fall back to ``normal`` rather than raising.
+        """
+        return getattr(self._cli, "active_profile", None) or "normal"
 
     def _current_node(self):
         chat_commands = getattr(self._cli, "chat_commands", None)
