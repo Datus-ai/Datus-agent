@@ -30,7 +30,7 @@ from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
 from rich.console import Console
 
-from datus.cli.cli_styles import CLR_CURRENT, CLR_CURSOR, SYM_ARROW
+from datus.cli.cli_styles import CLR_CURRENT, CLR_CURSOR, SYM_ARROW, print_error
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -125,7 +125,7 @@ class LanguageApp:
             return None
         except Exception as exc:
             logger.error("LanguageApp crashed: %s", exc)
-            self._console.print(f"[bold red]/language error:[/] {exc}")
+            print_error(self._console, f"/language error: {exc}")
             return None
 
     def _default_lang_index(self) -> int:

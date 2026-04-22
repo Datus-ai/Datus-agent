@@ -22,6 +22,7 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 from datus.cli._cli_utils import select_choice
+from datus.cli.cli_styles import print_error
 from datus.cli.init_util import detect_db_connectivity
 from datus.cli.provider_auth_flows import configure_claude_subscription, configure_codex_oauth
 from datus.configuration.agent_config import AgentConfig
@@ -796,19 +797,19 @@ def do_init_sql_and_log_result(
     try:
         sql_dir_path = Path(sql_dir)
         if not sql_dir_path.exists():
-            console.print(f"[bold red]No sql files found in {sql_dir}[/]")
+            print_error(console, f"No sql files found in {sql_dir}", prefix=False)
             return
         if sql_dir_path.is_dir():
             sql_files = list(sql_dir_path.rglob("*.sql"))
             if not sql_files:
-                console.print(f"[bold red]No sql files found in {sql_dir}[/]")
+                print_error(console, f"No sql files found in {sql_dir}", prefix=False)
                 return
         elif sql_dir_path.is_file():
             if sql_dir_path.suffix.lower() != ".sql":
-                console.print(f"[bold red]{sql_dir} must be a .sql file[/]")
+                print_error(console, f"{sql_dir} must be a .sql file", prefix=False)
                 return
         else:
-            console.print("[bold red]Only SQL directories or files are supported[/]")
+            print_error(console, "Only SQL directories or files are supported", prefix=False)
             return
 
         if kb_update_strategy == "overwrite":

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
+from datus.cli.cli_styles import print_success
 from datus.cli.language_app import LANGUAGE_CHOICES, LanguageApp, LanguageSelection
 from datus.configuration.project_config import ProjectOverride, load_project_override, save_project_override
 from datus.utils.loggings import get_logger
@@ -137,30 +138,26 @@ class LanguageCommands:
     def _save_global(self, code: str) -> None:
         self.agent_config.language = code
         self.cli.configuration_manager.update_item("language", code)
-        self.console.print(f"[bold green]Language set to: {code} (saved to agent.yml)[/]")
+        print_success(self.console, f"Language set to: {code} (saved to agent.yml)")
 
     def _save_project(self, code: str, project_override: Optional[ProjectOverride]) -> None:
         self.agent_config.language = code
         override = project_override or ProjectOverride()
         override.language = code
         path = save_project_override(override)
-        self.console.print(f"[bold green]Language set to: {code} (saved to {path})[/]")
+        print_success(self.console, f"Language set to: {code} (saved to {path})")
 
     def _clear_language(self, project_override: Optional[ProjectOverride], global_lang: str, scope: str) -> None:
         if scope == "global":
             self.cli.configuration_manager.update_item("language", None)
             self.agent_config.language = None
-            self.console.print("[bold green]Global language cleared. Language is now unset (model decides).[/]")
+            print_success(self.console, "Global language cleared. Language is now unset (model decides).")
         else:
             if project_override and project_override.language is not None:
                 project_override.language = None
                 save_project_override(project_override)
             self.agent_config.language = global_lang or None
             if global_lang:
-                self.console.print(
-                    f"[bold green]Project language override cleared. Falling back to global: {global_lang}[/]"
-                )
+                print_success(self.console, f"Project language override cleared. Falling back to global: {global_lang}")
             else:
-                self.console.print(
-                    "[bold green]Project language override cleared. Language is now unset (model decides).[/]"
-                )
+                print_success(self.console, "Project language override cleared. Language is now unset (model decides).")

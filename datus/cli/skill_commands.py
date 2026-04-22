@@ -252,7 +252,7 @@ class SkillCommands:
         # Local info
         local_skill = manager.get_skill(name)
         if local_skill:
-            self.console.print(f"[bold green]Local Skill:[/] {local_skill.name}")
+            print_success(self.console, f"Local Skill: {local_skill.name}")
             self.console.print(f"  Description: {local_skill.description}")
             self.console.print(f"  Version: {local_skill.version or 'unversioned'}")
             self.console.print(f"  Location: {local_skill.location}")

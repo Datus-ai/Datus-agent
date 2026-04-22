@@ -41,7 +41,7 @@ from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.widgets import TextArea
 from rich.console import Console
 
-from datus.cli.cli_styles import CLR_CURRENT, CLR_CURSOR, SYM_ARROW
+from datus.cli.cli_styles import CLR_CURRENT, CLR_CURSOR, SYM_ARROW, print_error
 from datus.configuration.agent_config import AgentConfig, ProviderConfig
 from datus.utils.loggings import get_logger
 
@@ -190,7 +190,7 @@ class ModelApp:
 
         # tab strip(1) + 2 separators(2) + error bar(1) + footer(1) + scroll indicator(1) = 6 lines chrome
         term_height = shutil.get_terminal_size((120, 40)).lines
-        self._max_visible: int = max(3, term_height - 6)
+        self._max_visible: int = max(3, min(15, term_height - 6))
 
         self._app = self._build_application()
 
@@ -209,7 +209,7 @@ class ModelApp:
             return None
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("ModelApp crashed: %s", exc)
-            self._console.print(f"[bold red]/model error:[/] {exc}")
+            print_error(self._console, f"/model error: {exc}")
             return None
 
     def _apply_seed(self) -> Optional[ModelSelection]:
@@ -385,7 +385,7 @@ class ModelApp:
         return Application(
             layout=Layout(root, focused_element=None),
             key_bindings=self._build_key_bindings(),
-            full_screen=True,
+            full_screen=False,
             mouse_support=False,
             erase_when_done=True,
         )

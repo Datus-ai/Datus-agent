@@ -1902,8 +1902,12 @@ class SubAgentWizard:
     def run(self) -> Optional[SubAgentConfig]:
         """Run the wizard application."""
         # Ensure selection watchers start exactly when the event loop is running.
+        # __init__ calls _start_selection_watchers() but the event loop is not
+        # yet active at that point, so call_later/call_soon silently fails.
+        # Register via pre_run_callables so the watcher starts once the loop is live.
         from datus.cli._cli_utils import _run_sub_application
 
+        self.app.pre_run_callables = [self._start_selection_watchers]
         return _run_sub_application(self.app)
 
     def native_tools_choices(self) -> Dict[str, List[str]]:

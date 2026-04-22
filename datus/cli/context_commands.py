@@ -9,6 +9,7 @@ This module provides context-related commands for the Datus CLI.
 
 from typing import TYPE_CHECKING
 
+from datus.cli.cli_styles import print_error
 from datus.cli.screen import show_subject_screen
 from datus.utils.loggings import get_logger
 
@@ -32,7 +33,7 @@ class ContextCommands:
             # Import here to avoid circular imports
 
             if not self.cli.db_connector and not self.cli.agent_config:
-                self.console.print("[bold red]Error:[/] No database connection or configuration.")
+                print_error(self.console, "No database connection or configuration.")
                 return
 
             from datus.cli.screen import show_catalog_screen
@@ -52,7 +53,7 @@ class ContextCommands:
 
         except Exception as e:
             logger.error(f"Catalog display error: {str(e)}")
-            self.console.print(f"[bold red]Error:[/] Failed to display catalog: {str(e)}")
+            print_error(self.console, f"Failed to display catalog: {str(e)}")
 
     def cmd_subject(self, args: str):
         """Display metrics."""
