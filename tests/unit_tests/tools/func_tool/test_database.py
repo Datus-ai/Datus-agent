@@ -702,7 +702,7 @@ class TestGetConnectorRouting:
             tool._get_connector("unknown_db")
 
     def test_default_datasource_fallback(self):
-        """When using default database (no explicit param) and direct lookup fails, fallback to datasource."""
+        """When using empty datasource, falls back to _default_datasource and looks up via db_manager."""
         from datus.tools.db_tools.db_manager import DBManager
 
         mock_connector = Mock()
@@ -710,8 +710,7 @@ class TestGetConnectorRouting:
         mock_connector.get_databases.return_value = []
 
         mock_db_manager = Mock(spec=DBManager)
-        # First call (db_name, db_name) raises, second call (datasource, db_name) succeeds
-        mock_db_manager.get_conn.side_effect = [KeyError("not found"), mock_connector]
+        mock_db_manager.get_conn.return_value = mock_connector
         mock_db_manager.first_conn.return_value = mock_connector
 
         mock_config = Mock()
@@ -727,10 +726,10 @@ class TestGetConnectorRouting:
             mock_sem.return_value.get_size.return_value = 0
             tool = DBFuncTool(mock_db_manager, agent_config=mock_config, default_datasource="default_db")
 
-        # Empty string = use default database, fallback is allowed
+        # Empty string = use default datasource
         conn = tool._get_connector("")
         assert conn is mock_connector
-        assert mock_db_manager.get_conn.call_count == 2
+        mock_db_manager.get_conn.assert_called_with("default_db", "default_db")
 
     def test_list_databases_connector_raises_marks_unavailable(self):
         """When _get_connector raises for a database, entry should have available=False."""

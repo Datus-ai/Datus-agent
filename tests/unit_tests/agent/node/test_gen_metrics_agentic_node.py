@@ -418,13 +418,13 @@ class TestSetupDbTools:
         assert node.db_func_tool is not None
 
     def test_db_tools_failure_does_not_break_init(self, real_agent_config, mock_llm_create):
-        """When DBFuncTool.create_dynamic raises, node still initializes with other tools."""
+        """When DBFuncTool() constructor raises, node still initializes with other tools."""
         from unittest.mock import patch as _patch
 
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
 
         with _patch(
-            "datus.tools.func_tool.DBFuncTool.create_dynamic",
+            "datus.tools.func_tool.DBFuncTool",
             side_effect=RuntimeError("no connection"),
         ):
             node = GenMetricsAgenticNode(
@@ -466,13 +466,13 @@ class TestSetupGenSemanticModelTools:
         assert node.gen_semantic_model_tools is not None
 
     def test_gen_semantic_model_tools_skipped_when_no_db(self, real_agent_config, mock_llm_create):
-        """When DBFuncTool.create_dynamic fails, gen_semantic_model_tools is None but node still works."""
+        """When DBFuncTool() constructor fails, gen_semantic_model_tools is None but node still works."""
         from unittest.mock import patch as _patch
 
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
 
         with _patch(
-            "datus.tools.func_tool.DBFuncTool.create_dynamic",
+            "datus.tools.func_tool.DBFuncTool",
             side_effect=RuntimeError("no connection"),
         ):
             node = GenMetricsAgenticNode(

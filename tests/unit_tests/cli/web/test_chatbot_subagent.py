@@ -31,7 +31,7 @@ class TestSubagentCLIParam:
         assert args.chatbot_dist == "/some/path"
 
     def test_run_web_interface_creates_app(self):
-        """run_web_interface should create a FastAPI app and start uvicorn."""
+        """run_web_interface should create a FastAPI app and start uvicorn.Server."""
         from datus.cli.web.chatbot import run_web_interface
 
         args = Namespace(
@@ -49,22 +49,19 @@ class TestSubagentCLIParam:
         with (
             patch("datus.cli.web.chatbot.create_web_app") as mock_create,
             patch("datus.cli.web.chatbot.uvicorn") as mock_uvicorn,
+            patch("datus.cli.web.chatbot.asyncio.run", side_effect=KeyboardInterrupt),
             patch("datus.cli.web.chatbot._schedule_browser_open"),
             patch("datus.cli.web.config_manager.get_home_from_config", return_value="~/.datus"),
             patch("datus.utils.path_manager.set_current_path_manager"),
         ):
             mock_app = MagicMock()
             mock_create.return_value = mock_app
-            mock_uvicorn.run.side_effect = KeyboardInterrupt
 
-            try:
-                run_web_interface(args)
-            except KeyboardInterrupt:
-                pass
+            run_web_interface(args)
 
             mock_create.assert_called_once_with(args)
-            mock_uvicorn.run.assert_called_once()
-            call_kwargs = mock_uvicorn.run.call_args
+            mock_uvicorn.Config.assert_called_once()
+            call_kwargs = mock_uvicorn.Config.call_args
             assert call_kwargs[1]["host"] == "localhost"
             assert call_kwargs[1]["port"] == 8501
 

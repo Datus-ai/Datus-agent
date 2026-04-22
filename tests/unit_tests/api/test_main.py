@@ -515,18 +515,26 @@ class TestRunServer:
         assert mock_run.call_args.kwargs["workers"] == 4
 
     def test_single_worker_creates_app_instance(self):
-        """Default single-worker mode creates an app instance and passes it to uvicorn."""
+        """Default single-worker mode creates an app instance and passes it to uvicorn.Server."""
         args = _server_args()
         agent_args = argparse.Namespace(datasource="x")
         sentinel_app = object()
+        mock_server = patch("datus.api.main.uvicorn.Server")
+        mock_config = patch("datus.api.main.uvicorn.Config")
         with (
             patch("datus.api.service.create_app", return_value=sentinel_app) as mock_create,
-            patch("datus.api.main.uvicorn.run") as mock_run,
+            mock_config as patched_config,
+            mock_server as patched_server,
+            patch("datus.api.main.asyncio.run") as mock_asyncio_run,
         ):
             _run_server(args, agent_args)
         mock_create.assert_called_once_with(agent_args)
-        assert mock_run.call_args.args[0] is sentinel_app
-        assert mock_run.call_args.kwargs["workers"] == 1
+        patched_config.assert_called_once()
+        config_kwargs = patched_config.call_args
+        assert config_kwargs.args[0] is sentinel_app
+        assert config_kwargs.kwargs["workers"] == 1
+        patched_server.assert_called_once_with(patched_config.return_value)
+        mock_asyncio_run.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

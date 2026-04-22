@@ -1346,7 +1346,6 @@ class TestDBFuncToolMultiConnector:
 
         # Verify multi-connector mode
         assert tool._db_manager is mock_db_manager
-        assert tool._datasource == "db1"
         assert tool._default_datasource == "db1"
         assert tool._connector_cache_size == 4
         assert tool._primary_connector is mock_connector
@@ -1358,11 +1357,11 @@ class TestDBFuncToolMultiConnector:
 
         mock_db_manager = Mock(spec=DBManager)
 
-        with pytest.raises(ValueError, match="AgentConfiguration is required"):
+        with pytest.raises(ValueError, match="agent_config is required"):
             DBFuncTool(mock_db_manager)
 
-    def test_single_db_config_uses_single_connector_mode(self, mock_single_db_agent_config):
-        """Test that single db config falls back to single connector mode."""
+    def test_single_db_config_uses_multi_connector_mode(self, mock_single_db_agent_config):
+        """Test that single db config with DBManager still uses multi-connector mode."""
         from datus.tools.db_tools.db_manager import DBManager
 
         mock_db_manager = Mock(spec=DBManager)
@@ -1378,10 +1377,9 @@ class TestDBFuncToolMultiConnector:
             agent_config=mock_single_db_agent_config,
         )
 
-        # Should be in single connector mode (not multi-connector)
-        assert tool._db_manager is None
+        assert tool._db_manager is mock_db_manager
         assert tool._primary_connector is mock_connector
-        assert not tool._is_multi_connector
+        assert tool._is_multi_connector
 
     def test_get_connector_cache_hit(self, mock_agent_config):
         """Test that _get_connector uses cache for repeated calls."""

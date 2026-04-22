@@ -346,14 +346,14 @@ class TestNodeFromDict:
         node = Node.from_dict(node_dict, agent_config=self.agent_config)
         assert isinstance(node.result, GenerateSQLResult)
 
-    @patch("datus.tools.func_tool.database.DBFuncTool.create_dynamic")
+    @patch("datus.agent.node.gen_table_agentic_node.DBFuncTool")
     @patch("datus.models.base.LLMBaseModel.create_model")
-    def test_from_dict_gen_table_input(self, mock_create_model, mock_db_create):
+    def test_from_dict_gen_table_input(self, mock_create_model, mock_db_cls):
         """from_dict should deserialize SemanticNodeInput for TYPE_GEN_TABLE."""
         mock_create_model.return_value = MagicMock()
         mock_db_func_tool = MagicMock(spec=[])
         mock_db_func_tool.available_tools = MagicMock(return_value=[])
-        mock_db_create.return_value = mock_db_func_tool
+        mock_db_cls.return_value = mock_db_func_tool
         node_dict = {
             "id": "fd_gen_table",
             "description": "gen_table test",
@@ -370,14 +370,14 @@ class TestNodeFromDict:
         assert node.input is not None
         assert node.input.user_message == "Create orders table"
 
-    @patch("datus.tools.func_tool.database.DBFuncTool.create_dynamic")
+    @patch("datus.agent.node.gen_table_agentic_node.DBFuncTool")
     @patch("datus.models.base.LLMBaseModel.create_model")
-    def test_from_dict_gen_table_result(self, mock_create_model, mock_db_create):
+    def test_from_dict_gen_table_result(self, mock_create_model, mock_db_cls):
         """from_dict should deserialize SemanticNodeResult for TYPE_GEN_TABLE."""
         mock_create_model.return_value = MagicMock()
         mock_db_func_tool = MagicMock(spec=[])
         mock_db_func_tool.available_tools = MagicMock(return_value=[])
-        mock_db_create.return_value = mock_db_func_tool
+        mock_db_cls.return_value = mock_db_func_tool
         node_dict = {
             "id": "fd_gen_table_result",
             "description": "gen_table result test",
