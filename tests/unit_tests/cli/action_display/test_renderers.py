@@ -13,8 +13,9 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.text import Text
 
-from datus.cli.action_display.renderers import ActionContentGenerator, ActionRenderer
+from datus.cli.action_display.renderers import ActionContentGenerator, ActionRenderer, _get_assistant_content
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+from datus.utils.text_utils import LITELLM_EMPTY_PLACEHOLDER
 
 
 def _make_action(
@@ -822,3 +823,31 @@ class TestRenderBatchInteractionSuccess:
         result = _renderer().render_interaction_success(action, verbose=False)
         text = _plain(result)
         assert "Selected: y" in text
+
+
+class TestGetAssistantContentPlaceholderFiltering:
+    """Verify _get_assistant_content strips LiteLLM sanitizer placeholder."""
+
+    def test_placeholder_in_raw_output_returns_empty(self):
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            output_data={"raw_output": LITELLM_EMPTY_PLACEHOLDER},
+        )
+        assert _get_assistant_content(action) == ""
+
+    def test_placeholder_in_messages_returns_empty(self):
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            messages=LITELLM_EMPTY_PLACEHOLDER,
+        )
+        assert _get_assistant_content(action) == ""
+
+    def test_normal_raw_output_unchanged(self):
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            output_data={"raw_output": "SELECT * FROM users"},
+        )
+        assert _get_assistant_content(action) == "SELECT * FROM users"

@@ -3,7 +3,7 @@
 
 import pytest
 
-from datus.utils.text_utils import clean_text
+from datus.utils.text_utils import LITELLM_EMPTY_PLACEHOLDER, clean_text, strip_litellm_placeholder
 
 
 class TestCleanText:
@@ -82,3 +82,27 @@ class TestCleanText:
     )
     def test_strip_various_whitespace(self, input_text, expected):
         assert clean_text(input_text) == expected
+
+
+class TestStripLitellmPlaceholder:
+    def test_exact_placeholder_returns_empty(self):
+        assert strip_litellm_placeholder(LITELLM_EMPTY_PLACEHOLDER) == ""
+
+    def test_placeholder_with_surrounding_whitespace_returns_empty(self):
+        assert strip_litellm_placeholder(f"  {LITELLM_EMPTY_PLACEHOLDER}  ") == ""
+
+    def test_normal_text_unchanged(self):
+        assert strip_litellm_placeholder("Hello, world!") == "Hello, world!"
+
+    def test_text_containing_placeholder_as_substring_unchanged(self):
+        text = f"Error: {LITELLM_EMPTY_PLACEHOLDER} was returned"
+        assert strip_litellm_placeholder(text) == text
+
+    def test_empty_string_returns_empty(self):
+        assert strip_litellm_placeholder("") == ""
+
+    def test_none_returns_none(self):
+        assert strip_litellm_placeholder(None) is None
+
+    def test_non_string_returns_unchanged(self):
+        assert strip_litellm_placeholder(42) == 42

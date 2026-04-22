@@ -47,11 +47,13 @@ def _truncate_middle(text: str, max_len: int = 120) -> str:
 
 def _get_assistant_content(action: ActionHistory) -> str:
     """Extract display content from an ASSISTANT action, preferring output.raw_output."""
+    from datus.utils.text_utils import strip_litellm_placeholder
+
     if action.output and isinstance(action.output, dict):
-        raw = action.output.get("raw_output", "")
+        raw = strip_litellm_placeholder(action.output.get("raw_output", ""))
         if raw:
             return raw
-    return action.messages or ""
+    return strip_litellm_placeholder(action.messages or "")
 
 
 # ── Icon/color mappings ─────────────────────────────────────────────────────

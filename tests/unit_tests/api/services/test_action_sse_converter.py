@@ -16,6 +16,7 @@ from datus.api.services.action_sse_converter import (
     action_to_sse_event,
 )
 from datus.schemas.action_history import SUBAGENT_COMPLETE_ACTION_TYPE, ActionHistory, ActionRole, ActionStatus
+from datus.utils.text_utils import LITELLM_EMPTY_PLACEHOLDER
 
 
 def _make_action(**overrides) -> ActionHistory:
@@ -296,6 +297,35 @@ class TestBuildThinkingContent:
         )
         contents = _build_thinking_content(action)
         assert contents[0].payload["content"] == "final fallback"
+
+    def test_placeholder_in_output_returns_none(self):
+        """LiteLLM sanitizer placeholder in output is filtered out."""
+        action = _make_action(
+            action_type="gen_sql",
+            output={"raw_output": LITELLM_EMPTY_PLACEHOLDER},
+            messages="",
+        )
+        contents = _build_thinking_content(action)
+        assert contents is None
+
+    def test_placeholder_in_messages_returns_none(self):
+        """LiteLLM sanitizer placeholder in messages fallback is filtered out."""
+        action = _make_action(
+            action_type="gen_sql",
+            output=None,
+            messages=LITELLM_EMPTY_PLACEHOLDER,
+        )
+        contents = _build_thinking_content(action)
+        assert contents is None
+
+    def test_placeholder_in_llm_generation_returns_none(self):
+        """LiteLLM sanitizer placeholder in llm_generation messages is filtered out."""
+        action = _make_action(
+            action_type="llm_generation",
+            messages=LITELLM_EMPTY_PLACEHOLDER,
+        )
+        contents = _build_thinking_content(action)
+        assert contents is None
 
 
 class TestBuildInteractionContent:

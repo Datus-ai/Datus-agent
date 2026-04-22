@@ -5,6 +5,17 @@
 import re
 import unicodedata
 
+LITELLM_EMPTY_PLACEHOLDER = "[System: Empty message content sanitised to satisfy protocol]"
+
+
+def strip_litellm_placeholder(text: str) -> str:
+    """Return empty string if text is only the LiteLLM sanitizer placeholder."""
+    if not text or not isinstance(text, str):
+        return text
+    if text.strip() == LITELLM_EMPTY_PLACEHOLDER:
+        return ""
+    return text
+
 
 def clean_text(text: str) -> str:
     if not text or not isinstance(text, str):

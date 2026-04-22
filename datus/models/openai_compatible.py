@@ -35,6 +35,7 @@ from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
 from datus.utils.resource_utils import read_data_file_text
+from datus.utils.text_utils import strip_litellm_placeholder
 from datus.utils.traceable_utils import setup_tracing
 
 logger = get_logger(__name__)
@@ -394,7 +395,7 @@ class OpenAICompatibleModel(LLMBaseModel):
             # Use LiteLLM for unified provider support
             response = litellm.completion(messages=messages, **params)
             message = response.choices[0].message
-            content = message.content
+            content = strip_litellm_placeholder(message.content)
 
             # Handle reasoning content for reasoning models (DeepSeek R1, OpenAI O-series)
             reasoning_content = None
@@ -831,7 +832,7 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                             # Stream text delta: yield thinking_delta for real-time display
                             if raw_type == "response.output_text.delta":
-                                delta_text = getattr(raw_data, "delta", None)
+                                delta_text = strip_litellm_placeholder(getattr(raw_data, "delta", None))
                                 if delta_text:
                                     if thinking_stream_id is None:
                                         thinking_stream_id = f"thinking_stream_{uuid.uuid4().hex[:8]}"
@@ -851,8 +852,8 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                             # Content part done: emit completed thinking action
                             if raw_type == "response.content_part.done":
-                                if thinking_accumulated.strip():
-                                    full_text = thinking_accumulated.strip()
+                                full_text = strip_litellm_placeholder(thinking_accumulated.strip())
+                                if full_text:
                                     text_content_split = full_text if len(full_text) <= 200 else f"{full_text[:200]}..."
                                     is_thinking = len(temp_tool_calls) > 0
                                     thinking_action = ActionHistory(
@@ -883,7 +884,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                                             part_text = getattr(content_part, "text", None)
                                             if part_text:
                                                 text_parts.append(part_text)
-                                        full_text = "\n".join(text_parts).strip()
+                                        full_text = strip_litellm_placeholder("\n".join(text_parts).strip())
                                         if full_text:
                                             text_content_split = (
                                                 full_text if len(full_text) <= 200 else f"{full_text[:200]}..."
@@ -1058,9 +1059,8 @@ class OpenAICompatibleModel(LLMBaseModel):
                                 else:
                                     text_content = str(content)
 
+                                text_content = strip_litellm_placeholder(text_content)
                                 if text_content and len(text_content.strip()) > 0:
-                                    # Create thinking/final output action and yield it
-                                    # External AgenticNode will parse raw_output for SQL extraction
                                     text_content = text_content.strip()
                                     text_content_split = (
                                         text_content if len(text_content) <= 200 else f"{text_content[:200]}..."

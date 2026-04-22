@@ -108,21 +108,27 @@ def _build_response_content(action: ActionHistory) -> List[IMessageContent]:
 
 def _build_thinking_content(action: ActionHistory) -> Optional[List[IMessageContent]]:
     """Extract text content from action for markdown display."""
+    from datus.utils.text_utils import strip_litellm_placeholder
+
     action_type = action.action_type
 
     if action_type == "llm_generation":
-        return [IMessageContent(type="thinking", payload={"content": action.messages})]
+        messages = strip_litellm_placeholder(action.messages)
+        return [IMessageContent(type="thinking", payload={"content": messages})] if messages else None
 
     output = action.output
     content = None
     if output and isinstance(output, dict):
         for key in ["response", "raw_output", "output", "thinking", "content"]:
             if key in output and output[key]:
-                content = str(output[key])
-                break
+                candidate = strip_litellm_placeholder(str(output[key]))
+                if candidate:
+                    content = candidate
+                    break
 
     if not content:
-        return [IMessageContent(type="thinking", payload={"content": action.messages})]
+        messages = strip_litellm_placeholder(action.messages)
+        return [IMessageContent(type="thinking", payload={"content": messages})] if messages else None
 
     result_json = llm_result2json(content)
 
