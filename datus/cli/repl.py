@@ -150,6 +150,10 @@ class DatusCLI:
         self.agent_config = load_agent_config(create_if_missing=True, **vars(self.args))
         self.configuration_manager = configuration_manager()
 
+        # Active permission profile name. Initialized from agent_config;
+        # mutated by /profile. StatusBarProvider reads this for display.
+        self.active_profile: str = getattr(self.agent_config, "active_profile_name", "normal")
+
         # Bind the process-wide path-manager ContextVar once so implicit callers
         # (e.g. ``get_path_manager()`` inside storage init) resolve against the
         # loaded agent_config instead of an empty default.  Required before
@@ -307,7 +311,7 @@ class DatusCLI:
             "bootstrap-bi": self.bi_dashboard_commands.cmd,
             "model": self.model_commands.cmd_model,
             "services": self.service_commands.cmd_services,
-            "profile": self._cmd_profile_placeholder,
+            "profile": self._cmd_profile,
         }
 
     @property
@@ -1492,11 +1496,144 @@ class DatusCLI:
                 logger.warning(f"Database connection closed failed, reason:{e}")
         return EXIT_SENTINEL
 
-    def _cmd_profile_placeholder(self, args: str) -> None:
-        """Placeholder for /profile — full handler lands in a follow-up commit."""
+    def _cmd_profile(self, args: str) -> None:
+        """Entry point for ``/profile``.
+
+        Delegates to an async core because profile selection goes through
+        ``InteractionBroker.request`` (async). If the REPL is not in an
+        event loop, ``asyncio.run`` drives one; otherwise schedule on the
+        running loop.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop is None:
+            asyncio.run(self._cmd_profile_async(args))
+        else:
+            asyncio.ensure_future(self._cmd_profile_async(args))
+
+    async def _cmd_profile_async(self, args: str) -> None:
+        """Open the profile selection dialog and apply the choice.
+
+        Sequence:
+            1. Build choices reflecting the three profiles + cancel.
+            2. Request selection from the broker.
+            3. If cancel or same profile, no-op.
+            4. If dangerous, require second confirmation (default-cancel).
+               Every session transition into dangerous re-confirms per
+               spec decision #5.
+            5. Rebuild ``agent_config.permissions_config`` so future nodes
+               inherit; call ``switch_profile`` on the current node's
+               PermissionManager for immediate effect; update
+               ``self.active_profile``.
+        """
+        from datus.cli.execution_state import InteractionCancelled
+        from datus.tools.permission.permission_config import PermissionConfig
+        from datus.tools.permission.profiles import PROFILE_NAMES, get_profile
+
+        broker = getattr(self, "broker", None)
+        if broker is None:
+            self.console.print("[yellow]/profile requires an interactive session.[/]")
+            return
+
+        current = self.active_profile
+        choices_dict = {
+            "normal": "normal      Read-only + confirm every write" + ("  ← current" if current == "normal" else ""),
+            "auto": "auto        Workspace writes auto; DB/MCP still ask"
+            + ("  ← current" if current == "auto" else ""),
+            "dangerous": "dangerous   Nearly all writes auto (⚠ see warning)"
+            + ("  ← current" if current == "dangerous" else ""),
+            "cancel": "cancel      Keep current profile",
+        }
+
+        try:
+            choice, callback = await broker.request(
+                contents=[f"### Select Permission Profile\n\nCurrent: **{current}**"],
+                choices=[choices_dict],
+                default_choices=["cancel"],
+            )
+        except InteractionCancelled:
+            return
+
+        if choice == "cancel":
+            await callback("**Kept current profile**")
+            return
+
+        if choice not in PROFILE_NAMES:
+            self.console.print(f"[bold red]Unknown profile:[/] {choice}")
+            return
+
+        if choice == current:
+            await callback(f"**Already on {choice}**")
+            return
+
+        # Dangerous second confirmation — every session transition into
+        # dangerous reconfirms (spec decision #5).
+        if choice == "dangerous":
+            confirm_content = (
+                "### ⚠ DANGEROUS PROFILE — Explicit Confirmation Required\n\n"
+                "Switching to Dangerous will auto-execute:\n"
+                "  • All DB writes (including DDL, DELETE)\n"
+                "  • All BI/Scheduler writes (including deletes)\n"
+                "  • All MCP tools\n"
+                "  • All skills\n\n"
+                "Still protected: writes outside workspace require ASK; "
+                "~/.datus internals remain hidden."
+            )
+            try:
+                confirm_choice, confirm_cb = await broker.request(
+                    contents=[confirm_content],
+                    choices=[
+                        {
+                            "cancel": "Cancel (stay on current profile)",
+                            "enable": "Enable Dangerous for this session",
+                        }
+                    ],
+                    default_choices=["cancel"],
+                )
+            except InteractionCancelled:
+                return
+            if confirm_choice != "enable":
+                await confirm_cb("**Dangerous mode cancelled**")
+                return
+            await confirm_cb("**Dangerous mode enabled**")
+
+        # Rebuild the user rules (exclude the profile key); reuse the raw
+        # permissions stashed at startup so we don't re-read YAML.
+        raw_permissions = getattr(self.agent_config, "_raw_permissions", {}) or {}
+        raw_user = {k: v for k, v in raw_permissions.items() if k != "profile"}
+        user_rules_cfg: Optional[PermissionConfig] = None
+        if raw_user:
+            # Same default-preservation logic as AgentConfig: if user did
+            # not explicitly set a default, keep the new profile's default.
+            if "default" not in raw_user and "default_permission" not in raw_user:
+                new_base = get_profile(choice)
+                dp = new_base.default_permission
+                raw_user = {
+                    **raw_user,
+                    "default_permission": dp.value if hasattr(dp, "value") else dp,
+                }
+            user_rules_cfg = PermissionConfig.from_dict(raw_user)
+
+        new_base = get_profile(choice)
+        new_effective = new_base.merge_with(user_rules_cfg) if user_rules_cfg else new_base
+        self.agent_config.permissions_config = new_effective
+        self.agent_config.active_profile_name = choice
+
+        # Immediate effect on the current node (if any). Capture the prior
+        # approval count BEFORE switch_profile clears it.
+        prior_approvals = 0
+        current_node = getattr(self.chat_commands, "current_node", None)
+        if current_node is not None and hasattr(current_node, "permission_manager"):
+            prior_approvals = len(getattr(current_node.permission_manager, "_session_approvals", {}))
+            current_node.permission_manager.switch_profile(choice, user_overrides=user_rules_cfg)
+
+        self.active_profile = choice
         self.console.print(
-            "[yellow]/profile handler not yet implemented; "
-            "the real implementation lands in the next commit of this branch.[/]"
+            f"[green]Profile switched:[/] {current} → {choice}\n"
+            f"[dim]Session approvals cleared (was: {prior_approvals})[/]"
         )
 
     def catalogs_callback(self, selected_path: str = "", selected_data: Optional[Dict[str, Any]] = None):
