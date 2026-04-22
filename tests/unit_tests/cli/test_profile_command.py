@@ -4,24 +4,46 @@
 
 """Tests for the /profile slash command handler.
 
-Mocks the dialog primitive so we exercise handler logic without a real UI.
+Injects stub picker callables onto the CLI stub so we exercise handler
+logic without spinning up prompt_toolkit.
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from datus.tools.permission.permission_manager import PermissionManager
 
 
 class _FakeCLI:
-    """Minimal CLI surface for /profile handler tests."""
+    """Minimal CLI surface for /profile handler tests.
 
-    def __init__(self, manager, agent_config):
+    Exposes picker callables as instance attributes; ``_cmd_profile``
+    reads them via ``self._run_profile_picker(current)`` /
+    ``self._run_dangerous_confirm()`` which finds them on the instance
+    before falling through to the class method.
+    """
+
+    def __init__(self, manager, agent_config, profile_responses, confirm_responses=None):
         self.console = MagicMock()
         self.agent_config = agent_config
         self.active_profile = agent_config.active_profile_name
         self.chat_commands = MagicMock()
         self.chat_commands.current_node = MagicMock()
         self.chat_commands.current_node.permission_manager = manager
+
+        self._profile_responses = list(profile_responses)
+        self._confirm_responses = list(confirm_responses or [])
+        self.picker_calls = 0
+        self.confirm_calls = 0
+
+    # Instance-level overrides that _cmd_profile will find via normal
+    # attribute lookup before hitting DatusCLI's class methods.
+    def _run_profile_picker(self, current):
+        self.picker_calls += 1
+        return self._profile_responses.pop(0)
+
+    def _run_dangerous_confirm(self):
+        self.confirm_calls += 1
+        return self._confirm_responses.pop(0)
 
 
 def _make_agent_config(profile: str = "normal"):
@@ -34,36 +56,15 @@ def _make_agent_config(profile: str = "normal"):
     return cfg
 
 
-def _patch_dialog(return_values):
-    """Patch the profile selection dialog to return scripted values in order.
-
-    The _cmd_profile implementation delegates to module-level helpers
-    ``datus.cli.repl._ask_profile_choice`` and
-    ``datus.cli.repl._ask_dangerous_confirmation``, so patching these
-    module-level names works regardless of the type of the ``self`` stub.
-    """
-    primary = return_values.get("primary", [])
-    confirm = return_values.get("confirm", [])
-    return (
-        patch("datus.cli.repl._ask_profile_choice", side_effect=primary),
-        patch(
-            "datus.cli.repl._ask_dangerous_confirmation",
-            side_effect=confirm,
-        ),
-    )
-
-
 def test_profile_switch_to_auto():
     from datus.cli.repl import DatusCLI
 
     manager = PermissionManager(active_profile="normal")
     manager.approve_for_session("db_tools", "execute_ddl")
     agent_config = _make_agent_config("normal")
-    cli = _FakeCLI(manager, agent_config)
+    cli = _FakeCLI(manager, agent_config, profile_responses=["auto"])
 
-    p_primary, p_confirm = _patch_dialog({"primary": ["auto"]})
-    with p_primary, p_confirm:
-        DatusCLI._cmd_profile(cli, "")
+    DatusCLI._cmd_profile(cli, "")
 
     assert cli.active_profile == "auto"
     assert manager.active_profile == "auto"
@@ -76,14 +77,19 @@ def test_profile_switch_dangerous_requires_confirmation():
 
     manager = PermissionManager(active_profile="normal")
     agent_config = _make_agent_config("normal")
-    cli = _FakeCLI(manager, agent_config)
+    cli = _FakeCLI(
+        manager,
+        agent_config,
+        profile_responses=["dangerous"],
+        confirm_responses=[True],
+    )
 
-    p_primary, p_confirm = _patch_dialog({"primary": ["dangerous"], "confirm": [True]})
-    with p_primary, p_confirm:
-        DatusCLI._cmd_profile(cli, "")
+    DatusCLI._cmd_profile(cli, "")
 
     assert cli.active_profile == "dangerous"
     assert manager.active_profile == "dangerous"
+    assert cli.picker_calls == 1
+    assert cli.confirm_calls == 1
 
 
 def test_profile_switch_dangerous_cancelled():
@@ -91,11 +97,14 @@ def test_profile_switch_dangerous_cancelled():
 
     manager = PermissionManager(active_profile="auto")
     agent_config = _make_agent_config("auto")
-    cli = _FakeCLI(manager, agent_config)
+    cli = _FakeCLI(
+        manager,
+        agent_config,
+        profile_responses=["dangerous"],
+        confirm_responses=[False],
+    )
 
-    p_primary, p_confirm = _patch_dialog({"primary": ["dangerous"], "confirm": [False]})
-    with p_primary, p_confirm:
-        DatusCLI._cmd_profile(cli, "")
+    DatusCLI._cmd_profile(cli, "")
 
     assert cli.active_profile == "auto"
     assert manager.active_profile == "auto"
@@ -106,11 +115,9 @@ def test_profile_dialog_cancel_keeps_current():
 
     manager = PermissionManager(active_profile="auto")
     agent_config = _make_agent_config("auto")
-    cli = _FakeCLI(manager, agent_config)
+    cli = _FakeCLI(manager, agent_config, profile_responses=[None])
 
-    p_primary, p_confirm = _patch_dialog({"primary": [None]})
-    with p_primary, p_confirm:
-        DatusCLI._cmd_profile(cli, "")
+    DatusCLI._cmd_profile(cli, "")
 
     assert cli.active_profile == "auto"
     assert manager.active_profile == "auto"
@@ -122,11 +129,9 @@ def test_profile_select_same_profile_is_noop():
     manager = PermissionManager(active_profile="auto")
     manager.approve_for_session("db_tools", "execute_ddl")
     agent_config = _make_agent_config("auto")
-    cli = _FakeCLI(manager, agent_config)
+    cli = _FakeCLI(manager, agent_config, profile_responses=["auto"])
 
-    p_primary, p_confirm = _patch_dialog({"primary": ["auto"]})
-    with p_primary, p_confirm:
-        DatusCLI._cmd_profile(cli, "")
+    DatusCLI._cmd_profile(cli, "")
 
     assert cli.active_profile == "auto"
     assert manager.active_profile == "auto"
@@ -134,47 +139,46 @@ def test_profile_select_same_profile_is_noop():
 
 
 def test_profile_every_dangerous_transition_reconfirms():
-    """Spec decision #5: every session transition into dangerous must confirm."""
     from datus.cli.repl import DatusCLI
 
     manager = PermissionManager(active_profile="normal")
     agent_config = _make_agent_config("normal")
-    cli = _FakeCLI(manager, agent_config)
+    cli = _FakeCLI(
+        manager,
+        agent_config,
+        profile_responses=["dangerous", "auto", "dangerous"],
+        confirm_responses=[True, True],
+    )
 
-    # Sequence: normal→dangerous(confirmed), dangerous→auto, auto→dangerous(confirmed)
-    primary_sequence = ["dangerous", "auto", "dangerous"]
-    confirm_sequence = [True, True]
+    DatusCLI._cmd_profile(cli, "")
+    assert cli.active_profile == "dangerous"
+    DatusCLI._cmd_profile(cli, "")
+    assert cli.active_profile == "auto"
+    DatusCLI._cmd_profile(cli, "")
+    assert cli.active_profile == "dangerous"
 
-    p_primary, p_confirm = _patch_dialog({"primary": primary_sequence, "confirm": confirm_sequence})
-    with p_primary, p_confirm:
-        DatusCLI._cmd_profile(cli, "")
-        assert cli.active_profile == "dangerous"
-        DatusCLI._cmd_profile(cli, "")
-        assert cli.active_profile == "auto"
-        DatusCLI._cmd_profile(cli, "")
-        assert cli.active_profile == "dangerous"
+    assert cli.confirm_calls == 2  # first and third dangerous transitions
 
 
 def test_profile_no_current_node_still_works():
-    """If no active chat node exists, /profile should still rebuild
-    agent_config and self.active_profile (future nodes inherit)."""
     from datus.cli.repl import DatusCLI
 
     agent_config = _make_agent_config("normal")
 
-    class _NoNodeCLI:
+    class _NoNodeCLI(_FakeCLI):
         def __init__(self):
             self.console = MagicMock()
             self.agent_config = agent_config
             self.active_profile = agent_config.active_profile_name
             self.chat_commands = MagicMock()
             self.chat_commands.current_node = None
+            self._profile_responses = ["auto"]
+            self._confirm_responses = []
+            self.picker_calls = 0
+            self.confirm_calls = 0
 
     cli = _NoNodeCLI()
-
-    p_primary, p_confirm = _patch_dialog({"primary": ["auto"]})
-    with p_primary, p_confirm:
-        DatusCLI._cmd_profile(cli, "")
+    DatusCLI._cmd_profile(cli, "")
 
     assert cli.active_profile == "auto"
     assert agent_config.active_profile_name == "auto"
