@@ -201,7 +201,7 @@ _BI_MODULES_PATCH = {
 }
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
-_SKILLS_DIR = _REPO_ROOT / "skills"
+_SKILLS_DIR = _REPO_ROOT / "datus" / "resources" / "skills"
 
 
 # ---- Helper: add dashboard config to agent_config ----
