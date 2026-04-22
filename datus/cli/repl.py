@@ -120,6 +120,67 @@ _LEGACY_PREFIX_HINTS: dict[str, str] = {
 }
 
 
+def _ask_profile_choice(current: str) -> Optional[str]:
+    """Primary profile selection dialog (module-level for test patching).
+
+    Returns the selected profile name (``"normal"``/``"auto"``/
+    ``"dangerous"``) or ``None`` if the user cancelled (Esc).
+
+    Uses ``prompt_toolkit.shortcuts.radiolist_dialog`` for arrow-key
+    selection.
+    """
+    from prompt_toolkit.shortcuts import radiolist_dialog
+
+    values = [
+        (
+            "normal",
+            "normal      Read-only + confirm every write" + ("  (current)" if current == "normal" else ""),
+        ),
+        (
+            "auto",
+            "auto        Workspace writes auto; DB/MCP still ask" + ("  (current)" if current == "auto" else ""),
+        ),
+        (
+            "dangerous",
+            "dangerous   Nearly all writes auto (see warning)" + ("  (current)" if current == "dangerous" else ""),
+        ),
+    ]
+    return radiolist_dialog(
+        title="Select Permission Profile",
+        text=f"Current: {current}\n\nChoose a new profile (Esc to cancel):",
+        values=values,
+    ).run()
+
+
+def _ask_dangerous_confirmation() -> bool:
+    """Second confirmation dialog for switching to Dangerous (module-level for test patching).
+
+    Returns ``True`` only if the user explicitly chose to enable.
+    Default highlight is Cancel to reduce accidental activation.
+    """
+    from prompt_toolkit.shortcuts import button_dialog
+
+    text = (
+        "Switching to Dangerous will auto-execute:\n"
+        "  * All DB writes (including DDL, DELETE)\n"
+        "  * All BI/Scheduler writes (including deletes)\n"
+        "  * All MCP tools\n"
+        "  * All skills\n\n"
+        "Still protected: writes outside workspace require ASK;\n"
+        "~/.datus internals remain hidden."
+    )
+    return bool(
+        button_dialog(
+            title="DANGEROUS PROFILE - Explicit Confirmation Required",
+            text=text,
+            buttons=[
+                ("Cancel", False),
+                ("Enable Dangerous", True),
+            ],
+        ).run()
+    )
+
+
 class DatusCLI:
     """Main REPL for the Datus CLI application."""
 
@@ -1497,68 +1558,28 @@ class DatusCLI:
         return EXIT_SENTINEL
 
     def _cmd_profile(self, args: str) -> None:
-        """Entry point for ``/profile``.
-
-        Delegates to an async core because profile selection goes through
-        ``InteractionBroker.request`` (async). If the REPL is not in an
-        event loop, ``asyncio.run`` drives one; otherwise schedule on the
-        running loop.
-        """
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop is None:
-            asyncio.run(self._cmd_profile_async(args))
-        else:
-            asyncio.ensure_future(self._cmd_profile_async(args))
-
-    async def _cmd_profile_async(self, args: str) -> None:
         """Open the profile selection dialog and apply the choice.
 
-        Sequence:
-            1. Build choices reflecting the three profiles + cancel.
-            2. Request selection from the broker.
-            3. If cancel or same profile, no-op.
-            4. If dangerous, require second confirmation (default-cancel).
-               Every session transition into dangerous re-confirms per
-               spec decision #5.
-            5. Rebuild ``agent_config.permissions_config`` so future nodes
-               inherit; call ``switch_profile`` on the current node's
-               PermissionManager for immediate effect; update
-               ``self.active_profile``.
+        Synchronous — uses ``radiolist_dialog`` which runs its own nested
+        event loop. Dialog calls are delegated to module-level helpers
+        ``_ask_profile_choice`` and ``_ask_dangerous_confirmation`` so that
+        tests can patch those seams without spinning up a real UI:
+          - ``_ask_profile_choice(current)`` returns the chosen profile name
+            or ``None`` (cancel).
+          - ``_ask_dangerous_confirmation()`` returns ``True``/``False``.
         """
-        from datus.cli.execution_state import InteractionCancelled
         from datus.tools.permission.permission_config import PermissionConfig
         from datus.tools.permission.profiles import PROFILE_NAMES, get_profile
 
-        broker = getattr(self, "broker", None)
-        if broker is None:
-            self.console.print("[yellow]/profile requires an interactive session.[/]")
-            return
-
         current = self.active_profile
-        choices_dict = {
-            "normal": "normal      Read-only + confirm every write" + ("  ← current" if current == "normal" else ""),
-            "auto": "auto        Workspace writes auto; DB/MCP still ask"
-            + ("  ← current" if current == "auto" else ""),
-            "dangerous": "dangerous   Nearly all writes auto (⚠ see warning)"
-            + ("  ← current" if current == "dangerous" else ""),
-            "cancel": "cancel      Keep current profile",
-        }
-
         try:
-            choice, callback = await broker.request(
-                contents=[f"### Select Permission Profile\n\nCurrent: **{current}**"],
-                choices=[choices_dict],
-                default_choices=["cancel"],
-            )
-        except InteractionCancelled:
+            choice = _ask_profile_choice(current)
+        except Exception as e:  # pragma: no cover - dialog render errors
+            logger.warning(f"/profile dialog failed: {e}")
+            self.console.print("[yellow]Profile dialog unavailable in this mode.[/]")
             return
 
-        if choice == "cancel":
-            await callback("**Kept current profile**")
+        if choice is None or choice == "cancel":
             return
 
         if choice not in PROFILE_NAMES:
@@ -1566,50 +1587,29 @@ class DatusCLI:
             return
 
         if choice == current:
-            await callback(f"**Already on {choice}**")
+            self.console.print(f"[dim]Already on {choice}.[/]")
             return
 
-        # Dangerous second confirmation — every session transition into
-        # dangerous reconfirms (spec decision #5).
+        # Dangerous second confirmation — every session transition re-confirms
+        # per spec decision #5.
         if choice == "dangerous":
-            confirm_content = (
-                "### ⚠ DANGEROUS PROFILE — Explicit Confirmation Required\n\n"
-                "Switching to Dangerous will auto-execute:\n"
-                "  • All DB writes (including DDL, DELETE)\n"
-                "  • All BI/Scheduler writes (including deletes)\n"
-                "  • All MCP tools\n"
-                "  • All skills\n\n"
-                "Still protected: writes outside workspace require ASK; "
-                "~/.datus internals remain hidden."
-            )
             try:
-                confirm_choice, confirm_cb = await broker.request(
-                    contents=[confirm_content],
-                    choices=[
-                        {
-                            "cancel": "Cancel (stay on current profile)",
-                            "enable": "Enable Dangerous for this session",
-                        }
-                    ],
-                    default_choices=["cancel"],
-                )
-            except InteractionCancelled:
+                confirmed = _ask_dangerous_confirmation()
+            except Exception as e:  # pragma: no cover
+                logger.warning(f"/profile confirmation dialog failed: {e}")
                 return
-            if confirm_choice != "enable":
-                await confirm_cb("**Dangerous mode cancelled**")
+            if not confirmed:
+                self.console.print("[yellow]Dangerous mode cancelled.[/]")
                 return
-            await confirm_cb("**Dangerous mode enabled**")
 
-        # Rebuild the user rules (exclude the profile key); reuse the raw
-        # permissions stashed at startup so we don't re-read YAML.
+        # Rebuild the user rules (exclude the profile key) and preserve the
+        # new profile's default unless the user explicitly set one.
         raw_permissions = getattr(self.agent_config, "_raw_permissions", {}) or {}
         raw_user = {k: v for k, v in raw_permissions.items() if k != "profile"}
         user_rules_cfg: Optional[PermissionConfig] = None
+        new_base = get_profile(choice)
         if raw_user:
-            # Same default-preservation logic as AgentConfig: if user did
-            # not explicitly set a default, keep the new profile's default.
             if "default" not in raw_user and "default_permission" not in raw_user:
-                new_base = get_profile(choice)
                 dp = new_base.default_permission
                 raw_user = {
                     **raw_user,
@@ -1617,13 +1617,12 @@ class DatusCLI:
                 }
             user_rules_cfg = PermissionConfig.from_dict(raw_user)
 
-        new_base = get_profile(choice)
         new_effective = new_base.merge_with(user_rules_cfg) if user_rules_cfg else new_base
         self.agent_config.permissions_config = new_effective
         self.agent_config.active_profile_name = choice
 
-        # Immediate effect on the current node (if any). Capture the prior
-        # approval count BEFORE switch_profile clears it.
+        # Immediate effect on the current node (if any). Capture approval
+        # count before clearing.
         prior_approvals = 0
         current_node = getattr(self.chat_commands, "current_node", None)
         if current_node is not None and hasattr(current_node, "permission_manager"):
