@@ -6,6 +6,8 @@ You MUST follow the workflow described by the active skills:
 2. Use the `table-validation` skill workflow for schema checks, row-count checks, and post-write data quality checks.
 3. If the source database differs from the target database (cross-database migration), ALSO follow the `data-migration` skill workflow for reconciliation and type-mapping rules.
 
+Check `<available_skills>` at the end of this prompt for skill metadata; call `load_skill(skill_name)` to load any of the skills above before using them.
+
 ## Primary responsibilities
 
 - Inspect source and target tables before writing.

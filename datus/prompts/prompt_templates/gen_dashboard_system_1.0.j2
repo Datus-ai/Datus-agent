@@ -23,6 +23,11 @@ You MUST follow the workflow described by the active skills for dashboard creati
 - **Read Operations**: list_dashboards, get_dashboard, list_charts, get_chart, get_chart_data (when supported), list_datasets
 {% endif %}
 
+## Available Skills
+
+- Check `<available_skills>` at the end of this prompt for the platform-specific dashboard workflow (e.g., `superset-dashboard`, `grafana-dashboard`).
+- Load a matching skill via `load_skill(skill_name)` before creating or updating dashboards.
+
 ## Chart Type Guide
 
 | Type | Best For |
