@@ -68,7 +68,7 @@ class ChatService:
                 user_id=user_id,
             )
         except (ValueError, DatusException) as e:
-            error_code = e.error_code.name if isinstance(e, DatusException) else ErrorCode.COMMON_VALIDATION_FAILED.name
+            error_code = e.code.name if isinstance(e, DatusException) else ErrorCode.COMMON_VALIDATION_FAILED.name
             yield SSEEvent(
                 id=1,
                 event="error",
@@ -100,7 +100,7 @@ class ChatService:
             )
         except DatusException as e:
             logger.warning("No active model: %s", e.message)
-            return Result[ChatModelData](success=False, errorCode=e.error_code.name, errorMessage=e.message)
+            return Result[ChatModelData](success=False, errorCode=e.code.name, errorMessage=e.message)
         except Exception as e:
             logger.error(f"Failed to get active model: {e}")
             return Result[ChatModelData](success=False, errorCode="MODEL_LOOKUP_ERROR", errorMessage=str(e))

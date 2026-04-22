@@ -12,12 +12,14 @@ import pytest
 
 from datus.api.routes import models_routes
 from datus.api.routes.models_routes import list_models
+from datus.configuration.agent_config import ModelConfig
 
 
 def _make_svc(
     *,
     catalog: Dict[str, Any],
     available: Optional[Iterable[str]] = None,
+    custom_models: Optional[Dict[str, Any]] = None,
 ) -> MagicMock:
     """Build a MagicMock svc with provider_catalog + provider_available wired up.
 
@@ -29,6 +31,7 @@ def _make_svc(
     svc = MagicMock()
     svc.agent_config.provider_catalog = catalog
     svc.agent_config.provider_available.side_effect = lambda p: p in allowed
+    svc.agent_config.models = custom_models if custom_models is not None else {}
     return svc
 
 
@@ -142,6 +145,7 @@ class TestCacheMetadata:
         model = result.data.models[0]
         assert model.provider == "openai"
         assert model.id == "gpt-4o"
+        assert model.model == "gpt-4o"
         assert model.name == "GPT-4o"
         assert model.context_length == 128000
         assert model.max_tokens == 16384  # from model_specs fallback
@@ -160,6 +164,7 @@ class TestCacheMetadata:
         assert len(result.data.models) == 1
         model = result.data.models[0]
         assert model.id == "claude-sonnet-4-5"
+        assert model.model == "claude-sonnet-4-5"
         # context_length from model_specs, pricing unavailable without cache.
         assert model.context_length == 1048576
         assert model.pricing is None
@@ -325,3 +330,79 @@ class TestDefensiveParsing:
         result = await list_models(svc)
 
         assert [m.id for m in result.data.models] == ["gpt-4o"]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Custom models from agent.models
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _custom_model(model: str, type_: str = "openai") -> ModelConfig:
+    return ModelConfig(type=type_, api_key="sk-test", model=model)
+
+
+class TestCustomModels:
+    @pytest.mark.asyncio
+    async def test_custom_models_are_appended(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(models_routes, "load_cached_model_details", lambda: None)
+        monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: None)
+
+        custom = {
+            "my-deepseek": _custom_model("deepseek-chat", "deepseek"),
+            "my-gpt": _custom_model("gpt-4", "openai"),
+        }
+        svc = _make_svc(catalog=_basic_catalog(), available=set(), custom_models=custom)
+        result = await list_models(svc)
+
+        assert "custom" in result.data.providers
+        assert len(result.data.models) == 2
+        by_id = {m.id: m for m in result.data.models}
+        assert by_id["my-deepseek"].provider == "custom"
+        assert by_id["my-deepseek"].model == "deepseek-chat"
+        assert by_id["my-gpt"].provider == "custom"
+        assert by_id["my-gpt"].model == "gpt-4"
+
+    @pytest.mark.asyncio
+    async def test_custom_models_pick_up_model_specs(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(models_routes, "load_cached_model_details", lambda: None)
+        monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: None)
+
+        custom = {"my-ds": _custom_model("deepseek-chat", "deepseek")}
+        svc = _make_svc(catalog=_basic_catalog(), available=set(), custom_models=custom)
+        result = await list_models(svc)
+
+        m = result.data.models[0]
+        assert m.id == "my-ds"
+        assert m.model == "deepseek-chat"
+        assert m.context_length == 65535
+        assert m.max_tokens == 8192
+
+    @pytest.mark.asyncio
+    async def test_empty_custom_models_no_custom_provider(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(models_routes, "load_cached_model_details", lambda: None)
+        monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: None)
+
+        svc = _make_svc(catalog=_basic_catalog(), available=set(), custom_models={})
+        result = await list_models(svc)
+
+        assert "custom" not in result.data.providers
+        assert result.data.models == []
+
+    @pytest.mark.asyncio
+    async def test_custom_and_provider_models_coexist(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(models_routes, "load_cached_model_details", lambda: None)
+        monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: None)
+
+        custom = {"my-ds": _custom_model("deepseek-chat", "deepseek")}
+        svc = _make_svc(catalog=_basic_catalog(), available={"openai"}, custom_models=custom)
+        result = await list_models(svc)
+
+        providers = set(result.data.providers)
+        assert providers == {"openai", "custom"}
+        provider_models = [m for m in result.data.models if m.provider == "openai"]
+        custom_models = [m for m in result.data.models if m.provider == "custom"]
+        assert len(provider_models) == 2
+        assert all(m.model == m.id for m in provider_models)
+        assert len(custom_models) == 1
+        assert custom_models[0].id == "my-ds"
+        assert custom_models[0].model == "deepseek-chat"

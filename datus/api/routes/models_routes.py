@@ -78,6 +78,7 @@ def _build_model_info(
     return ModelInfo(
         provider=provider,
         id=slug,
+        model=slug,
         name=name,
         context_length=context_length,
         max_tokens=max_tokens,
@@ -136,6 +137,30 @@ async def list_models(svc: ServiceDep) -> Result[ModelsData]:
             if not isinstance(slug, str) or not slug:
                 continue
             models.append(_build_model_info(provider_key, entry, catalog))
+
+    custom_models = getattr(agent_config, "models", None)
+    if isinstance(custom_models, dict) and custom_models:
+        for model_key, model_cfg in custom_models.items():
+            if not isinstance(model_key, str) or not model_key:
+                continue
+            actual_model = getattr(model_cfg, "model", None)
+            if not isinstance(actual_model, str) or not actual_model:
+                actual_model = model_key
+            spec = _model_spec(catalog, actual_model)
+            spec_ctx = spec.get("context_length")
+            spec_max = spec.get("max_tokens")
+            models.append(
+                ModelInfo(
+                    provider="custom",
+                    id=model_key,
+                    model=actual_model,
+                    name=model_key,
+                    context_length=spec_ctx if isinstance(spec_ctx, int) else None,
+                    max_tokens=spec_max if isinstance(spec_max, int) else None,
+                )
+            )
+        if any(m.provider == "custom" for m in models):
+            seen_providers.append("custom")
 
     return Result(
         success=True,

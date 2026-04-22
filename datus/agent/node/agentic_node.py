@@ -213,15 +213,11 @@ class AgenticNode(Node):
             return self._pinned_model
         if self._agent_config_ref is None:
             return None
-        try:
-            return LLMBaseModel.create_model(
-                agent_config=self._agent_config_ref,
-                model_name=self._node_model_name,
-                scope=self.scope,
-            )
-        except Exception as exc:
-            logger.debug(f"Lazy model resolution failed for node {self.get_node_name()}: {exc}")
-            return None
+        return LLMBaseModel.create_model(
+            agent_config=self._agent_config_ref,
+            model_name=self._node_model_name,
+            scope=self.scope,
+        )
 
     @model.setter
     def model(self, value: Optional[LLMBaseModel]) -> None:
@@ -599,7 +595,12 @@ class AgenticNode(Node):
             logger.debug("Skipped compaction for ephemeral session")
             return {"success": False, "summary": "", "summary_token": 0}
 
-        if not self.model:
+        try:
+            model = self.model
+        except Exception as exc:
+            logger.warning("Cannot compact: model resolution failed: %s", exc)
+            return {"success": False, "summary": "", "summary_token": 0}
+        if not model:
             logger.warning("Cannot compact: no model available")
             return {"success": False, "summary": "", "summary_token": 0}
 
@@ -683,7 +684,11 @@ class AgenticNode(Node):
         Returns:
             True if compacting was triggered and successful, False otherwise
         """
-        if not self.model or not self.context_length:
+        try:
+            model = self.model
+        except Exception:
+            return False
+        if not model or not self.context_length:
             return False
 
         try:

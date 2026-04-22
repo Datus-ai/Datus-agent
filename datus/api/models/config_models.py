@@ -220,8 +220,11 @@ class ModelInfo(BaseModel):
 
     model_config = ConfigDict(exclude_none=True)
 
-    provider: str = Field(..., description="Provider key from providers.yml")
+    provider: str = Field(..., description="Provider key from providers.yml, or 'custom' for agent.models entries")
     id: str = Field(..., description="Model slug as consumed by the SDK")
+    model: Optional[str] = Field(
+        None, description="Actual model name (same as id for provider models, ModelConfig.model for custom)"
+    )
     name: Optional[str] = Field(None, description="Human-readable model name")
     context_length: Optional[int] = Field(None, description="Maximum context window in tokens")
     max_tokens: Optional[int] = Field(None, description="Maximum completion tokens")

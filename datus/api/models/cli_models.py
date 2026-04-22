@@ -119,6 +119,7 @@ class ChatInput(BaseModel):
             "example": {
                 "message": "Show me total sales for last month",
                 "session_id": "session_123",
+                "model": "openai/gpt-4.1",
                 "catalog": "main",
                 "database": "sales_db",
                 "db_schema": "public",
@@ -133,6 +134,14 @@ class ChatInput(BaseModel):
     # Core message fields
     message: str = Field(..., description="Chat message")
     session_id: Optional[str] = Field(None, description="Session ID")
+    model: Optional[str] = Field(
+        default=None,
+        description=(
+            "Per-request model override in 'provider/model_id' format "
+            "(e.g. 'openai/gpt-4.1', 'custom/my-model'). "
+            "Takes highest priority over all other model config."
+        ),
+    )
     plan_mode: bool = Field(False, description="Whether in plan mode")
     source: Optional[str] = Field(None, description="chat source, web/vscode")
     interactive: Optional[bool] = Field(

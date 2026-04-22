@@ -924,3 +924,121 @@ class TestStartChatLanguageOverride:
         task = await manager.start_chat(real_agent_config, request)
         await task.asyncio_task
         assert captured["agent_config"].language == "zh"
+
+
+class TestStartChatModelOverride:
+    """``ChatInput.model`` (format ``provider/model_id``) must override the
+    cloned config's active model with the highest priority.
+    """
+
+    @pytest.mark.asyncio
+    async def test_provider_model_override(self, real_agent_config, monkeypatch):
+        from datus.api.models.cli_models import StreamChatInput
+
+        captured = {}
+
+        async def fake_run_loop(self, task, agent_config, request, **kwargs):
+            captured["agent_config"] = agent_config
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
+        manager = ChatTaskManager()
+        request = StreamChatInput(message="hi", model="openai/gpt-4.1")
+        task = await manager.start_chat(real_agent_config, request)
+        await task.asyncio_task
+        assert captured["agent_config"]._target_provider == "openai"
+        assert captured["agent_config"]._target_model == "gpt-4.1"
+
+    @pytest.mark.asyncio
+    async def test_custom_model_override(self, real_agent_config, monkeypatch):
+        from datus.api.models.cli_models import StreamChatInput
+
+        captured = {}
+
+        async def fake_run_loop(self, task, agent_config, request, **kwargs):
+            captured["agent_config"] = agent_config
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
+        manager = ChatTaskManager()
+        request = StreamChatInput(message="hi", model="custom/mock")
+        task = await manager.start_chat(real_agent_config, request)
+        await task.asyncio_task
+        assert captured["agent_config"].target == "mock"
+        assert captured["agent_config"]._target_provider is None
+        assert captured["agent_config"]._target_model is None
+
+    @pytest.mark.asyncio
+    async def test_model_with_slash_in_id(self, real_agent_config, monkeypatch):
+        from datus.api.models.cli_models import StreamChatInput
+
+        captured = {}
+
+        async def fake_run_loop(self, task, agent_config, request, **kwargs):
+            captured["agent_config"] = agent_config
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
+        manager = ChatTaskManager()
+        request = StreamChatInput(message="hi", model="openai/org/gpt-4.1")
+        task = await manager.start_chat(real_agent_config, request)
+        await task.asyncio_task
+        assert captured["agent_config"]._target_provider == "openai"
+        assert captured["agent_config"]._target_model == "org/gpt-4.1"
+
+    @pytest.mark.asyncio
+    async def test_model_without_slash_raises(self, real_agent_config, monkeypatch):
+        from datus.api.models.cli_models import StreamChatInput
+
+        async def fake_run_loop(self, task, agent_config, request, **kwargs):
+            pass
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
+        manager = ChatTaskManager()
+        request = StreamChatInput(message="hi", model="gpt-4.1")
+        with pytest.raises(ValueError, match="expected 'provider/model_id'"):
+            await manager.start_chat(real_agent_config, request)
+
+    @pytest.mark.asyncio
+    async def test_model_none_preserves_config(self, real_agent_config, monkeypatch):
+        from datus.api.models.cli_models import StreamChatInput
+
+        captured = {}
+
+        async def fake_run_loop(self, task, agent_config, request, **kwargs):
+            captured["agent_config"] = agent_config
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
+        manager = ChatTaskManager()
+        request = StreamChatInput(message="hi")
+        task = await manager.start_chat(real_agent_config, request)
+        await task.asyncio_task
+        assert captured["agent_config"].target == real_agent_config.target
+
+    @pytest.mark.asyncio
+    async def test_model_override_does_not_mutate_source(self, real_agent_config, monkeypatch):
+        from datus.api.models.cli_models import StreamChatInput
+
+        original_target = real_agent_config.target
+
+        async def fake_run_loop(self, task, agent_config, request, **kwargs):
+            pass
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
+        manager = ChatTaskManager()
+        request = StreamChatInput(message="hi", model="openai/gpt-4.1")
+        task = await manager.start_chat(real_agent_config, request)
+        await task.asyncio_task
+        assert real_agent_config.target == original_target
+        assert real_agent_config._target_provider is None or real_agent_config._target_provider != "openai"
+
+    @pytest.mark.asyncio
+    async def test_custom_model_unknown_raises(self, real_agent_config, monkeypatch):
+        from datus.api.models.cli_models import StreamChatInput
+        from datus.utils.exceptions import DatusException
+
+        async def fake_run_loop(self, task, agent_config, request, **kwargs):
+            pass
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
+        manager = ChatTaskManager()
+        request = StreamChatInput(message="hi", model="custom/nonexistent")
+        with pytest.raises(DatusException):
+            await manager.start_chat(real_agent_config, request)

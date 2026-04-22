@@ -216,6 +216,14 @@ class ChatTaskManager:
         # yaml-level ``agent.language`` default intact.
         if request.language:
             agent_config.language = request.language
+        if request.model:
+            provider, _, model_id = request.model.partition("/")
+            if not model_id:
+                raise ValueError(f"Invalid model format '{request.model}': expected 'provider/model_id'")
+            if provider == "custom":
+                agent_config.set_active_custom(model_id, persist=False)
+            else:
+                agent_config.set_active_provider_model(provider, model_id, persist=False)
         _fill_database_context(
             agent_config,
             catalog=request.catalog,
