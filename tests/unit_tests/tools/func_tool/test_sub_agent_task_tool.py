@@ -106,8 +106,8 @@ class TestGetAvailableTypes:
         assert "gen_sql" in types
         assert "custom" in types
 
-    def test_excludes_scoped_agent_wrong_namespace(self):
-        """Subagent with scoped_context bound to a different namespace should be excluded."""
+    def test_excludes_scoped_agent_wrong_datasource(self):
+        """Subagent with scoped_context bound to a different datasource should be excluded."""
         config = Mock(spec=AgentConfig)
         config.current_datasource = "default"
         config.agentic_nodes = {
@@ -115,15 +115,15 @@ class TestGetAvailableTypes:
             "scoped_agent": {
                 "model": "default",
                 "node_class": "gen_sql",
-                "scoped_context": {"namespace": "other_ns", "tables": "t1"},
+                "scoped_context": {"datasource": "other_ds", "tables": "t1"},
             },
         }
         tool = SubAgentTaskTool(agent_config=config)
         types = tool._get_available_types()
         assert "scoped_agent" not in types
 
-    def test_includes_scoped_agent_matching_namespace(self):
-        """Subagent with scoped_context matching current namespace should be included."""
+    def test_includes_scoped_agent_matching_datasource(self):
+        """Subagent with scoped_context matching current datasource should be included."""
         config = Mock(spec=AgentConfig)
         config.current_datasource = "sales"
         config.agentic_nodes = {
@@ -131,7 +131,7 @@ class TestGetAvailableTypes:
             "scoped_agent": {
                 "model": "default",
                 "node_class": "gen_sql",
-                "scoped_context": {"namespace": "sales", "tables": "orders"},
+                "scoped_context": {"datasource": "sales", "tables": "orders"},
             },
         }
         tool = SubAgentTaskTool(agent_config=config)
@@ -139,7 +139,7 @@ class TestGetAvailableTypes:
         assert "scoped_agent" in types
 
     def test_includes_agent_without_scoped_context(self):
-        """Subagent without scoped_context should not be filtered by namespace."""
+        """Subagent without scoped_context should not be filtered by datasource."""
         config = Mock(spec=AgentConfig)
         config.current_datasource = "default"
         config.agentic_nodes = {

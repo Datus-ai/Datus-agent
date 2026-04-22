@@ -60,7 +60,7 @@ agent:
       subagents: explore, gen_sql
       max_turns: 30
       scoped_context:
-        namespace: finance
+        datasource: finance
         tables: mart.finance_daily, mart.finance_budget
         metrics: finance.revenue.daily_revenue
         sqls: finance.revenue.region_rollup
@@ -71,7 +71,7 @@ agent:
 说明：
 
 - 省略 `node_class` 时默认按 `gen_sql` 处理
-- 手工编写 `scoped_context` 时请显式填写 `namespace`
+- 手工编写 `scoped_context` 时请显式填写 `datasource`
 - `subagents` 用于控制该节点可委派的 task 类型
 
 ## 如何使用 Subagent

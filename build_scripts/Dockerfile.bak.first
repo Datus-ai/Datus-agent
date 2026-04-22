@@ -74,15 +74,16 @@ RUN mkdir -p ~/.datus/conf && echo 'agent:\n\
   # Benchmark data is stored at {agent.home}/benchmark/{name}\n\
   # Supported benchmarks: bird_dev, spider2, semantic_layer\n\
   # local databases configuration\n\
-  namespace:\n\
-    snowflake:\n\
-      type: snowflake\n\
-      account:  ${SNOWFLAKE_ACCOUNT}\n\
-      username: ${SNOWFLAKE_USERNAME}\n\
-      password: ${SNOWFLAKE_PASSWORD}\n\
-    bird_sqlite:\n\
-      type: sqlite\n\
-      path_pattern: /app/benchmark/dev_20240627/dev_databases/**/*.sqlite # just support glob pattern\n\
+  services:\n\
+    datasources:\n\
+      snowflake:\n\
+        type: snowflake\n\
+        account:  ${SNOWFLAKE_ACCOUNT}\n\
+        username: ${SNOWFLAKE_USERNAME}\n\
+        password: ${SNOWFLAKE_PASSWORD}\n\
+      bird_sqlite:\n\
+        type: sqlite\n\
+        path_pattern: /app/benchmark/dev_20240627/dev_databases/**/*.sqlite # just support glob pattern\n\
   storage:\n\
     base_path: ~/.datus/data\n\
     database:\n\
@@ -100,9 +101,9 @@ RUN mkdir -p ~/.datus/conf && echo 'agent:\n\
 # RUN pip install datus-agent
 RUN pip install -i https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ datus-agent==0.1.5a4 --no-deps
 
-RUN datus-agent bootstrap-kb --namespace bird_sqlite --benchmark bird_dev --kb_update_strategy overwrite --pool_size 6
+RUN datus-agent bootstrap-kb --datasource bird_sqlite --benchmark bird_dev --kb_update_strategy overwrite --pool_size 6
 
-RUN datus-agent bootstrap-kb --namespace snowflake --benchmark spider2 --kb_update_strategy overwrite --pool_size 8
+RUN datus-agent bootstrap-kb --datasource snowflake --benchmark spider2 --kb_update_strategy overwrite --pool_size 8
 
 # Set the working directory
 WORKDIR /app

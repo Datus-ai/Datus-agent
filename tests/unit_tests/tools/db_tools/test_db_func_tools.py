@@ -1340,14 +1340,14 @@ class TestDBFuncToolMultiConnector:
         tool = DBFuncTool(
             mock_db_manager,
             agent_config=mock_agent_config,
-            default_database="db1",
+            default_datasource="db1",
             connector_cache_size=4,
         )
 
         # Verify multi-connector mode
         assert tool._db_manager is mock_db_manager
-        assert tool._namespace == "db1"
-        assert tool._default_database == "db1"
+        assert tool._datasource == "db1"
+        assert tool._default_datasource == "db1"
         assert tool._connector_cache_size == 4
         assert tool._primary_connector is mock_connector
         mock_db_manager.first_conn.assert_called_once_with("db1")
@@ -1399,12 +1399,14 @@ class TestDBFuncToolMultiConnector:
         mock_connector2.database_name = "db2"
 
         mock_db_manager.first_conn.return_value = mock_connector1
-        mock_db_manager.get_conn.side_effect = lambda ns, db: mock_connector2 if db == "db2" else mock_connector1
+        mock_db_manager.get_conn.side_effect = lambda datasource, db: (
+            mock_connector2 if db == "db2" else mock_connector1
+        )
 
         tool = DBFuncTool(
             mock_db_manager,
             agent_config=mock_agent_config,
-            default_database="db1",
+            default_datasource="db1",
         )
 
         # First call should fetch from db_manager
@@ -1433,7 +1435,7 @@ class TestDBFuncToolMultiConnector:
 
         connectors = {f"db{i}": make_connector(f"db{i}") for i in range(5)}
         mock_db_manager.first_conn.return_value = connectors["db0"]
-        mock_db_manager.get_conn.side_effect = lambda ns, db: connectors.get(db, connectors["db0"])
+        mock_db_manager.get_conn.side_effect = lambda datasource, db: connectors.get(db, connectors["db0"])
 
         # Update agent_config to have more databases
         mock_agent_config.current_db_configs.return_value = {f"db{i}": {} for i in range(5)}
@@ -1441,7 +1443,7 @@ class TestDBFuncToolMultiConnector:
         tool = DBFuncTool(
             mock_db_manager,
             agent_config=mock_agent_config,
-            default_database="db0",
+            default_datasource="db0",
             connector_cache_size=3,  # Small cache for testing
         )
 
@@ -1483,7 +1485,7 @@ class TestDBFuncToolMultiConnector:
         tool = DBFuncTool(
             mock_db_manager,
             agent_config=mock_agent_config,
-            default_database="db1",
+            default_datasource="db1",
         )
 
         result = tool.list_tables(database="db1")
@@ -1515,13 +1517,13 @@ class TestDBFuncToolMultiConnector:
         tool = DBFuncTool(
             mock_db_manager,
             agent_config=mock_agent_config,
-            default_database="db1",
+            default_datasource="db1",
         )
 
-        result = tool.read_query("SELECT * FROM test", database="db2")
+        result = tool.read_query("SELECT * FROM test", datasource="db2")
 
         assert result.success == 1
-        # In cross-database mode, db_name is used as both namespace and logic_name
+        # In cross-datasource mode, db_name is used as both datasource and logic_name
         mock_db_manager.get_conn.assert_called_with("db2", "db2")
         mock_connector.execute_query.assert_called_once()
 

@@ -265,10 +265,10 @@ Workflows can be configured with parameters:
 
 ```bash
 # Use specific workflow
-datus run --database <your_namespace> --task "your query" --plan reflection
+datus run --database <your_datasource> --task "your query" --plan reflection
 
 # Use custom workflow
-datus run --database <your_namespace> --task "your query" --plan custom_analytics
+datus run --database <your_datasource> --task "your query" --plan custom_analytics
 ```
 
 ### Available Parameters
@@ -276,7 +276,7 @@ datus run --database <your_namespace> --task "your query" --plan custom_analytic
 | Parameter | Description | Default | Options |
 |-----------|-------------|---------|---------|
 | `--plan` | Workflow type to execute | `reflection` | `reflection`, `fixed`, `metric_to_sql`, custom |
-| `--database` | Database namespace | Required | Any configured namespace |
+| `--database` | Database datasource | Required | Any configured datasource |
 | `--task` | Natural language query | Required | Any string |
 | `--max_iterations` | Maximum reflection rounds | `3` | Integer |
 | `--save_dir` | Directory to save workflow state | `./save` | Any valid path |
@@ -309,10 +309,10 @@ datus run --database <your_namespace> --task "your query" --plan custom_analytic
 
 ```bash
 # Enable debug mode for detailed logging
-datus run --database <your_namespace> --task "your query" --debug
+datus run --database <your_datasource> --task "your query" --debug
 
 # Save workflow state for inspection
-datus run --database <your_namespace> --task "your query" --save_dir ./debug_session
+datus run --database <your_datasource> --task "your query" --save_dir ./debug_session
 
 # Resume from saved state
 datus resume --save_dir ./debug_session

@@ -99,7 +99,7 @@ class BiDashboardCommands:
             self._configuration_manager = None
         self._adapter_registry = self._discover_adapters()
         self._force = force
-        self.db_manager = db_manager_instance(self.agent_config.namespaces)
+        self.db_manager = db_manager_instance(self.agent_config.datasource_configs)
 
     def current_datasource_context(self) -> Tuple[str, str, str]:
         current_con = self.db_manager.get_conn(self.agent_config.current_datasource)
@@ -484,7 +484,7 @@ class BiDashboardCommands:
         result: DashboardAssemblyResult,
     ) -> None:
         if not getattr(self.agent_config, "current_datasource", ""):
-            self.console.print("[yellow]No namespace set. Skipping sub-agent save.[/]")
+            self.console.print("[yellow]No datasource set. Skipping sub-agent save.[/]")
             return
 
         sub_agent_name = self._build_sub_agent_name(platform, dashboard.name or "")
@@ -535,7 +535,7 @@ class BiDashboardCommands:
 
         manager = SubAgentManager(
             configuration_manager=self._configuration_manager or configuration_manager(),
-            namespace=self.agent_config.current_datasource,
+            datasource=self.agent_config.current_datasource,
             agent_config=self.agent_config,
         )
         self._do_save_sub_agent(
@@ -959,7 +959,7 @@ class BiDashboardCommands:
             if self.cli and hasattr(self.cli, "db_manager"):
                 db_manager = self.cli.db_manager
             else:
-                db_manager = db_manager_instance(self.agent_config.namespaces)
+                db_manager = db_manager_instance(self.agent_config.datasource_configs)
 
             # Create metadata store
             metadata_store = SchemaWithValueRAG(self.agent_config)

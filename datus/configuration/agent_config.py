@@ -153,7 +153,7 @@ class DbConfig:
 class ServicesConfig:
     """Structured services configuration: datasources, semantic layer, BI tools, schedulers.
 
-    Replaces the old flat 'namespace' config. Each datasource is an independent entry.
+    Each datasource is an independent entry.
     """
 
     datasources: Dict[str, DbConfig] = field(default_factory=dict)
@@ -178,8 +178,7 @@ class ServicesConfig:
             raise DatusException(
                 ErrorCode.COMMON_FIELD_INVALID,
                 message=(
-                    "services.databases has been renamed to services.datasources in agent.yml. "
-                    "Rename the key manually or run `python -m datus.configuration.config_migrator`."
+                    "services.databases has been renamed to services.datasources in agent.yml. Rename the key manually."
                 ),
             )
         bi_platforms_raw = raw.get("bi_platforms")
@@ -198,47 +197,6 @@ class ServicesConfig:
             bi_platforms=bi_platforms_raw or {},
             schedulers=raw.get("schedulers", {}),
         )
-
-    @classmethod
-    def migrate_from_namespace(cls, namespace_config: Dict[str, Any]) -> Dict[str, Any]:
-        """Convert old namespace config format to new services.datasources format.
-
-        Old format:
-            namespace:
-              my_ns:
-                type: sqlite
-                dbs:
-                  - name: db1
-                    uri: ...
-                  - name: db2
-                    uri: ...
-
-        New format:
-            services:
-              datasources:
-                db1:
-                  type: sqlite
-                  uri: ...
-                db2:
-                  type: sqlite
-                  uri: ...
-        """
-        datasources = {}
-        for ns_name, ns_cfg in namespace_config.items():
-            if not isinstance(ns_cfg, dict):
-                continue
-            db_type = ns_cfg.get("type", "")
-            if "dbs" in ns_cfg:
-                for item in ns_cfg["dbs"]:
-                    name = item.get("name", ns_name)
-                    entry = {k: v for k, v in item.items() if k != "name"}
-                    entry["type"] = db_type
-                    datasources[name] = entry
-            elif "path_pattern" in ns_cfg:
-                datasources[ns_name] = ns_cfg
-            else:
-                datasources[ns_name] = ns_cfg
-        return {"datasources": datasources, "semantic_layer": {}, "bi_platforms": {}, "schedulers": {}}
 
 
 @dataclass
@@ -559,16 +517,9 @@ class AgentConfig:
                 # Store workflow configuration, supporting both list format and {steps: [], config: {}} format
                 self.custom_workflows[k] = v
         # Initialize services config (datasources, semantic layer, BI tools, schedulers)
-        # Supports the new 'services' format and legacy 'namespace' format with auto-migration
         services_raw = kwargs.get("services") or {}
-        namespace_raw = kwargs.get("namespace") or {}
         if not isinstance(services_raw, dict):
             services_raw = {}
-        if not isinstance(namespace_raw, dict):
-            namespace_raw = {}
-        if not services_raw and namespace_raw:
-            logger.info("Migrating legacy 'namespace' config to 'services.datasources' format")
-            services_raw = ServicesConfig.migrate_from_namespace(namespace_raw)
         self.services = ServicesConfig.from_dict(services_raw)
         self._init_services_config(services_raw.get("datasources", {}))
         self.init_semantic_layer(self.services.semantic_layer)
@@ -627,7 +578,7 @@ class AgentConfig:
         # Initialize channels configuration for Datus Gateway IM gateway
         self.channels_config: Dict[str, Any] = kwargs.get("channels", {})
 
-        # Platform documentation fetch configs (namespace-independent)
+        # Platform documentation fetch configs (datasource-independent)
         document_raw = kwargs.get("document", {}) or {}
         # Extract tavily_api_key from document config (top-level, not a platform)
         tavily_key_raw = document_raw.pop("tavily_api_key", None)
@@ -719,11 +670,11 @@ class AgentConfig:
         return self.export_config.get("max_lines", 1000)
 
     @property
-    def namespaces(self) -> Dict[str, Dict[str, DbConfig]]:
-        """Backward-compat: wraps services.datasources in old namespace structure.
+    def datasource_configs(self) -> Dict[str, Dict[str, DbConfig]]:
+        """Wraps services.datasources for DBManager consumption.
 
-        Each datasource entry becomes its own "namespace" with a single db inside,
-        so DBManager only initializes one connection per namespace key.
+        Each datasource entry becomes its own group with a single db inside,
+        so DBManager only initializes one connection per datasource key.
         """
         return {db_name: {db_name: db_config} for db_name, db_config in self.services.datasources.items()}
 
@@ -845,7 +796,7 @@ class AgentConfig:
         )
 
     def current_db_configs(self) -> Dict[str, DbConfig]:
-        """Backward-compat: returns all datasources (was namespace-scoped, now returns all)."""
+        """Returns all datasource configs."""
         return self.services.datasources
 
     def default_scheduler_service(self) -> Optional[str]:
@@ -947,10 +898,10 @@ class AgentConfig:
         config.setdefault("type", resolved_adapter)
 
         db_name = (
-            database_name or config.get("namespace") or self.current_datasource or self.services.default_datasource
+            database_name or config.get("datasource") or self.current_datasource or self.services.default_datasource
         )
         if db_name:
-            config.setdefault("namespace", db_name)
+            config.setdefault("datasource", db_name)
             db_config = _db_config_to_semantic_adapter_config(self.current_db_config(db_name))
             if db_config:
                 config.setdefault("db_config", db_config)
@@ -1082,8 +1033,7 @@ class AgentConfig:
         if kwargs.get("plan", ""):
             self.workflow_plan = kwargs["plan"]
         if kwargs.get("action", "") not in ["probe-llm", "generate-dataset", "service", "platform-doc"]:
-            # Support both --datasource (new) and --namespace (legacy) CLI args
-            db_arg = kwargs.get("datasource", "") or kwargs.get("namespace", "")
+            db_arg = kwargs.get("datasource", "")
             if db_arg:
                 self.current_datasource = db_arg
             elif self.services.default_datasource:
@@ -1413,7 +1363,7 @@ class AgentConfig:
         return os.path.join(self.rag_base_path, "datus_db")
 
     def document_storage_path(self, platform: str) -> str:
-        """Per-platform document storage path (namespace-independent).
+        """Per-platform document storage path (datasource-independent).
 
         Returns: {home}/data/document/{platform}/
         """

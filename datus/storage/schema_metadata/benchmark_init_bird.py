@@ -99,7 +99,7 @@ dir_path = os.path.dirname(os.path.dirname(current_path))
 def init_dev_schema(
     rag: SchemaWithValueRAG,
     db_manager: DBManager,
-    namespace: str,
+    datasource: str,
     bird_path: str = "benchmark/bird/dev_20240627",
     build_mode: str = "overwrite",
     pool_size: int = 4,
@@ -110,7 +110,7 @@ def init_dev_schema(
     Args:
         rag: SchemaWithValueRAG instance
         db_manager: DBManager instance
-        namespace: Database namespace
+        datasource: Database datasource
         bird_path: Path to the bird benchmark directory
         build_mode: Build mode for the schema
     """
@@ -132,7 +132,7 @@ def init_dev_schema(
                 init_dev_schema_by_db,
                 rag,
                 db_manager,
-                namespace,
+                datasource,
                 database_name,
                 db_table_keys,
                 databases_path,
@@ -149,7 +149,7 @@ def init_dev_schema(
 def init_dev_schema_by_db(
     rag: SchemaWithValueRAG,
     db_manager: DBManager,
-    namespace: str,
+    datasource: str,
     database_name: str,
     table_keys: Dict[str, Any],
     databases_path: str,
@@ -161,7 +161,7 @@ def init_dev_schema_by_db(
     logger.info(f"start init {database_name}")
     schema_result, value_result = init_db(
         db_manager,
-        namespace,
+        datasource,
         database_name,
         table_keys[database_name],
         databases_path,
@@ -174,7 +174,7 @@ def init_dev_schema_by_db(
 
 def init_db(
     db_manager: DBManager,
-    namespace: str,
+    datasource: str,
     database_name: str,
     table_keys: Dict[str, Any],
     databases_path: str,
@@ -187,7 +187,7 @@ def init_db(
     desc_path = os.path.join(db_path, "database_description")
     schema_result = []
     value_result = []
-    sql_conn = db_manager.get_conn(namespace, database_name)
+    sql_conn = db_manager.get_conn(datasource, database_name)
     for table_csv in os.listdir(desc_path):
         if not table_csv.endswith(".csv"):
             continue

@@ -599,9 +599,9 @@ class TestSaveToDb:
             node._save_to_db(str(outside))
             sync_mock.assert_not_called()
 
-    def test_save_to_db_rejects_cross_namespace_prefix(self, real_agent_config, mock_llm_create):
-        """LLM-emitted cross-namespace prefix must be refused so a node can't
-        overwrite another namespace's KB via a fabricated final JSON."""
+    def test_save_to_db_rejects_cross_datasource_prefix(self, real_agent_config, mock_llm_create):
+        """LLM-emitted cross-datasource prefix must be refused so a node can't
+        overwrite another datasource's KB via a fabricated final JSON."""
         from unittest.mock import patch
 
         node = _make_node(real_agent_config, mock_llm_create)

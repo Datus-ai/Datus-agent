@@ -151,24 +151,6 @@ class TestLoadExistingConfig:
 
         assert cfg.datasources["my_db"]["type"] == "sqlite"
 
-    def test_legacy_namespace_format_auto_migrates(self, tmp_path):
-        raw = {
-            "agent": {
-                "namespace": {"legacy_db": {"type": "duckdb", "uri": "legacy.duckdb"}},
-            }
-        }
-        (tmp_path / "agent.yml").write_text(yaml.dump(raw), encoding="utf-8")
-
-        migrated = {"datasources": {"legacy_db": {"type": "duckdb", "uri": "legacy.duckdb"}}}
-        with patch(
-            "datus.configuration.agent_config.ServicesConfig.migrate_from_namespace",
-            return_value=migrated,
-        ):
-            cfg = _make_configure(tmp_path)
-            cfg._load_existing_config()
-
-        assert "legacy_db" in cfg.datasources
-
     def test_missing_config_file_leaves_empty_state(self, tmp_path):
         cfg = _make_configure(tmp_path)
         cfg.config_path = tmp_path / "nonexistent.yml"
@@ -451,20 +433,6 @@ class TestSave:
         assert saved["agent"]["providers"] == raw["agent"]["providers"]
         assert saved["agent"]["models"] == raw["agent"]["models"]
         assert "d" in saved["agent"]["services"]["datasources"]
-
-    def test_save_removes_legacy_namespace_key(self, tmp_path):
-        raw = {
-            "agent": {
-                "namespace": {"ns1": {"type": "duckdb"}},
-                "services": {"datasources": {}, "semantic_layer": {}, "bi_platforms": {}, "schedulers": {}},
-            }
-        }
-        cfg = _make_configure(tmp_path)
-        cfg.config_path.write_text(yaml.dump(raw), encoding="utf-8")
-        cfg.datasources = {"d": {"type": "sqlite", "uri": "x"}}
-        cfg._save()
-        saved = yaml.safe_load(cfg.config_path.read_text(encoding="utf-8"))
-        assert "namespace" not in saved["agent"]
 
     def test_save_sets_default_nodes_when_absent(self, tmp_path):
         cfg = _make_configure(tmp_path)

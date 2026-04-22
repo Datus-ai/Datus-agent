@@ -16,7 +16,7 @@ class TestPlanning:
     def mock_agent_config(self):
         """Create a mock agent config."""
         config = MagicMock(spec=AgentConfig)
-        config.namespaces = {"test_db": {"type": "duckdb", "database": ":memory:"}}
+        config.datasource_configs = {"test_db": {"type": "duckdb", "database": ":memory:"}}
         config.custom_workflows = {}
         config.workflow_plan = "reflection"
         config.schema_linking_rate = "fast"

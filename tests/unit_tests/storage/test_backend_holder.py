@@ -58,7 +58,7 @@ class _StubRdbBackend(BaseRdbBackend):
     def initialize(self, config):
         _StubRdbBackend.last_config = config
 
-    def connect(self, namespace, store_db_name):
+    def connect(self, datasource, store_db_name):
         return _StubRdbDatabase()
 
     def close(self):

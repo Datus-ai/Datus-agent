@@ -10,7 +10,7 @@ class TestDatabaseConnectivity:
         """Test database connectivity test for StarRocks success."""
         config_data = {
             "type": "starrocks",
-            "name": "test_namespace",
+            "name": "test_datasource",
             "host": "127.0.0.1",
             "port": 9030,
             "username": "test_user",
@@ -34,7 +34,7 @@ class TestDatabaseConnectivity:
         """Test database connectivity test failure."""
         config_data = {
             "type": "starrocks",
-            "name": "test_namespace",
+            "name": "test_datasource",
             "host": "127.0.0.1",
             "port": 9030,
             "username": "test_user",
@@ -57,7 +57,7 @@ class TestDatabaseConnectivity:
         """Test database connectivity test with exception."""
         config_data = {
             "type": "starrocks",
-            "name": "test_namespace",
+            "name": "test_datasource",
             "host": "127.0.0.1",
             "port": 9030,
             "username": "test_user",

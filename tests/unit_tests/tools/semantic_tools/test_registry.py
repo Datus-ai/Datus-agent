@@ -128,7 +128,7 @@ class TestSemanticAdapterRegistry:
         SemanticAdapterRegistry.register("defaultservice", adapter_class, factory=factory)
 
         config = MagicMock()
-        config.namespace = "ns"
+        config.datasource = "ns"
         instance = SemanticAdapterRegistry.create_adapter("defaultservice", config)
         factory.assert_called_once_with(config)
         assert instance is expected_instance
@@ -144,7 +144,7 @@ class TestSemanticAdapterRegistry:
         factory = MagicMock(return_value=expected_instance)
         SemanticAdapterRegistry.register("caseservice", adapter_class, factory=factory)
         config = MagicMock()
-        config.namespace = "ns"
+        config.datasource = "ns"
         instance = SemanticAdapterRegistry.create_adapter("CaseService", config)
         factory.assert_called_once_with(config)
         assert instance is expected_instance

@@ -38,7 +38,7 @@ agent:
 
 ## Output Format
 
-Trace files are saved in the `trajectory_dir/{task_id}/` directory (`trajectory_dir` is the configured trace output base directory, typically `{agent.home}/trajectory/{namespace}/{timestamp}/`), with each node generating a `{node_id}.yml` file.
+Trace files are saved in the `trajectory_dir/{task_id}/` directory (`trajectory_dir` is the configured trace output base directory, typically `{agent.home}/trajectory/{datasource}/{timestamp}/`), with each node generating a `{node_id}.yml` file.
 
 ### YAML File Structure
 

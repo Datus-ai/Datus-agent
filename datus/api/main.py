@@ -150,7 +150,7 @@ def _status(pid_file: Path) -> int:
 
 def _build_agent_args(args: argparse.Namespace) -> argparse.Namespace:
     return argparse.Namespace(
-        namespace=args.namespace,
+        datasource=args.datasource,
         config=args.config,
         max_steps=args.max_steps,
         workflow=args.workflow,
@@ -220,10 +220,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Agent configuration file (default: ./conf/agent.yml > ~/.datus/conf/agent.yml)",
     )
     parser.add_argument(
-        "--namespace",
+        "--datasource",
         type=str,
-        default=os.getenv("DATUS_NAMESPACE", "default"),
-        help="Namespace of databases or benchmark (default: DATUS_NAMESPACE env or 'default')",
+        default=os.getenv("DATUS_DATASOURCE", "default"),
+        help="Datasource identifier (default: DATUS_DATASOURCE env or 'default')",
     )
     parser.add_argument(
         "--output-dir",
@@ -340,7 +340,7 @@ def main():
     args.config = config_path
 
     os.environ["DATUS_CONFIG"] = config_path
-    os.environ["DATUS_NAMESPACE"] = args.namespace
+    os.environ["DATUS_DATASOURCE"] = args.datasource
     os.environ["DATUS_OUTPUT_DIR"] = args.output_dir
     os.environ["DATUS_LOG_LEVEL"] = args.log_level
 
@@ -379,7 +379,7 @@ def main():
 
     logger.info(f"Starting Datus Agent API server on {args.host}:{args.port}")
     logger.info(f"Workers: {args.workers}, Reload: {args.reload}, Debug: {args.debug}")
-    logger.info(f"Agent config - Namespace: {args.namespace}, Config: {args.config}")
+    logger.info(f"Agent config - Datasource: {args.datasource}, Config: {args.config}")
     agent_args = _build_agent_args(args)
     _run_server(args, agent_args)
 

@@ -304,7 +304,7 @@ class TestChannelBridge:
 
         task_manager.consume_events = _fake_consume
 
-        cfg = ChannelConfig(adapter="feishu", namespace="prod", subagent_id="agent_x")
+        cfg = ChannelConfig(adapter="feishu", datasource="prod", subagent_id="agent_x")
         await bridge.handle_message(_make_inbound("test"), adapter, channel_config=cfg)
 
         call_args = task_manager.start_chat.call_args

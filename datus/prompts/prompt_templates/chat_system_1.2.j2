@@ -68,8 +68,8 @@ Current context:
 {% if current_date -%}
 - Current date: {{ current_date }}
 {% endif -%}
-{% if namespace -%}
-- Database: {{ namespace }}
+{% if datasource -%}
+- Database: {{ datasource }}
 {% endif -%}
 {% if workspace_root -%}
 - Current sql files root directory: {{ workspace_root }}

@@ -250,13 +250,13 @@ codex:
 
 ```yaml
 scoped_context:
-  namespace: finance
+  datasource: finance
   tables: mart.finance_daily, mart.finance_budget
   metrics: finance.revenue.daily_revenue
   sqls: finance.revenue.region_rollup
 ```
 
-手工写 YAML 时请显式填写 `namespace`。`/subagent` 向导会自动从当前数据库填充该值。
+手工写 YAML 时请显式填写 `datasource`。`/subagent` 向导会自动从当前数据库填充该值。
 
 ### 示例
 
@@ -279,7 +279,7 @@ agent:
       subagents: explore, gen_sql
       max_turns: 30
       scoped_context:
-        namespace: finance
+        datasource: finance
         tables: mart.finance_daily
         metrics: finance.revenue.daily_revenue
         sqls: finance.revenue.region_rollup

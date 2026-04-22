@@ -1015,28 +1015,6 @@ class TestServiceManagerSaveConfiguration:
         assert "logic_name" not in pg_entry
         assert "path_pattern" not in pg_entry
 
-    def test_save_configuration_removes_legacy_namespace_key(self):
-        """_save_configuration() removes legacy 'namespace' key when present."""
-        db_cfg = _make_db_config(db_type="sqlite", uri="data/db.sqlite")
-        mock_config = _make_agent_config({"main_db": db_cfg})
-
-        mock_cm = MagicMock()
-        mock_cm.data = {"namespace": {"old_db": {}}, "services": {}}
-
-        with (
-            patch("datus.cli.service_manager.load_agent_config", return_value=mock_config),
-            patch("datus.cli.service_manager.configuration_manager", return_value=mock_cm),
-            patch("datus.cli.service_manager.console"),
-        ):
-            from datus.cli.service_manager import ServiceManager
-
-            sm = ServiceManager("agent.yml")
-            result = sm._save_configuration()
-
-        assert result is True
-        assert "namespace" not in mock_cm.data
-        mock_cm.save.assert_called_once()
-
     def test_save_configuration_with_default_db_includes_default_flag(self):
         """_save_configuration() includes 'default: True' in output when db has default=True."""
         db_cfg = _make_db_config(db_type="sqlite", uri="data/db.sqlite", default=True)

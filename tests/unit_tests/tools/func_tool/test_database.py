@@ -531,7 +531,7 @@ class TestExecuteDDLDatabaseParam:
 
         tool = self._make_tool(mock_connector)
         with patch.object(tool, "_get_connector", return_value=mock_connector) as mock_get:
-            tool.execute_ddl("CREATE TABLE t (id INT)", database="greenplum")
+            tool.execute_ddl("CREATE TABLE t (id INT)", datasource="greenplum")
             mock_get.assert_called_once_with("greenplum")
 
     def test_execute_ddl_without_database_uses_default(self):
@@ -556,9 +556,9 @@ class TestExecuteDDLDatabaseParam:
         mock_connector.execute_ddl.return_value = ddl_result
 
         tool = self._make_tool(mock_connector)
-        result = tool.execute_ddl("CREATE TABLE t (id INT)", database="greenplum")
+        result = tool.execute_ddl("CREATE TABLE t (id INT)", datasource="greenplum")
         assert result.success == 1
-        assert "database" in result.result
+        assert "datasource" in result.result
 
 
 class TestGetConnectorRouting:
@@ -625,7 +625,7 @@ class TestGetConnectorRouting:
             tool = DBFuncTool(
                 mock_db_manager,
                 agent_config=mock_config,
-                default_database="duckdb",
+                default_datasource="duckdb",
             )
 
         # Verify multi-connector mode is active
@@ -638,8 +638,8 @@ class TestGetConnectorRouting:
         assert conn_target is mock_target
         assert conn_source is not conn_target
 
-    def test_multi_connector_defaults_coordinate_database_to_logical_name(self):
-        """When database is omitted, table coordinates should use the logical default database key."""
+    def test_multi_connector_defaults_coordinate_database_to_physical_name(self):
+        """When database is omitted, table coordinates should use the connector's physical database name, not the datasource."""
         from datus.tools.db_tools.db_manager import DBManager
 
         mock_source = Mock()
@@ -665,13 +665,13 @@ class TestGetConnectorRouting:
             tool = DBFuncTool(
                 mock_db_manager,
                 agent_config=mock_config,
-                default_database="duckdb",
+                default_datasource="duckdb",
             )
 
         coordinate = tool._build_table_coordinate("orders")
 
         assert tool._is_multi_connector is True
-        assert coordinate.database == "duckdb"
+        assert coordinate.database == "PHYSICAL_DB"
 
     def test_explicit_database_raises_when_not_configured(self):
         """When caller explicitly passes a database that doesn't exist, raise DatusException (no silent fallback)."""
@@ -696,13 +696,13 @@ class TestGetConnectorRouting:
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
-            tool = DBFuncTool(mock_db_manager, agent_config=mock_config, default_database="default_db")
+            tool = DBFuncTool(mock_db_manager, agent_config=mock_config, default_datasource="default_db")
 
         with pytest.raises(DatusException, match="not configured"):
             tool._get_connector("unknown_db")
 
-    def test_default_database_fallback_to_namespace(self):
-        """When using default database (no explicit param) and direct lookup fails, fallback to namespace."""
+    def test_default_datasource_fallback(self):
+        """When using default database (no explicit param) and direct lookup fails, fallback to datasource."""
         from datus.tools.db_tools.db_manager import DBManager
 
         mock_connector = Mock()
@@ -710,7 +710,7 @@ class TestGetConnectorRouting:
         mock_connector.get_databases.return_value = []
 
         mock_db_manager = Mock(spec=DBManager)
-        # First call (db_name, db_name) raises, second call (namespace, db_name) succeeds
+        # First call (db_name, db_name) raises, second call (datasource, db_name) succeeds
         mock_db_manager.get_conn.side_effect = [KeyError("not found"), mock_connector]
         mock_db_manager.first_conn.return_value = mock_connector
 
@@ -725,7 +725,7 @@ class TestGetConnectorRouting:
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
-            tool = DBFuncTool(mock_db_manager, agent_config=mock_config, default_database="default_db")
+            tool = DBFuncTool(mock_db_manager, agent_config=mock_config, default_datasource="default_db")
 
         # Empty string = use default database, fallback is allowed
         conn = tool._get_connector("")
@@ -762,7 +762,7 @@ class TestGetConnectorRouting:
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
-            tool = DBFuncTool(mock_db_manager, agent_config=mock_config, default_database=list(databases.keys())[0])
+            tool = DBFuncTool(mock_db_manager, agent_config=mock_config, default_datasource=list(databases.keys())[0])
         assert tool._is_multi_connector is True
 
         result = tool.list_databases()
@@ -788,13 +788,13 @@ class TestTransferQueryResult:
             mock_sem.return_value.get_size.return_value = 0
             tool = DBFuncTool(source_connector)
 
-        def get_connector(database=None):
-            if database == "target_db":
+        def get_connector(datasource=None):
+            if datasource == "target_db":
                 return target_connector
             return source_connector
 
         tool._get_connector = Mock(side_effect=get_connector)
-        tool._default_database = default_db
+        tool._default_datasource = default_db
         return tool
 
     def _make_source_connector(self, df):
@@ -836,9 +836,9 @@ class TestTransferQueryResult:
         tool = self._make_multi_tool(source, target)
         result = tool.transfer_query_result(
             source_sql="SELECT * FROM users",
-            source_database="source_db",
+            source_datasource="source_db",
             target_table="tgt.users",
-            target_database="target_db",
+            target_datasource="target_db",
             mode="replace",
             batch_size=5000,
         )
@@ -860,9 +860,9 @@ class TestTransferQueryResult:
         tool = self._make_multi_tool(source, target)
         result = tool.transfer_query_result(
             source_sql="SELECT * FROM users",
-            source_database="source_db",
+            source_datasource="source_db",
             target_table="tgt.users",
-            target_database="target_db",
+            target_datasource="target_db",
             mode="append",
         )
 
@@ -881,9 +881,9 @@ class TestTransferQueryResult:
         tool = self._make_multi_tool(source, target)
         result = tool.transfer_query_result(
             source_sql="SELECT * FROM empty_table",
-            source_database="source_db",
+            source_datasource="source_db",
             target_table="tgt.t",
-            target_database="target_db",
+            target_datasource="target_db",
             mode="replace",
         )
 
@@ -902,9 +902,9 @@ class TestTransferQueryResult:
 
         result = tool.transfer_query_result(
             source_sql="SELECT bad syntax",
-            source_database="source_db",
+            source_datasource="source_db",
             target_table="tgt.t",
-            target_database="target_db",
+            target_datasource="target_db",
         )
 
         assert result.success == 0
@@ -931,9 +931,9 @@ class TestTransferQueryResult:
 
         result = tool.transfer_query_result(
             source_sql="SELECT * FROM huge",
-            source_database="source_db",
+            source_datasource="source_db",
             target_table="tgt.t",
-            target_database="target_db",
+            target_datasource="target_db",
         )
 
         assert result.success == 0
@@ -949,9 +949,9 @@ class TestTransferQueryResult:
         tool = self._make_multi_tool(source, target)
         result = tool.transfer_query_result(
             source_sql="SELECT 1",
-            source_database="source_db",
+            source_datasource="source_db",
             target_table="tgt.t",
-            target_database="target_db",
+            target_datasource="target_db",
             mode="upsert",
         )
 
@@ -968,9 +968,9 @@ class TestTransferQueryResult:
         tool = self._make_multi_tool(source, target)
         tool.transfer_query_result(
             source_sql="SELECT * FROM t",
-            source_database="source_db",
+            source_datasource="source_db",
             target_table="tgt.t",
-            target_database="target_db",
+            target_datasource="target_db",
             mode="append",
         )
 
@@ -993,9 +993,9 @@ class TestTransferQueryResult:
         tool = self._make_multi_tool(source, target)
         result = tool.transfer_query_result(
             source_sql="SELECT * FROM t",
-            source_database="source_db",
+            source_datasource="source_db",
             target_table="tgt.t",
-            target_database="target_db",
+            target_datasource="target_db",
             mode="append",
             batch_size=5,  # Force 2 batches
         )
@@ -1016,9 +1016,9 @@ class TestTransferQueryResult:
         tool = self._make_multi_tool(source, target)
         result = tool.transfer_query_result(
             source_sql="SELECT 1",
-            source_database="source_db",
+            source_datasource="source_db",
             target_table="tgt.t",
-            target_database="target_db",
+            target_datasource="target_db",
             mode="replace",
         )
 
@@ -1035,9 +1035,9 @@ class TestTransferQueryResult:
         tool = self._make_multi_tool(source, target)
         result = tool.transfer_query_result(
             source_sql="SELECT 1",
-            source_database="source_db",
+            source_datasource="source_db",
             target_table="tgt.t",
-            target_database="target_db",
+            target_datasource="target_db",
         )
 
         assert result.success == 0
@@ -1054,9 +1054,9 @@ class TestTransferQueryResult:
         tool = self._make_multi_tool(source, target)
         result = tool.transfer_query_result(
             source_sql="SELECT 1",
-            source_database="source_db",
+            source_datasource="source_db",
             target_table="tgt.t",
-            target_database="target_db",
+            target_datasource="target_db",
             batch_size=0,
         )
 
@@ -1076,15 +1076,15 @@ class TestTransferQueryResult:
         for bad_name in ["users; DROP TABLE x", "123bad", "table name with spaces"]:
             result = tool.transfer_query_result(
                 source_sql="SELECT 1",
-                source_database="source_db",
+                source_datasource="source_db",
                 target_table=bad_name,
-                target_database="target_db",
+                target_datasource="target_db",
             )
             assert result.success == 0, f"Expected rejection for target_table='{bad_name}'"
             assert "invalid" in result.error.lower() or "identifier" in result.error.lower()
 
     def test_transfer_target_connector_raises_returns_error(self):
-        """When _get_connector raises for target_database, should return success=0."""
+        """When _get_connector raises for target_datasource, should return success=0."""
         source = Mock()
         source.dialect = "duckdb"
         source.get_databases.return_value = []
@@ -1097,19 +1097,19 @@ class TestTransferQueryResult:
             mock_sem.return_value.get_size.return_value = 0
             tool = DBFuncTool(source)
 
-        def get_connector(database=None):
-            if database == "target_db":
+        def get_connector(datasource=None):
+            if datasource == "target_db":
                 raise ConnectionError("target adapter not installed")
             return source
 
         tool._get_connector = Mock(side_effect=get_connector)
-        tool._default_database = "source_db"
+        tool._default_datasource = "source_db"
 
         result = tool.transfer_query_result(
             source_sql="SELECT 1",
-            source_database="source_db",
+            source_datasource="source_db",
             target_table="tgt.t",
-            target_database="target_db",
+            target_datasource="target_db",
         )
 
         assert result.success == 0

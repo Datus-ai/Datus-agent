@@ -37,12 +37,12 @@
 你可以使用 `datus-agent bootstrap-kb` 命令构建：
 
 ```bash
-datus-agent bootstrap-kb --namespace <your_namespace> --kb_update_strategy [check/overwrite/incremental]
+datus-agent bootstrap-kb --datasource <your_datasource> --kb_update_strategy [check/overwrite/incremental]
 ```
 
 ### 命令行参数说明
 
-- `--namespace`：你的数据库配置对应的键
+- `--datasource`：你的数据库配置对应的键
 - `--kb_update_strategy`：执行策略，有三个选项：
     - `check`：检查当前构建的数据条目数
     - `overwrite`：完全覆盖现有数据
@@ -52,17 +52,17 @@ datus-agent bootstrap-kb --namespace <your_namespace> --kb_update_strategy [chec
 
 ### 检查当前状态
 ```bash
-datus-agent bootstrap-kb --namespace <your_namespace> --kb_update_strategy check
+datus-agent bootstrap-kb --datasource <your_datasource> --kb_update_strategy check
 ```
 
 ### 完全重建
 ```bash
-datus-agent bootstrap-kb --namespace <your_namespace> --kb_update_strategy overwrite
+datus-agent bootstrap-kb --datasource <your_datasource> --kb_update_strategy overwrite
 ```
 
 ### 增量更新
 ```bash
-datus-agent bootstrap-kb --namespace <your_namespace> --kb_update_strategy incremental
+datus-agent bootstrap-kb --datasource <your_datasource> --kb_update_strategy incremental
 ```
 
 ## 最佳实践

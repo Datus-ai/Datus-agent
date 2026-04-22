@@ -50,7 +50,7 @@ The wizard supports scoped values for:
 - `metrics`
 - `sqls`
 
-When the wizard saves the config, it also records the current database as `scoped_context.namespace`.
+When the wizard saves the config, it also records the current database as `scoped_context.datasource`.
 
 ### Step 4: Rules
 
@@ -127,7 +127,7 @@ agent:
       rules:
         - Prefer existing finance metrics before generating new SQL
       scoped_context:
-        namespace: finance
+        datasource: finance
         tables: mart.finance_daily
         metrics: finance.revenue.daily_revenue
         sqls: finance.revenue.region_rollup

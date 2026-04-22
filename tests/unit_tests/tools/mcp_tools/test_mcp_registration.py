@@ -342,13 +342,13 @@ class TestToolContext:
         mock_ctx_tool = MagicMock()
 
         context = ToolContext(
-            namespace="test_ns",
+            datasource="test_ns",
             subagent=None,
             agent_config=MagicMock(),
             tools={"db_tool": mock_db, "context_tool": mock_ctx_tool},
         )
 
-        assert context.namespace == "test_ns"
+        assert context.datasource == "test_ns"
         assert context.subagent is None
         assert context.db_tool is mock_db
         assert context.context_tool is mock_ctx_tool
@@ -359,7 +359,7 @@ class TestToolContext:
         from datus.mcp_server import ToolContext
 
         context = ToolContext(
-            namespace="test_ns",
+            datasource="test_ns",
             subagent=None,
             agent_config=MagicMock(),
             tools={"db_tool": None, "context_tool": None},
@@ -375,7 +375,7 @@ class TestToolContext:
         mock_tool.connector = MagicMock()
 
         context = ToolContext(
-            namespace="test_ns",
+            datasource="test_ns",
             subagent=None,
             agent_config=MagicMock(),
             tools={"db_tool": mock_tool},

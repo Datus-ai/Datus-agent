@@ -295,7 +295,7 @@ class TestDBManager:
         with mgr as m:
             assert m is mgr
 
-    def test_missing_namespace_raises(self):
+    def test_missing_datasource_raises(self):
         mgr = DBManager({})
         with pytest.raises(DatusException):
             mgr.get_conn("nonexistent")

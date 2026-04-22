@@ -39,7 +39,7 @@ All slash commands available in Datus-CLI, grouped by category.
 |---------|-------------|
 | `/agent` | Select or inspect the default agent |
 | `/subagent` | Manage sub-agents (list/add/remove/update) |
-| `/namespace` | Switch the current namespace |
+| `/datasource` | Switch the current datasource |
 
 ## System
 

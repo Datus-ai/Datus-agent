@@ -8,9 +8,9 @@ The Datus Web Chatbot provides a user-friendly web interface for interacting wit
 
 ### Launch the Web Interface
 
-**With Namespace**:
+**With Datasource**:
 ```bash
-datus --web --database <your_namespace>
+datus --web --database <your_datasource>
 ```
 
 **With Custom Configuration**:
@@ -139,4 +139,4 @@ The Datus Web Chatbot provides:
 - **Success Tracking**: Mark and collect effective queries
 - **Easy Sharing**: One-click session link copying
 - **Visual Execution**: See step-by-step query generation
-- **Multi-Namespace Support**: Switch between databases easily
+- **Multi-Datasource Support**: Switch between databases easily

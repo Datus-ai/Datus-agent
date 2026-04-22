@@ -229,7 +229,7 @@ class KbService:
             logger.info("Truncated schema metadata tables for overwrite")
 
         store = SchemaWithValueRAG(config)
-        db_manager = DBManager(config.namespaces)
+        db_manager = DBManager(config.datasource_configs)
         init_local_schema(
             store,
             config,

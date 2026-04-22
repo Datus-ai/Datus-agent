@@ -37,7 +37,7 @@ class SearchTool(BaseTool):
         """Get document store for a specific platform.
 
         Each platform gets an isolated vector database via a dedicated
-        namespace (``docstore__{platform}``).  Returns ``None`` when the
+        store name (``docstore__{platform}``).  Returns ``None`` when the
         store has no data (table does not exist or is empty).
 
         Args:

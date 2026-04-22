@@ -126,7 +126,7 @@ class GenerationHooks(AgentHooks):
     """Hooks for handling generation tool results and user interaction."""
 
     # Mapping: generation kind → path_manager method name.
-    # Looked up lazily per call so sub-agent namespace switches are honored.
+    # Looked up lazily per call so sub-agent datasource switches are honored.
     _BASE_DIR_RESOLVERS = {
         "semantic": "semantic_model_path",
         "sql_summary": "sql_summary_path",
@@ -141,7 +141,7 @@ class GenerationHooks(AgentHooks):
             broker: InteractionBroker for async user interactions
             agent_config: Agent configuration for storage access. Base directories
                 for relative path resolution are looked up on this config at call
-                time so sub-agent namespace switches take effect without rebuilding
+                time so sub-agent datasource switches take effect without rebuilding
                 the hook.
         """
         self.broker = broker

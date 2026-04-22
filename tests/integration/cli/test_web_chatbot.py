@@ -48,9 +48,9 @@ class TestConfigManagerIntegration:
         assert datasources == []
 
     def test_create_cli_args(self):
-        """W1-03: create_cli_args generates correct argument namespace."""
-        args = create_cli_args(config_path=TESTS_CONF, namespace="ssb_sqlite")
-        assert args.namespace == "ssb_sqlite"
+        """W1-03: create_cli_args generates correct argument datasource."""
+        args = create_cli_args(config_path=TESTS_CONF, datasource="ssb_sqlite")
+        assert args.datasource == "ssb_sqlite"
         assert args.non_interactive is True
         assert hasattr(args, "config")
         assert hasattr(args, "storage_path")
@@ -58,7 +58,7 @@ class TestConfigManagerIntegration:
     def test_setup_config_and_models(self):
         """W1-04: ConfigManager.setup_config returns DatusCLI with models available."""
         cm = ConfigManager()
-        cli = cm.setup_config(config_path=TESTS_CONF, namespace="ssb_sqlite")
+        cli = cm.setup_config(config_path=TESTS_CONF, datasource="ssb_sqlite")
 
         assert cli is not None, "setup_config should return a DatusCLI instance"
         assert cm.cli is cli

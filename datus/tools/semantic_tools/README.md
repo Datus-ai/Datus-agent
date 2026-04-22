@@ -175,7 +175,7 @@ class MetricFlowAdapter(BaseSemanticAdapter):
     def __init__(self, config):
         super().__init__(config, service_type="metricflow")
         self.cli_path = config.cli_path
-        self.namespace = config.namespace
+        self.datasource = config.datasource
         self.timeout = config.timeout
 
     # Semantic Model Interface (Optional)
@@ -198,14 +198,14 @@ class MetricFlowAdapter(BaseSemanticAdapter):
         offset: int = 0,
     ) -> List[MetricDefinition]:
         """
-        Call: mf --namespace {namespace} list-metrics
+        Call: mf --datasource {datasource} list-metrics
         Parse output and convert to MetricDefinition objects.
         """
         cmd = [self.cli_path]
 
-        # Add namespace parameter
-        if self.namespace:
-            cmd.extend(["--namespace", self.namespace])
+        # Add datasource parameter
+        if self.datasource:
+            cmd.extend(["--datasource", self.datasource])
 
         cmd.append("list-metrics")
 
@@ -239,12 +239,12 @@ class MetricFlowAdapter(BaseSemanticAdapter):
         path: Optional[List[str]] = None,
     ) -> List[str]:
         """
-        Call: mf --namespace {namespace} list-dimensions --metric-names {metric_name}
+        Call: mf --datasource {datasource} list-dimensions --metric-names {metric_name}
         Parse and return dimension names.
         """
         cmd = [self.cli_path]
-        if self.namespace:
-            cmd.extend(["--namespace", self.namespace])
+        if self.datasource:
+            cmd.extend(["--datasource", self.datasource])
         cmd.extend(["list-dimensions", "--metric-names", metric_name])
 
         proc = await asyncio.create_subprocess_exec(
@@ -271,13 +271,13 @@ class MetricFlowAdapter(BaseSemanticAdapter):
         dry_run: bool = False,
     ) -> QueryResult:
         """
-        Build and execute: mf --namespace {namespace} query --metrics m1,m2 --group-by d1,d2 ...
+        Build and execute: mf --datasource {datasource} query --metrics m1,m2 --group-by d1,d2 ...
         For dry_run=True, use --explain flag.
         """
         cmd = [self.cli_path]
 
-        if self.namespace:
-            cmd.extend(["--namespace", self.namespace])
+        if self.datasource:
+            cmd.extend(["--datasource", self.datasource])
 
         cmd.append("query")
 
@@ -328,16 +328,16 @@ class MetricFlowAdapter(BaseSemanticAdapter):
 
     async def validate_semantic(self) -> ValidationResult:
         """
-        Call: mf --namespace {namespace} validate-configs
+        Call: mf --datasource {datasource} validate-configs
         Check configuration validity.
 
         Note: datus-metricflow automatically finds semantic model files at:
-        {agent.home}/semantic_models/{namespace}/
+        {agent.home}/semantic_models/{datasource}/
         """
         cmd = [self.cli_path]
 
-        if self.namespace:
-            cmd.extend(["--namespace", self.namespace])
+        if self.datasource:
+            cmd.extend(["--datasource", self.datasource])
 
         cmd.append("validate-configs")
 
@@ -385,7 +385,7 @@ from pydantic import BaseModel, Field
 
 class SemanticAdapterConfig(BaseModel):
     """Base configuration for semantic adapters."""
-    namespace: str = Field(..., description="Namespace for this semantic layer instance")
+    datasource: str = Field(..., description="Datasource for this semantic layer instance")
     service_type: str = Field(default="metricflow", description="Type of semantic service")
 
 class MetricFlowConfig(SemanticAdapterConfig):
@@ -399,7 +399,7 @@ class MetricFlowConfig(SemanticAdapterConfig):
 ```
 
 **Note**: For datus-metricflow, the semantic model files are automatically located at:
-- `{agent.home}/semantic_models/{namespace}/`
+- `{agent.home}/semantic_models/{datasource}/`
 - `agent.home` is read from `agent.yml` config (defaults to `~/.datus`)
 
 ### Step 4: Create Registration Function
@@ -466,14 +466,14 @@ The adapter will be automatically discovered via entry points!
 ```bash
 # Pull semantic models from MetricFlow
 datus-agent bootstrap-kb \
-  --namespace my_project \
+  --datasource my_project \
   --components semantic_model \
   --from_adapter metricflow \
   --kb-update-strategy overwrite
 
 # Pull metrics from MetricFlow with subject tree categorization
 datus-agent bootstrap-kb \
-  --namespace my_project \
+  --datasource my_project \
   --components metrics \
   --from_adapter metricflow \
   --subject-path "Finance,Sales,Operations" \
@@ -514,15 +514,15 @@ from datus.tools.semantic_tools import semantic_adapter_registry
 from datus_semantic_metricflow.config import MetricFlowConfig
 
 config = MetricFlowConfig(
-    namespace="my_project",
+    datasource="my_project",
     cli_path="mf",
 )
 
 adapter = semantic_adapter_registry.create_adapter("metricflow", config)
 
-# Or let Datus auto-create config from namespace
+# Or let Datus auto-create config from datasource
 metadata = semantic_adapter_registry.get_metadata("metricflow")
-config = metadata.config_class(namespace="my_project")
+config = metadata.config_class(datasource="my_project")
 adapter = semantic_adapter_registry.create_adapter("metricflow", config)
 
 # List metrics
@@ -592,7 +592,7 @@ from datus_semantic_metricflow.config import MetricFlowConfig
 @pytest.mark.asyncio
 async def test_list_metrics():
     config = MetricFlowConfig(
-        namespace="test",
+        datasource="test",
         cli_path="mf",
     )
     adapter = MetricFlowAdapter(config)
@@ -603,7 +603,7 @@ async def test_list_metrics():
 
 @pytest.mark.asyncio
 async def test_query_metrics():
-    config = MetricFlowConfig(namespace="test")
+    config = MetricFlowConfig(datasource="test")
     adapter = MetricFlowAdapter(config)
 
     result = await adapter.query_metrics(
@@ -621,8 +621,8 @@ async def test_query_metrics():
 
 The MetricFlow adapter uses datus-metricflow CLI which automatically finds semantic model files:
 
-1. **Namespace parameter**: Required, used to locate files
-2. **Model path resolution**: `{agent.home}/semantic_models/{namespace}/`
+1. **Datasource parameter**: Required, used to locate files
+2. **Model path resolution**: `{agent.home}/semantic_models/{datasource}/`
    - `agent.home` is read from `agent.yml` (defaults to `~/.datus`)
    - No need to specify `project_root` manually
 
@@ -637,7 +637,7 @@ The MetricFlow adapter uses datus-metricflow CLI which automatically finds seman
 agent:
   home: /Users/myuser/.datus  # Optional, defaults to ~/.datus
 
-namespaces:
+datasources:
   starrocks:
     - name: starrocks_db
       type: starrocks

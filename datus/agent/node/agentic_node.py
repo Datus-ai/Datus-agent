@@ -339,7 +339,7 @@ class AgenticNode(Node):
                 version=version,
                 # Add common template variables
                 agent_config=self.agent_config,
-                namespace=getattr(self.agent_config, "current_datasource", None) if self.agent_config else None,
+                datasource=getattr(self.agent_config, "current_datasource", None) if self.agent_config else None,
                 workspace_root=root_path,  # DEPRECATED: Use semantic_model_dir or sql_summary_dir instead
                 # Add conversation summary if available
                 conversation_summary=conversation_summary,

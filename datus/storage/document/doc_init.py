@@ -235,11 +235,11 @@ def init_platform_docs(
         import warnings
 
         warnings.warn(
-            "db_path is deprecated and ignored; document_store now uses namespace-based isolation",
+            "db_path is deprecated and ignored; document_store now uses datasource-based isolation",
             DeprecationWarning,
             stacklevel=2,
         )
-        logger.warning("db_path is deprecated and ignored; document_store now uses namespace-based isolation")
+        logger.warning("db_path is deprecated and ignored; document_store now uses datasource-based isolation")
 
     source = cfg.source or ""
     source_type = cfg.type

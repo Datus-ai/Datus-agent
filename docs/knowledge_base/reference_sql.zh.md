@@ -27,7 +27,7 @@ Bootstrap-KB Reference SQL是一个强大的组件，用于处理、分析和索
 ```bash
 # 初始化Reference SQL组件
 datus-agent bootstrap-kb \
-    --namespace <your_namespace> \
+    --datasource <your_datasource> \
     --components reference_sql \
     --sql_dir /path/to/sql/directory \
     --kb_update_strategy overwrite
@@ -37,7 +37,7 @@ datus-agent bootstrap-kb \
 
 | 参数 | 必需 | 描述 | 示例 |
 |-----------|----------|-------------|------------|
-| `--namespace` | ✅ | 数据库命名空间 | `analytics_db` |
+| `--datasource` | ✅ | 数据库数据源 | `analytics_db` |
 | `--components` | ✅ | 要初始化的组件 | `reference_sql` |
 | `--sql_dir` | ✅ | 包含 SQL 文件的目录 | `/sql/queries` |
 | `--kb_update_strategy` | ✅ | 更新策略 | `overwrite`/`incremental` |
@@ -63,7 +63,7 @@ datus-agent bootstrap-kb \
 
 ```bash
 datus-agent bootstrap-kb \
-    --namespace analytics_db \
+    --datasource analytics_db \
     --components reference_sql \
     --sql_dir /path/to/sql/queries \
     --kb_update_strategy overwrite \
@@ -81,7 +81,7 @@ datus-agent bootstrap-kb \
 
 ```bash
 datus-agent bootstrap-kb \
-    --namespace analytics_db \
+    --datasource analytics_db \
     --components reference_sql \
     --sql_dir /path/to/sql/queries \
     --kb_update_strategy overwrite

@@ -234,7 +234,7 @@ def register_dynamic_tools(
     Register all @mcp_tool decorated methods from a class for dynamic mode.
 
     In dynamic mode, the tool instance is retrieved from context at runtime,
-    allowing the same MCP server to serve multiple namespaces.
+    allowing the same MCP server to serve multiple datasources.
 
     Args:
         mcp: FastMCP server instance

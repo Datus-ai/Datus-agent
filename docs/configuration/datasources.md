@@ -14,7 +14,7 @@ Key features:
 - **Plugin Adapters**: Install additional database adapters via `datus-agent configure`
 - **Dynamic Discovery**: Glob pattern-based database discovery for multiple database files
 
-> **Migration note**: The old `namespace:` config format is auto-migrated to `services.datasources` at runtime. The earlier `services.databases` key has been renamed to `services.datasources`; run `python -m datus.configuration.config_migrator --config conf/agent.yml` to rewrite the YAML automatically, or rename the key manually — the runtime rejects the old name.
+> **Note**: The earlier `services.databases` key has been renamed to `services.datasources`. Rename the key manually in your `agent.yml` — the runtime rejects the old name.
 
 ## Configuration Structure
 

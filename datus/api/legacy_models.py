@@ -32,7 +32,7 @@ class RunWorkflowRequest(BaseModel):
     """Request model for workflow execution."""
 
     workflow: str = Field(..., description="Workflow name, e.g., nl2sql")
-    namespace: str = Field(..., description="Database namespace")
+    datasource: str = Field(..., description="Datasource identifier")
     task: str = Field(..., description="Natural language task description")
     mode: Mode = Field(Mode.SYNC, description="Execution mode: sync or async")
     task_id: Optional[str] = Field(None, description="Custom task ID for idempotency")

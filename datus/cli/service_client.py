@@ -325,7 +325,7 @@ class ServiceClientRegistry:
         # Probe results — cached because ``adapter_registry.discover_adapters``
         # (BI) walks entry points, and repeating it on every tab-complete is
         # wasteful. Invalidated together with the client cache when the
-        # namespace fingerprint changes.
+        # datasource fingerprint changes.
         self._adapter_available: Dict[str, bool] = {}
         self._discover()
 
@@ -348,33 +348,33 @@ class ServiceClientRegistry:
                     continue
                 self._entries[key] = (section, service_name)
 
-    def _namespace_fingerprint(self) -> Tuple[Any, ...]:
+    def _datasource_fingerprint(self) -> Tuple[Any, ...]:
         """Capture the agent_config state that affects built tool instances.
 
         ``SemanticTools`` bakes ``current_datasource`` into ``MetricRAG`` /
         ``SemanticModelRAG`` at init time and resolves the adapter against
-        the active namespace. ``BIFuncTool.read_connector`` is similarly
+        the active datasource. ``BIFuncTool.read_connector`` is similarly
         pulled via ``db_manager.get_conn(current_datasource, current_datasource)``
         on first use. If any of those change, cached instances must be
         rebuilt — a session-scoped cache would otherwise keep executing
-        queries against the pre-switch namespace after ``.database ...`` /
-        ``.namespace ...``.
+        queries against the pre-switch datasource after ``.database ...`` /
+        ``.datasource ...``.
         """
         cfg = self._agent_config
         return (
             getattr(cfg, "current_datasource", None),
-            getattr(cfg, "namespace", None),
+            getattr(cfg, "datasource", None),
         )
 
     def _invalidate_if_stale(self) -> None:
-        """Drop cached clients when the namespace fingerprint has changed."""
-        fp = self._namespace_fingerprint()
+        """Drop cached clients when the datasource fingerprint has changed."""
+        fp = self._datasource_fingerprint()
         if self._fingerprint is None:
             self._fingerprint = fp
             return
         if fp != self._fingerprint:
             self._clients.clear()
-            # Adapter availability can, in principle, change with namespace
+            # Adapter availability can, in principle, change with datasource
             # (different registered providers per tenant). Drop the probe
             # cache too so the next listing re-checks.
             self._adapter_available.clear()
@@ -386,7 +386,7 @@ class ServiceClientRegistry:
         ``ServiceClientRegistry`` discovers from ``agent.yml``; that tells us
         the service is *configured*, not that its adapter package
         (``datus-bi-<platform>``, ``datus-scheduler-core``, ``datus-semantic-<type>``)
-        is installed. The result is cached until the namespace fingerprint
+        is installed. The result is cached until the datasource fingerprint
         changes.
         """
         self._invalidate_if_stale()
@@ -405,7 +405,7 @@ class ServiceClientRegistry:
 
         ``status`` is user-facing:
 
-        - ``active`` — client already constructed under the current namespace.
+        - ``active`` — client already constructed under the current datasource.
         - ``configured`` — adapter package installed; first use will build.
         - ``missing adapter`` — configured in ``agent.yml`` but the adapter
           package isn't installed (or its platform isn't registered).

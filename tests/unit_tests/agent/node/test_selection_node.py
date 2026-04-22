@@ -16,7 +16,7 @@ from datus.schemas.parallel_node_models import SelectionInput, SelectionResult
 
 def make_agent_config():
     cfg = MagicMock()
-    cfg.namespaces = {}
+    cfg.datasource_configs = {}
     cfg.current_datasource = "test"
     cfg.nodes = {}
     cfg.custom_workflows = {}

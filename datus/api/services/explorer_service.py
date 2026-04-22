@@ -745,7 +745,7 @@ class ExplorerService:
             yaml_content=yaml_content,
             file_path=file_path,
             datus_home=self.agent_config.home,
-            namespace=self.agent_config.current_datasource,
+            datasource=self.agent_config.current_datasource,
         )
 
     async def create_metric(self, request: EditMetricInput) -> Result[dict]:

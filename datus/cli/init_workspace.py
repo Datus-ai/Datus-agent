@@ -187,8 +187,8 @@ class InitWorkspace:
                 self.console.print(f"[yellow]Database '{db_name}' not found in config, skipping probe.[/yellow]")
                 return ""
 
-            namespaces = {db_name: {db_name: db_config}}
-            db_manager = DBManager(namespaces)
+            datasource_configs = {db_name: {db_name: db_config}}
+            db_manager = DBManager(datasource_configs)
             connector = db_manager.get_conn(db_name, db_name)
 
             tables = connector.get_tables()

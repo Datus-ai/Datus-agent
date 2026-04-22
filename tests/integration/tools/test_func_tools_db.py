@@ -15,10 +15,10 @@ class TestDBFuncToolIntegrationReal:
 
     @pytest.fixture
     def ssb_sqlite_config(self):
-        """Load SSB SQLite namespace configuration."""
+        """Load SSB SQLite datasource configuration."""
         from tests.conftest import load_acceptance_config
 
-        return load_acceptance_config(namespace="ssb_sqlite", home="tests")
+        return load_acceptance_config(datasource="ssb_sqlite", home="tests")
 
     @pytest.fixture
     def ssb_db_tool(self, ssb_sqlite_config):
@@ -120,7 +120,7 @@ class TestSqliteMultiConnector:
         """Load acceptance config using a valid current database."""
         from tests.conftest import load_acceptance_config
 
-        return load_acceptance_config(namespace="california_schools", home="tests")
+        return load_acceptance_config(datasource="california_schools", home="tests")
 
     @pytest.fixture
     def db_tool(self, agent_config):
@@ -135,8 +135,8 @@ class TestSqliteMultiConnector:
         """Test that multi-connector mode initializes correctly."""
 
         assert db_tool._db_manager is not None
-        assert db_tool._namespace == "california_schools"
-        assert db_tool._default_database == "california_schools"
+        assert db_tool._datasource == "california_schools"
+        assert db_tool._default_datasource == "california_schools"
         assert db_tool._connector_cache_size > 1
 
     def test_database(self, db_tool):
@@ -165,10 +165,10 @@ class TestDuckDBTool:
 
     @pytest.fixture
     def duckdb_config(self):
-        """Load DuckDB namespace configuration."""
+        """Load DuckDB datasource configuration."""
         from tests.conftest import load_acceptance_config
 
-        return load_acceptance_config(namespace="duckdb", home="tests")
+        return load_acceptance_config(datasource="duckdb", home="tests")
 
     @pytest.fixture
     def duckdb_tool(self, duckdb_config):
@@ -288,7 +288,7 @@ class TestDBFuncToolErrors:
     def ssb_config(self):
         from tests.conftest import load_acceptance_config
 
-        return load_acceptance_config(namespace="ssb_sqlite", home="tests")
+        return load_acceptance_config(datasource="ssb_sqlite", home="tests")
 
     @pytest.fixture
     def ssb_db_tool(self, ssb_config):
@@ -321,16 +321,16 @@ class TestScopedTables:
     def ssb_config(self):
         from tests.conftest import load_acceptance_config
 
-        return load_acceptance_config(namespace="ssb_sqlite", home="tests")
+        return load_acceptance_config(datasource="ssb_sqlite", home="tests")
 
     @pytest.fixture
     def scoped_db_tool(self, ssb_config):
         """Create DBFuncTool with scoped_tables limited to customer and lineorder."""
-        db_manager = db_manager_instance(ssb_config.namespaces)
+        db_manager = db_manager_instance(ssb_config.datasource_configs)
         return DBFuncTool(
             db_manager,
             agent_config=ssb_config,
-            default_database=ssb_config.current_datasource,
+            default_datasource=ssb_config.current_datasource,
             scoped_tables=["customer", "lineorder"],
         )
 
@@ -349,11 +349,11 @@ class TestScopedTables:
 
     def test_describe_table_blocked_by_scope(self, ssb_config):
         """N11-09b: describe_table rejects tables outside scoped_tables."""
-        db_manager = db_manager_instance(ssb_config.namespaces)
+        db_manager = db_manager_instance(ssb_config.datasource_configs)
         scoped_tool = DBFuncTool(
             db_manager,
             agent_config=ssb_config,
-            default_database=ssb_config.current_datasource,
+            default_datasource=ssb_config.current_datasource,
             scoped_tables=["customer"],
         )
 

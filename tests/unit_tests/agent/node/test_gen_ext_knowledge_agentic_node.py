@@ -514,7 +514,7 @@ class TestGenExtKnowledgeNodeExecution:
 
 
 class TestGenExtKnowledgeSaveToDbSandbox:
-    """``_save_to_db`` must reject paths outside the per-kind, per-namespace sandbox.
+    """``_save_to_db`` must reject paths outside the per-kind, per-datasource sandbox.
 
     Workflow mode reads the path from the LLM's final JSON, so this is the
     last line of defence against a fabricated response syncing an arbitrary

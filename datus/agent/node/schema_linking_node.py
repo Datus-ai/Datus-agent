@@ -155,9 +155,9 @@ class SchemaLinkingNode(Node):
             # Get database connector through db_manager
             from datus.tools.db_tools.db_manager import db_manager_instance
 
-            db_manager = db_manager_instance(self.agent_config.namespaces)
+            db_manager = db_manager_instance(self.agent_config.datasource_configs)
 
-            # Get current namespace and database connection
+            # Get current datasource and database connection
             current_datasource = self.agent_config.current_datasource
             database_name = self.input.database_name if hasattr(self.input, "database_name") else ""
 

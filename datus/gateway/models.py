@@ -78,7 +78,7 @@ class ChannelConfig(BaseModel):
 
     adapter: str = Field(..., description="Adapter type: feishu, slack")
     enabled: bool = Field(True, description="Whether this channel is enabled")
-    namespace: Optional[str] = Field(None, description="Override default namespace")
+    datasource: Optional[str] = Field(None, description="Override default datasource")
     subagent_id: Optional[str] = Field(None, description="Route to a specific sub-agent")
     verbose: Verbose = Field(Verbose.ON, description="Output verbosity level: quiet, brief, detail")
     stream_response: bool = Field(True, description="Enable token-level streaming for chat responses")

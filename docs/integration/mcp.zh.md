@@ -5,8 +5,8 @@ Claude Desktop、Claude Code 及其他 MCP 兼容客户端集成。
 
 **服务模式：**
 
-- **静态模式（Static Mode）**：单命名空间，适用于 Claude Desktop、CLI 工具或单租户 HTTP/SSE 服务
-- **动态模式（Dynamic Mode）**：多命名空间 HTTP/SSE 服务，通过 URL 路径访问所有命名空间
+- **静态模式（Static Mode）**：单数据源，适用于 Claude Desktop、CLI 工具或单租户 HTTP/SSE 服务
+- **动态模式（Dynamic Mode）**：多数据源 HTTP/SSE 服务，通过 URL 路径访问所有数据源
 
 **支持的传输方式：**
 
@@ -25,16 +25,16 @@ pip install datus-agent
 - 启动 MCP 服务：
 
 ```bash
-# 静态模式：单命名空间
-uvx --from datus-agent datus-mcp --namespace <your namespace>
-uvx --from datus-agent datus-mcp --namespace <your namespace> --transport http --host 127.0.0.1 --port 8000
-# 动态模式：多命名空间 HTTP/SSE 服务
+# 静态模式：单数据源
+uvx --from datus-agent datus-mcp --datasource <your datasource>
+uvx --from datus-agent datus-mcp --datasource <your datasource> --transport http --host 127.0.0.1 --port 8000
+# 动态模式：多数据源 HTTP/SSE 服务
 uvx --from datus-agent datus-mcp --dynamic --transport http --host 127.0.0.1 --port 8000
 uvx --from datus-agent datus-mcp --dynamic --transport sse --host 127.0.0.1 --port 8000
 
 # 或者直接运行
-datus-mcp --namespace <your namespace>
-# 动态模式：多命名空间 HTTP/SSE 服务
+datus-mcp --datasource <your datasource>
+# 动态模式：多数据源 HTTP/SSE 服务
 datus-mcp --dynamic --transport http --host 127.0.0.1 --port 8000
 datus-mcp --dynamic --transport sse --host 127.0.0.1 --port 8000
 ```
@@ -50,7 +50,7 @@ datus-mcp --dynamic --transport sse --host 127.0.0.1 --port 8000
 datus-mcp --dynamic --transport sse --port 8000
 
 # 添加到 Claude Code
-claude mcp add --transport sse datus http://127.0.0.1:8000/sse/<your namespace>
+claude mcp add --transport sse datus http://127.0.0.1:8000/sse/<your datasource>
 ```
 
 ### Claude Desktop
@@ -71,7 +71,7 @@ cat > ~/Library/Application\ Support/Claude/claude_desktop_config.json << EOF
       "command": "$NPX_PATH",
       "args": [
         "mcp-remote@latest",
-        "http://127.0.0.1:8000/sse/<your namespace>",
+        "http://127.0.0.1:8000/sse/<your datasource>",
         "--transport",
         "sse-only"
       ],
@@ -93,7 +93,7 @@ EOF
       "command": "npx",
       "args": [
         "mcp-remote@latest",
-        "http://127.0.0.1:8000/sse/<your namespace>",
+        "http://127.0.0.1:8000/sse/<your datasource>",
         "--transport",
         "sse-only"
       ]
@@ -120,8 +120,8 @@ EOF
         "--from",
         "datus-agent",
         "datus-mcp",
-        "--namespace",
-        "<your namespace>",
+        "--datasource",
+        "<your datasource>",
         "--transport",
         "stdio"
       ]
@@ -140,8 +140,8 @@ EOF
       "args": [
         "-m",
         "datus.mcp_server",
-        "--namespace",
-        "<your namespace>",
+        "--datasource",
+        "<your datasource>",
         "--transport",
         "stdio"
       ]
@@ -157,7 +157,7 @@ EOF
 {
   "mcpServers": {
     "DatusServer": {
-      "url": "http://127.0.0.1:8000/sse/<your namespace>",
+      "url": "http://127.0.0.1:8000/sse/<your datasource>",
       "transport": "sse"
     }
   }
@@ -169,7 +169,7 @@ EOF
 {
   "mcpServers": {
     "DatusServer": {
-      "url": "http://127.0.0.1:8000/mcp/<your namespace>",
+      "url": "http://127.0.0.1:8000/mcp/<your datasource>",
       "transport": "http"
     }
   }
@@ -178,14 +178,14 @@ EOF
 
 ## HTTP 服务模式
 
-**静态模式（单命名空间）：**
+**静态模式（单数据源）：**
 
 ```bash
 # Streamable HTTP（默认，双向通信）
-datus-mcp --namespace <your namespace> --transport http --host 0.0.0.0 --port 8000
+datus-mcp --datasource <your datasource> --transport http --host 0.0.0.0 --port 8000
 
 # SSE 模式（适用于 Web 客户端）
-datus-mcp --namespace <your namespace> --transport sse --port 8000
+datus-mcp --datasource <your datasource> --transport sse --port 8000
 ```
 
 连接地址：
@@ -193,9 +193,9 @@ datus-mcp --namespace <your namespace> --transport sse --port 8000
 - Streamable HTTP：`http://localhost:8000/mcp`
 - SSE：`http://localhost:8000/sse`
 
-**动态模式（多命名空间）：**
+**动态模式（多数据源）：**
 
-启动单个服务即可通过 URL 路径访问所有已配置的命名空间：
+启动单个服务即可通过 URL 路径访问所有已配置的数据源：
 
 ```bash
 # 以 SSE 模式启动动态服务
@@ -205,21 +205,21 @@ datus-mcp --dynamic --host 0.0.0.0 --port 8000 --transport sse
 datus-mcp --dynamic --host 0.0.0.0 --port 8000 --transport http
 ```
 
-连接指定命名空间：
+连接指定数据源：
 
-- Streamable HTTP：`http://localhost:8000/mcp/{namespace}`
-- SSE：`http://localhost:8000/sse/{namespace}`
-- 指定 subagent：`http://localhost:8000/mcp/{namespace}?subagent={subagent_name}`
+- Streamable HTTP：`http://localhost:8000/mcp/{datasource}`
+- SSE：`http://localhost:8000/sse/{datasource}`
+- 指定 subagent：`http://localhost:8000/mcp/{datasource}?subagent={subagent_name}`
 
 示例：
 
-- Streamable HTTP，namespace 为 `bird_sqlite`：`http://localhost:8000/mcp/bird_sqlite`
-- SSE，namespace 为 `bird_sqlite`：`http://localhost:8000/sse/bird_sqlite`
-- Streamable HTTP，namespace 为 `superset`，子代理为 `sales_dashboard`：`http://localhost:8000/mcp/superset?subagent=sales_dashboard`
+- Streamable HTTP，datasource 为 `bird_sqlite`：`http://localhost:8000/mcp/bird_sqlite`
+- SSE，datasource 为 `bird_sqlite`：`http://localhost:8000/sse/bird_sqlite`
+- Streamable HTTP，datasource 为 `superset`，子代理为 `sales_dashboard`：`http://localhost:8000/mcp/superset?subagent=sales_dashboard`
 
 信息端点：
 
-- `http://localhost:8000/` - 服务信息及可用命名空间
+- `http://localhost:8000/` - 服务信息及可用数据源
 - `http://localhost:8000/health` - 健康检查
 
 ## 可用工具
@@ -237,8 +237,8 @@ MCP 服务暴露以下工具：
 datus-mcp --help
 
 模式选择（互斥，必选其一）：
-  --dynamic            动态模式：通过 /mcp/{namespace} URL 支持所有命名空间
-  --namespace, -n      静态模式：指定单个命名空间
+  --dynamic            动态模式：通过 /mcp/{datasource} URL 支持所有数据源
+  --datasource, -n      静态模式：指定单个数据源
 
 静态模式选项：
   --sub-agent, -s      Sub-agent 名称，用于限定上下文范围
@@ -247,8 +247,8 @@ datus-mcp --help
 
 动态模式选项：
   --transport, -t      传输方式：http（默认）、sse
-                       http: 通过 /mcp/{namespace} URL 访问
-                       sse: 通过 /sse/{namespace} URL 访问
+                       http: 通过 /mcp/{datasource} URL 访问
+                       sse: 通过 /sse/{datasource} URL 访问
 
 通用选项：
   --config, -c         Agent 配置文件路径

@@ -79,13 +79,13 @@ def _svc_mod():
 
 @pytest.fixture(scope="module")
 def chat_agent_config(tmp_path_factory):
-    """Load AgentConfig with bird_school namespace."""
+    """Load AgentConfig with bird_school datasource."""
     src = CONF_DIR / "agent.yml"
     tmp_cfg = tmp_path_factory.mktemp("chat_api_conf") / "agent.yml"
     shutil.copy2(src, tmp_cfg)
     from datus.configuration.agent_config_loader import load_agent_config
 
-    return load_agent_config(config=str(tmp_cfg), namespace="bird_school", reload=True, force=True, yes=True)
+    return load_agent_config(config=str(tmp_cfg), datasource="bird_school", reload=True, force=True, yes=True)
 
 
 @pytest.fixture(scope="module")
@@ -105,7 +105,7 @@ async def chat_client(chat_agent_config, chat_datus_service):
     from datus.api.services.datus_service_cache import DatusServiceCache
 
     agent_args = argparse.Namespace(
-        namespace="bird_school",
+        datasource="bird_school",
         config="tests/conf/agent.yml",
         max_steps=20,
         workflow="fixed",
@@ -119,7 +119,7 @@ async def chat_client(chat_agent_config, chat_datus_service):
     saved_deps = (
         deps_mod._auth_provider,
         deps_mod._service_cache,
-        deps_mod._namespace,
+        deps_mod._datasource,
         deps_mod._default_source,
         deps_mod._default_interactive,
         deps_mod._stream_thinking,
@@ -134,7 +134,7 @@ async def chat_client(chat_agent_config, chat_datus_service):
     # patched module state and shut the cache down cleanly.
     try:
         mod.service = DatusAPIService(agent_args)
-        init_deps(NoAuthProvider(), cache, namespace="bird_school")
+        init_deps(NoAuthProvider(), cache, datasource="bird_school")
         await cache.get_or_create("default", _factory)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", timeout=120.0) as c:
@@ -144,7 +144,7 @@ async def chat_client(chat_agent_config, chat_datus_service):
         (
             deps_mod._auth_provider,
             deps_mod._service_cache,
-            deps_mod._namespace,
+            deps_mod._datasource,
             deps_mod._default_source,
             deps_mod._default_interactive,
             deps_mod._stream_thinking,

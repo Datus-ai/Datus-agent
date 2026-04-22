@@ -554,42 +554,42 @@ class ResultProvider(Protocol):
 
 
 class CsvPerTaskResultProvider(ResultProvider):
-    def __init__(self, directory: str, namespace: Optional[str] = None, run_id: Optional[str] = None):
+    def __init__(self, directory: str, datasource: Optional[str] = None, run_id: Optional[str] = None):
         """
         Initialize CSV result provider with hierarchical directory structure.
 
         Args:
             directory: Base directory path
-            namespace: Optional namespace subdirectory. If None, uses directory directly.
-            run_id: Optional run_id subdirectory. If None and namespace is provided, uses latest run.
+            datasource: Optional datasource subdirectory. If None, uses directory directly.
+            run_id: Optional run_id subdirectory. If None and datasource is provided, uses latest run.
         """
         self.base_directory = Path(directory)
-        self.namespace = namespace
+        self.datasource = datasource
         self.run_id = run_id
 
         # Determine actual search directory
-        if namespace:
-            namespace_dir = self.base_directory / namespace
+        if datasource:
+            datasource_dir = self.base_directory / datasource
             if run_id:
-                # Specific namespace and run
-                self.directory = namespace_dir / run_id
+                # Specific datasource and run
+                self.directory = datasource_dir / run_id
             else:
                 # Auto-select latest run
-                if namespace_dir.exists() and namespace_dir.is_dir():
+                if datasource_dir.exists() and datasource_dir.is_dir():
                     run_dirs = sorted(
-                        [d for d in namespace_dir.iterdir() if d.is_dir()], key=lambda d: d.name, reverse=True
+                        [d for d in datasource_dir.iterdir() if d.is_dir()], key=lambda d: d.name, reverse=True
                     )
                     if run_dirs:
                         self.directory = run_dirs[0]
                         logger.info(f"Auto-selected latest run: {run_dirs[0].name}")
                     else:
                         # No run subdirectories found
-                        self.directory = namespace_dir
+                        self.directory = datasource_dir
                 else:
-                    # Namespace directory doesn't exist yet
-                    self.directory = namespace_dir
+                    # Datasource directory doesn't exist yet
+                    self.directory = datasource_dir
         else:
-            # No namespace - use directory directly (for gold results)
+            # No datasource - use directory directly (for gold results)
             self.directory = self.base_directory
 
     def fetch(self, task_id: str) -> ResultData:
@@ -959,7 +959,7 @@ class AgentResultSqlProvider(SqlProvider):
     def __init__(
         self,
         result_dir: str,
-        namespace: str,
+        datasource: str,
         run_id: Optional[str] = None,
         dialect: str = "snowflake",
     ):
@@ -968,35 +968,35 @@ class AgentResultSqlProvider(SqlProvider):
 
         Args:
             result_dir: Base result directory path
-            namespace: Namespace subdirectory (required)
+            datasource: Datasource subdirectory (required)
             run_id: Optional run_id subdirectory. If None, uses latest run.
             dialect: SQL dialect
         """
         self.base_result_dir = Path(result_dir)
         self.dialect = dialect
-        self.namespace = namespace
+        self.datasource = datasource
         self.run_id = run_id
 
         # Determine actual search directory
-        namespace_dir = self.base_result_dir / namespace
+        datasource_dir = self.base_result_dir / datasource
         if run_id:
-            # Specific namespace and run
-            self.result_dir = namespace_dir / run_id
+            # Specific datasource and run
+            self.result_dir = datasource_dir / run_id
         else:
             # Auto-select latest run
-            if namespace_dir.exists() and namespace_dir.is_dir():
+            if datasource_dir.exists() and datasource_dir.is_dir():
                 run_dirs = sorted(
-                    [d for d in namespace_dir.iterdir() if d.is_dir()], key=lambda d: d.name, reverse=True
+                    [d for d in datasource_dir.iterdir() if d.is_dir()], key=lambda d: d.name, reverse=True
                 )
                 if run_dirs:
                     self.result_dir = run_dirs[0]
                     logger.info(f"Auto-selected latest run for SQL: {run_dirs[0].name}")
                 else:
                     # No run subdirectories found
-                    self.result_dir = namespace_dir
+                    self.result_dir = datasource_dir
             else:
-                # Namespace directory doesn't exist yet
-                self.result_dir = namespace_dir
+                # Datasource directory doesn't exist yet
+                self.result_dir = datasource_dir
 
     def fetch(self, task_id: str) -> SqlData:
         if not self.result_dir.exists():
@@ -1511,10 +1511,10 @@ class BenchmarkEvaluator:
         self,
         trajectory_dir: str,
         target_task_ids: Iterable[str],
-        namespace: str,
+        datasource: str,
         run_id: Optional[str] = None,
     ) -> EvaluationReport:
-        trajectories = collect_latest_trajectory_files(trajectory_dir, namespace, run_id)
+        trajectories = collect_latest_trajectory_files(trajectory_dir, datasource, run_id)
         target_ids = {str(task_id) for task_id in target_task_ids}
         trajectories = {task_id: path for task_id, path in trajectories.items() if task_id in target_ids}
 
@@ -1714,16 +1714,16 @@ class BenchmarkEvaluator:
         outcome.tools_comparison = artifact_results
 
 
-def list_trajectory_runs(trajectory_dir: str, namespace: Optional[str] = None) -> Dict[str, List[str]]:
+def list_trajectory_runs(trajectory_dir: str, datasource: Optional[str] = None) -> Dict[str, List[str]]:
     """
     List all available run IDs in the trajectory directory.
 
     Args:
         trajectory_dir: Base trajectory directory
-        namespace: Optional namespace to filter by
+        datasource: Optional datasource to filter by
 
     Returns:
-        Dict mapping namespace to list of run_ids (sorted by name, newest first)
+        Dict mapping datasource to list of run_ids (sorted by name, newest first)
     """
     directory = Path(trajectory_dir)
     if not directory.exists():
@@ -1731,15 +1731,15 @@ def list_trajectory_runs(trajectory_dir: str, namespace: Optional[str] = None) -
 
     runs: Dict[str, List[str]] = {}
 
-    if namespace:
-        # List runs for specific namespace
-        namespace_dir = directory / namespace
-        if namespace_dir.exists() and namespace_dir.is_dir():
-            run_dirs = sorted([d.name for d in namespace_dir.iterdir() if d.is_dir()], reverse=True)
+    if datasource:
+        # List runs for specific datasource
+        datasource_dir = directory / datasource
+        if datasource_dir.exists() and datasource_dir.is_dir():
+            run_dirs = sorted([d.name for d in datasource_dir.iterdir() if d.is_dir()], reverse=True)
             if run_dirs:
-                runs[namespace] = run_dirs
+                runs[datasource] = run_dirs
     else:
-        # List runs for all namespaces
+        # List runs for all datasources
         for ns_dir in directory.iterdir():
             if ns_dir.is_dir():
                 ns_name = ns_dir.name
@@ -1750,16 +1750,16 @@ def list_trajectory_runs(trajectory_dir: str, namespace: Optional[str] = None) -
     return runs
 
 
-def list_save_runs(save_dir: str, namespace: Optional[str] = None) -> Dict[str, List[str]]:
+def list_save_runs(save_dir: str, datasource: Optional[str] = None) -> Dict[str, List[str]]:
     """
     List all available run IDs in the save directory.
 
     Args:
         save_dir: Base save directory
-        namespace: Optional namespace to filter by
+        datasource: Optional datasource to filter by
 
     Returns:
-        Dict mapping namespace to list of run_ids (sorted by name, newest first)
+        Dict mapping datasource to list of run_ids (sorted by name, newest first)
     """
     directory = Path(save_dir)
     if not directory.exists():
@@ -1767,15 +1767,15 @@ def list_save_runs(save_dir: str, namespace: Optional[str] = None) -> Dict[str, 
 
     runs: Dict[str, List[str]] = {}
 
-    if namespace:
-        # List runs for specific namespace
-        namespace_dir = directory / namespace
-        if namespace_dir.exists() and namespace_dir.is_dir():
-            run_dirs = sorted([d.name for d in namespace_dir.iterdir() if d.is_dir()], reverse=True)
+    if datasource:
+        # List runs for specific datasource
+        datasource_dir = directory / datasource
+        if datasource_dir.exists() and datasource_dir.is_dir():
+            run_dirs = sorted([d.name for d in datasource_dir.iterdir() if d.is_dir()], reverse=True)
             if run_dirs:
-                runs[namespace] = run_dirs
+                runs[datasource] = run_dirs
     else:
-        # List runs for all namespaces
+        # List runs for all datasources
         for ns_dir in directory.iterdir():
             if ns_dir.is_dir():
                 ns_name = ns_dir.name
@@ -1786,15 +1786,15 @@ def list_save_runs(save_dir: str, namespace: Optional[str] = None) -> Dict[str, 
     return runs
 
 
-def collect_latest_trajectory_files(save_dir: str, namespace: str, run_id: Optional[str] = None) -> Dict[str, Path]:
+def collect_latest_trajectory_files(save_dir: str, datasource: str, run_id: Optional[str] = None) -> Dict[str, Path]:
     """
     Collect latest trajectory files from directory.
 
-    Uses hierarchical structure: {save_dir}/{namespace}/{run_id}/*.yaml
+    Uses hierarchical structure: {save_dir}/{datasource}/{run_id}/*.yaml
 
     Args:
         save_dir: Base trajectory directory
-        namespace: Namespace to filter by (required)
+        datasource: Datasource to filter by (required)
         run_id: Optional run_id to filter by. If None, uses latest run.
 
     Returns:
@@ -1807,22 +1807,22 @@ def collect_latest_trajectory_files(save_dir: str, namespace: str, run_id: Optio
     file_groups: dict[str, list[tuple[float, Path]]] = defaultdict(list)
 
     # Determine search path
-    namespace_dir = directory / namespace
+    datasource_dir = directory / datasource
     if run_id:
-        # Specific namespace and run
-        search_path = namespace_dir / run_id
+        # Specific datasource and run
+        search_path = datasource_dir / run_id
     else:
         # Auto-select latest run
-        if namespace_dir.exists() and namespace_dir.is_dir():
-            run_dirs = sorted([d for d in namespace_dir.iterdir() if d.is_dir()], key=lambda d: d.name, reverse=True)
+        if datasource_dir.exists() and datasource_dir.is_dir():
+            run_dirs = sorted([d for d in datasource_dir.iterdir() if d.is_dir()], key=lambda d: d.name, reverse=True)
             if run_dirs:
                 search_path = run_dirs[0]
                 logger.info(f"Auto-selected latest run for trajectories: {run_dirs[0].name}")
             else:
                 # No run subdirectories found
-                search_path = namespace_dir
+                search_path = datasource_dir
         else:
-            # Namespace directory doesn't exist
+            # Datasource directory doesn't exist
             return {}
 
     # Collect trajectory files from search path
@@ -2076,7 +2076,7 @@ def _build_gold_result_provider(
             message="At least one of gold_result_key or gold_sql_key must be provided for gold result evaluation.",
         )
 
-    db_manager = db_manager_instance(agent_config.namespaces)
+    db_manager = db_manager_instance(agent_config.datasource_configs)
     connections = db_manager.get_connections(agent_config.current_datasource)
 
     return SingleFileGoldProvider(
@@ -2096,7 +2096,7 @@ def evaluate_benchmark(
     target_task_ids: Optional[Iterable[str]] = None,
     run_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    namespace = agent_config.current_datasource
+    datasource = agent_config.current_datasource
     trajectory_directory = Path(agent_config.trajectory_dir)
 
     try:
@@ -2128,9 +2128,9 @@ def evaluate_benchmark(
 
     # Use base save directory for providers, they will handle subdirectories
     save_base_dir = Path(agent_config._save_dir)
-    agent_result_provider = CsvPerTaskResultProvider(str(save_base_dir), namespace=namespace, run_id=run_id)
+    agent_result_provider = CsvPerTaskResultProvider(str(save_base_dir), datasource=datasource, run_id=run_id)
     result_sql_provider = AgentResultSqlProvider(
-        str(save_base_dir), namespace=namespace, run_id=run_id, dialect=dialect
+        str(save_base_dir), datasource=datasource, run_id=run_id, dialect=dialect
     )
     try:
         gold_sql_provider = _build_gold_sql_provider(benchmark_config, benchmark_root, question_file_path, dialect)
@@ -2154,7 +2154,7 @@ def evaluate_benchmark(
     )
 
     report = evaluator.evaluate_directory(
-        str(trajectory_directory), target_task_ids, namespace=namespace, run_id=run_id
+        str(trajectory_directory), target_task_ids, datasource=datasource, run_id=run_id
     )
     return report.to_dict()
 

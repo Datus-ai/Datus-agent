@@ -69,7 +69,7 @@ class TestRdbTestEnvABC:
             def teardown(self):
                 pass
 
-            def clear_data(self, namespace):
+            def clear_data(self, datasource):
                 pass
 
             def get_config(self):
@@ -112,7 +112,7 @@ class TestVectorTestEnvABC:
             def teardown(self):
                 pass
 
-            def clear_data(self, namespace):
+            def clear_data(self, datasource):
                 pass
 
             def get_config(self):

@@ -28,7 +28,7 @@ Bootstrap-KB Reference Template is a knowledge base component that processes, an
 ```bash
 # Initialize Reference Template component
 datus-agent bootstrap-kb \
-    --database <your_namespace> \
+    --database <your_datasource> \
     --components reference_template \
     --template_dir /path/to/template/directory \
     --kb_update_strategy overwrite
@@ -38,7 +38,7 @@ datus-agent bootstrap-kb \
 
 | Parameter | Required | Description | Example |
 |-----------|----------|-------------|---------|
-| `--database` | Yes | Database namespace | `analytics_db` |
+| `--database` | Yes | Database datasource | `analytics_db` |
 | `--components` | Yes | Components to initialize | `reference_template` |
 | `--template_dir` | Yes | Directory containing J2 template files | `/templates/queries` |
 | `--kb_update_strategy` | Yes | Update strategy | `overwrite`/`incremental` |

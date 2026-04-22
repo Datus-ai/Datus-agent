@@ -39,7 +39,7 @@ pytestmark = pytest.mark.ci
 class TestAPIArgumentParser:
     def test_defaults(self):
         with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("DATUS_NAMESPACE", None)
+            os.environ.pop("DATUS_DATASOURCE", None)
             os.environ.pop("DATUS_OUTPUT_DIR", None)
             os.environ.pop("DATUS_LOG_LEVEL", None)
             args = _build_parser().parse_args([])
@@ -49,7 +49,7 @@ class TestAPIArgumentParser:
         assert args.reload is False
         assert args.debug is False
         assert args.config is None
-        assert args.namespace == "default"
+        assert args.datasource == "default"
         assert args.output_dir == "./output"
         assert args.log_level == "INFO"
         assert args.max_steps == 20
@@ -87,10 +87,10 @@ class TestAPIArgumentParser:
         with pytest.raises(SystemExit):
             _build_parser().parse_args(["--source", "emacs"])
 
-    def test_namespace_from_env(self):
-        with patch.dict(os.environ, {"DATUS_NAMESPACE": "staging"}):
+    def test_datasource_from_env(self):
+        with patch.dict(os.environ, {"DATUS_DATASOURCE": "staging"}, clear=False):
             args = _build_parser().parse_args([])
-        assert args.namespace == "staging"
+        assert args.datasource == "staging"
 
     def test_output_dir_from_env(self):
         with patch.dict(os.environ, {"DATUS_OUTPUT_DIR": "/custom/out"}):
@@ -277,7 +277,7 @@ class TestDefaultPaths:
 class TestBuildAgentArgs:
     def _make(self, **overrides):
         base = dict(
-            namespace="ns",
+            datasource="ns",
             config="/etc/agent.yml",
             max_steps=20,
             workflow="fixed",
@@ -295,7 +295,7 @@ class TestBuildAgentArgs:
     def test_maps_all_fields(self):
         agent_args = _build_agent_args(
             self._make(
-                namespace="myns",
+                datasource="myns",
                 max_steps=15,
                 load_cp="cp.pkl",
                 debug=True,
@@ -305,7 +305,7 @@ class TestBuildAgentArgs:
                 log_level="DEBUG",
             )
         )
-        assert agent_args.namespace == "myns"
+        assert agent_args.datasource == "myns"
         assert agent_args.max_steps == 15
         assert agent_args.load_cp == "cp.pkl"
         assert agent_args.debug is True
@@ -374,7 +374,7 @@ class TestMainDispatch:
 
         def fake_run_server(args, agent_args):
             captured["host"] = args.host
-            captured["namespace"] = args.namespace
+            captured["datasource"] = args.datasource
             captured["source"] = args.source
             captured["interactive"] = args.interactive
 
@@ -388,7 +388,7 @@ class TestMainDispatch:
                 "argv",
                 [
                     "datus-api",
-                    "--namespace",
+                    "--datasource",
                     "test_main_ns",
                     "--source",
                     "web",
@@ -398,11 +398,11 @@ class TestMainDispatch:
         ):
             main()
 
-        assert os.environ.get("DATUS_NAMESPACE") == "test_main_ns"
+        assert os.environ.get("DATUS_DATASOURCE") == "test_main_ns"
         assert os.environ.get("DATUS_CONFIG") == "/tmp/agent.yml"
         assert captured == {
             "host": "0.0.0.0",
-            "namespace": "test_main_ns",
+            "datasource": "test_main_ns",
             "source": "web",
             "interactive": False,
         }
@@ -517,7 +517,7 @@ class TestRunServer:
     def test_single_worker_creates_app_instance(self):
         """Default single-worker mode creates an app instance and passes it to uvicorn."""
         args = _server_args()
-        agent_args = argparse.Namespace(namespace="x")
+        agent_args = argparse.Namespace(datasource="x")
         sentinel_app = object()
         with (
             patch("datus.api.service.create_app", return_value=sentinel_app) as mock_create,

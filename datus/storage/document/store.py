@@ -411,7 +411,7 @@ def document_store(platform: str) -> DocumentStore:
     """Get a cached DocumentStore instance for a platform.
 
     Each unique *platform* produces an isolated vector database via a
-    dedicated namespace (``docstore__{platform}``), so different platforms
+    dedicated datasource prefix (``docstore__{platform}``), so different platforms
     never share the same table.  This is backend-agnostic — LanceDB
     creates a separate directory, pgvector would use a separate schema.
 

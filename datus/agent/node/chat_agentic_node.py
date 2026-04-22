@@ -140,7 +140,7 @@ class ChatAgenticNode(AgenticNode):
 
     def setup_tools(self):
         """Initialize all tools with default database connection."""
-        db_manager = db_manager_instance(self.agent_config.namespaces)
+        db_manager = db_manager_instance(self.agent_config.datasource_configs)
         conn = db_manager.get_conn(self.agent_config.current_datasource, self.agent_config.current_datasource)
         self.db_func_tool = DBFuncTool(conn, agent_config=self.agent_config)
         self.context_search_tools = ContextSearchTools(self.agent_config)
@@ -292,7 +292,7 @@ class ChatAgenticNode(AgenticNode):
 
     def _update_database_connection(self, database_name: str):
         """Update database connection to a different database."""
-        db_manager = db_manager_instance(self.agent_config.namespaces)
+        db_manager = db_manager_instance(self.agent_config.datasource_configs)
         conn = db_manager.get_conn(self.agent_config.current_datasource, database_name)
         self.db_func_tool = DBFuncTool(conn, agent_config=self.agent_config)
         self._rebuild_tools()
@@ -381,7 +381,7 @@ class ChatAgenticNode(AgenticNode):
             if not db_config:
                 return None
 
-            metricflow_server = MCPServer.get_metricflow_mcp_server(namespace=self.agent_config.current_datasource)
+            metricflow_server = MCPServer.get_metricflow_mcp_server(datasource=self.agent_config.current_datasource)
             if metricflow_server:
                 logger.info(f"Added metricflow_mcp MCP server for database: {db_config.database}")
                 return metricflow_server

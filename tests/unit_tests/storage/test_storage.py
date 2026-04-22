@@ -17,7 +17,7 @@ logger = get_logger(__name__)
 @pytest.fixture
 def agent_config(tmp_path) -> AgentConfig:
     # Use tmp_path for isolated test environment
-    config = load_acceptance_config(namespace="snowflake", home=str(tmp_path))
+    config = load_acceptance_config(datasource="snowflake", home=str(tmp_path))
 
     # Benchmark paths will auto-derive from tmp_path/benchmark/
     config.benchmark_configs["spider2"].benchmark_path = str(tmp_path / "benchmark/spider2/spider2-snow")

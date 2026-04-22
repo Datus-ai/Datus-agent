@@ -46,7 +46,7 @@ def broker():
 @pytest.fixture
 def agent_config(tmp_path):
     # After the storage refactor, KB content lives under {project_root}/subject/
-    # without per-namespace subdirectories.
+    # without per-datasource subdirectories.
     subject_dir = tmp_path / "subject"
     (subject_dir / "semantic_models").mkdir(parents=True, exist_ok=True)
     (subject_dir / "sql_summaries").mkdir(parents=True, exist_ok=True)
@@ -1282,7 +1282,7 @@ class TestSyncSemanticToDbBooleanCoercion:
         db_config.schema = "public"
         db_config.db_type = "postgresql"
         agent_config.current_db_config.return_value = db_config
-        agent_config.namespaces = ["test_ns"]
+        agent_config.datasource_configs = ["test_ns"]
 
         captured_semantic = []
         captured_metric = []

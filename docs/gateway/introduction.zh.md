@@ -7,7 +7,7 @@ Datus Gateway 是 Datus Agent 的 IM（即时通讯）网关模块。它将 Datu
 - **仅使用出站长连接** — Datus Gateway 通过 WebSocket、Socket Mode 或 Stream SDK 主动连接到各 IM 平台，无需 Webhook 端点或公网 URL。
 - **实时流式响应** — Agent 的响应（思考过程、工具调用、SQL、Markdown）在生成时即刻流式推送到聊天中。
 - **会话管理** — 每个对话（群聊/私聊/话题）自动获得持久化会话。用户可通过 `/new` 或 `/reset` 重置会话。
-- **命名空间与子代理路由** — 每个频道可覆盖默认命名空间或将消息路由到特定的子代理。
+- **数据源与子代理路由** — 每个频道可覆盖默认数据源或将消息路由到特定的子代理。
 
 ## 支持的平台
 
@@ -74,7 +74,7 @@ channels:
   my-channel:
     adapter: slack          # 必填: feishu | slack
     enabled: true           # 可选: 默认 true
-    namespace: my_namespace # 可选: 覆盖默认命名空间
+    datasource: my_datasource # 可选: 覆盖默认数据源
     subagent_id: agent_01   # 可选: 路由到特定子代理
     extra:                  # 必填: 适配器专用凭证
       # ... 平台专用配置项
@@ -84,7 +84,7 @@ channels:
 |------|------|------|------|
 | `adapter` | string | 是 | 适配器类型：`feishu` 或 `slack` |
 | `enabled` | bool | 否 | 是否启用此频道（默认：`true`） |
-| `namespace` | string | 否 | 覆盖网关的默认命名空间 |
+| `datasource` | string | 否 | 覆盖网关的默认数据源 |
 | `subagent_id` | string | 否 | 将消息路由到特定子代理 |
 | `extra` | dict | 是 | 适配器专用配置（令牌、密钥等） |
 
@@ -165,7 +165,7 @@ datus-gateway --daemon --pid-file /var/run/datus-gateway.pid --daemon-log-file /
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `--config` | `./conf/agent.yml` | Agent 配置文件路径 |
-| `--namespace` | `default`（或 `DATUS_NAMESPACE` 环境变量） | 所有频道的默认命名空间 |
+| `--datasource` | `default`（或 `DATUS_DATASOURCE` 环境变量） | 所有频道的默认数据源 |
 | `--host` | `0.0.0.0` | 健康检查服务绑定地址 |
 | `--port` | `9000` | 健康检查服务绑定端口 |
 | `--debug` | `false` | 启用调试日志 |
@@ -230,9 +230,9 @@ Datus Gateway 提供了内置的斜杠命令，这些命令在消息进入 Agent
 
 机器人会确认重置并返回新的会话 ID。
 
-### 命名空间覆盖
+### 数据源覆盖
 
-每个频道可在配置中指定 `namespace` 以覆盖网关的默认命名空间。这允许不同频道查询不同的数据库。
+每个频道可在配置中指定 `datasource` 以覆盖网关的默认数据源。这允许不同频道查询不同的数据库。
 
 ### 子代理路由
 

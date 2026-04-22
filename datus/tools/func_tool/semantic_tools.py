@@ -114,10 +114,10 @@ class SemanticTools:
         self._adapter: Optional[BaseSemanticAdapter] = None
         self._attribution_tool: Optional[DimensionAttributionUtil] = None
 
-    def _extract_db_config(self, namespace: str) -> Optional[dict]:
+    def _extract_db_config(self, datasource: str) -> Optional[dict]:
         """Extract db_config dict from the selected database config."""
         try:
-            db_config_obj = self.agent_config.current_db_config(namespace)
+            db_config_obj = self.agent_config.current_db_config(datasource)
         except Exception:
             return None
         if db_config_obj is None:
@@ -153,20 +153,20 @@ class SemanticTools:
                 builder = getattr(self.agent_config, "build_semantic_adapter_config", None)
                 adapter_config = builder(resolved_adapter) if callable(builder) else None
                 if adapter_config is None:
-                    namespace = getattr(self.agent_config, "namespace", None) or self.agent_config.current_datasource
-                    db_config = self._extract_db_config(namespace)
+                    datasource = self.agent_config.current_datasource
+                    db_config = self._extract_db_config(datasource)
                     semantic_models_path = str(self.agent_config.path_manager.semantic_models_dir)
 
                     if metadata and metadata.config_class:
                         adapter_config = metadata.config_class(
-                            namespace=namespace,
+                            datasource=datasource,
                             db_config=db_config,
                             semantic_models_path=semantic_models_path,
                         )
                     else:
                         from datus.tools.semantic_tools.config import SemanticAdapterConfig
 
-                        adapter_config = SemanticAdapterConfig(namespace=namespace)
+                        adapter_config = SemanticAdapterConfig(datasource=datasource)
                 elif isinstance(adapter_config, dict):
                     if metadata and metadata.config_class:
                         adapter_config = metadata.config_class(**adapter_config)

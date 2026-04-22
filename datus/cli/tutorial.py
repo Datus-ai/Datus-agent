@@ -20,7 +20,7 @@ logger = get_logger(__name__)
 class BenchmarkTutorial:
     def __init__(self, config_path: str) -> None:
         self.config_path = config_path
-        self.namespace_name = "california_schools"
+        self.datasource_name = "california_schools"
         self.console = Console(log_path=False)
 
     def _ensure_files(self):
@@ -28,7 +28,7 @@ class BenchmarkTutorial:
             self.benchmark_path.mkdir(parents=True)
         from datus.cli.interactive_init import copy_data_file
 
-        sub_benchmark_path = self.benchmark_path / self.namespace_name
+        sub_benchmark_path = self.benchmark_path / self.datasource_name
         if not sub_benchmark_path.exists():
             sub_benchmark_path.mkdir(parents=True)
         copy_data_file(
@@ -46,8 +46,8 @@ class BenchmarkTutorial:
         agent_config = load_agent_config(config=self.config_path)
         self.benchmark_path = agent_config.path_manager.benchmark_dir
         if (
-            self.namespace_name not in agent_config.benchmark_configs
-            or self.namespace_name not in agent_config.services.datasources
+            self.datasource_name not in agent_config.benchmark_configs
+            or self.datasource_name not in agent_config.services.datasources
         ):
             # Add california_schools datasource to services.datasources
             config_manager = configuration_manager(config_path=self.config_path, reload=True)
@@ -77,7 +77,7 @@ class BenchmarkTutorial:
             self.console.print(Syntax(dict_to_yaml_str(services_config["datasources"]), lexer="yaml"))
 
             benchmark_config = {
-                self.namespace_name: {
+                self.datasource_name: {
                     "question_file": "california_schools.csv",
                     "question_id_key": "task_id",
                     "question_key": "question",
@@ -114,7 +114,7 @@ class BenchmarkTutorial:
                 self.console.print("Data files are ready.")
                 status.update("Ensuring configuration...")
             self.console.print("Configuration is ready.")
-            california_schools_path = self.benchmark_path / self.namespace_name
+            california_schools_path = self.benchmark_path / self.datasource_name
             from datus.cli.interactive_init import init_metadata_and_log_result, overwrite_sql_and_log_result
 
             self.console.print("[bold yellow][2/6] Initialize Metadata using command: [/bold yellow]")
@@ -124,12 +124,12 @@ class BenchmarkTutorial:
                 "--components metadata --kb_update_strategy overwrite[/]"
             )
             init_metadata_and_log_result(
-                namespace_name=self.namespace_name,
+                datasource_name=self.datasource_name,
                 config_path=self.config_path,
                 console=self.console,
             )
 
-            success_path = self.benchmark_path / self.namespace_name / "success_story.csv"
+            success_path = self.benchmark_path / self.datasource_name / "success_story.csv"
 
             self.console.print("[bold yellow][3/6] Initialize Semantic Model using command: [/bold yellow]")
             self.console.print(
@@ -167,7 +167,7 @@ class BenchmarkTutorial:
                 '" [/]'
             )
             overwrite_sql_and_log_result(
-                namespace_name=self.namespace_name,
+                datasource_name=self.datasource_name,
                 sql_dir=str(california_schools_path / "reference_sql"),
                 subject_tree="california_schools/Continuation/Free_Rate,"
                 "california_schools/Charter/Education_Location,"
@@ -206,10 +206,12 @@ class BenchmarkTutorial:
     def _init_semantic_model(self, success_path: Path):
         """Initialize semantic model using success stories."""
 
-        logger.info(f"Semantic model initialization with {self.benchmark_path}/{self.namespace_name}/success_story.csv")
+        logger.info(
+            f"Semantic model initialization with {self.benchmark_path}/{self.datasource_name}/success_story.csv"
+        )
         try:
             agent_config = load_agent_config(reload=True, config=self.config_path)
-            agent_config.current_datasource = self.namespace_name
+            agent_config.current_datasource = self.datasource_name
 
             successful, result = init_semantic_model(
                 success_path=success_path,
@@ -229,10 +231,10 @@ class BenchmarkTutorial:
     def _init_metrics(self, success_path: Path):
         """Initialize metrics using success stories."""
 
-        logger.info(f"Metrics initialization with {self.benchmark_path}/{self.namespace_name}/success_story.csv")
+        logger.info(f"Metrics initialization with {self.benchmark_path}/{self.datasource_name}/success_story.csv")
         try:
             agent_config = load_agent_config(reload=True, config=self.config_path)
-            agent_config.current_datasource = self.namespace_name
+            agent_config.current_datasource = self.datasource_name
             subject_tree = parse_subject_tree(
                 "california_schools/Continuation_School/Free_Rate,california_schools/Charter/Education_Location"
             )
@@ -254,7 +256,7 @@ class BenchmarkTutorial:
         agent_config = load_agent_config(reload=True, config=self.config_path)
         manager = SubAgentManager(
             configuration_manager=configuration_manager(config_path=self.config_path, reload=True),
-            namespace=self.namespace_name,
+            datasource=self.datasource_name,
             agent_config=agent_config,
         )
         manager.save_agent(

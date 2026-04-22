@@ -71,7 +71,7 @@ def _enrich_dimension_sample_values(params: list, agent_config: AgentConfig) -> 
     from datus.tools.func_tool.database import DBFuncTool
 
     try:
-        db_manager = db_manager_instance(agent_config.namespaces)
+        db_manager = db_manager_instance(agent_config.datasource_configs)
         conn = db_manager.get_conn(agent_config.current_datasource, agent_config.current_datasource)
         db_tool = DBFuncTool(conn, agent_config=agent_config)
     except Exception as e:

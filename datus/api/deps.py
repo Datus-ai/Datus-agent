@@ -16,7 +16,7 @@ logger = get_logger(__name__)
 # Module-level singletons (set during lifespan via init_deps)
 _auth_provider: Optional[AuthProvider] = None
 _service_cache: Optional[DatusServiceCache] = None
-_namespace: str = "default"
+_datasource: str = "default"
 _default_source: Optional[str] = None
 _default_interactive: bool = True
 _stream_thinking: bool = False
@@ -27,7 +27,7 @@ _DEFAULT_PROJECT_KEY = "default"
 def init_deps(
     auth_provider: AuthProvider,
     cache: DatusServiceCache,
-    namespace: str = "default",
+    datasource: str = "default",
     default_source: Optional[str] = None,
     default_interactive: bool = True,
     stream_thinking: bool = False,
@@ -36,10 +36,10 @@ def init_deps(
 
     Called from main.py lifespan to inject dependencies.
     """
-    global _auth_provider, _service_cache, _namespace, _default_source, _default_interactive, _stream_thinking
+    global _auth_provider, _service_cache, _datasource, _default_source, _default_interactive, _stream_thinking
     _auth_provider = auth_provider
     _service_cache = cache
-    _namespace = namespace
+    _datasource = datasource
     _default_source = default_source
     _default_interactive = default_interactive
     _stream_thinking = stream_thinking
@@ -71,9 +71,9 @@ async def get_datus_service(request: Request) -> DatusService:
         agent_config = ctx.config
         if agent_config is None:
             try:
-                agent_config = load_agent_config(namespace=_namespace)
+                agent_config = load_agent_config(datasource=_datasource)
             except Exception as e:
-                logger.error(f"Failed to load agent config for namespace '{_namespace}': {e}")
+                logger.error(f"Failed to load agent config for datasource '{_datasource}': {e}")
                 raise RuntimeError(f"Failed to load agent config: {e}") from e
 
         return DatusService(

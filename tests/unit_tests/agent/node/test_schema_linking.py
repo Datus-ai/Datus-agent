@@ -39,7 +39,7 @@ def agent_config():
     """Fixture to create a minimal AgentConfig for testing"""
     from tests.conftest import load_acceptance_config
 
-    config = load_acceptance_config(namespace="snowflake")
+    config = load_acceptance_config(datasource="snowflake")
     return config
 
 
@@ -134,7 +134,7 @@ def test_schema_linking_no_exist():
     """Test schema linking with non-existent database"""
     from tests.conftest import load_acceptance_config
 
-    test_config = load_acceptance_config(namespace="snowflake")
+    test_config = load_acceptance_config(datasource="snowflake")
     tool = SchemaLineageTool(agent_config=test_config)
     res = tool.execute(
         SchemaLinkingInput(

@@ -117,12 +117,12 @@ def search_metrics_input() -> List[Dict[str, Any]]:
 
 @pytest.fixture
 def agent_config() -> AgentConfig:
-    # Post-refactor (PR #542) legacy `namespace:` configs with `path_pattern` expand into
+    # Post-refactor (PR #542) legacy configs with `path_pattern` expand into
     # one database per matched file (keyed by logic name). The old "bird_sqlite" key is no
     # longer valid, so the loader drops it; individual tests override `current_datasource` as
     # needed. Seed a valid default here so fixtures that touch the DB (e.g. `function_tools`)
     # can initialize.
-    agent_config = load_acceptance_config(namespace="bird_sqlite")
+    agent_config = load_acceptance_config(datasource="bird_sqlite")
     if not agent_config.current_datasource and agent_config.services.datasources:
         agent_config.current_datasource = "california_schools"
     Path(agent_config.rag_storage_path()).mkdir(parents=True, exist_ok=True)
@@ -234,9 +234,9 @@ class TestNode:
         # Take first test case from the list
         for inputs in schema_linking_input:
             test_case = inputs["input"]
-            if "namespace" in test_case:
-                agent_config.current_datasource = test_case["namespace"]
-                del test_case["namespace"]
+            if "datasource" in test_case:
+                agent_config.current_datasource = test_case["datasource"]
+                del test_case["datasource"]
             node = Node.new_instance(
                 node_id="schema_link",
                 description="Schema Linking",

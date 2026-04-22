@@ -72,11 +72,11 @@ def load_benchmark_data(benchmark_path):
     return instance_ids
 
 
-def generate_benchmark_script(workdir, namespace, benchmark, instance_ids, output_file, extra_option):
+def generate_benchmark_script(workdir, datasource, benchmark, instance_ids, output_file, extra_option):
     with open(output_file, "w", encoding="utf-8") as f:
         f.write("#!/bin/bash\n\n")
         f.write("# generate test case\n")
-        f.write(f"# namespace: {namespace}\n")
+        f.write(f"# datasource: {datasource}\n")
         f.write(f"# benchmark: {benchmark}\n")
         f.write(f"# task count: {len(instance_ids)}\n\n")
 
@@ -86,7 +86,7 @@ def generate_benchmark_script(workdir, namespace, benchmark, instance_ids, outpu
         for instance_id in instance_ids:
             command = (
                 f"(cd {workdir} && python -m datus.main benchmark "
-                f"--namespace {namespace} --benchmark {benchmark} "
+                f"--datasource {datasource} --benchmark {benchmark} "
                 + extra_option
                 + f"--benchmark_task_id {instance_id})\n"
             )
@@ -99,7 +99,7 @@ def generate_benchmark_script(workdir, namespace, benchmark, instance_ids, outpu
 
 def main():
     parser = argparse.ArgumentParser(description="Generate benchmark script")
-    parser.add_argument("--namespace", required=True, help="namespace (example: snowflake)")
+    parser.add_argument("--datasource", required=True, help="Datasource name (example: snowflake)")
     parser.add_argument("--benchmark", required=True, help="benchmark (example: spider2)")
     parser.add_argument("--workdir", required=True, help="path to agent base directory")
     parser.add_argument("--output", default="run_integration.sh", help="output file")
@@ -121,7 +121,7 @@ def main():
 
         generate_benchmark_script(
             args.workdir,
-            args.namespace,
+            args.datasource,
             args.benchmark,
             instance_ids,
             args.output,

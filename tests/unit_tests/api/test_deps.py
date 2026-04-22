@@ -15,13 +15,13 @@ def _reset_deps():
     """Reset module-level singletons between tests."""
     deps._auth_provider = None
     deps._service_cache = None
-    deps._namespace = "default"
+    deps._datasource = "default"
     deps._default_source = None
     deps._default_interactive = True
     yield
     deps._auth_provider = None
     deps._service_cache = None
-    deps._namespace = "default"
+    deps._datasource = "default"
     deps._default_source = None
     deps._default_interactive = True
 
@@ -35,20 +35,20 @@ class TestInitDeps:
         mock_auth.on_evict = MagicMock()
         mock_cache = MagicMock(spec=DatusServiceCache)
 
-        init_deps(mock_auth, mock_cache, namespace="test_ns")
+        init_deps(mock_auth, mock_cache, datasource="test_ns")
 
         assert deps._auth_provider is mock_auth
         assert deps._service_cache is mock_cache
-        assert deps._namespace == "test_ns"
+        assert deps._datasource == "test_ns"
 
-    def test_default_namespace(self):
-        """Default namespace is 'default'."""
+    def test_default_datasource(self):
+        """Default datasource is 'default'."""
         mock_auth = MagicMock()
         mock_auth.on_evict = MagicMock()
         mock_cache = MagicMock(spec=DatusServiceCache)
 
         init_deps(mock_auth, mock_cache)
-        assert deps._namespace == "default"
+        assert deps._datasource == "default"
 
     def test_default_source_and_interactive_defaults(self):
         """Without explicit args, default_source is None and default_interactive is True."""
@@ -69,7 +69,7 @@ class TestInitDeps:
         init_deps(
             mock_auth,
             mock_cache,
-            namespace="ns",
+            datasource="ns",
             default_source="vscode",
             default_interactive=False,
         )
@@ -200,13 +200,13 @@ class TestGetDatusService:
         cache = DatusServiceCache()
         deps._auth_provider = auth_provider
         deps._service_cache = cache
-        deps._namespace = "test_ns"
+        deps._datasource = "test_ns"
 
         request = MagicMock()
         request.state = MagicMock()
         request.headers = {}
         # NoAuthProvider returns AppContext with config=None
-        # Factory should call load_agent_config(namespace="test_ns")
+        # Factory should call load_agent_config(datasource="test_ns")
         # This will fail because test_ns config doesn't exist in default paths,
         # but exercises the factory code path (lines 50-56)
         try:

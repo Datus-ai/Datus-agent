@@ -14,7 +14,7 @@ from datus.schemas.reason_sql_node_models import ReasoningInput, ReasoningResult
 
 def make_agent_config():
     cfg = MagicMock()
-    cfg.namespaces = {}
+    cfg.datasource_configs = {}
     cfg.current_datasource = "test"
     cfg.nodes = {}
     return cfg

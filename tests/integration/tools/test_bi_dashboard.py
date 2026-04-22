@@ -129,7 +129,7 @@ def agent_config(tmp_path_factory) -> AgentConfig:
     )
     tmp_cfg.write_text(content)
 
-    config = load_agent_config(config=str(tmp_cfg), namespace="superset", reload=True, force=True, yes=True)
+    config = load_agent_config(config=str(tmp_cfg), datasource="superset", reload=True, force=True, yes=True)
     return config
 
 

@@ -492,7 +492,7 @@ class TestLoadAgentConfigResolution:
         assert "datus" in msg
 
     def test_service_action_still_resolves(self, tmp_path, reset_global_singletons):
-        """``action='service'`` previously skipped the namespace fallback in
+        """``action='service'`` previously skipped the datasource fallback in
         ``override_by_args``; the loader tail must still populate the default."""
         cfg = self._write_base_yaml(
             tmp_path,

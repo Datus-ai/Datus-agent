@@ -65,7 +65,7 @@ response = requests.post(
     headers={"Authorization": "Bearer your_token"},
     json={
         "workflow": "reflection",
-        "namespace": "your_db",
+        "datasource": "your_db",
         "task": "Show me quarterly revenue trends",
         "mode": "sync"
     }

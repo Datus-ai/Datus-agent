@@ -33,7 +33,7 @@ class TestCreateParser:
         args = parser.parse_args(
             [
                 "run",
-                "--namespace",
+                "--datasource",
                 "myns",
                 "--task",
                 "count rows",
@@ -53,7 +53,7 @@ class TestCreateParser:
                 "benchmark",
                 "--benchmark",
                 "bird_dev",
-                "--namespace",
+                "--datasource",
                 "testns",
             ]
         )
@@ -65,7 +65,7 @@ class TestCreateParser:
         args = parser.parse_args(
             [
                 "bootstrap-kb",
-                "--namespace",
+                "--datasource",
                 "myns",
             ]
         )
@@ -76,7 +76,7 @@ class TestCreateParser:
         args = parser.parse_args(
             [
                 "check-db",
-                "--namespace",
+                "--datasource",
                 "testns",
             ]
         )
@@ -98,10 +98,10 @@ class TestCreateParser:
         args = parser.parse_args(["tutorial"])
         assert args.action == "tutorial"
 
-    def test_namespace_action_parsed(self):
+    def test_service_action_parsed(self):
         parser = create_parser()
-        args = parser.parse_args(["namespace", "list"])
-        assert args.action == "namespace"
+        args = parser.parse_args(["service", "list"])
+        assert args.action == "service"
         assert args.command == "list"
 
     def test_skill_action_parsed(self):
@@ -115,7 +115,7 @@ class TestCreateParser:
         args = parser.parse_args(
             [
                 "eval",
-                "--namespace",
+                "--datasource",
                 "myns",
                 "--benchmark",
                 "bird_dev",
@@ -146,7 +146,7 @@ class TestCreateParser:
         args = parser.parse_args(
             [
                 "run",
-                "--namespace",
+                "--datasource",
                 "ns",
                 "--task",
                 "do something",
@@ -161,7 +161,7 @@ class TestCreateParser:
         args = parser.parse_args(
             [
                 "run",
-                "--namespace",
+                "--datasource",
                 "ns",
                 "--task",
                 "do something",
@@ -176,7 +176,7 @@ class TestCreateParser:
         args = parser.parse_args(
             [
                 "bootstrap-kb",
-                "--namespace",
+                "--datasource",
                 "ns",
             ]
         )
@@ -192,7 +192,7 @@ class TestCreateParser:
         args = parser.parse_args(
             [
                 "bootstrap-bi",
-                "--namespace",
+                "--datasource",
                 "myns",
             ]
         )
@@ -260,14 +260,14 @@ class TestMainTutorialAction:
         assert result == 0
 
 
-class TestMainNamespaceAction:
-    def test_namespace_list_runs_namespace_manager(self):
+class TestMainServiceAction:
+    def test_service_list_runs_service_manager(self):
         mock_mgr = MagicMock()
         mock_mgr.run.return_value = 0
         with (
             patch("datus.main.configure_logging"),
-            patch("datus.main.NamespaceManager", return_value=mock_mgr),
-            patch.object(sys, "argv", ["datus", "namespace", "list"]),
+            patch("datus.cli.service_manager.ServiceManager", return_value=mock_mgr),
+            patch.object(sys, "argv", ["datus", "service", "list"]),
         ):
             main()
         mock_mgr.run.assert_called_with("list")
@@ -298,7 +298,7 @@ class TestMainCheckDbAction:
             patch("datus.main.setup_exception_handler"),
             patch("datus.main.load_agent_config", return_value=mock_config),
             patch("datus.main.Agent", return_value=mock_agent),
-            patch.object(sys, "argv", ["datus", "check-db", "--namespace", "myns"]),
+            patch.object(sys, "argv", ["datus", "check-db", "--datasource", "myns"]),
         ):
             result = main()
 
@@ -341,7 +341,7 @@ class TestMainRunAction:
             patch.object(
                 sys,
                 "argv",
-                ["datus", "run", "--namespace", "ns", "--task", "count rows", "--task_db_name", "mydb"],
+                ["datus", "run", "--datasource", "ns", "--task", "count rows", "--task_db_name", "mydb"],
             ),
         ):
             result = main()
@@ -367,7 +367,7 @@ class TestMainRunAction:
                 [
                     "datus",
                     "run",
-                    "--namespace",
+                    "--datasource",
                     "ns",
                     "--task",
                     "count rows",
@@ -399,7 +399,7 @@ class TestMainBenchmarkAction:
             patch.object(
                 sys,
                 "argv",
-                ["datus", "benchmark", "--benchmark", "bird_dev", "--namespace", "ns"],
+                ["datus", "benchmark", "--benchmark", "bird_dev", "--datasource", "ns"],
             ),
         ):
             result = main()
@@ -422,7 +422,7 @@ class TestMainEvalAction:
             patch.object(
                 sys,
                 "argv",
-                ["datus", "eval", "--namespace", "ns", "--benchmark", "bird_dev"],
+                ["datus", "eval", "--datasource", "ns", "--benchmark", "bird_dev"],
             ),
         ):
             result = main()

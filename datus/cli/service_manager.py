@@ -6,7 +6,7 @@
 """
 Manage command for Services (datasources, semantic layer, BI tools, schedulers).
 
-Replaces the legacy NamespaceManager. Works with the new services.datasources
+Replaces the legacy DatasourceManager. Works with the new services.datasources
 config structure where each datasource is an independent entry.
 """
 
@@ -307,11 +307,6 @@ class ServiceManager:
             }
 
             configure_manager.update(updates={"services": services_section}, delete_old_key=True)
-            # Remove legacy namespace key if it exists
-            if "namespace" in configure_manager.data:
-                del configure_manager.data["namespace"]
-                configure_manager.save()
-
             console.print(f"Configuration saved to {configure_manager.config_path}")
             return True
         except Exception as e:

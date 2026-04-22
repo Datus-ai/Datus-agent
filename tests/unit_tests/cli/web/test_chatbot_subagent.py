@@ -126,7 +126,7 @@ class TestCreateWebApp:
         )
 
         agent_args = _build_agent_args(args)
-        assert agent_args.namespace == "myns"
+        assert agent_args.datasource == "myns"
         assert agent_args.config == "conf/agent.yml"
         assert agent_args.source == "web"
         assert agent_args.interactive is True

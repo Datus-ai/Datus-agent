@@ -42,7 +42,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def setup_base_parser_args(parser: argparse.ArgumentParser):
-    parser.add_argument("--namespace", required=True, help="Namespace to benchmark, e.g. bird_sqlite.")
+    parser.add_argument("--datasource", required=True, help="Datasource to benchmark, e.g. bird_sqlite.")
     parser.add_argument("--benchmark", required=True, help="Benchmark name, e.g. bird_dev.")
     parser.add_argument("--workflow", default="reflection", help="Workflow plan to execute (default: reflection)")
     parser.add_argument(
@@ -150,7 +150,7 @@ def build_agent_args(
         "load_cp": None,
         "max_steps": cli_args.max_steps,
         "benchmark": cli_args.benchmark,
-        "namespace": cli_args.namespace,
+        "datasource": cli_args.datasource,
         "benchmark_task_ids": target_task_ids,
         "task_ids": target_task_ids,
         "catalog": "",
@@ -193,7 +193,7 @@ def run_single_round(
     override_round_paths(agent_config, round_dir)
 
     agent_args = build_agent_args(args, target_task_ids, round_dir, round_idx, run_id)
-    db_manager = db_manager_instance(agent_config.namespaces)
+    db_manager = db_manager_instance(agent_config.datasource_configs)
     agent = Agent(args=agent_args, agent_config=agent_config, db_manager=db_manager)
 
     print(f"[Round {round_idx}] Starting benchmark -> {round_dir}")

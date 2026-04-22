@@ -40,13 +40,13 @@ async def list_catalogs(
 ) -> Result[DatabasesData]:
     """List available databases."""
     request = ListDatabasesInput(
-        datasource_id=datasource_id or svc.database.current_datasource,
+        datasource_id=datasource_id or svc.datasource.current_datasource,
         catalog_name=catalog_name,
         database_name=database_name,
         schema_name=schema_name,
         include_sys_schemas=include_sys_schemas,
     )
-    databases: Result[ListDatabasesData] = svc.database.list_databases(request)
+    databases: Result[ListDatabasesData] = svc.datasource.list_databases(request)
     if not databases.success or databases.data is None:
         return Result(
             success=False,

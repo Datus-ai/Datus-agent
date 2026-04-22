@@ -131,7 +131,7 @@ class TestDeepSeekModel:
         )
 
         # Set up agent config for SQLite database
-        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        agent_config = load_acceptance_config(datasource="ssb_sqlite")
         tools = db_function_tools(agent_config)
 
         try:
@@ -174,7 +174,7 @@ class TestDeepSeekModel:
          between 1 and 3 and sales volume less than 25, where revenue is calculated by multiplying the extended
          price by the discount'"""
         # Set up agent config for SQLite database
-        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        agent_config = load_acceptance_config(datasource="ssb_sqlite")
         tools = db_function_tools(agent_config)
 
         try:
@@ -238,7 +238,7 @@ class TestDeepSeekModel:
         instructions = """You are a SQLite expert working with the Star Schema Benchmark database.
         Execute business analytics queries and provide clear results with proper joins."""
         # Set up agent config for SQLite database
-        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        agent_config = load_acceptance_config(datasource="ssb_sqlite")
         tools = db_function_tools(agent_config)
 
         for i, scenario in enumerate(test_scenarios):
@@ -275,7 +275,7 @@ class TestDeepSeekModel:
         ]
 
         # Set up agent config for SQLite database
-        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        agent_config = load_acceptance_config(datasource="ssb_sqlite")
         tools = db_function_tools(agent_config)
 
         for i, scenario in enumerate(complex_scenarios):
@@ -321,7 +321,7 @@ class TestDeepSeekModel:
         Answer questions about the database schema and data."""
 
         # Set up agent config for SQLite database
-        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        agent_config = load_acceptance_config(datasource="ssb_sqlite")
         tools = db_function_tools(agent_config)
 
         # First question: explore schema
@@ -391,7 +391,7 @@ class TestDeepSeekModel:
         Provide clear and concise answers about the database."""
 
         # Set up agent config for SQLite database
-        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        agent_config = load_acceptance_config(datasource="ssb_sqlite")
         tools = db_function_tools(agent_config)
 
         # First streaming question
@@ -450,7 +450,7 @@ class TestDeepSeekModel:
         # " aggregate by year, supplier country, and part category. The result should be sorted in ascending order by"
         # " year, supplier country, and part category'"
         # Set up agent config for SQLite database
-        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        agent_config = load_acceptance_config(datasource="ssb_sqlite")
         tools = db_function_tools(agent_config)
 
         # Test 1: Non-streaming version
@@ -589,7 +589,7 @@ class TestDeepSeekModel:
         Provide concise answers about database schema and simple queries."""
 
         # Set up agent config for SQLite database
-        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        agent_config = load_acceptance_config(datasource="ssb_sqlite")
         tools = db_function_tools(agent_config)
 
         # Simple acceptance scenarios with session

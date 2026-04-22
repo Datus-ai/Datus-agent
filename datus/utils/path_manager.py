@@ -12,7 +12,7 @@ Storage layout (refactored):
 
 - ``{project_root}/subject/{semantic_models, sql_summaries, ext_knowledge}/``
   — knowledge-base content lives alongside the project so every CWD gets its
-  own copy. There is no per-namespace subdirectory anymore.
+  own copy. There is no per-datasource subdirectory anymore.
 - ``{project_root}/.datus/skills/`` — project-level skills.
 - ``{datus_home}/sessions/{project_name}/`` — sessions sharded by project.
 - ``{datus_home}/data/`` — storage-backend root.  Each backend owns its own
@@ -220,18 +220,18 @@ class DatusPathManager:
         return self._datus_home / "trajectory"
 
     @staticmethod
-    def resolve_run_dir(base: Path, namespace: str, run_id: Optional[str] = None) -> Path:
-        """Resolve a namespaced run directory, creating it if needed.
+    def resolve_run_dir(base: Path, datasource: str, run_id: Optional[str] = None) -> Path:
+        """Resolve a datasource-scoped run directory, creating it if needed.
 
         Args:
             base: Base directory (e.g. save_dir or trajectory_dir, may be overridden)
-            namespace: Namespace name
-            run_id: Optional run identifier (timestamp). If None, returns namespace dir only.
+            datasource: Datasource name
+            run_id: Optional run identifier (timestamp). If None, returns datasource dir only.
 
         Returns:
-            Path: {base}/{namespace}/{run_id} or {base}/{namespace}
+            Path: {base}/{datasource}/{run_id} or {base}/{datasource}
         """
-        path = base / namespace
+        path = base / datasource
         if run_id:
             path = path / run_id
         path.mkdir(parents=True, exist_ok=True)

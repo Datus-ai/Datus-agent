@@ -46,11 +46,10 @@ def get_available_datasources(config_path: str = "") -> List[str]:
         return []
 
 
-def create_cli_args(config_path: str = "", namespace: str = None, catalog: str = "", datasource: str = "") -> Namespace:
+def create_cli_args(config_path: str = "", datasource: str = "", catalog: str = "") -> Namespace:
     """Create CLI arguments for DatusCLI initialization"""
     args = Namespace()
     args.config = parse_config_path(config_path)
-    args.namespace = namespace  # Add namespace parameter
     args.history_file = ".datus_history"
     args.db_type = "sqlite"
     args.db_path = None
@@ -106,17 +105,14 @@ class ConfigManager:
         """
         self.cli = cli
 
-    def setup_config(
-        self, config_path: str = "conf/agent.yml", namespace: str = None, catalog: str = "", datasource: str = ""
-    ) -> DatusCLI:
+    def setup_config(self, config_path: str = "conf/agent.yml", datasource: str = "", catalog: str = "") -> DatusCLI:
         """
         Setup agent configuration by initializing real DatusCLI.
 
         Args:
             config_path: Path to agent configuration file
-            namespace: Namespace to use (optional)
-            catalog: Catalog to use (optional)
             datasource: Datasource to use (optional)
+            catalog: Catalog to use (optional)
 
         Returns:
             Initialized DatusCLI instance
@@ -125,7 +121,7 @@ class ConfigManager:
             Exception: If configuration loading fails
         """
         # Create CLI arguments
-        args = create_cli_args(config_path, namespace, catalog, datasource=datasource)
+        args = create_cli_args(config_path, datasource=datasource, catalog=catalog)
 
         # Initialize real DatusCLI
         cli = DatusCLI(args)

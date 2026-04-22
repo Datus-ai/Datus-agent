@@ -107,10 +107,10 @@ class InteractiveConfigure:
     def _load_existing_config(self):
         """Load datasources from existing agent.yml.
 
-        Supports the new ``agent.services.datasources`` layout, the legacy
-        singular ``agent.service.datasources`` key, and the further-legacy
-        ``agent.namespace`` block. ``agent.models`` / ``agent.providers``
-        are ignored here — they are not this wizard's responsibility.
+        Supports the new ``agent.services.datasources`` layout and the legacy
+        singular ``agent.service.datasources`` key. ``agent.models`` /
+        ``agent.providers`` are ignored here — they are not this wizard's
+        responsibility.
         """
         if not self.config_path.exists():
             return
@@ -129,12 +129,6 @@ class InteractiveConfigure:
             self.datasources = services.get("datasources", {})
         elif isinstance(legacy_service, dict) and legacy_service.get("datasources") is not None:
             self.datasources = legacy_service.get("datasources", {})
-        elif "namespace" in agent:
-            # Auto-migrate legacy namespace format
-            from datus.configuration.agent_config import ServicesConfig
-
-            migrated = ServicesConfig.migrate_from_namespace(agent["namespace"])
-            self.datasources = migrated.get("datasources", {})
 
     # ── Display ────────────────────────────────────────────────────
 
@@ -443,8 +437,7 @@ class InteractiveConfigure:
             services["schedulers"] = {}
         agent["services"] = services
 
-        # Remove legacy namespace and singular service keys
-        agent.pop("namespace", None)
+        # Remove legacy singular service key
         agent.pop("service", None)
 
         # Set default nodes if not present

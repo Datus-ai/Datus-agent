@@ -16,7 +16,7 @@ from datus.schemas.node_models import SqlTask
 
 def make_agent_config(date_parser_language=None):
     cfg = MagicMock()
-    cfg.namespaces = {}
+    cfg.datasource_configs = {}
     cfg.current_datasource = "test"
     if date_parser_language:
         node_cfg = MagicMock()

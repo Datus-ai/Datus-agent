@@ -214,7 +214,7 @@ class GenSQLAgenticNode(AgenticNode):
         Args:
             database_name: The name of the database to connect to
         """
-        db_manager = db_manager_instance(self.agent_config.namespaces)
+        db_manager = db_manager_instance(self.agent_config.datasource_configs)
         conn = db_manager.get_conn(self.agent_config.current_datasource, database_name)
         self.db_func_tool = DBFuncTool(
             conn,
@@ -265,7 +265,7 @@ class GenSQLAgenticNode(AgenticNode):
             self._setup_filesystem_tools()
 
         # Rebuild subagent task tool so repeated setup_tools() calls (e.g. via
-        # ChatCommands.update_chat_node_tools after a namespace switch) keep the
+        # ChatCommands.update_chat_node_tools after a datasource switch) keep the
         # "task" tool available for delegation.
         self._setup_sub_agent_task_tool()
         if self.sub_agent_task_tool:
@@ -303,7 +303,7 @@ class GenSQLAgenticNode(AgenticNode):
                     sub_agent_name=self.node_config.get("system_prompt"),
                 )
             else:
-                db_manager = db_manager_instance(self.agent_config.namespaces)
+                db_manager = db_manager_instance(self.agent_config.datasource_configs)
                 conn = db_manager.get_conn(self.agent_config.current_datasource, self.agent_config.current_datasource)
                 self.db_func_tool = DBFuncTool(
                     conn,
@@ -334,7 +334,7 @@ class GenSQLAgenticNode(AgenticNode):
         try:
             db_tool = self.db_func_tool
             if not db_tool:
-                db_manager = db_manager_instance(self.agent_config.namespaces)
+                db_manager = db_manager_instance(self.agent_config.datasource_configs)
                 conn = db_manager.get_conn(self.agent_config.current_datasource, self.agent_config.current_datasource)
                 db_tool = DBFuncTool(
                     conn,
@@ -452,7 +452,7 @@ class GenSQLAgenticNode(AgenticNode):
                             sub_agent_name=self.node_config.get("system_prompt"),
                         )
                     else:
-                        db_manager = db_manager_instance(self.agent_config.namespaces)
+                        db_manager = db_manager_instance(self.agent_config.datasource_configs)
                         conn = db_manager.get_conn(
                             self.agent_config.current_datasource, self.agent_config.current_datasource
                         )
@@ -478,7 +478,7 @@ class GenSQLAgenticNode(AgenticNode):
                 if not self.reference_template_tools:
                     db_tool = self.db_func_tool
                     if not db_tool:
-                        _db_manager = db_manager_instance(self.agent_config.namespaces)
+                        _db_manager = db_manager_instance(self.agent_config.datasource_configs)
                         _conn = _db_manager.get_conn(
                             self.agent_config.current_datasource, self.agent_config.current_datasource
                         )
@@ -521,7 +521,7 @@ class GenSQLAgenticNode(AgenticNode):
                 logger.warning("Database config not found")
                 return None
 
-            metricflow_server = MCPServer.get_metricflow_mcp_server(namespace=self.agent_config.current_datasource)
+            metricflow_server = MCPServer.get_metricflow_mcp_server(datasource=self.agent_config.current_datasource)
             if metricflow_server:
                 logger.info(f"Added metricflow_mcp MCP server for database: {db_config.database}")
                 return metricflow_server
@@ -1251,10 +1251,10 @@ def prepare_template_context(
     # Add agent description from configuration or input
     context["agent_description"] = node_config.agent_description
 
-    # Add namespace and workspace info
+    # Add datasource and workspace info
     if agent_config:
         context["agent_config"] = agent_config
-        context["namespace"] = getattr(agent_config, "current_datasource", None)
+        context["datasource"] = getattr(agent_config, "current_datasource", None)
         context["db_name"] = getattr(agent_config, "current_datasource", None)
         context["workspace_root"] = workspace_root or getattr(agent_config, "project_root", None)
     logger.debug(f"Prepared template context: {context}")

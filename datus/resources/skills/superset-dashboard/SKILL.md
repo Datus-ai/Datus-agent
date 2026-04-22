@@ -29,7 +29,7 @@ Use `write_query` only when you need to run analytical SQL on the **source datab
 write_query(sql="SELECT ... FROM source_table ...", table_name="materialized_table_name")
 ```
 
-- The SQL runs on the source (namespace) database via the active connector.
+- The SQL runs on the source (datasource) database via the active connector.
 - Results are written as a physical table in Superset's dataset database.
 - Returns `database_id` (when resolvable) — save it for Step 2. If not returned, use `list_bi_databases()` to find the correct Superset database ID.
 - If the target table already exists in a Superset-connected BI database, or a virtual dataset is sufficient, skip this step and go directly to Step 2.

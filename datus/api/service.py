@@ -96,18 +96,18 @@ class DatusAPIService:
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         return f"{client_id}_{timestamp}"
 
-    def get_agent(self, namespace: str) -> Agent:
-        """Get or create an agent for the specified namespace."""
-        if namespace not in self.agents:
+    def get_agent(self, datasource: str) -> Agent:
+        """Get or create an agent for the specified datasource."""
+        if datasource not in self.agents:
             if not self.agent_config:
                 raise HTTPException(status_code=500, detail="Agent configuration not available")
 
-            self.agent_config.current_datasource = namespace
+            self.agent_config.current_datasource = datasource
             # Create agent instance
-            self.agents[namespace] = Agent(self.args, self.agent_config)
-            logger.info(f"Created new agent for namespace: {namespace}")
+            self.agents[datasource] = Agent(self.args, self.agent_config)
+            logger.info(f"Created new agent for datasource: {datasource}")
 
-        return self.agents[namespace]
+        return self.agents[datasource]
 
     def _create_sql_task(self, request: RunWorkflowRequest, task_id: str, agent: Agent) -> SqlTask:
         """Create SQL task from request parameters."""
@@ -159,8 +159,8 @@ class DatusAPIService:
             if self.task_store:
                 self.task_store.create_task(task_id, request.task)
 
-            # Get agent for the namespace
-            agent = self.get_agent(request.namespace)
+            # Get agent for the datasource
+            agent = self.get_agent(request.datasource)
 
             # Create SQL task
             sql_task = self._create_sql_task(request, task_id, agent)
@@ -243,8 +243,8 @@ class DatusAPIService:
         task_id = request.task_id or self._generate_task_id(client_id or "unknown")
 
         try:
-            # Get agent for the namespace
-            agent = self.get_agent(request.namespace)
+            # Get agent for the datasource
+            agent = self.get_agent(request.datasource)
 
             # Create SQL task
             sql_task = self._create_sql_task(request, task_id, agent)
@@ -437,14 +437,14 @@ async def lifespan(app: FastAPI):
     await service.initialize()
 
     # Initialize plugin-based auth and service cache for new API routes
-    namespace = getattr(args, "namespace", None) or os.getenv("DATUS_NAMESPACE", "default")
+    datasource = getattr(args, "datasource", None) or os.getenv("DATUS_DATASOURCE", "default")
     api_config = getattr(service.agent_config, "api_config", {}) if service.agent_config else {}
-    auth_provider = load_auth_provider(api_config, namespace=namespace)
+    auth_provider = load_auth_provider(api_config, datasource=datasource)
     service_cache = DatusServiceCache(max_size=128)
     init_deps(
         auth_provider,
         service_cache,
-        namespace=namespace,
+        datasource=datasource,
         default_source=getattr(args, "source", None),
         default_interactive=getattr(args, "interactive", True),
         stream_thinking=getattr(args, "stream_thinking", False),
@@ -581,7 +581,7 @@ def create_app(agent_args: argparse.Namespace) -> FastAPI:
 
 
 # Global app instance for uvicorn to load
-# Configuration via environment variables: DATUS_CONFIG, DATUS_NAMESPACE, DATUS_OUTPUT_DIR, DATUS_LOG_LEVEL
+# Configuration via environment variables: DATUS_CONFIG, DATUS_DATASOURCE, DATUS_OUTPUT_DIR, DATUS_LOG_LEVEL
 _config_file = os.getenv("DATUS_CONFIG", "")  # Empty string uses default resolution
 try:
     _config_path = str(parse_config_path(_config_file))
@@ -589,13 +589,13 @@ except Exception as e:
     logger.warning(f"Failed to locate config file: {e}, using current directory default")
     _config_path = "conf/agent.yml"
 
-_namespace = os.getenv("DATUS_NAMESPACE", "default")
+_datasource = os.getenv("DATUS_DATASOURCE", "default")
 _output_dir = os.getenv("DATUS_OUTPUT_DIR", "./output")
 _log_level = os.getenv("DATUS_LOG_LEVEL", "INFO")
 
 _default_args = argparse.Namespace(
     config=_config_path,
-    namespace=_namespace,
+    datasource=_datasource,
     output_dir=_output_dir,
     log_level=_log_level,
 )

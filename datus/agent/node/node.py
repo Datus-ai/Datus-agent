@@ -438,7 +438,7 @@ class Node(ABC):
             self.dependencies.append(node_id)
 
     def _sql_connector(self, database_name: str = "") -> BaseSqlConnector:
-        return db_manager_instance(self.agent_config.namespaces).get_conn(
+        return db_manager_instance(self.agent_config.datasource_configs).get_conn(
             self.agent_config.current_datasource,
             database_name,
         )

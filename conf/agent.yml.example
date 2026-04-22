@@ -113,7 +113,7 @@ agent:
   #   my_benchmark:
   #       question_file: dev.json # Relative path to the benchmark question file, can be csv/json/json
   #       question_id_key: question_id # The question id, use the line number when empty; The default value is question_id
-  #       db_key: db_id # The key corresponding to database name; By default, the database of namespaces will be taken.
+  #       db_key: db_id # The key corresponding to database name; By default, the database of datasources will be taken.
   #       ext_knowledge_key: evidence # Optional, the key corresponding to external knowledge
   #       use_tables_key: tables # Optional: specify which tables to use
 
@@ -124,9 +124,9 @@ agent:
   #       gold_result_key: "" # Optional, the key corresponding to the standard answer. When `gold_result_path` is a file, this configuration cannot be empty
 
 
-  # local databases configuration
+  # local datasources configuration
   services:
-    databases:
+    datasources:
       snowflake:
         type: snowflake
         account: ${SNOWFLAKE_ACCOUNT}  # Use environment variables or real values
@@ -186,7 +186,7 @@ agent:
 
   storage:
     # Data path is now fixed at {agent.home}/data
-    # Final storage paths: {home}/data/datus_db_{namespace}, {home}/data/sub_agents/{agent_name}, etc.
+    # Final storage paths: {home}/data/datus_db_{datasource}, {home}/data/sub_agents/{agent_name}, etc.
 
     # Storage backend configuration
     # The base storage layer is backend-agnostic; concrete implementations are pluggable.
@@ -369,7 +369,7 @@ agent:
     gen_skill:
       model: anthropic
       # Default: "create-skill, optimize-skill"
-  # Platform documentation (namespace-independent, stored at {home}/data/document/{platform}/)
+  # Platform documentation (datasource-independent, stored at {home}/data/document/{platform}/)
   # Each key under 'document' is either a reserved global setting (e.g. tavily_api_key)
   #
   # Common options:

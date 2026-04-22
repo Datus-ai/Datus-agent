@@ -39,7 +39,7 @@ curl -X POST "http://localhost:8000/auth/token" \
 curl -X POST "http://localhost:8000/workflows/run" \
   -H "Authorization: Bearer your_jwt_token" \
   -H "Content-Type: application/json" \
-  -d '{"workflow": "fixed", "namespace": "your_db", "task": "Show me users"}'
+  -d '{"workflow": "fixed", "datasource": "your_db", "task": "Show me users"}'
 ```
 
 ### Configuration
@@ -93,7 +93,7 @@ Execute a workflow to convert natural language to SQL.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `workflow` | string | ✅ | Workflow name (nl2sql, reflection, fixed, metric_to_sql) |
-| `namespace` | string | ✅ | Database namespace |
+| `datasource` | string | ✅ | Database datasource |
 | `task` | string | ✅ | Natural language task description |
 | `mode` | string | ✅ | Execution mode (sync or async) |
 | `task_id` | string | ❌ | Custom task ID for idempotency |
@@ -118,7 +118,7 @@ Content-Type: application/json
 ```json
 {
   "workflow": "nl2sql",
-  "namespace": "your_database_namespace",
+  "datasource": "your_database_datasource",
   "task": "Show me monthly revenue by product category",
   "mode": "sync",
   "catalog_name": "your_catalog",
@@ -169,7 +169,7 @@ Cache-Control: no-cache
 ```json
 {
   "workflow": "nl2sql",
-  "namespace": "your_database_namespace",
+  "datasource": "your_database_datasource",
   "task": "Show me monthly revenue by product category",
   "mode": "async",
   "catalog_name": "your_catalog",

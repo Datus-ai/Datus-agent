@@ -21,17 +21,17 @@ from datus.tools.func_tool.base import FuncToolResult
 # =============================================================================
 
 
-def _make_agent_config(namespace="default"):
+def _make_agent_config(datasource="default"):
     cfg = MagicMock()
-    cfg.namespace = namespace
+    cfg.datasource = datasource
     return cfg
 
 
-def _make_tool_context(namespace="default", subagent=None):
+def _make_tool_context(datasource="default", subagent=None):
     ctx = ToolContext(
-        namespace=namespace,
+        datasource=datasource,
         subagent=subagent,
-        agent_config=_make_agent_config(namespace),
+        agent_config=_make_agent_config(datasource),
         tools={},
     )
     return ctx
@@ -42,10 +42,10 @@ def _make_tool_context(namespace="default", subagent=None):
 # =============================================================================
 
 
-class TestToolContext:
-    def test_namespace(self):
+class TestMCPToolContext:
+    def test_datasource(self):
         ctx = _make_tool_context("sales")
-        assert ctx.namespace == "sales"
+        assert ctx.datasource == "sales"
 
     def test_subagent_default_none(self):
         ctx = _make_tool_context()
@@ -118,7 +118,11 @@ class TestToolContext:
 def mock_config_manager():
     mgr = MagicMock()
     mgr.get.side_effect = lambda key, default=None: (
-        {"ns1": {}, "ns2": {}} if key == "namespace" else {"agent1": {}} if key == "agentic_nodes" else default
+        {"datasources": {"ns1": {}, "ns2": {}}}
+        if key == "services"
+        else {"agent1": {}}
+        if key == "agentic_nodes"
+        else default
     )
     return mgr
 
@@ -131,20 +135,20 @@ def context_manager(mock_config_manager):
 
 
 class TestToolContextManagerInit:
-    def test_available_namespaces(self, context_manager):
-        namespaces = context_manager.available_namespaces
-        assert "ns1" in namespaces
-        assert "ns2" in namespaces
+    def test_available_datasources(self, context_manager):
+        datasources = context_manager.available_datasources
+        assert "ns1" in datasources
+        assert "ns2" in datasources
 
     def test_available_subagents(self, context_manager):
         subagents = context_manager.available_subagents
         assert "agent1" in subagents
 
-    def test_validate_namespace_known(self, context_manager):
-        assert context_manager.validate_namespace("ns1") is True
+    def test_validate_datasource_known(self, context_manager):
+        assert context_manager.validate_datasource("ns1") is True
 
-    def test_validate_namespace_unknown(self, context_manager):
-        assert context_manager.validate_namespace("unknown") is False
+    def test_validate_datasource_unknown(self, context_manager):
+        assert context_manager.validate_datasource("unknown") is False
 
     def test_validate_subagent_known(self, context_manager):
         assert context_manager.validate_subagent("agent1") is True
@@ -176,15 +180,15 @@ class TestToolContextManagerGetOrCreate:
     async def test_creates_context_on_miss(self, context_manager):
         mock_ctx = _make_tool_context("ns1")
         with patch.object(context_manager, "_create_context", return_value=mock_ctx):
-            result = await context_manager.get_or_create_context("ns1")
+            result = await context_manager.get_or_create_context(datasource="ns1")
         assert result is mock_ctx
 
     @pytest.mark.asyncio
     async def test_returns_cached_context_on_hit(self, context_manager):
         mock_ctx = _make_tool_context("ns1")
         with patch.object(context_manager, "_create_context", return_value=mock_ctx):
-            result1 = await context_manager.get_or_create_context("ns1")
-            result2 = await context_manager.get_or_create_context("ns1")
+            result1 = await context_manager.get_or_create_context(datasource="ns1")
+            result2 = await context_manager.get_or_create_context(datasource="ns1")
         # _create_context should only be called once
         assert result1 is result2
 
@@ -203,10 +207,10 @@ class TestToolContextManagerGetOrCreate:
             return ctx
 
         with patch.object(context_manager, "_create_context", side_effect=make_ctx):
-            await context_manager.get_or_create_context("ns0")
-            await context_manager.get_or_create_context("ns1")
+            await context_manager.get_or_create_context(datasource="ns0")
+            await context_manager.get_or_create_context(datasource="ns1")
             # This should evict ns0
-            await context_manager.get_or_create_context("ns2")
+            await context_manager.get_or_create_context(datasource="ns2")
 
         assert len(context_manager._contexts) == 2
         assert "ns0:" not in context_manager._contexts
@@ -222,10 +226,10 @@ class TestToolContextManagerGetOrCreate:
             return {"ns_a": ctx_a, "ns_b": ctx_b}[ns]
 
         with patch.object(context_manager, "_create_context", side_effect=make_ctx):
-            await context_manager.get_or_create_context("ns_a")
-            await context_manager.get_or_create_context("ns_b")
+            await context_manager.get_or_create_context(datasource="ns_a")
+            await context_manager.get_or_create_context(datasource="ns_b")
             # Access ns_a again — should move to end
-            await context_manager.get_or_create_context("ns_a")
+            await context_manager.get_or_create_context(datasource="ns_a")
 
         keys = list(context_manager._contexts.keys())
         assert keys[-1] == "ns_a:"

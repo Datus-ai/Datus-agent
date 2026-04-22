@@ -29,7 +29,7 @@ class TestBuildAgentArgs:
         )
         result = _build_agent_args(args)
 
-        assert result.namespace == "myns"
+        assert result.datasource == "myns"
         assert result.config == "conf/agent.yml"
         assert result.source == "web"
         assert result.interactive is True

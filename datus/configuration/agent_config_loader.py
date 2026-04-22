@@ -277,11 +277,11 @@ def load_agent_config(reload: bool = False, **kwargs) -> AgentConfig:
         # Filter out the 'config' parameter as it's only used for loading, not for overriding
         override_kwargs = {k: v for k, v in kwargs.items() if k != "config"}
 
-        # Only set namespace if it's valid (exists in agent_config.namespaces)
-        if "namespace" in override_kwargs and override_kwargs["namespace"]:
-            if override_kwargs["namespace"] not in agent_config.namespaces:
-                # Silently skip invalid namespace, keep config's default
-                del override_kwargs["namespace"]
+        # Only set datasource if it's valid (exists in agent_config.datasource_configs)
+        ds_key = "datasource" if "datasource" in override_kwargs else None
+        if ds_key and override_kwargs[ds_key]:
+            if override_kwargs[ds_key] not in agent_config.datasource_configs:
+                del override_kwargs[ds_key]
 
         if override_kwargs:
             agent_config.override_by_args(**override_kwargs)

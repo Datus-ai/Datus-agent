@@ -155,15 +155,16 @@ The module uses `DbConfig` objects with the following fields:
 
 ```yaml
 # agent.yml
-namespace:
-  local_data:
-    sqlite_db:
-      type: "sqlite"
-      uri: "sqlite:///data/local.db"
+services:
+  datasources:
+    local_data:
+      sqlite_db:
+        type: "sqlite"
+        uri: "sqlite:///data/local.db"
 
-    duckdb_files:
-      type: "duckdb"
-      path_pattern: "data/*.duckdb"
+      duckdb_files:
+        type: "duckdb"
+        path_pattern: "data/*.duckdb"
 ```
 
 ## How to Contribute to This Module

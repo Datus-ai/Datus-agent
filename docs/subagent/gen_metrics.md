@@ -36,7 +36,7 @@ JOIN customers c ON o.customer_id = c.id  -- ❌ JOIN not supported
 
 ## How It Works
 
-Start Datus CLI with `datus --database <namespace>`, and use the metrics generation subagent:
+Start Datus CLI with `datus --database <datasource>`, and use the metrics generation subagent:
 
 ```bash
 /gen_metrics Generate a metric from this SQL: SELECT SUM(amount) FROM transactions, the coresponding question is total amount of all transactions
@@ -100,7 +100,7 @@ See [Semantic Layer Configuration](../configuration/semantic_layer.md) for the f
 - **Hooks**: User confirmation workflow in interactive mode
 - **MCP Server**: MetricFlow validation server
 - **System Prompt**: Built-in template version 1.0
-- **Workspace**: `~/.datus/data/{namespace}/semantic_models`
+- **Workspace**: `~/.datus/data/{datasource}/semantic_models`
 
 ### Configuration Options
 

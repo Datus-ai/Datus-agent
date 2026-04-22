@@ -12,7 +12,7 @@
 
 ## 存储范围
 
-- **与 namespace 无关**：文档按平台独立存储，可跨 namespace 复用。
+- **与 datasource 无关**：文档按平台独立存储，可跨 datasource 复用。
 - **默认路径**：`~/.datus/data/document/<platform>/`。
 - **选择依据**：工具调用中的 `platform` 参数决定使用哪个文档库。
 

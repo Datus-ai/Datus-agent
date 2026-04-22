@@ -4,9 +4,9 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 """
-Manage command for Namespace.
+Manage command for Datasource.
 
-This module provides an interactive CLI for setting up the namespace configuration
+This module provides an interactive CLI for setting up the datasource configuration
 without requiring users to manually write conf/agent.yml files.
 """
 
@@ -43,15 +43,15 @@ def _redact_uri(uri: str) -> str:
     return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
 
-def _validate_namespace_name(name: str) -> tuple[bool, str]:
-    """Validate namespace name format."""
+def _validate_datasource_name(name: str) -> tuple[bool, str]:
+    """Validate datasource name format."""
     if not name.strip():
-        return False, "Namespace name cannot be empty"
+        return False, "Datasource name cannot be empty"
     # Check for invalid characters that could cause issues in YAML/paths
     invalid_chars = ["/", "\\", ":", "*", "?", '"', "<", ">", "|", " ", "\t", "\n"]
     for char in invalid_chars:
         if char in name:
-            return False, f"Namespace name cannot contain '{char}'"
+            return False, f"Datasource name cannot contain '{char}'"
     return True, ""
 
 
@@ -66,28 +66,27 @@ def _validate_port(port_str: str) -> tuple[bool, str]:
         return False, "Port must be a valid number"
 
 
-class NamespaceManager:
+class DatasourceManager:
     def __init__(self, config_path: str):
         self.config_path = config_path
         try:
-            # NamespaceManager is now a compat shell over services.datasources.
             # Load without action-specific default-db enforcement because
-            # namespace CRUD should work even when no default DB is selected.
+            # datasource CRUD should work even when no default DB is selected.
             self.agent_config = load_agent_config(config=config_path, reload=True)
         except DatusException as e:
             if e.code == ErrorCode.COMMON_FILE_NOT_FOUND:
-                console.print("❌ Configuration file not found.")
+                console.print("\u274c Configuration file not found.")
                 console.print("Please run 'datus-agent init' first to create the configuration.")
                 console.print("Or specify a config file with --config <path>")
             else:
-                console.print(f"❌ {e.message}")
+                console.print(f"\u274c {e.message}")
             self.agent_config = None
         except Exception as e:
-            console.print(f"❌ Failed to load configuration: {e}")
+            console.print(f"\u274c Failed to load configuration: {e}")
             self.agent_config = None
 
     def run(self, command: str) -> int:
-        """Run the specified namespace command."""
+        """Run the specified datasource command."""
         if self.agent_config is None:
             return 1
 
@@ -98,19 +97,18 @@ class NamespaceManager:
         elif command == "delete":
             return self.delete()
         else:
-            console.print(f"❌ Unknown command: {command}")
+            console.print(f"\u274c Unknown command: {command}")
             return 1
 
     def list(self) -> int:
-        databases = self.agent_config.services.datasources
-        if not databases:
-            console.print("No namespace configured.")
+        datasources = self.agent_config.services.datasources
+        if not datasources:
+            console.print("No datasource configured.")
             return 0
 
-        console.print("[bold yellow]Configured namespaces:[/bold yellow]")
-        for namespace_name, db_config in databases.items():
-            console.print(f"\nNamespace: {namespace_name}")
-            console.print(f"  Database: {namespace_name}")
+        console.print("[bold yellow]Configured datasources:[/bold yellow]")
+        for datasource_name, db_config in datasources.items():
+            console.print(f"\nDatasource: {datasource_name}")
             console.print(f"    Type: {db_config.type}")
             if db_config.host:
                 console.print(f"    Host: {db_config.host}:{db_config.port}")
@@ -132,19 +130,19 @@ class NamespaceManager:
         return 0
 
     def add(self) -> int:
-        """Interactive method to add a new namespace configuration."""
-        console.print("[bold yellow]Add New Namespace[/bold yellow]")
+        """Interactive method to add a new datasource configuration."""
+        console.print("[bold yellow]Add New Datasource[/bold yellow]")
 
-        # Namespace name
-        namespace_name = Prompt.ask("- Namespace name")
-        valid, error_msg = _validate_namespace_name(namespace_name)
+        # Datasource name
+        datasource_name = Prompt.ask("- Datasource name")
+        valid, error_msg = _validate_datasource_name(datasource_name)
         if not valid:
-            console.print(f"❌ {error_msg}")
+            console.print(f"\u274c {error_msg}")
             return 1
 
-        # Check if namespace already exists
-        if namespace_name in self.agent_config.services.datasources:
-            console.print(f"❌ Namespace '{namespace_name}' already exists")
+        # Check if datasource already exists
+        if datasource_name in self.agent_config.services.datasources:
+            console.print(f"\u274c Datasource '{datasource_name}' already exists")
             return 1
 
         # Get available adapters dynamically
@@ -152,7 +150,7 @@ class NamespaceManager:
 
         available_adapters = connector_registry.list_available_adapters()
         if not available_adapters:
-            console.print("❌ No database adapters available. Please install at least one adapter.")
+            console.print("\u274c No database adapters available. Please install at least one adapter.")
             return 1
 
         # Database type selection
@@ -166,11 +164,11 @@ class NamespaceManager:
 
         # Initialize config data
         config_data = {"type": db_type}
-        logical_name = namespace_name  # Default logical name
+        logical_name = datasource_name  # Default logical name
 
         # If adapter provides config schema, use it to prompt for fields
         if not config_fields:
-            console.print(f"❌ Adapter '{db_type}' does not have a configuration schema registered.")
+            console.print(f"\u274c Adapter '{db_type}' does not have a configuration schema registered.")
             return 1
 
         for field_name, field_info in config_fields.items():
@@ -202,12 +200,12 @@ class NamespaceManager:
                     if field_name == "port":
                         valid, error_msg = _validate_port(value_str)
                         if not valid:
-                            console.print(f"❌ {error_msg}")
+                            console.print(f"\u274c {error_msg}")
                             return 1
                     try:
                         value = int(value_str)
                     except ValueError:
-                        console.print(f"❌ Invalid integer value: '{value_str}'. Please enter a valid number.")
+                        console.print(f"\u274c Invalid integer value: '{value_str}'. Please enter a valid number.")
                         return 1
                 else:
                     value = default_value
@@ -232,73 +230,71 @@ class NamespaceManager:
         config_data["name"] = logical_name
 
         # Test database connectivity
-        console.print("→ Testing database connectivity...")
+        console.print("\u2192 Testing database connectivity...")
 
-        success, error_msg = detect_db_connectivity(namespace_name, config_data)
+        success, error_msg = detect_db_connectivity(datasource_name, config_data)
 
         if success:
-            console.print("✔ Database connection test successful\n")
+            console.print("\u2714 Database connection test successful\n")
 
-            # Add to agent configuration (namespace is guaranteed to not exist from earlier check)
-            # Use services.datasources directly — the namespaces property is a read-only compat view
             db_config = DbConfig.filter_kwargs(DbConfig, config_data)
-            self.agent_config.services.datasources[namespace_name] = db_config
+            self.agent_config.services.datasources[datasource_name] = db_config
 
             # Save configuration
             if self._save_configuration():
-                console.print(f"✔ Namespace '{namespace_name}' added successfully")
+                console.print(f"\u2714 Datasource '{datasource_name}' added successfully")
                 return 0
             else:
-                console.print("❌ Failed to save configuration")
+                console.print("\u274c Failed to save configuration")
                 return 1
         else:
-            console.print(f"❌ Database connectivity test failed: {error_msg}\n")
+            console.print(f"\u274c Database connectivity test failed: {error_msg}\n")
             return 1
 
     def delete(self) -> int:
-        """Interactive method to delete a namespace configuration."""
-        console.print("[bold yellow]Delete Namespace[/bold yellow]")
+        """Interactive method to delete a datasource configuration."""
+        console.print("[bold yellow]Delete Datasource[/bold yellow]")
 
-        # Check if there are any namespaces to delete
-        databases = self.agent_config.services.datasources
-        if not databases:
-            console.print("❌ No namespaces configured to delete")
+        # Check if there are any datasources to delete
+        datasources = self.agent_config.services.datasources
+        if not datasources:
+            console.print("\u274c No datasources configured to delete")
             return 1
 
-        # List available namespaces
-        console.print("Available namespaces:")
-        for namespace_name in databases.keys():
-            console.print(f"  - {namespace_name}")
+        # List available datasources
+        console.print("Available datasources:")
+        for datasource_name in datasources.keys():
+            console.print(f"  - {datasource_name}")
 
-        # Get namespace name to delete
-        namespace_name = Prompt.ask("- Namespace name to delete")
-        if not namespace_name.strip():
-            console.print("❌ Namespace name cannot be empty")
+        # Get datasource name to delete
+        datasource_name = Prompt.ask("- Datasource name to delete")
+        if not datasource_name.strip():
+            console.print("\u274c Datasource name cannot be empty")
             return 1
 
-        # Check if namespace exists
-        if namespace_name not in databases:
-            console.print(f"❌ Namespace '{namespace_name}' does not exist")
+        # Check if datasource exists
+        if datasource_name not in datasources:
+            console.print(f"\u274c Datasource '{datasource_name}' does not exist")
             return 1
 
         # Confirm deletion
         confirm = Confirm.ask(
-            f"Are you sure you want to delete namespace '{namespace_name}'? This action cannot be undone.",
+            f"Are you sure you want to delete datasource '{datasource_name}'? This action cannot be undone.",
             default=False,
         )
         if not confirm:
-            console.print("❌ Namespace deletion cancelled")
+            console.print("\u274c Datasource deletion cancelled")
             return 1
 
-        # Delete namespace from configuration
-        del self.agent_config.services.datasources[namespace_name]
+        # Delete datasource from configuration
+        del self.agent_config.services.datasources[datasource_name]
 
         # Save configuration
         if self._save_configuration():
-            console.print(f"✔ Namespace '{namespace_name}' deleted successfully")
+            console.print(f"\u2714 Datasource '{datasource_name}' deleted successfully")
             return 0
         else:
-            console.print("❌ Failed to save configuration after deletion")
+            console.print("\u274c Failed to save configuration after deletion")
             return 1
 
     def _save_configuration(self) -> bool:
@@ -342,12 +338,9 @@ class NamespaceManager:
             }
 
             configure_manager.update(updates={"services": services_section}, delete_old_key=True)
-            if "namespace" in configure_manager.data:
-                del configure_manager.data["namespace"]
-                configure_manager.save()
             console.print(f"Configuration saved to {configure_manager.config_path}")
             return True
         except Exception as e:
-            console.print(f"❌ Failed to save configuration: {e}")
+            console.print(f"\u274c Failed to save configuration: {e}")
             logger.error(f"Failed to save configuration: {e}")
             return False

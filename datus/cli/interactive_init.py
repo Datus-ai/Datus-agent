@@ -40,7 +40,7 @@ class InteractiveInit:
 
     def __init__(self, user_home: Optional[str] = None):
         self.workspace_path = ""
-        self.namespace_name = ""
+        self.datasource_name = ""
         self.user_home = user_home if user_home else Path.home()
         self.console = Console(log_path=False)
 
@@ -62,7 +62,7 @@ class InteractiveInit:
         self.config = {
             "agent": {
                 "providers": {},
-                "namespace": {},
+                "services": {"datasources": {}},
                 "storage": {
                     "workspace_root": "~/.datus/workspace",
                     "embedding_device_type": "cpu",
@@ -139,8 +139,8 @@ class InteractiveInit:
                 if not Confirm.ask("Re-enter LLM configuration?", default=True):
                     return 1
 
-            # Step 2: Configure Namespace
-            while not self._configure_namespace():
+            # Step 2: Configure Datasource
+            while not self._configure_datasource():
                 if not Confirm.ask("Re-enter database configuration?", default=True):
                     return 1
 
@@ -301,14 +301,14 @@ class InteractiveInit:
         self._pending_target = ProjectTarget(provider=provider, model=result["model"])
         return True
 
-    def _configure_namespace(self) -> bool:
-        """Step 2: Configure namespace and database."""
-        self.console.print("[bold yellow][2/5] Configure Namespace[/bold yellow]")
+    def _configure_datasource(self) -> bool:
+        """Step 2: Configure datasource and database."""
+        self.console.print("[bold yellow][2/5] Configure Datasource[/bold yellow]")
 
-        # Namespace name
-        self.namespace_name = Prompt.ask("- Namespace name")
-        if not self.namespace_name.strip():
-            self.console.print("❌ Namespace name cannot be empty")
+        # Datasource name
+        self.datasource_name = Prompt.ask("- Datasource name").strip()
+        if not self.datasource_name:
+            self.console.print("❌ Datasource name cannot be empty")
             return False
 
         # Get available adapters dynamically
@@ -337,7 +337,7 @@ class InteractiveInit:
         # Collect configuration based on adapter's config schema
         config_data = {
             "type": db_type,
-            "name": self.namespace_name,
+            "name": self.datasource_name,
         }
 
         # If adapter provides config schema, use it to prompt for fields
@@ -403,20 +403,20 @@ class InteractiveInit:
             if value != "" and value is not None:
                 config_data[field_name] = value
 
-        self.config["agent"]["namespace"][self.namespace_name] = config_data
+        self.config["agent"]["services"]["datasources"][self.datasource_name] = config_data
         # Test database connectivity
         self.console.print("→ Testing database connectivity...")
         success, error_msg = detect_db_connectivity(
-            self.namespace_name, self.config["agent"]["namespace"][self.namespace_name]
+            self.datasource_name, self.config["agent"]["services"]["datasources"][self.datasource_name]
         )
         if success:
             self.console.print(" ✅ Database connection test successful\n")
             return True
         else:
             self.console.print(f" ❌ Database connectivity test failed: {error_msg}\n")
-            # Remove failed database configuration
-            if self.namespace_name in self.config["agent"]["namespace"]:
-                del self.config["agent"]["namespace"][self.namespace_name]
+            # Remove failed datasource configuration
+            if self.datasource_name in self.config["agent"]["services"]["datasources"]:
+                del self.config["agent"]["services"]["datasources"][self.datasource_name]
             return False
 
     def _configure_workspace(self) -> bool:
@@ -445,14 +445,14 @@ class InteractiveInit:
 
         # Initialize metadata knowledge base
         if Confirm.ask("- Initialize vector DB for metadata?", default=False):
-            init_metadata_and_log_result(self.namespace_name, config_path, self.console)
+            init_metadata_and_log_result(self.datasource_name, config_path, self.console)
 
         # Initialize reference SQL
         if Confirm.ask("- Initialize reference SQL from workspace?", default=False):
             default_sql_dir = str(Path(self.workspace_path) / "reference_sql")
             sql_dir = Prompt.ask("- Enter SQL directory path to scan", default=default_sql_dir)
             overwrite_sql_and_log_result(
-                namespace_name=self.namespace_name, sql_dir=sql_dir, config_path=config_path, console=self.console
+                datasource_name=self.datasource_name, sql_dir=sql_dir, config_path=config_path, console=self.console
             )
 
         self.console.print()
@@ -496,14 +496,14 @@ class InteractiveInit:
             table.add_row("LLM", f"custom:{self._pending_target.custom}")
         else:
             table.add_row("LLM", "(not configured)")
-        table.add_row("Namespace", self.namespace_name)
+        table.add_row("Datasource", self.datasource_name)
         table.add_row("Workspace", self.workspace_path)
 
         self.console.print(table)
 
     def _display_completion(self):
         """Display completion message."""
-        self.console.print(f"\nYou are ready to run `datus-cli --namespace {self.namespace_name}` 🚀")
+        self.console.print(f"\nYou are ready to run `datus-cli --datasource {self.datasource_name}` 🚀")
         self.console.print("\nCheck the document at https://docs.datus.ai/ for more details.")
 
     def _test_llm_connectivity(self) -> tuple[bool, str]:
@@ -560,7 +560,7 @@ class InteractiveInit:
         from datus.configuration.agent_config_loader import load_agent_config
 
         agent_config = load_agent_config(reload=True)
-        agent_config.current_datasource = self.namespace_name
+        agent_config.current_datasource = self.datasource_name
 
         return Agent(args, agent_config)
 
@@ -576,12 +576,12 @@ class InteractiveInit:
         )
 
 
-def create_agent(namespace_name: str, components: list, config_path: str, **kwargs):
+def create_agent(datasource_name: str, components: list, config_path: str, **kwargs):
     import argparse
 
     default_args = {
         "action": "bootstrap-kb",
-        "namespace": namespace_name,
+        "datasource": datasource_name,
         "components": components,
         "kb_update_strategy": "overwrite",
         "storage_path": None,
@@ -606,7 +606,7 @@ def create_agent(namespace_name: str, components: list, config_path: str, **kwar
 
     agent_config = load_agent_config(reload=True, config=config_path, **vars(args))
 
-    agent_config.current_datasource = namespace_name
+    agent_config.current_datasource = datasource_name
 
     return Agent(args, agent_config)
 
@@ -710,18 +710,18 @@ class ReferenceSqlStreamHandler:
             return
 
 
-def init_metadata_and_log_result(namespace_name: str, config_path: str, console: Console):
+def init_metadata_and_log_result(datasource_name: str, config_path: str, console: Console):
     from datus.configuration.agent_config_loader import load_agent_config
     from datus.storage.schema_metadata.local_init import init_local_schema
     from datus.storage.schema_metadata.store import SchemaWithValueRAG
     from datus.tools.db_tools.db_manager import db_manager_instance
 
     agent_config = load_agent_config(reload=True, config=config_path)
-    agent_config.current_datasource = namespace_name
+    agent_config.current_datasource = datasource_name
     kb_update_strategy = "overwrite"
     storage_path = agent_config.rag_storage_path()
 
-    with console.status(f"→ Initializing metadata for {namespace_name} with path `{storage_path}`..."):
+    with console.status(f"→ Initializing metadata for {datasource_name} with path `{storage_path}`..."):
         try:
             if kb_update_strategy == "overwrite":
                 agent_config.save_storage_config("database")
@@ -738,7 +738,7 @@ def init_metadata_and_log_result(namespace_name: str, config_path: str, console:
                 agent_config.check_init_storage_config("database")
 
             metadata_store = SchemaWithValueRAG(agent_config)
-            db_manager = db_manager_instance(agent_config.namespaces)
+            db_manager = db_manager_instance(agent_config.datasource_configs)
             init_local_schema(
                 metadata_store,
                 agent_config,
@@ -763,7 +763,7 @@ def init_metadata_and_log_result(namespace_name: str, config_path: str, console:
 
 
 def overwrite_sql_and_log_result(
-    namespace_name: str,
+    datasource_name: str,
     sql_dir: str,
     config_path: str,
     subject_tree: Optional[str] = None,
@@ -776,7 +776,7 @@ def overwrite_sql_and_log_result(
 
     try:
         agent_config = load_agent_config(reload=True, config=config_path)
-        agent_config.current_datasource = namespace_name
+        agent_config.current_datasource = datasource_name
         do_init_sql_and_log_result(agent_config, sql_dir, subject_tree, console, force=force)
     except Exception as e:
         print_rich_exception(console, e, "Reference SQL initialization failed", logger)

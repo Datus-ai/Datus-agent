@@ -595,7 +595,7 @@ class TestDBManagerFactory:
 
         try:
             set_db_manager_factory(capture_factory)
-            test_configs = {"my_namespace": {}}
+            test_configs = {"my_datasource": {}}
             db_manager_instance(test_configs)
             assert len(received) == 1
             assert received[0] is test_configs
@@ -603,7 +603,7 @@ class TestDBManagerFactory:
             set_db_manager_factory(None)
 
     def test_no_factory_caches_by_config(self):
-        """Without a factory, db_manager_instance caches by namespace keys (avoids connection leak)."""
+        """Without a factory, db_manager_instance caches by datasource keys (avoids connection leak)."""
         from datus.tools.db_tools.db_manager import DBManager, db_manager_instance, set_db_manager_factory
 
         set_db_manager_factory(None)

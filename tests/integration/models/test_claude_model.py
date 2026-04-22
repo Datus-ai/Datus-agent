@@ -85,7 +85,7 @@ class TestClaudeModel:
         question = """database_type='sqlite' task='Find the top 5 customers by total revenue from the SSB database'"""
 
         # Set up agent config for SQLite database
-        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        agent_config = load_acceptance_config(datasource="ssb_sqlite")
         tools = db_function_tools(agent_config)
 
         result = await self.model.generate_with_tools(
@@ -112,7 +112,7 @@ class TestClaudeModel:
         ]
 
         # Set up agent config for SQLite database
-        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        agent_config = load_acceptance_config(datasource="ssb_sqlite")
         tools = db_function_tools(agent_config)
 
         for i, scenario in enumerate(complex_scenarios):
@@ -167,7 +167,7 @@ class TestClaudeModel:
         Answer questions about the database schema and data."""
 
         # Set up agent config for SQLite database
-        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        agent_config = load_acceptance_config(datasource="ssb_sqlite")
         tools = db_function_tools(agent_config)
 
         # First question: explore schema

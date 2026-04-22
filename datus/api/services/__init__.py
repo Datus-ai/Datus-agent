@@ -36,10 +36,10 @@ def __getattr__(name):
         from datus.api.services.cli_service import CLIService
 
         return CLIService
-    elif name == "DatabaseService":
-        from datus.api.services.database_service import DatabaseService
+    elif name == "DatasourceService":
+        from datus.api.services.database_service import DatasourceService
 
-        return DatabaseService
+        return DatasourceService
     elif name == "ExplorerService":
         from datus.api.services.explorer_service import ExplorerService
 

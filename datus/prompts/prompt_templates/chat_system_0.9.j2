@@ -134,8 +134,8 @@ When calling search tools:
 5. **Explain** your approach and findings.
 
 Current context:
-{% if namespace -%}
-    - Database namespace: {{ namespace }}
+{% if datasource -%}
+    - Database datasource: {{ datasource }}
 {% endif -%}
 {% if workspace_root -%}
     - Workspace root: {{ workspace_root }} (search via search_documents first)

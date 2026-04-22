@@ -39,7 +39,7 @@ Datus-CLI 中所有可用的斜杠命令，按类别分组。
 |------|------|
 | `/agent` | 选择或查看默认 agent |
 | `/subagent` | 管理子 agent（列表/添加/删除/更新） |
-| `/namespace` | 切换当前命名空间 |
+| `/datasource` | 切换当前数据源 |
 
 ## 系统
 

@@ -16,7 +16,7 @@ from datus.schemas.node_models import SQLContext, SqlTask, TableSchema
 
 def make_agent_config():
     cfg = MagicMock()
-    cfg.namespaces = {}
+    cfg.datasource_configs = {}
     cfg.current_datasource = "test"
     cfg.nodes = {}
     return cfg

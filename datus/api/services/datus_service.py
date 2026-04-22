@@ -46,7 +46,7 @@ class DatusService:
         # Lazy service slots
         self._chat = None
         self._cli = None
-        self._database = None
+        self._datasource = None
         self._explorer = None
         self._mcp = None
         self._kb = None
@@ -117,12 +117,12 @@ class DatusService:
         return self._cli
 
     @property
-    def database(self):
-        if self._database is None:
-            from datus.api.services.database_service import DatabaseService
+    def datasource(self):
+        if self._datasource is None:
+            from datus.api.services.database_service import DatasourceService
 
-            self._database = DatabaseService(agent_config=self._agent_config)
-        return self._database
+            self._datasource = DatasourceService(agent_config=self._agent_config)
+        return self._datasource
 
     @property
     def explorer(self):

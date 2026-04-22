@@ -49,7 +49,7 @@ class StubAgentConfig:
 def _build_manager(tmp_path):
     config_mgr = StubConfigurationManager(tmp_path)
     agent_config = StubAgentConfig(tmp_path)
-    manager = SubAgentManager(configuration_manager=config_mgr, namespace="demo", agent_config=agent_config)
+    manager = SubAgentManager(configuration_manager=config_mgr, datasource="demo", agent_config=agent_config)
     manager._prompt_manager = StubPromptManager(tmp_path)
     return manager, config_mgr, agent_config
 
@@ -329,8 +329,8 @@ class TestRemovePromptTemplate:
 
     def test_no_op_when_file_missing(self, tmp_path):
         manager, _, _ = _build_manager(tmp_path)
-        # Should not raise
-        manager._remove_prompt_template("nonexistent_agent", "1.0")
+        result = manager._remove_prompt_template("nonexistent_agent", "1.0")
+        assert result is None
 
 
 # ---------------------------------------------------------------------------

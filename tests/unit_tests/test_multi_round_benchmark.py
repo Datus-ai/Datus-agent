@@ -439,7 +439,7 @@ class TestBuildAgentArgs:
     def _make_cli_args(self, **overrides):
         defaults = dict(
             benchmark="bird_dev",
-            namespace="ns1",
+            datasource="ns1",
             workflow="reflection",
             max_steps=30,
             workers=1,
@@ -454,7 +454,7 @@ class TestBuildAgentArgs:
         round_dir = tmp_path / "round_0"
         result = build_agent_args(cli_args, task_ids, round_dir, 0, "run1")
         assert result.benchmark == "bird_dev"
-        assert result.namespace == "ns1"
+        assert result.datasource == "ns1"
         assert result.workflow == "reflection"
         assert result.max_steps == 30
         assert result.max_workers == 1
@@ -525,9 +525,9 @@ class TestSetupBaseParserArgs:
     def test_adds_required_args(self):
         parser = argparse.ArgumentParser()
         setup_base_parser_args(parser)
-        # namespace and benchmark are required
-        args = parser.parse_args(["--namespace", "ns1", "--benchmark", "b1"])
-        assert args.namespace == "ns1"
+        # datasource and benchmark are required
+        args = parser.parse_args(["--datasource", "ns1", "--benchmark", "b1"])
+        assert args.datasource == "ns1"
         assert args.benchmark == "b1"
         assert args.round == 4  # default
         assert args.workers == 1  # default
@@ -535,5 +535,5 @@ class TestSetupBaseParserArgs:
     def test_default_workflow(self):
         parser = argparse.ArgumentParser()
         setup_base_parser_args(parser)
-        args = parser.parse_args(["--namespace", "ns", "--benchmark", "bm"])
+        args = parser.parse_args(["--datasource", "ns", "--benchmark", "bm"])
         assert args.workflow == "reflection"

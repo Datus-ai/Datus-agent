@@ -22,7 +22,7 @@ def agent_config(tmp_path) -> AgentConfig:
     # Use tmp_path for home (logs, save, trajectory) but point rag_base_path to real data
     from tests.conftest import TEST_DATA_DIR
 
-    agent_config = load_acceptance_config(namespace="bird_school", home=str(tmp_path))
+    agent_config = load_acceptance_config(datasource="bird_school", home=str(tmp_path))
     # Use absolute path to real test data directory
     agent_config.rag_base_path = str(TEST_DATA_DIR)
     return agent_config

@@ -41,16 +41,6 @@ def get_benchmark_path(config, benchmark):
     return benchmark_path
 
 
-def get_namespace_config(config, namespace):
-    """Get namespace config from config"""
-    namespace_config = config.get("agent", {}).get("namespace", {})
-
-    if namespace not in namespace_config:
-        raise Exception(f"Namespace '{namespace}' not found in config")
-
-    return namespace_config[namespace]
-
-
 def parse_dev_json(dev_json_path):
     """Parse dev.json file and return SQL statements and database mappings"""
     if not os.path.exists(dev_json_path):
@@ -141,7 +131,7 @@ def save_results_to_csv(results, output_path):
 
 def main():
     parser = argparse.ArgumentParser(description="Generate SQL execution results")
-    parser.add_argument("--namespace", required=True, help="Namespace (e.g., bird_sqlite)")
+    parser.add_argument("--datasource", required=True, help="Datasource name (e.g., bird_sqlite)")
     parser.add_argument("--benchmark", required=True, help="Benchmark (e.g., bird_dev)")
     parser.add_argument("--type", required=True, help="Type (e.g., bird)")
     parser.add_argument("--workdir", required=True, help="Working directory path")
@@ -153,7 +143,7 @@ def main():
     try:
         config_path = fix_path(args.workdir, args.config)
 
-        config = load_agent_config(config=config_path, namespace=args.namespace, benchmark=args.benchmark)
+        config = load_agent_config(config=config_path, datasource=args.datasource, benchmark=args.benchmark)
 
         benchmark_path = config.benchmark_path(args.benchmark)
 
@@ -177,7 +167,7 @@ def main():
 
         gold_dir = os.path.join(full_benchmark_path, "gold", "exec_result")
         os.makedirs(gold_dir, exist_ok=True)
-        db_manager = db_manager_instance(config.namespaces)
+        db_manager = db_manager_instance(config.datasource_configs)
         if args.task_id is not None:
             # Process single task
             task_id = args.task_id
@@ -193,7 +183,7 @@ def main():
 
             print(f"Processing task {task_id}: database={task_data['db_id']}")
             try:
-                sql_connector = db_manager.get_conn(args.namespace, task_data["db_id"])
+                sql_connector = db_manager.get_conn(args.datasource, task_data["db_id"])
                 print(f"Executing SQL: {task_data['sql'][:100]}...")
                 results = sql_connector.execute_arrow(task_data["sql"])
 
@@ -215,7 +205,7 @@ def main():
                 task_id = task_data["question_id"]
                 print(f"Processing task {task_id}/{len(sql_data)}: database={task_data['db_id']}")
                 try:
-                    sql_connector = db_manager.get_conn(args.namespace, task_data["db_id"])
+                    sql_connector = db_manager.get_conn(args.datasource, task_data["db_id"])
                     results = sql_connector.execute_arrow(task_data["sql"])
                     output_path = os.path.join(gold_dir, f"{task_id}.csv")
 

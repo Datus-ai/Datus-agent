@@ -320,7 +320,7 @@ class TestInitDb:
         mock_db_manager = MagicMock()
         schema_result, value_result = init_db(
             db_manager=mock_db_manager,
-            namespace="ns",
+            datasource="ns",
             database_name="nonexistent_db",
             table_keys={},
             databases_path=str(tmp_path),
@@ -361,7 +361,7 @@ class TestInitDb:
 
         schema_result, value_result = init_db(
             db_manager=mock_db_manager,
-            namespace="ns",
+            datasource="ns",
             database_name="mydb",
             table_keys=table_keys["mydb"],  # init_db expects flat {table_name: {}} dict
             databases_path=str(tmp_path),
@@ -386,7 +386,7 @@ class TestInitDb:
 
         schema_result, value_result = init_db(
             db_manager=mock_db_manager,
-            namespace="ns",
+            datasource="ns",
             database_name="mydb",
             table_keys={},
             databases_path=str(tmp_path),
@@ -421,7 +421,7 @@ class TestInitDb:
 
         schema_result, value_result = init_db(
             db_manager=mock_db_manager,
-            namespace="ns",
+            datasource="ns",
             database_name="mydb",
             table_keys={"users": {}},
             databases_path=str(tmp_path),
@@ -456,7 +456,7 @@ class TestInitDb:
 
         schema_result, value_result = init_db(
             db_manager=mock_db_manager,
-            namespace="ns",
+            datasource="ns",
             database_name="mydb",
             table_keys={"users": {}},
             databases_path=str(tmp_path),
@@ -479,7 +479,7 @@ class TestInitDevSchemaByDb:
         init_dev_schema_by_db(
             rag=mock_rag,
             db_manager=mock_db_manager,
-            namespace="ns",
+            datasource="ns",
             database_name=".DS_Store",
             table_keys={},
             databases_path="/fake",
@@ -516,7 +516,7 @@ class TestInitDevSchemaByDb:
         init_dev_schema_by_db(
             rag=mock_rag,
             db_manager=mock_db_manager,
-            namespace="ns",
+            datasource="ns",
             database_name="mydb",
             table_keys={"mydb": {"products": {}}},  # init_dev_schema_by_db looks up by db_name internally
             databases_path=str(tmp_path),

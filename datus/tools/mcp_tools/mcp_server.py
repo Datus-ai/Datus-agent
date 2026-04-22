@@ -112,7 +112,7 @@ class MCPServer:
     _lock = threading.Lock()
 
     @classmethod
-    def get_metricflow_mcp_server(cls, namespace: str):
+    def get_metricflow_mcp_server(cls, datasource: str):
         if cls._metricflow_mcp_server is None:
             with cls._lock:
                 if cls._metricflow_mcp_server is None:
@@ -139,7 +139,7 @@ class MCPServer:
                     logger.info(f"MetricFlow MCP server directory verified: {directory}")
 
                     # MetricFlow can now read Datus config directly via DatusConfigHandler
-                    # Pass the namespace via --namespace command line argument
+                    # Pass the datasource via --datasource command line argument
                     # Pass current working directory so mf can find ./conf/agent.yml
                     env_dict = os.environ.copy()
                     env_dict["DATUS_PROJECT_ROOT"] = os.getcwd()
@@ -151,8 +151,8 @@ class MCPServer:
                             directory,
                             "run",
                             "mcp-metricflow-server",
-                            "--namespace",
-                            namespace,
+                            "--datasource",
+                            datasource,
                         ],
                         env=env_dict,
                     )

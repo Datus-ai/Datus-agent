@@ -27,14 +27,14 @@ Bootstrap-KB External Knowledge is a component that processes, stores, and index
 ```bash
 # From CSV (direct import)
 datus-agent bootstrap-kb \
-    --database <your_namespace> \
+    --database <your_datasource> \
     --components ext_knowledge \
     --ext_knowledge /path/to/knowledge.csv \
     --kb_update_strategy overwrite
 
 # From success story (AI generation)
 datus-agent bootstrap-kb \
-    --database <your_namespace> \
+    --database <your_datasource> \
     --components ext_knowledge \
     --success_story /path/to/success_story.csv \
     --kb_update_strategy overwrite
@@ -44,7 +44,7 @@ datus-agent bootstrap-kb \
 
 | Parameter              | Required | Description                                                       | Example                           |
 | ---------------------- | -------- | ----------------------------------------------------------------- | --------------------------------- |
-| `--database`          | ✅       | Database namespace                                                | `analytics_db`                    |
+| `--database`          | ✅       | Database datasource                                                | `analytics_db`                    |
 | `--components`         | ✅       | Components to initialize                                          | `ext_knowledge`                   |
 | `--ext_knowledge`      | ⚠️       | Path to knowledge CSV file (required if no `--success_story`)     | `/data/knowledge.csv`             |
 | `--success_story`      | ⚠️       | Path to success story CSV file (required if no `--ext_knowledge`) | `/data/success_story.csv`         |

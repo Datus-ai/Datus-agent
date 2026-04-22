@@ -69,7 +69,7 @@ class TestCodexModel:
         The database contains tables: customer, supplier, part, date, and lineorder."""
 
         question = "database_type='sqlite' task='Count the total number of rows in the customer table'"
-        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        agent_config = load_acceptance_config(datasource="ssb_sqlite")
         tools = db_function_tools(agent_config)
 
         try:
@@ -98,7 +98,7 @@ class TestCodexModel:
         Answer questions briefly."""
 
         question = "database_type='sqlite' task='How many suppliers are there?'"
-        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        agent_config = load_acceptance_config(datasource="ssb_sqlite")
         tools = db_function_tools(agent_config)
 
         action_count = 0

@@ -69,7 +69,7 @@ class TestLineageTools:
 
     @pytest.fixture
     def agent_config(self, tmp_path, monkeypatch) -> AgentConfig:
-        # Use test config file which has bird_sqlite namespace defined.
+        # Use test config file which has bird_sqlite datasource defined.
         # The yml points ``home`` at the relative path ``.datus_test_data``,
         # which ``Path.resolve()`` anchors to the current cwd. Switch cwd to
         # ``tmp_path`` so every derived path (path_manager, storage data_dir,
@@ -79,7 +79,7 @@ class TestLineageTools:
         test_conf_path = Path(__file__).parent.parent.parent / "conf" / "agent.yml"
         return load_agent_config(
             config=str(test_conf_path),
-            namespace="bird_sqlite",
+            datasource="bird_sqlite",
             home=str(tmp_path),
         )
 

@@ -36,7 +36,7 @@ class ListDatabasesData(BaseModel):
 
     databases: List[DatabaseInfo] = Field(..., description="List of databases")
     total_count: int = Field(..., description="Total number of databases")
-    current_database: Optional[str] = Field(None, description="Current database name")
+    current_db_name: Optional[str] = Field(None, description="Current database name")
 
 
 class DatabasesData(BaseModel):

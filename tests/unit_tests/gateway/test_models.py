@@ -121,7 +121,7 @@ class TestChannelConfig:
     def test_minimal_construction(self):
         cfg = ChannelConfig(adapter="feishu")
         assert cfg.enabled is True
-        assert cfg.namespace is None
+        assert cfg.datasource is None
         assert cfg.subagent_id is None
         assert cfg.verbose == Verbose.ON
         assert cfg.stream_response is True
@@ -131,13 +131,13 @@ class TestChannelConfig:
         cfg = ChannelConfig(
             adapter="slack",
             enabled=False,
-            namespace="production",
+            datasource="production",
             subagent_id="agent_42",
             extra={"app_token": "test-app-token", "bot_token": "test-bot-token"},
         )
         assert cfg.adapter == "slack"
         assert cfg.enabled is False
-        assert cfg.namespace == "production"
+        assert cfg.datasource == "production"
         assert cfg.extra["app_token"] == "test-app-token"
 
     def test_serialization_roundtrip(self):

@@ -60,7 +60,7 @@ agent:
       subagents: explore, gen_sql
       max_turns: 30
       scoped_context:
-        namespace: finance
+        datasource: finance
         tables: mart.finance_daily, mart.finance_budget
         metrics: finance.revenue.daily_revenue
         sqls: finance.revenue.region_rollup
@@ -71,7 +71,7 @@ agent:
 Notes:
 
 - `node_class` defaults to `gen_sql` if omitted
-- When writing `scoped_context` manually, set `namespace` explicitly
+- When writing `scoped_context` manually, set `datasource` explicitly
 - `subagents` controls which task types this node may delegate to
 
 ## How to Use Subagents

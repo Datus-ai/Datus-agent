@@ -78,7 +78,7 @@ cd ~
 然后为 BIRD 数据集构建知识库：
 
 ```bash title="Terminal"
-datus-agent bootstrap-kb --namespace bird_sqlite --benchmark bird_dev
+datus-agent bootstrap-kb --datasource bird_sqlite --benchmark bird_dev
 ```
 
 ### 第四步：运行基准测试 {#第四步运行基准测试}
@@ -94,7 +94,7 @@ datus-agent bootstrap-kb --namespace bird_sqlite --benchmark bird_dev
 === "按任务 ID 运行"
     ```bash title="Terminal"
     datus-agent benchmark \
-    --namespace bird_sqlite \
+    --datasource bird_sqlite \
     --benchmark bird_dev \
     --benchmark_task_ids <task_id1> <task_id2>
     ```
@@ -102,7 +102,7 @@ datus-agent bootstrap-kb --namespace bird_sqlite --benchmark bird_dev
 === "运行全部任务"
     ```bash title="Terminal"
     datus-agent benchmark \
-    --namespace bird_sqlite \
+    --datasource bird_sqlite \
     --benchmark bird_dev
     ```
 
@@ -117,7 +117,7 @@ datus-agent bootstrap-kb --namespace bird_sqlite --benchmark bird_dev
 === "按任务 ID 运行"
     ```bash title="Terminal"
     datus-agent benchmark \
-    --namespace snowflake \
+    --datasource snowflake \
     --benchmark spider2 \
     --benchmark_task_ids <task_id1> <task_id2>
     ```
@@ -125,7 +125,7 @@ datus-agent bootstrap-kb --namespace bird_sqlite --benchmark bird_dev
 === "运行全部任务"
     ```bash title="Terminal"
     datus-agent benchmark \
-    --namespace snowflake \
+    --datasource snowflake \
     --benchmark spider2
     ```
 
@@ -135,7 +135,7 @@ datus-agent bootstrap-kb --namespace bird_sqlite --benchmark bird_dev
 === "按任务 ID 进行评估"
 ```bash title="Run Evaluation"
 datus-agent eval \
-  --namespace snowflake \
+  --datasource snowflake \
   --benchmark spider2 \
   --output_file evaluation.json \
   --task_ids <task_id1> <task_id2>
@@ -143,7 +143,7 @@ datus-agent eval \
 === "评估全部"
 ```bash title="Run Evaluation"
 datus-agent eval \
-  --namespace snowflake \
+  --datasource snowflake \
   --output_file evaluation.json \
   --benchmark spider2
 ```
@@ -379,7 +379,7 @@ agent:
 === "datus-agent 子命令"
     ```bash title="Terminal"
     datus-agent multi-round-benchmark \
-      --namespace bird_sqlite \
+      --datasource bird_sqlite \
       --benchmark bird_dev \
       --workflow chat_agentic \
       --round 4 \
@@ -389,7 +389,7 @@ agent:
 === "独立 CLI 入口"
     ```bash title="Terminal"
     datus-multi-benchmark \
-      --namespace bird_sqlite \
+      --datasource bird_sqlite \
       --benchmark bird_dev \
       --workflow chat_agentic \
       --round 4 \
@@ -399,7 +399,7 @@ agent:
 === "Python 模块"
     ```bash title="Terminal"
     python -m datus.multi_round_benchmark \
-      --namespace bird_sqlite \
+      --datasource bird_sqlite \
       --benchmark bird_dev \
       --workflow chat_agentic \
       --round 4 \
@@ -410,7 +410,7 @@ agent:
 
 | 参数                      | 必填  | 默认值                                            | 说明                              |
 |-------------------------|-----|------------------------------------------------|---------------------------------|
-| `--namespace`           | 是   | —                                              | 基准测试命名空间，如 `bird_sqlite`        |
+| `--datasource`           | 是   | —                                              | 基准测试数据源，如 `bird_sqlite`        |
 | `--benchmark`           | 是   | —                                              | 基准测试名称，如 `bird_dev`             |
 | `--workflow`            | 否   | `reflection`                                   | 要执行的工作流                         |
 | `--round`               | 否   | `4`                                            | 基准测试迭代轮数                        |
@@ -436,7 +436,7 @@ agent:
 ```text
 {agent.home}/integration/
 ├── {group_name}_0/
-│   ├── save/{namespace}/{timestamp}/
+│   ├── save/{datasource}/{timestamp}/
 │   │   ├── 0.json                                     # 任务元数据
 │   │   ├── 0.sql                                      # 生成的 SQL
 │   │   ├── 0.csv                                      # 查询执行结果
@@ -444,13 +444,13 @@ agent:
 │   │   ├── 1.sql
 │   │   ├── 1.csv
 │   │   └── ...
-│   ├── trajectory/{namespace}/{timestamp}/
+│   ├── trajectory/{datasource}/{timestamp}/
 │   │   ├── 0_{ts}.yaml                                # 工作流轨迹（如 0_1769611836.yaml）
 │   │   ├── 1_{ts}.yaml
 │   │   └── ...
 │   └── evaluation_round_{timestamp}_0.json            # 第 0 轮评估报告
 ├── {group_name}_1/
-│   ├── save/{namespace}/{timestamp}/
+│   ├── save/{datasource}/{timestamp}/
 │   │   ├── 0.json
 │   │   ├── 0.sql
 │   │   ├── 0.csv
@@ -458,7 +458,7 @@ agent:
 │   │   ├── 1.sql
 │   │   ├── 1.csv
 │   │   └── ...
-│   ├── trajectory/{namespace}/{timestamp}/
+│   ├── trajectory/{datasource}/{timestamp}/
 │   │   ├── 0_{ts}.yaml
 │   │   ├── 1_{ts}.yaml
 │   │   └── ...

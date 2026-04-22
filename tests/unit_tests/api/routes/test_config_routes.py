@@ -28,7 +28,7 @@ def _mock_svc(datasources, *, target="deepseek", current_datasource="starrocks",
     svc.agent_config.target = target
     svc.agent_config.models = models if models is not None else {}
     svc.agent_config.current_datasource = current_datasource
-    svc.agent_config.namespaces = datasources
+    svc.agent_config.datasource_configs = datasources
     svc.agent_config.home = home
     return svc
 

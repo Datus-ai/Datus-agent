@@ -16,7 +16,7 @@ logger = get_logger(__name__)
 console = Console()
 
 
-def detect_db_connectivity(namespace_name, db_config_data) -> tuple[bool, str]:
+def detect_db_connectivity(datasource_name: str, db_config_data: dict[str, Any]) -> tuple[bool, str]:
     """Test database connectivity.
 
     Uses DbConfig.filter_kwargs to handle all database types uniformly.
@@ -50,11 +50,11 @@ def detect_db_connectivity(namespace_name, db_config_data) -> tuple[bool, str]:
         db_config = DbConfig.filter_kwargs(DbConfig, config_data)
 
         # Create DB manager with minimal config
-        namespaces = {namespace_name: {namespace_name: db_config}}
-        db_manager = DBManager(namespaces)
+        datasource_configs = {datasource_name: {datasource_name: db_config}}
+        db_manager = DBManager(datasource_configs)
 
         # Get connector and test connection
-        connector = db_manager.get_conn(namespace_name, namespace_name)
+        connector = db_manager.get_conn(datasource_name, datasource_name)
         test_result = connector.test_connection()
 
         # Handle different return types from different connectors

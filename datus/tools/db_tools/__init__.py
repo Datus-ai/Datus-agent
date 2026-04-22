@@ -18,7 +18,7 @@ __all__ = [
 
 def _register_builtin_connectors():
     """Register built-in connectors (SQLite and DuckDB only)"""
-    # SQLite (0 dependencies, no namespace support)
+    # SQLite (0 dependencies, no schema support)
     try:
         from .builtin_configs import SQLiteConfig
         from .sqlite_connector import SQLiteConnector

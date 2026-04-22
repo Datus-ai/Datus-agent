@@ -50,7 +50,7 @@
 - `metrics`
 - `sqls`
 
-保存时，向导还会把当前数据库写入 `scoped_context.namespace`。
+保存时，向导还会把当前数据库写入 `scoped_context.datasource`。
 
 ### 第 4 步：Rules
 
@@ -127,7 +127,7 @@ agent:
       rules:
         - 优先复用已有财务指标，再决定是否编写新 SQL
       scoped_context:
-        namespace: finance
+        datasource: finance
         tables: mart.finance_daily
         metrics: finance.revenue.daily_revenue
         sqls: finance.revenue.region_rollup

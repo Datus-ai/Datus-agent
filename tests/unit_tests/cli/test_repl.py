@@ -9,8 +9,8 @@ Tests cover:
 - CommandType enum
 - DatusCLI._parse_command: EXIT, TOOL, SLASH, CHAT, SQL, legacy-prefix UNKNOWN
 - DatusCLI.check_agent_available: ready / initializing / not ready
-- DatusCLI._cmd_list_namespaces: smoke test
-- DatusCLI._cmd_switch_namespace: empty args, same namespace, switch
+- DatusCLI._cmd_list_datasources: smoke test
+- DatusCLI._cmd_switch_datasource: empty args, same datasource, switch
 - DatusCLI._smart_display_table: empty data, few columns, many columns
 - DatusCLI._get_prompt_text: normal/plan mode
 - DatusCLI.create_combined_completer: returns a completer
@@ -81,7 +81,7 @@ def _make_cli(agent_config, available_subagents=None):
         "!sl": cli.agent_commands.cmd_schema_linking,
         "/catalog": cli.context_commands.cmd_catalog,
         "/tables": cli.metadata_commands.cmd_tables,
-        "/namespace": cli._cmd_switch_namespace,
+        "/datasource": cli._cmd_switch_datasource,
         "/help": cli._cmd_help,
         "/exit": lambda a: None,
         "/quit": lambda a: None,
@@ -175,9 +175,9 @@ class TestParseCommand:
         assert args == ""
 
     def test_slash_command_with_args(self, cli):
-        cmd_type, cmd, args = cli._parse_command("/namespace test_ns")
+        cmd_type, cmd, args = cli._parse_command("/datasource test_ns")
         assert cmd_type == CommandType.SLASH
-        assert cmd == "/namespace"
+        assert cmd == "/datasource"
         assert args == "test_ns"
 
     def test_slash_help_canonical(self, cli):
@@ -298,53 +298,53 @@ class TestGetPromptText:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _cmd_list_namespaces
+# Tests: _cmd_list_datasources
 # ---------------------------------------------------------------------------
 
 
-class TestCmdListNamespaces:
-    def test_lists_namespaces(self, cli):
-        cli._cmd_list_namespaces()
+class TestCmdListDatasources:
+    def test_lists_datasources(self, cli):
+        cli._cmd_list_datasources()
         output = cli.console.file.getvalue()
         # Should have printed something (the table)
         assert len(output) > 0
 
     def test_current_datasource_highlighted(self, cli):
         cli.agent_config.current_datasource = "california_schools"
-        cli._cmd_list_namespaces()
+        cli._cmd_list_datasources()
         output = cli.console.file.getvalue()
-        # Each database is listed as its own namespace entry
+        # Each database is listed as its own datasource entry
         assert "california_schools" in output
 
 
 # ---------------------------------------------------------------------------
-# Tests: _cmd_switch_namespace
+# Tests: _cmd_switch_datasource
 # ---------------------------------------------------------------------------
 
 
-class TestCmdSwitchNamespace:
-    def test_empty_args_lists_namespaces(self, cli):
-        with patch.object(cli, "_cmd_list_namespaces") as mock_list:
-            cli._cmd_switch_namespace("")
+class TestCmdSwitchDatasource:
+    def test_empty_args_lists_datasources(self, cli):
+        with patch.object(cli, "_cmd_list_datasources") as mock_list:
+            cli._cmd_switch_datasource("")
         mock_list.assert_called_once()
 
-    def test_same_namespace_prints_message(self, cli):
+    def test_same_datasource_prints_message(self, cli):
         current_ns = cli.agent_config.current_datasource
-        with patch.object(cli, "_cmd_list_namespaces"):
-            cli._cmd_switch_namespace(current_ns)
+        with patch.object(cli, "_cmd_list_datasources"):
+            cli._cmd_switch_datasource(current_ns)
         output = cli.console.file.getvalue()
         assert "doesn't need" in output or "already" in output.lower() or "now under" in output.lower()
 
-    def test_switch_to_different_namespace(self, cli):
+    def test_switch_to_different_datasource(self, cli):
         mock_conn = MagicMock()
         mock_conn.database_name = "newdb"
         mock_conn.catalog_name = ""
         mock_conn.schema_name = ""
         cli.db_manager.first_conn_with_name.return_value = ("newdb", mock_conn)
 
-        # Switch to the california_schools database (namespace key in compat dict)
+        # Switch to the california_schools datasource
         with patch.object(cli, "reset_session"):
-            cli._cmd_switch_namespace("california_schools")
+            cli._cmd_switch_datasource("california_schools")
 
         output = cli.console.file.getvalue()
         assert "california_schools" in output
@@ -703,11 +703,11 @@ class TestCreateCombinedCompleterExtended:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _cmd_switch_namespace extended
+# Tests: _cmd_switch_datasource extended
 # ---------------------------------------------------------------------------
 
 
-class TestCmdSwitchNamespaceExtended:
+class TestCmdSwitchDatasourceExtended:
     def test_switch_updates_cli_context(self, cli):
         mock_conn = MagicMock()
         mock_conn.database_name = "california_schools"
@@ -716,7 +716,7 @@ class TestCmdSwitchNamespaceExtended:
         cli.db_manager.first_conn_with_name.return_value = ("test_ns", mock_conn)
 
         # Patch current_datasource property to return a different value so the
-        # "already on this namespace" branch is NOT taken; setter is a no-op.
+        # "already on this datasource" branch is NOT taken; setter is a no-op.
         with patch.object(
             type(cli.agent_config),
             "current_datasource",
@@ -726,17 +726,17 @@ class TestCmdSwitchNamespaceExtended:
             ),
         ):
             with patch.object(cli, "reset_session"):
-                cli._cmd_switch_namespace("test_ns")
+                cli._cmd_switch_datasource("test_ns")
 
         output = cli.console.file.getvalue()
-        # Output prints the new namespace name passed to _cmd_switch_namespace
-        assert "Namespace changed" in output
+        # Output prints the new datasource name passed to _cmd_switch_datasource
+        assert "Datasource changed" in output
 
-    def test_same_namespace_both_listed_and_message(self, cli):
+    def test_same_datasource_both_listed_and_message(self, cli):
         current = cli.agent_config.current_datasource
 
-        with patch.object(cli, "_cmd_list_namespaces") as mock_list:
-            cli._cmd_switch_namespace(current)
+        with patch.object(cli, "_cmd_list_datasources") as mock_list:
+            cli._cmd_switch_datasource(current)
 
         mock_list.assert_called()
         output = cli.console.file.getvalue()
@@ -805,25 +805,16 @@ class TestPrintWelcome:
     def test_database_from_args_datasource(self, real_agent_config):
         """args.datasource takes highest priority."""
         cli = _make_cli(real_agent_config)
-        cli.args = MagicMock(datasource="my_db", namespace="my_ns")
+        cli.args = MagicMock(datasource="my_db")
         real_agent_config._current_datasource = "config_db"
         output = self._get_output(cli)
         assert "my_db" in output
-        assert "my_ns" not in output
         assert "config_db" not in output
-
-    def test_database_fallback_to_args_namespace(self, real_agent_config):
-        """Falls back to args.namespace when args.datasource is empty."""
-        cli = _make_cli(real_agent_config)
-        cli.args = MagicMock(datasource="", namespace="my_ns")
-        real_agent_config._current_datasource = ""
-        output = self._get_output(cli)
-        assert "my_ns" in output
 
     def test_database_fallback_to_agent_config(self, real_agent_config):
         """Falls back to agent_config.current_datasource when args are empty."""
         cli = _make_cli(real_agent_config)
-        cli.args = MagicMock(datasource="", namespace="")
+        cli.args = MagicMock(datasource="")
         real_agent_config._current_datasource = "config_db"
         output = self._get_output(cli)
         assert "config_db" in output
@@ -831,7 +822,7 @@ class TestPrintWelcome:
     def test_no_database_warning(self, real_agent_config):
         """Shows 'not selected' hint when no database is available."""
         cli = _make_cli(real_agent_config)
-        cli.args = MagicMock(datasource="", namespace="")
+        cli.args = MagicMock(datasource="")
         real_agent_config._current_datasource = ""
         output = self._get_output(cli)
         assert "not selected" in output
@@ -849,21 +840,21 @@ class TestBuildBannerPanel:
         from datus import __version__
 
         cli = _make_cli(real_agent_config)
-        cli.args = MagicMock(database="benchmark", namespace="")
+        cli.args = MagicMock(database="benchmark", datasource="")
         real_agent_config._current_datasource = ""
         output = self._render(cli)
         assert f"v{__version__}" in output
 
     def test_contains_subtitle(self, real_agent_config):
         cli = _make_cli(real_agent_config)
-        cli.args = MagicMock(database="benchmark", namespace="")
+        cli.args = MagicMock(database="benchmark", datasource="")
         real_agent_config._current_datasource = ""
         output = self._render(cli)
         assert "Data engineering agent builds evolvable context for your data system" in output
 
     def test_contains_ascii_art_on_wide_terminal(self, real_agent_config):
         cli = _make_cli(real_agent_config)
-        cli.args = MagicMock(database="benchmark", namespace="")
+        cli.args = MagicMock(database="benchmark", datasource="")
         real_agent_config._current_datasource = ""
         output = self._render(cli, width=100)
         assert "██████╗" in output
@@ -872,7 +863,7 @@ class TestBuildBannerPanel:
         from datus import __version__
 
         cli = _make_cli(real_agent_config)
-        cli.args = MagicMock(database="benchmark", namespace="")
+        cli.args = MagicMock(database="benchmark", datasource="")
         real_agent_config._current_datasource = ""
         output = self._render(cli, width=40)
         assert f"DATUS v{__version__}" in output
@@ -881,7 +872,7 @@ class TestBuildBannerPanel:
     def test_no_ai_status_row(self, real_agent_config):
         """Banner must not include an AI status row."""
         cli = _make_cli(real_agent_config)
-        cli.args = MagicMock(database="benchmark", namespace="")
+        cli.args = MagicMock(database="benchmark", datasource="")
         real_agent_config._current_datasource = ""
         cli.agent_ready = True
         cli.agent_initializing = False
@@ -894,7 +885,7 @@ class TestBuildBannerPanel:
 
     def test_not_connected_label(self, real_agent_config):
         cli = _make_cli(real_agent_config)
-        cli.args = MagicMock(database="benchmark", namespace="")
+        cli.args = MagicMock(datasource="benchmark")
         real_agent_config._current_datasource = ""
         cli.db_connector = None
         output = self._render(cli)
@@ -903,7 +894,7 @@ class TestBuildBannerPanel:
     def test_no_command_prefix_cheatsheet(self, real_agent_config):
         """Banner must not include the '/ . @ !' command prefix cheatsheet row."""
         cli = _make_cli(real_agent_config)
-        cli.args = MagicMock(database="benchmark", namespace="")
+        cli.args = MagicMock(database="benchmark", datasource="")
         real_agent_config._current_datasource = ""
         output = self._render(cli)
         assert "! @ ." not in output
@@ -912,7 +903,7 @@ class TestBuildBannerPanel:
     def test_using_suffix_when_active_db_differs(self, real_agent_config):
         """Database line appends 'using <name>' when current_db_name != configured db."""
         cli = _make_cli(real_agent_config)
-        cli.args = MagicMock(database="benchmark", namespace="")
+        cli.args = MagicMock(datasource="benchmark")
         real_agent_config._current_datasource = ""
         cli.cli_context.current_db_name = "other_db"
         output = self._render(cli)
@@ -921,7 +912,7 @@ class TestBuildBannerPanel:
     def test_context_row_rendered_when_available(self, real_agent_config):
         """Context row appears when cli_context has a non-empty summary."""
         cli = _make_cli(real_agent_config)
-        cli.args = MagicMock(database="benchmark", namespace="")
+        cli.args = MagicMock(datasource="benchmark")
         real_agent_config._current_datasource = ""
         cli.cli_context.current_db_name = "benchmark"
         output = self._render(cli)
@@ -1009,7 +1000,7 @@ class TestCmdAgent:
 class TestParseCommandDefaultAgent:
     """After the slash refactor, agent selection is driven by ``/agent`` and
     bare text (no prefix) is the only path that routes to chat. ``/<word>`` is
-    now exclusively a command namespace — unknown slashes surface as UNKNOWN
+    now exclusively a command prefix — unknown slashes surface as UNKNOWN
     instead of silently being interpreted as a chat message.
     """
 

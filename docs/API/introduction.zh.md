@@ -20,8 +20,8 @@ API 服务与 `datus` CLI、`datus-mcp` MCP 服务共享同一套配置、知识
 X-Datus-User-Id: alice
 ```
 
-Namespace 隔离由 `--namespace` CLI 参数(或 `DATUS_NAMESPACE` 环境变量)单独控制,决定加载 `agent.yml`
-中的哪个 namespace 的数据库与知识库。
+Datasource 隔离由 `--datasource` CLI 参数(或 `DATUS_DATASOURCE` 环境变量)单独控制,决定加载 `agent.yml`
+中的哪个 datasource 的数据库与知识库。
 
 ## 响应封装 {#response-envelope}
 

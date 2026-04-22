@@ -506,29 +506,29 @@ class TestCsvPerTaskResultProvider:
         assert result.available
         assert list(result.dataframe.columns) == ["col1", "col2"]
 
-    def test_namespace_run_id(self, tmp_path):
+    def test_datasource_run_id(self, tmp_path):
         ns_dir = tmp_path / "ns" / "run1"
         ns_dir.mkdir(parents=True)
         csv_file = ns_dir / "task_x.csv"
         csv_file.write_text("a,b\n1,2\n")
-        provider = CsvPerTaskResultProvider(str(tmp_path), namespace="ns", run_id="run1")
+        provider = CsvPerTaskResultProvider(str(tmp_path), datasource="ns", run_id="run1")
         result = provider.fetch("task_x")
         assert result.available
 
-    def test_namespace_auto_latest_run(self, tmp_path):
+    def test_datasource_auto_latest_run(self, tmp_path):
         ns_dir = tmp_path / "ns"
         run_dir = ns_dir / "run_2024"
         run_dir.mkdir(parents=True)
         csv_file = run_dir / "task_y.csv"
         csv_file.write_text("x,y\n5,6\n")
-        provider = CsvPerTaskResultProvider(str(tmp_path), namespace="ns")
+        provider = CsvPerTaskResultProvider(str(tmp_path), datasource="ns")
         result = provider.fetch("task_y")
         assert result.available
 
-    def test_namespace_no_run_dirs(self, tmp_path):
+    def test_datasource_no_run_dirs(self, tmp_path):
         ns_dir = tmp_path / "empty_ns"
         ns_dir.mkdir()
-        provider = CsvPerTaskResultProvider(str(tmp_path), namespace="empty_ns")
+        provider = CsvPerTaskResultProvider(str(tmp_path), datasource="empty_ns")
         result = provider.fetch("task_z")
         assert result.error is not None
 
@@ -822,14 +822,14 @@ class TestListTrajectoryRuns:
         result = list_trajectory_runs(str(tmp_path / "nope"))
         assert result == {}
 
-    def test_lists_runs_for_namespace(self, tmp_path):
+    def test_lists_runs_for_datasource(self, tmp_path):
         run_dir = tmp_path / "ns" / "run1"
         run_dir.mkdir(parents=True)
-        result = list_trajectory_runs(str(tmp_path), namespace="ns")
+        result = list_trajectory_runs(str(tmp_path), datasource="ns")
         assert "ns" in result
         assert "run1" in result["ns"]
 
-    def test_lists_all_namespaces(self, tmp_path):
+    def test_lists_all_datasources(self, tmp_path):
         (tmp_path / "ns1" / "run_a").mkdir(parents=True)
         (tmp_path / "ns2" / "run_b").mkdir(parents=True)
         result = list_trajectory_runs(str(tmp_path))
@@ -842,13 +842,13 @@ class TestListSaveRuns:
         result = list_save_runs(str(tmp_path / "nope"))
         assert result == {}
 
-    def test_lists_runs_for_namespace(self, tmp_path):
+    def test_lists_runs_for_datasource(self, tmp_path):
         run_dir = tmp_path / "ns" / "run1"
         run_dir.mkdir(parents=True)
-        result = list_save_runs(str(tmp_path), namespace="ns")
+        result = list_save_runs(str(tmp_path), datasource="ns")
         assert "ns" in result
 
-    def test_lists_all_namespaces(self, tmp_path):
+    def test_lists_all_datasources(self, tmp_path):
         (tmp_path / "nsA" / "run1").mkdir(parents=True)
         (tmp_path / "nsB" / "run2").mkdir(parents=True)
         result = list_save_runs(str(tmp_path))

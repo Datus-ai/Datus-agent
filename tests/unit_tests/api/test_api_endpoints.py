@@ -44,7 +44,7 @@ def mock_agent_config():
 def app(mock_agent_config):
     """Create a FastAPI app with mocked dependencies."""
     agent_args = argparse.Namespace(
-        namespace="test_ns",
+        datasource="test_ns",
         config=None,
         max_steps=20,
         workflow="fixed",
@@ -198,7 +198,7 @@ class TestWorkflowEndpoint:
             "/workflows/run",
             json={
                 "workflow": "nl2sql",
-                "namespace": "test_ns",
+                "datasource": "test_ns",
                 "task": "show all tables",
             },
         )
@@ -209,7 +209,7 @@ class TestWorkflowEndpoint:
             "/workflows/run",
             json={
                 "workflow": "nl2sql",
-                "namespace": "test_ns",
+                "datasource": "test_ns",
                 "task": "show all tables",
             },
             headers={"Authorization": "Bearer invalid_token_here"},
@@ -230,7 +230,7 @@ class TestWorkflowEndpoint:
             "/workflows/run",
             json={
                 "workflow": "nl2sql",
-                "namespace": "test_ns",
+                "datasource": "test_ns",
                 "task": "show all tables",
                 "mode": "sync",
             },
@@ -248,7 +248,7 @@ class TestWorkflowEndpoint:
             "/workflows/run",
             json={
                 "workflow": "nl2sql",
-                "namespace": "test_ns",
+                "datasource": "test_ns",
                 "task": "show all tables",
                 "mode": "async",
             },
@@ -298,7 +298,7 @@ class TestFeedbackEndpoint:
 
 class TestAPIModels:
     def test_run_workflow_request_defaults(self):
-        req = RunWorkflowRequest(workflow="nl2sql", namespace="test", task="query")
+        req = RunWorkflowRequest(workflow="nl2sql", datasource="test", task="query")
         assert req.mode == Mode.SYNC
         assert req.task_id is None
         assert req.subject_path is None
@@ -306,7 +306,7 @@ class TestAPIModels:
     def test_run_workflow_request_full(self):
         req = RunWorkflowRequest(
             workflow="nl2sql",
-            namespace="test",
+            datasource="test",
             task="query",
             mode=Mode.ASYNC,
             task_id="custom_id",

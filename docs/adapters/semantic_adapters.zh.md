@@ -134,7 +134,7 @@ from datus.tools.semantic_tools import semantic_adapter_registry
 from datus_semantic_metricflow.config import MetricFlowConfig
 
 async def main():
-    config = MetricFlowConfig(namespace="my_project")
+    config = MetricFlowConfig(datasource="my_project")
     adapter = semantic_adapter_registry.create_adapter("metricflow", config)
 
     metrics = await adapter.list_metrics(limit=10)

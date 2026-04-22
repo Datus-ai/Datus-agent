@@ -87,8 +87,8 @@ class TestGetStorage:
             b = get_storage(_DummyStore, "metric", project="test")
         assert a is not b
 
-    def test_different_namespaces_not_in_key(self):
-        """get_storage ignores namespace — same factory always returns same instance."""
+    def test_different_datasources_not_in_key(self):
+        """get_storage ignores datasource — same factory always returns same instance."""
         with patch("datus.storage.registry.get_embedding_model", side_effect=_fake_get_embedding_model):
             a = get_storage(_DummyStore, "metric", project="test")
             b = get_storage(_DummyStore, "metric", project="test")

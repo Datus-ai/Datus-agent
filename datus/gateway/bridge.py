@@ -150,9 +150,9 @@ class ChannelBridge:
 
         request = StreamChatInput(message=msg.text, session_id=session_id, stream_response=adapter.supports_streaming)
 
-        # Apply channel-level namespace override
-        if channel_config and channel_config.namespace:
-            request.database = channel_config.namespace
+        # Apply channel-level datasource override
+        if channel_config and channel_config.datasource:
+            request.database = channel_config.datasource
 
         has_error = False
         # Start the agentic loop

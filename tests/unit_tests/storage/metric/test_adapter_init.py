@@ -16,15 +16,14 @@ pytestmark = pytest.mark.ci
 # ---------------------------------------------------------------------------
 
 
-def _make_agent_config(namespace="test_ns", adapter_type_config=None):
+def _make_agent_config(datasource="test_ns", adapter_type_config=None):
     """Create a mock AgentConfig."""
     config = MagicMock()
-    config.namespace = namespace
-    config.current_datasource = namespace
+    config.current_datasource = datasource
     config.resolve_semantic_adapter.side_effect = lambda adapter_type=None: (
         adapter_type.lower().strip() if adapter_type else None
     )
-    config.build_semantic_adapter_config.side_effect = lambda adapter_type=None: {"namespace": namespace}
+    config.build_semantic_adapter_config.side_effect = lambda adapter_type=None: {"datasource": datasource}
     # By default, no adapter-specific config on agent_config
     if adapter_type_config is not None:
         for key, val in adapter_type_config.items():
@@ -126,8 +125,8 @@ class TestInitFromAdapter:
     @pytest.mark.asyncio
     @patch("datus.storage.metric.adapter_init.SemanticStorageManager")
     @patch("datus.storage.metric.adapter_init.semantic_adapter_registry")
-    async def test_dict_adapter_config_sets_namespace(self, mock_registry, MockStorageManager):
-        """When adapter_config is a dict, namespace should be set if missing."""
+    async def test_dict_adapter_config_sets_datasource(self, mock_registry, MockStorageManager):
+        """When adapter_config is a dict, datasource should be set from base config."""
         from datus.storage.metric.adapter_init import init_from_adapter
 
         mock_metadata = MagicMock()
@@ -139,23 +138,23 @@ class TestInitFromAdapter:
         mock_manager.sync_from_adapter = AsyncMock(return_value={"metrics_synced": 1})
         MockStorageManager.return_value = mock_manager
 
-        config = _make_agent_config(namespace="my_ns")
+        config = _make_agent_config(datasource="my_ns")
 
-        # Pass a dict config without namespace - it should be auto-set
+        # Pass a dict config without datasource - it should be auto-set from base config
         with patch("datus.tools.semantic_tools.config.SemanticAdapterConfig") as MockConfig:
             MockConfig.return_value = MagicMock()
             await init_from_adapter(config, "dbt", adapter_config={"timeout_seconds": 60})
 
-            # Verify namespace was added to the dict before creating config
+            # Verify datasource was added to the dict before creating config
             MockConfig.assert_called_once()
             call_kwargs = MockConfig.call_args[1]
-            assert call_kwargs["namespace"] == "my_ns"
+            assert call_kwargs["datasource"] == "my_ns"
 
     @pytest.mark.asyncio
     @patch("datus.storage.metric.adapter_init.SemanticStorageManager")
     @patch("datus.storage.metric.adapter_init.semantic_adapter_registry")
-    async def test_dict_config_preserves_existing_namespace(self, mock_registry, MockStorageManager):
-        """When adapter_config dict already has namespace, it should not be overwritten."""
+    async def test_dict_config_preserves_existing_datasource(self, mock_registry, MockStorageManager):
+        """When adapter_config dict already has datasource, it should not be overwritten."""
         from datus.storage.metric.adapter_init import init_from_adapter
 
         mock_metadata = MagicMock()
@@ -167,14 +166,14 @@ class TestInitFromAdapter:
         mock_manager.sync_from_adapter = AsyncMock(return_value={"metrics_synced": 1})
         MockStorageManager.return_value = mock_manager
 
-        config = _make_agent_config(namespace="default_ns")
+        config = _make_agent_config(datasource="default_ns")
 
         with patch("datus.tools.semantic_tools.config.SemanticAdapterConfig") as MockConfig:
             MockConfig.return_value = MagicMock()
-            await init_from_adapter(config, "dbt", adapter_config={"namespace": "custom_ns"})
+            await init_from_adapter(config, "dbt", adapter_config={"datasource": "custom_ns"})
 
             call_kwargs = MockConfig.call_args[1]
-            assert call_kwargs["namespace"] == "custom_ns"
+            assert call_kwargs["datasource"] == "custom_ns"
 
     @pytest.mark.asyncio
     @patch("datus.storage.metric.adapter_init.SemanticStorageManager")
@@ -198,16 +197,15 @@ class TestInitFromAdapter:
 
         # agent_config must NOT have metricflow_config so code falls through
         # to the metadata.config_class branch. Use spec to restrict attributes.
-        config = MagicMock(spec=["namespace", "current_datasource", "namespaces", "path_manager"])
-        config.namespace = "ns1"
+        config = MagicMock(spec=["current_datasource", "datasource_configs", "path_manager"])
         config.current_datasource = "ns1"
-        config.namespaces = {}
+        config.datasource_configs = {}
         config.path_manager.semantic_models_dir = "/tmp/project/subject/semantic_models"
 
         await init_from_adapter(config, "metricflow")
 
         mock_config_class.assert_called_once_with(
-            namespace="ns1", db_config=None, semantic_models_path="/tmp/project/subject/semantic_models"
+            datasource="ns1", db_config=None, semantic_models_path="/tmp/project/subject/semantic_models"
         )
 
     @pytest.mark.asyncio
@@ -237,8 +235,8 @@ class TestInitFromAdapter:
     @pytest.mark.asyncio
     @patch("datus.storage.metric.adapter_init.SemanticStorageManager")
     @patch("datus.storage.metric.adapter_init.semantic_adapter_registry")
-    async def test_namespace_from_current_datasource_fallback(self, mock_registry, MockStorageManager):
-        """Should use current_datasource when namespace attr is None."""
+    async def test_datasource_from_current_datasource_fallback(self, mock_registry, MockStorageManager):
+        """Should use current_datasource when building adapter config."""
         from datus.storage.metric.adapter_init import init_from_adapter
 
         mock_metadata = MagicMock()
@@ -251,23 +249,22 @@ class TestInitFromAdapter:
         MockStorageManager.return_value = mock_manager
 
         # Use spec to prevent auto-generated attributes like dbt_config
-        config = MagicMock(spec=["namespace", "current_datasource", "namespaces", "path_manager"])
-        config.namespace = None
+        config = MagicMock(spec=["current_datasource", "datasource_configs", "path_manager"])
         config.current_datasource = "fallback_ns"
-        config.namespaces = {}
+        config.datasource_configs = {}
         config.path_manager.semantic_models_dir = "/tmp/project/subject/semantic_models"
 
         with patch("datus.tools.semantic_tools.config.SemanticAdapterConfig") as MockConfig:
             MockConfig.return_value = MagicMock()
             await init_from_adapter(config, "dbt")
 
-            MockConfig.assert_called_once_with(namespace="fallback_ns")
+            MockConfig.assert_called_once_with(datasource="fallback_ns")
 
     @pytest.mark.asyncio
     @patch("datus.storage.metric.adapter_init.SemanticStorageManager")
     @patch("datus.storage.metric.adapter_init.semantic_adapter_registry")
-    async def test_none_config_extracts_db_config_from_namespaces(self, mock_registry, MockStorageManager):
-        """When adapter_config is None and namespaces has data, should extract db_config."""
+    async def test_none_config_extracts_db_config_from_datasource_configs(self, mock_registry, MockStorageManager):
+        """When adapter_config is None and datasource_configs has data, should extract db_config."""
         from datus.storage.metric.adapter_init import init_from_adapter
 
         mock_config_class = MagicMock()
@@ -283,7 +280,7 @@ class TestInitFromAdapter:
         mock_manager.sync_from_adapter = AsyncMock(return_value={"metrics_synced": 2})
         MockStorageManager.return_value = mock_manager
 
-        # Set up agent_config with namespaces containing a DbConfig
+        # Set up agent_config with datasource_configs containing a DbConfig
         mock_db_config = MagicMock()
         mock_db_config.to_dict.return_value = {
             "db_type": "mysql",
@@ -296,17 +293,16 @@ class TestInitFromAdapter:
             "logic_name": "ignore_me_too",
         }
 
-        config = MagicMock(spec=["namespace", "current_datasource", "namespaces", "path_manager"])
-        config.namespace = "ns1"
+        config = MagicMock(spec=["current_datasource", "datasource_configs", "path_manager"])
         config.current_datasource = "ns1"
-        config.namespaces = {"ns1": {"default": mock_db_config}}
+        config.datasource_configs = {"ns1": {"default": mock_db_config}}
         config.path_manager.semantic_models_dir = "/tmp/project/subject/semantic_models"
 
         await init_from_adapter(config, "metricflow")
 
         mock_config_class.assert_called_once()
         call_kwargs = mock_config_class.call_args[1]
-        assert call_kwargs["namespace"] == "ns1"
+        assert call_kwargs["datasource"] == "ns1"
         assert call_kwargs["semantic_models_path"] == "/tmp/project/subject/semantic_models"
         # db_config should contain stringified values, excluding "extra" and "logic_name"
         db_config = call_kwargs["db_config"]

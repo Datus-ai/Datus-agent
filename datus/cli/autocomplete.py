@@ -908,7 +908,7 @@ class AtReferenceCompleter(Completer):
     def _detect_sub_agent_from_input(self, text: str) -> str:
         """Detect sub-agent name from input line prefix like '/sub_agent_name ...'.
 
-        Only returns sub-agents that are configured for the current namespace.
+        Only returns sub-agents that are configured for the current datasource.
         """
         if not text.startswith("/") or not self._available_subagents:
             return ""
@@ -920,13 +920,15 @@ class AtReferenceCompleter(Completer):
         first_token = stripped[:space_pos]
         if first_token not in self._available_subagents:
             return ""
-        # Verify sub-agent is in current namespace
+        # Verify sub-agent is in current datasource
         from datus.schemas.agent_models import SubAgentConfig
 
         raw_config = self.agent_config.sub_agent_config(first_token)
         if raw_config:
             sub_config = SubAgentConfig.model_validate(raw_config)
-            if sub_config.has_scoped_context() and not sub_config.is_in_namespace(self.agent_config.current_datasource):
+            if sub_config.has_scoped_context() and not sub_config.is_in_datasource(
+                self.agent_config.current_datasource
+            ):
                 return ""
         return first_token
 

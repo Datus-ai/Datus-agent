@@ -12,13 +12,13 @@ class TestCreateApp:
         """create_app returns a FastAPI application."""
         from fastapi import FastAPI
 
-        args = argparse.Namespace(config="", namespace="default", output_dir="./output", log_level="INFO")
+        args = argparse.Namespace(config="", datasource="default", output_dir="./output", log_level="INFO")
         app = create_app(args)
         assert isinstance(app, FastAPI)
 
     def test_create_app_has_routes(self):
         """create_app registers expected route paths."""
-        args = argparse.Namespace(config="", namespace="default", output_dir="./output", log_level="INFO")
+        args = argparse.Namespace(config="", datasource="default", output_dir="./output", log_level="INFO")
         app = create_app(args)
         route_paths = [route.path for route in app.routes]
         assert "/" in route_paths
@@ -26,14 +26,14 @@ class TestCreateApp:
 
     def test_create_app_stores_agent_args(self):
         """create_app stores agent_args in app.state."""
-        args = argparse.Namespace(config="", namespace="test_ns", output_dir="./output", log_level="INFO")
+        args = argparse.Namespace(config="", datasource="test_ns", output_dir="./output", log_level="INFO")
         app = create_app(args)
         assert app.state.agent_args is args
-        assert app.state.agent_args.namespace == "test_ns"
+        assert app.state.agent_args.datasource == "test_ns"
 
     def test_create_app_includes_cors_middleware(self):
         """create_app adds CORS middleware."""
-        args = argparse.Namespace(config="", namespace="default", output_dir="./output", log_level="INFO")
+        args = argparse.Namespace(config="", datasource="default", output_dir="./output", log_level="INFO")
         app = create_app(args)
         # CORS middleware is in the middleware stack
         # FastAPI stores user middleware as Middleware objects
@@ -41,7 +41,7 @@ class TestCreateApp:
 
     def test_create_app_registers_v1_routers(self):
         """create_app registers API v1 route prefixes."""
-        args = argparse.Namespace(config="", namespace="default", output_dir="./output", log_level="INFO")
+        args = argparse.Namespace(config="", datasource="default", output_dir="./output", log_level="INFO")
         app = create_app(args)
         route_paths = {route.path for route in app.routes}
         # Check that at least some v1 routes are registered

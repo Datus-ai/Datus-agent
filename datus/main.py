@@ -9,7 +9,6 @@ import os
 import sys
 from datetime import datetime
 
-from datus.cli.namespace_manager import NamespaceManager
 from datus.cli.tutorial import BenchmarkTutorial
 from datus.multi_round_benchmark import multi_benchmark, setup_base_parser_args
 from datus.utils.async_utils import setup_windows_policy
@@ -70,10 +69,10 @@ def create_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     init_parser.add_argument(
-        "--datasource", "--namespace", type=str, default="", help="Datasource to probe for schema info in AGENTS.md"
+        "--datasource", type=str, default="", help="Datasource to probe for schema info in AGENTS.md"
     )
 
-    # service command (was: namespace)
+    # service command
     service_parser = subparsers.add_parser(
         "service",
         help="Manage services (databases, semantic layer, BI tools, schedulers)",
@@ -81,15 +80,6 @@ def create_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     service_parser.add_argument("command", help="Service management command", choices=["list", "add", "delete"])
-
-    # Keep 'namespace' as hidden alias for backward compatibility
-    namespace_parser = subparsers.add_parser(
-        "namespace",
-        help=argparse.SUPPRESS,
-        parents=[global_parser],
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    namespace_parser.add_argument("command", help="namespace manage command", choices=["list", "add", "delete"])
 
     # probe-llm command
     probe_parser = subparsers.add_parser(
@@ -107,9 +97,7 @@ def create_parser() -> argparse.ArgumentParser:
         parents=[global_parser],
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    check_db_parser.add_argument(
-        "--datasource", "--namespace", type=str, required=True, help="Datasource name to check"
-    )
+    check_db_parser.add_argument("--datasource", type=str, required=True, help="Datasource name to check")
 
     # bootstrap-kb command
     bootstrap_parser = subparsers.add_parser(
@@ -145,7 +133,7 @@ def create_parser() -> argparse.ArgumentParser:
     bootstrap_parser.add_argument(
         "--benchmark", type=str, choices=["spider2", "bird_dev", "bird_critic"], help="Benchmark dataset to use"
     )
-    bootstrap_parser.add_argument("--datasource", "--namespace", type=str, required=True, help="Datasource name")
+    bootstrap_parser.add_argument("--datasource", type=str, required=True, help="Datasource name")
     bootstrap_parser.add_argument(
         "--schema_linking_type",
         type=str,
@@ -321,7 +309,7 @@ def create_parser() -> argparse.ArgumentParser:
     benchmark_parser.add_argument(
         "--benchmark_task_ids", type=str, nargs="+", help="Specific benchmark task IDs to run"
     )
-    benchmark_parser.add_argument("--datasource", "--namespace", type=str, required=True, help="Datasource name")
+    benchmark_parser.add_argument("--datasource", type=str, required=True, help="Datasource name")
     benchmark_parser.add_argument("--task_db_name", type=str, help="Database name for the task")
     benchmark_parser.add_argument("--task_schema", type=str, help="Schema name for the task")
     benchmark_parser.add_argument("--subject_path", type=str, help="Subject path for the task")
@@ -387,7 +375,7 @@ def create_parser() -> argparse.ArgumentParser:
         parents=[global_parser],
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    run_parser.add_argument("--datasource", "--namespace", type=str, required=True, help="Datasource name")
+    run_parser.add_argument("--datasource", type=str, required=True, help="Datasource name")
     run_parser.add_argument("--task", type=str, required=True, help="Natural language task description")
     run_parser.add_argument(
         "--task_id",
@@ -426,7 +414,7 @@ def create_parser() -> argparse.ArgumentParser:
         parents=[global_parser],
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    evaluation_parser.add_argument("--datasource", "--namespace", type=str, required=True, help="Datasource name")
+    evaluation_parser.add_argument("--datasource", type=str, required=True, help="Datasource name")
     evaluation_parser.add_argument(
         "--benchmark",
         type=str,
@@ -438,7 +426,7 @@ def create_parser() -> argparse.ArgumentParser:
     evaluation_parser.add_argument(
         "--run_id",
         type=str,
-        help="Specific run ID to evaluate. If not provided, evaluates the latest run for the namespace",
+        help="Specific run ID to evaluate. If not provided, evaluates the latest run for the datasource",
     )
     evaluation_parser.add_argument(
         "--summary_report_file",
@@ -452,7 +440,7 @@ def create_parser() -> argparse.ArgumentParser:
         parents=[global_parser],
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    bi_subparser.add_argument("--datasource", "--namespace", type=str, required=True, help="Datasource name")
+    bi_subparser.add_argument("--datasource", type=str, required=True, help="Datasource name")
 
     multi_benchmark_parser = subparsers.add_parser(
         "multi-round-benchmark", parents=[global_parser], help="Multi-round benchmarking"
@@ -559,11 +547,6 @@ def main():
 
         return ServiceManager(args.config or "").run(args.command)
 
-    if args.action == "namespace":
-        configure_logging(args.debug, console_output=False)
-        namespace_manager = NamespaceManager(args.config or "")
-        return namespace_manager.run(args.command)
-
     if args.action == "skill":
         configure_logging(args.debug, console_output=False)
         from datus.cli.skill_cli import run_skill_command
@@ -586,7 +569,7 @@ def main():
         return BiDashboardCommands(agent_config).cmd()
 
     if args.action == "platform-doc":
-        # platform-doc is namespace-independent; handled before Agent init
+        # platform-doc is datasource-independent; handled before Agent init
         from datus.agent.agent import bootstrap_platform_doc
 
         bootstrap_platform_doc(args, agent_config)

@@ -7,11 +7,12 @@ agent:
       api_key: ${DEEPSEEK_API_KEY}
       model: deepseek-chat
 
-  namespace:
-    california_schools:
-      name: california_schools
-      type: sqlite
-      uri: ~/.datus/benchmark/california_schools/california_schools.sqlite
+  services:
+    datasources:
+      california_schools:
+        name: california_schools
+        type: sqlite
+        uri: ~/.datus/benchmark/california_schools/california_schools.sqlite
 
   skills:
     directories:

@@ -7,7 +7,7 @@ Datus Gateway is the IM (Instant Messaging) gateway module for Datus Agent. It c
 - **Outbound long connections only** — Datus Gateway actively connects to each IM platform using WebSocket, Socket Mode, or Stream SDK. No webhook endpoint or public URL is needed.
 - **Real-time streaming** — Agent responses (thinking, tool calls, SQL, markdown) are streamed back to the chat as they are generated.
 - **Session management** — Each conversation (group/DM/thread) automatically gets a persistent session. Users can reset it with `/new` or `/reset`.
-- **Namespace & subagent routing** — Each channel can override the default namespace or route messages to a specific sub-agent.
+- **Datasource & subagent routing** — Each channel can override the default datasource or route messages to a specific sub-agent.
 
 ## Supported Platforms
 
@@ -72,7 +72,7 @@ channels:
   my-channel:
     adapter: slack          # Required: feishu | slack
     enabled: true           # Optional: default true
-    namespace: my_namespace # Optional: override default namespace
+    datasource: my_datasource # Optional: override default datasource
     subagent_id: agent_01   # Optional: route to a specific sub-agent
     extra:                  # Required: adapter-specific credentials
       # ... platform-specific keys
@@ -82,7 +82,7 @@ channels:
 |-------|------|----------|-------------|
 | `adapter` | string | Yes | Adapter type: `feishu` or `slack` |
 | `enabled` | bool | No | Whether this channel is active (default: `true`) |
-| `namespace` | string | No | Override the gateway's default namespace |
+| `datasource` | string | No | Override the gateway's default datasource |
 | `subagent_id` | string | No | Route messages to a specific sub-agent |
 | `extra` | dict | Yes | Adapter-specific configuration (tokens, keys, etc.) |
 
@@ -165,7 +165,7 @@ datus-gateway --daemon --pid-file /var/run/datus-gateway.pid --daemon-log-file /
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--config` | `./conf/agent.yml` | Path to agent configuration file |
-| `--namespace` | `default` (or `DATUS_NAMESPACE` env) | Default namespace for all channels |
+| `--datasource` | `default` (or `DATUS_DATASOURCE` env) | Default datasource for all channels |
 | `--host` | `0.0.0.0` | Health-check server bind host |
 | `--port` | `9000` | Health-check server bind port |
 | `--debug` | `false` | Enable debug logging |
@@ -230,9 +230,9 @@ Each conversation (group chat, DM, or thread) automatically maps to a persistent
 
 The bot will confirm the reset with the new session ID.
 
-### Namespace Override
+### Datasource Override
 
-Each channel can specify a `namespace` in its configuration to override the gateway's default namespace. This allows different channels to query different databases.
+Each channel can specify a `datasource` in its configuration to override the gateway's default datasource. This allows different channels to query different databases.
 
 ### Subagent Routing
 

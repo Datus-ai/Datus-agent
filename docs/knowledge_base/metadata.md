@@ -37,7 +37,7 @@ This module contains two types of information: **table definition** and **sample
 You can build it using the `datus-agent bootstrap-kb` command:
 
 ```bash
-datus-agent bootstrap-kb --database <your_namespace> --kb_update_strategy [check/overwrite/incremental]
+datus-agent bootstrap-kb --database <your_datasource> --kb_update_strategy [check/overwrite/incremental]
 ```
 
 ### Command Line Parameter Description
@@ -52,23 +52,23 @@ datus-agent bootstrap-kb --database <your_namespace> --kb_update_strategy [check
 
 ### Check Current Status
 ```bash
-datus-agent bootstrap-kb --database <your_namespace> --kb_update_strategy check
+datus-agent bootstrap-kb --database <your_datasource> --kb_update_strategy check
 ```
 
 ### Full Rebuild
 ```bash
-datus-agent bootstrap-kb --database <your_namespace> --kb_update_strategy overwrite
+datus-agent bootstrap-kb --database <your_datasource> --kb_update_strategy overwrite
 ```
 
 ### Incremental Update
 ```bash
-datus-agent bootstrap-kb --database <your_namespace> --kb_update_strategy incremental
+datus-agent bootstrap-kb --database <your_datasource> --kb_update_strategy incremental
 ```
 
 ## Best Practices
 
 ### Database Configuration
-- Ensure your database namespace is properly configured in `agent.yml`
+- Ensure your database datasource is properly configured in `agent.yml`
 - Verify database connectivity before running bootstrap commands
 - Use appropriate credentials with read access to system tables
 

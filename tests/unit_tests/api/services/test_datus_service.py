@@ -41,7 +41,7 @@ class TestDatusServiceInit:
         svc = DatusService(agent_config=real_agent_config, project_id="p1")
         assert svc._chat is None
         assert svc._cli is None
-        assert svc._database is None
+        assert svc._datasource is None
         assert svc._explorer is None
         assert svc._mcp is None
         assert svc._kb is None
@@ -58,12 +58,12 @@ class TestDatusServiceLazyProperties:
         # Second access returns same instance
         assert svc.chat is chat
 
-    def test_database_property_creates_database_service(self, real_agent_config):
-        """Accessing .database creates a DatabaseService instance."""
+    def test_datasource_property_creates_datasource_service(self, real_agent_config):
+        """Accessing .datasource creates a DatasourceService instance."""
         svc = DatusService(agent_config=real_agent_config, project_id="p1")
-        db = svc.database
+        db = svc.datasource
         assert db is not None
-        assert svc.database is db
+        assert svc.datasource is db
 
     def test_explorer_property_creates_explorer_service(self, real_agent_config):
         """Accessing .explorer creates an ExplorerService instance."""

@@ -28,7 +28,7 @@ Bootstrap-KB Reference Template 是一个知识库组件，用于处理、分析
 ```bash
 # 初始化 Reference Template 组件
 datus-agent bootstrap-kb \
-    --namespace <your_namespace> \
+    --datasource <your_datasource> \
     --components reference_template \
     --template_dir /path/to/template/directory \
     --kb_update_strategy overwrite
@@ -38,7 +38,7 @@ datus-agent bootstrap-kb \
 
 | 参数 | 必需 | 描述 | 示例 |
 |------|------|------|------|
-| `--namespace` | 是 | 数据库命名空间 | `analytics_db` |
+| `--datasource` | 是 | 数据库数据源 | `analytics_db` |
 | `--components` | 是 | 要初始化的组件 | `reference_template` |
 | `--template_dir` | 是 | 包含 J2 模板文件的目录 | `/templates/queries` |
 | `--kb_update_strategy` | 是 | 更新策略 | `overwrite`/`incremental` |
@@ -54,7 +54,7 @@ datus-agent bootstrap-kb \
 
 ```bash
 datus-agent bootstrap-kb \
-    --namespace analytics_db \
+    --datasource analytics_db \
     --components reference_template \
     --template_dir /path/to/templates \
     --kb_update_strategy overwrite \

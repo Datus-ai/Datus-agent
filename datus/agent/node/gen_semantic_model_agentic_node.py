@@ -136,7 +136,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
     def _setup_db_tools(self):
         """Setup database tools."""
         try:
-            db_manager = db_manager_instance(self.agent_config.namespaces)
+            db_manager = db_manager_instance(self.agent_config.datasource_configs)
             conn = db_manager.get_conn(self.agent_config.current_datasource, self.agent_config.current_datasource)
             self.db_func_tool = DBFuncTool(
                 conn,

@@ -45,7 +45,7 @@ def _metadata_names(_type: str) -> _DBMetadataNames:
 
 class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMixin):
     """
-    Connector for DuckDB databases with schema namespace support using native DuckDB SDK.
+    Connector for DuckDB databases with schema support using native DuckDB SDK.
     """
 
     def __init__(self, config: DuckDBConfig):

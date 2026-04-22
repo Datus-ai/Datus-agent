@@ -38,7 +38,7 @@ python datus/api/server.py \
 ### Agent Configuration
 ```bash
 python datus/api/server.py \
-  --namespace your_namespace \
+  --datasource your_datasource \
   --config conf/agent.yml \
   --max_steps 20 \
   --workflow fixed
@@ -89,7 +89,7 @@ curl -X POST "http://localhost:8000/workflows/run" \
   -H "Content-Type: application/json" \
   -d '{
     "task": "Find all users from database",
-    "namespace": "your_namespace",
+    "datasource": "your_datasource",
     "workflow": "workflow_name",
     "mode": "sync"
   }'
@@ -103,7 +103,7 @@ curl -X POST "http://localhost:8000/workflows/run" \
   -H "Accept: text/event-stream" \
   -d '{
     "task": "Find all users from database",
-    "namespace": "your_namespace",
+    "datasource": "your_datasource",
     "workflow": "workflow_name",
     "mode": "async"
   }'

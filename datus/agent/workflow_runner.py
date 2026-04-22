@@ -109,7 +109,7 @@ class WorkflowRunner:
         file_name = self.workflow.task.id
         timestamp = int(time.time())
 
-        # Use new hierarchical directory structure: {trajectory_dir}/{namespace}/{run_id}/
+        # Use new hierarchical directory structure: {trajectory_dir}/{datasource}/{run_id}/
         trajectory_dir = self.global_config.get_trajectory_run_dir(self.run_id)
         os.makedirs(trajectory_dir, exist_ok=True)
 

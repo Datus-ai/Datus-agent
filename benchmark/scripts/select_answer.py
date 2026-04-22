@@ -5,7 +5,7 @@ This script compares answers from different agents and uses a large language mod
 to select the best answer for each task.
 
 Usage:
-    python select_answer.py --workdir=/path/to/workdir --namespace=bird_sqlite --agent=3
+    python select_answer.py --workdir=/path/to/workdir --datasource=bird_sqlite --agent=3
     --task-id=0 --gold-path=benchmark/bird/dev_20240627/gold
 """
 
@@ -129,9 +129,9 @@ def compare_csv_results(actual_path, expected_path):
     return comparison_result
 
 
-def compare_with_gold_standard(task_id, workdir, namespace, gold_path, result_dir="output"):
+def compare_with_gold_standard(task_id, workdir, datasource, gold_path, result_dir="output"):
     """Compare execution results with gold standard"""
-    actual_csv = os.path.join(workdir, result_dir, namespace, f"{task_id}.csv")
+    actual_csv = os.path.join(workdir, result_dir, datasource, f"{task_id}.csv")
     gold_csv = os.path.join(workdir, gold_path, "exec_result", f"{task_id}.csv")
 
     comparison_result = {
@@ -159,9 +159,9 @@ def compare_with_gold_standard(task_id, workdir, namespace, gold_path, result_di
 class AgentAnswerSelector:
     """Tool for selecting the best answer from different agents"""
 
-    def __init__(self, workdir: str, namespace: str, agent_count: int, gold_path: str = None):
+    def __init__(self, workdir: str, datasource: str, agent_count: int, gold_path: str = None):
         self.workdir = Path(workdir)
-        self.namespace = namespace
+        self.datasource = datasource
         self.agent_count = agent_count
         self.gold_path = gold_path
         self.multi_dir = self.workdir / "multi"
@@ -171,7 +171,7 @@ class AgentAnswerSelector:
         os.chdir(self.workdir)
 
         try:
-            self.agent_config = load_agent_config(config=str(config_path), namespace=self.namespace)
+            self.agent_config = load_agent_config(config=str(config_path), datasource=self.datasource)
         finally:
             os.chdir(original_cwd)
 
@@ -182,7 +182,7 @@ class AgentAnswerSelector:
         agent_outputs = {}
 
         for i in range(1, self.agent_count + 1):
-            output_dir = self.multi_dir / f"agent{i}_output" / self.namespace
+            output_dir = self.multi_dir / f"agent{i}_output" / self.datasource
             json_file = output_dir / f"{task_id}.json"
 
             if json_file.exists():
@@ -212,7 +212,7 @@ class AgentAnswerSelector:
 
             try:
                 comparison_result = compare_with_gold_standard(
-                    task_id, str(self.workdir), self.namespace, self.gold_path, result_dir
+                    task_id, str(self.workdir), self.datasource, self.gold_path, result_dir
                 )
 
                 if comparison_result["comparison"] and not comparison_result["comparison"].get("error"):
@@ -348,13 +348,13 @@ Please return results in JSON format, including:
             return None
 
     def copy_best_agent_files(self, task_id: str, best_agent: str) -> tuple[Path, Path]:
-        best_output_dir = self.multi_dir / "best_agent_output" / self.namespace
+        best_output_dir = self.multi_dir / "best_agent_output" / self.datasource
         best_save_dir = self.multi_dir / "best_agent_save"
 
         best_output_dir.mkdir(parents=True, exist_ok=True)
         best_save_dir.mkdir(parents=True, exist_ok=True)
 
-        source_output_dir = self.multi_dir / f"{best_agent}_output" / self.namespace
+        source_output_dir = self.multi_dir / f"{best_agent}_output" / self.datasource
         for ext in [".json", ".csv", ".sql"]:
             source_file = source_output_dir / f"{task_id}{ext}"
             if source_file.exists():
@@ -402,7 +402,7 @@ Please return results in JSON format, including:
 def main():
     parser = argparse.ArgumentParser(description="Agent Answer Selection Tool")
     parser.add_argument("--workdir", required=True, help="Working directory path")
-    parser.add_argument("--namespace", required=True, help="Dataset namespace (e.g., bird_sqlite)")
+    parser.add_argument("--datasource", required=True, help="Datasource name (e.g., bird_sqlite)")
     parser.add_argument("--agent", type=int, required=True, help="Number of agents")
     parser.add_argument("--task-id", required=True, help="Task ID (required)")
     parser.add_argument("--gold-path", help="Path to gold standard files")
@@ -428,7 +428,7 @@ def main():
     gold_path = args.gold_path
 
     selector = AgentAnswerSelector(
-        workdir=str(workdir), namespace=args.namespace, agent_count=args.agent, gold_path=gold_path
+        workdir=str(workdir), datasource=args.datasource, agent_count=args.agent, gold_path=gold_path
     )
 
     result = selector.select_best_answer(task_id)

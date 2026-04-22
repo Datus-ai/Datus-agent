@@ -63,9 +63,8 @@ class ArgumentParser:
 
         self.parser.add_argument(
             "--datasource",
-            "--namespace",
             type=str,
-            help="Datasource name to connect (use --datasource, --namespace is deprecated)",
+            help="Datasource name to connect",
             default="",
         )
 

@@ -50,7 +50,7 @@ class SchedulerTools(BaseTool):
         platform = config.get("type", "airflow")
 
         # For Airflow, the adapter config's ``project_name`` is a
-        # filesystem-namespace knob ONLY — it controls the DAG subdirectory
+        # filesystem-scoped knob ONLY — it controls the DAG subdirectory
         # (``{dags_folder_root}/{project_name}/``) so multiple Datus
         # instances writing DAG files to the same Airflow cluster never
         # collide on disk. It does NOT auto-derive a ``dag_id_prefix``

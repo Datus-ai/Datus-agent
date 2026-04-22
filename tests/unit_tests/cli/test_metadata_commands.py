@@ -42,7 +42,7 @@ def _make_cli(db_type=DBType.SQLITE):
     # agent_config
     db_cfg = _make_db_config(db_type=db_type)
     cli.agent_config.current_datasource = "test_ns"
-    cli.agent_config.namespaces = {"test_ns": {"mydb": db_cfg}}
+    cli.agent_config.datasource_configs = {"test_ns": {"mydb": db_cfg}}
     cli.agent_config.db_type = db_type
 
     # cli_context
@@ -74,7 +74,7 @@ class TestCmdListDatabases:
         cli = _make_cli()
         db_cfg1 = _make_db_config(logic_name="db1")
         db_cfg2 = _make_db_config(logic_name="db2")
-        cli.agent_config.namespaces = {"test_ns": {"db1": db_cfg1, "db2": db_cfg2}}
+        cli.agent_config.datasource_configs = {"test_ns": {"db1": db_cfg1, "db2": db_cfg2}}
         meta = MetadataCommands(cli)
         meta.cmd_list_databases()
         cli.console.print.assert_called()
@@ -83,7 +83,7 @@ class TestCmdListDatabases:
         """Non-SQLite single DB with get_databases returning empty triggers 'Empty set' message."""
         cli = _make_cli(db_type="snowflake")
         db_cfg = _make_db_config(db_type="snowflake", logic_name="mydb")
-        cli.agent_config.namespaces = {"test_ns": {"mydb": db_cfg}}
+        cli.agent_config.datasource_configs = {"test_ns": {"mydb": db_cfg}}
         cli.db_connector.get_databases.return_value = []
         meta = MetadataCommands(cli)
         meta.cmd_list_databases()
@@ -92,7 +92,7 @@ class TestCmdListDatabases:
 
     def test_exception_prints_error(self, meta):
         meta.cli.agent_config.current_datasource = None
-        meta.cli.agent_config.namespaces = {}
+        meta.cli.agent_config.datasource_configs = {}
         meta.cmd_list_databases()
         meta.cli.console.print.assert_called()
 

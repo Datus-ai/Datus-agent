@@ -86,7 +86,7 @@ class TestOpenAIModel:
             "extended price by the discount'"
         )
         # Set up agent config for SQLite database
-        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        agent_config = load_acceptance_config(datasource="ssb_sqlite")
         tools = db_function_tools(agent_config)
 
         try:
@@ -121,7 +121,7 @@ class TestOpenAIModel:
 
         question = "database_type='sqlite' task='Count the total number of rows in the customer table'"
         # Set up agent config for SQLite database
-        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        agent_config = load_acceptance_config(datasource="ssb_sqlite")
         tools = db_function_tools(agent_config)
 
         # Test 1: Non-streaming version
@@ -268,7 +268,7 @@ class TestKimiModel:
             "extended price by the discount'"
         )
         # Set up agent config for SQLite database
-        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        agent_config = load_acceptance_config(datasource="ssb_sqlite")
         tools = db_function_tools(agent_config)
 
         try:
@@ -369,7 +369,7 @@ class TestGeminiModel:
             "extended price by the discount'"
         )
         # Set up agent config for SQLite database
-        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        agent_config = load_acceptance_config(datasource="ssb_sqlite")
         tools = db_function_tools(agent_config)
 
         try:

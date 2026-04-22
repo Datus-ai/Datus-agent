@@ -122,7 +122,7 @@ class TestQwenModel:
         question = """database_type='sqlite' task='Find the total number of customers by region in the SSB database'"""
 
         # Set up agent config for SQLite database
-        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        agent_config = load_acceptance_config(datasource="ssb_sqlite")
         tools = db_function_tools(agent_config)
 
         result = await self.model.generate_with_tools(
@@ -153,7 +153,7 @@ class TestQwenModel:
         question = "database_type='sqlite' task='Analyze the revenue trends by year from the lineorder table'"
 
         # Set up agent config for SQLite database
-        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        agent_config = load_acceptance_config(datasource="ssb_sqlite")
         tools = db_function_tools(agent_config)
 
         action_count = 0

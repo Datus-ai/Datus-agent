@@ -45,7 +45,7 @@ async def init_from_adapter(
         if callable(resolver):
             adapter_type = resolver(adapter_type) or adapter_type
 
-        namespace = getattr(agent_config, "namespace", None) or agent_config.current_datasource
+        datasource = agent_config.current_datasource
 
         # Get the registered config class for this adapter type
         metadata = semantic_adapter_registry.get_metadata(adapter_type)
@@ -60,7 +60,7 @@ async def init_from_adapter(
             adapter_config = {**(base_config or {}), **adapter_config}
 
         if adapter_config is None:
-            ns_configs = agent_config.namespaces.get(namespace)
+            ns_configs = agent_config.datasource_configs.get(datasource)
             db_config = None
             if ns_configs:
                 db_config_obj = list(ns_configs.values())[0]
@@ -74,14 +74,14 @@ async def init_from_adapter(
 
             if metadata and metadata.config_class:
                 adapter_config = metadata.config_class(
-                    namespace=namespace,
+                    datasource=datasource,
                     db_config=db_config,
                     semantic_models_path=semantic_models_path,
                 )
             else:
                 from datus.tools.semantic_tools.config import SemanticAdapterConfig
 
-                adapter_config = SemanticAdapterConfig(namespace=namespace)
+                adapter_config = SemanticAdapterConfig(datasource=datasource)
 
         if isinstance(adapter_config, dict):
             if metadata and metadata.config_class:

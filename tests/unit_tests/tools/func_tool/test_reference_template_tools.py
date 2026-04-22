@@ -14,7 +14,7 @@ from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTool
 @pytest.fixture
 def mock_agent_config():
     config = MagicMock()
-    config.current_datasource = "test_namespace"
+    config.current_datasource = "test_datasource"
     return config
 
 
@@ -276,8 +276,8 @@ class TestExecuteReferenceTemplate:
         mock_db.read_query.return_value = FuncToolResult(success=1, result=[{"1": 1}])
         tools.db_func_tool = mock_db
 
-        tools.execute_reference_template(["Sales"], "tpl", "{}", database="analytics_db")
-        mock_db.read_query.assert_called_once_with("SELECT 1", database="analytics_db")
+        tools.execute_reference_template(["Sales"], "tpl", "{}", datasource="analytics_db")
+        mock_db.read_query.assert_called_once_with("SELECT 1", datasource="analytics_db")
 
     def test_available_tools_includes_execute_when_db_present(self, mock_agent_config, mock_rag):
         """available_tools includes execute_reference_template when db_func_tool is set."""

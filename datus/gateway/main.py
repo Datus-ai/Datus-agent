@@ -98,7 +98,7 @@ def _run_gateway(args: argparse.Namespace) -> None:
     logger.info("Loading agent configuration...")
     agent_config = load_agent_config(
         config=args.config or "",
-        namespace=args.namespace,
+        datasource=args.datasource,
     )
     # Gateway runs non-interactively — no broker to confirm out-of-workspace
     # file access. Force filesystem strict mode so nodes reject EXTERNAL
@@ -209,10 +209,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Agent configuration file (default: ./conf/agent.yml > ~/.datus/conf/agent.yml)",
     )
     parser.add_argument(
-        "--namespace",
+        "--datasource",
         type=str,
-        default=os.getenv("DATUS_NAMESPACE", "default"),
-        help="Default namespace (default: DATUS_NAMESPACE env or 'default')",
+        default=os.getenv("DATUS_DATASOURCE", "default"),
+        help="Default datasource (default: DATUS_DATASOURCE env or 'default')",
     )
     parser.add_argument("--host", default="0.0.0.0", help="Health-check bind host (default: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=9000, help="Health-check bind port (default: 9000)")

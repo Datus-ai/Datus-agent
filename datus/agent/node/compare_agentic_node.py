@@ -87,14 +87,14 @@ class CompareAgenticNode(AgenticNode):
             return
 
         try:
-            namespace = self.agent_config.current_datasource
+            datasource = self.agent_config.current_datasource
 
-            db_manager = db_manager_instance(self.agent_config.namespaces)
+            db_manager = db_manager_instance(self.agent_config.datasource_configs)
             database = getattr(self.agent_config, "current_datasource", "")
             try:
-                connector = db_manager.get_conn(namespace, database)
+                connector = db_manager.get_conn(datasource, database)
             except Exception:
-                connector = db_manager.first_conn(namespace)
+                connector = db_manager.first_conn(datasource)
 
             self.db_func_tool = DBFuncTool(connector, agent_config=self.agent_config)
 

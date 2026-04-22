@@ -35,8 +35,8 @@ logger = get_logger(__name__)
 _NO_SCHEMA_TYPES = {"sqlite", "duckdb", "mysql"}
 
 
-class DatabaseService:
-    """Service for handling database management operations."""
+class DatasourceService:
+    """Service for handling datasource management operations."""
 
     def __init__(self, agent_config: Optional[AgentConfig] = None):
         """
@@ -47,12 +47,12 @@ class DatabaseService:
         """
         self.agent_config = agent_config
 
-        self.db_manager = DBManager(agent_config.namespaces)
+        self.db_manager = DBManager(agent_config.datasource_configs)
         self.current_datasource = agent_config.current_datasource
         self.semantic_rag = SemanticModelRAG(self.agent_config)
 
         self.current_db_connector = None
-        self.current_database = None
+        self.current_db_name = None
         self._initialize_connection()
 
     def _get_database_type(self, database_name: Optional[str] = None) -> tuple[str, str]:
@@ -67,17 +67,17 @@ class DatabaseService:
             db_name: Database name
         """
         db_type = "unknown"
-        target_db = database_name or self.current_database
+        target_db = database_name or self.current_db_name
 
         try:
-            if self.agent_config and self.current_datasource in self.agent_config.namespaces:
-                namespace_config = self.agent_config.namespaces[self.current_datasource]
-                if target_db and target_db in namespace_config:
-                    db_config = namespace_config[target_db]
+            if self.agent_config and self.current_datasource in self.agent_config.datasource_configs:
+                datasource_config = self.agent_config.datasource_configs[self.current_datasource]
+                if target_db and target_db in datasource_config:
+                    db_config = datasource_config[target_db]
                     db_type = db_config.type.value if hasattr(db_config.type, "value") else str(db_config.type)
-                elif len(namespace_config) == 1:
-                    # Single database in namespace
-                    db_config = list(namespace_config.values())[0]
+                elif len(datasource_config) == 1:
+                    # Single database in datasource
+                    db_config = list(datasource_config.values())[0]
                     db_type = db_config.type.value if hasattr(db_config.type, "value") else str(db_config.type)
         except Exception as e:
             logger.warning(f"Failed to get db type from config: {e}")
@@ -90,11 +90,11 @@ class DatabaseService:
             try:
                 db_name, connector = self.db_manager.first_conn_with_name(self.current_datasource)
                 self.current_db_connector = connector
-                self.current_database = connector.database_name or db_name
+                self.current_db_name = connector.database_name or db_name
             except Exception as e:
                 logger.warning(f"Failed to initialize database connection: {e}")
                 self.current_db_connector = None
-                self.current_database = None
+                self.current_db_name = None
 
     def _get_connection_info(
         self,
@@ -271,9 +271,9 @@ class DatabaseService:
                     errorMessage="Database manager not initialized",
                 )
 
-            # Get connections from the specified namespace
-            namespace = request.datasource_id or self.current_datasource
-            connections = self.db_manager.get_connections(namespace)
+            # Get connections from the specified datasource
+            datasource = request.datasource_id or self.current_datasource
+            connections = self.db_manager.get_connections(datasource)
 
             databases = []
             # Handle both single connector and dictionary of connectors
@@ -283,13 +283,13 @@ class DatabaseService:
                     databases.extend(db_info)
             else:
                 # Single connector case
-                db_info = self._get_connection_info(connections, namespace, request)
+                db_info = self._get_connection_info(connections, datasource, request)
                 databases.extend(db_info)
 
             data = ListDatabasesData(
                 databases=databases,
                 total_count=len(databases),
-                current_database=self.current_database,
+                current_db_name=self.current_db_name,
             )
 
             return Result(success=True, data=data)
@@ -329,7 +329,7 @@ class DatabaseService:
                 catalog_name = name_parts["catalog_name"] or getattr(self.current_db_connector, "catalog_name", "")
                 database_name = (
                     name_parts["database_name"]
-                    or self.current_database
+                    or self.current_db_name
                     or getattr(self.current_db_connector, "database", "")
                 )
                 schema_name = name_parts["schema_name"] or getattr(self.current_db_connector, "schema_name", "")
@@ -398,7 +398,7 @@ class DatabaseService:
         name_parts = parse_table_name_parts(full_name, self.current_db_connector.get_type())
         current_db_config = self.agent_config.current_db_config()
         catalog_name = name_parts["catalog_name"] or current_db_config.catalog
-        database_name = name_parts["database_name"] or self.current_database or current_db_config.database
+        database_name = name_parts["database_name"] or self.current_db_name or current_db_config.database
         schema_name = name_parts["schema_name"] or current_db_config.schema
         table_name = name_parts["table_name"]
 
@@ -536,7 +536,7 @@ class DatabaseService:
         This method performs complete validation by:
         1. Creating a temporary file with the input YAML
         2. Using ConfigLinter to check YAML format/structure
-        3. Combining with existing semantic models in the namespace directory
+        3. Combining with existing semantic models in the datasource directory
         4. Using parse_yaml_file_paths_to_model for full semantic validation
            (including cross-file reference checks)
         5. Using ModelValidator for semantic validation
@@ -569,7 +569,7 @@ class DatabaseService:
                 yaml_content=request.yaml,
                 file_path=semantic_file_path,
                 datus_home=self.agent_config.home,
-                namespace=self.agent_config.current_datasource,
+                datasource=self.agent_config.current_datasource,
             )
 
             if not is_valid:

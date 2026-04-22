@@ -177,21 +177,21 @@ agentic_nodes:
 ```bash
 # Basic usage - initialize reference templates with overwrite mode
 python -m datus.main bootstrap-kb \
-  --namespace your_namespace \
+  --datasource your_datasource \
   --components reference_template \
   --template_dir /path/to/template/directory \
   --kb_update_strategy overwrite
 
 # Incremental update - only process new template files
 python -m datus.main bootstrap-kb \
-  --namespace your_namespace \
+  --datasource your_datasource \
   --components reference_template \
   --template_dir /path/to/template/directory \
   --kb_update_strategy incremental
 
 # With predefined subject tree categories and parallel processing
 python -m datus.main bootstrap-kb \
-  --namespace your_namespace \
+  --datasource your_datasource \
   --components reference_template \
   --template_dir /path/to/template/directory \
   --kb_update_strategy overwrite \

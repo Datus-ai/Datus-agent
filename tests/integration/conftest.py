@@ -49,7 +49,7 @@ def agent_config(tmp_path_factory) -> AgentConfig:
     shutil.copy2(src, tmp_cfg)
     config = load_agent_config(
         config=str(tmp_cfg),
-        namespace="bird_school",
+        datasource="bird_school",
         reload=True,
         force=True,
         yes=True,
@@ -201,7 +201,7 @@ def llm_agent_config(tmp_path_factory) -> AgentConfig:
 
     config = load_agent_config(
         config=str(tmp_cfg),
-        namespace="california_schools",
+        datasource="california_schools",
         reload=True,
         force=True,
         yes=True,
@@ -218,7 +218,7 @@ def mock_args():
     return Namespace(
         history_file="~/.datus/reference_sql",
         debug=False,
-        namespace="bird_school",
+        datasource="bird_school",
         database="california_schools",
         config=str(CONF_DIR / "agent.yml"),
         storage_path="tests/data",
@@ -248,7 +248,7 @@ def nightly_agent_config() -> AgentConfig:
     """
     from tests.conftest import load_acceptance_config
 
-    config = load_acceptance_config(namespace="bird_school")
+    config = load_acceptance_config(datasource="bird_school")
     config.rag_base_path = "tests/data"
     config.agentic_nodes = copy.deepcopy(config.agentic_nodes)
     return config

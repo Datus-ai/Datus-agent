@@ -30,7 +30,7 @@ class SubAgentCommands:
         if self._sub_agent_manager is None:
             self._sub_agent_manager = SubAgentManager(
                 configuration_manager=self.cli_instance.configuration_manager,
-                namespace=self.cli_instance.agent_config.current_datasource,
+                datasource=self.cli_instance.agent_config.current_datasource,
                 agent_config=self.cli_instance.agent_config,
             )
         return self._sub_agent_manager
@@ -110,12 +110,12 @@ class SubAgentCommands:
             print_warning(self.cli_instance.console, "No sub-agents configured.")
             return
         show_agents: List[SubAgentConfig] = []
-        # filter by namespace
+        # filter by datasource
         for _, agent in agents.items():
             agent = SubAgentConfig.model_validate(agent)
             if (
                 not agent.has_scoped_context()
-                or agent.scoped_context.namespace == self.cli_instance.agent_config.current_datasource
+                or agent.scoped_context.datasource == self.cli_instance.agent_config.current_datasource
             ):
                 show_agents.append(agent)
 

@@ -322,7 +322,7 @@ class TestSqlSummaryExtractMethods:
 
 
 class TestSqlSummarySaveToDbSandbox:
-    """``_save_to_db`` must reject paths outside the per-kind, per-namespace sandbox.
+    """``_save_to_db`` must reject paths outside the per-kind, per-datasource sandbox.
 
     These paths come from the LLM's final JSON (not from the write_file tool
     result), so the containment check is the last line of defence against a
@@ -341,7 +341,7 @@ class TestSqlSummarySaveToDbSandbox:
             node._save_to_db(str(outside))
             sync_mock.assert_not_called()
 
-    def test_rejects_cross_namespace_prefix(self, real_agent_config, mock_llm_create):
+    def test_rejects_cross_datasource_prefix(self, real_agent_config, mock_llm_create):
         from unittest.mock import patch
 
         node = _create_node(real_agent_config)

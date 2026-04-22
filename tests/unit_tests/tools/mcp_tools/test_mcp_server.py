@@ -37,7 +37,7 @@ class TestMCPServerCreation:
     @pytest.fixture
     def server(self):
         with patch.object(DatusMCPServer, "_init_tools"), patch.object(DatusMCPServer, "_register_tools"):
-            server = create_server(namespace="bird_sqlite", config_path=TEST_CONF_PATH)
+            server = create_server(datasource="bird_sqlite", config_path=TEST_CONF_PATH)
             server.tools = {
                 "db_tool": MagicMock(),
                 "context_tool": MagicMock(),
@@ -47,7 +47,7 @@ class TestMCPServerCreation:
     def test_server_creation(self, server):
         """Test that server can be created."""
         assert server is not None
-        assert server.namespace == "bird_sqlite"
+        assert server.datasource == "bird_sqlite"
         assert server.mcp is not None
 
     def test_server_has_tools(self, server):
@@ -69,7 +69,7 @@ class TestMCPServerASGIApp:
     @pytest.fixture
     def server(self):
         with patch.object(DatusMCPServer, "_init_tools"), patch.object(DatusMCPServer, "_register_tools"):
-            server = create_server(namespace="bird_sqlite", config_path=TEST_CONF_PATH)
+            server = create_server(datasource="bird_sqlite", config_path=TEST_CONF_PATH)
             server.tools = {}
             yield server
 
@@ -101,79 +101,79 @@ class TestToolContextManager:
     def test_manager_creation(self, manager):
         """Test that manager can be created."""
         assert manager is not None
-        assert len(manager.available_namespaces) > 0
+        assert len(manager.available_datasources) > 0
 
-    def test_validate_namespace(self, manager):
-        """Test namespace validation."""
-        assert manager.validate_namespace("bird_sqlite") is True
-        assert manager.validate_namespace("non_existent_namespace") is False
+    def test_validate_datasource(self, manager):
+        """Test datasource validation."""
+        assert manager.validate_datasource("bird_sqlite") is True
+        assert manager.validate_datasource("non_existent_datasource") is False
 
     @pytest.mark.asyncio
     async def test_get_or_create_context(self, manager):
         """Test context creation and caching."""
         mock_context = ToolContext(
-            namespace="bird_sqlite",
+            datasource="bird_sqlite",
             subagent=None,
             agent_config=MagicMock(),
             tools={"db_tool": MagicMock()},
         )
         with patch.object(manager, "_create_context", return_value=mock_context):
-            context1 = await manager.get_or_create_context("bird_sqlite")
+            context1 = await manager.get_or_create_context(datasource="bird_sqlite")
             assert context1 is not None
             assert isinstance(context1, ToolContext)
-            assert context1.namespace == "bird_sqlite"
+            assert context1.datasource == "bird_sqlite"
 
             # Second call returns cached context
-            context2 = await manager.get_or_create_context("bird_sqlite")
+            context2 = await manager.get_or_create_context(datasource="bird_sqlite")
             assert context2 is context1
 
     @pytest.mark.asyncio
     async def test_context_has_tools(self, manager):
         """Test that context has tools initialized."""
         mock_context = ToolContext(
-            namespace="bird_sqlite",
+            datasource="bird_sqlite",
             subagent=None,
             agent_config=MagicMock(),
             tools={"db_tool": MagicMock(), "context_tool": MagicMock()},
         )
         with patch.object(manager, "_create_context", return_value=mock_context):
-            context = await manager.get_or_create_context("bird_sqlite")
+            context = await manager.get_or_create_context(datasource="bird_sqlite")
             assert context.has_db_tools or context.has_context_tools
 
     @pytest.mark.asyncio
     async def test_lru_eviction(self, manager):
         """Test LRU cache eviction when max_size is exceeded."""
-        namespaces = list(manager.available_namespaces)[:4]
-        if len(namespaces) < 4:
-            pytest.skip("Need at least 4 namespaces for LRU eviction test")
+        datasources = list(manager.available_datasources)[:4]
+        if len(datasources) < 4:
+            pytest.skip("Need at least 4 datasources for LRU eviction test")
 
-        def mock_create(ns, subagent=None):
+        def mock_create(ds, subagent=None):
             return ToolContext(
-                namespace=ns,
+                datasource=ds,
                 subagent=subagent,
                 agent_config=MagicMock(),
                 tools={"db_tool": MagicMock()},
             )
 
         with patch.object(manager, "_create_context", side_effect=mock_create):
-            for ns in namespaces:
-                await manager.get_or_create_context(ns)
+            for ds in datasources:
+                await manager.get_or_create_context(datasource=ds)
 
             # After creating 4 contexts with max_size=3, first one should be evicted
             assert len(manager._contexts) == 3
-            assert manager._get_cache_key(namespaces[0]) not in manager._contexts
+            assert manager._get_cache_key(datasources[0]) not in manager._contexts
 
     @pytest.mark.asyncio
     async def test_context_with_subagent(self, manager):
         """Test context creation with subagent parameter."""
         mock_context = ToolContext(
-            namespace="bird_sqlite",
+            datasource="bird_sqlite",
             subagent=None,
             agent_config=MagicMock(),
             tools={},
         )
         with patch.object(manager, "_create_context", return_value=mock_context):
-            context = await manager.get_or_create_context("bird_sqlite", subagent=None)
+            context = await manager.get_or_create_context(datasource="bird_sqlite", subagent=None)
             assert context.subagent is None
 
         # Different cache keys for different subagents
@@ -200,12 +200,12 @@ class TestLightweightDynamicMCPServer:
         """Test that dynamic server can be created."""
         assert server is not None
         assert server.mcp is not None
-        assert len(server.available_namespaces) > 0
+        assert len(server.available_datasources) > 0
 
-    def test_validate_namespace(self, server):
-        """Test namespace validation."""
-        assert server.validate_namespace("bird_sqlite") is True
-        assert server.validate_namespace("invalid_ns") is False
+    def test_validate_datasource(self, server):
+        """Test datasource validation."""
+        assert server.validate_datasource("bird_sqlite") is True
+        assert server.validate_datasource("invalid_ns") is False
 
     @pytest.mark.asyncio
     async def test_list_tools(self, server):
@@ -247,8 +247,8 @@ class TestDynamicModeHTTPEndpoints:
             assert data["service"] == "Datus MCP Server"
             assert data["mode"] == "lightweight-dynamic"
             assert data["transport"] == "http"
-            assert "available_namespaces" in data
-            assert "bird_sqlite" in data["available_namespaces"]
+            assert "available_datasources" in data
+            assert "bird_sqlite" in data["available_datasources"]
 
     @pytest.mark.asyncio
     async def test_health_endpoint(self, http_app):
@@ -267,15 +267,15 @@ class TestDynamicModeHTTPEndpoints:
             assert data["transport"] == "http"
 
     @pytest.mark.asyncio
-    async def test_invalid_namespace_returns_404(self, http_app):
-        """Test that invalid namespace returns 404."""
+    async def test_invalid_datasource_returns_404(self, http_app):
+        """Test that invalid datasource returns 404."""
         import httpx
 
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=http_app),
             base_url="http://test",
         ) as client:
-            response = await client.post("/mcp/invalid_namespace_xyz")
+            response = await client.post("/mcp/invalid_datasource_xyz")
             assert response.status_code == 404
             assert "not available" in response.json()["error"]
 
@@ -307,7 +307,7 @@ class TestDynamicModeSSEEndpoints:
             data = response.json()
             assert data["transport"] == "sse"
             assert "sse" in data["endpoints"]
-            assert "/sse/{namespace}" in data["endpoints"]["sse"]
+            assert "/sse/{datasource}" in data["endpoints"]["sse"]
 
     @pytest.mark.asyncio
     async def test_health_endpoint_sse(self, sse_app):
@@ -341,15 +341,15 @@ class TestDynamicModeSSEEndpoints:
         assert "/messages" in route_paths, f"Expected /messages route, got {route_paths}"
 
     @pytest.mark.asyncio
-    async def test_sse_invalid_namespace_returns_404(self, sse_app):
-        """Test that invalid namespace returns 404 for SSE."""
+    async def test_sse_invalid_datasource_returns_404(self, sse_app):
+        """Test that invalid datasource returns 404 for SSE."""
         import httpx
 
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=sse_app),
             base_url="http://test",
         ) as client:
-            response = await client.get("/sse/invalid_namespace_xyz")
+            response = await client.get("/sse/invalid_datasource_xyz")
             assert response.status_code == 404
 
     @pytest.mark.asyncio
@@ -387,8 +387,8 @@ class TestDynamicModeSSEEndpoints:
 class TestDynamicRouterPathParsing:
     """Test DynamicRouter path parsing logic."""
 
-    def test_parse_simple_namespace(self):
-        """Test parsing simple namespace path."""
+    def test_parse_simple_datasource(self):
+        """Test parsing simple datasource path."""
         server = LightweightDynamicMCPServer(config_path=TEST_CONF_PATH)
         app = server.create_asgi_app(transport="http")
 
@@ -400,15 +400,15 @@ class TestDynamicRouterPathParsing:
                 break
 
         scope = {"path": "/bird_sqlite", "query_string": b""}
-        namespace, subagent, subpath = router._parse_request(scope)
-        assert namespace == "bird_sqlite"
+        datasource, subagent, subpath = router._parse_request(scope)
+        assert datasource == "bird_sqlite"
         assert subagent is None
         assert subpath == "/"
 
         server._context_manager.close_all()
 
-    def test_parse_namespace_with_subpath(self):
-        """Test parsing namespace with subpath."""
+    def test_parse_datasource_with_subpath(self):
+        """Test parsing datasource with subpath."""
         server = LightweightDynamicMCPServer(config_path=TEST_CONF_PATH)
         app = server.create_asgi_app(transport="sse")
 
@@ -420,14 +420,14 @@ class TestDynamicRouterPathParsing:
                 break
 
         scope = {"path": "/bird_sqlite/messages", "query_string": b""}
-        namespace, subagent, subpath = router._parse_request(scope)
-        assert namespace == "bird_sqlite"
+        datasource, subagent, subpath = router._parse_request(scope)
+        assert datasource == "bird_sqlite"
         assert subpath == "/messages"
 
         server._context_manager.close_all()
 
-    def test_parse_namespace_with_subagent(self):
-        """Test parsing namespace with subagent query param."""
+    def test_parse_datasource_with_subagent(self):
+        """Test parsing datasource with subagent query param."""
         server = LightweightDynamicMCPServer(config_path=TEST_CONF_PATH)
         app = server.create_asgi_app(transport="http")
 
@@ -439,8 +439,8 @@ class TestDynamicRouterPathParsing:
                 break
 
         scope = {"path": "/bird_sqlite", "query_string": b"subagent=my_agent"}
-        namespace, subagent, subpath = router._parse_request(scope)
-        assert namespace == "bird_sqlite"
+        datasource, subagent, subpath = router._parse_request(scope)
+        assert datasource == "bird_sqlite"
         assert subagent == "my_agent"
 
         server._context_manager.close_all()
@@ -458,8 +458,8 @@ class TestDynamicRouterPathParsing:
                 break
 
         scope = {"path": "/sse/bird_sqlite", "query_string": b""}
-        namespace, subagent, subpath = router._parse_request(scope)
-        assert namespace == "bird_sqlite"
+        datasource, subagent, subpath = router._parse_request(scope)
+        assert datasource == "bird_sqlite"
         assert subpath == "/"
 
         server._context_manager.close_all()

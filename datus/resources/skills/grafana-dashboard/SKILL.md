@@ -36,7 +36,7 @@ Run the analytical SQL on the **source database** and write results to **Grafana
 write_query(sql="SELECT ... FROM source_table ...", table_name="materialized_table_name")
 ```
 
-- The SQL runs on the source (namespace) database.
+- The SQL runs on the source (datasource) database.
 - Results are written as a physical table in Grafana's dataset database (configured in `dataset_db`).
 - **CRITICAL**: Remember the `table_name` — you will query this table in Step 3.
 

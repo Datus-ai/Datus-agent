@@ -46,7 +46,7 @@ class _SqliteTestEnv(RdbTestEnv):
     def teardown(self) -> None:
         pass
 
-    def clear_data(self, namespace: str) -> None:
+    def clear_data(self, datasource: str) -> None:
         pass  # tmp_path provides isolation
 
     def get_config(self) -> TestEnvConfig:
@@ -62,7 +62,7 @@ class _LanceTestEnv(VectorTestEnv):
     def teardown(self) -> None:
         pass
 
-    def clear_data(self, namespace: str) -> None:
+    def clear_data(self, datasource: str) -> None:
         pass  # tmp_path provides isolation
 
     def get_config(self) -> TestEnvConfig:

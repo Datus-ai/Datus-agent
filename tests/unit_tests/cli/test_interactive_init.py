@@ -112,13 +112,13 @@ class TestInit:
                 "base_url": "https://api.deepseek.com",
                 "auth_type": "api_key",
             }
-            init.config["agent"]["namespace"]["test_ns"] = {
+            init.config["agent"]["services"]["datasources"]["test_ns"] = {
                 "type": "duckdb",
                 "name": "test_ns",
                 "uri": "duckdb:///test.db",
             }
             init.config["agent"]["storage"]["workspace_root"] = str(Path(tmpdir) / "workspace")
-            init.namespace_name = "test_ns"
+            init.datasource_name = "test_ns"
             from datus.configuration.project_config import ProjectTarget
 
             init._pending_target = ProjectTarget(provider="deepseek", model="deepseek-chat")
@@ -136,7 +136,7 @@ class TestInit:
             assert saved_config["agent"]["providers"]["deepseek"]["api_key"] == "test-key-456"
             assert "target" not in saved_config["agent"], "Global target should no longer be written"
             assert "models" not in saved_config["agent"], "Init wizard must not write agent.models"
-            assert "test_ns" in saved_config["agent"]["namespace"]
+            assert "test_ns" in saved_config["agent"]["services"]["datasources"]
 
             project_cfg_path = Path(tmpdir) / ".datus" / "config.yml"
             assert project_cfg_path.exists(), "Project-level .datus/config.yml should be created"
@@ -148,7 +148,7 @@ class TestInit:
         """N4-04: Optional component initialization (metadata and reference SQL)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             init = InteractiveInit(user_home=tmpdir)
-            init.namespace_name = "test_ns"
+            init.datasource_name = "test_ns"
             init.workspace_path = str(Path(tmpdir) / "workspace")
 
             # Create workspace directory
@@ -414,7 +414,7 @@ class TestDisplayMethods:
                 "base_url": "https://api.openai.com/v1",
                 "auth_type": "api_key",
             }
-            init.namespace_name = "test_ns"
+            init.datasource_name = "test_ns"
             init.workspace_path = "/tmp/workspace"
             init._display_summary()
             output = init.console.file.getvalue()
@@ -425,7 +425,7 @@ class TestDisplayMethods:
         with tempfile.TemporaryDirectory() as tmpdir:
             init = InteractiveInit(user_home=tmpdir)
             init.console = Console(file=io.StringIO(), no_color=True)
-            init.namespace_name = "test_ns"
+            init.datasource_name = "test_ns"
             init._display_completion()
             assert "datus" in init.console.file.getvalue().lower()
 
@@ -557,7 +557,7 @@ class TestOverwriteSqlAndLogResult:
             patch("datus.cli.interactive_init.print_rich_exception") as mock_print_exc,
         ):
             overwrite_sql_and_log_result(
-                namespace_name="test_ns",
+                datasource_name="test_ns",
                 sql_dir="/some/dir",
                 config_path="/path/to/agent.yml",
                 console=console,

@@ -54,13 +54,13 @@ This ensures consistent metric definitions across the organization.
 ```bash
 # From CSV (historical SQLs)
 datus-agent bootstrap-kb \
-    --database <your_namespace> \
+    --database <your_datasource> \
     --components metrics \
     --success_story path/to/success_story.csv
 
 # From YAML (semantic models)
 datus-agent bootstrap-kb \
-    --database <your_namespace> \
+    --database <your_datasource> \
     --components metrics \
     --semantic_yaml path/to/semantic_model.yaml
 ```
@@ -69,7 +69,7 @@ datus-agent bootstrap-kb \
 
 | Parameter | Required | Description | Example |
 |-----------|----------|-------------|---------|
-| `--database` | ✅ | Database namespace | `sales_db` |
+| `--database` | ✅ | Database datasource | `sales_db` |
 | `--components` | ✅ | Components to initialize | `metrics` |
 | `--success_story` | ⚠️ | CSV file with historical SQLs and questions (required if no `--semantic_yaml`) | `success_story.csv` |
 | `--semantic_yaml` | ⚠️ | Semantic model YAML file (required if no `--success_story`) | `semantic_model.yaml` |

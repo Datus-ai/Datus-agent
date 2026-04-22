@@ -30,7 +30,7 @@ class TestFallbackValidation:
             yaml_content="metric:\n  name: revenue\n  type: simple\n",
             file_path="/tmp/revenue.yml",
             datus_home="/tmp/datus",
-            namespace="default",
+            datasource="default",
         )
         assert is_valid is True
         assert errors == []
@@ -41,7 +41,7 @@ class TestFallbackValidation:
             yaml_content=":\n  - ][",
             file_path="/tmp/bad.yml",
             datus_home="/tmp/datus",
-            namespace="default",
+            datasource="default",
         )
         assert is_valid is False
         assert len(errors) > 0
@@ -52,7 +52,7 @@ class TestFallbackValidation:
             yaml_content="",
             file_path="/tmp/empty.yml",
             datus_home="/tmp/datus",
-            namespace="default",
+            datasource="default",
         )
         assert is_valid is True
         assert errors == []
@@ -73,7 +73,7 @@ class TestDeepValidation:
             yaml_content="metric:\n  name: test\n",
             file_path="/tmp/test.yml",
             datus_home="/tmp/datus",
-            namespace="default",
+            datasource="default",
         )
         assert is_valid is True
         assert errors == []
@@ -89,7 +89,7 @@ class TestDeepValidation:
             yaml_content="metric:\n  name: test\n",
             file_path="/tmp/test.yml",
             datus_home="/tmp/datus",
-            namespace="default",
+            datasource="default",
         )
         assert is_valid is False
         assert "Missing required field" in errors[0]
@@ -105,7 +105,7 @@ class TestDeepValidation:
             yaml_content="metric:\n  name: test\n  type: simple\n  type_params:\n    measure: nonexistent_measure\n",
             file_path="/tmp/test.yml",
             datus_home="/tmp/datus",
-            namespace="default",
+            datasource="default",
         )
         assert is_valid is False
         assert "nonexistent_measure" in errors[0]
@@ -121,7 +121,7 @@ class TestDeepValidation:
             yaml_content="metric:\n  name: test\n",
             file_path="/tmp/test.yml",
             datus_home="/tmp/datus",
-            namespace="default",
+            datasource="default",
         )
         assert is_valid is False
         assert "Semantic validation failed" in errors[0]

@@ -16,12 +16,12 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
-def load_auth_provider(api_config: Optional[Dict[str, Any]], namespace: str) -> AuthProvider:
+def load_auth_provider(api_config: Optional[Dict[str, Any]], datasource: str) -> AuthProvider:
     """Load an AuthProvider instance from the ``api.auth_provider`` config section.
 
     Args:
         api_config: The ``api`` section dict from agent.yml (may be ``None``).
-        namespace: Default namespace passed to ``NoAuthProvider`` when no custom
+        datasource: Default datasource passed to ``NoAuthProvider`` when no custom
             provider is declared.
 
     Returns:

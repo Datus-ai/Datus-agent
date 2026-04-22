@@ -36,7 +36,7 @@ curl -X POST "http://localhost:8000/auth/token" \
 curl -X POST "http://localhost:8000/workflows/run" \
   -H "Authorization: Bearer your_jwt_token" \
   -H "Content-Type: application/json" \
-  -d '{"workflow": "fixed", "namespace": "your_db", "task": "Show me users"}'
+  -d '{"workflow": "fixed", "datasource": "your_db", "task": "Show me users"}'
 ```
 
 ### 配置
@@ -84,7 +84,7 @@ client_id=your_client_id&client_secret=your_client_secret&grant_type=client_cred
 | 参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `workflow` | string | ✅ | 工作流名称（nl2sql、reflection、fixed、metric_to_sql） |
-| `namespace` | string | ✅ | 数据库命名空间 |
+| `datasource` | string | ✅ | 数据库数据源 |
 | `task` | string | ✅ | 自然语言任务描述 |
 | `mode` | string | ✅ | 执行模式（sync 或 async） |
 | `task_id` | string | ❌ | 自定义任务 ID（幂等） |
@@ -108,7 +108,7 @@ Content-Type: application/json
 ```json
 {
   "workflow": "nl2sql",
-  "namespace": "your_database_namespace",
+  "datasource": "your_database_datasource",
   "task": "Show me monthly revenue by product category",
   "mode": "sync",
   "catalog_name": "your_catalog",
@@ -147,7 +147,7 @@ Cache-Control: no-cache
 ```json
 {
   "workflow": "nl2sql",
-  "namespace": "your_database_namespace",
+  "datasource": "your_database_datasource",
   "task": "Show me monthly revenue by product category",
   "mode": "async",
   "catalog_name": "your_catalog",

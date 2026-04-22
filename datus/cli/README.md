@@ -9,18 +9,18 @@ Datus-CLI is a data engineering agent that builds evolvable context for your dat
 ```bash
 # SQLite
 #python cli/main.py --db_type sqlite --db_path benchmark/bird/dev_20240627/dev_databases/california_schools/california_schools.sqlite
-python cli/main.py --namespace bird_sqlite  --config conf/agent.yml
+python cli/main.py --datasource bird_sqlite  --config conf/agent.yml
 
 # Snowflake
 #python cli/main.py --db-type snowflake --sf-account your_account --sf-user your_user --sf-password your_password --sf-warehouse your_warehouse --sf-database your_database 
-python cli/main.py --namespace spidersnow  --config conf/agent.yml
+python cli/main.py --datasource spidersnow  --config conf/agent.yml
 ```
 And then run sqls as you wish. 
 
 ## Examples to explore bird benchmark
 
 ```bash
-python main.py bootstrap-kb --benchmark bird_dev --namespace bird_sqlite --kb_update_strategy overwrite
+python main.py bootstrap-kb --benchmark bird_dev --datasource bird_sqlite --kb_update_strategy overwrite
 
 ```
 

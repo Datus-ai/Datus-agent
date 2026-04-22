@@ -45,7 +45,7 @@ def _build_agent_args(args: argparse.Namespace) -> argparse.Namespace:
     ``create_app`` / ``DatusAPIService``.
     """
     agent_args = argparse.Namespace(
-        namespace=args.datasource,
+        datasource=args.datasource,
         config=getattr(args, "config", None),
         debug=getattr(args, "debug", False),
         # Fields expected by DatusAPIService but not present in CLI args

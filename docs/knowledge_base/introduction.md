@@ -79,7 +79,7 @@ Datus Agent supports pluggable storage backends via a Registry + entry-point mec
 
 ### Default: LanceDB + SQLite
 - Zero configuration, works out of the box
-- Data stored under `data/datus_db_<namespace>/`
+- Data stored under `data/datus_db_<datasource>/`
 - Ideal for development and single-machine deployment
 
 ### PostgreSQL (pgvector)
@@ -89,9 +89,9 @@ Datus Agent supports pluggable storage backends via a Registry + entry-point mec
 - Database isolation via PostgreSQL schemas
 
 ### Database Isolation
-- Each namespace is stored independently with no cross-contamination
-  - LanceDB: One directory per namespace
-  - PostgreSQL: One schema per namespace
+- Each datasource is stored independently with no cross-contamination
+  - LanceDB: One directory per datasource
+  - PostgreSQL: One schema per datasource
 
 > For detailed configuration, see [Storage Configuration](../configuration/storage.md#storage-backends).
 

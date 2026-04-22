@@ -43,8 +43,8 @@ class ModelConfig(BaseModel):
     model: str = Field(..., description="Model name")
 
 
-class NamespaceConfig(BaseModel):
-    """Database namespace configuration."""
+class DatasourceConfig(BaseModel):
+    """Database datasource configuration."""
 
     model_config = ConfigDict(exclude_none=True)
 
@@ -83,7 +83,7 @@ class AgentConfigData(BaseModel):
     models: Optional[Dict[str, ModelConfig]] = Field(None, description="Model configurations")
     nodes: Optional[Dict[str, Dict]] = Field(None, description="Node configurations")
     benchmark: Optional[Dict[str, Dict]] = Field(None, description="Benchmark configurations")
-    namespace: Optional[Dict[str, NamespaceConfig]] = Field(None, description="Namespace configurations")
+    datasources: Optional[Dict[str, DatasourceConfig]] = Field(None, description="Datasource configurations")
     metrics: Optional[Dict[str, Dict]] = Field(None, description="Metrics configurations")
     storage: Optional[StorageConfig] = Field(None, description="Storage configuration")
     workflow: Optional[Dict] = Field(None, description="Workflow configuration")
@@ -116,8 +116,8 @@ class DatabaseInfo(BaseModel):
     catalogs: Optional[List[str]] = Field(None, description="Available catalogs (if supported)")
 
 
-class NamespaceConnectivityTest(BaseModel):
-    """Namespace connectivity test result."""
+class DatasourceConnectivityTest(BaseModel):
+    """Datasource connectivity test result."""
 
     status: str = Field(..., description="Test status (success/failed)")
     type: str = Field(..., description="Database type")
@@ -130,7 +130,7 @@ class ConnectivityTests(BaseModel):
     """All connectivity test results."""
 
     models: Dict[str, ModelConnectivityTest] = Field(..., description="Model connectivity test results")
-    namespace: Dict[str, NamespaceConnectivityTest] = Field(..., description="Namespace connectivity test results")
+    datasources: Dict[str, DatasourceConnectivityTest] = Field(..., description="Datasource connectivity test results")
 
 
 class ValidationSummary(BaseModel):
@@ -153,7 +153,7 @@ class UpdateAgentConfigData(BaseModel):
 class FailedTest(BaseModel):
     """Failed test information."""
 
-    component: str = Field(..., description="Component that failed (model/namespace)")
+    component: str = Field(..., description="Component that failed (model/datasource)")
     name: str = Field(..., description="Name of the failed component")
     error: str = Field(..., description="Error message")
     suggestion: str = Field(..., description="Suggestion to fix the error")

@@ -35,7 +35,7 @@ async def get_table_detail(
     ),
 ) -> Result[GetTableDetailData]:
     """Get table detail."""
-    return await asyncio.to_thread(svc.database.get_table_schema, table)
+    return await asyncio.to_thread(svc.datasource.get_table_schema, table)
 
 
 # ========== SemanticModel Endpoints ==========
@@ -55,7 +55,7 @@ async def get_semantic_model(
     ),
 ) -> Result[GetSemanticModelData]:
     """Get SemanticModel YAML."""
-    return await asyncio.to_thread(svc.database.get_semantic_model, table)
+    return await asyncio.to_thread(svc.datasource.get_semantic_model, table)
 
 
 @router.post(
@@ -69,7 +69,7 @@ async def save_semantic_model(
     svc: ServiceDep,
 ) -> Result[dict]:
     """Save SemanticModel YAML."""
-    return await svc.database.save_semantic_model(request)
+    return await svc.datasource.save_semantic_model(request)
 
 
 @router.post(
@@ -83,4 +83,4 @@ async def validate_semantic_model(
     svc: ServiceDep,
 ) -> Result[ValidateSemanticModelData]:
     """Validate SemanticModel YAML."""
-    return await svc.database.validate_semantic_model(request)
+    return await svc.datasource.validate_semantic_model(request)

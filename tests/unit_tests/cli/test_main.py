@@ -83,7 +83,7 @@ class TestArgumentParser:
 
 
 class TestApplicationRun:
-    def test_run_no_namespace_prints_help(self):
+    def test_run_no_datasource_prints_help(self):
         """When no database is set and _resolve_default_datasource fails, help is printed."""
         app = Application()
         mock_args = SimpleNamespace(

@@ -203,7 +203,7 @@ class TestServiceClientRegistry:
         cfg = _fake_agent_config(
             bi_platforms={"superset": {"api_url": "x"}, "grafana": {"api_url": "y"}},
             schedulers={"airflow": {"type": "airflow"}},
-            semantic_layer={"metricflow": {"namespace": "x"}},
+            semantic_layer={"metricflow": {"datasource": "x"}},
         )
         always_available = {k: (lambda c, n: True) for k in ("bi_platforms", "schedulers", "semantic_layer")}
         with patch.dict("datus.cli.service_client._PROBES", always_available):
@@ -286,16 +286,16 @@ class TestServiceClientRegistry:
         registry = ServiceClientRegistry(cfg)
         assert registry.list_services() == []
 
-    def test_cache_invalidated_on_namespace_switch(self):
-        """After ``.database`` / ``.namespace`` switch, cached ``ServiceClient``s
+    def test_cache_invalidated_on_datasource_switch(self):
+        """After ``.database`` / ``.datasource`` switch, cached ``ServiceClient``s
         must be dropped — ``SemanticTools`` / ``BIFuncTool`` internalise the
-        active namespace at construction time (MetricRAG, read_connector,
+        active datasource at construction time (MetricRAG, read_connector,
         adapter config resolution) and continuing to reuse them would run
-        queries against the old namespace.
+        queries against the old datasource.
         """
         cfg = SimpleNamespace(
             services=SimpleNamespace(bi_platforms={"superset": {}}, schedulers={}, semantic_layer={}),
-            current_datasource="namespace_a",
+            current_datasource="datasource_a",
         )
         factory = MagicMock(side_effect=lambda *_: _FakeBITool())
         with (
@@ -307,12 +307,12 @@ class TestServiceClientRegistry:
             assert c1 is not None
             factory.assert_called_once()
 
-            # Same namespace → cached instance reused.
+            # Same datasource → cached instance reused.
             assert registry.get("superset") is c1
             factory.assert_called_once()
 
-            # User runs ``.database namespace_b`` — current_datasource mutates.
-            cfg.current_datasource = "namespace_b"
+            # User runs ``.database datasource_b`` — current_datasource mutates.
+            cfg.current_datasource = "datasource_b"
             c2 = registry.get("superset")
             assert c2 is not c1
             assert factory.call_count == 2
@@ -320,13 +320,12 @@ class TestServiceClientRegistry:
             statuses = {name: status for name, _type, status in registry.list_services()}
             assert statuses["superset"] == "active"
 
-    def test_namespace_field_also_triggers_invalidation(self):
-        """Not every install uses ``current_datasource`` — the ``namespace``
-        attribute is also part of the fingerprint."""
+    def test_datasource_field_also_triggers_invalidation(self):
+        """The ``datasource`` attribute is also part of the fingerprint."""
         cfg = SimpleNamespace(
             services=SimpleNamespace(bi_platforms={"superset": {}}, schedulers={}, semantic_layer={}),
             current_datasource="shared",
-            namespace="tenant_a",
+            datasource="tenant_a",
         )
         factory = MagicMock(side_effect=lambda *_: _FakeBITool())
         with (
@@ -335,7 +334,7 @@ class TestServiceClientRegistry:
         ):
             registry = ServiceClientRegistry(cfg)
             registry.get("superset")
-            cfg.namespace = "tenant_b"
+            cfg.datasource = "tenant_b"
             registry.get("superset")
             assert factory.call_count == 2
 
@@ -355,7 +354,7 @@ class TestServiceClientRegistry:
             registry.get("superset")
             assert registry.list_services()[0][2] == "active"
 
-            # Namespace switch without a follow-up get() — status drops back to
+            # Datasource switch without a follow-up get() — status drops back to
             # "configured" (adapter still available, client cache cleared).
             cfg.current_datasource = "b"
             # list_services itself triggers invalidation.
@@ -403,7 +402,7 @@ class TestServiceClientRegistry:
             # Cached → called once.
             assert probe.call_count == 1
 
-            # Namespace switch → cache dropped → probe runs again.
+            # Datasource switch → cache dropped → probe runs again.
             cfg.current_datasource = "b"
             assert registry.adapter_available("superset") is True
             assert probe.call_count == 2

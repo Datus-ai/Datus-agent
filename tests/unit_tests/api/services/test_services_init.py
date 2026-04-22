@@ -44,11 +44,11 @@ class TestLazyImports:
 
         assert services.CLIService is CLIService
 
-    def test_lazy_import_database_service(self):
-        """DatabaseService is lazy-imported on first access."""
-        from datus.api.services.database_service import DatabaseService
+    def test_lazy_import_datasource_service(self):
+        """DatasourceService is lazy-imported on first access."""
+        from datus.api.services.database_service import DatasourceService
 
-        assert services.DatabaseService is DatabaseService
+        assert services.DatasourceService is DatasourceService
 
     def test_lazy_import_explorer_service(self):
         """ExplorerService is lazy-imported on first access."""

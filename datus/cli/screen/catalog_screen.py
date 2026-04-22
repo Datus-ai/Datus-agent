@@ -293,7 +293,7 @@ class CatalogScreen(ContextScreen):
 
         Args:
             context_data: Dictionary containing database connection info
-                - namespace: Database namespace
+                - datasource: Database datasource
                 - db_type: Database type
                 - database_name: Specific database name (optional)
             inject_callback: Callback for injecting data into the CLI

@@ -18,7 +18,7 @@ class ScopedContextLists(BaseModel):
 
 
 class ScopedContext(BaseModel):
-    namespace: Optional[str] = Field(default_factory=str, description="The namespace corresponding to the data source")
+    datasource: Optional[str] = Field(default_factory=str, description="The datasource identifier")
     tables: Optional[str] = Field(default=None, init=True, description="Tables to be used by sub-agents")
     metrics: Optional[str] = Field(default=None, init=True, description="Metrics to be used by sub-agents")
     sqls: Optional[str] = Field(default=None, init=True, description="Reference SQL to be used by sub-agents")
@@ -114,10 +114,10 @@ class SubAgentConfig(BaseModel):
             return True
         return False
 
-    def is_in_namespace(self, namespace: str) -> bool:
-        return self.has_scoped_context() and namespace == self.scoped_context.namespace
+    def is_in_datasource(self, datasource: str) -> bool:
+        return self.has_scoped_context() and datasource == self.scoped_context.datasource
 
-    def as_payload(self, namespace: Optional[str] = None) -> Dict[str, Any]:
+    def as_payload(self, datasource: Optional[str] = None) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
             "system_prompt": self.system_prompt,
             "prompt_version": self.prompt_version,
@@ -138,9 +138,8 @@ class SubAgentConfig(BaseModel):
         # storage with WHERE filters, so we no longer persist this field.
 
         if self.has_scoped_context():
-            self.scoped_context.namespace = namespace
-            scoped_context = self.scoped_context.model_dump(exclude_none=True)
-            payload["scoped_context"] = scoped_context
+            ctx = self.scoped_context.model_copy(update={"datasource": datasource})
+            payload["scoped_context"] = ctx.model_dump(exclude_none=True)
 
         return payload
 

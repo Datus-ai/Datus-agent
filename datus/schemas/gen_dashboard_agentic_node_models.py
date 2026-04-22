@@ -20,7 +20,7 @@ class GenDashboardNodeInput(BaseInput):
     """Input model for GenDashboardAgenticNode."""
 
     user_message: str = Field(..., description="User's dashboard request (required)")
-    database: Optional[str] = Field(None, description="Source database namespace")
+    database: Optional[str] = Field(None, description="Source datasource")
     prompt_version: Optional[str] = Field(None, description="Prompt template version")
 
 

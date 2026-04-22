@@ -41,13 +41,13 @@ def fake_module():
 
 
 def test_default_when_empty():
-    provider = load_auth_provider(None, namespace="default")
+    provider = load_auth_provider(None, datasource="default")
     assert isinstance(provider, NoAuthProvider)
 
-    provider = load_auth_provider({}, namespace="default")
+    provider = load_auth_provider({}, datasource="default")
     assert isinstance(provider, NoAuthProvider)
 
-    provider = load_auth_provider({"auth_provider": {}}, namespace="default")
+    provider = load_auth_provider({"auth_provider": {}}, datasource="default")
     assert isinstance(provider, NoAuthProvider)
 
 
@@ -58,7 +58,7 @@ def test_load_custom_with_kwargs(fake_module):
             "kwargs": {"issuer": "iss", "audience": "aud"},
         }
     }
-    provider = load_auth_provider(cfg, namespace="ns")
+    provider = load_auth_provider(cfg, datasource="ns")
     assert isinstance(provider, _DummyAuth)
     assert provider.issuer == "iss"
     assert provider.audience == "aud"
@@ -66,33 +66,33 @@ def test_load_custom_with_kwargs(fake_module):
 
 def test_load_custom_colon_separator(fake_module):
     cfg = {"auth_provider": {"class": f"{fake_module}:DummyAuth"}}
-    provider = load_auth_provider(cfg, namespace="ns")
+    provider = load_auth_provider(cfg, datasource="ns")
     assert isinstance(provider, _DummyAuth)
 
 
 def test_invalid_class_path():
     with pytest.raises(DatusException):
-        load_auth_provider({"auth_provider": {"class": "NoModule"}}, namespace="ns")
+        load_auth_provider({"auth_provider": {"class": "NoModule"}}, datasource="ns")
 
 
 def test_missing_module():
     with pytest.raises(DatusException):
-        load_auth_provider({"auth_provider": {"class": "nonexistent_pkg_xyz.SomeClass"}}, namespace="ns")
+        load_auth_provider({"auth_provider": {"class": "nonexistent_pkg_xyz.SomeClass"}}, datasource="ns")
 
 
 def test_missing_class(fake_module):
     with pytest.raises(DatusException):
-        load_auth_provider({"auth_provider": {"class": f"{fake_module}.MissingClass"}}, namespace="ns")
+        load_auth_provider({"auth_provider": {"class": f"{fake_module}.MissingClass"}}, datasource="ns")
 
 
 def test_not_implementing_protocol(fake_module):
     with pytest.raises(DatusException):
-        load_auth_provider({"auth_provider": {"class": f"{fake_module}.NotAnAuth"}}, namespace="ns")
+        load_auth_provider({"auth_provider": {"class": f"{fake_module}.NotAnAuth"}}, datasource="ns")
 
 
 def test_constructor_failure(fake_module):
     with pytest.raises(DatusException):
         load_auth_provider(
             {"auth_provider": {"class": f"{fake_module}.DummyAuth", "kwargs": {"bad": 1}}},
-            namespace="ns",
+            datasource="ns",
         )

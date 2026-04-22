@@ -218,7 +218,6 @@ class OpenAICompatibleModel(LLMBaseModel):
             return None
 
         node_name = ""
-        namespace = ""
         datasource = ""
         if getattr(self, "current_node", None):
             try:
@@ -227,7 +226,6 @@ class OpenAICompatibleModel(LLMBaseModel):
                 node_name = getattr(self.current_node, "node_type", "") or ""
             agent_config = getattr(self.current_node, "agent_config", None)
             if agent_config:
-                namespace = getattr(agent_config, "current_datasource", "") or ""
                 datasource = getattr(agent_config, "current_datasource", "") or ""
 
         raw_key = "|".join(
@@ -236,7 +234,6 @@ class OpenAICompatibleModel(LLMBaseModel):
                 self.model_name,
                 agent_name,
                 node_name,
-                namespace,
                 datasource,
             ]
         )

@@ -91,10 +91,10 @@ def init_local_schema(
     """
     event_helper = BatchEventHelper(BIZ_NAME, emit)
 
-    logger.info(f"Initializing local schema for namespace: {agent_config.current_datasource}")
-    event_helper.task_started(namespace=agent_config.current_datasource, build_mode=build_mode, table_type=table_type)
+    logger.info(f"Initializing local schema for datasource: {agent_config.current_datasource}")
+    event_helper.task_started(datasource=agent_config.current_datasource, build_mode=build_mode, table_type=table_type)
 
-    db_configs = agent_config.namespaces[agent_config.current_datasource]
+    db_configs = agent_config.datasource_configs[agent_config.current_datasource]
     if len(db_configs) == 1:
         db_configs = list(db_configs.values())[0]
 

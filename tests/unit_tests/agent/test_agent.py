@@ -260,10 +260,10 @@ def _make_args(**kwargs):
     return argparse.Namespace(**defaults)
 
 
-def _make_agent_config(namespace="test_ns"):
+def _make_agent_config(datasource="test_ns"):
     cfg = MagicMock()
-    cfg.current_datasource = namespace
-    cfg.namespaces = {namespace: {"type": "sqlite", "dbs": []}}
+    cfg.current_datasource = datasource
+    cfg.datasource_configs = {datasource: {"type": "sqlite", "dbs": []}}
     cfg.workflow_plan = "reflection"
     cfg.get_trajectory_run_dir.return_value = "/tmp/traj"
     cfg.output_dir = "/tmp/output"
@@ -403,9 +403,9 @@ class TestCheckDb:
         result = agent.check_db()
         assert result["status"] == "success"
 
-    def test_error_when_namespace_not_in_config(self):
-        cfg = _make_agent_config(namespace="test_ns")
-        cfg.namespaces = {}  # empty namespaces
+    def test_error_when_datasource_not_in_config(self):
+        cfg = _make_agent_config(datasource="test_ns")
+        cfg.datasource_configs = {}  # empty datasource_configs
         agent = _make_agent(config=cfg)
 
         result = agent.check_db()
@@ -550,10 +550,10 @@ def _make_args_ext(**kwargs):
     return argparse.Namespace(**defaults)
 
 
-def _make_agent_config_ext(namespace="test_ns"):
+def _make_agent_config_ext(datasource="test_ns"):
     cfg = MagicMock()
-    cfg.current_datasource = namespace
-    cfg.namespaces = {namespace: {"type": "sqlite", "dbs": []}}
+    cfg.current_datasource = datasource
+    cfg.datasource_configs = {datasource: {"type": "sqlite", "dbs": []}}
     cfg.workflow_plan = "reflection"
     cfg.get_trajectory_run_dir.return_value = "/tmp/traj"
     cfg.output_dir = "/tmp/output"
@@ -1252,17 +1252,17 @@ class TestBenchmarkHelpers:
         result = agent._check_benchmark_file(str(f))
         assert result is None
 
-    def test_cleanup_benchmark_output_paths_removes_namespace_dir(self, tmp_path):
+    def test_cleanup_benchmark_output_paths_removes_datasource_dir(self, tmp_path):
         agent = _make_agent_ext()
-        namespace_dir = tmp_path / "test_ns"
-        namespace_dir.mkdir()
+        datasource_dir = tmp_path / "test_ns"
+        datasource_dir.mkdir()
         agent.global_config.output_dir = str(tmp_path)
         agent.global_config.current_datasource = "test_ns"
 
         with patch("shutil.rmtree") as mock_rmtree:
             agent._cleanup_benchmark_output_paths(str(tmp_path / "bm"))
 
-        mock_rmtree.assert_called_once_with(str(namespace_dir))
+        mock_rmtree.assert_called_once_with(str(datasource_dir))
 
     def test_cleanup_benchmark_output_paths_gold_not_present(self, tmp_path):
         agent = _make_agent_ext()

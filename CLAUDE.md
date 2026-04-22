@@ -80,7 +80,7 @@ All CLI output colours, symbols, and message formats are centralised in
   - `./.datus/skills/` — project-level skills; takes precedence over
     `~/.datus/skills`.
   - `./.datus/config.yml` — project-level overrides for `target`
-    (provider/model), `default_database`, and `project_name`. Written by the
+    (provider/model), `default_datasource`, and `project_name`. Written by the
     `/model` slash command; only whitelisted keys are accepted.
 - **Global (`~/.datus/`), sharded per project where relevant**:
   - `~/.datus/sessions/{project_name}/{session_id}.db`

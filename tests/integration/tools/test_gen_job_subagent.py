@@ -92,7 +92,7 @@ agent:
 
     # Failures in config load / node construction are real bugs — don't mask them as skips.
     # External-service availability is handled by per-test TEST_GP_ENABLED gating.
-    agent_config = load_agent_config(config=config_path, namespace="source_duckdb", reload=True, force=True)
+    agent_config = load_agent_config(config=config_path, datasource="source_duckdb", reload=True, force=True)
 
     from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
@@ -104,7 +104,7 @@ agent:
     # Cleanup target table using node's own execute_ddl (same SQLAlchemy connection, avoids lock conflicts).
     # Log rather than swallow — silent pass here would hide cleanup failures in subsequent runs.
     try:
-        node.db_func_tool.execute_ddl(sql=f"DROP TABLE IF EXISTS {TARGET_TABLE}", database="greenplum")
+        node.db_func_tool.execute_ddl(sql=f"DROP TABLE IF EXISTS {TARGET_TABLE}", datasource="greenplum")
     except Exception as cleanup_err:
         logger.warning("Cleanup DROP TABLE %s failed: %s", TARGET_TABLE, cleanup_err)
 
@@ -158,7 +158,7 @@ class TestGenJobMigrationToolChain:
     def test_execute_ddl_on_target(self, migration_node):
         """execute_ddl should create a table on Greenplum."""
         # Drop first if exists
-        migration_node.db_func_tool.execute_ddl(sql=f"DROP TABLE IF EXISTS {TARGET_TABLE}", database="greenplum")
+        migration_node.db_func_tool.execute_ddl(sql=f"DROP TABLE IF EXISTS {TARGET_TABLE}", datasource="greenplum")
         result = migration_node.db_func_tool.execute_ddl(
             sql=f"""CREATE TABLE {TARGET_TABLE} (
                 id INTEGER NOT NULL,
@@ -175,7 +175,7 @@ class TestGenJobMigrationToolChain:
     def test_transfer_and_verify(self, migration_node):
         """Full transfer: DuckDB → Greenplum, then verify row count."""
         # Ensure target table exists
-        migration_node.db_func_tool.execute_ddl(sql=f"DROP TABLE IF EXISTS {TARGET_TABLE}", database="greenplum")
+        migration_node.db_func_tool.execute_ddl(sql=f"DROP TABLE IF EXISTS {TARGET_TABLE}", datasource="greenplum")
         migration_node.db_func_tool.execute_ddl(
             sql=f"""CREATE TABLE {TARGET_TABLE} (
                 id INTEGER NOT NULL,

@@ -108,7 +108,7 @@ _LEGACY_PREFIX_HINTS: dict[str, str] = {
     ".schema": "/schema",
     ".table_schema": "/table_schema",
     ".indexes": "/indexes",
-    ".namespace": "/namespace",
+    ".datasource": "/datasource",
     ".agent": "/agent",
     ".subagent": "/subagent",
     ".mcp": "/mcp",
@@ -219,7 +219,7 @@ class DatusCLI:
             current_catalog=getattr(args, "catalog", ""),
             current_schema=getattr(args, "schema", ""),
         )
-        self.db_manager = db_manager_instance(self.agent_config.namespaces)
+        self.db_manager = db_manager_instance(self.agent_config.datasource_configs)
 
         # Initialize command handlers after cli_context is created
         self.agent_commands = AgentCommands(self, self.cli_context)
@@ -296,7 +296,7 @@ class DatusCLI:
             # agent
             "agent": self._cmd_agent,
             "subagent": self.sub_agent_commands.cmd,
-            "namespace": self._cmd_switch_namespace,
+            "datasource": self._cmd_switch_datasource,
             "language": self.language_commands.cmd_language,
             # system
             "mcp": self._cmd_mcp,
@@ -909,14 +909,14 @@ class DatusCLI:
             self.console.print("[red]Error:[/] AI features are not available. Agent initialization failed.")
             return False
 
-    def _cmd_list_namespaces(self):
+    def _cmd_list_datasources(self):
         table = Table(show_header=True, header_style="bold green")
-        table.add_column("Namespace")
-        for namespace in self.agent_config.namespaces.keys():
-            if self.agent_config.current_datasource == namespace:
-                table.add_row(f"[green]{namespace}[/]")
+        table.add_column("Datasource")
+        for datasource in self.agent_config.datasource_configs.keys():
+            if self.agent_config.current_datasource == datasource:
+                table.add_row(f"[green]{datasource}[/]")
             else:
-                table.add_row(namespace)
+                table.add_row(datasource)
         self.console.print(table)
         return
 
@@ -1023,8 +1023,8 @@ class DatusCLI:
         """Filter ``self.available_subagents`` to those eligible as default agent.
 
         Drops :data:`HIDDEN_SYS_SUB_AGENTS` (internal meta agents such as
-        ``feedback``) and scoped agents whose namespace doesn't match the
-        current database. Mirrors the previous ``SubagentCompleter._load_subagents``
+        ``feedback``) and scoped agents whose datasource doesn't match the
+        current one. Mirrors the previous ``SubagentCompleter._load_subagents``
         behaviour now that the completer no longer surfaces agents directly.
         """
 
@@ -1032,7 +1032,8 @@ class DatusCLI:
         if hasattr(self.agent_config, "agentic_nodes") and self.agent_config.agentic_nodes:
             current_db = getattr(self.agent_config, "current_datasource", None)
             for name, sub_config in self.agent_config.agentic_nodes.items():
-                scoped_ns = (sub_config or {}).get("scoped_context", {}).get("namespace")
+                sc = (sub_config or {}).get("scoped_context", {})
+                scoped_ns = sc.get("datasource")
                 if scoped_ns and scoped_ns != current_db:
                     visible.discard(name)
         return visible
@@ -1078,17 +1079,17 @@ class DatusCLI:
             self.default_agent = args
             self.console.print(f"[green]Default agent set to: {args}[/]")
 
-    def _cmd_switch_namespace(self, args: str):
+    def _cmd_switch_datasource(self, args: str):
         if args.strip() == "":
-            self._cmd_list_namespaces()
+            self._cmd_list_datasources()
         elif self.agent_config.current_datasource == args.strip():
             self.console.print(
                 (
-                    f"[yellow]It's now under the namespace [bold]{self.agent_config.current_datasource}[/]"
+                    f"[yellow]It's now under the datasource [bold]{self.agent_config.current_datasource}[/]"
                     " and doesn't need to be switched[/]"
                 )
             )
-            self._cmd_list_namespaces()
+            self._cmd_list_datasources()
             return
         else:
             next_datasource = args.strip()
@@ -1105,7 +1106,7 @@ class DatusCLI:
             )
             self.reset_session()
             self.chat_commands.update_chat_node_tools()
-            self.console.print(f"[green]Namespace changed to: {self.agent_config.current_datasource}[/]")
+            self.console.print(f"[green]Datasource changed to: {self.agent_config.current_datasource}[/]")
 
     def _parse_command(self, text: str) -> Tuple[CommandType, str, str]:
         """Classify raw user input into a ``CommandType`` + canonical cmd + args.
@@ -1177,7 +1178,7 @@ class DatusCLI:
 
         # Determine if text is SQL or chat using parse_sql_type
         try:
-            # Get current database dialect from agent_config.db_type (set from current namespace)
+            # Get current database dialect from agent_config.db_type (set from current datasource)
             dialect = self.agent_config.db_type if self.agent_config.db_type else "snowflake"
             sql_type = parse_sql_type(text, dialect)
 
@@ -1530,11 +1531,7 @@ class DatusCLI:
 
     def _build_banner_panel(self) -> Panel:
         """Build the unified startup banner as a Rich Panel."""
-        database = (
-            getattr(self.args, "datasource", "")
-            or getattr(self.args, "namespace", "")
-            or getattr(self.agent_config, "current_datasource", "")
-        )
+        database = getattr(self.args, "datasource", "") or getattr(self.agent_config, "current_datasource", "")
         db_type = getattr(self.agent_config, "db_type", "") or ""
 
         if self.db_connector and database:
@@ -1639,10 +1636,10 @@ class DatusCLI:
                 except FuturesTimeoutError:
                     self.console.print(
                         f"[red]Error:[/] Database connection timed out after {timeout_seconds} seconds. "
-                        f"Please check if the database server for namespace '{current_datasource}' is running "
+                        f"Please check if the database server for datasource '{current_datasource}' is running "
                         "and accessible."
                     )
-                    logger.error(f"Database connection timeout for namespace: {current_datasource}")
+                    logger.error(f"Database connection timeout for datasource: {current_datasource}")
                     self.db_connector = None
                     return
 
@@ -1669,14 +1666,14 @@ class DatusCLI:
                 except FuturesTimeoutError:
                     self.console.print(
                         f"[red]Error:[/] Connection test timed out after {timeout_seconds} seconds. "
-                        f"The database server for namespace '{current_datasource}' may be unresponsive."
+                        f"The database server for datasource '{current_datasource}' may be unresponsive."
                     )
-                    logger.error(f"Connection test timeout for namespace: {current_datasource}")
+                    logger.error(f"Connection test timeout for datasource: {current_datasource}")
                     self.db_connector = None
 
         except Exception as e:
             self.console.print(f"[red]Error:[/] Failed to connect to database: {str(e)}")
-            logger.error(f"Database connection failed for namespace {current_datasource}: {e}")
+            logger.error(f"Database connection failed for datasource {current_datasource}: {e}")
             self.db_connector = None
 
     def _create_workflow_runner(self) -> WorkflowRunner:

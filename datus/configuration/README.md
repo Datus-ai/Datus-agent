@@ -55,10 +55,11 @@ Configure specific behaviors for each workflow node:
 
 ### 3. Database Configuration
 
-Configure database connections by namespace:
+Configure database connections by datasource:
 
 ```yaml
-  namespace:
+  services:
+    datasources:
     snowflake:
       type: snowflake
       account: ${SNOWFLAKE_ACCOUNT}
@@ -180,10 +181,11 @@ models:
 
 ### 2. Adding New Database Configuration
 
-Add to the `namespace` section:
+Add to the `services.datasources` section:
 
 ```yaml
-namespace:
+services:
+  datasources:
   my_database:
     type: postgres
     host: ${POSTGRES_HOST}
@@ -234,7 +236,8 @@ agent:
       api_key: ${OPENAI_API_KEY}
       model: gpt-4-turbo
 
-  namespace:
+  services:
+    datasources:
     my_data:
       type: sqlite
       uri: sqlite:///my_database.db
@@ -255,7 +258,8 @@ agent:
       api_key: ${ANTHROPIC_API_KEY}
       model: claude-3-sonnet-20241022
 
-  namespace:
+  services:
+    datasources:
     production:
       type: postgresql
       host: ${POSTGRES_HOST}
@@ -284,7 +288,8 @@ agent:
       api_key: ${OPENAI_API_KEY}
       model: gpt-4-turbo
 
-  namespace:
+  services:
+    datasources:
     snowflake_prod:
       type: snowflake
       account: ${SNOWFLAKE_ACCOUNT}

@@ -415,7 +415,7 @@ Execute repeated benchmark + evaluation cycles (as described in [Step 4](#step-4
 
 | Option                  | Required | Default                                       | Description                                                          |
 |-------------------------|----------|-----------------------------------------------|----------------------------------------------------------------------|
-| `--database`           | Yes      | —                                             | Namespace to benchmark, e.g. `bird_sqlite`                           |
+| `--database`           | Yes      | —                                             | Datasource to benchmark, e.g. `bird_sqlite`                           |
 | `--benchmark`           | Yes      | —                                             | Benchmark name, e.g. `bird_dev`                                      |
 | `--workflow`            | No       | `reflection`                                  | Workflow plan to execute                                             |
 | `--round`               | No       | `4`                                           | Number of benchmark iterations to run                                |
@@ -441,7 +441,7 @@ For each round the tool creates an isolated output directory under `{agent.home}
 ```text
 {agent.home}/integration/
 ├── {group_name}_0/
-│   ├── save/{namespace}/{timestamp}/
+│   ├── save/{datasource}/{timestamp}/
 │   │   ├── 0.json                                     # Task metadata
 │   │   ├── 0.sql                                      # Generated SQL
 │   │   ├── 0.csv                                      # Query execution result
@@ -449,13 +449,13 @@ For each round the tool creates an isolated output directory under `{agent.home}
 │   │   ├── 1.sql
 │   │   ├── 1.csv
 │   │   └── ...
-│   ├── trajectory/{namespace}/{timestamp}/
+│   ├── trajectory/{datasource}/{timestamp}/
 │   │   ├── 0_{ts}.yaml                                # Workflow trace (e.g. 0_1769611836.yaml)
 │   │   ├── 1_{ts}.yaml
 │   │   └── ...
 │   └── evaluation_round_{timestamp}_0.json            # Evaluation report for round 0
 ├── {group_name}_1/
-│   ├── save/{namespace}/{timestamp}/
+│   ├── save/{datasource}/{timestamp}/
 │   │   ├── 0.json
 │   │   ├── 0.sql
 │   │   ├── 0.csv
@@ -463,7 +463,7 @@ For each round the tool creates an isolated output directory under `{agent.home}
 │   │   ├── 1.sql
 │   │   ├── 1.csv
 │   │   └── ...
-│   ├── trajectory/{namespace}/{timestamp}/
+│   ├── trajectory/{datasource}/{timestamp}/
 │   │   ├── 0_{ts}.yaml
 │   │   ├── 1_{ts}.yaml
 │   │   └── ...

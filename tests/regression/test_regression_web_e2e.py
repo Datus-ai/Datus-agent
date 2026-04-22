@@ -55,7 +55,7 @@ def web_server():
             "localhost",
             "--config",
             str(PROJECT_ROOT / "tests" / "conf" / "agent.yml"),
-            "--namespace",
+            "--datasource",
             "ssb_sqlite",
         ],
         stdout=subprocess.DEVNULL,

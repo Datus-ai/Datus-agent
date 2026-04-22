@@ -76,21 +76,21 @@ Comment-SQL     Validation    Metadata    Vector DB
 ```bash
 # Basic usage - initialize reference SQL with overwrite mode
 python -m datus.main bootstrap-kb \
-  --namespace your_namespace \
+  --datasource your_datasource \
   --components reference_sql \
   --sql_dir /path/to/sql/directory \
   --kb_update_strategy overwrite
 
 # Incremental update - only process new SQL files
 python -m datus.main bootstrap-kb \
-  --namespace your_namespace \
+  --datasource your_datasource \
   --components reference_sql \
   --sql_dir /path/to/sql/directory \
   --kb_update_strategy incremental
 
 # High performance - use 8 parallel threads for LLM analysis
 python -m datus.main bootstrap-kb \
-  --namespace your_namespace \
+  --datasource your_datasource \
   --components reference_sql \
   --sql_dir /path/to/sql/directory \
   --kb_update_strategy overwrite \
@@ -98,7 +98,7 @@ python -m datus.main bootstrap-kb \
 
 # Debug mode with detailed logging
 python -m datus.main bootstrap-kb \
-  --namespace your_namespace \
+  --datasource your_datasource \
   --components reference_sql \
   --sql_dir /path/to/sql/directory \
   --kb_update_strategy overwrite \
@@ -106,7 +106,7 @@ python -m datus.main bootstrap-kb \
 
 # Validate-only mode - process and validate SQL files without LLM analysis or storage
 python -m datus.main bootstrap-kb \
-  --namespace your_namespace \
+  --datasource your_datasource \
   --components reference_sql \
   --sql_dir /path/to/sql/directory \
   --validate-only

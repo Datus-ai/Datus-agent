@@ -5,8 +5,8 @@
 """Tests for RAG classes in PHYSICAL isolation mode.
 
 In Storage 3.0, datasource_id isolation is handled at the backend level:
-- PHYSICAL mode (CLI default): each namespace gets its own directory via
-  init_backends(namespace=...).  All RAG instances within one process share
+- PHYSICAL mode (CLI default): each datasource gets its own directory via
+  init_backends(datasource=...).  All RAG instances within one process share
   the same storage — isolation is per-process, not per-RAG.
 - LOGICAL mode (SaaS): backend auto-injects datasource_id column for
   within-process multi-tenant filtering.

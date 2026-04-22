@@ -147,7 +147,7 @@ def get_connection(
         raise DatusException(
             code=ErrorCode.DB_CONNECTION_FAILED,
             message_args={
-                "error_message": f"Database {logic_name} not found in current namespace",
+                "error_message": f"Database {logic_name} not found in current datasource",
             },
         )
     return connections[logic_name]
@@ -158,70 +158,70 @@ class DBManager:
         self._conn_dict: Dict[str, Union[BaseSqlConnector, Dict[str, BaseSqlConnector]]] = defaultdict(dict)
         self._db_configs: Dict[str, Dict[str, DbConfig]] = db_configs
 
-    def get_conn(self, namespace: str, logic_name: str = "") -> BaseSqlConnector:
-        self._init_connections(namespace)
-        connector_or_dict = self._conn_dict[namespace]
+    def get_conn(self, datasource: str, logic_name: str = "") -> BaseSqlConnector:
+        self._init_connections(datasource)
+        connector_or_dict = self._conn_dict[datasource]
         return get_connection(connector_or_dict, logic_name)
 
-    def get_connections(self, namespace: str = "") -> Union[BaseSqlConnector, Dict[str, BaseSqlConnector]]:
-        self._init_connections(namespace)
-        return self._conn_dict[namespace]
+    def get_connections(self, datasource: str = "") -> Union[BaseSqlConnector, Dict[str, BaseSqlConnector]]:
+        self._init_connections(datasource)
+        return self._conn_dict[datasource]
 
-    def current_db_configs(self, namespace: str) -> Dict[str, DbConfig]:
-        return self._db_configs[namespace]
+    def current_db_configs(self, datasource: str) -> Dict[str, DbConfig]:
+        return self._db_configs[datasource]
 
-    def _init_connections(self, namespace):
-        if namespace in self._conn_dict:
+    def _init_connections(self, datasource):
+        if datasource in self._conn_dict:
             return
-        if namespace not in self._db_configs:
+        if datasource not in self._db_configs:
             raise DatusException(
-                code=ErrorCode.COMMON_CONFIG_ERROR, message=f"Namespace {namespace} not found in config"
+                code=ErrorCode.COMMON_CONFIG_ERROR, message=f"Datasource {datasource} not found in config"
             )
-        configs = self._db_configs[namespace]
+        configs = self._db_configs[datasource]
         if len(configs) == 1:
             db_config = list(configs.values())[0]
-            self._init_conn(namespace, db_config)
+            self._init_conn(datasource, db_config)
             return
         # Multiple database configuration
         for database_name, db_config in configs.items():
-            self._init_conn(namespace, db_config, database_name=database_name)
+            self._init_conn(datasource, db_config, database_name=database_name)
 
-        if namespace not in self._conn_dict:
+        if datasource not in self._conn_dict:
             raise DatusException(
                 ErrorCode.COMMON_CONFIG_ERROR,
                 message=(
-                    f"Database initialization under namespace {namespace} failed with the current configuration:"
+                    f"Database initialization under datasource {datasource} failed with the current configuration:"
                     f" {configs}"
                 ),
             )
 
-    def first_conn(self, namespace: str) -> BaseSqlConnector:
-        self._init_connections(namespace)
-        dbs: Union[BaseSqlConnector, Dict[str, BaseSqlConnector]] = self._conn_dict[namespace]
+    def first_conn(self, datasource: str) -> BaseSqlConnector:
+        self._init_connections(datasource)
+        dbs: Union[BaseSqlConnector, Dict[str, BaseSqlConnector]] = self._conn_dict[datasource]
         if isinstance(dbs, dict):
             return list(dbs.values())[0]
         return dbs
 
-    def first_conn_with_name(self, namespace: str) -> Tuple[str, BaseSqlConnector]:
-        self._init_connections(namespace)
-        dbs: Union[BaseSqlConnector, Dict[str, BaseSqlConnector]] = self._conn_dict[namespace]
+    def first_conn_with_name(self, datasource: str) -> Tuple[str, BaseSqlConnector]:
+        self._init_connections(datasource)
+        dbs: Union[BaseSqlConnector, Dict[str, BaseSqlConnector]] = self._conn_dict[datasource]
         if isinstance(dbs, dict):
             name = list(dbs.keys())[0]
             conn = dbs[name]
             return name, conn
 
-        config = list(self._db_configs[namespace].values())[0]
+        config = list(self._db_configs[datasource].values())[0]
         return config.logic_name, dbs
 
-    def get_db_uris(self, namespace: str) -> Dict[str, str]:
-        dbs = self._db_configs.get(namespace, {})
+    def get_db_uris(self, datasource: str) -> Dict[str, str]:
+        dbs = self._db_configs.get(datasource, {})
         return {name: db.uri for name, db in dbs.items()}
 
-    def _init_conn(self, namespace: str, db_config: DbConfig, database_name: Optional[str] = None) -> BaseSqlConnector:
+    def _init_conn(self, datasource: str, db_config: DbConfig, database_name: Optional[str] = None) -> BaseSqlConnector:
         """Initialize connection using the registry
 
         Args:
-            namespace: Namespace identifier
+            datasource: Datasource identifier
             db_config: Database configuration
             database_name: Optional database name for multi-database setup
 
@@ -236,9 +236,9 @@ class DBManager:
 
         # Store connection
         if database_name:
-            self._conn_dict[namespace][database_name] = conn
+            self._conn_dict[datasource][database_name] = conn
         else:
-            self._conn_dict[namespace] = conn
+            self._conn_dict[datasource] = conn
 
         return conn
 
@@ -327,16 +327,16 @@ class DBManager:
         self.close()
 
 
-def db_config_name(namespace: str, db_type: str, name: str = "") -> str:
+def db_config_name(datasource: str, db_type: str, name: str = "") -> str:
     if db_type == DBType.SQLITE or db_type == DBType.DUCKDB:
-        return f"{namespace}::{name}"
+        return f"{datasource}::{name}"
     # fix local snowflake
-    return f"{namespace}::{namespace}"
+    return f"{datasource}::{datasource}"
 
 
 # External factory for DBManager creation (used by SaaS backend for connection pooling)
 _factory: Optional[Callable[[Dict[str, Dict[str, DbConfig]]], DBManager]] = None
-# CLI-mode cache: keyed by frozenset of namespace names to avoid creating
+# CLI-mode cache: keyed by frozenset of datasource names to avoid creating
 # duplicate DBManager instances (and leaking connections) for the same config.
 _cli_cache: Dict[frozenset, DBManager] = {}
 
@@ -367,7 +367,7 @@ def db_manager_instance(
 
     - With a factory set (SaaS mode): delegates to the factory every call,
       which typically returns a pooled/ref-counted instance.
-    - Without a factory (CLI mode): caches by namespace keys to avoid
+    - Without a factory (CLI mode): caches by datasource keys to avoid
       creating duplicate instances and leaking connections.
     """
     if _factory is not None:

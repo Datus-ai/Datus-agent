@@ -15,7 +15,7 @@
 
 ## 工作原理
 
-使用 `datus --database <namespace>` 启动 Datus CLI，然后使用子代理命令：
+使用 `datus --database <datasource>` 启动 Datus CLI，然后使用子代理命令：
 
 ```text
   /gen_semantic_model generate a semantic model for table <table_name>
@@ -86,7 +86,7 @@ agent:
 - **Hooks**：交互模式下的用户确认工作流
 - **MCP 服务器**：MetricFlow 验证服务器
 - **系统提示**：内置模板版本 1.0
-- **工作空间**：`~/.datus/data/{namespace}/semantic_models`
+- **工作空间**：`~/.datus/data/{datasource}/semantic_models`
 
 ## 语义模型结构
 

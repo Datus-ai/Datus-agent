@@ -18,7 +18,7 @@ pytestmark = pytest.mark.regression
 
 @pytest.fixture
 def agent_config() -> AgentConfig:
-    return load_agent_config(**{"namespace": "snowflake"})
+    return load_agent_config(**{"datasource": "snowflake"})
 
 
 @pytest.fixture

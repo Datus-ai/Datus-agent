@@ -150,7 +150,7 @@ def real_agent_config(tmp_path, reset_global_singletons):
     - home = tmp_path
     - target = "mock"
     - models with a mock OpenAI config
-    - namespace "test_ns" with california_schools.sqlite ("california_schools")
+    - datasource "test_ns" with california_schools.sqlite ("california_schools")
     - agentic_nodes config for chat, gensql, gen_ext_knowledge, compare,
       gen_sql_summary, gen_metrics, gen_semantic_model, gen_report
     """
@@ -240,7 +240,7 @@ def real_agent_config(tmp_path, reset_global_singletons):
     nodes: dict[str, NodeConfig] = {}
     agent_config = AgentConfig(nodes=nodes, **config_kwargs)
 
-    # Set current datasource (was: current_namespace = "test_ns")
+    # Set current datasource
     agent_config.current_datasource = "california_schools"
 
     yield agent_config

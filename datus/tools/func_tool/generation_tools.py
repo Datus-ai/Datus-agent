@@ -156,7 +156,7 @@ class GenerationTools:
                 Relative file names within the sub-agent's semantic-model workspace
                 are preferred (e.g. ``["orders.yml", "customers.yml"]``). Absolute
                 paths are also accepted. The downstream hook resolves relative
-                entries against the live agent_config namespace.
+                entries against the live agent_config datasource.
 
         Returns:
             dict: Result containing confirmation message and semantic_model_files

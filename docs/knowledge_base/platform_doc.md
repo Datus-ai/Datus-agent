@@ -12,7 +12,7 @@ Fetch → Parse → Clean → Chunk → Embed → Store
 
 ## Storage Scope
 
-- **Namespace-independent**: documents are stored per platform and shared across namespaces.
+- **Datasource-independent**: documents are stored per platform and shared across datasources.
 - **Default location**: `~/.datus/data/document/<platform>/`.
 - **Selection key**: the `platform` argument decides which document store is queried.
 

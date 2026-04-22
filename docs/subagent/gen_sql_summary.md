@@ -87,7 +87,7 @@ agentic_nodes:
 - **Tools**: Filesystem tools (`read_file`, `write_file`, `edit_file`, `glob`) and `generate_sql_summary_id`
 - **Hooks**: User confirmation workflow in interactive mode
 - **System Prompt**: Built-in template version 1.0
-- **Workspace**: `~/.datus/data/{namespace}/reference_sql`
+- **Workspace**: `~/.datus/data/{datasource}/reference_sql`
 - **Context Retrieval**: Automatically queries existing subject trees and similar SQLs from Knowledge Base
 
 ### Configuration Options

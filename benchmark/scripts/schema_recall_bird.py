@@ -35,8 +35,8 @@ def match_result(target_schema: set[str], full_name_set: set[str]) -> dict[str, 
 
 @pytest.fixture
 def agent_config() -> AgentConfig:
-    # FIXME Modify namespace according to your configuration
-    config = load_agent_config(**{"benchmark": "bird_dev", "namespace": "bird_sqlite"})
+    # FIXME Modify datasource according to your configuration
+    config = load_agent_config(**{"benchmark": "bird_dev", "datasource": "bird_sqlite"})
     return config
 
 

@@ -288,13 +288,13 @@ The runtime currently reads these commonly used fields from `agentic_nodes` entr
 
 ```yaml
 scoped_context:
-  namespace: finance
+  datasource: finance
   tables: mart.finance_daily, mart.finance_budget
   metrics: finance.revenue.daily_revenue
   sqls: finance.revenue.region_rollup
 ```
 
-When writing YAML manually, set `namespace` explicitly. The `/subagent` wizard fills it from the current database automatically.
+When writing YAML manually, set `datasource` explicitly. The `/subagent` wizard fills it from the current database automatically.
 
 ### Example
 
@@ -317,7 +317,7 @@ agent:
       subagents: explore, gen_sql
       max_turns: 30
       scoped_context:
-        namespace: finance
+        datasource: finance
         tables: mart.finance_daily
         metrics: finance.revenue.daily_revenue
         sqls: finance.revenue.region_rollup

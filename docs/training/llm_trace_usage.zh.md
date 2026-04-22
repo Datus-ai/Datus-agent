@@ -12,13 +12,13 @@
 
 ```bash
 # CLI 模式
-datus-cli --namespace spidersnow --save_llm_trace
+datus-cli --datasource spidersnow --save_llm_trace
 
 # 主程序模式
-python datus/main.py run --namespace bird_sqlite --task "Query all users" --task_db_name test.db --save_llm_trace
+python datus/main.py run --datasource bird_sqlite --task "Query all users" --task_db_name test.db --save_llm_trace
 
 # Benchmark 模式
-python datus/main.py benchmark --namespace bird_sqlite --benchmark bird_dev --save_llm_trace
+python datus/main.py benchmark --datasource bird_sqlite --benchmark bird_dev --save_llm_trace
 ```
 
 ### 2. 配置文件
@@ -81,28 +81,28 @@ trajectory_dir/
 
 ```bash
 # 在开发期间启用跟踪以调试提示词
-datus-cli --namespace local_duckdb --save_llm_trace
+datus-cli --datasource local_duckdb --save_llm_trace
 ```
 
 ### 2. 性能分析
 
 ```bash
 # 分析不同节点的 LLM 输入/输出
-python datus/main.py benchmark --namespace bird_sqlite --benchmark bird_dev --save_llm_trace
+python datus/main.py benchmark --datasource bird_sqlite --benchmark bird_dev --save_llm_trace
 ```
 
 ### 3. 审计和合规
 
 ```bash
 # 记录所有 LLM 交互以进行审计
-python datus/main.py run --namespace prod --task "sensitive query" --save_llm_trace
+python datus/main.py run --datasource prod --task "sensitive query" --save_llm_trace
 ```
 
 ### 4. MCP 调用跟踪
 
 ```bash
 # 启用 MCP 调用的详细跟踪，包括整个函数调用过程
-python datus/main.py run --namespace bird_sqlite --task "Complex query" --save_llm_trace
+python datus/main.py run --datasource bird_sqlite --task "Complex query" --save_llm_trace
 ```
 
 ## 重要说明

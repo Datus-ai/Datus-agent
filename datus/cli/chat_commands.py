@@ -122,7 +122,7 @@ class ChatCommands:
         self.current_streaming_ctx = None
 
     def update_chat_node_tools(self):
-        """Update current node tools when namespace changes."""
+        """Update current node tools when datasource changes."""
         if self.current_node and hasattr(self.current_node, "setup_tools"):
             self.current_node.setup_tools()
         # Keep backward compatibility

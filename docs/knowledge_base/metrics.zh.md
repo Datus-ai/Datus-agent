@@ -54,13 +54,13 @@ query_metrics(
 ```bash
 # 从 CSV（历史 SQLs）
 datus-agent bootstrap-kb \
-    --namespace <your_namespace> \
+    --datasource <your_datasource> \
     --components metrics \
     --success_story path/to/success_story.csv
 
 # 从 YAML（语义模型）
 datus-agent bootstrap-kb \
-    --namespace <your_namespace> \
+    --datasource <your_datasource> \
     --components metrics \
     --semantic_yaml path/to/semantic_model.yaml
 ```
@@ -69,7 +69,7 @@ datus-agent bootstrap-kb \
 
 | 参数 | 必需 | 描述 | 示例 |
 |-----------|----------|-------------|------------|
-| `--namespace` | ✅ | 数据库命名空间 | `sales_db` |
+| `--datasource` | ✅ | 数据库数据源 | `sales_db` |
 | `--components` | ✅ | 要初始化的组件 | `metrics` |
 | `--success_story` | ⚠️ | 包含历史 SQLs 和问题的 CSV 文件（如果没有 `--semantic_yaml` 则必需） | `success_story.csv` |
 | `--semantic_yaml` | ⚠️ | 语义模型 YAML 文件（如果没有 `--success_story` 则必需） | `semantic_model.yaml` |

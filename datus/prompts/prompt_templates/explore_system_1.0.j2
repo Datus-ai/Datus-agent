@@ -68,8 +68,8 @@ Current context:
 {% if current_date -%}
 - Current date: {{ current_date }}
 {% endif -%}
-{% if namespace -%}
-- Database namespace: {{ namespace }}
+{% if datasource -%}
+- Database datasource: {{ datasource }}
 {% endif -%}
 {% if scoped_tables -%}
 - Scoped tables: {{ scoped_tables | join(", ") }}

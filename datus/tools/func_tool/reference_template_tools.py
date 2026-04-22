@@ -245,7 +245,7 @@ class ReferenceTemplateTools:
 
     @mcp_tool(availability_check="has_reference_templates")
     def execute_reference_template(
-        self, subject_path: List[str], name: str, params: str, database: str = ""
+        self, subject_path: List[str], name: str, params: str, datasource: str = ""
     ) -> FuncToolResult:
         """
         **PREFERRED** way to use reference templates. Render a template with parameters and immediately
@@ -261,7 +261,7 @@ class ReferenceTemplateTools:
             params: JSON string of parameter key-value pairs to render the template.
                     Keys must match the template's parameter names.
                     Example: '{"start_date": "2024-01-01", "end_date": "2024-12-31", "region": "US"}'
-            database: Optional database name for multi-database scenarios.
+            datasource: Optional datasource name for multi-datasource scenarios.
 
         Returns:
             FuncToolResult with:
@@ -290,7 +290,7 @@ class ReferenceTemplateTools:
             )
 
         try:
-            exec_result = self.db_func_tool.read_query(rendered_sql, database=database)
+            exec_result = self.db_func_tool.read_query(rendered_sql, datasource=datasource)
             if exec_result.success == 0:
                 return FuncToolResult(
                     success=0,

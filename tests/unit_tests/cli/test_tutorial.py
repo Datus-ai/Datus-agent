@@ -29,7 +29,7 @@ class DummyAgentConfig:
 
     def __init__(self):
         self.db_type = "sqlite"
-        self.current_datasource = "test_namespace"
+        self.current_datasource = "test_datasource"
         self._db_config = SimpleNamespace(catalog="catalog", database="database", schema="schema")
 
     def current_db_config(self):
@@ -133,7 +133,7 @@ class TestBenchmarkTutorialInit:
     def test_init_with_config_path(self):
         tutorial = BenchmarkTutorial(config_path="/path/to/config.yml")
         assert tutorial.config_path == "/path/to/config.yml"
-        assert tutorial.namespace_name == "california_schools"
+        assert tutorial.datasource_name == "california_schools"
         assert isinstance(tutorial.console, Console)
 
     def test_init_with_none_config_path(self):
@@ -155,7 +155,7 @@ class TestBenchmarkTutorialEnsureConfig:
         output = buffer.getvalue()
         assert "not found" in output
 
-    def test_returns_true_when_config_exists_and_namespace_configured(self, tmp_path, monkeypatch):
+    def test_returns_true_when_config_exists_and_datasource_configured(self, tmp_path, monkeypatch):
         config_file = tmp_path / "agent.yml"
         config_file.write_text("agent: {}")
 
@@ -176,7 +176,7 @@ class TestBenchmarkTutorialEnsureConfig:
         assert result is True
         assert tutorial.benchmark_path == tmp_path / "benchmark"
 
-    def test_adds_namespace_and_benchmark_config_when_missing(self, tmp_path, monkeypatch):
+    def test_adds_datasource_and_benchmark_config_when_missing(self, tmp_path, monkeypatch):
         config_file = tmp_path / "agent.yml"
         config_file.write_text("agent: {}")
 

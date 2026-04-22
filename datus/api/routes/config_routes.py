@@ -121,7 +121,7 @@ async def _evict_current_project(project_id: str) -> None:
     "/config/agent",
     response_model=Result[dict],
     summary="Get Agent Configuration",
-    description="Get the current project's agent configuration (models, namespace, agentic_nodes)",
+    description="Get the current project's agent configuration (models, datasource, agentic_nodes)",
 )
 async def get_agent_config_endpoint(
     svc: ServiceDep,
@@ -130,7 +130,7 @@ async def get_agent_config_endpoint(
     config = svc.agent_config
     flat_datasources: dict = {}
 
-    for db_name, inner in config.namespaces.items():
+    for db_name, inner in config.datasource_configs.items():
         if not inner:
             continue
         db_config = inner.get(db_name)

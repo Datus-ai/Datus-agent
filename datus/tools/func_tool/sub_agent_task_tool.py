@@ -998,10 +998,10 @@ class SubAgentTaskTool:
                 if name in ("chat", "explore", "feedback") or name in SYS_SUB_AGENTS:
                     continue
 
-                # If scoped_context is configured, namespace must match current namespace
+                # If scoped_context is configured, datasource must match current datasource
                 try:
                     sub_config = SubAgentConfig.model_validate(config)
-                    if sub_config.has_scoped_context() and not sub_config.is_in_namespace(current_datasource):
+                    if sub_config.has_scoped_context() and not sub_config.is_in_datasource(current_datasource):
                         continue
                 except Exception as e:
                     logger.debug(f"Skipping invalid subagent config '{name}': {e}")

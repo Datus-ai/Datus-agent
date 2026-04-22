@@ -260,7 +260,7 @@ All adapters support:
 #### PostgreSQL
 - INFORMATION_SCHEMA queries
 - Tables, views, and materialized views support
-- Multi-schema namespace support
+- Multi-schema datasource support
 - SSL connection modes (disable, allow, prefer, require, verify-ca, verify-full)
 - SQLAlchemy-based (psycopg2 driver)
 

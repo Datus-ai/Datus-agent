@@ -23,7 +23,7 @@ class TestNoAdapterInstalled:
 
         agent_config = MagicMock()
         agent_config.db_type = "postgresql"
-        agent_config.namespaces = MagicMock()
+        agent_config.datasource_configs = MagicMock()
         with patch("datus_bi_core.registry.BIAdapterRegistry.list_adapters", return_value={}):
             return BiDashboardCommands(agent_config=agent_config, force=True)
 

@@ -148,20 +148,20 @@ class TestMCPServer:
             with patch(
                 "datus.tools.mcp_tools.mcp_server.find_mcp_directory", side_effect=FileNotFoundError("not found")
             ):
-                result = MCPServer.get_metricflow_mcp_server(namespace="test")
+                result = MCPServer.get_metricflow_mcp_server(datasource="test")
         assert result is None
 
     def test_returns_none_when_directory_does_not_exist(self, tmp_path):
         nonexistent = str(tmp_path / "missing_dir")
         with patch.dict("os.environ", {"METRICFLOW_MCP_DIR": nonexistent}):
-            result = MCPServer.get_metricflow_mcp_server(namespace="test")
+            result = MCPServer.get_metricflow_mcp_server(datasource="test")
         assert result is None
 
     def test_returns_none_when_pyproject_missing(self, tmp_path):
         # Directory exists but no pyproject.toml
         tmp_path.mkdir(parents=True, exist_ok=True)
         with patch.dict("os.environ", {"METRICFLOW_MCP_DIR": str(tmp_path)}):
-            result = MCPServer.get_metricflow_mcp_server(namespace="test")
+            result = MCPServer.get_metricflow_mcp_server(datasource="test")
         assert result is None
 
     def test_creates_server_when_valid_directory(self, tmp_path):
@@ -171,7 +171,7 @@ class TestMCPServer:
             with patch("datus.tools.mcp_tools.mcp_server.SilentMCPServerStdio") as mock_cls:
                 mock_instance = MagicMock()
                 mock_cls.return_value = mock_instance
-                result = MCPServer.get_metricflow_mcp_server(namespace="my_ns")
+                result = MCPServer.get_metricflow_mcp_server(datasource="my_ns")
         assert result is mock_instance
 
     def test_singleton_returns_same_instance(self, tmp_path):
@@ -180,8 +180,8 @@ class TestMCPServer:
             with patch("datus.tools.mcp_tools.mcp_server.SilentMCPServerStdio") as mock_cls:
                 mock_instance = MagicMock()
                 mock_cls.return_value = mock_instance
-                result1 = MCPServer.get_metricflow_mcp_server(namespace="ns1")
-                result2 = MCPServer.get_metricflow_mcp_server(namespace="ns2")
+                result1 = MCPServer.get_metricflow_mcp_server(datasource="ns1")
+                result2 = MCPServer.get_metricflow_mcp_server(datasource="ns2")
         assert result1 is result2
         # Constructor called only once
         assert mock_cls.call_count == 1

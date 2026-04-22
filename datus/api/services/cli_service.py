@@ -49,9 +49,9 @@ class CLIService:
         """
         self.agent_config = agent_config
         self.chat_service = chat_service
-        # Initialize database manager and namespace only if agent_config is provided
+        # Initialize database manager and datasource only if agent_config is provided
         if self.agent_config:
-            self.db_manager = DBManager(self.agent_config.namespaces)
+            self.db_manager = DBManager(self.agent_config.datasource_configs)
             self.current_datasource = self.agent_config.current_datasource
         else:
             self.db_manager = None

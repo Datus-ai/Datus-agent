@@ -15,7 +15,7 @@ Supported Transport Modes:
     - stdio: Standard input/output (for Claude Desktop and CLI tools)
 
 Usage:
-    # === Dynamic Mode (Multi-namespace Server) ===
+    # === Dynamic Mode (Multi-datasource Server) ===
     # Run dynamic server with HTTP streamable (default)
     python -m datus.mcp_server --dynamic
     python -m datus.mcp_server --dynamic --host 0.0.0.0 --port 8000
@@ -23,36 +23,36 @@ Usage:
     # Run dynamic server with SSE transport
     python -m datus.mcp_server --dynamic --transport sse
 
-    # Connect to specific namespace:
-    # HTTP: http://localhost:8000/mcp/{namespace}
-    # SSE:  http://localhost:8000/sse/{namespace}
-    # With subagent: http://localhost:8000/mcp/{namespace}?subagent={subagent_name}
+    # Connect to specific datasource:
+    # HTTP: http://localhost:8000/mcp/{datasource}
+    # SSE:  http://localhost:8000/sse/{datasource}
+    # With subagent: http://localhost:8000/mcp/{datasource}?subagent={subagent_name}
 
-    # === Static Mode (Single-namespace) ===
+    # === Static Mode (Single-datasource) ===
     # Run with uv (recommended for development)
-    uv run datus-mcp --namespace demo
-    uv run datus-mcp --namespace demo --transport stdio
+    uv run datus-mcp --datasource demo
+    uv run datus-mcp --datasource demo --transport stdio
 
     # Run with uvx (after installing from PyPI)
-    uvx --from datus-agent datus-mcp --namespace demo
-    uvx --from datus-agent datus-mcp --namespace demo --transport stdio
+    uvx --from datus-agent datus-mcp --datasource demo
+    uvx --from datus-agent datus-mcp --datasource demo --transport stdio
 
     # Run with HTTP streamable mode (default)
-    python -m datus.mcp_server --namespace demo
-    python -m datus.mcp_server --namespace demo --host 0.0.0.0 --port 8000
+    python -m datus.mcp_server --datasource demo
+    python -m datus.mcp_server --datasource demo --host 0.0.0.0 --port 8000
 
     # Run with HTTP SSE mode
-    python -m datus.mcp_server --namespace demo --transport sse --port 8000
+    python -m datus.mcp_server --datasource demo --transport sse --port 8000
 
     # Run with stdio (for Claude Desktop)
-    python -m datus.mcp_server --namespace demo --transport stdio
+    python -m datus.mcp_server --datasource demo --transport stdio
 
     # For Claude Desktop config (claude_desktop_config.json):
     {
         "mcpServers": {
             "datus": {
                 "command": "uvx",
-                "args": ["--from", "datus-agent", "datus-mcp", "--namespace", "demo", "--transport", "stdio"]
+                "args": ["--from", "datus-agent", "datus-mcp", "--datasource", "demo", "--transport", "stdio"]
             }
         }
     }
@@ -62,14 +62,14 @@ Usage:
         "mcpServers": {
             "datus": {
                 "command": "python",
-                "args": ["-m", "datus.mcp_server", "--namespace", "demo", "--transport", "stdio"]
+                "args": ["-m", "datus.mcp_server", "--datasource", "demo", "--transport", "stdio"]
             }
         }
     }
 
     # For HTTP clients, connect to:
     # Static mode:  http://localhost:8000/mcp (HTTP) or http://localhost:8000/sse (SSE)
-    # Dynamic mode: http://localhost:8000/mcp/{namespace} (HTTP) or http://localhost:8000/sse/{namespace} (SSE)
+    # Dynamic mode: http://localhost:8000/mcp/{datasource} (HTTP) or http://localhost:8000/sse/{datasource} (SSE)
 """
 
 import argparse
@@ -126,15 +126,15 @@ assert ReferenceTemplateTools  # Ensure imported and decorator ran
 @dataclass
 class ToolContext:
     """
-    Container for namespace-scoped tool instances.
+    Container for datasource-scoped tool instances.
 
     This class holds the AgentConfig and tool instances for a specific
-    namespace/subagent combination, enabling tool reuse across requests.
+    datasource/subagent combination, enabling tool reuse across requests.
 
     Tools are automatically discovered via @mcp_tool_class decorated classes.
     """
 
-    namespace: str
+    datasource: str
     subagent: Optional[str]
     agent_config: AgentConfig
     tools: Dict[str, Any]  # Unified tool storage: {tool_name: tool_instance}
@@ -180,13 +180,13 @@ class ToolContext:
 
 class ToolContextManager:
     """
-    Manages ToolContext instances for multiple namespaces with LRU caching.
+    Manages ToolContext instances for multiple datasources with LRU caching.
 
     This manager:
-    1. Creates AgentConfig copies with specific namespace settings
+    1. Creates AgentConfig copies with specific datasource settings
     2. Initializes DBFuncTool and ContextSearchTools lazily
     3. Caches contexts with LRU eviction policy
-    4. Provides validation of namespaces and subagents
+    4. Provides validation of datasources and subagents
     5. Properly closes evicted contexts to release resources
     """
 
@@ -207,70 +207,58 @@ class ToolContextManager:
         self._contexts: OrderedDict[str, ToolContext] = OrderedDict()
         self._lock = asyncio.Lock()
 
-        # Load base configuration. Prefer the new services.datasources layout,
-        # but keep legacy namespace support for older configs that may still
-        # be passed to the MCP server.
+        # Load base configuration and read available datasources.
         self._config_manager = configuration_manager(config_path=config_path or "")
         services = self._config_manager.get("services", {}) or {}
         datasources = services.get("datasources", {}) or {}
-        legacy_namespaces = self._config_manager.get("namespace", {}) or {}
-        if datasources:
-            available_namespaces = set(datasources.keys())
-        elif legacy_namespaces:
-            from datus.configuration.agent_config import ServicesConfig
-
-            migrated = ServicesConfig.migrate_from_namespace(legacy_namespaces)
-            available_namespaces = set(migrated.get("datasources", {}).keys())
-        else:
-            available_namespaces = set()
-        self._available_namespaces: Set[str] = available_namespaces
+        self._available_datasources: Set[str] = set(datasources.keys())
         self._available_subagents: Set[str] = set(self._config_manager.get("agentic_nodes", {}).keys())
 
         logger.info(
-            f"ToolContextManager initialized with namespaces: {list(self._available_namespaces)}, "
+            f"ToolContextManager initialized with datasources: {list(self._available_datasources)}, "
             f"max_size: {self._max_size or 'unlimited'}"
         )
 
     @property
-    def available_namespaces(self) -> List[str]:
-        return list(self._available_namespaces)
+    def available_datasources(self) -> List[str]:
+        return list(self._available_datasources)
 
     @property
     def available_subagents(self) -> List[str]:
         return list(self._available_subagents)
 
-    def validate_namespace(self, namespace: str) -> bool:
-        return namespace in self._available_namespaces
+    def validate_datasource(self, datasource: str) -> bool:
+        return datasource in self._available_datasources
 
     def validate_subagent(self, subagent: str) -> bool:
         return subagent in self._available_subagents
 
     def _get_cache_key(
         self,
-        namespace: str,
+        datasource: str,
         subagent: Optional[str] = None,
     ) -> str:
-        return f"{namespace}:{subagent or ''}"
+        return f"{datasource}:{subagent or ''}"
 
     async def get_or_create_context(
         self,
-        namespace: str,
+        datasource: str,
         subagent: Optional[str] = None,
     ) -> ToolContext:
         """
-        Get or create a ToolContext for the given namespace/subagent.
+        Get or create a ToolContext for the given datasource/subagent.
 
         Uses LRU caching: recently accessed contexts are kept, oldest are evicted
         when cache exceeds max_size.
 
         Args:
-            namespace: The database namespace (required)
+            datasource: The database datasource (required)
             subagent: Optional sub-agent name
 
         Returns:
             ToolContext with initialized tools
         """
-        cache_key = self._get_cache_key(namespace, subagent)
+        cache_key = self._get_cache_key(datasource, subagent)
 
         async with self._lock:
             if cache_key in self._contexts:
@@ -280,7 +268,7 @@ class ToolContextManager:
 
             # Cache miss: create new context
             logger.info(f"Creating ToolContext for {cache_key}")
-            context = self._create_context(namespace, subagent)
+            context = self._create_context(datasource, subagent)
 
             # Evict oldest if cache is full
             if self._max_size > 0 and len(self._contexts) >= self._max_size:
@@ -296,12 +284,12 @@ class ToolContextManager:
 
     def _create_context(
         self,
-        namespace: str,
+        datasource: str,
         subagent: Optional[str] = None,
     ) -> ToolContext:
         """Create a new ToolContext with initialized tools from global registry."""
-        # Load agent config with namespace
-        config_kwargs = {"namespace": namespace}
+        # Load agent config with datasource
+        config_kwargs = {"datasource": datasource}
         if self.config_path:
             config_kwargs["config"] = self.config_path
 
@@ -314,14 +302,14 @@ class ToolContextManager:
                 tool_instance = tool_config.tool_class.create_dynamic(agent_config, subagent)
                 tools[tool_config.name] = tool_instance
                 logger.info(
-                    f"{tool_config.tool_class.__name__} initialized for namespace: {namespace} (multi-connector mode)"
+                    f"{tool_config.tool_class.__name__} initialized for datasource: {datasource} (multi-connector mode)"
                 )
             except Exception as e:
-                logger.warning(f"Failed to initialize {tool_config.name} for {namespace}: {e}")
+                logger.warning(f"Failed to initialize {tool_config.name} for {datasource}: {e}")
                 tools[tool_config.name] = None
 
         return ToolContext(
-            namespace=namespace,
+            datasource=datasource,
             subagent=subagent,
             agent_config=agent_config,
             tools=tools,
@@ -346,14 +334,14 @@ class LightweightDynamicMCPServer:
     """
     Lightweight MCP server with single FastMCP instance and dynamic tool contexts.
 
-    This server uses a single FastMCP instance shared across all namespaces,
+    This server uses a single FastMCP instance shared across all datasources,
     with tool execution dynamically routed to the appropriate ToolContext
     based on the current request.
 
     Key benefits:
-    - Single FastMCP overhead regardless of namespace count
+    - Single FastMCP overhead regardless of datasource count
     - Shared session manager for all requests
-    - Per-namespace tool caching (AgentConfig, DBFuncTool, ContextSearchTools)
+    - Per-datasource tool caching (AgentConfig, DBFuncTool, ContextSearchTools)
 
     Usage:
         server = LightweightDynamicMCPServer(config_path="conf/agent.yml")
@@ -401,15 +389,15 @@ class LightweightDynamicMCPServer:
         self._sse_sessions: Dict[str, ToolContext] = {}
 
     @property
-    def available_namespaces(self) -> List[str]:
-        return self._context_manager.available_namespaces
+    def available_datasources(self) -> List[str]:
+        return self._context_manager.available_datasources
 
     @property
     def available_subagents(self) -> List[str]:
         return self._context_manager.available_subagents
 
-    def validate_namespace(self, namespace: str) -> bool:
-        return self._context_manager.validate_namespace(namespace)
+    def validate_datasource(self, datasource: str) -> bool:
+        return self._context_manager.validate_datasource(datasource)
 
     def validate_subagent(self, subagent: str) -> bool:
         return self._context_manager.validate_subagent(subagent)
@@ -505,7 +493,7 @@ class LightweightDynamicMCPServer:
         scope: Dict,
         receive,
         send,
-        namespace: str,
+        datasource: str,
         subagent: Optional[str] = None,
         transport: Literal["http", "sse"] = "http",
         subpath: str = "/",
@@ -517,17 +505,17 @@ class LightweightDynamicMCPServer:
             scope: ASGI scope
             receive: ASGI receive callable
             send: ASGI send callable
-            namespace: Target namespace
+            datasource: Target datasource
             subagent: Optional subagent name
             transport: Transport type - "http" or "sse"
-            subpath: Subpath after namespace (for SSE: "/" or "/messages")
+            subpath: Subpath after datasource (for SSE: "/" or "/messages")
         """
         if not self._started:
             raise RuntimeError("Server not started. Use lifespan_context first.")
 
         # Get or create tool context
         context = await self._context_manager.get_or_create_context(
-            namespace=namespace,
+            datasource=datasource,
             subagent=subagent,
         )
 
@@ -536,8 +524,8 @@ class LightweightDynamicMCPServer:
         try:
             if transport == "sse":
                 # SSE: delegate to the SSE app with correct path rewriting
-                # /sse/{namespace} -> /sse (for SSE connection)
-                # /sse/{namespace}/messages -> /messages (for posting messages)
+                # /sse/{datasource} -> /sse (for SSE connection)
+                # /sse/{datasource}/messages -> /messages (for posting messages)
                 if self._sse_app is None:
                     raise RuntimeError("SSE app not initialized. Use lifespan_context with transport='sse' first.")
 
@@ -562,7 +550,7 @@ class LightweightDynamicMCPServer:
                                     if match:
                                         session_id = match.group(1)
                                         self._sse_sessions[session_id] = context
-                                        logger.debug(f"Captured SSE session: {session_id} -> {namespace}")
+                                        logger.debug(f"Captured SSE session: {session_id} -> {datasource}")
                         await send(message)
 
                     await self._sse_app(new_scope, receive, capturing_send)
@@ -596,7 +584,7 @@ class LightweightDynamicMCPServer:
         current_transport = transport
 
         class DynamicRouter:
-            """ASGI router that parses namespace from path and routes to server."""
+            """ASGI router that parses datasource from path and routes to server."""
 
             # Mount prefixes that need to be stripped
             MOUNT_PREFIXES = ("/sse/", "/mcp/")
@@ -607,15 +595,15 @@ class LightweightDynamicMCPServer:
             @classmethod
             def _parse_request(cls, scope: Dict) -> tuple:
                 """
-                Parse namespace, subagent, and subpath from request.
+                Parse datasource, subagent, and subpath from request.
 
                 Handles both cases:
                 1. Mount stripped the prefix: /bird_sqlite, /bird_sqlite/messages
                 2. Mount didn't strip the prefix: /sse/bird_sqlite, /mcp/bird_sqlite/messages
 
                 Returns:
-                - /bird_sqlite           -> namespace="bird_sqlite", subpath="/"
-                - /bird_sqlite/messages  -> namespace="bird_sqlite", subpath="/messages"
+                - /bird_sqlite           -> datasource="bird_sqlite", subpath="/"
+                - /bird_sqlite/messages  -> datasource="bird_sqlite", subpath="/messages"
                 """
                 path = scope.get("path", "")
                 query_string = scope.get("query_string", b"").decode("utf-8")
@@ -630,8 +618,8 @@ class LightweightDynamicMCPServer:
                 if not parts or not parts[0]:
                     return None, None, "/"
 
-                # First part is always the namespace
-                namespace = parts[0]
+                # First part is always the datasource
+                datasource = parts[0]
 
                 # Remaining parts form the subpath (for SSE: /messages, etc.)
                 subpath = "/" + "/".join(parts[1:]) if len(parts) > 1 else "/"
@@ -643,23 +631,24 @@ class LightweightDynamicMCPServer:
                     params = parse_qs(query_string)
                     subagent = params.get("subagent", [None])[0]
 
-                return namespace, subagent, subpath
+                return datasource, subagent, subpath
 
             async def __call__(self, scope, receive, send):
                 if scope["type"] != "http":
                     return
 
-                namespace, subagent, subpath = self._parse_request(scope)
+                datasource, subagent, subpath = self._parse_request(scope)
 
-                if not namespace:
-                    await self._send_error(send, 400, "Bad Request: Missing namespace in path")
+                if not datasource:
+                    await self._send_error(send, 400, "Bad Request: Missing datasource in path")
                     return
 
-                if not server.validate_namespace(namespace):
+                if not server.validate_datasource(datasource):
                     await self._send_error(
                         send,
                         404,
-                        f"Not Found: Namespace '{namespace}' not available. Available: {server.available_namespaces}",
+                        f"Not Found: Datasource '{datasource}' not available. "
+                        f"Available: {server.available_datasources}",
                     )
                     return
 
@@ -673,10 +662,10 @@ class LightweightDynamicMCPServer:
 
                 try:
                     await server.handle_request(
-                        scope, receive, send, namespace, subagent, transport=self.transport_type, subpath=subpath
+                        scope, receive, send, datasource, subagent, transport=self.transport_type, subpath=subpath
                     )
                 except Exception as e:
-                    logger.error(f"Error handling request for namespace={namespace}: {e}")
+                    logger.error(f"Error handling request for datasource={datasource}: {e}")
                     await self._send_error(send, 500, f"Internal Server Error: {str(e)}")
 
             @staticmethod
@@ -696,7 +685,7 @@ class LightweightDynamicMCPServer:
         @asynccontextmanager
         async def lifespan(_app):
             logger.info(f"Starting Datus MCP Server (Lightweight Dynamic Mode, transport={current_transport})")
-            logger.info(f"Available namespaces: {server.available_namespaces}")
+            logger.info(f"Available datasources: {server.available_datasources}")
             if server.available_subagents:
                 logger.info(f"Available subagents: {server.available_subagents}")
 
@@ -709,14 +698,14 @@ class LightweightDynamicMCPServer:
             # Determine endpoint based on transport
             if current_transport == "sse":
                 endpoints = {
-                    "sse": "/sse/{namespace}",
-                    "sse_with_subagent": "/sse/{namespace}?subagent={subagent_name}",
+                    "sse": "/sse/{datasource}",
+                    "sse_with_subagent": "/sse/{datasource}?subagent={subagent_name}",
                     "health": "/health",
                 }
             else:
                 endpoints = {
-                    "mcp": "/mcp/{namespace}",
-                    "mcp_with_subagent": "/mcp/{namespace}?subagent={subagent_name}",
+                    "mcp": "/mcp/{datasource}",
+                    "mcp_with_subagent": "/mcp/{datasource}?subagent={subagent_name}",
                     "health": "/health",
                 }
 
@@ -725,7 +714,7 @@ class LightweightDynamicMCPServer:
                     "service": "Datus MCP Server",
                     "mode": "lightweight-dynamic",
                     "transport": current_transport,
-                    "available_namespaces": server.available_namespaces,
+                    "available_datasources": server.available_datasources,
                     "available_subagents": server.available_subagents,
                     "endpoints": endpoints,
                 }
@@ -768,7 +757,7 @@ class LightweightDynamicMCPServer:
                 scope["root_path"] = ""
                 scope["path"] = "/messages/"
 
-                logger.debug(f"Messages request: session_id={session_id}, namespace={context.namespace}")
+                logger.debug(f"Messages request: session_id={session_id}, datasource={context.datasource}")
 
                 # Create a response by calling the SSE app directly
                 # We need to capture the response from the ASGI app
@@ -851,7 +840,7 @@ class DatusMCPServer:
 
     def __init__(
         self,
-        namespace: str,
+        datasource: str,
         sub_agent: Optional[str] = None,
         database_name: Optional[str] = None,
         config_path: Optional[str] = None,
@@ -861,13 +850,13 @@ class DatusMCPServer:
         Initialize the Datus MCP Server.
 
         Args:
-            namespace: The database namespace to use (required)
+            datasource: The database datasource to use (required)
             sub_agent: Optional sub-agent name for scoped context
             database_name: Optional database name override
             config_path: Optional path to agent configuration file
             stateless_http: If True, creates a new transport per request (for dynamic routing)
         """
-        self.namespace = namespace
+        self.datasource = datasource
         self.sub_agent = sub_agent
         self.database_name = database_name or ""
         self._stateless_http = stateless_http
@@ -885,7 +874,7 @@ class DatusMCPServer:
         )
 
         # Load agent configuration
-        config_kwargs = {"namespace": namespace}
+        config_kwargs = {"datasource": datasource}
         if config_path:
             config_kwargs["config"] = config_path
         if database_name:
@@ -910,7 +899,7 @@ class DatusMCPServer:
                     self.database_name,
                 )
                 self.tools[tool_config.name] = tool_instance
-                logger.info(f"{tool_config.tool_class.__name__} initialized for namespace: {self.namespace}")
+                logger.info(f"{tool_config.tool_class.__name__} initialized for datasource: {self.datasource}")
             except Exception as e:
                 logger.warning(f"Failed to initialize {tool_config.name}: {e}")
                 self.tools[tool_config.name] = None
@@ -994,7 +983,7 @@ class DatusMCPServer:
             host: Host to bind for HTTP transports (default: 127.0.0.1)
             port: Port to bind for HTTP transports (default: 8000)
         """
-        logger.info(f"Starting Datus MCP Server (namespace={self.namespace}, transport={transport})")
+        logger.info(f"Starting Datus MCP Server (datasource={self.datasource}, transport={transport})")
 
         if transport == "http":
             self._run_http_server(self.mcp.streamable_http_app(), host, port, "/mcp")
@@ -1010,7 +999,7 @@ class DatusMCPServer:
         logger.info(f"HTTP server starting on http://{host}:{port}{path}")
         print(f"\n{'=' * 60}")
         print("  Datus MCP Server (HTTP Mode)")
-        print(f"  Namespace: {self.namespace}")
+        print(f"  Datasource: {self.datasource}")
         print(f"  Endpoint:  http://{host}:{port}{path}")
         print(f"{'=' * 60}\n")
 
@@ -1026,7 +1015,7 @@ class DatusMCPServer:
             from datus.mcp_server import create_server
 
             app = FastAPI()
-            mcp_server = create_server(namespace="demo")
+            mcp_server = create_server(datasource="demo")
             app.mount("/sse", mcp_server.get_sse_app())
 
         Returns:
@@ -1044,7 +1033,7 @@ class DatusMCPServer:
             from datus.mcp_server import create_server
 
             app = FastAPI()
-            mcp_server = create_server(namespace="demo")
+            mcp_server = create_server(datasource="demo")
             app.mount("/mcp", mcp_server.get_streamable_http_app())
 
         Returns:
@@ -1054,7 +1043,7 @@ class DatusMCPServer:
 
 
 def create_server(
-    namespace: str,
+    datasource: str,
     sub_agent: Optional[str] = None,
     database_name: Optional[str] = None,
     config_path: Optional[str] = None,
@@ -1063,7 +1052,7 @@ def create_server(
     Factory function to create a DatusMCPServer instance.
 
     Args:
-        namespace: The database namespace to use (required)
+        datasource: The database datasource to use (required)
         sub_agent: Optional sub-agent name for scoped context
         database_name: Optional database name override
         config_path: Optional path to agent configuration file
@@ -1072,7 +1061,7 @@ def create_server(
         Configured DatusMCPServer instance
     """
     return DatusMCPServer(
-        namespace=namespace,
+        datasource=datasource,
         sub_agent=sub_agent,
         database_name=database_name,
         config_path=config_path,
@@ -1085,11 +1074,11 @@ def create_dynamic_app(
     transport: Literal["http", "sse"] = "http",
 ):
     """
-    Create a Starlette application with dynamic namespace/subagent routing.
+    Create a Starlette application with dynamic datasource/subagent routing.
 
     This function creates an ASGI app that:
-    1. Loads all available namespaces from configuration at startup
-    2. Routes requests to /mcp/{namespace} (HTTP) or /sse/{namespace} (SSE)
+    1. Loads all available datasources from configuration at startup
+    2. Routes requests to /mcp/{datasource} (HTTP) or /sse/{datasource} (SSE)
     3. Supports optional subagent parameter via query string
     4. Properly handles MCP's streaming protocol
 
@@ -1148,8 +1137,8 @@ def run_dynamic_server(
     print(f"\n{'=' * 60}")
     print(f"  Datus MCP Server (Dynamic Mode, transport={transport})")
     print(f"  Cache size: {max_cache_size or 64}")
-    print(f"  Endpoint: http://{host}:{port}{endpoint_path}/{{namespace}}")
-    print(f"  With subagent: http://{host}:{port}{endpoint_path}/{{namespace}}?subagent={{name}}")
+    print(f"  Endpoint: http://{host}:{port}{endpoint_path}/{{datasource}}")
+    print(f"  With subagent: http://{host}:{port}{endpoint_path}/{{datasource}}?subagent={{name}}")
     print(f"  Info: http://{host}:{port}/")
     print(f"{'=' * 60}\n")
 
@@ -1168,7 +1157,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    # === Dynamic Mode (Multi-namespace Server) ===
+    # === Dynamic Mode (Multi-datasource Server) ===
     # Run dynamic server with HTTP streamable (default)
     python -m datus.mcp_server --dynamic
     python -m datus.mcp_server --dynamic --host 0.0.0.0 --port 8000
@@ -1176,32 +1165,32 @@ Examples:
     # Run dynamic server with SSE transport
     python -m datus.mcp_server --dynamic --transport sse
 
-    # Connect to specific namespace:
-    # HTTP: http://localhost:8000/mcp/{namespace}
-    # SSE:  http://localhost:8000/sse/{namespace}
+    # Connect to specific datasource:
+    # HTTP: http://localhost:8000/mcp/{datasource}
+    # SSE:  http://localhost:8000/sse/{datasource}
     # With subagent: ?subagent={subagent_name}
 
-    # === Static Mode (Single-namespace) ===
+    # === Static Mode (Single-datasource) ===
     # Run with uv (recommended for development)
-    uv run datus-mcp --namespace demo
-    uv run datus-mcp --namespace demo --transport stdio
+    uv run datus-mcp --datasource demo
+    uv run datus-mcp --datasource demo --transport stdio
 
     # Run with uvx (after installing from PyPI)
-    uvx --from datus-agent datus-mcp --namespace demo
-    uvx --from datus-agent datus-mcp --namespace demo --transport stdio
+    uvx --from datus-agent datus-mcp --datasource demo
+    uvx --from datus-agent datus-mcp --datasource demo --transport stdio
 
     # Run with HTTP streamable mode (default)
-    python -m datus.mcp_server --namespace demo
-    python -m datus.mcp_server --namespace demo --host 0.0.0.0 --port 8000
+    python -m datus.mcp_server --datasource demo
+    python -m datus.mcp_server --datasource demo --host 0.0.0.0 --port 8000
 
     # Run with HTTP SSE mode
-    python -m datus.mcp_server --namespace demo --transport sse --port 8000
+    python -m datus.mcp_server --datasource demo --transport sse --port 8000
 
     # Run with stdio (for Claude Desktop)
-    python -m datus.mcp_server --namespace demo --transport stdio
+    python -m datus.mcp_server --datasource demo --transport stdio
 
     # Use custom config file
-    python -m datus.mcp_server --namespace demo --config /path/to/agent.yml
+    python -m datus.mcp_server --datasource demo --config /path/to/agent.yml
 
 Claude Desktop Configuration (claude_desktop_config.json):
 
@@ -1209,14 +1198,14 @@ Claude Desktop Configuration (claude_desktop_config.json):
         "mcpServers": {
             "datus": {
                 "command": "uvx",
-                "args": ["--from", "datus-agent", "datus-mcp", "--namespace", "demo", "--transport", "stdio"]
+                "args": ["--from", "datus-agent", "datus-mcp", "--datasource", "demo", "--transport", "stdio"]
             }
         }
     }
 
 HTTP Client Usage:
     # Static mode: http://localhost:8000/mcp
-    # Dynamic mode: http://localhost:8000/mcp/{namespace}
+    # Dynamic mode: http://localhost:8000/mcp/{datasource}
     # SSE transport: http://localhost:8000/sse (static mode only)
         """,
     )
@@ -1226,19 +1215,13 @@ HTTP Client Usage:
     mode_group.add_argument(
         "--dynamic",
         action="store_true",
-        help="Run in dynamic mode: support all namespaces via /mcp/{namespace} URL",
+        help="Run in dynamic mode: support all datasources via /mcp/{datasource} URL",
     )
     mode_group.add_argument(
-        "--namespace",
-        "-n",
-        help="Run in static mode with specified namespace",
-    )
-
-    parser.add_argument(
         "--datasource",
-        "-d",
-        default=None,
-        help="Run in static mode with specified datasource name",
+        "-n",
+        dest="datasource",
+        help="Run in static mode with specified datasource",
     )
 
     parser.add_argument(
@@ -1292,7 +1275,7 @@ HTTP Client Usage:
     configure_logging(debug=args.debug, console_output=(args.transport != "stdio"))
 
     if args.dynamic:
-        # Dynamic mode: run multi-namespace server
+        # Dynamic mode: run multi-datasource server
         # Note: stdio is not supported in dynamic mode
         if args.transport == "stdio":
             parser.error("stdio transport is not supported in dynamic mode. Use http or sse.")
@@ -1306,11 +1289,10 @@ HTTP Client Usage:
             transport=args.transport,
         )
     else:
-        # Static mode: run single-namespace server
+        # Static mode: run single-datasource server
         server = create_server(
-            namespace=args.namespace,
+            datasource=args.datasource,
             sub_agent=args.sub_agent,
-            database_name=args.datasource,
             config_path=args.config,
         )
         server.run(transport=args.transport, host=args.host, port=args.port)

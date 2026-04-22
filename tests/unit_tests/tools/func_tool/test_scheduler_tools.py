@@ -132,9 +132,9 @@ class TestGetAdapter:
                 adapter = tools._get_adapter()
         assert adapter is mock_adapter
 
-    def test_airflow_injects_project_name_as_file_namespace_only(self):
+    def test_airflow_injects_project_name_as_file_scope_only(self):
         """Datus auto-injects ``agent.project_name`` into the Airflow
-        adapter config — but *only* for the filesystem-namespace role
+        adapter config — but *only* for the filesystem-scoping role
         (DAG subdirectory under ``dags_folder_root``). In the adapter
         0.2.0+ schema ``project_name`` no longer drives ``dag_id_prefix``
         defaulting, so list/get operations aren't silently filtered by
@@ -166,7 +166,7 @@ class TestGetAdapter:
 
         call_kwargs = mock_registry.create_adapter.call_args.kwargs
         assert call_kwargs["platform"] == "airflow"
-        # File-namespace is auto-filled so DAG files land in a per-workspace subdir.
+        # File-scoping is auto-filled so DAG files land in a per-workspace subdir.
         assert call_kwargs["config"]["project_name"] == "reports-team"
         # dag_id_prefix is NOT auto-set — that's an explicit opt-in.
         assert "dag_id_prefix" not in call_kwargs["config"]

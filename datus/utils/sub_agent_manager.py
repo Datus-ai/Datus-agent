@@ -21,12 +21,12 @@ class SubAgentManager:
     def __init__(
         self,
         configuration_manager: ConfigurationManager,
-        namespace: str,
+        datasource: str,
         agent_config: AgentConfig,
     ):
         self._configuration_manager = configuration_manager
         self._prompt_manager: PromptManager = PromptManager(agent_config=agent_config)
-        self._namespace = namespace
+        self._datasource = datasource
         self._agent_config = agent_config
 
     @property
@@ -59,7 +59,7 @@ class SubAgentManager:
         if previous_key in agents:
             previous_config = agents.get(previous_key)
 
-        payload = config.as_payload(self._namespace)
+        payload = config.as_payload(self._datasource)
         result: Dict[str, Any] = {
             "config_path": str(self.config_path),
             "prompt_path": None,
@@ -78,7 +78,7 @@ class SubAgentManager:
             self._remove_prompt_template(previous_name, old_prompt_version)
             agents.pop(previous_name, None)
 
-        agents[config.system_prompt] = config.as_payload(self._namespace)
+        agents[config.system_prompt] = config.as_payload(self._datasource)
 
         self._configuration_manager.update_item("agentic_nodes", agents, delete_old_key=True)
         self._agent_config.agentic_nodes = agents

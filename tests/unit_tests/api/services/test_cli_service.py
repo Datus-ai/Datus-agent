@@ -46,7 +46,7 @@ class TestCLIServiceInit:
         assert cli_svc.cli_context.current_db_name == "california_schools"
 
     def test_init_sets_current_db_name(self, cli_svc):
-        """Init resolves current_db_name to the default database in the namespace."""
+        """Init resolves current_db_name to the default database in the datasource."""
         assert cli_svc.current_db_name == "california_schools"
 
 

@@ -36,8 +36,8 @@ class MetadataCommands:
         """List all databases in the current connection."""
         try:
             # For SQLite, this is simply the current database file
-            namespace = self.cli.agent_config.current_datasource
-            database_config_dict = self.cli.agent_config.namespaces[namespace]
+            datasource = self.cli.agent_config.current_datasource
+            database_config_dict = self.cli.agent_config.datasource_configs[datasource]
             result = []
             show_uri = False
             if len(database_config_dict) > 1:

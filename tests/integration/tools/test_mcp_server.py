@@ -10,10 +10,10 @@ with MCP SDK clients. Covers:
   - Static mode with HTTP Streamable transport
   - Static mode with SSE transport
   - Static mode with stdio transport
-  - Dynamic mode with HTTP Streamable transport (multi-namespace)
-  - Dynamic mode with SSE transport (multi-namespace)
+  - Dynamic mode with HTTP Streamable transport (multi-datasource)
+  - Dynamic mode with SSE transport (multi-datasource)
 
-Namespaces tested:
+Datasources tested:
   - ssb_sqlite: SQLite database with SSB benchmark tables
   - duckdb: DuckDB database with MetricFlow demo tables
 """
@@ -250,15 +250,15 @@ class DynamicModeTestBase:
     """
 
     def _ssb_session(self):
-        """Return an async context manager for the ssb_sqlite namespace."""
+        """Return an async context manager for the ssb_sqlite datasource."""
         raise NotImplementedError
 
     def _duckdb_session(self):
-        """Return an async context manager for the duckdb namespace."""
+        """Return an async context manager for the duckdb datasource."""
         raise NotImplementedError
 
     async def test_list_tools_ssb(self):
-        """Verify tools are discoverable on ssb_sqlite namespace."""
+        """Verify tools are discoverable on ssb_sqlite datasource."""
         async with self._ssb_session() as session:
             result = await session.list_tools()
             tool_names = {t.name for t in result.tools}
@@ -266,7 +266,7 @@ class DynamicModeTestBase:
                 assert expected in tool_names, f"Missing expected tool: {expected}"
 
     async def test_list_tools_duckdb(self):
-        """Verify tools are discoverable on duckdb namespace."""
+        """Verify tools are discoverable on duckdb datasource."""
         async with self._duckdb_session() as session:
             result = await session.list_tools()
             tool_names = {t.name for t in result.tools}
@@ -318,7 +318,7 @@ class DynamicModeTestBase:
             assert data["success"] == 1, f"read_query duckdb failed: {data.get('error')}"
             assert data["result"] is not None
 
-    async def test_multi_namespace_isolation(self):
+    async def test_multi_datasource_isolation(self):
         """Verify that ssb_sqlite and duckdb return different table sets."""
         async with self._ssb_session() as ssb_session:
             ssb_result = await ssb_session.call_tool("list_tables", {})
@@ -352,9 +352,9 @@ class TestStaticModeHTTPStreamable(StaticModeTestBase):
 
     @pytest_asyncio.fixture(autouse=True)
     async def static_server(self):
-        """Start a static-mode MCP server for ssb_sqlite namespace."""
+        """Start a static-mode MCP server for ssb_sqlite datasource."""
         port = find_free_port()
-        server = DatusMCPServer(namespace="ssb_sqlite", config_path=CONFIG_PATH, stateless_http=True)
+        server = DatusMCPServer(datasource="ssb_sqlite", config_path=CONFIG_PATH, stateless_http=True)
         app = server.get_streamable_http_app()
         uvi_server, task = await start_uvicorn(app, port)
         self.port = port
@@ -381,7 +381,7 @@ class TestStaticModeSSE(StaticModeTestBase):
     async def static_sse_server(self):
         """Start a static-mode MCP server with SSE transport for ssb_sqlite."""
         port = find_free_port()
-        server = DatusMCPServer(namespace="ssb_sqlite", config_path=CONFIG_PATH)
+        server = DatusMCPServer(datasource="ssb_sqlite", config_path=CONFIG_PATH)
         app = server.get_sse_app()
         uvi_server, task = await start_uvicorn(app, port)
         self.port = port
@@ -412,7 +412,7 @@ class TestStaticModeStdio(StaticModeTestBase):
             args=[
                 "-m",
                 "datus.mcp_server",
-                "--namespace",
+                "--datasource",
                 "ssb_sqlite",
                 "--transport",
                 "stdio",
@@ -523,9 +523,9 @@ class TestMCPClient:
 
     @pytest_asyncio.fixture(autouse=True)
     async def mcp_server(self):
-        """Start a static-mode MCP server for ssb_sqlite namespace."""
+        """Start a static-mode MCP server for ssb_sqlite datasource."""
         port = find_free_port()
-        server = DatusMCPServer(namespace="ssb_sqlite", config_path=CONFIG_PATH, stateless_http=True)
+        server = DatusMCPServer(datasource="ssb_sqlite", config_path=CONFIG_PATH, stateless_http=True)
         app = server.get_streamable_http_app()
         uvi_server, task = await start_uvicorn(app, port)
         self.url = f"http://127.0.0.1:{port}/mcp"
@@ -609,7 +609,7 @@ class TestMCPToolRegistration:
     @pytest.fixture
     def server(self):
         """Create a test server instance."""
-        server = create_server(namespace="ssb_sqlite", config_path=CONFIG_PATH)
+        server = create_server(datasource="ssb_sqlite", config_path=CONFIG_PATH)
         yield server
         server.close()
 
@@ -639,7 +639,7 @@ class TestMCPToolExecution:
     @pytest.fixture
     def server(self):
         """Create a test server instance."""
-        server = create_server(namespace="ssb_sqlite", config_path=CONFIG_PATH)
+        server = create_server(datasource="ssb_sqlite", config_path=CONFIG_PATH)
         yield server
         server.close()
 

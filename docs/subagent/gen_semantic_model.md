@@ -15,7 +15,7 @@ A semantic model is a YAML configuration that defines:
 
 ## How It Works
 
-Start Datus CLI with `datus --database <namespace>`, and begin with a subagent command:
+Start Datus CLI with `datus --database <datasource>`, and begin with a subagent command:
 
 ```text
   /gen_semantic_model generate a semantic model for table <table_name>
@@ -88,7 +88,7 @@ See [Semantic Layer Configuration](../configuration/semantic_layer.md) for the f
 - **Hooks**: User confirmation workflow in interactive mode
 - **MCP Server**: MetricFlow validation server
 - **System Prompt**: Built-in template version 1.0
-- **Workspace**: `~/.datus/data/{namespace}/semantic_models`
+- **Workspace**: `~/.datus/data/{datasource}/semantic_models`
 
 ### Configuration Options
 

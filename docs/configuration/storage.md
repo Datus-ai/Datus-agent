@@ -39,7 +39,7 @@ storage:
 
 The final data paths will be:
 
-- `data/datus_db_<namespace_name>` for each configured namespace
+- `data/datus_db_<datasource_name>` for each configured datasource
 - Example: `data/datus_db_snowflake`, `data/datus_db_local_sqlite`
 
 ### Device Configuration
@@ -278,7 +278,7 @@ The storage configuration works with the metrics section to embed business metri
 
 ```yaml
 metrics:
-  duckdb:                              # Namespace reference
+  duckdb:                              # Datasource reference
     domain: sale                       # Business domain
     layer1: layer1                     # Metric layer classification
     layer2: layer2                     # Sub-layer classification
@@ -303,7 +303,7 @@ By default (no `rdb` / `vector` section in YAML), Datus Agent uses:
 - **Vector**: LanceDB (file-based, zero-config)
 - **RDB**: SQLite (file-based, zero-config)
 
-Data is stored under `data/datus_db_<namespace>/`.
+Data is stored under `data/datus_db_<datasource>/`.
 
 ### PostgreSQL Backend
 

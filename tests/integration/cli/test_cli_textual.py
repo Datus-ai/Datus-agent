@@ -15,14 +15,14 @@ from tests.conftest import load_acceptance_config
 
 @pytest.fixture
 def agent_config() -> AgentConfig:
-    agent_config = load_acceptance_config(namespace="bird_school")
+    agent_config = load_acceptance_config(datasource="bird_school")
     agent_config.rag_base_path = str(Path("tests") / "data")
     return agent_config
 
 
 @pytest.fixture
 def db_manager(agent_config: AgentConfig) -> DBManager:
-    return db_manager_instance(agent_config.namespaces)
+    return db_manager_instance(agent_config.datasource_configs)
 
 
 @pytest.fixture
@@ -51,7 +51,7 @@ def catalog_agent_config(agent_config: AgentConfig, tmp_path: Path) -> AgentConf
 
 @pytest.fixture
 def catalog_db_manager(catalog_agent_config: AgentConfig) -> DBManager:
-    return DBManager(catalog_agent_config.namespaces)
+    return DBManager(catalog_agent_config.datasource_configs)
 
 
 @pytest.mark.acceptance

@@ -16,7 +16,7 @@ Configure benchmarks in the `benchmark` section of your configuration file:
 
 ```yaml
 benchmark:
-  custom_bird:                       # Custom benchmark namespace
+  custom_bird:                       # Custom benchmark datasource
     benchmark_path: benchmark/custom_bird/dev_data
 
   custom_spider:

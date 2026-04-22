@@ -13,7 +13,7 @@ Validates that under a real LLM execution loop:
   * No file is dropped at the subject root (proof that the normalizer kicked in).
   * No FileNotFoundError surfaces during the LLM's read-back tool calls.
 
-Configured via tests/conf/agent.yml + namespace=bird_school. Auto-skips when the
+Configured via tests/conf/agent.yml + datasource=bird_school. Auto-skips when the
 required SQLite database or DEEPSEEK_API_KEY is missing.
 """
 

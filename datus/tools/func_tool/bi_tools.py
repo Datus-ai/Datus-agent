@@ -215,12 +215,12 @@ class BIFuncTool:
             try:
                 from datus.tools.db_tools.db_manager import db_manager_instance
 
-                db_manager = db_manager_instance(self.agent_config.namespaces)
+                db_manager = db_manager_instance(self.agent_config.datasource_configs)
                 current_db = getattr(self.agent_config, "current_datasource", "") or ""
-                # Pick whichever connector the namespace carries rather than
-                # assuming ``namespace == logic_db``. In the post-services
+                # Pick whichever connector the datasource carries rather than
+                # assuming ``datasource == logic_db``. In the post-services
                 # migration they happen to match, but ``first_conn_with_name``
-                # stays correct if a namespace ever bundles multiple DBs again.
+                # stays correct if a datasource ever bundles multiple DBs again.
                 _, self._read_connector = db_manager.first_conn_with_name(current_db)
             except Exception as exc:
                 logger.warning(f"No source DB connector for write_query: {exc}")
@@ -607,7 +607,7 @@ class BIFuncTool:
         that Superset/Grafana can query them directly without touching the source DB.
 
         Args:
-            sql: SELECT statement to run on the source (namespace) database.
+            sql: SELECT statement to run on the source (datasource) database.
             table_name: Target table name inside the dashboard database.
             if_exists: What to do if the table already exists: "replace" (default),
                        "append", or "fail".

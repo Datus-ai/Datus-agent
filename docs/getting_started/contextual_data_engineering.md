@@ -226,7 +226,7 @@ When data engineers receive issue links from customers, they can revise SQL, upd
 
     ---
 
-    Configure advanced settings for agents, namespaces, and storage.
+    Configure advanced settings for agents, datasources, and storage.
 
     [:octicons-arrow-right-24: Configuration guide](../configuration/introduction.md)
 

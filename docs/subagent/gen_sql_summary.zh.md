@@ -85,7 +85,7 @@ agentic_nodes:
 - **工具**：文件系统工具和 `generate_sql_summary_id`
 - **Hooks**：交互模式下的用户确认工作流
 - **系统提示**：内置模板版本 1.0
-- **工作空间**：`~/.datus/data/{namespace}/reference_sql`
+- **工作空间**：`~/.datus/data/{datasource}/reference_sql`
 - **上下文检索**：自动查询现有主题树和相似 SQL
 
 ### 主题树分类

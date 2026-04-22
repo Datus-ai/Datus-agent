@@ -200,7 +200,7 @@ def compare_csv_results(actual_path, expected_path):
 
 
 def analyze_yaml_file(
-    filepath, workdir, namespace, enable_comparison=False, target_task_id=None, gold_path=None, result_dir="output"
+    filepath, workdir, datasource, enable_comparison=False, target_task_id=None, gold_path=None, result_dir="output"
 ):
     try:
         with open(filepath, "r", encoding="utf-8") as f:
@@ -254,7 +254,7 @@ def analyze_yaml_file(
                         task_id = task.get("id", "") if task else ""
 
                         if task_id and (target_task_id is None or task_id == target_task_id):
-                            comparison = compare_with_gold_standard(task_id, workdir, namespace, gold_path, result_dir)
+                            comparison = compare_with_gold_standard(task_id, workdir, datasource, gold_path, result_dir)
                             if comparison:
                                 results["comparison_results"].append(comparison)
                 else:
@@ -304,7 +304,7 @@ def analyze_yaml_file(
 
                             if task_id and (target_task_id is None or task_id == target_task_id):
                                 comparison = compare_with_gold_standard(
-                                    task_id, workdir, namespace, gold_path, result_dir
+                                    task_id, workdir, datasource, gold_path, result_dir
                                 )
                                 if comparison:
                                     results["comparison_results"].append(comparison)
@@ -328,9 +328,9 @@ def analyze_yaml_file(
         return {"error": f"parse file failed: {str(e)}\nTraceback: {traceback.format_exc()}"}
 
 
-def compare_with_gold_standard(task_id, workdir, namespace, gold_path, result_dir="output"):
+def compare_with_gold_standard(task_id, workdir, datasource, gold_path, result_dir="output"):
     """Compare execution results with gold standard"""
-    actual_csv = os.path.join(workdir, result_dir, namespace, f"{task_id}.csv")
+    actual_csv = os.path.join(workdir, result_dir, datasource, f"{task_id}.csv")
     gold_csv = os.path.join(workdir, gold_path, "exec_result", f"{task_id}.csv")
 
     comparison_result = {
@@ -382,7 +382,7 @@ def parse_integration_script(script_path):
     return test_commands, task_ids
 
 
-def clean_successful_tests_and_generate_rerun_script(workdir, namespace, analysis_results):
+def clean_successful_tests_and_generate_rerun_script(workdir, datasource, analysis_results):
     """Clean failed test files and generate rerun script for failed tests"""
     script_path = os.path.join(workdir, "tests", "integration", "run_integration.sh")
 
@@ -462,7 +462,7 @@ def clean_successful_tests_and_generate_rerun_script(workdir, namespace, analysi
         print(f"Failed to generate rerun script: {e}")
 
 
-def generate_report(analysis_results, namespace, output_file=None, json_output=False, enable_comparison=False):
+def generate_report(analysis_results, datasource, output_file=None, json_output=False, enable_comparison=False):
     if json_output:
         # Collect task IDs for different categories
         failed_task_ids = []
@@ -471,7 +471,7 @@ def generate_report(analysis_results, namespace, output_file=None, json_output=F
         empty_result_task_ids = []
 
         json_report = {
-            "namespace": namespace,
+            "datasource": datasource,
             "generated_time": datetime.now().isoformat(),
             "summary": {
                 "total_files": len(analysis_results),
@@ -572,7 +572,7 @@ def generate_report(analysis_results, namespace, output_file=None, json_output=F
 
     report_lines = []
     report_lines.append("=" * 60)
-    report_lines.append(f"Workflow Evaluation Report - {namespace}")
+    report_lines.append(f"Workflow Evaluation Report - {datasource}")
     report_lines.append("=" * 60)
     report_lines.append(f"Generated Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     report_lines.append("")
@@ -737,7 +737,7 @@ def generate_report(analysis_results, namespace, output_file=None, json_output=F
 
 def main():
     parser = argparse.ArgumentParser(description="evaluate script")
-    parser.add_argument("--namespace", required=True, help="namespace (example: snowflake)")
+    parser.add_argument("--datasource", required=True, help="Datasource name (example: snowflake)")
     parser.add_argument("--workdir", required=True, help="working directory")
     parser.add_argument("--gold-path", required=True, help="path to gold standard files directory")
     parser.add_argument("--result-dir", default="output", help="result directory (default: output)")
@@ -785,7 +785,7 @@ def main():
         result = analyze_yaml_file(
             filepath,
             args.workdir,
-            args.namespace,
+            args.datasource,
             args.enable_comparison,
             args.task_id,
             args.gold_path,
@@ -793,13 +793,13 @@ def main():
         )
         analysis_results[task_id] = result
 
-    generate_report(analysis_results, args.namespace, args.output, args.json, args.enable_comparison)
+    generate_report(analysis_results, args.datasource, args.output, args.json, args.enable_comparison)
 
     if args.clean_and_rerun:
         print("\n" + "=" * 60)
         print("Cleaning failed tests and generating rerun script...")
         print("=" * 60)
-        clean_successful_tests_and_generate_rerun_script(args.workdir, args.namespace, analysis_results)
+        clean_successful_tests_and_generate_rerun_script(args.workdir, args.datasource, analysis_results)
 
     return 0
 

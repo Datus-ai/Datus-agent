@@ -139,7 +139,7 @@ def agent_config() -> AgentConfig:
 @pytest.fixture(scope="module")
 def ssb_agent_config() -> AgentConfig:
     load_dotenv()
-    return load_acceptance_config(namespace="ssb_sqlite")
+    return load_acceptance_config(datasource="ssb_sqlite")
 
 
 @pytest.fixture(scope="module")

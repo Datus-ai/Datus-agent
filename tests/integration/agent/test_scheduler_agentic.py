@@ -48,7 +48,7 @@ def scheduler_agent_config():
 
     from tests.conftest import load_acceptance_config
 
-    config = load_acceptance_config(namespace="bird_school")
+    config = load_acceptance_config(datasource="bird_school")
     config.rag_base_path = "tests/data"
     config.agentic_nodes = copy.deepcopy(config.agentic_nodes)
 

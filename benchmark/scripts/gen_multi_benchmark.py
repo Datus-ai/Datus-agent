@@ -78,7 +78,7 @@ def load_benchmark_data(benchmark_path):
     return instance_ids
 
 
-def generate_multi_benchmark_scripts(workdir, namespace, benchmark, instance_ids, agent_num, task_limit):
+def generate_multi_benchmark_scripts(workdir, datasource, benchmark, instance_ids, agent_num, task_limit):
     if task_limit and task_limit < len(instance_ids):
         instance_ids = instance_ids[:task_limit]
 
@@ -89,14 +89,14 @@ def generate_multi_benchmark_scripts(workdir, namespace, benchmark, instance_ids
             f.write("#!/bin/bash\n\n")
             f.write("# generate test case\n")
             f.write(f"# agent: agent{agent_idx}\n")
-            f.write(f"# namespace: {namespace}\n")
+            f.write(f"# datasource: {datasource}\n")
             f.write(f"# benchmark: {benchmark}\n")
             f.write(f"# task count: {len(instance_ids)}\n\n")
 
             for instance_id in instance_ids:
                 command = (
                     f"(cd {workdir} && python {workdir}/datus/main.py benchmark "
-                    f"--namespace {namespace} --benchmark {benchmark} "
+                    f"--datasource {datasource} --benchmark {benchmark} "
                     f"--benchmark_task_id {instance_id} "
                     f"--config conf/multi/agent{agent_idx}.yml "
                     f"--trajectory_dir multi/agent{agent_idx}_save "
@@ -111,7 +111,7 @@ def generate_multi_benchmark_scripts(workdir, namespace, benchmark, instance_ids
     with open(select_script_file, "w", encoding="utf-8") as f:
         f.write("#!/bin/bash\n\n")
         f.write("# select best agent script\n")
-        f.write(f"# namespace: {namespace}\n")
+        f.write(f"# datasource: {datasource}\n")
         f.write(f"# agent_num: {agent_num}\n")
         f.write(f"# task count: {len(instance_ids)}\n\n")
 
@@ -119,7 +119,7 @@ def generate_multi_benchmark_scripts(workdir, namespace, benchmark, instance_ids
             # TODO gold-path
             command = (
                 f"python select_answer.py --workdir={workdir} --gold-path=benchmark/bird/dev_20240627/gold "
-                f"--namespace {namespace} --agent={agent_num} --task-id={task_id}\n"
+                f"--datasource {datasource} --agent={agent_num} --task-id={task_id}\n"
             )
             f.write(command)
 
@@ -131,7 +131,7 @@ def generate_multi_benchmark_scripts(workdir, namespace, benchmark, instance_ids
 
 def main():
     parser = argparse.ArgumentParser(description="Generate multi-agent benchmark scripts")
-    parser.add_argument("--namespace", required=True, help="namespace (example: bird_sqlite)")
+    parser.add_argument("--datasource", required=True, help="Datasource name (example: bird_sqlite)")
     parser.add_argument("--benchmark", required=True, help="benchmark (example: bird_dev)")
     parser.add_argument("--workdir", required=True, help="path to agent base directory")
     parser.add_argument("--agent_num", type=int, required=True, help="number of agents to generate scripts for")
@@ -154,7 +154,7 @@ def main():
 
         generate_multi_benchmark_scripts(
             args.workdir,
-            args.namespace,
+            args.datasource,
             args.benchmark,
             instance_ids,
             args.agent_num,
