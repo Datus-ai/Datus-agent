@@ -1,0 +1,99 @@
+# Copyright 2025-present DatusAI, Inc.
+# Licensed under the Apache License, Version 2.0.
+# See http://www.apache.org/licenses/LICENSE-2.0 for details.
+
+"""Tests for permission profile loading in AgentConfig."""
+
+from datus.configuration.agent_config import AgentConfig
+from datus.tools.permission.permission_config import PermissionLevel
+
+
+def _make_config(permissions_raw):
+    """Build a bare AgentConfig exercising only ``_init_permissions_config``.
+
+    Real AgentConfig.__init__ requires substantial YAML; for these tests we
+    instantiate with ``__new__`` and call the helper directly. If the
+    project adds a richer fixture helper later, prefer that.
+    """
+    cfg = AgentConfig.__new__(AgentConfig)
+    cfg.active_profile_name = "normal"  # pre-seed so loader can overwrite
+    cfg.permissions_config = cfg._init_permissions_config(permissions_raw or {})
+    return cfg
+
+
+def test_missing_permissions_yields_normal_profile():
+    cfg = _make_config(None)
+    assert cfg.active_profile_name == "normal"
+    # Normal profile has explicit read allows
+    assert any(r.tool == "db_tools" and r.pattern == "read_query" for r in cfg.permissions_config.rules)
+
+
+def test_empty_permissions_yields_normal_profile():
+    cfg = _make_config({})
+    assert cfg.active_profile_name == "normal"
+    assert cfg.permissions_config.default_permission == PermissionLevel.ASK
+
+
+def test_profile_field_selects_auto():
+    cfg = _make_config({"profile": "auto"})
+    assert cfg.active_profile_name == "auto"
+    # Auto has the workspace write allows
+    assert any(
+        r.tool == "filesystem_tools"
+        and r.pattern == "write_file"
+        and PermissionLevel(r.permission) == PermissionLevel.ALLOW
+        for r in cfg.permissions_config.rules
+    )
+
+
+def test_dangerous_profile_loads():
+    cfg = _make_config({"profile": "dangerous"})
+    assert cfg.active_profile_name == "dangerous"
+    assert cfg.permissions_config.default_permission == PermissionLevel.ALLOW
+
+
+def test_user_rules_layered_on_profile_base():
+    """User's permissions.rules should be appended after profile rules,
+    so last-match-wins lets users override."""
+    cfg = _make_config(
+        {
+            "profile": "auto",
+            "rules": [
+                {"tool": "db_tools", "pattern": "execute_ddl", "permission": "deny"},
+            ],
+        }
+    )
+    rules = cfg.permissions_config.rules
+    # The Auto base has execute_ddl ASK; user rule must appear after it.
+    auto_idx = next(
+        i
+        for i, r in enumerate(rules)
+        if r.tool == "db_tools" and r.pattern == "execute_ddl" and PermissionLevel(r.permission) == PermissionLevel.ASK
+    )
+    user_idx = next(
+        i
+        for i, r in enumerate(rules)
+        if r.tool == "db_tools" and r.pattern == "execute_ddl" and PermissionLevel(r.permission) == PermissionLevel.DENY
+    )
+    assert user_idx > auto_idx, "user rule must be appended after profile base"
+
+
+def test_invalid_profile_falls_back_to_normal(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="datus.configuration.agent_config"):
+        cfg = _make_config({"profile": "yolo"})
+    assert cfg.active_profile_name == "normal"
+    assert any("Invalid profile" in rec.message or "yolo" in rec.message for rec in caplog.records)
+
+
+def test_raw_permissions_stashed_for_runtime_switch():
+    """/profile must be able to rebuild effective config without re-reading YAML."""
+    raw = {
+        "profile": "auto",
+        "rules": [
+            {"tool": "db_tools", "pattern": "execute_ddl", "permission": "deny"},
+        ],
+    }
+    cfg = _make_config(raw)
+    assert cfg._raw_permissions == raw

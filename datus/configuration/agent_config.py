@@ -569,6 +569,11 @@ class AgentConfig:
             self._backend_config = backend_config
             init_backends(backend_config, data_dir=str(self.path_manager.data_dir))
 
+        # Active profile name — set by ``_init_permissions_config``. Pre-seed
+        # so downstream readers always see a valid string even if permission
+        # init raises.
+        self.active_profile_name: str = "normal"
+        self._raw_permissions: Dict[str, Any] = {}
         # Initialize unified permission system
         self.permissions_config = self._init_permissions_config(kwargs.get("permissions", {}))
 
@@ -739,22 +744,45 @@ class AgentConfig:
     def _init_permissions_config(self, permissions_raw: Dict[str, Any]):
         """Initialize unified permission configuration.
 
+        Loads the base profile (default: ``normal``) and layers user-supplied
+        ``rules`` on top via ``PermissionConfig.merge_with`` (last-match-wins).
+        Sets ``self.active_profile_name`` so the CLI status bar and
+        ``/profile`` command can read the source of truth from one place.
+        Stashes the raw dict in ``self._raw_permissions`` so ``/profile`` can
+        rebuild the effective config on switch without re-reading YAML.
+
         Args:
-            permissions_raw: Raw permissions config from agent.yml
+            permissions_raw: Raw permissions config from agent.yml. May be
+                empty ({}) — treated as "no profile override, no user rules",
+                equivalent to ``{"profile": "normal", "rules": []}``.
 
         Returns:
-            PermissionConfig instance or None
+            PermissionConfig instance. A profile is always applied, so the
+            return is never ``None``.
         """
-        if not permissions_raw:
-            return None
+        from datus.tools.permission.permission_config import PermissionConfig
+        from datus.tools.permission.profiles import get_profile
+
+        permissions_raw = permissions_raw or {}
+        # Stash a copy so /profile can rebuild effective config on switch
+        # without re-reading YAML.
+        self._raw_permissions = dict(permissions_raw)
+        requested_profile = permissions_raw.get("profile", "normal")
 
         try:
-            from datus.tools.permission.permission_config import PermissionConfig
+            base = get_profile(requested_profile)
+            self.active_profile_name = requested_profile
+        except ValueError as e:
+            logger.warning(f"Invalid profile {requested_profile!r} in agent.yml: {e}. Falling back to 'normal'.")
+            base = get_profile("normal")
+            self.active_profile_name = "normal"
 
-            return PermissionConfig.from_dict(permissions_raw)
-        except Exception as e:
-            logger.warning(f"Failed to initialize permissions config: {e}")
-            return None
+        # Remove the ``profile`` key so PermissionConfig.from_dict only
+        # consumes ``default`` and ``rules`` as before.
+        user_raw = {k: v for k, v in permissions_raw.items() if k != "profile"}
+        user_cfg = PermissionConfig.from_dict(user_raw) if user_raw else None
+
+        return base.merge_with(user_cfg) if user_cfg else base
 
     def _init_skills_config(self, skills_raw: Dict[str, Any]):
         """Initialize skills configuration.
