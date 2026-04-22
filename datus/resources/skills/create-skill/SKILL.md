@@ -98,12 +98,12 @@ skill-name/
 
 Use `write_file` from the filesystem tools. Paths must start with `.datus/skills/` (project-level) or `~/.datus/skills/` (user-level) — see Critical Rule #2:
 
-```
+```text
 write_file(path=".datus/skills/<skill-name>/SKILL.md", content=...)
 ```
 
 If the user explicitly requested scripts, also create scripts/:
-```
+```text
 write_file(path=".datus/skills/<skill-name>/scripts/<script>.py", content=...)
 ```
 
@@ -145,7 +145,7 @@ agent:
   skills:
     directories:
       - ~/.datus/skills
-      - ./skills
+      - .datus/skills
 ```
 
 Per-node filtering:
