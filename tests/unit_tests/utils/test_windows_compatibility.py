@@ -42,6 +42,20 @@ def test_multiprocessing_start_method_embedding(platform_name, expected_method):
             mock_set.assert_called_once_with(expected_method, force=True)
 
 
+def test_multiprocessing_start_method_base_ignores_runtime_error():
+    with patch("platform.system", return_value="Linux"):
+        with patch("multiprocessing.set_start_method", side_effect=RuntimeError("already set")) as mock_set:
+            configure_llm_multiprocessing()
+            mock_set.assert_called_once_with("fork", force=True)
+
+
+def test_multiprocessing_start_method_embedding_ignores_runtime_error():
+    with patch("platform.system", return_value="Linux"):
+        with patch("multiprocessing.set_start_method", side_effect=RuntimeError("already set")) as mock_set:
+            configure_embedding_multiprocessing()
+            mock_set.assert_called_once_with("fork", force=True)
+
+
 def test_detect_toxicology_db(tmp_path):
     test_files = [
         "benchmark/bird/dev_20240627/dev_databases/medical/toxicology.sqlite",

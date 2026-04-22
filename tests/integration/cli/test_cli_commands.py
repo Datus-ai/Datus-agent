@@ -146,7 +146,7 @@ def test_bash_command_denied(mock_args, capsys):
 @pytest.mark.acceptance
 def test_databases_command(mock_args, capsys):
     with patch("datus.cli.repl.PromptSession.prompt") as mock_prompt:
-        mock_prompt.side_effect = [".databases", EOFError]
+        mock_prompt.side_effect = ["/databases", EOFError]
         cli = DatusCLI(args=mock_args)
         cli.run()
         captured = capsys.readouterr()
@@ -156,7 +156,7 @@ def test_databases_command(mock_args, capsys):
 @pytest.mark.acceptance
 def test_tables_command(mock_args, capsys):
     with patch("datus.cli.repl.PromptSession.prompt") as mock_prompt:
-        mock_prompt.side_effect = [".tables", EOFError]
+        mock_prompt.side_effect = ["/tables", EOFError]
         cli = DatusCLI(args=mock_args)
         cli.run()
         captured = capsys.readouterr()
@@ -178,7 +178,7 @@ def test_chat_command(mock_args, capsys, gen_sql_input: List[Dict[str, Any]]):
     with patch("datus.cli.repl.PromptSession.prompt") as mock_prompt:
         mock_prompt.side_effect = [
             f"/{sql_task['task']}",
-            ".chat_info",
+            "/chat_info",
             EOFError,
         ]
         with (
@@ -278,12 +278,12 @@ def test_chat_command_with_ext_knowledge(mock_args):
 @pytest.mark.acceptance
 def test_chat_info(mock_args, capsys):
     """
-    Tests the '.chat_info' command for last_
+    Tests the '/chat_info' command for the current session state.
     """
 
     with patch("datus.cli.repl.PromptSession.prompt") as mock_prompt:
         mock_prompt.side_effect = [
-            ".chat_info",
+            "/chat_info",
             EOFError,
         ]
         cli = DatusCLI(args=mock_args)
