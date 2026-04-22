@@ -14,6 +14,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
 
 from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel, PermissionRule
+from datus.tools.permission.profiles import get_profile
 
 if TYPE_CHECKING:
     from datus.tools.func_tool.base import Tool
@@ -50,21 +51,32 @@ class PermissionManager:
         self,
         global_config: Optional[PermissionConfig] = None,
         node_overrides: Optional[Dict[str, PermissionConfig]] = None,
+        active_profile: str = "normal",
     ):
         """Initialize the permission manager.
 
         Args:
-            global_config: Global permission configuration from agent.yml
-            node_overrides: Per-node permission overrides (node_name -> config)
+            global_config: Global permission configuration. Typically the
+                result of ``profile_base.merge_with(user_rules)`` built by
+                :meth:`AgentConfig._init_permissions_config`.
+            node_overrides: Per-node permission overrides (node_name -> config).
+            active_profile: Name of the currently active profile. The rules
+                baked into ``global_config`` are authoritative; this string
+                is what the status bar displays and what :meth:`switch_profile`
+                mutates. Defaults to ``"normal"``.
         """
         self.global_config = global_config or PermissionConfig()
         self.node_overrides = node_overrides or {}
+        self.active_profile = active_profile
         self._permission_callback: Optional[Callable[[str, str, Dict[str, Any]], Awaitable[bool]]] = None
 
         # Cache for session-approved permissions (tool_category.tool_name -> approved)
         self._session_approvals: Dict[str, bool] = {}
 
-        logger.debug(f"PermissionManager initialized with {len(self.global_config.rules)} global rules")
+        logger.debug(
+            f"PermissionManager initialized: profile={self.active_profile}, "
+            f"{len(self.global_config.rules)} global rules"
+        )
 
     def set_permission_callback(self, callback: Callable[[str, str, Dict[str, Any]], Awaitable[bool]]) -> None:
         """Set callback for ASK permission user prompts.
@@ -268,6 +280,38 @@ class PermissionManager:
     def clear_session_approvals(self) -> None:
         """Clear all session approvals (e.g., on session end)."""
         self._session_approvals.clear()
+
+    def switch_profile(
+        self,
+        profile_name: str,
+        user_overrides: Optional[PermissionConfig] = None,
+    ) -> None:
+        """Switch to a different permission profile at runtime.
+
+        Replaces ``global_config`` with ``get_profile(profile_name)`` merged
+        with ``user_overrides`` (if any), updates ``active_profile``, and
+        clears ``_session_approvals`` so prior ``always-allow`` grants never
+        leak across profiles (spec decision #7).
+
+        Args:
+            profile_name: One of ``"normal"``, ``"auto"``, ``"dangerous"``.
+                Raises ``ValueError`` on unknown names — callers are expected
+                to validate input before invoking.
+            user_overrides: Optional user rules to layer on top (typically
+                reconstructed from ``agent.yml``'s ``permissions.rules``).
+
+        Raises:
+            ValueError: if ``profile_name`` is not a known profile.
+        """
+        base = get_profile(profile_name)  # raises ValueError on unknown name
+        self.global_config = base.merge_with(user_overrides) if user_overrides else base
+        self.active_profile = profile_name
+        self._session_approvals.clear()
+        logger.info(
+            f"Profile switched to '{profile_name}': "
+            f"{len(self.global_config.rules)} effective rules, "
+            f"session approvals cleared"
+        )
 
     def _get_tool_category(self, tool_name: str) -> str:
         """Determine tool category from tool name.

@@ -326,3 +326,84 @@ class TestPermissionManagerEdgeCases:
 
         result = manager.check_permission("db_tools", "execute_sql", "chatbot")
         assert result == PermissionLevel.ALLOW
+
+
+class TestPermissionManagerProfileSwitching:
+    """switch_profile() updates global_config and clears session approvals.
+
+    Spec decision #7: switching profiles must never leave behind prior
+    'always allow' grants from a more permissive profile.
+    """
+
+    def test_active_profile_defaults_to_normal(self):
+        from datus.tools.permission.permission_manager import PermissionManager
+
+        mgr = PermissionManager()
+        assert mgr.active_profile == "normal"
+
+    def test_active_profile_accepts_constructor_arg(self):
+        from datus.tools.permission.permission_manager import PermissionManager
+
+        mgr = PermissionManager(active_profile="auto")
+        assert mgr.active_profile == "auto"
+
+    def test_switch_profile_updates_active_name(self):
+        from datus.tools.permission.permission_manager import PermissionManager
+
+        mgr = PermissionManager()
+        mgr.switch_profile("auto")
+        assert mgr.active_profile == "auto"
+
+    def test_switch_profile_replaces_global_config(self):
+        from datus.tools.permission.permission_config import PermissionLevel
+        from datus.tools.permission.permission_manager import PermissionManager
+
+        mgr = PermissionManager()
+        mgr.switch_profile("dangerous")
+        # Dangerous has default ALLOW with no rules
+        assert mgr.global_config.default_permission == PermissionLevel.ALLOW
+        assert len(mgr.global_config.rules) == 0
+
+    def test_switch_profile_clears_session_approvals(self):
+        from datus.tools.permission.permission_manager import PermissionManager
+
+        mgr = PermissionManager()
+        mgr.approve_for_session("db_tools", "execute_ddl")
+        assert mgr._session_approvals
+        mgr.switch_profile("auto")
+        assert mgr._session_approvals == {}
+
+    def test_switch_profile_with_user_overrides(self):
+        from datus.tools.permission.permission_config import (
+            PermissionConfig,
+            PermissionLevel,
+            PermissionRule,
+        )
+        from datus.tools.permission.permission_manager import PermissionManager
+
+        mgr = PermissionManager()
+        user_overrides = PermissionConfig(
+            default_permission=PermissionLevel.ASK,
+            rules=[
+                PermissionRule(
+                    tool="db_tools",
+                    pattern="execute_ddl",
+                    permission=PermissionLevel.DENY,
+                )
+            ],
+        )
+        mgr.switch_profile("auto", user_overrides=user_overrides)
+        matching = [r for r in mgr.global_config.rules if r.tool == "db_tools" and r.pattern == "execute_ddl"]
+        # Final matching rule's permission should be DENY (user override wins)
+        final = matching[-1].permission
+        final_level = PermissionLevel(final) if isinstance(final, str) else final
+        assert final_level == PermissionLevel.DENY
+
+    def test_switch_profile_unknown_raises(self):
+        import pytest
+
+        from datus.tools.permission.permission_manager import PermissionManager
+
+        mgr = PermissionManager()
+        with pytest.raises(ValueError, match="Unknown profile"):
+            mgr.switch_profile("yolo")
