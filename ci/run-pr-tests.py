@@ -281,11 +281,7 @@ def _normalize_suite_exit_code(
 
 
 def select_impacted_unit_tests(changed_files: list[str]) -> list[str]:
-    """Map changed source files to the unit-test paths that should run.
-
-    Skips paths that no longer exist on disk so deletions in the diff do not
-    fail pytest collection with "file or directory not found".
-    """
+    """Map changed source files to the unit-test paths that should run."""
     impacted: list[str] = []
     for path in changed_files:
         normalized = _normalize_path(path)
@@ -294,22 +290,35 @@ def select_impacted_unit_tests(changed_files: list[str]) -> list[str]:
 
         if normalized.startswith("tests/unit_tests/"):
             if normalized.endswith(".py"):
-                if os.path.exists(normalized):
-                    impacted.append(normalized)
+                impacted.append(normalized)
             else:
                 parent = normalized.rstrip("/").rsplit("/", 1)[0]
-                candidate = f"{parent}/" if parent else "tests/unit_tests/"
-                if os.path.isdir(candidate):
-                    impacted.append(candidate)
+                impacted.append(f"{parent}/" if parent else "tests/unit_tests/")
             continue
 
         for prefix, test_target in IMPACTED_TEST_MAPPING:
             if normalized.startswith(prefix):
-                if os.path.isdir(test_target) or (test_target.endswith(".py") and os.path.exists(test_target)):
-                    impacted.append(test_target)
+                impacted.append(test_target)
                 break
 
     return _dedupe_preserve(impacted)
+
+
+def _filter_existing_paths(paths: list[str]) -> list[str]:
+    """Drop mapped test targets that no longer exist on disk.
+
+    The diff may reference files that were deleted in the PR. Passing a
+    non-existent path to pytest aborts the entire collection with
+    "file or directory not found", which masks real test results.
+    """
+    existing: list[str] = []
+    for path in paths:
+        if path.endswith("/"):
+            if os.path.isdir(path):
+                existing.append(path)
+        elif os.path.exists(path):
+            existing.append(path)
+    return existing
 
 
 def find_compare_branch(base_ref: str) -> str | None:
@@ -434,6 +443,7 @@ def list_changed_files(base_ref: str) -> list[str]:
 def resolve_impacted_unit_tests(base_ref: str) -> list[str]:
     changed_files = list_changed_files(base_ref)
     impacted = select_impacted_unit_tests(changed_files)
+    impacted = _filter_existing_paths(impacted)
     if impacted:
         log(f"Impacted unit-test targets: {', '.join(impacted)}")
     else:

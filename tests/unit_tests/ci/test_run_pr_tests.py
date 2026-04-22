@@ -60,6 +60,24 @@ def test_select_impacted_unit_tests_maps_non_python_files_to_parent_directory():
     ]
 
 
+def test_filter_existing_paths_drops_missing_files(tmp_path):
+    real_dir = tmp_path / "real_dir"
+    real_dir.mkdir()
+    real_file = tmp_path / "real_file.py"
+    real_file.write_text("")
+
+    filtered = run_pr_tests._filter_existing_paths(
+        [
+            str(real_dir) + "/",
+            str(tmp_path / "missing_dir") + "/",
+            str(real_file),
+            str(tmp_path / "missing_file.py"),
+        ]
+    )
+
+    assert filtered == [str(real_dir) + "/", str(real_file)]
+
+
 def test_merge_and_parse_junit_results_across_multiple_suites(tmp_path):
     suite_a = tmp_path / "suite-a.xml"
     suite_b = tmp_path / "suite-b.xml"
